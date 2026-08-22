@@ -1,4 +1,4 @@
-use crabka_units::{bytes, convert::TimeExt, per_sec, ByteSize, Frequency, Time};
+use crabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, per_sec};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

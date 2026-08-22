@@ -8,10 +8,10 @@ use crabka_blockstore::{Labels, SeriesFingerprint};
 
 use super::labels::labels_without_metric_name;
 use crate::{
+    PromqlError,
     error::Result,
     planner::{aggregate::AGGREGATE_VALUE_COLUMN, leaf, over_time_range, rate_range, scalar_math},
     result::{InstantSample, QueryResult, SampleValue},
-    PromqlError,
 };
 
 /// Reconstructs a [`Labels`] set from the string label columns of one row of a

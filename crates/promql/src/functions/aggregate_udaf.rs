@@ -31,7 +31,7 @@ use arrow::{
 };
 use datafusion::{
     common::{Result as DfResult, ScalarValue},
-    logical_expr::{create_udaf, function::AccumulatorArgs, Accumulator, AggregateUDF, Volatility},
+    logical_expr::{Accumulator, AggregateUDF, Volatility, create_udaf, function::AccumulatorArgs},
     prelude::SessionContext,
 };
 

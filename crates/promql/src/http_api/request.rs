@@ -2,17 +2,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::http::HeaderMap;
 use crabka_blockstore::LabelMatcher;
-use crabka_metrics::{validate_tenant, QueryEnforcer};
+use crabka_metrics::{QueryEnforcer, validate_tenant};
 use crabka_units::prelude::*;
 use num_traits::ToPrimitive;
 use promql_parser::parser::Expr;
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::form_urlencoded;
 
 use super::{ApiError, PrometheusApiState};
 use crate::{
-    engine::{label_matcher_sets, MAX_RESOLUTION_POINTS},
-    parse_promql, MetricStore, PromqlError, QueryResult,
+    MetricStore, PromqlError, QueryResult,
+    engine::{MAX_RESOLUTION_POINTS, label_matcher_sets},
+    parse_promql,
 };
 
 #[derive(Debug, Default)]

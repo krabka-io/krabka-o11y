@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 
 use assert2::{assert, check};
 use crabka_blockstore::{
-    labels, BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, TimeRange,
+    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, TimeRange, labels,
 };
-use crabka_logql::{parse_query, plan_stream_query, LineFilterOp, PipelineStage};
+use crabka_logql::{LineFilterOp, PipelineStage, parse_query, plan_stream_query};
 
 #[test]
 fn stream_planner_prunes_series_and_blocks_before_line_filters() {

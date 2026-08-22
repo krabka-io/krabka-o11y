@@ -6,7 +6,7 @@ use std::io::Read;
 
 use crabka_blockstore::Labels;
 use crabka_pprof::PprofProfile;
-use crabka_units::{convert::ByteSizeExt as _, ByteSize};
+use crabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 use crate::{error::ProfilesError, ingest::RawProfile, wire::pb};
 

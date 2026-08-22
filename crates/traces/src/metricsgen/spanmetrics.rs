@@ -8,7 +8,7 @@ use num_traits::ToPrimitive as _;
 use crate::metricsgen::{
     config::MetricsGenConfig,
     contract::{SpanKind, SpanRecord, StatusCode},
-    series::{sorted_labels, Exemplar, Series, SeriesSample},
+    series::{Exemplar, Series, SeriesSample, sorted_labels},
 };
 
 const NS_PER_SEC: f64 = 1_000_000_000.0;
@@ -384,10 +384,12 @@ mod tests {
         let out = reg.drain(1_000);
         let calls = find(&out, "traces_spanmetrics_calls_total", "GET /x");
 
-        assert2::assert!(calls
-            .labels
-            .iter()
-            .any(|(k, v)| k == "status_message" && v == "deadline exceeded"));
+        assert2::assert!(
+            calls
+                .labels
+                .iter()
+                .any(|(k, v)| k == "status_message" && v == "deadline exceeded")
+        );
     }
 
     #[test]
@@ -453,10 +455,11 @@ mod tests {
         let lat = find(&out, "traces_spanmetrics_latency", "GET /x");
         assert2::assert!(lat.exemplars.len() == 1);
         let ex = &lat.exemplars[0];
-        assert2::assert!(ex
-            .labels
-            .iter()
-            .any(|(k, v)| { k == "trace_id" && v == "abababababababababababababababab" }));
+        assert2::assert!(
+            ex.labels
+                .iter()
+                .any(|(k, v)| { k == "trace_id" && v == "abababababababababababababababab" })
+        );
         assert2::assert!((ex.value - 0.005).abs() < 1e-6);
     }
 

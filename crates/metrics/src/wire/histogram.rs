@@ -2,7 +2,7 @@
 
 use num_traits::ToPrimitive;
 
-use super::{pb, WireError};
+use super::{WireError, pb};
 use crate::{BucketSpan, NativeHistogram, ResetHint};
 
 /// # Errors

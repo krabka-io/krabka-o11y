@@ -1,8 +1,8 @@
 //! OTLP `TracesData` to internal spans.
 
 use opentelemetry_proto::tonic::{
-    common::v1::{any_value::Value, AnyValue, KeyValue as OtlpKv},
-    trace::v1::{span::SpanKind as OtlpKind, Status, TracesData},
+    common::v1::{AnyValue, KeyValue as OtlpKv, any_value::Value},
+    trace::v1::{Status, TracesData, span::SpanKind as OtlpKind},
 };
 
 use super::WireError;
@@ -196,12 +196,12 @@ mod tests {
 
     use opentelemetry_proto::tonic::{
         common::v1::{
-            any_value::Value, AnyValue, ArrayValue, InstrumentationScope, KeyValue as OtlpKv,
+            AnyValue, ArrayValue, InstrumentationScope, KeyValue as OtlpKv, any_value::Value,
         },
         resource::v1::Resource,
         trace::v1::{
-            span::SpanKind as OtlpKind, ResourceSpans, ScopeSpans, Span as OtlpSpan, Status,
-            TracesData,
+            ResourceSpans, ScopeSpans, Span as OtlpSpan, Status, TracesData,
+            span::SpanKind as OtlpKind,
         },
     };
 

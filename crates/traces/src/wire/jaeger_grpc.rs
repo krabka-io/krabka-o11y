@@ -5,8 +5,8 @@ use prost_types::{Duration, Timestamp};
 use crate::{
     span::{AttrValue, KeyValue, Span},
     wire::{
-        jaeger::{spans_from_batch, JaegerBatch, JaegerLog, JaegerProcess, JaegerRef, JaegerSpan},
         WireError,
+        jaeger::{JaegerBatch, JaegerLog, JaegerProcess, JaegerRef, JaegerSpan, spans_from_batch},
     },
 };
 

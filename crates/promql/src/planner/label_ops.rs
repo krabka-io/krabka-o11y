@@ -26,9 +26,9 @@ use crabka_blockstore::Labels;
 use regex::Regex;
 
 use crate::{
+    PromqlError,
     error::Result,
     result::{InstantSample, SampleValue},
-    PromqlError,
 };
 
 /// Sort order for the `sort` / `sort_desc` functions.

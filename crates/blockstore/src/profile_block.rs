@@ -84,8 +84,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        profile_samples_decl, profile_samples_schema, validate_against, PCOL_STACKTRACE_ID,
-        PCOL_TRACE_ID, PCOL_VALUE,
+        PCOL_STACKTRACE_ID, PCOL_TRACE_ID, PCOL_VALUE, profile_samples_decl,
+        profile_samples_schema, validate_against,
     };
 
     fn row(fp: u64, ts: i64, stack: u64, value: i64, trace: Option<Vec<u8>>) -> ProfileSampleRow {

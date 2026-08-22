@@ -2,7 +2,7 @@ use assert2::check;
 use crabka_traces::metricsgen::{
     BucketSpan, NativeHistogram, SpanKind, SpanRecord, StatusCode, TRACES_WAL_TOPIC,
 };
-use crabka_units::{convert::ByteSizeExt as _, ByteSize};
+use crabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 #[test]
 fn metricsgen_contract_exposes_wal_projection() {

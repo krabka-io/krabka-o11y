@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    proto::{Function, Line, Location, Profile, Sample, ValueType},
     PprofProfile, ProfileType, Tree,
+    proto::{Function, Line, Location, Profile, Sample, ValueType},
 };
 
 #[must_use]
@@ -193,11 +193,13 @@ mod tests {
         check!(inner.sample.iter().all(|sample| sample.value != vec![0]));
         check!(inner.function.iter().all(|function| function.id > 0));
         check!(inner.location.iter().all(|location| location.id > 0));
-        check!(inner
-            .sample
-            .iter()
-            .flat_map(|sample| sample.location_id.iter())
-            .all(|location_id| *location_id > 0));
+        check!(
+            inner
+                .sample
+                .iter()
+                .flat_map(|sample| sample.location_id.iter())
+                .all(|location_id| *location_id > 0)
+        );
         check!(
             sample_paths(inner)
                 == vec![

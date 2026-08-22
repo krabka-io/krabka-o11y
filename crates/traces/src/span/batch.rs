@@ -4,12 +4,12 @@ use std::collections::HashMap;
 
 use arrow::record_batch::RecordBatch;
 use crabka_blockstore::{
-    encode_span_rows_with_promoted_attrs, AttrValue as BlockAttrValue, NestedSet as BlockNestedSet,
-    PromotedSpanAttr, SpanAttr, SpanEvent, SpanKind, SpanLink, SpanRow, StatusCode,
+    AttrValue as BlockAttrValue, NestedSet as BlockNestedSet, PromotedSpanAttr, SpanAttr,
+    SpanEvent, SpanKind, SpanLink, SpanRow, StatusCode, encode_span_rows_with_promoted_attrs,
 };
 use crabka_units::prelude::*;
 
-use super::{nested_set::assign_nested_set, AttrValue, KeyValue, Span};
+use super::{AttrValue, KeyValue, Span, nested_set::assign_nested_set};
 use crate::error::TracesError;
 
 pub const RESOURCE_ATTR_PREFIX: &str = "__resource.";
@@ -284,9 +284,9 @@ mod tests {
         Array, BooleanArray, FixedSizeBinaryArray, Int32Array, ListArray, StringArray,
     };
     use crabka_blockstore::{
-        span_block_schema, SCOL_ATTR_IS_ARRAY, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,
-        SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_ROOT_SERVICE_NAME,
-        SCOL_SPAN_ID, SCOL_TRACE_ID,
+        SCOL_ATTR_IS_ARRAY, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_NESTED_SET_LEFT,
+        SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_ROOT_SERVICE_NAME, SCOL_SPAN_ID, SCOL_TRACE_ID,
+        span_block_schema,
     };
 
     use super::*;

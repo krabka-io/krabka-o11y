@@ -4,15 +4,15 @@ use std::{
 };
 
 use axum::{
-    response::{IntoResponse, Response},
     Json,
+    response::{IntoResponse, Response},
 };
 use crabka_blockstore::{Labels, SeriesFingerprint};
 use crabka_metrics::{BucketSpan, NativeHistogram};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::apply_limit;
-use crate::{store::ExemplarRecord, QueryResult, RangeSeries, SampleValue};
+use crate::{QueryResult, RangeSeries, SampleValue, store::ExemplarRecord};
 
 pub(super) fn success_response(result: QueryResult) -> Response {
     Json(json!({

@@ -4,9 +4,9 @@ use crabka_units::prelude::*;
 use num_traits::ToPrimitive;
 
 use super::{
-    add_compatible_native_histogram, labels::labels_without_metric_name,
+    RangeEval, add_compatible_native_histogram, labels::labels_without_metric_name,
     native_histograms_are_range_compatible, result_utils::quantile_value,
-    scale_native_histogram_values, selector::timestamp_seconds, RangeEval,
+    scale_native_histogram_values, selector::timestamp_seconds,
 };
 #[cfg(feature = "experimental-functions")]
 use crate::error::{PromqlError, Result};

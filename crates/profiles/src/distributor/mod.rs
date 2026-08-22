@@ -19,9 +19,9 @@ use connectrpc_axum::{
     MakeServiceBuilder, MessageLimits,
     message::{Code, ConnectError, ConnectRequest, ConnectResponse},
 };
-use crabka_throttle::TokenBucket;
 use crabka_client_producer::{Header, Producer, ProducerRecord};
 use crabka_pprof::PprofProfile;
+use crabka_throttle::TokenBucket;
 #[cfg(test)]
 use crabka_units::mebibytes;
 use crabka_units::{

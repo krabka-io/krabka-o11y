@@ -5,9 +5,9 @@ use promql_parser::parser::{Expr, LabelModifier, VectorSelector};
 
 use super::selector::label_matcher_sets;
 use crate::{
+    PromqlError,
     error::Result,
     result::{InstantSample, SampleValue},
-    PromqlError,
 };
 
 /// Records the `__name__` of the first sample for a histogram group key.

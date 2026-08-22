@@ -4,7 +4,7 @@ use thiserror::Error;
 
 mod enforce;
 mod overrides;
-pub use enforce::{IngestEnforcer, QueryEnforcer, DEFAULT_MAX_RATE_BUCKETS};
+pub use enforce::{DEFAULT_MAX_RATE_BUCKETS, IngestEnforcer, QueryEnforcer};
 pub use overrides::{OverridesError, OverridesProvider};
 
 /// Mimir-style per-tenant limits used by metrics ingest and query paths.
@@ -43,9 +43,9 @@ pub struct Limits {
 /// therefore load cleanly and mean *unlimited*, but zero is the documented way
 /// to turn a cap off. A rejection at parse time keeps one sentinel.
 pub mod non_negative_time {
-    use serde::{de::Error as _, Deserializer, Serializer};
+    use serde::{Deserializer, Serializer, de::Error as _};
 
-    use crate::limits::{serde_units, Time};
+    use crate::limits::{Time, serde_units};
 
     /// Writes the extent in its human form.
     ///
@@ -78,9 +78,9 @@ pub mod non_negative_time {
 /// the guard must exist on both or a per-tenant override slips past it. This
 /// module is deserialize-only, because nothing serializes `PartialLimits`.
 pub(crate) mod option_non_negative_time {
-    use serde::{de::Error as _, Deserializer};
+    use serde::{Deserializer, de::Error as _};
 
-    use crate::limits::{serde_units, Time};
+    use crate::limits::{Time, serde_units};
 
     /// Reads the optional extent and rejects a negative one.
     ///

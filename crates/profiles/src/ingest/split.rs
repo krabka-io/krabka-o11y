@@ -216,12 +216,16 @@ mod tests {
             .iter()
             .map(|profile| profile.profile_type.as_str())
             .collect();
-        assert!(types
-            .iter()
-            .any(|profile_type| profile_type == &"memory:alloc_objects:count:space:bytes"));
-        assert!(types
-            .iter()
-            .any(|profile_type| profile_type == &"memory:alloc_space:bytes:space:bytes"));
+        assert!(
+            types
+                .iter()
+                .any(|profile_type| profile_type == &"memory:alloc_objects:count:space:bytes")
+        );
+        assert!(
+            types
+                .iter()
+                .any(|profile_type| profile_type == &"memory:alloc_space:bytes:space:bytes")
+        );
 
         let objects = out
             .iter()
@@ -351,9 +355,10 @@ mod tests {
 
         check!(out.len() == 2);
         for target in ["all", "self"] {
-            check!(out
-                .iter()
-                .any(|profile| profile.labels.get("target") == Some(target)));
+            check!(
+                out.iter()
+                    .any(|profile| profile.labels.get("target") == Some(target))
+            );
         }
     }
 }

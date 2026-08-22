@@ -9,7 +9,7 @@ use promql_parser::{
 };
 use regex::Regex;
 
-use crate::{error::Result, PromqlError};
+use crate::{PromqlError, error::Result};
 
 pub(crate) fn label_matcher_sets(selector: &VectorSelector) -> Vec<Vec<LabelMatcher>> {
     if selector.matchers.or_matchers.is_empty() {

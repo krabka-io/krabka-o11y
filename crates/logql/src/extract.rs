@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    template::template_parse_error, util::decode_quoted_escape, DestinationLabel,
-    JsonExpressionPath, ParseError, SourceLabel,
+    DestinationLabel, JsonExpressionPath, ParseError, SourceLabel, template::template_parse_error,
+    util::decode_quoted_escape,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -321,16 +321,20 @@ mod tests {
     #[test]
     fn logfmt_extractions_reject_empty_destination_or_source() {
         check!(LogfmtExtraction::same("").is_err());
-        check!(LogfmtExtraction::rename(
-            DestinationLabel(String::new()),
-            SourceLabel("source".into())
-        )
-        .is_err());
-        check!(LogfmtExtraction::rename(
-            DestinationLabel("destination".into()),
-            SourceLabel(String::new())
-        )
-        .is_err());
+        check!(
+            LogfmtExtraction::rename(
+                DestinationLabel(String::new()),
+                SourceLabel("source".into())
+            )
+            .is_err()
+        );
+        check!(
+            LogfmtExtraction::rename(
+                DestinationLabel("destination".into()),
+                SourceLabel(String::new())
+            )
+            .is_err()
+        );
     }
 }
 

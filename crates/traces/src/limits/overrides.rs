@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crabka_units::{
-    convert::{ByteSizeExt as _, FrequencyExt as _, TimeExt},
     ByteSize, Frequency, Time,
+    convert::{ByteSizeExt as _, FrequencyExt as _, TimeExt},
 };
 use serde::Deserialize;
 use thiserror::Error;

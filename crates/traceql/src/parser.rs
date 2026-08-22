@@ -6,7 +6,7 @@ use crate::{
         SpansetExpr, StructuralOp, Value, WithBinding,
     },
     error::{Result, TraceqlError},
-    lexer::{lex, Token},
+    lexer::{Token, lex},
 };
 
 /// Default `topN` for `compare()` when the query omits the argument, as in Tempo.
@@ -1248,8 +1248,10 @@ mod tests {
 
         let q =
             parse("{ .a = 1 } | quantile_over_time(span:duration, .5, 0.9) by(span.svc)").unwrap();
-        let [Pipeline::Aggregate(Aggregate::QuantileOverTime { quantiles, .. }), Pipeline::By(by)] =
-            q.pipeline.as_slice()
+        let [
+            Pipeline::Aggregate(Aggregate::QuantileOverTime { quantiles, .. }),
+            Pipeline::By(by),
+        ] = q.pipeline.as_slice()
         else {
             panic!("quantile pipeline")
         };
@@ -1298,12 +1300,14 @@ mod tests {
         // `{outer} | compare({selection}, topN)`. The selection is a full
         // spanset reused via parse_spanset_or; topN defaults to 10.
         let q = parse("{} | compare({ status = error }, 5)").unwrap();
-        let [Pipeline::Compare {
-            selection,
-            top_n,
-            start,
-            end,
-        }] = q.pipeline.as_slice()
+        let [
+            Pipeline::Compare {
+                selection,
+                top_n,
+                start,
+                end,
+            },
+        ] = q.pipeline.as_slice()
         else {
             panic!("compare pipeline: {:?}", q.pipeline)
         };

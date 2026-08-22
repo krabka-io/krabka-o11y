@@ -37,8 +37,10 @@ fn corpus_is_nonempty_and_covers_key_functions() {
     let queries = query_corpus();
 
     check!(queries.iter().any(|case| case.promql.contains("rate(")));
-    check!(queries
-        .iter()
-        .any(|case| case.promql.contains("histogram_quantile")));
+    check!(
+        queries
+            .iter()
+            .any(|case| case.promql.contains("histogram_quantile"))
+    );
     assert!(!seed_dataset().is_empty());
 }

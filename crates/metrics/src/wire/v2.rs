@@ -5,8 +5,8 @@ use crabka_units::prelude::*;
 use prost::Message;
 
 use super::{
-    histogram::v2_histogram_to_native, pb, snappy_block_decode, DecodedExemplar, DecodedMetadata,
-    DecodedSample, DecodedSeries, WireError,
+    DecodedExemplar, DecodedMetadata, DecodedSample, DecodedSeries, WireError,
+    histogram::v2_histogram_to_native, pb, snappy_block_decode,
 };
 use crate::SymbolTable;
 

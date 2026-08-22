@@ -9,7 +9,7 @@ use promql_parser::parser::LabelModifier;
 
 use super::{MomentReduction, QueryShardReducer, RankReduction};
 use crate::{
-    engine::add_compatible_native_histogram, PromqlError, QueryResult, RangeSeries, SampleValue,
+    PromqlError, QueryResult, RangeSeries, SampleValue, engine::add_compatible_native_histogram,
 };
 
 /// Merges range-matrix subquery results back into one Prometheus matrix.

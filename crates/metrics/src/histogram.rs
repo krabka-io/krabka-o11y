@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use arrow::{
     array::{
-        Array, ArrayRef, BooleanArray, BooleanBuilder, Float64Array, Float64Builder, Int32Array,
-        Int32Builder, Int64Array, Int64Builder, Int8Array, Int8Builder, ListArray, ListBuilder,
+        Array, ArrayRef, BooleanArray, BooleanBuilder, Float64Array, Float64Builder, Int8Array,
+        Int8Builder, Int32Array, Int32Builder, Int64Array, Int64Builder, ListArray, ListBuilder,
         StructArray, StructBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder,
     },
     datatypes::{DataType, Field, Fields},
@@ -16,10 +16,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     arrow_codec::{require_non_null, schema_mismatch, typed_column},
     schema::{
-        native_histogram_schema, COL_FINGERPRINT, COL_NH_COUNT, COL_NH_CUSTOM_VALUES,
-        COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS, COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS,
-        COL_NH_RESET_HINT, COL_NH_SCHEMA, COL_NH_START_TS, COL_NH_SUM, COL_NH_ZERO_COUNT,
-        COL_NH_ZERO_THRESHOLD, COL_TIMESTAMP,
+        COL_FINGERPRINT, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS,
+        COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT, COL_NH_SCHEMA,
+        COL_NH_START_TS, COL_NH_SUM, COL_NH_ZERO_COUNT, COL_NH_ZERO_THRESHOLD, COL_TIMESTAMP,
+        native_histogram_schema,
     },
 };
 

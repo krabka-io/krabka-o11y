@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crabka_units::{
-    convert::{ByteSizeExt as _, FrequencyExt as _, TimeExt as _},
     Time,
+    convert::{ByteSizeExt as _, FrequencyExt as _, TimeExt as _},
 };
 use dashmap::DashMap;
 use num_traits::ToPrimitive as _;
@@ -372,11 +372,9 @@ mod tests {
             QueryEnforcer::check_search_duration(&limits, start_ns, start_ns + 7_200_000_000_000),
             Err(LimitError::SearchDurationExceeded { .. })
         ));
-        assert2::assert!(QueryEnforcer::check_search_duration(
-            &limits,
-            start_ns,
-            start_ns + 1_800_000_000_000
-        )
-        .is_ok());
+        assert2::assert!(
+            QueryEnforcer::check_search_duration(&limits, start_ns, start_ns + 1_800_000_000_000)
+                .is_ok()
+        );
     }
 }

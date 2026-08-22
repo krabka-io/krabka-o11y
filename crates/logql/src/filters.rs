@@ -4,9 +4,9 @@ use crabka_units::ByteSize;
 use regex::Regex;
 
 use crate::{
-    stream::{insert_extracted_field, PipelineStage},
-    util::{parse_bytes_literal, parse_prometheus_duration_literal},
     Labels, ParseError,
+    stream::{PipelineStage, insert_extracted_field},
+    util::{parse_bytes_literal, parse_prometheus_duration_literal},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -691,12 +691,16 @@ mod tests {
 
     #[test]
     fn line_filter_reports_ip_matcher_mode() {
-        assert!(!LineFilter::new(LineFilterOp::Contains, "error")
-            .unwrap()
-            .is_ip_matcher());
-        assert!(LineFilter::ip(LineFilterOp::Contains, "192.168.1.0/24")
-            .unwrap()
-            .is_ip_matcher());
+        assert!(
+            !LineFilter::new(LineFilterOp::Contains, "error")
+                .unwrap()
+                .is_ip_matcher()
+        );
+        assert!(
+            LineFilter::ip(LineFilterOp::Contains, "192.168.1.0/24")
+                .unwrap()
+                .is_ip_matcher()
+        );
     }
 
     #[test]

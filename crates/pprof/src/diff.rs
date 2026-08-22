@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::{
-    tree::{Tree, TreeSnapshotNode},
     FlameGraphDiff, Level,
+    tree::{Tree, TreeSnapshotNode},
 };
 
 const ROOT_NAME: &str = "total";

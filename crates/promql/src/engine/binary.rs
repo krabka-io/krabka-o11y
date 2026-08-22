@@ -3,11 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crabka_blockstore::Labels;
 use crabka_metrics::{NativeHistogram, ResetHint};
 use promql_parser::parser::{
-    token::{
-        TokenType, T_ADD, T_ATAN2, T_DIV, T_EQLC, T_GTE, T_GTR, T_LAND, T_LOR, T_LSS, T_LTE,
-        T_LUNLESS, T_MOD, T_MUL, T_NEQ, T_POW, T_SUB,
-    },
     BinModifier, BinaryExpr, LabelModifier, VectorMatchCardinality,
+    token::{
+        T_ADD, T_ATAN2, T_DIV, T_EQLC, T_GTE, T_GTR, T_LAND, T_LOR, T_LSS, T_LTE, T_LUNLESS, T_MOD,
+        T_MUL, T_NEQ, T_POW, T_SUB, TokenType,
+    },
 };
 
 use super::{
@@ -20,9 +20,9 @@ use super::{
     },
 };
 use crate::{
+    PromqlError,
     error::Result,
     result::{InstantSample, QueryResult, SampleValue},
-    PromqlError,
 };
 
 pub(super) enum InstantValue {

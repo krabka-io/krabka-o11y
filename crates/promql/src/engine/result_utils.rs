@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use num_traits::ToPrimitive;
 
 use super::labels::labels_key;
-use crate::{error::Result, result::QueryResult, PromqlError};
+use crate::{PromqlError, error::Result, result::QueryResult};
 
 pub(super) fn quantile_value(quantile: f64, values: &mut [f64]) -> Option<f64> {
     if values.is_empty() {

@@ -3,11 +3,11 @@ use crabka_units::prelude::*;
 use promql_parser::{
     label as prom_label,
     parser::{
-        token::{
-            TokenType, T_AVG, T_BOTTOMK, T_COUNT, T_GROUP, T_MAX, T_MIN, T_STDDEV, T_STDVAR, T_SUM,
-            T_TOPK,
-        },
         AggregateExpr, Expr, LabelModifier, VectorSelector,
+        token::{
+            T_AVG, T_BOTTOMK, T_COUNT, T_GROUP, T_MAX, T_MIN, T_STDDEV, T_STDVAR, T_SUM, T_TOPK,
+            TokenType,
+        },
     },
 };
 
@@ -15,7 +15,7 @@ use super::{
     FrontendRangeQuery, MomentReduction, QueryFrontendOptions, QueryShard, QueryShardExecution,
     QueryShardReducer, RankReduction,
 };
-use crate::{engine::MAX_RESOLUTION_POINTS, parse_promql, PromqlError};
+use crate::{PromqlError, engine::MAX_RESOLUTION_POINTS, parse_promql};
 
 /// Plans query-frontend fan-out for a Prometheus range query.
 ///

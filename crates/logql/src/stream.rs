@@ -1,9 +1,9 @@
 use regex::Regex;
 
 use crate::{
-    extract::LogfmtParser, FieldFilter, FieldFilterChain, FieldFilterExpression, JsonParserConfig,
-    LabelFormat, LabelSelectionSet, Labels, LineFilter, LineFormat, LogfmtParserConfig, ParseError,
-    UnwrapExpression,
+    FieldFilter, FieldFilterChain, FieldFilterExpression, JsonParserConfig, LabelFormat,
+    LabelSelectionSet, Labels, LineFilter, LineFormat, LogfmtParserConfig, ParseError,
+    UnwrapExpression, extract::LogfmtParser,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -630,7 +630,7 @@ fn pattern_parse_error(message: &str) -> ParseError {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_pattern_parts, PatternParser, PatternPart};
+    use super::{PatternParser, PatternPart, parse_pattern_parts};
 
     #[test]
     fn parse_pattern_parts_omits_empty_literals_around_captures() {

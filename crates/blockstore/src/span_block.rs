@@ -16,8 +16,8 @@ use crate::{
     error::{BlockStoreError, Result},
     nested_set::NestedSet,
     span_schema::{
-        span_block_schema_with_promoted_attrs, PromotedSpanAttr, PromotedSpanAttrType, SpanKind,
-        StatusCode, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,
+        PromotedSpanAttr, PromotedSpanAttrType, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SpanKind,
+        StatusCode, span_block_schema_with_promoted_attrs,
     },
 };
 
@@ -515,7 +515,7 @@ mod tests {
 
     use super::*;
     use crate::span_schema::{
-        span_block_schema, PromotedSpanAttr, SCOL_KIND, SCOL_NESTED_SET_LEFT, SCOL_TRACE_ID,
+        PromotedSpanAttr, SCOL_KIND, SCOL_NESTED_SET_LEFT, SCOL_TRACE_ID, span_block_schema,
     };
 
     fn tid() -> [u8; 16] {

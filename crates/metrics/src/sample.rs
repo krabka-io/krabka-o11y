@@ -13,7 +13,7 @@ use arrow::{
 use crate::{
     arrow_codec::{require_non_null, typed_column},
     histogram::HistogramCodecError,
-    schema::{float_sample_schema, COL_FINGERPRINT, COL_TIMESTAMP},
+    schema::{COL_FINGERPRINT, COL_TIMESTAMP, float_sample_schema},
 };
 
 const COL_VALUE: &str = "value";
