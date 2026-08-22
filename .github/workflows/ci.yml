@@ -1,0 +1,313 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly, 05:00 UTC: the full container run and the mutation sweep.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel superseded PR runs; let pushes to main run to completion.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Build, test, lint and format. The Aspect CLI narrows each of these to what
+  # the change actually touched; `bazel build|test //...` is the equivalent for
+  # anyone without the CLI, and is what the nightly job runs.
+  ci:
+    name: build · test · lint · format
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Change detection needs the merge base, not just the tip.
+          fetch-depth: 0
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      # `--severity` defaults to `auto`, which the CLI resolves to `fail` on CI
+      # and `info` off it -- so this gates here and only reports locally.
+      - name: format
+        run: aspect format
+
+      # `aspect lint` narrows to the targets a change touched and annotates the
+      # pull request. It reads the `rules_lint_machine` output group, which is
+      # why the clippy aspect comes from aspect_rules_lint_rust rather than from
+      # @rules_rust -- see //tools/lint/linters.bzl. `bazel test //...` gates on
+      # the same aspect through the `*_clippy` targets, for anyone without the
+      # CLI.
+      - name: lint
+        run: aspect lint
+
+      - name: build
+        run: aspect build //...
+
+      - name: test
+        run: aspect test //...
+
+  # LCOV over the first-party crates. Separate from `ci` because instrumented
+  # binaries are a different build, so sharing that job's cache would only
+  # evict it.
+  coverage:
+    name: coverage
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-coverage
+          repository-cache: true
+      - run: bazel coverage //crates/...
+      - uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: bazel-out/_coverage/_coverage_report.dat
+          disable_search: true
+          fail_ci_if_error: false
+
+  # rustdoc for every crate, kept as an artifact. The `ci` job already builds
+  # these -- a `rust_doc` per crate is an ordinary target -- so this exists to
+  # publish the output, and to keep rendering the whole set even when `aspect
+  # build` narrowed to the crates a change touched.
+  docs:
+    name: docgen
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-docs
+          repository-cache: true
+      - run: bazel build $(bazel query 'kind("rust_doc rule", //crates/...)')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustdoc
+          path: bazel-bin/crates/**/*.rustdoc
+          if-no-files-found: error
+
+  # Container suites, one runner each.
+  #
+  # These saturate a runner: the suites are container-heavy, so Bazel got only
+  # about 1.2x concurrency running them together and the box, not the target
+  # granularity, was the limit. Sharding them across runners is what actually
+  # parallelises them -- one job per suite, so the wall clock is the slowest
+  # suite rather than the sum of all of them.
+  #
+  # `aspect test` does not narrow to impacted targets -- that is an Aspect
+  # Workflows feature, not part of the open-source CLI -- so the set is computed
+  # here: reverse dependencies of the files a change touched, intersected with
+  # the targets tagged `docker`. A scheduled or manual run takes every suite
+  # instead, because a green impacted run says "nothing impacted broke", not
+  # "the container suites pass".
+  docker-select:
+    name: select container suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      suites: ${{ steps.select.outputs.suites }}
+      any: ${{ steps.select.outputs.any }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # rdeps needs the merge base, not just the tip.
+          fetch-depth: 0
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-docker
+          repository-cache: true
+
+      - id: select
+        run: |
+          set -euo pipefail
+          all() { bazel query 'attr(tags, "docker", //crates/...)'; }
+
+          event="${{ github.event_name }}"
+          if [ "${event}" = "schedule" ] || [ "${event}" = "workflow_dispatch" ]; then
+            targets="$(all)"
+          else
+            base="${{ github.event.pull_request.base.sha || github.event.before }}"
+            if [ -z "${base}" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+              # No usable base (first push on a branch, force-push): run them all
+              # rather than silently skipping.
+              targets="$(all)"
+            else
+              changed="$(git diff --name-only "${base}...HEAD")"
+
+              # Build-wide inputs reach every target, and most are not Bazel
+              # targets at all -- `rdeps` takes a target set, and `//:MODULE.bazel`
+              # is a source file no rule exports. Treat them as "everything"
+              # rather than trying to name them.
+              if grep -qE '^(MODULE\.bazel|\.bazelrc|Cargo\.lock|Cargo\.toml|bazel/|tools/)' <<<"${changed}"; then
+                targets="$(all)"
+              else
+                mapfile -t files < <(grep -E '^crates/' <<<"${changed}" | while read -r f; do
+                  [ -e "${f}" ] && printf '%s\n' "${f}"
+                done)
+                if [ "${#files[@]}" -eq 0 ]; then
+                  targets=""
+                else
+                  targets="$(bazel query "attr(tags, 'docker', rdeps(//crates/..., set(${files[*]})))")"
+                fi
+              fi
+            fi
+          fi
+
+          # One matrix entry per target, `name` being the bare suite for the job
+          # label -- the full label is too long to read in the checks list.
+          # `grep` finding nothing is the empty selection, not an error, and a
+          # bare `[ ] && x` would exit under `set -e` whenever the test is false.
+          suites="$(
+            printf '%s\n' "${targets}" | { grep -E '^//' || true; } |
+              jq -R -s -c 'split("\n") | map(select(length > 0)) |
+                map({target: ., name: (. | split(":")[1] | sub("_docker_test$"; ""))})'
+          )"
+          if [ -z "${suites}" ]; then suites='[]'; fi
+          echo "suites=${suites}" >>"${GITHUB_OUTPUT}"
+          echo "any=$([ "${suites}" = '[]' ] && echo false || echo true)" >>"${GITHUB_OUTPUT}"
+          echo "Selected: ${suites}"
+
+  docker:
+    name: container · ${{ matrix.suite.name }}
+    needs: docker-select
+    if: needs.docker-select.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      # One suite failing should not cancel the rest -- the point of the shard
+      # is to see every suite's result in one run.
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(needs.docker-select.outputs.suites) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-docker
+          repository-cache: true
+
+      # The host side of these suites reaches the broker over loopback, but a few
+      # host-side Rust clients bootstrap through the advertised name, so it has to
+      # resolve here too. Containers resolve it separately, through
+      # `--add-host=host.docker.internal:host-gateway`.
+      - run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
+
+      - run: bazel test --config=docker ${{ matrix.suite.target }}
+
+  # A mutation sweep rebuilds and re-runs a crate's unit tests once per mutant,
+  # so it is far too slow to gate a pull request.
+  #
+  # One job per crate. As a single job over all fifteen targets there was no
+  # bound that meant anything: one `broker_mutants` shard sat at 3557s against
+  # Bazel's 3600s ceiling while the other fourteen crates waited behind it, and
+  # a sweep that overran said nothing about which crate was responsible. Per
+  # crate each is bounded on its own, reports its own result, and the wall clock
+  # is the slowest crate rather than the sum.
+  #
+  # `continue-on-error`: survivors are the expected state, not an exception --
+  # `cargo_mutants_test` runs only `#[cfg(test)]` unit tests, so every mutant the
+  # `tests/*.rs` suites would have killed is reported as one. The job exists to
+  # produce a list to read. Make it blocking once the score is worth defending.
+  mutants-select:
+    name: select mutants targets
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      crates: ${{ steps.select.outputs.crates }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-mutants
+          repository-cache: true
+      - id: select
+        run: |
+          set -euo pipefail
+          # `crates/broker` is the outlier: every mutant rebuilds 212k lines, so
+          # its sweep is hours where the rest are minutes. It gets the long
+          # budget; nothing else is allowed to want one.
+          crates="$(
+            bazel query 'kind("cargo_mutants_test rule", //crates/...)' |
+              jq -R -s -c 'split("\n") | map(select(length > 0)) |
+                map({target: ., name: (. | split("/")[3] | split(":")[0])}) |
+                map(. + {minutes: (if .name == "broker" then 300 else 60 end)})'
+          )"
+          echo "crates=${crates}" >>"${GITHUB_OUTPUT}"
+          echo "Selected: ${crates}"
+
+  mutants:
+    name: mutants · ${{ matrix.crate.name }}
+    needs: mutants-select
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    # A bound, not an estimate. A crate that cannot finish inside it is saying
+    # its shard count is too low, and that is worth being told.
+    timeout-minutes: ${{ matrix.crate.minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: ${{ fromJSON(needs.mutants-select.outputs.crates) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-mutants
+          repository-cache: true
+      - run: bazel test ${{ matrix.crate.target }}
+
+  # Push the broker image.
+  #
+  # Not `aspect delivery`: its "only what changed" tracking needs
+  # `ASPECT_WORKFLOWS_DELIVERY_API_ENDPOINT`, a state backend that comes with
+  # Aspect Workflows rather than the open-source CLI. Without it the task refuses
+  # to run except with `--mode=always`, which is what a plain push already is.
+  #
+  # Pushing unconditionally costs less than it sounds: the image is
+  # content-addressed, so a registry that already holds these layers takes the
+  # manifest and skips the blobs. Revisit if Workflows is ever adopted.
+  delivery:
+    name: delivery
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push
+        run: bazel run //packaging:push -- --tag "${GITHUB_SHA}" --tag latest

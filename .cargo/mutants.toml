@@ -1,0 +1,25 @@
+# cargo-mutants configuration — https://mutants.rs
+#
+# Read by a local `cargo mutants` run, and by the `cargo_mutants_test` targets
+# via `--@rules_rs_mutants//mutants:config` in //.bazelrc. Both paths see the
+# same file, and the paths written here are the workspace paths the results
+# print.
+
+test_tool = "nextest"
+profile = "mutants"
+
+# A surviving mutant in the ingest and query paths is often only caught by the
+# slower in-process suites under each crate's tests/ dir. Give every mutant a
+# generous timeout relative to the unmutated baseline so a legitimately-slower
+# run is not misreported as a timeout survivor.
+timeout_multiplier = 5.0
+minimum_test_timeout = 120
+
+exclude_globs = [
+    # The three service entrypoints: parse CLI args, build a config, hand it to
+    # the server, wait for a signal. No unit-testable decision in any of them,
+    # and each is covered end to end by its crate's integration suite.
+    "crates/metrics/src/bin/**",
+    "crates/profiles/src/bin/**",
+    "crates/traces/src/bin/**",
+]

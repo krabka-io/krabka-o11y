@@ -1,0 +1,32 @@
+load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+# Consumed by `crate.from_cargo` (see //MODULE.bazel).
+exports_files(["Cargo.toml"])
+
+crate_library(name = "traces")
+
+# `bazel run //crates/traces:crabka-traces -- --help`.
+crate_binary(
+    name = "crabka-traces",
+    crate_root = "src/bin/crabka-traces.rs",
+    lib = ":traces",
+)
+
+crate_tests(
+    # Suites that drive a real Grafana-stack component and compare against
+    # it, with the images each one starts. //bazel/images pins those by
+    # digest and //bazel/defs.bzl loads them before the suite runs.
+    docker = {
+        "grafana_e2e": [
+            "grafana",
+            "prometheus",
+        ],
+        "tempo_differential": [
+            "grafana",
+            "tempo",
+        ],
+    },
+    lib = "traces",
+)

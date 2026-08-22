@@ -1,0 +1,43 @@
+"""Images the differential suites run against.
+
+Pulled by Bazel from a digest and loaded into the local daemon at test time,
+rather than pulled by testcontainers over the network mid-test. That pins the
+bytes a test runs against, keeps the network out of the test itself, and lets
+the repository cache carry the images between CI runs.
+
+`oci_load` produces a `docker load`-able tarball; `//bazel:docker_test.sh` loads
+each one it is handed before executing the test binary.
+"""
+
+load("@rules_oci//oci:defs.bzl", "oci_load")
+
+package(default_visibility = ["//visibility:public"])
+
+# Tag each image is loaded under -- the name the suites build their
+# `GenericImage` from. Keep in step with //MODULE.bazel, which pins the digests.
+IMAGES = {
+    "grafana": "mirror.gcr.io/grafana/grafana:11.6.1",
+    "mimir": "mirror.gcr.io/grafana/mimir:2.16.1",
+    "prometheus": "mirror.gcr.io/prom/prometheus:v3.8.0",
+    "pyroscope": "mirror.gcr.io/grafana/pyroscope:latest",
+    "tempo": "mirror.gcr.io/grafana/tempo:latest",
+}
+
+[
+    oci_load(
+        name = name,
+        image = "@" + name,
+        repo_tags = [tag],
+    )
+    for name, tag in IMAGES.items()
+]
+
+# The tarball each `oci_load` produces, which is what a test consumes.
+[
+    filegroup(
+        name = name + "_tar",
+        srcs = [":" + name],
+        output_group = "tarball",
+    )
+    for name in IMAGES
+]

@@ -1,0 +1,175 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+# The cargo-mutants pin that Bazel builds //tools/mutants from is not a member.
+exclude = ["tools/mutants"]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["The Crabka Authors"]
+rust-version = "1.97.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# These three opt-outs are intentional while the public API is still pre-1.0;
+# re-evaluate once API surfaces stabilise.
+clone_on_copy = "warn"
+
+[profile.mutants]
+inherits = "test"
+debug = "none"
+
+[profile.dev]
+# Split debug info into a separate file (reduces linker work)
+split-debuginfo = "packed"
+
+[workspace.dependencies]
+addr2line = "0.27"
+arc-swap = "1"
+arrow = { version = "59", default-features = false, features = ["ipc"] }
+# Expressive test assertions: `assert!(a == b)` / `check!(..)` with
+# captured-expression diagnostics. Used for all test assertions workspace-wide.
+assert2 = "0.4"
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+base64 = "0.23"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+connectrpc-axum = "0.2"
+connectrpc-axum-build = "0.2"
+dashmap = "6"
+# Observability block store (crabka-blockstore): DataFusion query engine over
+# Parquet blocks on object storage. Pinned to apache/datafusion `main` because
+# that revision tracks arrow 59 / parquet 59 / object_store 0.13.2, matching the
+# workspace pins. The latest released datafusion line is on an older arrow major.
+datafusion = { git = "https://github.com/apache/datafusion", rev = "0062b4b409a1c556c84746b840fd65e1cdd151c9", version = "54" }
+# Stable data-driven test harness. Use for file-backed corpora so nextest can
+# schedule each fixture as its own test process.
+datatest-stable = "0.3.3"
+# Derive boilerplate for domain newtypes (Display/From/Into/Deref/AsRef/
+# Constructor/FromStr and numeric ops) so wrappers over wire/domain primitives
+# stay one-liners. See docs/style_guides/code_style_guide.md#newtypes-for-domain-values.
+derive_more = { version = "2", features = ["display", "from", "into", "deref", "as_ref", "constructor", "from_str", "add", "add_assign", "mul", "sum"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+futures = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
+hex = "0.4"
+jfrs = "0.2.5"
+multer = "3"
+# mutants: `#[cfg_attr(test, mutants::skip)]` attribute for cargo-mutants. Used
+# only where `exclude_re` cannot reliably suppress a mutant (struct-field-deletion
+# mutants on a live-IO adapter). Dev-dependency only; expands to nothing.
+mutants = "0.0.4"
+num-traits = "0.2.19"
+object = { version = "0.40", default-features = false, features = ["read_core", "elf", "macho", "pe", "std"] }
+# `object_store` is the Apache-stewarded multi-backend object-store client used
+# across the Rust data ecosystem (DataFusion, Polars, Delta-rs). Crabka's
+# S3-compatible and native-GCS RemoteStorageManagers (KIP-405) are built on it.
+#
+# Pinned to 0.13 in lock-step with the datafusion git rev and `parquet 59`: both
+# depend on `object_store ^0.13` and pass its `ObjectStore`/`Path` types across
+# the `ParquetObjectReader` / `register_object_store` boundary in crabka-blockstore.
+# Bumping object_store alone to 0.14 splits the dependency graph (blockstore on
+# 0.14, parquet/datafusion on 0.13) and fails to compile — exactly what the
+# auto-merged renovate bump #644 did to main. Move it only together with the
+# datafusion rev; the renovate rule below holds it to enforce that.
+object_store = { version = "0.13", features = ["aws", "gcp"] }
+# Slice 42: OTLP distributed tracing. opentelemetry-otlp 0.32 lines up with
+# the tonic 0.14 / prost 0.14 / reqwest 0.13 stack already in the dep graph.
+opentelemetry = { version = "0.32", default-features = false, features = ["trace", "logs"] }
+# Slice KIP-714: prost-generated OTLP MetricsData / MetricsService types
+# (opentelemetry 0.32 stack). `gen-tonic` exposes the OTLP gRPC service traits the
+# metrics distributor implements; `gen-tonic-messages` + `trace` serve the traces
+# signal; `tonic-prost` carries the prost codec for tonic 0.14.
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "gen-tonic-messages", "metrics", "trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "logs"] }
+parquet = { version = "59", default-features = false, features = ["arrow", "async", "object_store"] }
+pbjson = "0.9"
+prometheus-client = "0.25"
+# PromQL parser only; Crabka supplies the PromQL-to-DataFusion planner.
+promql-parser = { version = "0.10", features = ["ser"] }
+proptest = "1"
+prost = "0.14"
+prost-build = "0.14"
+prost-types = "0.14"
+protoc-bin-vendored = "3.2"
+# Pure-Rust protobuf compiler — lets crates that drive `prost-build` directly
+# generate code without a `protoc` binary. The Connect crates still need a
+# binary (connectrpc-axum-build always shells out to protoc), so they use the
+# vendored one below.
+protox = "0.9"
+refined_type = "0.6"
+# KIP-848: client-supplied `subscribed_topic_regex` matched against the
+# metadata image. Uses RE2-compatible syntax (same regex engine family as
+# the JVM's `java.util.regex` for the cases KIP-848 expects to portably
+# support); diverges on lookahead/lookbehind which aren't in the KIP-848
+# operator-readable subset.
+regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde-wincode = "=0.1.2"
+serde_json = "1"
+serde_yaml = "0.9"
+snap = "1"
+tempfile = "3"
+testcontainers = "0.28"
+thiserror = "2"
+tokio = { version = "1", default-features = false }
+tokio-tungstenite = "0.30"
+tokio-util = { version = "0.7", default-features = false }
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+tower = "0.5"
+tracing = "0.1"
+tracing-opentelemetry = { version = "0.33", default-features = false }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+url = "2"
+# wincode + serde-wincode replace bincode for serde-derived wire shapes.
+# Keep these paired so `SerdeCompat` implements this wincode's traits.
+wincode = "=0.6"
+xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
+
+# First-party crates inherited by more than one member.
+crabka-units = "0.4.0"
+
+# Sibling repositories, pinned by revision. These crates are declared
+# against crates.io above and in the member manifests; the patch below is
+# the single place a sibling revision is bumped.
+#
+# Every crate each sibling publishes is listed, not only the ones this
+# repo names directly: cargo ignores a dependency's own patch table, so a
+# crate reached transitively would otherwise come from the registry while
+# its git twin is also in the graph.
+[patch.crates-io]
+crabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-broker = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-kraft-core = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-log = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-logfmt = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-object-store = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-raft = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-records-legacy = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-remote-storage = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-remote-storage-topic = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-telemetry = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-throttle = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-verified = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
+crabka-client-admin = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "55cfeba1148963e195fde3a959871c582d390a89" }
+crabka-client-consumer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "55cfeba1148963e195fde3a959871c582d390a89" }
+crabka-client-core = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "55cfeba1148963e195fde3a959871c582d390a89" }
+crabka-client-producer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "55cfeba1148963e195fde3a959871c582d390a89" }
+crabka-compression = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
+crabka-ids = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
+crabka-metadata = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
+crabka-protocol = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
+crabka-security = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
+crabka-trace-context = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
+crabka-units = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
+crabka-voters = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }

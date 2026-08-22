@@ -1,0 +1,77 @@
+"""Root package: the public krabka observability surface."""
+
+package(default_visibility = ["//visibility:public"])
+
+# Cargo.lock/Cargo.toml are consumed by `crate.from_cargo` (see //MODULE.bazel);
+# clippy.toml by the lint aspect in //tools/lint; .cargo/mutants.toml by the
+# mutation sweep, via `--@rules_rs_mutants//mutants:config` in //.bazelrc.
+exports_files([
+    ".cargo/mutants.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "clippy.toml",
+])
+
+# The storage layer every signal is written through.
+alias(
+    name = "blockstore",
+    actual = "//crates/blockstore",
+)
+
+# Query languages, one per signal.
+alias(
+    name = "logql",
+    actual = "//crates/logql",
+)
+
+alias(
+    name = "promql",
+    actual = "//crates/promql",
+)
+
+alias(
+    name = "traceql",
+    actual = "//crates/traceql",
+)
+
+alias(
+    name = "pprof",
+    actual = "//crates/pprof",
+)
+
+# Ingest and serve, one per signal.
+alias(
+    name = "metrics",
+    actual = "//crates/metrics",
+)
+
+alias(
+    name = "traces",
+    actual = "//crates/traces",
+)
+
+alias(
+    name = "profiles",
+    actual = "//crates/profiles",
+)
+
+alias(
+    name = "observability",
+    actual = "//crates/observability",
+)
+
+# The metrics query service. `bazel run //:metrics_bin -- --help`.
+alias(
+    name = "metrics_bin",
+    actual = "//crates/metrics:crabka-metrics",
+)
+
+alias(
+    name = "traces_bin",
+    actual = "//crates/traces:crabka-traces",
+)
+
+alias(
+    name = "profiles_bin",
+    actual = "//crates/profiles:crabka-profiles",
+)

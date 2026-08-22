@@ -1,0 +1,21 @@
+"""The repository formatter.
+
+`bazel run //tools/format` rewrites; `bazel run //tools/format:format.check`
+reports. `aspect format` drives the same target over changed files only.
+
+This replaces `cargo +nightly fmt --all` as the gate. It is the same rustfmt
+reading the same rustfmt.toml -- `format_multirun` just hands it the files Bazel
+knows about, so a file that is not in any target cannot drift unnoticed.
+"""
+
+load("@aspect_rules_lint//format:defs.bzl", "format_multirun")
+
+package(default_visibility = ["//:__subpackages__"])
+
+format_multirun(
+    name = "format",
+    rust = "@rules_rust//tools/upstream_wrapper:rustfmt",
+    starlark = "@buildifier_prebuilt//:buildifier",
+    visibility = ["//visibility:public"],
+    yaml = "@aspect_rules_lint//format:yamlfmt",
+)

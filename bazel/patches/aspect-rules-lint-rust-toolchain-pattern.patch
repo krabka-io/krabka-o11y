@@ -1,0 +1,24 @@
+Register the Rust toolchains by recursive pattern, not `//:all`.
+
+aspect_rules_lint_rust declares `rules_rs` 0.0.83 and registers
+`@default_rust_toolchains//:all`. This repository resolves rules_rs 0.0.106,
+which lays that repo out with the toolchains in subpackages -- `rustc/`,
+`rustfmt/`, `rust-analyzer/` -- and no BUILD file at the root. `//:all` then
+names a package that does not exist, and every toolchain resolution fails with
+"BUILD file not found in directory ''".
+
+`//...` matches the same toolchains under either layout.
+
+The alternative was pinning rules_rs back to 0.0.83 across the whole build, to
+suit a module used only for its clippy aspect.
+
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -28,6 +28,6 @@
+ use_repo(toolchains, "default_rust_toolchains")
+ 
+ register_toolchains(
+-    "@default_rust_toolchains//:all",
++    "@default_rust_toolchains//...",
+     "@llvm//toolchain:all",
+ )

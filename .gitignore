@@ -1,0 +1,64 @@
+target/
+**/*.rs.bk
+
+# `/.cargo/config.toml` is TRACKED, and was ignored here until 2026-08-13. It
+# holds the git-fetch setting that thirteen workflow files used to repeat. Do
+# not ignore it again. An ignored config file never reaches the runners, so
+# the setting stops working with nothing to show for it.
+
+# Bazel convenience symlinks + local user settings
+/bazel-*
+user.bazelrc
+MODULE.bazel.lock
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Gradle / Java — match any nested subproject, not just tools/oracle/
+**/.gradle/
+**/build/
+*.class
+
+# melange / apko build artifacts
+.melange-cache/
+melange.rsa
+melange.rsa.pub
+packages/
+crabka-operator.tar
+crabka-demo.tar
+sbom-*.spdx.json
+.tmp-*.log
+.worktree
+.worktrees/
+.superpowers/
+
+# OMB harness — upstream checkout fetched at run time
+.omb/
+
+# Generated docs-site content (produced by crabka-docgen / cargo doc at build time)
+/website/content/docs/reference/
+/website/static/api/
+/website/static/images/
+/website/static/charts/
+/website/public/
+
+# Generated WASM playground bundle (built by website/build-playground.sh).
+# The hand-written front-end (app.js, playground.css) stays tracked.
+/website/static/playground/crabka_playground.js
+/website/static/playground/crabka_playground_bg.wasm
+
+
+# Cargo mutant output
+mutants.out
+mutants.out.old
+
+# Default output paths of the gres conformance runner, written into the cwd
+# when --out/--summary are not given.
+/parity.json
+/parity.md
+/regress-parity.json
+/regress-parity.md
+
+# Python bytecode from local runs of scripts/tests
+__pycache__/

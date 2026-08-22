@@ -1,0 +1,20 @@
+load("//bazel:defs.bzl", "crate_library", "crate_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+# Consumed by `crate.from_cargo` (see //MODULE.bazel).
+exports_files(["Cargo.toml"])
+
+crate_library(name = "metrics-service")
+
+crate_tests(
+    # Suites that drive a real Grafana-stack component and compare against
+    # it, with the images each one starts. //bazel/images pins those by
+    # digest and //bazel/defs.bzl loads them before the suite runs.
+    docker = {
+        "diff_mimir": ["mimir"],
+        "diff_prometheus": ["prometheus"],
+        "grafana_integration": ["grafana"],
+    },
+    lib = "metrics-service",
+)

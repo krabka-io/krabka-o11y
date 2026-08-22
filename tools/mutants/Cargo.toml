@@ -1,0 +1,14 @@
+[package]
+name = "mutants"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Not built by Cargo, and not a workspace member. This manifest exists only to
+# pin the `cargo-mutants` binary that `//mutants:cargo_mutants_binary` points
+# at, so the mutation sweep runs the same version everywhere.
+[lib]
+path = "stub.rs"
+
+[dependencies]
+cargo-mutants = "27.1.0"

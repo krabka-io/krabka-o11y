@@ -1,0 +1,5 @@
+# Consumed by `crate.from_cargo(name = "mutants", ...)` in //MODULE.bazel.
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+])

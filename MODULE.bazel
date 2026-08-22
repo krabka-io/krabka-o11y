@@ -1,0 +1,213 @@
+"""krabka-broker — Bazel module (bzlmod).
+
+Bazel is the build and test path; Cargo stays the dependency source of truth.
+`crate.from_cargo` reads the same `Cargo.toml` / `Cargo.lock` that Cargo does,
+so there is no second dependency set to keep in sync.
+"""
+
+module(
+    name = "krabka_o11y",
+    version = "0.4.0",
+)
+
+bazel_dep(name = "rules_rs", version = "0.0.106")
+bazel_dep(name = "rules_rs_mutants", version = "0.0.1")
+
+# rules_rs_mutants is not published to the Bazel Central Registry, so the
+# `bazel_dep` above has nothing to resolve against without this override.
+git_override(
+    module_name = "rules_rs_mutants",
+    # Resolved to a commit so the checkout is reproducible. Past v0.0.1 for
+    # `//mutants:config`, without which the sweep enumerates from a synthetic
+    # workspace where this repo's `.cargo/mutants.toml` is not in scope -- so the
+    # exclusions written there did not exclude.
+    commit = "fd8902e425382aaa58490c22721f563127ab9467",
+    remote = "https://github.com/robot-head/rules_rs_mutants",
+)
+
+# A hermetic C++ toolchain rather than the host's.
+#
+# Bazel's autodetected toolchain links with whatever the machine happens to have.
+# GitHub's runners carry `ld.gold`, so it passed `-fuse-ld=gold` and every link
+# action printed "the gold linker is deprecated and has known bugs with Rust" --
+# hundreds of lines per CI run, from a linker choice nothing here made. Pinning
+# the toolchain links with lld instead, makes a local build and a CI build the
+# same build, and is what rules_rs_mutants needs on macOS, where Xcode's
+# cc_wrapper leaves a mutant link without `DEVELOPER_DIR`.
+bazel_dep(name = "llvm", version = "0.8.18")
+
+register_toolchains("@llvm//toolchain:all")
+
+# ---------------------------------------------------------------------------
+# Kafka images for the container-driven suites.
+#
+# Pinned by digest and fetched by Bazel, so a test loads known bytes from the
+# repository cache instead of pulling a mutable tag over the network mid-run.
+# See //bazel/images, which turns each into a `docker load`-able tarball.
+# ---------------------------------------------------------------------------
+bazel_dep(name = "rules_oci", version = "2.3.0")
+
+# `sh_test`, for the wrapper that loads those images before a suite runs.
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+
+[
+    oci.pull(
+        name = name,
+        digest = digest,
+        image = image,
+        platforms = ["linux/amd64"],
+    )
+    for name, image, digest in [
+        # The systems the differential suites compare against. Several of these
+        # suites defaulted to `:latest`, which is the thing digest pinning
+        # exists to remove: a differential test that disagrees with a moving
+        # target reports a difference nobody changed.
+        ("grafana", "mirror.gcr.io/grafana/grafana", "sha256:95173c11b36f53a423ce47f00baee3f913a3e403f202a83c8bc3c7115a2cfdd0"),
+        ("mimir", "mirror.gcr.io/grafana/mimir", "sha256:5bdf62ac23417da24c320f399972c7334b6438a410ad2c73d27736228066cf43"),
+        ("prometheus", "mirror.gcr.io/prom/prometheus", "sha256:67abe619da66a6b14cc0e185205f93a29d5b03cedd1aaa06930745b21f95a374"),
+        ("pyroscope", "mirror.gcr.io/grafana/pyroscope", "sha256:b65dffe6719cf91dcb7dcbb9790c439be164220f051a41a8477e06acfea1bbf9"),
+        ("tempo", "mirror.gcr.io/grafana/tempo", "sha256:a095c183ca7d433062dd2780d715df8bc15fca9656a9167eb1ab59c78de09681"),
+    ]
+]
+
+use_repo(
+    oci,
+    "grafana",
+    "mimir",
+    "prometheus",
+    "pyroscope",
+    "tempo",
+)
+
+# ---------------------------------------------------------------------------
+# Format and lint. See //tools/format and //tools/lint.
+# ---------------------------------------------------------------------------
+bazel_dep(name = "aspect_rules_lint", version = "2.7.2")
+
+# Supplies a clippy aspect shaped the way `aspect lint` expects -- it writes the
+# `rules_lint_machine` output group, which the aspect from @rules_rust does not.
+# It also registers a Rust toolchain of its own, pinned to 1.92.0 / edition 2021
+# for its own tests; see the toolchain block below for how the two coexist.
+bazel_dep(name = "aspect_rules_lint_rust", version = "0.0.2")
+
+# See the patch header: that module registers `@default_rust_toolchains//:all`,
+# a package rules_rs 0.0.106 does not create.
+single_version_override(
+    module_name = "aspect_rules_lint_rust",
+    patch_strip = 1,
+    patches = ["//bazel/patches:aspect-rules-lint-rust-toolchain-pattern.patch"],
+    version = "0.0.2",
+)
+
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.3")
+
+# rules_rs vends its own patched @rules_rust. `rust_doc_test` has no rules_rs
+# wrapper, so it is loaded from there directly rather than from a second copy.
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust")
+use_repo(rules_rust, "rules_rust")
+
+# ---------------------------------------------------------------------------
+# Rust toolchain — pinned to the same channel as rust-toolchain.toml.
+# ---------------------------------------------------------------------------
+toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains")
+
+# Named rather than left as `default_rust_toolchains`, which
+# aspect_rules_lint_rust also claims: rules_rs refuses two configurations under
+# one repo name, and that module wants 1.92.0 / edition 2021 while this
+# repository is 1.97.1 / edition 2024. Both toolchains get registered; ours is
+# registered from the root module, which is what makes it the one that resolves.
+toolchains.toolchain(
+    name = "krabka_rust_toolchains",
+    edition = "2024",
+    # rustfmt.toml sets `format_code_in_doc_comments`, `group_imports` and
+    # `imports_granularity`, all still nightly-gated. Stable rustfmt does not
+    # fail on them, it warns and silently skips them -- so a stable formatter
+    # would quietly disagree with the tree, which CI formats with
+    # `cargo +nightly fmt`. rules_rs pins rustfmt separately from rustc for
+    # exactly this.
+    rustfmt_version = "nightly/2026-08-14",
+    # Matches rust-toolchain.toml. These had drifted apart -- Bazel built with
+    # 1.97.0 while Cargo used 1.97.1 -- which is precisely the split the "one
+    # dependency source of truth" arrangement exists to avoid.
+    version = "1.97.1",
+)
+use_repo(toolchains, "krabka_rust_toolchains")
+
+register_toolchains("@krabka_rust_toolchains//...")
+
+# ---------------------------------------------------------------------------
+# Third-party crates, resolved from the Cargo workspace.
+# ---------------------------------------------------------------------------
+PLATFORM_TRIPLES = [
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+]
+
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = PLATFORM_TRIPLES,
+)
+
+# rules_rs_mutants deliberately ships no cargo-mutants binary: every consumer
+# builds one from its own lockfile so the sweep and the build agree on a
+# version. `//tools/mutants` is that lockfile.
+crate.from_cargo(
+    name = "mutants",
+    cargo_lock = "//tools/mutants:Cargo.lock",
+    cargo_toml = "//tools/mutants:Cargo.toml",
+    platform_triples = PLATFORM_TRIPLES,
+)
+
+# The wire-layer and client crates come from two sibling repositories, each a
+# Cargo workspace whose `members` is the glob `crates/*`. rules_rs resolves a git
+# crate's directory by matching the crate name against the members list, and it
+# skips glob entries, so each member's path is named here instead.
+SIBLING_MEMBERS = {
+    "crabka-compression": "crates/compression",
+    "crabka-ids": "crates/ids",
+    "crabka-metadata": "crates/metadata",
+    "crabka-security": "crates/security",
+    "crabka-trace-context": "crates/trace-context",
+    "crabka-units": "crates/units",
+    "crabka-voters": "crates/voters",
+    "crabka-client-admin": "crates/client-admin",
+    "crabka-client-consumer": "crates/client-consumer",
+    "crabka-client-core": "crates/client-core",
+    "crabka-client-producer": "crates/client-producer",
+}
+
+[
+    crate.annotation(
+        crate = crate_name,
+        strip_prefix = directory,
+        workspace_cargo_toml = "Cargo.toml",
+    )
+    for crate_name, directory in SIBLING_MEMBERS.items()
+]
+
+# crabka-protocol carries the same member annotation plus one more. Its build.rs
+# only checks that its checked-in `generated/`
+# sources still match the `schemas/` SHAs; it emits no code. It reads its own
+# manifest directory through `env!("CARGO_MANIFEST_DIR")`, which rules_rust
+# rejects because it bakes an absolute build path into the binary. Nothing here
+# needs the check -- the generated sources are consumed directly -- and the
+# Cargo build in krabka-protocol still runs it.
+crate.annotation(
+    crate = "crabka-protocol",
+    gen_build_script = "off",
+    strip_prefix = "crates/protocol",
+    workspace_cargo_toml = "Cargo.toml",
+)
+crate.annotation(
+    crate = "cargo-mutants",
+    gen_binaries = ["cargo-mutants"],
+    repositories = ["mutants"],
+)
+use_repo(crate, "crates", "mutants")

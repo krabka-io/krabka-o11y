@@ -1,0 +1,29 @@
+load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+# Consumed by `crate.from_cargo` (see //MODULE.bazel).
+exports_files(["Cargo.toml"])
+
+crate_library(name = "profiles")
+
+# `bazel run //crates/profiles:crabka-profiles -- --help`.
+crate_binary(
+    name = "crabka-profiles",
+    crate_root = "src/bin/crabka-profiles.rs",
+    lib = ":profiles",
+)
+
+crate_tests(
+    data = glob(["tests/fixtures/**"]),
+    # Suites that drive a real Grafana-stack component and compare against
+    # it, with the images each one starts. //bazel/images pins those by
+    # digest and //bazel/defs.bzl loads them before the suite runs.
+    docker = {
+        "pyroscope_differential": [
+            "grafana",
+            "pyroscope",
+        ],
+    },
+    lib = "profiles",
+)

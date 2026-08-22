@@ -1,0 +1,19 @@
+load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+# Consumed by `crate.from_cargo` (see //MODULE.bazel).
+exports_files(["Cargo.toml"])
+
+crate_library(name = "metrics")
+
+# `bazel run //crates/metrics:crabka-metrics -- --help`.
+crate_binary(
+    name = "crabka-metrics",
+    crate_root = "src/bin/crabka-metrics.rs",
+    lib = ":metrics",
+)
+
+crate_tests(
+    lib = "metrics",
+)

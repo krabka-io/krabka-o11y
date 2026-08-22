@@ -1,0 +1,80 @@
+# krabka-broker Bazel configuration.
+#
+# Cargo remains the dependency source of truth; Bazel reads the same
+# Cargo.toml / Cargo.lock through rules_rs (see MODULE.bazel).
+
+# Keep the action environment hermetic so build-script outputs are reproducible.
+build --incompatible_strict_action_env
+
+# The @llvm toolchain passes `--unwindlib=none` on link actions deliberately, to
+# stop clang picking a libunwind for itself. clang then reports the argument as
+# unused, and rustc's `linker_messages` lint surfaces that on stderr -- one
+# warning per link, which is most of a CI log. The toolchain already suppresses
+# the same complaint for its header-parsing and LTO actions and carries a TODO
+# about rules_cc passing extra args; this extends that to linking.
+build --linkopt=-Wno-unused-command-line-argument
+
+# Keep the autodetected host C++ toolchain from outranking the hermetic @llvm one
+# registered in MODULE.bazel.
+common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
+common --repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1
+
+test --test_output=errors
+
+# Clippy, as an aspect over the targets the build already has.
+#
+#     bazel build --config=lint //...    # report
+#     bazel test //...                   # fail on a violation
+#
+# It sees the crates, features and dependencies the build sees, rather than a
+# second `cargo clippy` resolution that can disagree with it.
+build:lint --aspects=//tools/lint:linters.bzl%clippy
+build:lint --output_groups=rules_lint_report
+# `clippy::pedantic` is a warning by workspace policy, and CLAUDE.md forbids
+# suppressing it. Warnings therefore have to fail, or the policy is decorative.
+test --@aspect_rules_lint//lint:fail_on_violation
+
+# Coverage. rules_rust emits LLVM source-based coverage, which Bazel merges into
+# one LCOV file at bazel-out/_coverage/_coverage_report.dat.
+#
+#     bazel coverage //crates/...
+#
+# Only first-party crates are instrumented: third-party coverage is noise, and
+# instrumenting the whole dependency closure is most of the run.
+coverage --combined_report=lcov
+coverage --instrumentation_filter=^//crates[:/]
+# Profiling instrumentation slows every test enough to trip the wall-clock
+# assertions in the consensus and replication suites -- they pass in the test
+# run and fail here, which is a statement about the instrumentation rather than
+# the code. They gate in `bazel test`; this run exists for the report.
+# Both exclusions, because `--test_tag_filters` is last-wins rather than
+# additive: naming only `-timing-sensitive` here replaced the `-docker` set for
+# `test` above, and the coverage run started trying to drive containers.
+coverage --test_tag_filters=-docker,-timing-sensitive
+
+# Download a JDK rather than resolving the machine's. `jvm_tiered_storage` runs
+# a small Java probe against Kafka's own storage classes; without this the
+# toolchain resolves to `local_jdk` and fails on a machine with no JDK, which is
+# how that suite fails under Cargo today.
+build --java_runtime_version=remotejdk_21
+
+# Container-driven suites are opt-in. They start real Kafka brokers through
+# testcontainers, so they need a Docker daemon and several hundred megabytes of
+# images; `bazel test //...` on a machine without one should not fail.
+#
+#     bazel test --config=docker //...
+test --test_tag_filters=-docker
+test:docker --test_tag_filters=docker
+
+# The mutation rules ship no cargo-mutants binary of their own; point them at
+# the one built from //tools/mutants' lockfile.
+build --@rules_rs_mutants//mutants:cargo_mutants_binary=@mutants//:cargo-mutants__cargo-mutants
+
+# The sweep's own config. Without this the enumeration step runs unconfigured:
+# it lists mutants from a synthetic workspace in a temp dir, where a
+# `.cargo/mutants.toml` sitting in this one is not in scope, so the exclusions
+# written there do not exclude and mutants no test can kill cannot be marked.
+build --@rules_rs_mutants//mutants:config=//:.cargo/mutants.toml
+
+# Optional developer-local overrides (registry mirrors, remote cache, etc.).
+try-import %workspace%/user.bazelrc
