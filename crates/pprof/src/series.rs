@@ -1,6 +1,6 @@
 //! Select-series result types and step-bucketing helpers.
 
-use crabka_units::{Time, convert::TimeExt as _, millis};
+use crabka_units::{convert::TimeExt as _, millis, Time};
 
 use crate::ProfileError;
 

@@ -2,7 +2,7 @@
 //! All label names, label values, and metadata strings are `u32` indices into
 //! `symbols`.
 
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 /// Errors raised by symbol-table operations.
 #[derive(Debug, thiserror::Error)]

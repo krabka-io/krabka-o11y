@@ -1,12 +1,12 @@
 #[cfg(feature = "experimental-functions")]
-use promql_parser::parser::token::{T_LIMIT_RATIO, T_LIMITK};
+use promql_parser::parser::token::{T_LIMITK, T_LIMIT_RATIO};
 use promql_parser::parser::{
-    AggregateExpr, Call, Expr, LabelModifier, MatrixSelector, SubqueryExpr,
     token::{
-        T_AVG, T_BOTTOMK, T_COUNT, T_COUNT_VALUES, T_GROUP, T_MAX, T_MIN, T_QUANTILE, T_STDDEV,
-        T_STDVAR, T_SUM, T_TOPK, TokenType,
+        TokenType, T_AVG, T_BOTTOMK, T_COUNT, T_COUNT_VALUES, T_GROUP, T_MAX, T_MIN, T_QUANTILE,
+        T_STDDEV, T_STDVAR, T_SUM, T_TOPK,
     },
     value::ValueType,
+    AggregateExpr, Call, Expr, LabelModifier, MatrixSelector, SubqueryExpr,
 };
 
 use super::{
@@ -16,16 +16,16 @@ use super::{
     scalar::calendar_fn_from_function_name,
 };
 use crate::{
-    PromqlError,
     error::Result,
     functions::{OverTimeFamily, ScalarMathOp},
     planner::{
-        ExtendedSelectorExpr, ExtendedSelectorModifier,
         aggregate::{Grouping, SimpleAggregateOp},
         label_ops::SortOrder,
         over_time_range::over_time_family_from_function_name,
         rate_range::RateUdfKind,
+        ExtendedSelectorExpr, ExtendedSelectorModifier,
     },
+    PromqlError,
 };
 
 pub(super) fn validate_extended_selector_modifier(

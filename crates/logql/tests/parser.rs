@@ -5,16 +5,16 @@ use std::{
 
 use assert2::check;
 use crabka_logql::{
-    ComparisonOp, DestinationLabel, DurationNanos, FieldFilter, FieldValue, JsonExpressionPath,
-    JsonExtraction, JsonParserConfig, LabelFormat, LabelFormatAssignment, LabelMatcher,
-    LabelSelection, LabelSelectionSet, LineFilter, LineFilterOp, LineFormat, LogfmtExtraction,
-    LogfmtParserConfig, MatchOp, MetricQuery, OffsetNanos, ParserStage, PatternParser,
-    PipelineStage, Quantile, QuantileDenominator, QuantileNumerator, RangeAggregation,
-    RegexpParser, SourceLabel, StreamQuery, UnwrapExpression, VectorAggregation,
-    VectorAggregationOp, VectorGrouping, parse_metric_binary_arithmetic_query,
-    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
-    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
-    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
+    parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
+    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
+    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
+    parse_query, ComparisonOp, DestinationLabel, DurationNanos, FieldFilter, FieldValue,
+    JsonExpressionPath, JsonExtraction, JsonParserConfig, LabelFormat, LabelFormatAssignment,
+    LabelMatcher, LabelSelection, LabelSelectionSet, LineFilter, LineFilterOp, LineFormat,
+    LogfmtExtraction, LogfmtParserConfig, MatchOp, MetricQuery, OffsetNanos, ParserStage,
+    PatternParser, PipelineStage, Quantile, QuantileDenominator, QuantileNumerator,
+    RangeAggregation, RegexpParser, SourceLabel, StreamQuery, UnwrapExpression, VectorAggregation,
+    VectorAggregationOp, VectorGrouping,
 };
 
 #[test]
@@ -1530,11 +1530,9 @@ fn query_evaluator_field_filter_matches_missing_string_label_as_empty() {
     check!(!evaluation.fields.contains_key("empty"));
 
     let non_empty_query = parse_query(r#"{app="api"} | logfmt | empty != """#).unwrap();
-    check!(
-        non_empty_query
-            .evaluate_with_fields(&labels, r"host=grafana.net", &BTreeMap::new())
-            .is_none()
-    );
+    check!(non_empty_query
+        .evaluate_with_fields(&labels, r"host=grafana.net", &BTreeMap::new())
+        .is_none());
 }
 
 #[test]
@@ -1743,11 +1741,9 @@ fn query_evaluator_rejects_repeated_sample_signs() {
         evaluation.fields.get("__error_details__")
             == Some(&"unwrap label `cost` cannot be converted".to_string())
     );
-    check!(
-        !evaluation
-            .fields
-            .contains_key("__crabka_unwrap_sample_value__")
-    );
+    check!(!evaluation
+        .fields
+        .contains_key("__crabka_unwrap_sample_value__"));
 }
 
 #[test]
@@ -2400,12 +2396,10 @@ fn parses_parenthesized_metric_query_with_quoted_close_parenthesis() {
 
 #[test]
 fn rejects_parenthesized_metric_operands_with_trailing_text() {
-    check!(
-        parse_metric_scalar_comparison_query(
-            r#"2 > bool (count_over_time({app="api"}[30s])) trailing"#,
-        )
-        .is_err()
-    );
+    check!(parse_metric_scalar_comparison_query(
+        r#"2 > bool (count_over_time({app="api"}[30s])) trailing"#,
+    )
+    .is_err());
 }
 
 #[test]
@@ -3047,21 +3041,19 @@ fn rejects_invalid_metric_scalar_literals() {
         parse_metric_scalar_comparison_query(r#"1e > bool count_over_time({app="api"}[30s])"#)
             .is_err()
     );
-    check!(
-        parse_metric_scalar_comparison_query(r#"+.5e+2 > bool count_over_time({app="api"}[30s])"#)
-            .is_ok()
-    );
+    check!(parse_metric_scalar_comparison_query(
+        r#"+.5e+2 > bool count_over_time({app="api"}[30s])"#
+    )
+    .is_ok());
 }
 
 #[test]
 fn parses_and_rejects_field_value_literal_boundaries() {
     check!(parse_query(r#"{app="api"} | logfmt | status = -5"#).is_ok());
     let error = parse_query(r#"{app="api"} | logfmt | status = -"#).unwrap_err();
-    check!(
-        error
-            .to_string()
-            .contains("expected field comparison value")
-    );
+    check!(error
+        .to_string()
+        .contains("expected field comparison value"));
     check!(parse_query(r#"{app="api"} | logfmt | size = 1.5MiB"#).is_ok());
     check!(parse_query(r#"{app="api"} | logfmt | size = 1.5XYZ"#).is_err());
 }

@@ -1,9 +1,9 @@
 use crabka_blockstore::{
-    LabelMatcher, Labels, MatchOp, QUERY_SHARD_LABEL, QueryShardSelector, SeriesFingerprint,
-    parse_query_shard_selector,
+    parse_query_shard_selector, LabelMatcher, Labels, MatchOp, QueryShardSelector,
+    SeriesFingerprint, QUERY_SHARD_LABEL,
 };
 
-use crate::{PromqlError, error::Result};
+use crate::{error::Result, PromqlError};
 
 pub(super) enum PreparedMatcher {
     LabelEq { name: String, value: String },

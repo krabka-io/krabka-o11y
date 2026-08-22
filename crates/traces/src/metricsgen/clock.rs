@@ -2,8 +2,8 @@
 
 use std::{
     sync::{
-        Arc,
         atomic::{AtomicI64, Ordering},
+        Arc,
     },
     time::{SystemTime, UNIX_EPOCH},
 };

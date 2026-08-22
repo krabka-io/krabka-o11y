@@ -1,6 +1,6 @@
 use std::sync::{
-    Arc,
     atomic::{AtomicU64, Ordering},
+    Arc,
 };
 
 use crabka_blockstore::Labels;

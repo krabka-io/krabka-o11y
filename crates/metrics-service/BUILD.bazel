@@ -8,6 +8,14 @@ exports_files(["Cargo.toml"])
 crate_library(name = "metrics-service")
 
 crate_tests(
+    # Suites that drive a real Grafana-stack component and compare against
+    # it, with the images each one starts. //bazel/images pins those by
+    # digest and //bazel/defs.bzl loads them before the suite runs.
+    docker = {
+        "diff_mimir": ["mimir"],
+        "diff_prometheus": ["prometheus"],
+        "grafana_integration": ["grafana"],
+    },
     # The differential corpus lives with //crates/metrics and these suites
     # reach it with `#[path]`; naming it here puts it at that same relative
     # path inside the sandbox.
@@ -18,14 +26,6 @@ crate_tests(
             "diff_prometheus",
             "grafana_integration",
         ]
-    },
-    # Suites that drive a real Grafana-stack component and compare against
-    # it, with the images each one starts. //bazel/images pins those by
-    # digest and //bazel/defs.bzl loads them before the suite runs.
-    docker = {
-        "diff_mimir": ["mimir"],
-        "diff_prometheus": ["prometheus"],
-        "grafana_integration": ["grafana"],
     },
     lib = "metrics-service",
 )

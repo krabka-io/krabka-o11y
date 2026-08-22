@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crabka_units::prelude::*;
 
 use super::{
-    RulerGroupState,
     config::{stable_hash_parts, yaml_duration},
+    RulerGroupState,
 };
 use crate::PromqlError;
 

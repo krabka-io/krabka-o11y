@@ -260,13 +260,11 @@ mod tests {
 
         let spans = decode_zipkin(body.as_bytes()).unwrap();
 
-        assert2::assert!(
-            spans[0]
-                .span_attrs
-                .iter()
-                .any(|attr| attr.key == "peer.service"
-                    && attr.value == AttrValue::Str("postgres".into()))
-        );
+        assert2::assert!(spans[0]
+            .span_attrs
+            .iter()
+            .any(|attr| attr.key == "peer.service"
+                && attr.value == AttrValue::Str("postgres".into())));
     }
 
     #[test]

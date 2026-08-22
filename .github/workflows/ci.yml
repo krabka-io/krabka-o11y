@@ -7,15 +7,12 @@ on:
     # Nightly, 05:00 UTC: the full container run and the mutation sweep.
     - cron: "0 5 * * *"
   workflow_dispatch:
-
 permissions:
   contents: read
-
 # Cancel superseded PR runs; let pushes to main run to completion.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-
 jobs:
   # Build, test, lint and format. The Aspect CLI narrows each of these to what
   # the change actually touched; `bazel build|test //...` is the equivalent for
@@ -35,12 +32,10 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}
           repository-cache: true
-
       # `--severity` defaults to `auto`, which the CLI resolves to `fail` on CI
       # and `info` off it -- so this gates here and only reports locally.
       - name: format
         run: aspect format
-
       # `aspect lint` narrows to the targets a change touched and annotates the
       # pull request. It reads the `rules_lint_machine` output group, which is
       # why the clippy aspect comes from aspect_rules_lint_rust rather than from
@@ -49,13 +44,10 @@ jobs:
       # CLI.
       - name: lint
         run: aspect lint
-
       - name: build
         run: aspect build //...
-
       - name: test
         run: aspect test //...
-
   # LCOV over the first-party crates. Separate from `ci` because instrumented
   # binaries are a different build, so sharing that job's cache would only
   # evict it.
@@ -78,7 +70,6 @@ jobs:
           files: bazel-out/_coverage/_coverage_report.dat
           disable_search: true
           fail_ci_if_error: false
-
   # rustdoc for every crate, kept as an artifact. The `ci` job already builds
   # these -- a `rust_doc` per crate is an ordinary target -- so this exists to
   # publish the output, and to keep rendering the whole set even when `aspect
@@ -101,14 +92,12 @@ jobs:
           name: rustdoc
           path: bazel-bin/crates/**/*.rustdoc
           if-no-files-found: error
-
   # Container suites, one runner each.
   #
-  # These saturate a runner: the suites are container-heavy, so Bazel got only
-  # about 1.2x concurrency running them together and the box, not the target
-  # granularity, was the limit. Sharding them across runners is what actually
-  # parallelises them -- one job per suite, so the wall clock is the slowest
-  # suite rather than the sum of all of them.
+  # These saturate a runner: each boots a Grafana-stack component and compares
+  # against it, so running them together buys little -- the box, not the target
+  # granularity, is the limit. One job per suite, so the wall clock is the
+  # slowest suite rather than the sum of all of them.
   #
   # `aspect test` does not narrow to impacted targets -- that is an Aspect
   # Workflows feature, not part of the open-source CLI -- so the set is computed
@@ -133,7 +122,6 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-docker
           repository-cache: true
-
       - id: select
         run: |
           set -euo pipefail
@@ -183,7 +171,6 @@ jobs:
           echo "suites=${suites}" >>"${GITHUB_OUTPUT}"
           echo "any=$([ "${suites}" = '[]' ] && echo false || echo true)" >>"${GITHUB_OUTPUT}"
           echo "Selected: ${suites}"
-
   docker:
     name: container · ${{ matrix.suite.name }}
     needs: docker-select
@@ -203,24 +190,23 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-docker
           repository-cache: true
-
-      # The host side of these suites reaches the broker over loopback, but a few
-      # host-side Rust clients bootstrap through the advertised name, so it has to
-      # resolve here too. Containers resolve it separately, through
-      # `--add-host=host.docker.internal:host-gateway`.
+      # The differential suites point a Grafana-stack container back at a
+      # collector running on the host, under the name `host.docker.internal`.
+      # The container resolves it through
+      # `--add-host=host.docker.internal:host-gateway`; the host has to resolve
+      # it too, because the same address is what the test asserts against.
       - run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
-
       - run: bazel test --config=docker ${{ matrix.suite.target }}
-
   # A mutation sweep rebuilds and re-runs a crate's unit tests once per mutant,
   # so it is far too slow to gate a pull request.
   #
-  # One job per crate. As a single job over all fifteen targets there was no
-  # bound that meant anything: one `broker_mutants` shard sat at 3557s against
-  # Bazel's 3600s ceiling while the other fourteen crates waited behind it, and
-  # a sweep that overran said nothing about which crate was responsible. Per
-  # crate each is bounded on its own, reports its own result, and the wall clock
-  # is the slowest crate rather than the sum.
+  # One job per crate, so each is bounded on its own and reports its own
+  # result, and the wall clock is the slowest crate rather than the sum. Two
+  # things this shape protects against, both learned the hard way in
+  # krabka-broker: a sweep that overruns inside one shared job says nothing
+  # about which crate was responsible, and a shard that overruns reports
+  # nothing at all rather than reporting a failure -- the totals line
+  # (caught + missed + unviable == total) is the only place that shows.
   #
   # `continue-on-error`: survivors are the expected state, not an exception --
   # `cargo_mutants_test` runs only `#[cfg(test)]` unit tests, so every mutant the
@@ -243,18 +229,17 @@ jobs:
       - id: select
         run: |
           set -euo pipefail
-          # `crates/broker` is the outlier: every mutant rebuilds 212k lines, so
-          # its sweep is hours where the rest are minutes. It gets the long
-          # budget; nothing else is allowed to want one.
+          # Every mutant rebuilds its crate, so the budget follows crate size.
+          # promql, observability and traces are 40k lines or more; the rest are
+          # a fraction of that.
           crates="$(
             bazel query 'kind("cargo_mutants_test rule", //crates/...)' |
               jq -R -s -c 'split("\n") | map(select(length > 0)) |
                 map({target: ., name: (. | split("/")[3] | split(":")[0])}) |
-                map(. + {minutes: (if .name == "broker" then 300 else 60 end)})'
+                map(. + {minutes: (if (["promql","observability","traces"] | index(.name)) then 180 else 60 end)})'
           )"
           echo "crates=${crates}" >>"${GITHUB_OUTPUT}"
           echo "Selected: ${crates}"
-
   mutants:
     name: mutants · ${{ matrix.crate.name }}
     needs: mutants-select
@@ -275,39 +260,3 @@ jobs:
           disk-cache: ${{ github.workflow }}-mutants
           repository-cache: true
       - run: bazel test ${{ matrix.crate.target }}
-
-  # Push the broker image.
-  #
-  # Not `aspect delivery`: its "only what changed" tracking needs
-  # `ASPECT_WORKFLOWS_DELIVERY_API_ENDPOINT`, a state backend that comes with
-  # Aspect Workflows rather than the open-source CLI. Without it the task refuses
-  # to run except with `--mode=always`, which is what a plain push already is.
-  #
-  # Pushing unconditionally costs less than it sounds: the image is
-  # content-addressed, so a registry that already holds these layers takes the
-  # manifest and skips the blobs. Revisit if Workflows is ever adopted.
-  delivery:
-    name: delivery
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: ci
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
-        with:
-          bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}
-          repository-cache: true
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: push
-        run: bazel run //packaging:push -- --tag "${GITHUB_SHA}" --tag latest

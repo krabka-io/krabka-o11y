@@ -1,4 +1,9 @@
 use crate::{
+    filters::field_filter_expression_to_pipeline_stage,
+    util::{
+        decode_quoted_escape, duration_unit, gcd_u64, is_ident_char, is_ident_start,
+        parse_bytes_literal, parse_prometheus_duration_literal, QuotedChar,
+    },
     ComparisonOp, DestinationLabel, DurationNanos, FieldFilter, FieldFilterExpression,
     FieldFilterLogicOp, FieldValue, IpMatcher, JsonExpressionPath, JsonExtraction,
     JsonParserConfig, LabelFormat, LabelFormatAssignment, LabelMatcher, LabelSelection,
@@ -6,11 +11,6 @@ use crate::{
     MatchOp, OffsetNanos, ParseError, ParserStage, PatternParser, PipelineStage,
     QuantileDenominator, QuantileNumerator, RegexpParser, SourceLabel, StreamQuery,
     UnwrapExpression,
-    filters::field_filter_expression_to_pipeline_stage,
-    util::{
-        QuotedChar, decode_quoted_escape, duration_unit, gcd_u64, is_ident_char, is_ident_start,
-        parse_bytes_literal, parse_prometheus_duration_literal,
-    },
 };
 
 #[tracing::instrument(level = "info", skip_all, fields(query = %input), err)]

@@ -48,7 +48,6 @@ register_toolchains("@llvm//toolchain:all")
 # `protoc` for the crates that generate prost types. Supplied by the build so
 # no crate has to vendor a binary and locate it through its own manifest path.
 bazel_dep(name = "protobuf", version = "27.0")
-
 bazel_dep(name = "rules_oci", version = "2.3.0")
 
 # `sh_test`, for the wrapper that loads those images before a suite runs.
@@ -223,6 +222,7 @@ crate.annotation(
     strip_prefix = "crates/protocol",
     workspace_cargo_toml = "Cargo.toml",
 )
+
 # datafusion-common's `test_util` locates datafusion's test-data submodule
 # through `env!("CARGO_MANIFEST_DIR")`, and the module is not feature-gated, so
 # that lands in every build of the library. `env!` bakes the absolute build
@@ -235,7 +235,6 @@ crate.annotation(
     patch_args = ["-p1"],
     patches = ["//bazel/patches:datafusion-common-manifest-dir.patch"],
 )
-
 crate.annotation(
     crate = "cargo-mutants",
     gen_binaries = ["cargo-mutants"],

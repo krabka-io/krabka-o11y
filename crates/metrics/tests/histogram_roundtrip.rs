@@ -1,5 +1,5 @@
 use crabka_metrics::{
-    BucketSpan, NativeHistogram, ResetHint, decode_native_histograms, encode_native_histograms,
+    decode_native_histograms, encode_native_histograms, BucketSpan, NativeHistogram, ResetHint,
 };
 use proptest::prelude::*;
 

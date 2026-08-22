@@ -1,9 +1,9 @@
 //! Crate-wide error type and ingest-edge HTTP status mapping.
 
 use axum::{
-    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
+    Json,
 };
 use serde_json::json;
 

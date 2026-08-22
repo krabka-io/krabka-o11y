@@ -1,9 +1,9 @@
 use opentelemetry_proto::tonic::{
-    common::v1::{AnyValue, ArrayValue, InstrumentationScope, KeyValue, any_value::Value},
+    common::v1::{any_value::Value, AnyValue, ArrayValue, InstrumentationScope, KeyValue},
     resource::v1::Resource,
     trace::v1::{
-        ResourceSpans, ScopeSpans, Span as OtlpSpan, Status, TracesData,
         span::{Event, Link},
+        ResourceSpans, ScopeSpans, Span as OtlpSpan, Status, TracesData,
     },
 };
 use serde_json::Value as JsonValue;

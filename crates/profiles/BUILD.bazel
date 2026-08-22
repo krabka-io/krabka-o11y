@@ -7,11 +7,11 @@ exports_files(["Cargo.toml"])
 
 crate_library(
     name = "profiles",
+    # `build.rs` generates prost types from these.
+    build_script_data = glob(["proto/**"]),
     # `src/ingest` reaches these with `include_bytes!`, so they are read while
     # the library compiles, not while a test runs.
     compile_data = glob(["tests/fixtures/**"]),
-    # `build.rs` generates prost types from these.
-    build_script_data = glob(["proto/**"]),
 )
 
 # `bazel run //crates/profiles:crabka-profiles -- --help`.

@@ -9,8 +9,8 @@ use promql_parser::parser::token::{
     T_AVG, T_COUNT, T_GROUP, T_MAX, T_MIN, T_STDDEV, T_STDVAR, T_SUM,
 };
 use promql_parser::parser::{
+    token::{TokenType, T_TOPK},
     AggregateExpr, Expr, LabelModifier,
-    token::{T_TOPK, TokenType},
 };
 
 use super::{

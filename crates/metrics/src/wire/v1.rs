@@ -7,8 +7,8 @@ use crabka_units::prelude::*;
 use prost::Message;
 
 use super::{
-    DecodedExemplar, DecodedMetadata, DecodedSample, DecodedSeries, WireError,
-    histogram::v1_histogram_to_native, pb, snappy_block_decode,
+    histogram::v1_histogram_to_native, pb, snappy_block_decode, DecodedExemplar, DecodedMetadata,
+    DecodedSample, DecodedSeries, WireError,
 };
 
 /// # Errors

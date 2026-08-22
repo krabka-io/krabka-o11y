@@ -259,17 +259,15 @@ mod tests {
     fn single_sample_yields_none() {
         let timestamps = [60_000_i64];
         let values = [1.0];
-        assert2::assert!(
-            extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
-            )
-            .is_none()
-        );
+        assert2::assert!(extrapolated_rate(
+            &timestamps,
+            &values,
+            0,
+            60_000,
+            millis(60_000),
+            RangeKind::Rate
+        )
+        .is_none());
         assert2::assert!(instant_delta(&timestamps, &values, InstantKind::Irate).is_none());
     }
 
@@ -278,17 +276,15 @@ mod tests {
     fn mismatched_range_lengths_yield_none() {
         let timestamps = [0_i64, 60_000];
         let values = [1.0];
-        assert2::assert!(
-            extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
-            )
-            .is_none()
-        );
+        assert2::assert!(extrapolated_rate(
+            &timestamps,
+            &values,
+            0,
+            60_000,
+            millis(60_000),
+            RangeKind::Rate
+        )
+        .is_none());
     }
 
     /// Two coincident timestamps make a zero-width sampled interval, which
@@ -297,17 +293,15 @@ mod tests {
     fn zero_width_sampled_interval_yields_none() {
         let timestamps = [60_000_i64, 60_000];
         let values = [1.0, 2.0];
-        assert2::assert!(
-            extrapolated_rate(
-                &timestamps,
-                &values,
-                0,
-                60_000,
-                millis(60_000),
-                RangeKind::Rate
-            )
-            .is_none()
-        );
+        assert2::assert!(extrapolated_rate(
+            &timestamps,
+            &values,
+            0,
+            60_000,
+            millis(60_000),
+            RangeKind::Rate
+        )
+        .is_none());
     }
 
     /// Pins `irate` to `engine.rs::instant_irate_uses_last_two_samples_per_second`:

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crabka_blockstore::{SpanNode, assign_nested_set};
+use crabka_blockstore::{assign_nested_set, SpanNode};
 use proptest::prelude::*;
 
 fn sid(n: u32) -> [u8; 8] {

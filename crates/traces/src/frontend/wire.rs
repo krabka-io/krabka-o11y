@@ -14,8 +14,8 @@
 
 use crabka_traceql::{AttrValue, SpanRef, SpanSet, TraceResult};
 use crabka_units::{
-    ByteSize, Time,
     convert::{ByteSizeExt, TimeExt as _},
+    ByteSize, Time,
 };
 use serde::{Deserialize, Serialize};
 

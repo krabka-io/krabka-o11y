@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use assert2::assert;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 const FLOAT_EPSILON: f64 = 1e-6;
 

@@ -9,8 +9,8 @@ away from the manifests Cargo still resolves.
 
 load("@crates//:data.bzl", "DEP_DATA")
 load("@crates//:defs.bzl", "all_crate_deps", "crate_name", "edition")
-load("@rules_rs//rs:rust_binary.bzl", "rust_binary")
 load("@rules_rs//rs:cargo_build_script.bzl", "cargo_build_script")
+load("@rules_rs//rs:rust_binary.bzl", "rust_binary")
 load("@rules_rs//rs:rust_library.bzl", "rust_library")
 load("@rules_rs//rs:rust_test.bzl", "rust_test")
 load("@rules_rs_mutants//mutants:cargo_mutants_test.bzl", "cargo_mutants_test")

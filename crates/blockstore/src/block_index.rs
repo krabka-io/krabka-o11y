@@ -1,7 +1,7 @@
 //! Pluggable per-signal block index and schema declaration.
 
 use arrow::datatypes::DataType;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::block::BlockMeta;
 

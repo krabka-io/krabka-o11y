@@ -353,7 +353,7 @@ fn scope_key(scope: TagScope) -> &'static str {
 
 // Re-export the metric-series merge helpers (separate module for clarity).
 pub use crate::frontend::metrics_merge::{
-    MetricSample, MetricSeries, limit_exemplars, merge_metric_series,
+    limit_exemplars, merge_metric_series, MetricSample, MetricSeries,
 };
 
 #[cfg(test)]

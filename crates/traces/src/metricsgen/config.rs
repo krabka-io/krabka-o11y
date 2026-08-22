@@ -1,6 +1,6 @@
 //! Metrics-generator configuration.
 
-use crabka_units::{Time, secs};
+use crabka_units::{secs, Time};
 use serde::{Deserialize, Serialize};
 
 /// Tempo-default latency histogram bucket edges, in nanoseconds.
