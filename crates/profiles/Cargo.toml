@@ -18,6 +18,8 @@ categories = ["database-implementations"]
 workspace = true
 
 [features]
+default = ["vendored-protoc"]
+vendored-protoc = ["dep:protoc-bin-vendored"]
 heap-profiling = ["crabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
@@ -68,7 +70,7 @@ tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling",
 
 [build-dependencies]
 connectrpc-axum-build = { workspace = true }
-protoc-bin-vendored = { workspace = true }
+protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
 assert2 = { workspace = true }

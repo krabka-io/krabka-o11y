@@ -3,7 +3,13 @@ load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
 package(default_visibility = ["//visibility:public"])
 
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
-exports_files(["Cargo.toml"])
+# `tests/support/diff_corpus.rs` is the shared differential corpus:
+# //crates/metrics-service's suites reach it with `#[path]`, so it has to
+# be nameable from there.
+exports_files([
+    "Cargo.toml",
+    "tests/support/diff_corpus.rs",
+])
 
 crate_library(
     name = "metrics",

@@ -45,6 +45,10 @@ register_toolchains("@llvm//toolchain:all")
 # repository cache instead of pulling a mutable tag over the network mid-run.
 # See //bazel/images, which turns each into a `docker load`-able tarball.
 # ---------------------------------------------------------------------------
+# `protoc` for the crates that generate prost types. Supplied by the build so
+# no crate has to vendor a binary and locate it through its own manifest path.
+bazel_dep(name = "protobuf", version = "27.0")
+
 bazel_dep(name = "rules_oci", version = "2.3.0")
 
 # `sh_test`, for the wrapper that loads those images before a suite runs.

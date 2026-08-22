@@ -7,6 +7,9 @@ exports_files(["Cargo.toml"])
 
 crate_library(
     name = "profiles",
+    # `src/ingest` reaches these with `include_bytes!`, so they are read while
+    # the library compiles, not while a test runs.
+    compile_data = glob(["tests/fixtures/**"]),
     # `build.rs` generates prost types from these.
     build_script_data = glob(["proto/**"]),
 )
@@ -19,6 +22,7 @@ crate_binary(
 )
 
 crate_tests(
+    compile_data = glob(["tests/fixtures/**"]),
     data = glob(["tests/fixtures/**"]),
     # Suites that drive a real Grafana-stack component and compare against
     # it, with the images each one starts. //bazel/images pins those by

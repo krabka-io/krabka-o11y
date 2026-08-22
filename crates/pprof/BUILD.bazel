@@ -7,6 +7,9 @@ exports_files(["Cargo.toml"])
 
 crate_library(
     name = "pprof",
+    # `build.rs` reaches this with `include_str!`, so it is read while the
+    # script compiles rather than while it runs.
+    build_script_compile_data = ["src/proto_mapping.rsfrag"],
     # `build.rs` generates prost types from these.
     build_script_data = glob(["proto/**"]),
 )

@@ -220,6 +220,22 @@ pub mod testkit {
     }
 
     /// Runs every `.test` file in `dir` and returns a per-file report.
+    /// The checked-in corpus directory, found from wherever the tests run.
+    ///
+    /// Cargo runs a test with the crate directory as the working directory, so
+    /// `tests/testdata` resolves; Bazel runs it from the runfiles root, where
+    /// the same relative path is nothing. Getting this wrong is quiet rather
+    /// than loud: a missing directory comes back as one failed file, so the
+    /// "corpus did not run" guard still sees a non-empty report and the suite
+    /// fails as though the corpus disagreed.
+    #[must_use]
+    pub fn corpus_dir() -> std::path::PathBuf {
+        match std::env::var("CARGO_MANIFEST_DIR") {
+            Ok(dir) => std::path::PathBuf::from(dir).join("tests/testdata"),
+            Err(_) => std::path::PathBuf::from("crates/promql/tests/testdata"),
+        }
+    }
+
     pub async fn run_corpus_dir(dir: impl AsRef<Path>) -> Report {
         let dir = dir.as_ref();
         let mut paths = match corpus_paths(dir) {

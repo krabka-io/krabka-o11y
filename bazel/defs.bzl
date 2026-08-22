@@ -54,14 +54,22 @@ def _aliases(kinds):
         if label in labels
     }
 
-def crate_library(name, srcs = None, build_script_data = None, **kwargs):
+def crate_library(
+        name,
+        srcs = None,
+        build_script_data = None,
+        build_script_compile_data = None,
+        **kwargs):
     """`rust_library` for a workspace member, configured from Cargo metadata.
 
     Args:
       name: the library target name, matching the crate's directory.
       srcs: sources; defaults to `src/**/*.rs` less `src/bin/**`.
-      build_script_data: files the crate's `build.rs` reads, e.g. `.proto`
-        sources. Only meaningful when the crate has one.
+      build_script_data: files the crate's `build.rs` reads at run time,
+        e.g. `.proto` sources. Only meaningful when the crate has one.
+      build_script_compile_data: files the crate's `build.rs` reaches with
+        `include_str!`/`include_bytes!`, which are read while it compiles
+        rather than while it runs.
       **kwargs: passed through to `rust_library`.
     """
     deps = all_crate_deps(normal = True)
@@ -72,13 +80,31 @@ def crate_library(name, srcs = None, build_script_data = None, **kwargs):
     # to read and the generated modules are simply absent.
     if native.glob(["build.rs"], allow_empty = True):
         script = name + "_build_script"
+
+        # `protoc` comes from the build, not from a vendored crate. The
+        # `protoc-bin-vendored-*` crates locate their binary through
+        # `env!("CARGO_MANIFEST_DIR")`, which bakes an absolute build path into
+        # the artifact -- the same sources would produce different bytes on
+        # different machines, and the sandbox rejects it. They cannot be read at
+        # run time either: the path they want belongs to their own manifest, and
+        # nothing sets it. So the feature that pulls them in is dropped here and
+        # `PROTOC` is handed over instead, which is what `build.rs` prefers.
+        # Cargo keeps the feature on by default and behaves as it always did.
         cargo_build_script(
             name = script,
             srcs = ["build.rs"],
+            build_script_env = {"PROTOC": "$(execpath @protobuf//:protoc)"},
+            crate_features = [f for f in _features() if f != "vendored-protoc"],
             crate_name = crate_name() + "_build_script",
+            compile_data = build_script_compile_data or [],
             data = build_script_data or [],
             edition = edition(),
-            deps = all_crate_deps(build = True),
+            tools = ["@protobuf//:protoc"],
+            deps = [
+                dep
+                for dep in all_crate_deps(build = True)
+                if "protoc-bin-vendored" not in dep
+            ],
         )
         deps = deps + [":" + script]
 
@@ -156,6 +182,7 @@ def crate_tests(
         cpu_heavy = [],
         docker = {},
         env = {},
+        extra_srcs = {},
         rustc_env = {},
         manual = [],
         no_harness = [],
@@ -172,6 +199,9 @@ def crate_tests(
       data: runtime files every integration test gets (fixtures, corpora).
       compile_data: files reachable from `include!`/`include_str!` at compile time.
       env: runtime environment for every test target in the package.
+      extra_srcs: per-stem sources from outside this package, for a suite that
+        reaches one with `#[path]`. Bazel places a label at its own workspace
+        path, which is the path such an include is written against.
       rustc_env: extra compile-time environment, e.g. `CARGO_MANIFEST_DIR`.
       manual: test stems to tag `manual` — Docker-driven or otherwise
         non-hermetic suites, the Bazel equivalent of their `#[ignore]`.
@@ -237,7 +267,7 @@ def crate_tests(
         stem = src[len("tests/"):-len(".rs")]
         rust_test(
             name = stem + "_test",
-            srcs = [src] + helpers,
+            srcs = [src] + helpers + extra_srcs.get(stem, []),
             crate_root = src,
             aliases = _aliases(["deps", "dev_deps"]),
             compile_data = compile_data or [],
@@ -273,7 +303,7 @@ def crate_tests(
         # a non-test target so `bazel test //...` does not try to run it bare.
         rust_test(
             name = stem + "_docker_bin",
-            srcs = [src] + helpers,
+            srcs = [src] + helpers + extra_srcs.get(stem, []),
             crate_root = src,
             aliases = _aliases(["deps", "dev_deps"]),
             compile_data = compile_data or [],

@@ -9262,9 +9262,9 @@ async fn util_planner_path_matches_interpreter() {
 /// `Ok(None)`.
 #[tokio::test]
 async fn conformance_corpus_runs_green_through_planner() {
-    use crate::conformance::testkit::run_corpus_dir;
+    use crate::conformance::testkit::{corpus_dir, run_corpus_dir};
 
-    let report = run_corpus_dir("tests/testdata").await;
+    let report = run_corpus_dir(corpus_dir()).await;
     // Sanity: the corpus actually ran (no path/setup error swallowed the run).
     assert2::assert!(!report.files.is_empty());
     assert2::assert!(report.files.iter().all(|file| file.passed));

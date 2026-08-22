@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let includes = ["proto"];
 
     let mut config = prost_build::Config::new();
-    let protoc_path = protoc_bin_vendored::protoc_bin_path()?;
+    let protoc_path = protoc_path()?;
     config.protoc_executable(protoc_path);
 
     config.compile_protos(&protos, &includes)?;
@@ -50,4 +50,25 @@ fn rewrite_generated_enums() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::write(path, rewritten)?;
     }
     Ok(())
+}
+
+/// The `protoc` this build should drive.
+///
+/// A build system that ships its own hermetic `protoc` says so through
+/// `PROTOC`, and that one wins: the vendored crates locate their binary
+/// through `env!("CARGO_MANIFEST_DIR")`, which bakes an absolute build path
+/// into the artifact and so cannot be built reproducibly. Cargo sets nothing,
+/// falls through, and uses the vendored binary exactly as before.
+fn protoc_path() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    if let Some(from_toolchain) = std::env::var_os("PROTOC") {
+        return Ok(std::path::PathBuf::from(from_toolchain));
+    }
+    #[cfg(feature = "vendored-protoc")]
+    {
+        Ok(protoc_bin_vendored::protoc_bin_path()?)
+    }
+    #[cfg(not(feature = "vendored-protoc"))]
+    {
+        Err("no PROTOC in the environment and the vendored protoc is disabled".into())
+    }
 }
