@@ -5,7 +5,11 @@ package(default_visibility = ["//visibility:public"])
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
 exports_files(["Cargo.toml"])
 
-crate_library(name = "pprof")
+crate_library(
+    name = "pprof",
+    # `build.rs` generates prost types from these.
+    build_script_data = glob(["proto/**"]),
+)
 
 crate_tests(
     lib = "pprof",

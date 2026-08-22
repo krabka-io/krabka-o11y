@@ -170,17 +170,31 @@ crate.from_cargo(
 # crate's directory by matching the crate name against the members list, and it
 # skips glob entries, so each member's path is named here instead.
 SIBLING_MEMBERS = {
-    "crabka-compression": "crates/compression",
-    "crabka-ids": "crates/ids",
-    "crabka-metadata": "crates/metadata",
-    "crabka-security": "crates/security",
-    "crabka-trace-context": "crates/trace-context",
-    "crabka-units": "crates/units",
-    "crabka-voters": "crates/voters",
+    "crabka-audit": "crates/audit",
+    "crabka-authz": "crates/authz",
+    "crabka-broker": "crates/broker",
     "crabka-client-admin": "crates/client-admin",
     "crabka-client-consumer": "crates/client-consumer",
     "crabka-client-core": "crates/client-core",
     "crabka-client-producer": "crates/client-producer",
+    "crabka-compression": "crates/compression",
+    "crabka-ids": "crates/ids",
+    "crabka-kraft-core": "crates/kraft-core",
+    "crabka-log": "crates/log",
+    "crabka-logfmt": "crates/logfmt",
+    "crabka-metadata": "crates/metadata",
+    "crabka-object-store": "crates/object-store",
+    "crabka-raft": "crates/raft",
+    "crabka-records-legacy": "crates/records-legacy",
+    "crabka-remote-storage": "crates/remote-storage",
+    "crabka-remote-storage-topic": "crates/remote-storage-topic",
+    "crabka-security": "crates/security",
+    "crabka-telemetry": "crates/telemetry",
+    "crabka-throttle": "crates/throttle",
+    "crabka-trace-context": "crates/trace-context",
+    "crabka-units": "crates/units",
+    "crabka-verified": "crates/verified",
+    "crabka-voters": "crates/voters",
 }
 
 [
@@ -205,6 +219,19 @@ crate.annotation(
     strip_prefix = "crates/protocol",
     workspace_cargo_toml = "Cargo.toml",
 )
+# datafusion-common's `test_util` locates datafusion's test-data submodule
+# through `env!("CARGO_MANIFEST_DIR")`, and the module is not feature-gated, so
+# that lands in every build of the library. `env!` bakes the absolute build
+# directory into the artifact, which the sandboxed build rejects outright: the
+# same sources would produce different bytes on different machines. The patch
+# reads the variable at run time instead, which is where the only caller -- a
+# test helper -- needs it, and which Cargo sets for test binaries anyway.
+crate.annotation(
+    crate = "datafusion-common",
+    patch_args = ["-p1"],
+    patches = ["//bazel/patches:datafusion-common-manifest-dir.patch"],
+)
+
 crate.annotation(
     crate = "cargo-mutants",
     gen_binaries = ["cargo-mutants"],

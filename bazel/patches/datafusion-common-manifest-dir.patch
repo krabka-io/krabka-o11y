@@ -1,0 +1,15 @@
+--- a/datafusion/common/src/test_util.rs
++++ b/datafusion/common/src/test_util.rs
+@@ -303,7 +303,11 @@
+     // env "CARGO_MANIFEST_DIR" is "the directory containing the manifest of your package",
+     // set by `cargo run` or `cargo test`, see:
+     // https://doc.rust-lang.org/cargo/reference/environment-variables.html
+-    let dir = env!("CARGO_MANIFEST_DIR");
++    // Read at run time rather than baked in: `env!` embeds the absolute
++    // build directory in the compiled artifact, which a sandboxed,
++    // reproducible build rejects. Cargo sets this variable for test
++    // binaries too, so the lookup finds the same value it always did.
++    let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+ 
+     let pb = PathBuf::from(dir).join(submodule_data);
+     if pb.is_dir() {

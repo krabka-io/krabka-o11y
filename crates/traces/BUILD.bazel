@@ -5,7 +5,11 @@ package(default_visibility = ["//visibility:public"])
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
 exports_files(["Cargo.toml"])
 
-crate_library(name = "traces")
+crate_library(
+    name = "traces",
+    # `build.rs` generates prost types from these.
+    build_script_data = glob(["proto/**"]),
+)
 
 # `bazel run //crates/traces:crabka-traces -- --help`.
 crate_binary(

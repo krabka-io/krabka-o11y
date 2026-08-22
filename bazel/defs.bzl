@@ -10,6 +10,7 @@ away from the manifests Cargo still resolves.
 load("@crates//:data.bzl", "DEP_DATA")
 load("@crates//:defs.bzl", "all_crate_deps", "crate_name", "edition")
 load("@rules_rs//rs:rust_binary.bzl", "rust_binary")
+load("@rules_rs//rs:cargo_build_script.bzl", "cargo_build_script")
 load("@rules_rs//rs:rust_library.bzl", "rust_library")
 load("@rules_rs//rs:rust_test.bzl", "rust_test")
 load("@rules_rs_mutants//mutants:cargo_mutants_test.bzl", "cargo_mutants_test")
@@ -53,8 +54,34 @@ def _aliases(kinds):
         if label in labels
     }
 
-def crate_library(name, srcs = None, **kwargs):
-    """`rust_library` for a workspace member, configured from Cargo metadata."""
+def crate_library(name, srcs = None, build_script_data = None, **kwargs):
+    """`rust_library` for a workspace member, configured from Cargo metadata.
+
+    Args:
+      name: the library target name, matching the crate's directory.
+      srcs: sources; defaults to `src/**/*.rs` less `src/bin/**`.
+      build_script_data: files the crate's `build.rs` reads, e.g. `.proto`
+        sources. Only meaningful when the crate has one.
+      **kwargs: passed through to `rust_library`.
+    """
+    deps = all_crate_deps(normal = True)
+
+    # A crate with a `build.rs` gets one, wired so its `OUT_DIR` reaches the
+    # library. Four crates here generate prost types from vendored protos and
+    # `include!` them from `OUT_DIR`; without this the include has no directory
+    # to read and the generated modules are simply absent.
+    if native.glob(["build.rs"], allow_empty = True):
+        script = name + "_build_script"
+        cargo_build_script(
+            name = script,
+            srcs = ["build.rs"],
+            crate_name = crate_name() + "_build_script",
+            data = build_script_data or [],
+            edition = edition(),
+            deps = all_crate_deps(build = True),
+        )
+        deps = deps + [":" + script]
+
     rust_library(
         name = name,
         srcs = srcs if srcs != None else native.glob(
@@ -67,7 +94,7 @@ def crate_library(name, srcs = None, **kwargs):
         edition = edition(),
         rustc_flags = WORKSPACE_RUSTC_FLAGS,
         visibility = ["//visibility:public"],
-        deps = all_crate_deps(normal = True),
+        deps = deps,
         **kwargs
     )
 
