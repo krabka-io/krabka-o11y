@@ -1,0 +1,107 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "automerge": true,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "platformAutomerge": true,
+  "rebaseWhen": "behind-base-branch",
+  "minimumReleaseAge": "3 days",
+  "prConcurrentLimit": 5,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": [
+      "before 5am on monday"
+    ]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The rules_rs toolchain version in MODULE.bazel. Named and sourced exactly as the built-in rust-toolchain manager names rust-toolchain.toml, so the two group.",
+      "managerFilePatterns": [
+        "/(^|/)MODULE\\.bazel$/"
+      ],
+      "matchStrings": [
+        "toolchains\\.toolchain\\([^)]*?version = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "rust",
+      "datasourceTemplate": "rust-version"
+    },
+    {
+      "customType": "regex",
+      "description": "The prebuilt protoc that `toolchains_protoc` downloads, which is a release tag rather than a module version.",
+      "managerFilePatterns": [
+        "/(^|/)MODULE\\.bazel$/"
+      ],
+      "matchStrings": [
+        "protoc\\.toolchain\\(version = \"(?<currentValue>v[\\d.]+)\"\\)"
+      ],
+      "depNameTemplate": "protocolbuffers/protobuf",
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "description": "The digest-pinned images `oci.pull` fetches, written as (name, image, digest) tuples that no manager parses.",
+      "managerFilePatterns": [
+        "/(^|/)MODULE\\.bazel$/"
+      ],
+      "matchStrings": [
+        "\\(\"[a-z_0-9]+\", \"(?<depName>[^\"]+)\", \"(?<currentDigest>sha256:[a-f0-9]+)\"\\)"
+      ],
+      "currentValueTemplate": "latest",
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Pinned by `git_override` to a commit past v0.0.1, for the `//mutants:config` support the sweep needs. The `bazel_dep` version beside it selects nothing, and the Bazel Central Registry does not serve this module at all -- a registry bump here would be a no-op that reads like a real one.",
+      "matchManagers": [
+        "bazel-module"
+      ],
+      "matchPackageNames": [
+        "rules_rs_mutants"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "`single_version_override` applies //bazel/patches/aspect-rules-lint-rust-toolchain-pattern.patch. A bump that moves the patched lines fails to apply, and a patch failure breaks module resolution before a single target is analysed -- so this gets a pull request, but lands by hand with the patch re-checked.",
+      "matchManagers": [
+        "bazel-module"
+      ],
+      "matchPackageNames": [
+        "aspect_rules_lint_rust"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "MODULE.bazel and rust-toolchain.toml carry one decision in two files. They drifted apart once already -- Bazel building with 1.97.0 while Cargo used 1.97.1 -- which is the exact split the one-dependency-source arrangement exists to prevent. Grouped so they can only move together.",
+      "matchDepNames": [
+        "rust"
+      ],
+      "groupName": "rust toolchain"
+    },
+    {
+      "description": "These images are what the differential suites compare against. Moving one changes the reference implementation, so a suite can start failing on a difference nobody in this repository introduced. That is a reading to take deliberately, not a merge to wake up to.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchFileNames": [
+        "MODULE.bazel"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "The sibling crates reach this repository through [patch.crates-io], which Renovate's Cargo manager does not read -- it sees only the `version = \"0.4.0\"` in each member manifest and takes them for registry dependencies. Those versions are a formality: the patch table decides what is built. A bump toward a newer crates.io release would leave the manifest asking for a version the patched revision does not provide, which fails to resolve. The revisions move through .github/workflows/sync-siblings.yml instead, which rewrites the patch table and regenerates Cargo.lock together.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "/^crabka-/"
+      ],
+      "enabled": false
+    }
+  ]
+}
