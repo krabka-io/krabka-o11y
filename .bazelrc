@@ -13,6 +13,10 @@ build --incompatible_strict_action_env
 # the same complaint for its header-parsing and LTO actions and carries a TODO
 # about rules_cc passing extra args; this extends that to linking.
 build --linkopt=-Wno-unused-command-line-argument
+# The same suppression for the exec configuration. Tools built for the build
+# itself -- process_wrapper among them -- link under that configuration, which
+# `--linkopt` does not reach, so the warning survived there alone.
+build --host_linkopt=-Wno-unused-command-line-argument
 
 # Keep the autodetected host C++ toolchain from outranking the hermetic @llvm one
 # registered in MODULE.bazel.

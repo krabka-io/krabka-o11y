@@ -155,6 +155,26 @@ use_repo(toolchains, "krabka_rust_toolchains")
 register_toolchains("@krabka_rust_toolchains//...")
 
 # ---------------------------------------------------------------------------
+# Native `-sys` crates, built by Bazel rather than by their build scripts.
+#
+# rules_rs ships a well-known annotation for each of these and warns on every
+# build until it is applied. Each one otherwise compiles a bundled C library
+# through a `cc`-crate build script: the host's compiler, its flags, and its
+# headers, none of which the hermetic toolchain governs. Pointing them at the
+# BCR's own builds puts that C under the same toolchain as everything else.
+# ---------------------------------------------------------------------------
+bazel_dep(name = "aws-lc", version = "5.1.0.bcr.2")
+bazel_dep(name = "jemalloc", version = "5.3.0-bcr.alpha.4")
+bazel_dep(name = "zstd", version = "1.5.7.bcr.1")
+
+# aws-lc-sys' bindings are generated, and rules_rs prefers the pregenerated set
+# to running bindgen; the toolchain is still required for the paths that do.
+rules_rust_bindgen = use_extension("@rules_rs//rs:rules_rust_bindgen.bzl", "rules_rust_bindgen")
+use_repo(rules_rust_bindgen, "rules_rust_bindgen")
+
+register_toolchains("@rules_rust_bindgen//:all")
+
+# ---------------------------------------------------------------------------
 # Third-party crates, resolved from the Cargo workspace.
 # ---------------------------------------------------------------------------
 PLATFORM_TRIPLES = [
@@ -254,4 +274,29 @@ crate.annotation(
     gen_binaries = ["cargo-mutants"],
     repositories = ["mutants"],
 )
+crate.annotation(
+    crate = "aws-lc-rs",
+    gen_build_script = "off",
+)
+crate.annotation(
+    additive_build_file = "@rules_rs//3rd_party/aws-lc-sys:additive.BUILD.bazel",
+    crate = "aws-lc-sys",
+    extra_aliased_targets = {"aws_lc_sys_build_info": "aws_lc_sys_build_info"},
+    gen_build_script = "off",
+    rustc_flags = ["--cfg=use_bindgen_pregenerated"],
+    # One version resolves here, so the target needs no version suffix.
+    deps = ["@crates//:aws_lc_sys_build_info"],
+)
+crate.annotation(
+    crate = "tikv-jemalloc-sys",
+    gen_build_script = "off",
+    deps = ["@jemalloc"],
+)
+crate.annotation(
+    crate = "zstd-sys",
+    gen_build_script = "off",
+    deps = ["@zstd"],
+)
 use_repo(crate, "crates", "mutants")
+
+inject_repo(crate, "aws-lc")

@@ -9,6 +9,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  # The Aspect CLI uploads test logs and BEP through the Actions artifact
+  # API, which GitHub gates behind an OIDC token it only mints for jobs
+  # holding this. Without it those uploads are skipped and the run says so
+  # on every job.
+  id-token: write
 # Cancel superseded PR runs; let pushes to main run to completion.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -29,6 +34,7 @@ jobs:
           fetch-depth: 0
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}
           repository-cache: true
@@ -61,6 +67,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-coverage
           repository-cache: true
@@ -84,6 +91,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-docs
           repository-cache: true
@@ -120,6 +128,7 @@ jobs:
           fetch-depth: 0
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-docker
           repository-cache: true
@@ -188,6 +197,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-docker
           repository-cache: true
@@ -224,6 +234,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-mutants
           repository-cache: true
@@ -257,6 +268,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-mutants
           repository-cache: true
