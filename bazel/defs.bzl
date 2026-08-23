@@ -93,13 +93,13 @@ def crate_library(
         cargo_build_script(
             name = script,
             srcs = ["build.rs"],
-            build_script_env = {"PROTOC": "$(execpath @protobuf//:protoc)"},
+            build_script_env = {"PROTOC": "$(execpath //bazel:protoc)"},
             crate_features = [f for f in _features() if f != "vendored-protoc"],
             crate_name = crate_name() + "_build_script",
             compile_data = build_script_compile_data or [],
             data = build_script_data or [],
             edition = edition(),
-            tools = ["@protobuf//:protoc"],
+            tools = ["//bazel:protoc"],
             deps = [
                 dep
                 for dep in all_crate_deps(build = True)

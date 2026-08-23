@@ -1,5 +1,17 @@
 # Macro package. See defs.bzl.
+load(":protoc.bzl", "protoc_binary")
+
 exports_files([
     "defs.bzl",
     "docker_test.sh",
 ])
+
+# `$(execpath //bazel:protoc)` for the build scripts that generate prost types.
+protoc_binary(
+    name = "protoc",
+    # A tool the build scripts reach for, not something to build on its own.
+    # `manual` keeps `//...` from downloading the binary in a repo whose crates
+    # happen to generate no prost types.
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)

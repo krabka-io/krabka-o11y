@@ -47,7 +47,21 @@ register_toolchains("@llvm//toolchain:all")
 # ---------------------------------------------------------------------------
 # `protoc` for the crates that generate prost types. Supplied by the build so
 # no crate has to vendor a binary and locate it through its own manifest path.
-bazel_dep(name = "protobuf", version = "27.0")
+#
+# A prebuilt binary rather than the `protobuf` module, which builds protoc from
+# its C++ sources -- minutes of compilation and several hundred deprecation
+# warnings per CI run, for a tool the build only shells out to.
+bazel_dep(name = "toolchains_protoc", version = "0.6.1")
+
+# For the `@rules_proto//proto:toolchain_type` that `//bazel:protoc` resolves.
+bazel_dep(name = "rules_proto", version = "7.1.0")
+
+protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc")
+protoc.toolchain(version = "v27.3")
+use_repo(protoc, "toolchains_protoc_hub")
+
+register_toolchains("@toolchains_protoc_hub//:all")
+
 bazel_dep(name = "rules_oci", version = "2.3.0")
 
 # `sh_test`, for the wrapper that loads those images before a suite runs.
