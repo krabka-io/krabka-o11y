@@ -1,0 +1,9 @@
+# yamlfmt, as //tools/format runs it.
+#
+# `retain_line_breaks_single` keeps the single blank lines that separate the
+# blocks of a workflow file. Without it yamlfmt collapses them all, which turns
+# a readable `on:` / `permissions:` / `jobs:` sequence into one wall of keys and
+# changes nothing about what the file means.
+formatter:
+  type: basic
+  retain_line_breaks_single: true
