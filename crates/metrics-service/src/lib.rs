@@ -1484,8 +1484,25 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        time::{SystemTime, UNIX_EPOCH},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
+
+    use super::{current_time_ms, duration_ms, unix_time_ms};
+
+    /// Both clocks convert a duration to milliseconds and saturate rather than
+    /// wrap. A constant in either place makes every block-store refresh window
+    /// and every ruler timestamp agree on a time that never happened.
+    #[test]
+    fn millisecond_clocks_convert_and_saturate() {
+        check!(duration_ms(Duration::from_millis(1_500)) == 1_500);
+        check!(duration_ms(Duration::ZERO) == 0);
+        check!(duration_ms(Duration::from_secs(u64::MAX)) == i64::MAX);
+
+        // Later than 2020-01-01, and not a sentinel.
+        let now = current_time_ms();
+        check!(now > 1_577_836_800_000);
+        check!(unix_time_ms() > 1_577_836_800_000);
+    }
 
     use assert2::check;
     use axum::{
@@ -1746,6 +1763,16 @@ mod tests {
                 == (400_000, i64::MAX)
         );
         check!(super::normalize_refresh_range(100, 200, minutes(10), 1_000_000) == (100, 200));
+        // Bounded on one side only. Read as `||`, either sentinel alone is
+        // enough to rewrite the caller's range to the lookback window.
+        check!(
+            super::normalize_refresh_range(i64::MIN, 5_000, minutes(10), 1_000_000)
+                == (i64::MIN, 5_000)
+        );
+        check!(
+            super::normalize_refresh_range(100, i64::MAX, minutes(10), 1_000_000)
+                == (100, i64::MAX)
+        );
     }
 
     #[test]
