@@ -41,9 +41,10 @@ jobs:
       # why the clippy aspect comes from aspect_rules_lint_rust rather than from
       # @rules_rust -- see //tools/lint/linters.bzl. `bazel test //...` gates on
       # the same aspect through the `*_clippy` targets, for anyone without the
-      # CLI.
+      # CLI. The aspect is named here rather than left to the `build:lint`
+      # bazelrc config, which `aspect lint` does not read.
       - name: lint
-        run: aspect lint
+        run: aspect lint --aspect=//tools/lint:linters.bzl%clippy
       - name: build
         run: aspect build //...
       - name: test
