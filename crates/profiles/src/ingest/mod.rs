@@ -302,62 +302,110 @@ mod tests {
         }
     }
 
-    fn labels_of(pairs: &[(&str, &str)]) -> Labels {
-        let mut labels = Labels::new();
-        for (name, value) in pairs {
-            labels.insert(*name, *value);
-        }
-        labels
-    }
-
     /// `apply_relabel` returns whether the series survives. Drop and Keep are
     /// mirror images -- one rejects on a match, the other on the absence of
     /// one -- so both are checked from both sides.
     #[test]
     fn relabel_drop_and_keep_are_mirror_images() {
-        let mut labels = labels_of(&[("env", "prod")]);
+        let mut series = labels(&[("env", "prod")]);
 
-        assert!(!apply_relabel(&mut labels, &[relabel(RelabelAction::Drop, &["env"], "prod")]));
-        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Drop, &["env"], "dev")]));
-        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["env"], "prod")]));
-        assert!(!apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["env"], "dev")]));
+        assert!(!apply_relabel(&mut series, &[relabel(RelabelAction::Drop, &["env"], "prod")]));
+        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Drop, &["env"], "dev")]));
+        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["env"], "prod")]));
+        assert!(!apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["env"], "dev")]));
 
         // The regex is anchored, so a partial match is not a match.
-        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Drop, &["env"], "pro")]));
+        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Drop, &["env"], "pro")]));
 
         // A label that is not set reads as empty rather than skipping the rule.
-        assert!(!apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["absent"], "prod")]));
-        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["absent"], "")]));
+        assert!(!apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["absent"], "prod")]));
+        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["absent"], "")]));
 
         // Several source labels are joined with ';' before matching.
-        let mut two = labels_of(&[("a", "x"), ("b", "y")]);
+        let mut two = labels(&[("a", "x"), ("b", "y")]);
         assert!(!apply_relabel(&mut two, &[relabel(RelabelAction::Drop, &["a", "b"], "x;y")]));
         assert!(apply_relabel(&mut two, &[relabel(RelabelAction::Drop, &["a", "b"], "xy")]));
 
         // A rule whose regex will not compile is skipped, not treated as a
         // match: one bad rule must not drop every series.
-        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["env"], "[")]));
+        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["env"], "[")]));
     }
 
     /// A Replace rule with an empty replacement removes the target label
     /// instead of setting it to the empty string, and touches nothing else.
     #[test]
     fn relabel_replace_sets_or_removes_only_the_target() {
-        let mut labels = labels_of(&[("env", "prod"), ("target", "old"), ("keep", "me")]);
+        let mut series = labels(&[("env", "prod"), ("target", "old"), ("keep", "me")]);
         let mut config = relabel(RelabelAction::Replace, &["env"], "prod");
 
-        assert!(apply_relabel(&mut labels, std::slice::from_ref(&config)));
-        assert!(labels == labels_of(&[("env", "prod"), ("target", "new"), ("keep", "me")]));
+        assert!(apply_relabel(&mut series, std::slice::from_ref(&config)));
+        assert!(series == labels(&[("env", "prod"), ("target", "new"), ("keep", "me")]));
 
         config.replacement = String::new();
-        assert!(apply_relabel(&mut labels, std::slice::from_ref(&config)));
-        assert!(labels == labels_of(&[("env", "prod"), ("keep", "me")]));
+        assert!(apply_relabel(&mut series, std::slice::from_ref(&config)));
+        assert!(series == labels(&[("env", "prod"), ("keep", "me")]));
 
         // A rule that does not match leaves the labels alone.
         config.replacement = "other".to_string();
         config.regex = "dev".to_string();
-        assert!(apply_relabel(&mut labels, std::slice::from_ref(&config)));
-        assert!(labels == labels_of(&[("env", "prod"), ("keep", "me")]));
+        assert!(apply_relabel(&mut series, std::slice::from_ref(&config)));
+        assert!(series == labels(&[("env", "prod"), ("keep", "me")]));
+    }
+
+    /// Each ingest limit rejects what exceeds it, so a series sitting exactly
+    /// on every limit is still admitted. All three are checked at their edge
+    /// and one past it.
+    #[test]
+    fn ingest_limits_admit_exactly_their_boundary() {
+        let limits = TenantLimits {
+            max_label_name: crabka_units::bytes(3),
+            max_label_names_per_series: 2,
+            max_label_value: crabka_units::bytes(4),
+            session_id_buckets: 1,
+        };
+
+        // Two labels, a three-byte name and a four-byte value: all at the edge.
+        let at_edge = labels(&[("abc", "wxyz"), ("de", "fg")]);
+        assert!(enforce_limits(&at_edge, &limits).is_ok());
+
+        let too_many = labels(&[("a", "b"), ("c", "d"), ("e", "f")]);
+        let err = enforce_limits(&too_many, &limits).unwrap_err().to_string();
+        assert!(err.contains("too many label names: 3 > 2"));
+
+        let long_name = labels(&[("abcd", "x")]);
+        let err = enforce_limits(&long_name, &limits).unwrap_err().to_string();
+        assert!(err.contains("`abcd` name exceeds 3 bytes"));
+
+        let long_value = labels(&[("a", "wxyz!")]);
+        let err = enforce_limits(&long_value, &limits).unwrap_err().to_string();
+        assert!(err.contains("`a` value exceeds 4 bytes"));
+    }
+
+    /// A label byte limit is a count of bytes, so it has to be a whole
+    /// non-negative number that a usize can hold. The deserializer rejects
+    /// each way that can fail, and rejecting is the point: a limit that
+    /// silently rounded or wrapped would be enforced as something other than
+    /// what was configured.
+    #[test]
+    fn a_label_byte_limit_must_be_a_whole_non_negative_count() {
+        let parse = |limit: &str| {
+            let json = String::from("{\"max_label_name\":\"")
+                + limit
+                + "\",\"max_label_names_per_series\":2,\"max_label_value\":\"4B\",\"session_id_buckets\":1}";
+            serde_json::from_str::<TenantLimits>(&json).map(|limits| limits.max_label_name)
+        };
+
+        assert!(parse("0B").unwrap() == crabka_units::bytes(0), "zero is a limit");
+        assert!(parse("3B").unwrap() == crabka_units::bytes(3));
+        assert!(parse("1KiB").unwrap() == crabka_units::bytes(1024), "units are honoured");
+
+        for rejected in ["1.5B", "-1B", "-0.5B", "18446744073709551616B"] {
+            let err = parse(rejected).unwrap_err().to_string();
+            assert!(
+                err.contains("non-negative whole byte count"),
+                "{rejected} should be rejected, got: {err}"
+            );
+        }
     }
 
     fn labels(pairs: &[(&str, &str)]) -> Labels {
