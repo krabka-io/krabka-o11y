@@ -528,6 +528,49 @@ mod tests {
         check!(hash(&["a"]) != hash(&[]), "a key is not nothing");
     }
 
+    /// The compacted object key spans the whole input: the earliest start and
+    /// the latest end across every block, not the first block's range. The
+    /// blocks below are deliberately out of order so a key built from
+    /// position rather than from the extremes is visibly wrong.
+    #[test]
+    fn a_compacted_key_spans_the_whole_input_range() {
+        let block = |min_ts, max_ts| BlockMeta {
+            tenant: "t".to_string(),
+            object_key: String::new(),
+            min_ts,
+            max_ts,
+            row_count: 0,
+            fingerprints: vec![],
+        };
+        let inputs = vec!["a".to_string(), "b".to_string()];
+        let digest = format!("{:016x}", super::fnv1a(&inputs));
+
+        let blocks = [block(300, 400), block(100, 500), block(200, 250)];
+        check!(
+            super::compacted_key("tenant", &blocks, &inputs)
+                == format!("blocks/tenant/compacted/100-500-{digest}.parquet")
+        );
+
+        // A single block spans itself.
+        check!(
+            super::compacted_key("tenant", &[block(7, 9)], &inputs)
+                == format!("blocks/tenant/compacted/7-9-{digest}.parquet")
+        );
+
+        // No blocks leaves both ends at zero rather than failing.
+        check!(
+            super::compacted_key("tenant", &[], &inputs)
+                == format!("blocks/tenant/compacted/0-0-{digest}.parquet")
+        );
+
+        // The digest covers the inputs, so a different input list is a
+        // different key even over the same range.
+        check!(
+            super::compacted_key("tenant", &blocks, &["a".to_string()])
+                != super::compacted_key("tenant", &blocks, &inputs)
+        );
+    }
+
 
     use super::*;
     use crate::{
