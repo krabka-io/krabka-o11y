@@ -609,6 +609,53 @@ query: { .svc = "x" }
         assert!(parse(Some("0,255")) == vec![0, 255], "the full byte range");
     }
 
+    /// `run_search_case` is what turns a corpus case into a verdict, so a
+    /// fault here weakens every case at once rather than one of them. It is
+    /// exercised against the same engine the corpus uses, with a case known
+    /// to hold and the same case with each expectation spoiled in turn.
+    #[tokio::test]
+    async fn a_search_case_passes_only_when_both_expectations_hold() {
+        let engine = super::engine();
+        let case = |traces: &str, spans: &str| super::Case {
+            name: "t".into(),
+            kind: "search".into(),
+            query: Some(r#"{ .http.method = "GET" }"#.into()),
+            trace_id: None,
+            expect_trace_ids: Some(traces.into()),
+            expect_span_ids: Some(spans.into()),
+            expect_series_count: None,
+            expect_span_count: None,
+        };
+
+        let result = super::run_search_case(&engine, case("1", "1")).await;
+        assert!(result.passed, "message: {}", result.message);
+        assert!(result.passed_assertions == 2);
+        assert!(result.total_assertions == 2);
+
+        // Each expectation on its own must be able to fail the case.
+        let result = super::run_search_case(&engine, case("2", "1")).await;
+        assert!(!result.passed, "a wrong trace id must fail");
+        assert!(result.passed_assertions == 1, "the span assertion still held");
+        assert!(result.message.contains("trace ids expected"));
+
+        let result = super::run_search_case(&engine, case("1", "2")).await;
+        assert!(!result.passed, "a wrong span id must fail");
+        assert!(result.passed_assertions == 1, "the trace assertion still held");
+        assert!(result.message.contains("span ids expected"));
+
+        let result = super::run_search_case(&engine, case("2", "2")).await;
+        assert!(!result.passed);
+        assert!(result.passed_assertions == 0, "neither assertion held");
+
+        // A case with no query asserts nothing and must not be reported as a
+        // pass, which is the vacuous outcome worth guarding against.
+        let mut empty = case("1", "1");
+        empty.query = None;
+        let result = super::run_search_case(&engine, empty).await;
+        assert!(!result.passed);
+        assert!(result.message == "missing query");
+    }
+
     #[test]
     #[should_panic(expected = "`x` is not a valid id")]
     fn an_unparseable_id_stops_the_run() {
