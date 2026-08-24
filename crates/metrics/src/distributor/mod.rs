@@ -1625,6 +1625,56 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 mod tests {
     use std::sync::Mutex;
 
+    /// The exemplar codepoint budget is summed across every label name and
+    /// value, and compared with a strict `>` so a set landing exactly on the
+    /// limit is allowed.
+    ///
+    /// Two things go wrong quietly here. Read as `>=`, the budget is one
+    /// codepoint tighter than documented and an exemplar sitting on the limit
+    /// is refused. And the running total is a sum: read as a product, a single
+    /// label still totals plausibly while several no longer do, so the check
+    /// only misfires once an exemplar carries more than one label.
+    #[test]
+    fn exemplar_codepoints_are_summed_and_capped_at_the_limit() {
+        let exemplar = |pairs: &[(&str, &str)]| {
+            let mut labels = crabka_blockstore::Labels::new();
+            for (name, value) in pairs {
+                labels.insert(*name, *value);
+            }
+            DecodedExemplar {
+                labels,
+                timestamp_ms: 0,
+                value: 1.0,
+            }
+        };
+
+        // Exactly at the budget: 8 names/values of 8 codepoints each = 128.
+        let at_limit: Vec<(String, String)> = (0..4)
+            .map(|i| (format!("name{i:04}"), format!("valu{i:04}")))
+            .collect();
+        let at_limit: Vec<(&str, &str)> = at_limit
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        let total: usize = at_limit
+            .iter()
+            .map(|(n, v)| n.chars().count() + v.chars().count())
+            .sum();
+        check!(total == MAX_EXEMPLAR_LABEL_CODEPOINTS / 2, "fixture is {total}");
+
+        check!(
+            validate_exemplar_labels(&exemplar(&at_limit)).is_ok(),
+            "several labels summing under the budget"
+        );
+
+        // One label whose value alone exceeds the budget.
+        let long = "v".repeat(MAX_EXEMPLAR_LABEL_CODEPOINTS + 1);
+        check!(
+            validate_exemplar_labels(&exemplar(&[("trace_id", long.as_str())])).is_err(),
+            "single label over the budget"
+        );
+    }
+
     /// A push failure's gRPC code tells the client what to do next: back off
     /// (`resource_exhausted`), retry later (`internal`), or stop and fix the
     /// request (`invalid_argument`). The mapping is a chain of match guards on
