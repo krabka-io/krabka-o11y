@@ -1126,8 +1126,15 @@ fn urldecode(s: &str) -> String {
         match byte {
             b'+' => out.push(' '),
             b'%' => {
-                let (Some(hi), Some(lo)) = (bytes.next(), bytes.next()) else {
+                let (first, second) = (bytes.next(), bytes.next());
+                let (Some(hi), Some(lo)) = (first, second) else {
+                    // An escape cut short by the end of the input keeps
+                    // whatever it consumed, the same way an unparseable one
+                    // below does.
                     out.push('%');
+                    if let Some(first) = first {
+                        out.push(char::from(first));
+                    }
                     continue;
                 };
                 let hex = [hi, lo];
@@ -1606,6 +1613,70 @@ mod tests {
 
         check!(parse("").is_err(), "an empty value is not a time");
         check!(parse("later").is_err(), "a word is not a time");
+    }
+
+    /// `urldecode` expands percent escapes and '+' in ingest query strings.
+    /// Anything it cannot expand is passed through as written, so a malformed
+    /// escape neither disappears nor takes the characters after it with it.
+    #[test]
+    fn urldecode_expands_escapes_and_passes_through_the_rest() {
+        let decode = super::urldecode;
+
+        check!(decode("plain") == "plain", "ordinary text is untouched");
+        check!(decode("") == "", "an empty string stays empty");
+        check!(decode("a+b") == "a b", "plus is a space");
+        check!(decode("a%20b") == "a b", "an escape is expanded");
+        check!(decode("a%2Fb") == "a/b", "uppercase hex");
+        check!(decode("a%2fb") == "a/b", "lowercase hex");
+        check!(decode("%41%42") == "AB", "back to back escapes");
+        // Percent is not self-escaping here: "%%" is simply an escape whose
+        // first digit is not hex, so both characters survive.
+        check!(decode("100%%") == "100%%", "a doubled percent is not one literal");
+
+        // Malformed escapes keep every character they consumed.
+        check!(decode("a%zz") == "a%zz", "unparseable hex is left as written");
+        check!(decode("a%2") == "a%2", "an escape cut short keeps its digit");
+        check!(decode("a%") == "a%", "a trailing percent stands alone");
+        check!(decode("a%2z") == "a%2z", "a bad second digit is kept too");
+    }
+
+    /// A jfr labels part is a flat JSON object. Scalars are stringified so
+    /// that a label written as a number and one written as a string arrive
+    /// the same way; anything with structure is rejected rather than
+    /// flattened into something meaningless.
+    #[test]
+    fn jfr_labels_stringify_scalars_and_reject_structure() {
+        let parse = |raw: &str| super::parse_labels_part(raw.as_bytes());
+
+        check!(parse("").unwrap() == vec![], "an absent part is no labels");
+        check!(parse("{}").unwrap() == vec![], "an empty object is no labels");
+
+        let labels = parse(
+            r#"{"text":"a","int":7,"float":1.5,"yes":true,"no":false,"nothing":null}"#,
+        )
+        .unwrap();
+        // Document order is kept rather than sorted, so a caller reading the
+        // first label gets the first one written.
+        check!(
+            labels
+                == vec![
+                    ("text".to_string(), "a".to_string()),
+                    ("int".to_string(), "7".to_string()),
+                    ("float".to_string(), "1.5".to_string()),
+                    ("yes".to_string(), "true".to_string()),
+                    ("no".to_string(), "false".to_string()),
+                    ("nothing".to_string(), String::new()),
+                ]
+        );
+
+        let err = parse(r#"{"list":[1,2]}"#).unwrap_err().to_string();
+        check!(err.contains("`list` must be a scalar"), "got: {err}");
+        let err = parse(r#"{"nested":{"a":1}}"#).unwrap_err().to_string();
+        check!(err.contains("`nested` must be a scalar"), "got: {err}");
+        let err = parse("[1,2]").unwrap_err().to_string();
+        check!(err.contains("must be a JSON object"), "got: {err}");
+        let err = parse("not json").unwrap_err().to_string();
+        check!(err.contains("is not JSON"), "got: {err}");
     }
 
     #[test]
