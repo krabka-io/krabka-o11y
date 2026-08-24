@@ -1032,6 +1032,95 @@ mod tests {
         check!(err.contains("height does not fit u32"), "got: {err}");
     }
 
+    fn state_with_max_series(limit: u64) -> Arc<DistributorState> {
+        Arc::new(DistributorState {
+            sink: Arc::new(RecordingSink(Mutex::default())),
+            limits: TenantLimitConfig::default(),
+            profile_overrides: OverridesProvider::from_yaml(&format!(
+                "overrides:\n  tenant-a:\n    max_series: {limit}\n"
+            ))
+            .unwrap(),
+            active_series: Mutex::default(),
+            ingestion_buckets: Mutex::default(),
+            relabel: vec![],
+            max_decompressed: mebibytes(16),
+            max_tracked_tenants: 4096,
+            legacy_decode_limits: LegacyDecodeLimits::default(),
+            metrics: ServiceMetrics::new(),
+        })
+    }
+
+    fn series_record(name: &str) -> ProfileRecord {
+        ProfileRecord {
+            tenant: "tenant-a".to_string(),
+            labels: vec![("__name__".to_string(), name.to_string())],
+            profile_type: "cpu".to_string(),
+            samples: vec![],
+            symbols: crate::wal::WalSymbolSet {
+                strings: vec![],
+                functions: vec![],
+                locations: vec![],
+                mappings: vec![],
+            },
+        }
+    }
+
+    /// The max-series budget counts *distinct new* fingerprints, reserves them
+    /// only if they all fit, and leaves the tenant's set untouched when they
+    /// do not. That last property is the one worth guarding: a rejection that
+    /// half-reserved would burn budget on a request that never landed.
+    #[test]
+    fn max_series_reserves_all_or_nothing() {
+        let state = state_with_max_series(2);
+        let reserved = |records: &[ProfileRecord]| {
+            super::enforce_and_reserve_max_series(&state, "tenant-a", records)
+        };
+        let held = || {
+            state
+                .active_series
+                .lock()
+                .unwrap()
+                .get("tenant-a")
+                .map_or(0, std::collections::BTreeSet::len)
+        };
+
+        // A repeated series counts once, so this fits a budget of two.
+        let two = [series_record("a"), series_record("b"), series_record("a")];
+        check!(reserved(&two).unwrap().len() == 2, "three records, two series");
+        check!(held() == 2);
+
+        // Re-offering what is already held adds nothing and stays within budget.
+        check!(reserved(&two).unwrap().is_empty(), "nothing new to reserve");
+        check!(held() == 2);
+
+        // One more distinct series is over the limit, and is refused whole.
+        let err = reserved(&[series_record("c")]).unwrap_err().to_string();
+        check!(err.contains("max series exceeded"), "got: {err}");
+        check!(held() == 2, "a rejected request reserves nothing");
+
+        // Even a request that mixes a known series with a new one is refused
+        // in full rather than admitting the part that fits.
+        let err = reserved(&[series_record("a"), series_record("d")])
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("max series exceeded"), "got: {err}");
+        check!(held() == 2, "still nothing reserved");
+    }
+
+    /// A limit of zero means unlimited, so nothing is tracked at all.
+    #[test]
+    fn a_max_series_limit_of_zero_tracks_nothing() {
+        let state = state_with_max_series(0);
+        let records = [series_record("a"), series_record("b")];
+
+        check!(
+            super::enforce_and_reserve_max_series(&state, "tenant-a", &records)
+                .unwrap()
+                .is_empty()
+        );
+        check!(state.active_series.lock().unwrap().is_empty(), "no tenant is tracked");
+    }
+
     /// pprof ids are indexes into a reference table. The optional form treats
     /// zero as "absent" and returns zero without a lookup; the required form
     /// has no such case and must reject zero like any other unknown id.
