@@ -358,7 +358,7 @@ fn parse_unix_time_ms(value: &str) -> Result<i64, ProfilesError> {
     let numeric = value
         .parse::<i64>()
         .map_err(|err| ProfilesError::Invalid(format!("invalid ingest time {value:?}: {err}")))?;
-    Ok(if numeric.abs() < 10_000_000_000 {
+    Ok(if numeric.unsigned_abs() < 10_000_000_000 {
         numeric.saturating_mul(1000)
     } else {
         numeric
@@ -1575,6 +1575,37 @@ mod tests {
         // The same part under a format that has no labels concept.
         let raw = decode("groups", "profile").unwrap();
         check!(raw.labels.get("service_name") == None, "labels: {:?}", raw.labels);
+    }
+
+    /// Ingest timestamps arrive as either seconds or milliseconds and are
+    /// told apart by magnitude, so the cutoff itself is the interesting part.
+    /// `i64::MIN` is included because it is the one input whose magnitude
+    /// cannot be taken as a signed value.
+    #[test]
+    fn ingest_times_below_the_cutoff_are_read_as_seconds() {
+        let parse = super::parse_unix_time_ms;
+
+        check!(parse("0").unwrap() == 0);
+        check!(parse("1").unwrap() == 1_000, "seconds scale up");
+        check!(parse("  7  ").unwrap() == 7_000, "surrounding space is trimmed");
+        check!(parse("-1").unwrap() == -1_000, "negative seconds scale too");
+        check!(
+            parse("9999999999").unwrap() == 9_999_999_999_000,
+            "the largest value still read as seconds"
+        );
+        check!(
+            parse("10000000000").unwrap() == 10_000_000_000,
+            "the cutoff itself is already milliseconds"
+        );
+        check!(
+            parse("-10000000000").unwrap() == -10_000_000_000,
+            "the cutoff is on magnitude, not sign"
+        );
+        check!(parse("9223372036854775807").unwrap() == i64::MAX);
+        check!(parse("-9223372036854775808").unwrap() == i64::MIN);
+
+        check!(parse("").is_err(), "an empty value is not a time");
+        check!(parse("later").is_err(), "a word is not a time");
     }
 
     #[test]
