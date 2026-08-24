@@ -285,6 +285,55 @@ mod tests {
     use super::*;
     use crate::limits::Limits;
 
+    /// Both query caps are off when zero and otherwise reject only what
+    /// exceeds them, so a query landing exactly on either is still allowed.
+    /// The two are checked one at a time, since a range within the length cap
+    /// can still be outside the lookback and the errors name different fields.
+    #[test]
+    fn query_range_caps_admit_exactly_their_limit() {
+        let limits = |length_secs, lookback_secs| Limits {
+            max_query_length: crabka_units::secs(length_secs),
+            max_query_lookback: crabka_units::secs(lookback_secs),
+            ..Limits::default()
+        };
+        let now = 1_000_000_i64;
+
+        // Zero turns a cap off: an enormous range passes.
+        check!(QueryEnforcer::check_range(&limits(0, 0), 0, now, now).is_ok());
+
+        // Length cap of 10s: a 10s range fits, 10.001s does not.
+        let start = now - 10_000;
+        check!(QueryEnforcer::check_range(&limits(10, 0), start, now, now).is_ok());
+        let err = QueryEnforcer::check_range(&limits(10, 0), start - 1, now, now).unwrap_err();
+        check!(
+            matches!(err, LimitError::QueryRangeTooLong { limit_secs: 10, observed_secs: 11 }),
+            "got: {err:?}"
+        );
+
+        // Lookback cap of 10s, measured from the range start to now. The
+        // length cap is off, so only the lookback can reject here.
+        check!(QueryEnforcer::check_range(&limits(0, 10), start, now, now).is_ok());
+        let err = QueryEnforcer::check_range(&limits(0, 10), start - 1, now, now).unwrap_err();
+        check!(
+            matches!(err, LimitError::QueryLookbackExceeded { limit_secs: 10, observed_secs: 11 }),
+            "got: {err:?}"
+        );
+
+        // A range running backwards has no extent and cannot exceed anything.
+        check!(QueryEnforcer::check_range(&limits(10, 10), now, now - 60_000, now).is_ok());
+    }
+
+    /// Reported seconds round *up*, so a range a millisecond over a whole
+    /// second is reported as the next second rather than the one it passed.
+    #[test]
+    fn reported_seconds_round_up() {
+        check!(secs_ceil(crabka_units::millis(0)) == 0);
+        check!(secs_ceil(crabka_units::millis(1)) == 1, "any remainder rounds up");
+        check!(secs_ceil(crabka_units::millis(1_000)) == 1, "a whole second stays whole");
+        check!(secs_ceil(crabka_units::millis(1_001)) == 2);
+        check!(secs_ceil(crabka_units::secs(90)) == 90);
+    }
+
     fn limits_with(series: u64, name_len: ByteSize, val_len: ByteSize) -> Limits {
         Limits {
             max_global_series_per_user: series,
