@@ -179,6 +179,38 @@ mod tests {
 
     use super::*;
 
+    /// A query span cap is a duration, and a negative one has no meaning:
+    /// zero is how a cap is turned off. The deserializer rejects negatives
+    /// rather than accepting one and comparing against it, which would
+    /// refuse every query.
+    #[test]
+    fn a_query_span_cap_may_be_zero_but_not_negative() {
+        // A one-field wrapper so the adapter is exercised on its own rather
+        // than through every other field Limits requires.
+        #[derive(serde::Deserialize)]
+        struct OnlyCap {
+            #[serde(with = "super::non_negative_time")]
+            cap: Time,
+        }
+
+        let parse = |value: &str| {
+            let json = String::from("{\"cap\":\"") + value + "\"}";
+            serde_json::from_str::<OnlyCap>(&json).map(|parsed| parsed.cap)
+        };
+
+        check!(parse("0s").unwrap() == Time::default(), "zero turns the cap off");
+        check!(parse("1h").unwrap() == crabka_units::hours(1));
+        check!(parse("1ms").unwrap() == crabka_units::millis(1), "the smallest positive cap");
+
+        for rejected in ["-1s", "-1ms", "-1h"] {
+            let err = parse(rejected).unwrap_err().to_string();
+            check!(
+                err.contains("cannot be negative"),
+                "{rejected} should be rejected, got: {err}"
+            );
+        }
+    }
+
     #[test]
     fn default_limits_are_generous_and_finite() {
         let l = Limits::default();
