@@ -301,6 +301,51 @@ mod tests {
     /// `||`, a histogram must satisfy all four at once -- so one carrying only
     /// float bucket counts is read as integer-valued and decoded down the wrong
     /// path.
+    /// The v1 detector is the twin of the v2 one below and needs the same
+    /// treatment: four independent signals joined by `||`, each of which has
+    /// to be sufficient on its own. Testing them together would let a chain
+    /// read as `&&` still pass.
+    #[test]
+    fn any_single_float_field_makes_a_v1_histogram_float() {
+        let integer = pb::v1::Histogram {
+            schema: 0,
+            count: Some(pb::v1::histogram::Count::CountInt(4)),
+            zero_count: Some(pb::v1::histogram::ZeroCount::ZeroCountInt(1)),
+            positive_deltas: vec![1, 2],
+            ..Default::default()
+        };
+        check!(!is_v1_float(&integer), "no float field anywhere");
+
+        check!(
+            is_v1_float(&pb::v1::Histogram {
+                count: Some(pb::v1::histogram::Count::CountFloat(4.0)),
+                ..integer.clone()
+            }),
+            "float count alone"
+        );
+        check!(
+            is_v1_float(&pb::v1::Histogram {
+                zero_count: Some(pb::v1::histogram::ZeroCount::ZeroCountFloat(0.5)),
+                ..integer.clone()
+            }),
+            "float zero-count alone"
+        );
+        check!(
+            is_v1_float(&pb::v1::Histogram {
+                positive_counts: vec![1.5],
+                ..integer.clone()
+            }),
+            "positive float counts alone"
+        );
+        check!(
+            is_v1_float(&pb::v1::Histogram {
+                negative_counts: vec![1.5],
+                ..integer.clone()
+            }),
+            "negative float counts alone"
+        );
+    }
+
     #[test]
     fn any_single_float_field_makes_a_v2_histogram_float() {
         let integer = pb::v2::Histogram {
