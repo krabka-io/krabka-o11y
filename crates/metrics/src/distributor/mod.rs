@@ -1833,11 +1833,11 @@ mod tests {
             }
         };
 
-        // Exactly at the budget: 8 names/values of 8 codepoints each = 128.
-        let at_limit: Vec<(String, String)> = (0..4)
+        // Eight labels of eight codepoints each side: 128, exactly the budget.
+        let owned: Vec<(String, String)> = (0..8)
             .map(|i| (format!("name{i:04}"), format!("valu{i:04}")))
             .collect();
-        let at_limit: Vec<(&str, &str)> = at_limit
+        let at_limit: Vec<(&str, &str)> = owned
             .iter()
             .map(|(n, v)| (n.as_str(), v.as_str()))
             .collect();
@@ -1845,11 +1845,19 @@ mod tests {
             .iter()
             .map(|(n, v)| n.chars().count() + v.chars().count())
             .sum();
-        check!(total == MAX_EXEMPLAR_LABEL_CODEPOINTS / 2, "fixture is {total}");
+        check!(total == MAX_EXEMPLAR_LABEL_CODEPOINTS, "fixture is {total}, not the budget");
 
         check!(
             validate_exemplar_labels(&exemplar(&at_limit)).is_ok(),
-            "several labels summing under the budget"
+            "a set landing exactly on the budget is allowed"
+        );
+
+        // One codepoint more, spread across the same number of labels, is not.
+        let mut over = at_limit.clone();
+        over.push(("x", ""));
+        check!(
+            validate_exemplar_labels(&exemplar(&over)).is_err(),
+            "one codepoint past the budget is refused"
         );
 
         // One label whose value alone exceeds the budget.
