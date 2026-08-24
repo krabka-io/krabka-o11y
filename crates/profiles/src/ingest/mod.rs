@@ -273,6 +273,25 @@ mod tests {
 
     use super::*;
 
+    /// FNV-1a, checked against the reference vectors rather than against
+    /// values this implementation produced. The constants and the
+    /// xor-then-multiply order are the whole algorithm, and a version that
+    /// multiplies before xoring, or seeds from zero, still looks like a hash.
+    #[test]
+    fn fnv1a_matches_the_published_vectors() {
+        let hash = |s: &str| super::fnv1a(s.as_bytes());
+
+        assert!(hash("") == 0xcbf2_9ce4_8422_2325, "the empty input is the offset basis");
+        assert!(hash("a") == 0xaf63_dc4c_8601_ec8c);
+        assert!(hash("b") == 0xaf63_df4c_8601_f1a5);
+        assert!(hash("c") == 0xaf63_de4c_8601_eff2);
+        assert!(hash("foobar") == 0x8594_4171_f739_67e8);
+
+        // Order matters, so a hash that folded bytes commutatively would not
+        // pass even if every vector above did.
+        assert!(hash("ab") != hash("ba"));
+    }
+
     fn labels(pairs: &[(&str, &str)]) -> Labels {
         let mut labels = Labels::new();
         for (name, value) in pairs {

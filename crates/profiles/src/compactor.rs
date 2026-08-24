@@ -504,6 +504,31 @@ mod tests {
     use crabka_pprof::{EngineOpts, FlameEngine};
     use object_store::{ObjectStore, memory::InMemory};
 
+    /// The compactor hashes a *list* of keys, not a blob, so it folds a 0xff
+    /// separator in after each one. Without it a single key `ab` and the pair
+    /// `a`, `b` would collide, and two different compaction inputs would
+    /// share a key.
+    ///
+    /// The expected values are computed from the FNV-1a definition rather
+    /// than captured from this implementation.
+    #[test]
+    fn compaction_keys_hash_their_boundaries_not_just_their_bytes() {
+        let hash = |keys: &[&str]| {
+            super::fnv1a(&keys.iter().map(|k| (*k).to_string()).collect::<Vec<_>>())
+        };
+
+        check!(hash(&[]) == 0xcbf2_9ce4_8422_2325, "no keys is the offset basis");
+        check!(hash(&["a"]) == 0x089b_c907_b544_c769);
+        check!(hash(&["ab"]) == 0xe720_2e19_0542_452f);
+        check!(hash(&["a", "b"]) == 0xd2b3_7181_9297_f98a);
+
+        // The three relationships the separator exists to guarantee.
+        check!(hash(&["ab"]) != hash(&["a", "b"]), "a split is not the same as a join");
+        check!(hash(&["a", "b"]) != hash(&["b", "a"]), "order matters");
+        check!(hash(&["a"]) != hash(&[]), "a key is not nothing");
+    }
+
+
     use super::*;
     use crate::{
         blockbuilder::build_block,
