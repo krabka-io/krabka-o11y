@@ -1626,6 +1626,103 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 mod tests {
     use std::sync::Mutex;
 
+    fn decoded_series(labels: &[(&str, &str)], samples: usize) -> crate::wire::DecodedSeries {
+        let mut set = crabka_blockstore::Labels::new();
+        for (name, value) in labels {
+            set.insert(*name, *value);
+        }
+        crate::wire::DecodedSeries {
+            labels: set,
+            samples: (0..samples)
+                .map(|i| crate::wire::DecodedSample {
+                    timestamp_ms: i64::try_from(i).unwrap_or(0),
+                    value: 1.0,
+                    start_timestamp_ms: None,
+                })
+                .collect(),
+            histograms: vec![],
+            exemplars: vec![],
+            metadata: None,
+        }
+    }
+
+    /// Every structural limit rejects what exceeds it, so a request sitting
+    /// exactly on each one is still accepted. Each is checked at its edge and
+    /// one past it, and the errors are matched on their text because the four
+    /// differ only in which number they name.
+    #[test]
+    fn structural_limits_admit_exactly_their_boundary() {
+        let limits = TenantLimits {
+            max_series_per_request: 2,
+            max_samples_per_series: 3,
+            max_label_name_len: crabka_units::bytes(4),
+            max_label_value_len: crabka_units::bytes(5),
+            ..TenantLimits::default()
+        };
+
+        let two = [decoded_series(&[("ok", "v")], 1), decoded_series(&[("ok", "v")], 1)];
+        assert!(super::validate(&two, &limits).is_ok(), "two series fit a limit of two");
+
+        let three = [
+            decoded_series(&[("ok", "v")], 1),
+            decoded_series(&[("ok", "v")], 1),
+            decoded_series(&[("ok", "v")], 1),
+        ];
+        let err = super::validate(&three, &limits).unwrap_err().to_string();
+        assert!(err.contains("series per request 3 exceeds limit 2"), "got: {err}");
+
+        let at_edge = [decoded_series(&[("ok", "v")], 3)];
+        assert!(super::validate(&at_edge, &limits).is_ok(), "three samples fit a limit of three");
+        let over = [decoded_series(&[("ok", "v")], 4)];
+        let err = super::validate(&over, &limits).unwrap_err().to_string();
+        assert!(err.contains("samples per series 4 exceeds limit 3"), "got: {err}");
+
+        let at_edge = [decoded_series(&[("abcd", "v")], 1)];
+        assert!(super::validate(&at_edge, &limits).is_ok(), "a four-byte name fits");
+        let over = [decoded_series(&[("abcde", "v")], 1)];
+        let err = super::validate(&over, &limits).unwrap_err().to_string();
+        assert!(err.contains("label name length 5 exceeds limit 4"), "got: {err}");
+
+        let at_edge = [decoded_series(&[("ok", "vwxyz")], 1)];
+        assert!(super::validate(&at_edge, &limits).is_ok(), "a five-byte value fits");
+        let over = [decoded_series(&[("ok", "vwxyz!")], 1)];
+        let err = super::validate(&over, &limits).unwrap_err().to_string();
+        assert!(err.contains("label value length 6 exceeds limit 5"), "got: {err}");
+
+        let bad = [decoded_series(&[("has space", "v")], 1)];
+        let err = super::validate(&bad, &limits).unwrap_err().to_string();
+        assert!(err.contains("invalid label name"), "got: {err}");
+    }
+
+    /// The per-series sample budget counts samples, histograms and exemplars
+    /// together, so a series can exceed it without any one kind doing so.
+    #[test]
+    fn the_sample_budget_counts_every_kind_together() {
+        let limits = TenantLimits {
+            max_samples_per_series: 3,
+            ..TenantLimits::default()
+        };
+
+        let mut series = decoded_series(&[("ok", "v")], 2);
+        series.exemplars = vec![crate::wire::DecodedExemplar {
+            labels: crabka_blockstore::Labels::new(),
+            value: 1.0,
+            timestamp_ms: 1,
+        }];
+        assert!(
+            super::validate(std::slice::from_ref(&series), &limits).is_ok(),
+            "two samples and one exemplar is exactly three"
+        );
+
+        series.exemplars.push(crate::wire::DecodedExemplar {
+            labels: crabka_blockstore::Labels::new(),
+            value: 1.0,
+            timestamp_ms: 2,
+        });
+        let err = super::validate(&[series], &limits).unwrap_err().to_string();
+        assert!(err.contains("samples per series 4 exceeds limit 3"), "got: {err}");
+    }
+
     /// The HTTP-to-gRPC mapping the error kinds share. Only two codes get a
     /// status of their own; everything else is the caller's fault by default,
     /// which is the safer reading for a code nobody has mapped yet.
