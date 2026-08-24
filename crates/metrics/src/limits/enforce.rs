@@ -285,6 +285,59 @@ mod tests {
     use super::*;
     use crate::limits::Limits;
 
+    /// The per-query sample cap is off when zero and otherwise strict, so a
+    /// query landing exactly on it is still served.
+    #[test]
+    fn the_sample_cap_admits_exactly_its_limit() {
+        let limits = |max_samples_per_query| Limits {
+            max_samples_per_query,
+            ..Limits::default()
+        };
+
+        check!(QueryEnforcer::check_sample_count(&limits(0), u64::MAX).is_ok(), "zero is off");
+        check!(QueryEnforcer::check_sample_count(&limits(10), 10).is_ok(), "ten fits ten");
+        check!(QueryEnforcer::check_sample_count(&limits(10), 0).is_ok());
+
+        let err = QueryEnforcer::check_sample_count(&limits(10), 11).unwrap_err();
+        check!(
+            matches!(err, LimitError::SamplesPerQueryExceeded { limit: 10, observed: 11 }),
+            "got: {err:?}"
+        );
+    }
+
+    /// Label length caps reject only what exceeds them, and the name and the
+    /// value have separate caps, so each is checked at its own edge against a
+    /// label set where the other is comfortably inside.
+    #[test]
+    fn label_length_caps_admit_exactly_their_limit() {
+        let limits = Limits {
+            max_label_name_length: crabka_units::bytes(4),
+            max_label_value_length: crabka_units::bytes(5),
+            ..Limits::default()
+        };
+        let label = |name: &str, value: &str| {
+            let mut set = Labels::new();
+            set.insert(name, value);
+            set
+        };
+
+        check!(IngestEnforcer::check_labels(&limits, &label("abcd", "vwxyz")).is_ok(), "both at edge");
+
+        let err = IngestEnforcer::check_labels(&limits, &label("abcde", "v")).unwrap_err();
+        check!(
+            matches!(err, LimitError::LabelNameTooLong { limit: 4, observed: 5 }),
+            "got: {err:?}"
+        );
+
+        let err = IngestEnforcer::check_labels(&limits, &label("ab", "vwxyz!")).unwrap_err();
+        check!(
+            matches!(err, LimitError::LabelValueTooLong { limit: 5, observed: 6 }),
+            "got: {err:?}"
+        );
+
+        check!(IngestEnforcer::check_labels(&limits, &Labels::new()).is_ok(), "no labels, no limit");
+    }
+
     /// Both query caps are off when zero and otherwise reject only what
     /// exceeds them, so a query landing exactly on either is still allowed.
     /// The two are checked one at a time, since a range within the length cap
