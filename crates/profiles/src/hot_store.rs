@@ -415,6 +415,39 @@ mod tests {
         }
     }
 
+    /// A rebuild is amortized: it happens once evictions reach a
+    /// `1 / REBUILD_AMORTIZE_FACTOR` share of what is still retained, and
+    /// never when nothing has been evicted. Both halves of that condition are
+    /// pinned at their edge, since a rebuild on every eviction and a rebuild
+    /// that never fires both leave queries answering correctly, just slower
+    /// or hungrier.
+    #[test]
+    fn a_rebuild_waits_until_evictions_are_worth_it() {
+        let state = |evicted, retained| super::RetainedState {
+            records: std::iter::repeat_with(|| super::Retained {
+                max_ts_ms: 0,
+                record: record(),
+            })
+            .take(retained)
+            .collect(),
+            evicted_since_rebuild: evicted,
+        };
+        let should = |evicted, retained| {
+            super::WalTailProfileStore::should_rebuild(&state(evicted, retained))
+        };
+
+        // Nothing evicted is never worth a rebuild, however small the store.
+        check!(!should(0, 0), "an empty store at rest");
+        check!(!should(0, 8), "a full store at rest");
+
+        // One eviction covers eight retained records, so that is the edge.
+        check!(!should(1, 9), "one eviction does not cover nine");
+        check!(should(1, 8), "one eviction exactly covers eight");
+        check!(should(1, 7), "and more than covers seven");
+        check!(should(2, 16), "the ratio holds as both grow");
+        check!(!should(2, 17), "and so does the edge above it");
+    }
+
     /// The four metadata queries all delegate to the current snapshot,
     /// passing the tenant, matchers and time window straight through. Each is
     /// checked against a store holding two tenants at two different times, so
