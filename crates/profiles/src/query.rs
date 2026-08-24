@@ -2982,6 +2982,61 @@ mod tests {
         check!(merge(r#"{service="api""#, &["abc"]).is_err());
     }
 
+    /// A render offset is a count and a one-letter unit. The units differ only
+    /// in scale, so each is checked against the millisecond total it stands
+    /// for rather than merely for being accepted.
+    #[test]
+    fn render_offsets_scale_by_their_unit() {
+        let parse = |value| super::parse_render_offset(value).map(Time::millis_i64);
+
+        check!(parse("1s").unwrap() == 1_000);
+        check!(parse("1m").unwrap() == 60_000);
+        check!(parse("1h").unwrap() == 3_600_000);
+        check!(parse("1d").unwrap() == 86_400_000);
+        check!(parse("90m").unwrap() == 5_400_000, "counts above one scale too");
+        check!(parse("0s").unwrap() == 0);
+        check!(parse("-30m").unwrap() == -1_800_000, "an offset may look forward");
+
+        // The unit is the last character and the count is everything before it.
+        let err = parse("1w").unwrap_err().to_string();
+        check!(err.contains("duration unit \"w\""), "got: {err}");
+        let err = parse("s").unwrap_err().to_string();
+        check!(err.contains("invalid render relative duration"), "got: {err}");
+        let err = parse("").unwrap_err().to_string();
+        check!(err.contains("invalid render relative duration"), "got: {err}");
+        let err = parse("1.5h").unwrap_err().to_string();
+        check!(err.contains("invalid render relative duration"), "got: {err}");
+
+        // An offset too large to express in milliseconds is an error rather
+        // than a silently different lookback.
+        let err = parse("9223372036854775807d").unwrap_err().to_string();
+        check!(err.contains("overflows"), "got: {err}");
+    }
+
+    /// `types_label_pairs` is a straight rename across a protobuf boundary.
+    /// It has one way to go wrong, and it is worth ruling out.
+    #[test]
+    fn label_pairs_keep_their_names_with_their_values() {
+        let pairs = super::types_label_pairs(vec![
+            ("service".to_string(), "api".to_string()),
+            ("env".to_string(), "prod".to_string()),
+        ]);
+        check!(
+            pairs
+                == vec![
+                    pb::types::v1::LabelPair {
+                        name: "service".to_string(),
+                        value: "api".to_string()
+                    },
+                    pb::types::v1::LabelPair {
+                        name: "env".to_string(),
+                        value: "prod".to_string()
+                    },
+                ]
+        );
+        check!(super::types_label_pairs(vec![]).is_empty());
+    }
+
     /// `flamegraph_dot` walks the flamegraph level by level, laying bars out
     /// left to right. Each bar's x position is the running sum of the bars
     /// before it plus its own offset, and a bar is wired to the bar on the
