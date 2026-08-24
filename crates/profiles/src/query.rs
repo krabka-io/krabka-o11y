@@ -2982,6 +2982,50 @@ mod tests {
         check!(merge(r#"{service="api""#, &["abc"]).is_err());
     }
 
+    /// `flamegraph_dot` walks the flamegraph level by level, laying bars out
+    /// left to right. Each bar's x position is the running sum of the bars
+    /// before it plus its own offset, and a bar is wired to the bar on the
+    /// level above whose span contains its left edge.
+    ///
+    /// The graph below is a root of width 10 over two children of width 4 and
+    /// 6, plus a third level under the second child, so parent selection has
+    /// to discriminate between two candidates rather than always pick the
+    /// first. One name needs escaping and one index is out of range.
+    #[test]
+    fn flamegraph_dot_lays_out_bars_and_wires_them_to_their_parents() {
+        let graph = crabka_pprof::FlameGraph {
+            names: vec!["root".to_string(), "a\"quoted".to_string(), "b".to_string()],
+            levels: vec![
+                crabka_pprof::Level { values: vec![0, 10, 2, 0] },
+                crabka_pprof::Level { values: vec![0, 4, 4, 1, 0, 6, 6, 2] },
+                // Offset 4 from a running end of 0 puts this under "b", not "a".
+                crabka_pprof::Level { values: vec![4, 6, 6, 9] },
+                // A negative name index cannot convert at all, which is a
+                // different failure from index 9 above: that one converts and
+                // then misses. Both fall back to a placeholder rather than
+                // naming some unrelated frame.
+                crabka_pprof::Level { values: vec![0, 6, 6, -1] },
+            ],
+            total: 10,
+            max_self: 6,
+        };
+
+        let expected = concat!(
+            "digraph flamegraph {\n",
+            "  node [shape=box];\n",
+            "  n0 [label=\"root\\ntotal=10 self=2\"];\n",
+            "  n1 [label=\"a\\\"quoted\\ntotal=4 self=4\"];\n",
+            "  n0 -> n1;\n",
+            "  n2 [label=\"b\\ntotal=6 self=6\"];\n",
+            "  n0 -> n2;\n",
+            "  n3 [label=\"unknown:9\\ntotal=6 self=6\"];\n",
+            "  n2 -> n3;\n",
+            "  n4 [label=\"unknown:18446744073709551615\\ntotal=6 self=6\"];\n",
+            "}\n",
+        );
+        check!(super::flamegraph_dot(&graph) == expected);
+    }
+
 
     use super::*;
     use crate::{Limits, OverridesProvider};
