@@ -1100,13 +1100,12 @@ fn heatmap_slot_timestamp(
     time_buckets: usize,
     timestamp: i64,
 ) -> Option<i64> {
-    if timestamp < start_ms || timestamp >= end_ms || start_ms >= end_ms || time_buckets == 0 {
+    if timestamp < start_ms || timestamp >= end_ms || time_buckets == 0 {
         return None;
     }
     let time_span = i128::from(end_ms - start_ms);
     let raw = i128::from(timestamp - start_ms) * i128::try_from(time_buckets).ok()? / time_span;
-    let bucket = raw.clamp(0, i128::try_from(time_buckets - 1).ok()?);
-    let bucket = i64::try_from(bucket).ok()?;
+    let bucket = i64::try_from(raw).ok()?;
     let step_ms = (end_ms - start_ms) / i64::try_from(time_buckets).ok()?;
     Some(start_ms + (bucket + 1) * step_ms)
 }
@@ -2865,6 +2864,45 @@ mod tests {
     use base64::Engine;
     use crabka_pprof::{FunctionRec, LineRec, LocationRec};
     use crabka_units::secs;
+
+    /// `heatmap_slot_timestamp` places a sample in one of `time_buckets` slots
+    /// and returns the slot's *end*. Everything here is boundary work: the
+    /// guard is four clauses joined by `||`, so each has to reject on its own,
+    /// and the arithmetic is a multiply-then-divide whose operators all look
+    /// alike from the middle of a range.
+    ///
+    /// With start 0, end 100 and 4 buckets the step is 25, so a timestamp maps
+    /// to 25, 50, 75 or 100 and nothing else.
+    #[test]
+    fn heatmap_slots_are_bounded_and_end_labelled() {
+        let slot = |ts| super::heatmap_slot_timestamp(0, 100, 4, ts);
+
+        // Each guard clause, alone: before the range, on the exclusive end,
+        // past it, an inverted range, and no buckets.
+        check!(slot(-1) == None, "before start");
+        check!(slot(100) == None, "end is exclusive");
+        check!(slot(101) == None, "past end");
+        check!(super::heatmap_slot_timestamp(100, 0, 4, 50) == None, "inverted");
+        check!(super::heatmap_slot_timestamp(0, 100, 0, 50) == None, "no buckets");
+
+        // Inside: the first instant, each bucket edge, and the last instant.
+        check!(slot(0) == Some(25), "start of the first bucket");
+        check!(slot(24) == Some(25), "last ms of the first bucket");
+        check!(slot(25) == Some(50), "first ms of the second");
+        check!(slot(50) == Some(75), "first ms of the third");
+        check!(slot(75) == Some(100), "first ms of the last");
+        check!(slot(99) == Some(100), "last ms in range");
+
+        // Offset from zero: with start_ms 0 a sign error in the span is
+        // invisible, so repeat over 1000..1400 (step 100).
+        let offset = |ts| super::heatmap_slot_timestamp(1000, 1400, 4, ts);
+        check!(offset(999) == None, "before an offset start");
+        check!(offset(1000) == Some(1100), "first instant of an offset range");
+        check!(offset(1150) == Some(1200), "mid offset range");
+        check!(offset(1399) == Some(1400), "last ms of an offset range");
+        check!(offset(1400) == None, "offset end is exclusive");
+    }
+
 
     use super::*;
     use crate::{Limits, OverridesProvider};
