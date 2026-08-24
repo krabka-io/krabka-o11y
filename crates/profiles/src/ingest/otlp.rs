@@ -540,6 +540,64 @@ mod tests {
             .to_string();
         check!(err.contains("references missing location"), "got: {err}");
     }
+
+    /// The service name comes from the `service.name` resource attribute.
+    /// Everything that is not a non-empty string there falls back to the
+    /// placeholder, because a profile filed under an empty or absent name is
+    /// unattributable.
+    #[test]
+    fn the_service_name_falls_back_whenever_it_is_not_a_usable_string() {
+        use pb::opentelemetry::proto::common::v1::{AnyValue, KeyValue, any_value::Value};
+        use pb::opentelemetry::proto::resource::v1::Resource;
+
+        let with_attrs = |attrs: Vec<KeyValue>| pb::otlp_profiles::ResourceProfiles {
+            resource: Some(Resource { attributes: attrs, ..Default::default() }),
+            ..Default::default()
+        };
+        let attr = |key: &str, value: Option<Value>| KeyValue {
+            key: key.to_string(),
+            value: Some(AnyValue { value }),
+        };
+
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "service.name",
+                Some(Value::StringValue("payments".to_string()))
+            )])) == "payments"
+        );
+
+        // The key is matched, not the position.
+        check!(
+            super::resolve_service_name(&with_attrs(vec![
+                attr("other", Some(Value::StringValue("first".to_string()))),
+                attr("service.name", Some(Value::StringValue("payments".to_string()))),
+            ])) == "payments"
+        );
+
+        // Each way the attribute can be present but unusable.
+        for (name, rp) in [
+            ("no resource at all", pb::otlp_profiles::ResourceProfiles::default()),
+            ("no attributes", with_attrs(vec![])),
+            (
+                "a different key",
+                with_attrs(vec![attr("host.name", Some(Value::StringValue("h".into())))]),
+            ),
+            (
+                "an empty name",
+                with_attrs(vec![attr("service.name", Some(Value::StringValue(String::new())))]),
+            ),
+            (
+                "a non-string value",
+                with_attrs(vec![attr("service.name", Some(Value::IntValue(7)))]),
+            ),
+            ("no value", with_attrs(vec![attr("service.name", None)])),
+        ] {
+            check!(
+                super::resolve_service_name(&rp) == "unknown_service",
+                "{name} should fall back"
+            );
+        }
+    }
     use assert2::{assert, check};
 
     use super::*;
