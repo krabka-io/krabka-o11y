@@ -3764,6 +3764,58 @@ overrides:
         assert!(tracker.elected_replica("tenant-a", "c1") == Some("r1".to_string()));
     }
 
+    /// A poll that replays nothing must not commit. Committing on an empty
+    /// batch would advance the group past records it never applied, and the
+    /// elections they carry would be lost on the next restart.
+    #[tokio::test]
+    async fn poll_ha_election_consumer_once_does_not_commit_without_progress() {
+        let tracker = HaTracker::default();
+
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![vec![]],
+            commit_calls: 0,
+        };
+        let result =
+            poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
+                .await
+                .unwrap();
+        assert!(
+            result
+                == HaElectionReplayResult {
+                    polled_records: 0,
+                    replayed_records: 0,
+                    committed_offsets: vec![],
+                }
+        );
+        assert!(consumer.commit_calls == 0, "an empty poll commits nothing");
+
+        // Polled but not replayed: a record from another topic is seen and
+        // applied to nothing. Committing here would advance this group's
+        // offsets on the strength of someone else's records.
+        let record = HaElectionRecord {
+            tenant: "tenant-a".to_string(),
+            cluster: "c1".to_string(),
+            replica: "r1".to_string(),
+            lease_timestamp_ms: 42_000,
+        };
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![vec![consumer_record(
+                "some-other-topic",
+                1,
+                7,
+                Some(record.encode().unwrap()),
+            )]],
+            commit_calls: 0,
+        };
+        let result =
+            poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
+                .await
+                .unwrap();
+        assert!(result.polled_records == 1, "the record was seen");
+        assert!(result.replayed_records == 0, "but it was not ours to apply");
+        assert!(consumer.commit_calls == 0, "a poll that applies nothing commits nothing");
+    }
+
     /// The election consumer loop polls until told to stop, accumulating
     /// what each poll saw. A caller watching the summary to decide when it
     /// has caught up depends on every field advancing on every poll.
