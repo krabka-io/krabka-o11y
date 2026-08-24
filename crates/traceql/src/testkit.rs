@@ -656,6 +656,79 @@ query: { .svc = "x" }
         assert!(result.message == "missing query");
     }
 
+    /// The metrics and trace-by-id runners each carry a single assertion, so
+    /// the only thing standing between a real check and a vacuous pass is
+    /// that one comparison. Both are exercised with a case that holds and the
+    /// same case with the expectation moved off by one.
+    #[tokio::test]
+    async fn the_single_assertion_runners_can_fail_their_case() {
+        let engine = super::engine();
+
+        let metrics_case = |count: usize| super::Case {
+            name: "t".into(),
+            kind: "metrics".into(),
+            query: Some("{ .svc != nil } | rate()".into()),
+            trace_id: None,
+            expect_trace_ids: None,
+            expect_span_ids: None,
+            expect_series_count: Some(count),
+            expect_span_count: None,
+        };
+
+        let result = super::run_metrics_case(&engine, metrics_case(1)).await;
+        assert!(result.passed, "message: {}", result.message);
+        assert!(result.passed_assertions == 1 && result.total_assertions == 1);
+
+        let result = super::run_metrics_case(&engine, metrics_case(2)).await;
+        assert!(!result.passed, "a wrong series count must fail");
+        assert!(result.passed_assertions == 0);
+        assert!(result.message.contains("series count expected 2, got 1"));
+
+        // A metrics case that states no series count is asserting zero, not
+        // opting out. This query yields one, so it must fail.
+        let mut unstated = metrics_case(1);
+        unstated.expect_series_count = None;
+        let result = super::run_metrics_case(&engine, unstated).await;
+        assert!(!result.passed, "an unstated count means zero");
+        assert!(result.message.contains("series count expected 0, got 1"));
+
+        let mut no_query = metrics_case(1);
+        no_query.query = None;
+        let result = super::run_metrics_case(&engine, no_query).await;
+        assert!(!result.passed && result.message == "missing query");
+
+        let by_id_case = |trace_id, count: usize| super::Case {
+            name: "t".into(),
+            kind: "trace_by_id".into(),
+            query: None,
+            trace_id,
+            expect_trace_ids: None,
+            expect_span_ids: None,
+            expect_series_count: None,
+            expect_span_count: Some(count),
+        };
+
+        let result = super::run_trace_by_id_case(&engine, by_id_case(Some(1), 4)).await;
+        assert!(result.passed, "message: {}", result.message);
+
+        let result = super::run_trace_by_id_case(&engine, by_id_case(Some(1), 3)).await;
+        assert!(!result.passed, "a wrong span count must fail");
+        assert!(result.message.contains("span count expected 3, got 4"));
+
+        // A trace that is not there has no spans, which a case may assert.
+        let result = super::run_trace_by_id_case(&engine, by_id_case(Some(9), 0)).await;
+        assert!(result.passed, "message: {}", result.message);
+
+        // Unstated means zero here too, which an absent trace satisfies.
+        let mut unstated = by_id_case(Some(9), 4);
+        unstated.expect_span_count = None;
+        let result = super::run_trace_by_id_case(&engine, unstated).await;
+        assert!(result.passed, "message: {}", result.message);
+
+        let result = super::run_trace_by_id_case(&engine, by_id_case(None, 4)).await;
+        assert!(!result.passed && result.message == "missing trace_id");
+    }
+
     #[test]
     #[should_panic(expected = "`x` is not a valid id")]
     fn an_unparseable_id_stops_the_run() {
