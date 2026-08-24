@@ -2020,6 +2020,18 @@ mod tests {
 
         let active = store.cardinality_active_series("acme").await.unwrap();
         check!(!active.is_empty(), "active series: {active:?}");
+
+        // The remaining readers delegate the same way. Each is asserted
+        // non-empty against the seeded series, which is what a reader replaced
+        // by an empty vec cannot produce.
+        let card_names = store.cardinality_label_names("acme").await.unwrap();
+        check!(!card_names.is_empty(), "cardinality names: {card_names:?}");
+
+        let card_values = store.cardinality_label_values("acme").await.unwrap();
+        check!(!card_values.is_empty(), "cardinality values: {card_values:?}");
+
+        let blocks = store.tsdb_blocks("acme").await;
+        check!(blocks.is_ok(), "tsdb blocks: {blocks:?}");
     }
 
     #[test]
