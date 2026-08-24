@@ -1976,6 +1976,52 @@ mod tests {
         assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
     }
 
+    /// The `MetricStore` impl on the refreshing store is delegation: resolve
+    /// the store covering the range, then forward. Nothing drove it, so a
+    /// reader replaced by an empty vec described a tenant with no series at
+    /// all -- which is exactly what an empty store looks like, so an assertion
+    /// against one proves nothing. The head is seeded first, and each reader
+    /// asserted against what was seeded.
+    #[tokio::test]
+    async fn refreshing_store_readers_forward_to_the_covering_store() {
+        use crabka_metrics::{SamplePayload, WalRecord};
+
+        let head = crabka_promql::WalHead::new();
+        head.apply_wal_record(&WalRecord {
+            tenant: "acme".into(),
+            labels: vec![
+                ("__name__".into(), "http_requests_total".into()),
+                ("route".into(), "/orders".into()),
+            ],
+            payload: SamplePayload::Float {
+                timestamp_ms: 1_000,
+                value: 7.0,
+                start_timestamp_ms: None,
+            },
+            exemplars: Vec::new(),
+        });
+
+        let store = super::RefreshingMetricBlockStore::new(
+            Arc::new(InMemory::new()) as Arc<dyn ObjectStore>,
+            url::Url::parse("memory:///").unwrap(),
+            "metrics",
+            head,
+        );
+
+        let names = store.label_names("acme", &[], 0, 10_000).await.unwrap();
+        check!(names.contains(&"__name__".to_string()), "names: {names:?}");
+        check!(names.contains(&"route".to_string()), "names: {names:?}");
+
+        let routes = store
+            .label_values("acme", "route", &[], 0, 10_000)
+            .await
+            .unwrap();
+        check!(routes == vec!["/orders".to_string()], "routes: {routes:?}");
+
+        let active = store.cardinality_active_series("acme").await.unwrap();
+        check!(!active.is_empty(), "active series: {active:?}");
+    }
+
     #[test]
     fn refreshing_blockstore_policy_defaults_and_overrides() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
