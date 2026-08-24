@@ -292,12 +292,22 @@ fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
                     "name" => case.name = format!("{file}:{value}"),
                     "kind" => case.kind = value.to_string(),
                     "query" => case.query = Some(value.to_string()),
-                    "trace_id" => case.trace_id = value.parse().ok(),
+                    "trace_id" => case.trace_id = Some(parse_field(&case.name, "trace_id", value)),
                     "expect_trace_ids" => case.expect_trace_ids = Some(value.to_string()),
                     "expect_span_ids" => case.expect_span_ids = Some(value.to_string()),
-                    "expect_series_count" => case.expect_series_count = value.parse().ok(),
-                    "expect_span_count" => case.expect_span_count = value.parse().ok(),
-                    _ => {}
+                    "expect_series_count" => {
+                        case.expect_series_count =
+                            Some(parse_field(&case.name, "expect_series_count", value));
+                    }
+                    "expect_span_count" => {
+                        case.expect_span_count =
+                            Some(parse_field(&case.name, "expect_span_count", value));
+                    }
+                    // An unrecognised key is a typo in the corpus, not an
+                    // optional extra. Silently ignoring it would drop the
+                    // expectation it was meant to state and leave the case
+                    // passing on a weaker assertion than its author wrote.
+                    other => panic!("{}: unknown case key `{other}`", case.name),
                 }
             }
             (!block.trim().is_empty()).then_some(case)
@@ -305,13 +315,29 @@ fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
         .collect()
 }
 
+/// Parses one numeric field of a corpus case, failing loudly rather than
+/// leaving it unset. A field that will not parse is a mistake in the case
+/// file, and treating it as absent removes the assertion it was written to
+/// make.
+fn parse_field<T: std::str::FromStr>(case: &str, key: &str, value: &str) -> T {
+    value
+        .parse()
+        .unwrap_or_else(|_| panic!("{case}: `{key}` is not a valid value: {value:?}"))
+}
+
+/// Parses a comma-separated id list. Empty entries are allowed so a trailing
+/// comma is harmless, but an entry that is not a number is a mistake in the
+/// case file and stops the run: dropping it would silently shorten the list
+/// the case is asserting against.
 fn parse_u8_list(value: Option<&str>) -> Vec<u8> {
     value
         .unwrap_or_default()
         .split(',')
-        .filter_map(|item| {
-            let item = item.trim();
-            (!item.is_empty()).then(|| item.parse().ok()).flatten()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            item.parse()
+                .unwrap_or_else(|_| panic!("`{item}` is not a valid id in list {value:?}"))
         })
         .collect()
 }
@@ -562,6 +588,100 @@ query: { .svc = "x" }
                 links: Vec::new(),
             }
         );
+    }
+
+    /// `parse_u8_list` reads the id lists a case asserts against. Blank
+    /// entries are tolerated so a trailing comma is harmless, but an entry
+    /// that is not a number stops the run rather than shortening the list --
+    /// a case asserting against three ids and silently checking two is worse
+    /// than a case that fails.
+    #[test]
+    fn id_lists_tolerate_blanks_and_reject_nonsense() {
+        let parse = super::parse_u8_list;
+
+        assert!(parse(None) == Vec::<u8>::new(), "an absent list is empty");
+        assert!(parse(Some("")) == Vec::<u8>::new());
+        assert!(parse(Some("1,2,3")) == vec![1, 2, 3]);
+        assert!(parse(Some(" 1 , 2 ")) == vec![1, 2], "space around entries is trimmed");
+        assert!(parse(Some("1,,2")) == vec![1, 2], "a blank entry is skipped");
+        assert!(parse(Some("1,2,")) == vec![1, 2], "so is a trailing comma");
+        assert!(parse(Some("7")) == vec![7], "a single id needs no comma");
+        assert!(parse(Some("0,255")) == vec![0, 255], "the full byte range");
+    }
+
+    #[test]
+    #[should_panic(expected = "`x` is not a valid id")]
+    fn an_unparseable_id_stops_the_run() {
+        super::parse_u8_list(Some("1,x,3"));
+    }
+
+    #[test]
+    #[should_panic(expected = "`256` is not a valid id")]
+    fn an_id_outside_a_byte_stops_the_run() {
+        super::parse_u8_list(Some("256"));
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown case key `expect_span_counts`")]
+    fn a_misspelled_case_key_stops_the_run() {
+        super::parse_cases("f.case", "name: a\nexpect_span_counts: 4\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "`expect_span_count` is not a valid value")]
+    fn a_malformed_case_number_stops_the_run() {
+        super::parse_cases("f.case", "name: a\nexpect_span_count: four\n");
+    }
+
+    /// The two id collectors differ deliberately: trace ids keep the order
+    /// the engine returned them in, because that order is part of what a
+    /// search case asserts, while span ids are sorted because they are
+    /// gathered across span sets whose order is not meaningful.
+    #[test]
+    fn trace_ids_keep_engine_order_and_span_ids_are_sorted() {
+        use crate::result::{SearchResponse, SpanRef, SpanSet, TraceResult};
+        use crabka_units::{bytes, millis};
+
+        // Only the first byte of each id is read, but the ids are fixed-size,
+        // so both are widened from the byte under test.
+        let span = |id: u8| SpanRef {
+            span_id: [id, 0, 0, 0, 0, 0, 0, 0],
+            parent_span_id: None,
+            name: String::new(),
+            kind: 0,
+            nested_set_left: 0,
+            nested_set_right: 0,
+            nested_set_parent: 0,
+            start_time_unix_nano: 0,
+            duration: millis(0),
+            status_code: 0,
+            status_message: String::new(),
+            instrumentation_name: String::new(),
+            instrumentation_version: String::new(),
+            resource_attributes: vec![],
+            attributes: vec![],
+            events: vec![],
+            links: vec![],
+        };
+        let trace = |id: u8, spans: Vec<u8>| TraceResult {
+            trace_id: [id, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            root_service_name: String::new(),
+            root_trace_name: String::new(),
+            start_time_unix_nano: 0,
+            duration: millis(0),
+            span_sets: vec![SpanSet {
+                spans: spans.into_iter().map(span).collect(),
+                matched: 0,
+            }],
+        };
+        let resp = SearchResponse {
+            traces: vec![trace(3, vec![9, 1]), trace(1, vec![5])],
+            inspected_traces: 0,
+            inspected: bytes(0),
+        };
+
+        assert!(super::trace_ids(&resp) == vec![3, 1], "engine order is kept");
+        assert!(super::span_ids(&resp) == vec![1, 5, 9], "span ids are sorted");
     }
 
     #[test]
