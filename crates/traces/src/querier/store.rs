@@ -2647,6 +2647,138 @@ fn block_err(err: &crabka_blockstore::BlockStoreError) -> TraceqlError {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
+    /// The comparison operators are the whole of a matcher's meaning, so each
+    /// is checked on the boundary where the strict and non-strict forms part
+    /// company, and either side of it so a comparison stuck on one answer is
+    /// caught too.
+    #[test]
+    fn integer_comparisons_are_exact_at_the_boundary() {
+        let five = MatchValue::Int(5);
+        let cmp = |value, op| super::int_matches(value, op, &five);
+
+        check!(cmp(5, MatchCmp::Eq));
+        check!(!cmp(5, MatchCmp::Neq));
+        check!(!cmp(5, MatchCmp::Lt), "5 < 5");
+        check!(cmp(5, MatchCmp::Lte), "5 <= 5");
+        check!(!cmp(5, MatchCmp::Gt), "5 > 5");
+        check!(cmp(5, MatchCmp::Gte), "5 >= 5");
+
+        check!(cmp(4, MatchCmp::Lt) && cmp(4, MatchCmp::Lte) && cmp(4, MatchCmp::Neq));
+        check!(!cmp(4, MatchCmp::Gt) && !cmp(4, MatchCmp::Gte) && !cmp(4, MatchCmp::Eq));
+        check!(cmp(6, MatchCmp::Gt) && cmp(6, MatchCmp::Gte) && cmp(6, MatchCmp::Neq));
+        check!(!cmp(6, MatchCmp::Lt) && !cmp(6, MatchCmp::Lte) && !cmp(6, MatchCmp::Eq));
+
+        // Regex operators have no meaning against a number.
+        check!(!cmp(5, MatchCmp::Re) && !cmp(5, MatchCmp::Nre));
+
+        // A value of another type never matches, whatever the operator.
+        for op in [MatchCmp::Eq, MatchCmp::Lt, MatchCmp::Gte] {
+            check!(
+                !super::int_matches(5, op, &MatchValue::Bool(true)),
+                "an integer does not compare with a bool"
+            );
+        }
+    }
+
+    /// The float matcher mirrors the integer one, with the extra case that
+    /// NaN compares equal to nothing at all -- not even itself -- which is
+    /// what the partial comparison is there to express.
+    #[test]
+    fn float_comparisons_are_exact_and_nan_matches_nothing() {
+        let five = MatchValue::Float(5.0);
+        let cmp = |value, op| super::float_matches(value, op, &five);
+
+        check!(cmp(5.0, MatchCmp::Eq));
+        check!(!cmp(5.0, MatchCmp::Lt) && cmp(5.0, MatchCmp::Lte));
+        check!(!cmp(5.0, MatchCmp::Gt) && cmp(5.0, MatchCmp::Gte));
+        check!(cmp(4.5, MatchCmp::Lt) && cmp(5.5, MatchCmp::Gt));
+
+        // NaN is unordered against everything.
+        check!(!cmp(f64::NAN, MatchCmp::Eq), "NaN is equal to nothing");
+        check!(cmp(f64::NAN, MatchCmp::Neq), "so it differs from everything");
+        check!(!cmp(f64::NAN, MatchCmp::Lt) && !cmp(f64::NAN, MatchCmp::Gt));
+        check!(!cmp(f64::NAN, MatchCmp::Lte) && !cmp(f64::NAN, MatchCmp::Gte));
+
+        check!(
+            !super::float_matches(5.0, MatchCmp::Eq, &MatchValue::Int(5)),
+            "a float does not compare with an integer"
+        );
+    }
+
+    /// Booleans support only equality; every ordering operator is a
+    /// non-match rather than an error.
+    #[test]
+    fn booleans_compare_only_for_equality() {
+        let yes = MatchValue::Bool(true);
+
+        check!(super::bool_matches(true, MatchCmp::Eq, &yes));
+        check!(!super::bool_matches(false, MatchCmp::Eq, &yes));
+        check!(super::bool_matches(false, MatchCmp::Neq, &yes));
+        check!(!super::bool_matches(true, MatchCmp::Neq, &yes));
+
+        for op in [
+            MatchCmp::Lt,
+            MatchCmp::Lte,
+            MatchCmp::Gt,
+            MatchCmp::Gte,
+            MatchCmp::Re,
+            MatchCmp::Nre,
+        ] {
+            check!(!super::bool_matches(true, op, &yes), "ordering has no meaning");
+        }
+
+        check!(
+            !super::bool_matches(true, MatchCmp::Eq, &MatchValue::Int(1)),
+            "a bool does not compare with an integer"
+        );
+    }
+
+    /// Span kind and status names come off the wire as strings and have to
+    /// land on the numbers the stored spans use. Every name is checked, since
+    /// a table is exactly where an off-by-one goes unnoticed.
+    #[test]
+    fn span_kind_and_status_names_map_to_their_stored_numbers() {
+        let kinds = [
+            ("unspecified", 0),
+            ("internal", 1),
+            ("server", 2),
+            ("client", 3),
+            ("producer", 4),
+            ("consumer", 5),
+        ];
+        for (name, value) in kinds {
+            check!(super::kind_enum_value(name) == Some(value), "kind {name}");
+        }
+        check!(super::kind_enum_value("Server") == None, "the match is case-sensitive");
+        check!(super::kind_enum_value("") == None);
+        check!(super::kind_enum_value("gateway") == None, "an unknown kind is not a number");
+
+        for (name, value) in [("unset", 0), ("ok", 1), ("error", 2)] {
+            check!(super::status_enum_value(name) == Some(value), "status {name}");
+        }
+        check!(super::status_enum_value("OK") == None, "the match is case-sensitive");
+        check!(super::status_enum_value("failed") == None);
+    }
+
+    /// Trace and span ids are rendered as lower-case hex, two characters per
+    /// byte, with leading zeroes kept -- a byte dropping its high nibble
+    /// would produce an id that no longer round-trips.
+    #[test]
+    fn bytes_render_as_two_hex_characters_each() {
+        let hex = super::bytes_to_hex;
+
+        check!(hex(&[]) == "");
+        check!(hex(&[0x00]) == "00", "a zero byte is two characters, not none");
+        check!(hex(&[0x0f]) == "0f", "the leading zero is kept");
+        check!(hex(&[0xf0]) == "f0");
+        check!(hex(&[0xff]) == "ff");
+        check!(hex(&[0xab, 0xcd]) == "abcd", "bytes keep their order");
+        check!(hex(&[0x01, 0x23, 0x45, 0x67]) == "01234567");
+        check!(hex(&[0x89, 0xab, 0xcd, 0xef]) == "89abcdef", "digits above nine are lower case");
+        check!(hex(&[0xde; 16]).len() == 32, "a trace id is 32 characters");
+    }
+
+
     use arc_swap::ArcSwap;
     use arrow::{
         array::{
