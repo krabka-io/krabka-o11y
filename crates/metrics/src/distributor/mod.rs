@@ -195,6 +195,22 @@ impl WalSink for KafkaSink {
 }
 
 #[must_use]
+/// Builds a keyed producer record for a compacted topic.
+///
+/// Separated from the send so the record's shape can be checked without a
+/// broker. The partition is deliberately absent: the producer keys on `key`,
+/// which is what keeps a compacted topic's records for one entity together.
+fn keyed_producer_record(topic: String, key: Bytes, value: Vec<u8>) -> ProducerRecord {
+    ProducerRecord {
+        topic,
+        partition: None,
+        key: Some(key),
+        value: Some(Bytes::from(value)),
+        ..Default::default()
+    }
+}
+
+#[must_use]
 pub fn ha_election_compaction_key(record: &HaElectionRecord) -> Bytes {
     Bytes::from(format!("{}\0{}", record.tenant, record.cluster))
 }
@@ -230,13 +246,7 @@ impl HaElectionSink for KafkaHaElectionSink {
             .map_err(|error| ProduceError::Append(error.to_string()))?;
         let ack = self
             .producer
-            .send(ProducerRecord {
-                topic: self.topic.clone(),
-                partition: None,
-                key: Some(key),
-                value: Some(Bytes::from(value)),
-                ..Default::default()
-            })
+            .send(keyed_producer_record(self.topic.clone(), key, value))
             .await;
         ack.await
             .map_err(|error| ProduceError::Append(error.to_string()))?
@@ -1735,6 +1745,47 @@ mod tests {
         });
         let err = super::validate(&[series], &limits).unwrap_err().to_string();
         assert!(err.contains("samples per series 4 exceeds limit 3"), "got: {err}");
+    }
+
+    /// The HA election compaction key identifies one tenant-and-cluster pair.
+    /// Two pairs sharing a key would let one cluster's election overwrite
+    /// another's, so the separator has to do its job.
+    #[test]
+    fn ha_election_keys_identify_one_tenant_and_cluster() {
+        let key = |tenant: &str, cluster: &str| {
+            super::ha_election_compaction_key(&crate::distributor::ha::HaElectionRecord {
+                tenant: tenant.into(),
+                cluster: cluster.into(),
+                // Neither is part of the identity: a later election for the
+                // same pair replaces the earlier one.
+                replica: "replica-1".into(),
+                lease_timestamp_ms: 1,
+            })
+        };
+
+        check!(key("t", "c") == Bytes::from("t\0c"));
+        check!(key("t", "c") == key("t", "c"), "the same pair keys alike");
+        check!(key("t", "c") != key("t", "d"), "a different cluster differs");
+        check!(key("t", "c") != key("u", "c"), "so does a different tenant");
+        check!(
+            key("t", "c") != key("tc", ""),
+            "the separator stops a shifted split from colliding"
+        );
+    }
+
+    /// The record both compacted sinks build, checked without a broker.
+    #[test]
+    fn a_compacted_record_carries_its_topic_key_and_value() {
+        let record = super::keyed_producer_record(
+            "ha-elections".to_string(),
+            Bytes::from_static(b"the-key"),
+            b"the-value".to_vec(),
+        );
+
+        check!(record.topic == "ha-elections");
+        check!(record.partition == None, "partitioning is left to the producer");
+        check!(record.key.as_deref() == Some(&b"the-key"[..]));
+        check!(record.value.as_deref() == Some(&b"the-value"[..]));
     }
 
     /// The WAL record's shape, checked without a broker. The key and value
