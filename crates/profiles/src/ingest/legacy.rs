@@ -1154,6 +1154,43 @@ mod tests {
 
     use super::*;
 
+    /// `read_tree_varint` decodes a base-128 varint and advances `pos` past
+    /// exactly the bytes it consumed. Each case checks the value *and* the
+    /// resulting offset, because a decoder that returns the right number but
+    /// leaves the cursor in the wrong place corrupts every field after it.
+    #[test]
+    fn tree_varints_decode_and_advance_the_cursor() {
+        let read = |bytes: &[u8]| {
+            let mut pos = 0_usize;
+            super::read_tree_varint(bytes, &mut pos, "field").map(|v| (v, pos))
+        };
+
+        check!(read(&[0x00]).unwrap() == (0, 1), "zero is one byte");
+        check!(read(&[0x7f]).unwrap() == (127, 1), "the largest single byte");
+        check!(read(&[0x80, 0x01]).unwrap() == (128, 2), "the smallest two-byte value");
+        check!(read(&[0xff, 0x01]).unwrap() == (255, 2), "continuation bits are stripped");
+        check!(read(&[0xac, 0x02]).unwrap() == (300, 2), "low group first");
+        check!(
+            read(&[0xff, 0xff, 0xff, 0xff, 0x0f]).unwrap() == (u64::from(u32::MAX), 5),
+            "a full u32 spans five bytes"
+        );
+
+        // A trailing byte after the terminator is left for the next field.
+        let mut pos = 0_usize;
+        check!(super::read_tree_varint(&[0x01, 0x02], &mut pos, "field").unwrap() == 1);
+        check!(pos == 1, "the cursor stops at the terminator");
+
+        // Running out of input names the field being read.
+        let err = read(&[0x80]).unwrap_err().to_string();
+        check!(err.contains("ended before field"), "got: {err}");
+        let err = read(&[]).unwrap_err().to_string();
+        check!(err.contains("ended before field"), "got: {err}");
+
+        // Ten continuation bytes push the shift past what a u64 can hold.
+        let err = read(&[0x80; 12]).unwrap_err().to_string();
+        check!(err.contains("overflows u64"), "got: {err}");
+    }
+
     #[test]
     fn parse_query_extracts_name_labels_format() {
         let q =
