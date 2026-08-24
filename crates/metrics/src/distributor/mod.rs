@@ -1296,34 +1296,35 @@ impl IntoResponse for PushError {
     }
 }
 
+/// The gRPC status a push failure reaches the client as.
+///
+/// The errors that carry an HTTP status share one mapping rather than each
+/// repeating it as a match guard. Three of those guards could never match:
+/// wire errors only ever report 400 or 415, and OTLP errors only 400, so the
+/// arms testing them for 429 and 500 were unreachable. Going through the
+/// status code keeps the intent, applies it to all three uniformly, and stays
+/// correct if any of them gains a new code.
 fn status_from_push_error(error: &PushError) -> Status {
+    let message = error.to_string();
     match error {
-        PushError::Limit(limit)
-            if limit.http_status() == StatusCode::TOO_MANY_REQUESTS.as_u16() =>
-        {
-            Status::resource_exhausted(error.to_string())
-        }
-        PushError::Produce(_) => Status::internal(error.to_string()),
-        PushError::Wire(wire) if wire.status_code() == StatusCode::TOO_MANY_REQUESTS.as_u16() => {
-            Status::resource_exhausted(error.to_string())
-        }
-        PushError::Wire(wire)
-            if wire.status_code() == StatusCode::INTERNAL_SERVER_ERROR.as_u16() =>
-        {
-            Status::internal(error.to_string())
-        }
-        PushError::Otlp(otlp)
-            if otlp.status_code() == StatusCode::INTERNAL_SERVER_ERROR.as_u16() =>
-        {
-            Status::internal(error.to_string())
-        }
+        PushError::Produce(_) => Status::internal(message),
+        PushError::Limit(limit) => status_from_http_status(limit.http_status(), message),
+        PushError::Wire(wire) => status_from_http_status(wire.status_code(), message),
+        PushError::Otlp(otlp) => status_from_http_status(otlp.status_code(), message),
         PushError::MissingTenant
         | PushError::InvalidTenant(_)
-        | PushError::TooOldSample { .. }
-        | PushError::Limit(_)
-        | PushError::Wire(_)
         | PushError::Clock(_)
-        | PushError::Otlp(_) => Status::invalid_argument(error.to_string()),
+        | PushError::TooOldSample { .. } => Status::invalid_argument(message),
+    }
+}
+
+fn status_from_http_status(http_status: u16, message: String) -> Status {
+    if http_status == StatusCode::TOO_MANY_REQUESTS.as_u16() {
+        Status::resource_exhausted(message)
+    } else if http_status == StatusCode::INTERNAL_SERVER_ERROR.as_u16() {
+        Status::internal(message)
+    } else {
+        Status::invalid_argument(message)
     }
 }
 
@@ -1624,6 +1625,93 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+
+    /// The HTTP-to-gRPC mapping the error kinds share. Only two codes get a
+    /// status of their own; everything else is the caller's fault by default,
+    /// which is the safer reading for a code nobody has mapped yet.
+    #[test]
+    fn http_statuses_map_to_the_grpc_code_the_client_should_act_on() {
+        let map = |code| super::status_from_http_status(code, "why".to_string()).code();
+
+        check!(map(429) == tonic::Code::ResourceExhausted, "too many requests");
+        check!(map(500) == tonic::Code::Internal, "our fault");
+
+        for code in [400, 404, 415, 422, 428, 430, 499, 501, 503] {
+            check!(
+                map(code) == tonic::Code::InvalidArgument,
+                "{code} has no status of its own"
+            );
+        }
+
+        check!(
+            super::status_from_http_status(500, "why".to_string()).message() == "why",
+            "the reason is carried through"
+        );
+    }
+
+    /// Every push failure has to reach the client as the status it should act
+    /// on: back off, retry later, or stop sending this request. The table
+    /// covers each error kind, including the ones that reach the catch-all,
+    /// since that is where a guard that stopped matching would land.
+    #[test]
+    fn push_errors_reach_the_client_as_the_status_to_act_on() {
+        use crate::limits::LimitError;
+        use crate::wire::WireError;
+
+        let cases: Vec<(super::PushError, tonic::Code, &str)> = vec![
+            (
+                LimitError::IngestionRateExceeded { rate: 1.0, observed: 2.0 }.into(),
+                tonic::Code::ResourceExhausted,
+                "a rate limit is a back-off",
+            ),
+            (
+                LimitError::MaxSeriesPerUser { limit: 1, observed: 2 }.into(),
+                tonic::Code::InvalidArgument,
+                "a series limit is the request's fault",
+            ),
+            (
+                LimitError::QueryRangeTooLong { limit_secs: 1, observed_secs: 2 }.into(),
+                tonic::Code::InvalidArgument,
+                "an unprocessable range is too",
+            ),
+            (
+                super::ProduceError::Append("wal down".into()).into(),
+                tonic::Code::Internal,
+                "a failed append is ours, not the client's",
+            ),
+            (
+                WireError::UnsupportedContentType("text/plain".into()).into(),
+                tonic::Code::InvalidArgument,
+                "an undecodable body is the request's fault",
+            ),
+            (
+                WireError::Invalid("bad".into()).into(),
+                tonic::Code::InvalidArgument,
+                "so is an invalid one",
+            ),
+            (
+                super::PushError::MissingTenant,
+                tonic::Code::InvalidArgument,
+                "a missing tenant header",
+            ),
+            (
+                super::PushError::InvalidTenant("a/b".into()),
+                tonic::Code::InvalidArgument,
+                "an unusable tenant header",
+            ),
+            (
+                super::PushError::TooOldSample { timestamp_ms: 1, oldest_allowed_ms: 2 },
+                tonic::Code::InvalidArgument,
+                "a sample the store will not take",
+            ),
+        ];
+
+        for (error, expected, why) in cases {
+            let status = super::status_from_push_error(&error);
+            check!(status.code() == expected, "{why}: {error}");
+            check!(!status.message().is_empty(), "{why}: the reason is carried through");
+        }
+    }
 
     /// The exemplar codepoint budget is summed across every label name and
     /// value, and compared with a strict `>` so a set landing exactly on the
