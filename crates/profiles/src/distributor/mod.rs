@@ -1032,6 +1032,69 @@ mod tests {
         check!(err.contains("height does not fit u32"), "got: {err}");
     }
 
+    /// pprof ids are indexes into a reference table. The optional form treats
+    /// zero as "absent" and returns zero without a lookup; the required form
+    /// has no such case and must reject zero like any other unknown id.
+    #[test]
+    fn pprof_ids_resolve_through_the_reference_table() {
+        let refs = HashMap::from([(7_u64, 1_u32), (9, 2)]);
+
+        check!(super::normalize_optional_pprof_id(0, &refs, "f").unwrap() == 0, "zero is absent");
+        check!(super::normalize_optional_pprof_id(7, &refs, "f").unwrap() == 1);
+        check!(super::normalize_optional_pprof_id(9, &refs, "f").unwrap() == 2);
+        let err = super::normalize_optional_pprof_id(8, &refs, "location")
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("location references missing id 8"), "got: {err}");
+
+        // The required form differs only in how it treats zero.
+        check!(super::normalize_required_pprof_id(7, &refs, "f").unwrap() == 1);
+        let err = super::normalize_required_pprof_id(0, &refs, "function")
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("function references missing id 0"), "got: {err}");
+    }
+
+    /// Every limit breach maps to the status the client should act on:
+    /// back off, or stop sending this shape of request.
+    #[test]
+    fn every_limit_error_maps_to_the_code_the_client_should_act_on() {
+        let cases = [
+            (
+                crate::limits::LimitError::IngestionRateExceeded { rate: 1.0, observed: 2.0 },
+                Code::ResourceExhausted,
+            ),
+            (
+                crate::limits::LimitError::MaxSeries { limit: 1, observed: 2 },
+                Code::ResourceExhausted,
+            ),
+            (
+                crate::limits::LimitError::SessionCardinalityExceeded { limit: 1 },
+                Code::ResourceExhausted,
+            ),
+            (
+                crate::limits::LimitError::LabelNameTooLong { limit: 1, observed: 2 },
+                Code::InvalidArgument,
+            ),
+            (
+                crate::limits::LimitError::LabelValueTooLong { limit: 1, observed: 2 },
+                Code::InvalidArgument,
+            ),
+            (
+                crate::limits::LimitError::TooManyLabels { limit: 1, observed: 2 },
+                Code::InvalidArgument,
+            ),
+            (
+                crate::limits::LimitError::QueryLengthExceeded { limit_secs: 1, observed_secs: 2 },
+                Code::InvalidArgument,
+            ),
+        ];
+
+        for (err, expected) in cases {
+            check!(super::limit_connect_code(&err) == expected, "for {err}");
+        }
+    }
+
     /// `ingest_span_tenant` reads the `X-Scope-OrgID` header. It returns the
     /// value verbatim when the header is present and non-empty. It returns
     /// `"unknown"` when the header is missing or empty.
