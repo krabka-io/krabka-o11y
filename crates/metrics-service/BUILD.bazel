@@ -28,4 +28,16 @@ crate_tests(
         ]
     },
     lib = "metrics-service",
+    # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
+    # crate size times mutants-per-shard. At the default `long` (900s) every
+    # shard here was killed mid-sweep -- and a killed shard reports nothing
+    # rather than failing, so eight crates read as "0 mutants, 0 missed" when
+    # they had simply never finished. pprof alone needs 2628s.
+    # One cargo job per shard. Bazel already runs the shards concurrently, so
+    # the default of 4 multiplied out to shards x 4 concurrent cargo builds --
+    # 48 on a 32-core machine, which drove load average past 200 and made every
+    # shard miss its deadline for want of CPU rather than for want of time.
+    mutants_jobs = 1,
+    mutants_shards = 8,
+    mutants_timeout = "eternal",
 )

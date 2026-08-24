@@ -2716,9 +2716,63 @@ pub(crate) fn template_parse_error(message: &str) -> ParseError {
 
 #[cfg(test)]
 mod tests {
+
+    /// `evaluate_template_function` is the whole Go-template function surface
+    /// LogQL exposes through `line_format`, and it carried by far the largest
+    /// concentration of surviving mutants in this crate: thirty-nine dispatch
+    /// arms, each an arithmetic or comparison the tests never pinned to a
+    /// value. An arm that returns the wrong operand, or a comparison read the
+    /// other way, still renders a plausible line.
+    ///
+    /// Inputs are chosen so no two operations agree: 7 and 3 separate add from
+    /// sub, mul from div, min from max, and mod from all of them.
+    #[test]
+    fn template_functions_render_their_documented_results() {
+        let s = |v: &str| TemplateRuntimeValue::String(v.to_string());
+
+        let cases: &[(&str, Vec<TemplateRuntimeValue>, &str)] = &[
+            ("add", vec![s("7"), s("3")], "10"),
+            ("sub", vec![s("7"), s("3")], "4"),
+            ("mul", vec![s("7"), s("3")], "21"),
+            ("div", vec![s("7"), s("3")], "2"),
+            ("mod", vec![s("7"), s("3")], "1"),
+            ("max", vec![s("7"), s("3")], "7"),
+            ("min", vec![s("7"), s("3")], "3"),
+            ("addf", vec![s("7.5"), s("3.25")], "10.75"),
+            ("mulf", vec![s("2.5"), s("4")], "10"),
+            ("divf", vec![s("7.5"), s("2.5")], "3"),
+            ("maxf", vec![s("2.5"), s("7.5")], "7.5"),
+            ("minf", vec![s("2.5"), s("7.5")], "2.5"),
+            ("ceil", vec![s("2.1")], "3"),
+            ("floor", vec![s("2.9")], "2"),
+            // `int` parses an integer, it does not truncate a float.
+            ("int", vec![s("42")], "42"),
+            ("len", vec![s("abcd")], "4"),
+            // Comparisons: both polarities, so a flipped operator shows.
+            ("eq", vec![s("a"), s("a")], "true"),
+            ("eq", vec![s("a"), s("b")], "false"),
+            ("ne", vec![s("a"), s("b")], "true"),
+            ("ne", vec![s("a"), s("a")], "false"),
+            ("lt", vec![s("3"), s("7")], "true"),
+            ("lt", vec![s("7"), s("3")], "false"),
+            ("gt", vec![s("7"), s("3")], "true"),
+            ("gt", vec![s("3"), s("7")], "false"),
+            // Boundaries, where `<` and `<=` part company.
+            ("le", vec![s("3"), s("3")], "true"),
+            ("lt", vec![s("3"), s("3")], "false"),
+            ("ge", vec![s("3"), s("3")], "true"),
+            ("gt", vec![s("3"), s("3")], "false"),
+        ];
+
+        for (name, args, want) in cases {
+            let got = evaluate_template_function(name, args).as_rendered_string();
+            assert2::check!(got == *want, "{name}({args:?})");
+        }
+    }
     use std::{cmp::Ordering, collections::BTreeMap};
 
     use super::{
+        evaluate_template_function,
         LineFormat, TemplatePart, TemplateRuntimeValue, ensure_template_parenthesized_token,
         ensure_template_quoted_token, evaluate_template_index, evaluate_template_slice,
         format_go_time_layout, format_template_bytes, format_template_date, format_template_float,

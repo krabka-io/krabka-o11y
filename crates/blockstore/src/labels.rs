@@ -99,6 +99,26 @@ mod tests {
 
     use super::*;
 
+    /// `len` and `is_empty` are read all over the query paths to decide whether
+    /// a series carries any labels at all, and nothing asserted either. A `len`
+    /// answering a constant, or an `is_empty` stuck at one answer, describes
+    /// every series as the same shape.
+    #[test]
+    fn len_and_is_empty_track_the_entries() {
+        let mut labels = Labels::new();
+        assert2::check!((labels.len(), labels.is_empty()) == (0, true));
+
+        labels.insert("app", "api");
+        assert2::check!((labels.len(), labels.is_empty()) == (1, false));
+
+        labels.insert("region", "us-east");
+        assert2::check!((labels.len(), labels.is_empty()) == (2, false));
+
+        // Re-inserting a name replaces it rather than growing the set.
+        labels.insert("app", "web");
+        assert2::check!((labels.len(), labels.is_empty()) == (2, false));
+    }
+
     #[test]
     fn fingerprint_is_order_independent() {
         let mut a = Labels::new();

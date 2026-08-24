@@ -159,6 +159,15 @@ async fn prune_old_index_snapshots(
 
 #[cfg(test)]
 mod tests {
+
+    /// `Display` is how the retention reaches config output and log lines.
+    /// Writing nothing still succeeds, and reports a retention of "".
+    #[test]
+    fn retain_displays_its_value() {
+        let retain = IndexSnapshotRetain::new(7).expect("7 is a positive retention");
+        assert2::check!(retain.to_string() == "7");
+        assert2::check!(IndexSnapshotRetain::default().to_string() != "");
+    }
     use crabka_units::{convert::ByteSizeExt as _, mebibytes};
 
     use super::{DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain};

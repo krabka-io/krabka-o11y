@@ -23,3 +23,22 @@ exclude_globs = [
     "crates/profiles/src/bin/**",
     "crates/traces/src/bin/**",
 ]
+
+exclude_re = [
+    # NOTE ON WRITING THESE: the name a pattern matches carries the return type
+    # between the function and `with` --
+    #
+    #   replace new_str_list -> ListBuilder<StringBuilder> with ...
+    #
+    # while the failure output prints a shortened form without it, so a pattern
+    # copied from that output never matches. `cargo-mutants --list` prints the
+    # real names. Binary operators and match guards put the function at the end
+    # instead: `replace < with <= in Type::method`.
+
+    # `new_str_list` and `new_str_list_list` build an empty arrow builder.
+    # `StringBuilder::default()` is `StringBuilder::new()`, `ListBuilder::from`
+    # is `ListBuilder::new`, and the starting capacity is not observable in the
+    # encoded batch -- so these replacements construct the same builder.
+    "replace new_str_list -> .* with ListBuilder::(new|from)\\(Default::default\\(\\)\\)$",
+    "replace new_str_list_list -> .* with ListBuilder::(new|from)\\(ListBuilder::(new|from)\\(Default::default\\(\\)\\)\\)$",
+]

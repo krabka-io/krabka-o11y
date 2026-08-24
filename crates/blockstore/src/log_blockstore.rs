@@ -1573,6 +1573,14 @@ pub enum BlockStoreError {
 
 #[cfg(test)]
 mod tests {
+
+    /// The manifest path is where every reader looks for the log index. An
+    /// empty `PathBuf` in its place points every caller at the store root.
+    #[test]
+    fn log_index_manifest_path_joins_the_relative_path() {
+        let path = super::log_index_manifest_path("/var/lib/crabka");
+        assert2::check!(path == std::path::Path::new("/var/lib/crabka/index/logs/manifest.json"));
+    }
     use assert2::check;
     use datafusion::prelude::{col, lit};
     use object_store::{local::LocalFileSystem, path::Path as ObjectPath};

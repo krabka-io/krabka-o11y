@@ -548,6 +548,51 @@ mod tests {
 
     use super::*;
 
+    /// `MappingSymbolization` packs four independent booleans into one byte and
+    /// nothing round-tripped them. Every survivor here was a bit-level slip
+    /// that an all-false or all-true case cannot see: `|=` written as `&=`
+    /// clears the bit it meant to set, `& FLAG != 0` written as `| FLAG != 0`
+    /// answers true for every mapping, `^` misreads only the mapping where that
+    /// one flag is the only one set, and `1 << 2` shifted the other way makes a
+    /// flag that can never be stored.
+    ///
+    /// Exhausting all sixteen combinations is what separates them: each bit is
+    /// asserted set and clear, alone and alongside every other.
+    #[test]
+    fn mapping_symbolization_round_trips_every_flag_combination() {
+        for bits in 0_u8..16 {
+            let parts = (
+                bits & 1 != 0,
+                bits & 2 != 0,
+                bits & 4 != 0,
+                bits & 8 != 0,
+            );
+            let flags = MappingSymbolization::from_parts(parts);
+            check!(
+                (
+                    flags.has_functions(),
+                    flags.has_filenames(),
+                    flags.has_line_numbers(),
+                    flags.has_inline_frames(),
+                ) == parts,
+                "combination {bits:#06b}"
+            );
+        }
+
+        // Distinct combinations must not collapse onto the same byte, which is
+        // what a flag stored at the wrong bit would do.
+        let mut seen = std::collections::HashSet::new();
+        for bits in 0_u8..16 {
+            let parts = (
+                bits & 1 != 0,
+                bits & 2 != 0,
+                bits & 4 != 0,
+                bits & 8 != 0,
+            );
+            check!(seen.insert(MappingSymbolization::from_parts(parts)));
+        }
+    }
+
     fn db_with_abc() -> (SymbolDb, [u32; 3]) {
         let mut db = SymbolDb::new();
         let mk = |db: &mut SymbolDb, name: &str| {

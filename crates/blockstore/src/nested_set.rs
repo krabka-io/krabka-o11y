@@ -106,6 +106,30 @@ mod tests {
         [n, 0, 0, 0, 0, 0, 0, 0]
     }
 
+    /// A span naming itself as its own parent is a root, not its own child.
+    /// The `parent_idx != i` guard is what decides that; forced true, the span
+    /// is pushed into its own children list and the traversal descends into a
+    /// cycle instead of laying out a tree.
+    #[test]
+    fn a_self_parenting_span_is_treated_as_a_root() {
+        let spans = vec![
+            SpanNode {
+                span_id: sid(1),
+                parent_span_id: Some(sid(1)),
+            },
+            SpanNode {
+                span_id: sid(2),
+                parent_span_id: Some(sid(1)),
+            },
+        ];
+
+        let sets = assign_nested_set(&spans);
+        assert2::check!(sets.len() == 2);
+        // The self-parenting span encloses its real child.
+        assert2::check!(sets[0].nested_set_left < sets[1].nested_set_left);
+        assert2::check!(sets[1].nested_set_right < sets[0].nested_set_right);
+    }
+
     fn node(id: u8, parent: Option<u8>) -> SpanNode {
         SpanNode {
             span_id: sid(id),

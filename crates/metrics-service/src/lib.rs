@@ -1863,6 +1863,75 @@ mod tests {
         }
     }
 
+    /// Shared by handle so the fanout can own one and the test can still read
+    /// it: the fanout takes its sinks by value, and the trait is implemented for
+    /// the recorder itself rather than for `Arc<_>`.
+    #[derive(Clone, Default)]
+    struct RecordingRulerStateSink {
+        groups: std::sync::Arc<std::sync::Mutex<Vec<crabka_promql::RulerGroupStateRecord>>>,
+        alerts: std::sync::Arc<std::sync::Mutex<Vec<crabka_promql::RulerAlertStateRecord>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crabka_promql::RulerStateSink for RecordingRulerStateSink {
+        async fn persist_ruler_group_state(
+            &self,
+            record: crabka_promql::RulerGroupStateRecord,
+        ) -> Result<(), crabka_promql::RulerWalError> {
+            self.groups.lock().expect("poisoned").push(record);
+            Ok(())
+        }
+
+        async fn persist_ruler_alert_state(
+            &self,
+            record: crabka_promql::RulerAlertStateRecord,
+        ) -> Result<(), crabka_promql::RulerWalError> {
+            self.alerts.lock().expect("poisoned").push(record);
+            Ok(())
+        }
+    }
+
+    /// The fanout sink exists so ruler state reaches two destinations at once,
+    /// and nothing asserted that it reaches either. Both methods replaced by
+    /// `Ok(())` report success while writing to neither -- which is exactly
+    /// what losing ruler state looks like from the caller's side.
+    #[tokio::test]
+    async fn ruler_state_fanout_reaches_both_sinks() {
+        use crabka_promql::RulerStateSink as _;
+
+        let first = RecordingRulerStateSink::default();
+        let second = RecordingRulerStateSink::default();
+        let fanout = super::RulerStateFanoutSink::new(first.clone(), second.clone());
+
+        let group = crabka_promql::RulerGroupStateRecord {
+            tenant: "acme".into(),
+            namespace: "ns".into(),
+            group: "g".into(),
+            last_eval_ms: 1_234,
+        };
+        let alert = crabka_promql::RulerAlertStateRecord {
+            tenant: "acme".into(),
+            rule_id: "r1".into(),
+            labels: std::collections::BTreeMap::new(),
+            active_since_ms: Some(9),
+            keep_firing_until_ms: None,
+        };
+
+        fanout
+            .persist_ruler_group_state(group.clone())
+            .await
+            .unwrap();
+        fanout
+            .persist_ruler_alert_state(alert.clone())
+            .await
+            .unwrap();
+
+        for sink in [&first, &second] {
+            check!(*sink.groups.lock().expect("poisoned") == vec![group.clone()]);
+            check!(*sink.alerts.lock().expect("poisoned") == vec![alert.clone()]);
+        }
+    }
+
     struct RecordingAlertmanagerSink;
 
     #[async_trait::async_trait]
