@@ -1284,6 +1284,57 @@ mod tests {
         resource::v1::Resource,
     };
 
+    /// Every OTLP unit the table maps, checked one by one.
+    ///
+    /// A deleted arm falls through to `None`, and the caller then emits the
+    /// metric with no unit suffix at all -- `http_request_duration` instead of
+    /// `http_request_duration_milliseconds`. Prometheus treats those as
+    /// different series, so the sample lands somewhere nothing queries. The
+    /// whole table is listed because a per-arm gap is invisible from any one
+    /// unit: seven of these were uncovered.
+    #[test]
+    fn every_otlp_unit_maps_to_its_prometheus_suffix() {
+        for (unit, want) in [
+            ("d", "days"),
+            ("h", "hours"),
+            ("min", "minutes"),
+            ("s", "seconds"),
+            ("ms", "milliseconds"),
+            ("us", "microseconds"),
+            ("ns", "nanoseconds"),
+            ("m", "meters"),
+            ("By", "bytes"),
+            ("KiBy", "kibibytes"),
+            ("MiBy", "mebibytes"),
+            ("GiBy", "gibibytes"),
+            ("TiBy", "tebibytes"),
+            ("kBy", "kilobytes"),
+            ("MBy", "megabytes"),
+            ("GBy", "gigabytes"),
+            ("TBy", "terabytes"),
+            ("bit", "bits"),
+            ("V", "volts"),
+            ("A", "amperes"),
+            ("J", "joules"),
+            ("W", "watts"),
+            ("g", "grams"),
+            ("Cel", "celsius"),
+            ("Hz", "hertz"),
+            ("%", "percent"),
+        ] {
+            assert2::check!(
+                super::prometheus_base_unit_suffix(unit) == Some(want),
+                "unit {unit:?}"
+            );
+        }
+
+        // Not a unit the table knows, and the empty string: both carry no
+        // suffix rather than a wrong one.
+        assert2::check!(super::prometheus_base_unit_suffix("furlong") == None);
+        assert2::check!(super::prometheus_base_unit_suffix("") == None);
+    }
+
+
     use super::{DeltaAccumulator, TranslationStrategy, decode_otlp, decode_otlp_stateful};
     use crate::{
         BucketSpan,
