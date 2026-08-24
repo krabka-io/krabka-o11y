@@ -3764,6 +3764,95 @@ overrides:
         assert!(tracker.elected_replica("tenant-a", "c1") == Some("r1".to_string()));
     }
 
+    /// The election consumer loop polls until told to stop, accumulating
+    /// what each poll saw. A caller watching the summary to decide when it
+    /// has caught up depends on every field advancing on every poll.
+    #[tokio::test]
+    async fn the_ha_election_loop_accumulates_every_polls_result() {
+        let tracker = HaTracker::default();
+        let record = |cluster: &str| {
+            HaElectionRecord {
+                tenant: "tenant-a".to_string(),
+                cluster: cluster.to_string(),
+                replica: "r1".to_string(),
+                lease_timestamp_ms: 42_000,
+            }
+            .encode()
+            .unwrap()
+        };
+
+        // Two records, then one, then none, so a loop that reused a single
+        // poll's result would not add up.
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![
+                vec![
+                    consumer_record(HA_TRACKER_TOPIC, 0, 1, Some(record("c1"))),
+                    consumer_record(HA_TRACKER_TOPIC, 1, 5, Some(record("c2"))),
+                ],
+                vec![consumer_record(HA_TRACKER_TOPIC, 2, 9, Some(record("c3")))],
+                vec![],
+            ],
+            commit_calls: 0,
+        };
+
+        let summary = run_ha_election_consumer_loop(
+            &mut consumer,
+            &tracker,
+            HA_TRACKER_TOPIC,
+            millis(1),
+            |summary| summary.polls >= 3,
+        )
+        .await
+        .unwrap();
+
+        assert!(summary.polls == 3, "one count per poll, including the empty one");
+        assert!(summary.polled_records == 3, "2 + 1 + 0");
+        assert!(summary.replayed_records == 3);
+        assert!(
+            summary.committed_offsets
+                == vec![
+                    HaElectionPartitionOffset {
+                        partition: PartitionIndex(0),
+                        offset: Offset(2),
+                    },
+                    HaElectionPartitionOffset {
+                        partition: PartitionIndex(1),
+                        offset: Offset(6),
+                    },
+                    HaElectionPartitionOffset {
+                        partition: PartitionIndex(2),
+                        offset: Offset(10),
+                    },
+                ],
+            "offsets from every poll, in order"
+        );
+        assert!(consumer.commit_calls == 2, "the empty poll committed nothing");
+    }
+
+    /// The stop predicate is consulted after each poll, so a loop told to
+    /// stop immediately still does exactly one poll's worth of work.
+    #[tokio::test]
+    async fn the_ha_election_loop_stops_after_the_poll_that_satisfies_it() {
+        let tracker = HaTracker::default();
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![vec![], vec![]],
+            commit_calls: 0,
+        };
+
+        let summary = run_ha_election_consumer_loop(
+            &mut consumer,
+            &tracker,
+            HA_TRACKER_TOPIC,
+            millis(1),
+            |_| true,
+        )
+        .await
+        .unwrap();
+
+        assert!(summary.polls == 1, "stopping at once still polls once");
+        assert!(consumer.batches.len() == 1, "and consumes exactly one batch");
+    }
+
     #[tokio::test]
     async fn poll_ha_election_consumer_once_replays_records_and_commits_on_progress() {
         let tracker = HaTracker::default();
