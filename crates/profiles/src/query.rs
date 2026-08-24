@@ -2617,25 +2617,7 @@ fn merge_profile_id_selector(
         )
     };
 
-    let trimmed = label_selector.trim();
-    let merged = if trimmed.is_empty() || trimmed == "{}" {
-        format!("{{{matcher}}}")
-    } else if let Some(inner) = trimmed.strip_prefix('{') {
-        let inner = inner
-            .strip_suffix('}')
-            .ok_or_else(|| ProfileError::Plan("unclosed label selector".to_string()))?
-            .trim();
-        if inner.is_empty() {
-            format!("{{{matcher}}}")
-        } else {
-            format!("{{{inner},{matcher}}}")
-        }
-    } else {
-        format!("{{{trimmed},{matcher}}}")
-    };
-
-    parse_label_selector(&merged)?;
-    Ok(merged)
+    merge_label_matcher(label_selector, &matcher)
 }
 
 fn merge_profile_type_selector(
@@ -2963,6 +2945,41 @@ mod tests {
         check!(escape("a\nb") == r"a\nb", "a newline becomes an escape pair");
         check!(escape("a\tb") == "a\tb", "a tab is left literal");
         check!(escape("plain") == "plain", "ordinary text is untouched");
+    }
+
+    /// `merge_profile_id_selector` folds a profile-id filter into a label
+    /// selector. The id count picks the matcher form (exact vs alternation)
+    /// and the selector's existing shape picks how the two are joined, so the
+    /// cases below cross both.
+    #[test]
+    fn profile_ids_merge_into_every_selector_shape() {
+        let merge = |sel: &str, ids: &[&str]| {
+            let ids: Vec<String> = ids.iter().map(|s| (*s).to_string()).collect();
+            super::merge_profile_id_selector(sel, &ids)
+        };
+
+        // No ids: the selector is handed back untouched, brackets and all.
+        check!(merge(r#"{service="api"}"#, &[]).unwrap() == r#"{service="api"}"#);
+        check!(merge("", &[]).unwrap() == "", "an empty selector stays empty");
+
+        // One id uses an exact match; more than one uses an anchored
+        // alternation. The boundary between the two forms is at exactly 1.
+        check!(merge("", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#);
+        check!(
+            merge("", &["abc", "def"]).unwrap() == r#"{__profile_id__=~"^(?:abc|def)$"}"#
+        );
+
+        // The four selector shapes an empty-vs-braced-vs-populated input takes.
+        check!(merge("{}", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#);
+        check!(merge("  ", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#, "blank trims to empty");
+        check!(
+            merge(r#"{service="api"}"#, &["abc"]).unwrap()
+                == r#"{service="api",__profile_id__="abc"}"#
+        );
+
+        // A selector that opens a brace but never closes it is rejected rather
+        // than silently repaired.
+        check!(merge(r#"{service="api""#, &["abc"]).is_err());
     }
 
 
