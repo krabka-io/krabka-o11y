@@ -2636,6 +2636,38 @@ fn u64_from_i64(v: i64) -> Result<u64> {
 mod tests {
     use std::sync::Arc;
 
+    /// `usize_from_integer_f64` refuses anything that is not a non-negative
+    /// whole number, and each clause of the guard rejects a different value.
+    /// Joined with `&&` instead of `||`, a value has to be all three kinds of
+    /// wrong at once to be refused -- so a negative, a fractional, or an
+    /// infinite limit sails through and is parsed as a count.
+    #[test]
+    fn a_limit_must_be_a_non_negative_whole_number() {
+        use super::usize_from_integer_f64;
+
+        check!(usize_from_integer_f64(0.0).unwrap() == 0);
+        check!(usize_from_integer_f64(42.0).unwrap() == 42);
+
+        // Each is wrong in exactly one way, so each isolates one clause.
+        //
+        // The guard's *message* is what has to be asserted, not merely that an
+        // error came back: `-1.0` and `1.5` both fail the `parse::<usize>()`
+        // below the guard as well, so `is_err()` holds whether or not the guard
+        // fired. Only the diagnostic separates a rejected limit from a value
+        // that happened not to parse.
+        let refused = |value: f64| match usize_from_integer_f64(value) {
+            Err(TraceqlError::Exec(message)) => {
+                message.contains("expected non-negative integer float")
+            }
+            _ => false,
+        };
+        check!(refused(-1.0), "negative");
+        check!(refused(1.5), "fractional");
+        check!(refused(f64::INFINITY), "infinite");
+        check!(refused(f64::NAN), "not a number");
+    }
+
+
     use arrow::{
         array::{
             ArrayRef, FixedSizeBinaryBuilder, Int32Array, Int64Array, StringArray,
