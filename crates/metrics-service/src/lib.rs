@@ -2649,6 +2649,102 @@ rules:
         assert2::assert!(body["data"]["groups"][0]["lastEvaluation"] == "1970-01-01T00:01:00Z");
     }
 
+    /// The consumer loop polls until told to stop, accumulating what each
+    /// poll saw. Every field of the running total has to advance on every
+    /// poll, and the committed offsets have to accumulate rather than be
+    /// replaced -- a caller reading the summary to decide when it has caught
+    /// up would otherwise stop early or never.
+    #[tokio::test]
+    async fn the_consumer_loop_accumulates_every_polls_result() {
+        let state =
+            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+        let record = |group: &str| {
+            super::RulerStateWalRecord::Group(crabka_promql::RulerGroupStateRecord {
+                tenant: "tenant-a".to_string(),
+                namespace: "team-a".to_string(),
+                group: group.to_string(),
+                last_eval_ms: 60_000,
+            })
+            .encode()
+            .unwrap()
+        };
+
+        // Three polls: two records, then one, then none. The batches differ
+        // so a loop that reused one poll's result would not add up.
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![
+                vec![
+                    consumer_record(super::RULER_STATE_TOPIC, 0, 1, Some(record("a"))),
+                    consumer_record(super::RULER_STATE_TOPIC, 1, 5, Some(record("b"))),
+                ],
+                vec![consumer_record(super::RULER_STATE_TOPIC, 2, 9, Some(record("c")))],
+                vec![],
+            ],
+            commit_calls: 0,
+        };
+
+        let summary = super::run_ruler_state_consumer_loop(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+            |summary| summary.polls >= 3,
+        )
+        .await
+        .unwrap();
+
+        assert2::assert!(summary.polls == 3, "one count per poll, including the empty one");
+        assert2::assert!(summary.polled_records == 3, "2 + 1 + 0");
+        assert2::assert!(summary.replayed_records == 3);
+        assert2::assert!(
+            summary.committed_offsets
+                == vec![
+                    super::WalHeadPartitionOffset {
+                        partition: super::PartitionIndex(0),
+                        offset: super::Offset(2),
+                    },
+                    super::WalHeadPartitionOffset {
+                        partition: super::PartitionIndex(1),
+                        offset: super::Offset(6),
+                    },
+                    super::WalHeadPartitionOffset {
+                        partition: super::PartitionIndex(2),
+                        offset: super::Offset(10),
+                    },
+                ],
+            "offsets from every poll, in order, got {:?}",
+            summary.committed_offsets
+        );
+
+        // The empty third poll replayed nothing, so it committed nothing.
+        assert2::assert!(consumer.commit_calls == 2);
+    }
+
+    /// The stop predicate is consulted after each poll, so a loop told to
+    /// stop immediately still does exactly one poll's worth of work.
+    #[tokio::test]
+    async fn the_consumer_loop_stops_after_the_poll_that_satisfies_it() {
+        let state =
+            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![vec![], vec![]],
+            commit_calls: 0,
+        };
+
+        let summary = super::run_ruler_state_consumer_loop(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+            |_| true,
+        )
+        .await
+        .unwrap();
+
+        assert2::assert!(summary.polls == 1, "stopping at once still polls once");
+        assert2::assert!(consumer.batches.len() == 1, "and consumes exactly one batch");
+    }
+
     /// A poll that replays nothing must not commit. Committing on an empty
     /// batch would advance the group past records it never applied, and the
     /// state they carry would be lost on the next restart.
