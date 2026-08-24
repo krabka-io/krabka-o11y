@@ -144,6 +144,34 @@ impl KafkaSink {
     }
 }
 
+/// Builds the WAL producer record for a serialized entry.
+///
+/// Separated from the send so the record's shape can be checked without a
+/// broker: the topic it lands on, that partitioning is left to the producer,
+/// and that the key and value are not transposed.
+fn wal_producer_record(
+    key: Bytes,
+    value: Vec<u8>,
+    trace_headers: Vec<(String, String)>,
+) -> ProducerRecord {
+    ProducerRecord {
+        topic: WAL_TOPIC.to_string(),
+        // No explicit partition: the producer's partitioner keys on `key`, so
+        // every record for a series lands on one partition and stays ordered.
+        partition: None,
+        key: Some(key),
+        value: Some(Bytes::from(value)),
+        headers: trace_headers
+            .into_iter()
+            .map(|(key, value)| ProducerHeader {
+                key,
+                value: Some(Bytes::from(value.into_bytes())),
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
 #[async_trait::async_trait]
 impl WalSink for KafkaSink {
     async fn append(&self, key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
@@ -155,23 +183,9 @@ impl WalSink for KafkaSink {
         // span onto this producer's trace. Additive: it only appends the
         // traceparent/tracestate headers, and is an empty `Vec` (no-op) when no
         // span is active or OTLP is disabled.
-        let headers = current_trace_headers()
-            .into_iter()
-            .map(|(key, value)| ProducerHeader {
-                key,
-                value: Some(Bytes::from(value.into_bytes())),
-            })
-            .collect::<Vec<_>>();
         let ack = self
             .producer
-            .send(ProducerRecord {
-                topic: WAL_TOPIC.to_string(),
-                partition: None,
-                key: Some(key),
-                value: Some(Bytes::from(value)),
-                headers,
-                ..Default::default()
-            })
+            .send(wal_producer_record(key, value, current_trace_headers()))
             .await;
         ack.await
             .map_err(|error| ProduceError::Append(error.to_string()))?
@@ -1721,6 +1735,50 @@ mod tests {
         });
         let err = super::validate(&[series], &limits).unwrap_err().to_string();
         assert!(err.contains("samples per series 4 exceeds limit 3"), "got: {err}");
+    }
+
+    /// The WAL record's shape, checked without a broker. The key and value
+    /// are distinguishable byte strings so a transposition is visible, and
+    /// the absent partition matters: supplying one would override the
+    /// producer's key-based partitioner and break per-series ordering.
+    #[test]
+    fn a_wal_record_carries_its_key_value_and_trace_headers() {
+        let record = super::wal_producer_record(
+            Bytes::from_static(b"the-key"),
+            b"the-value".to_vec(),
+            vec![
+                ("traceparent".to_string(), "00-abc-def-01".to_string()),
+                ("tracestate".to_string(), "vendor=1".to_string()),
+            ],
+        );
+
+        check!(record.topic == super::WAL_TOPIC);
+        check!(record.partition == None, "partitioning is left to the producer");
+        check!(record.key.as_deref() == Some(&b"the-key"[..]));
+        check!(record.value.as_deref() == Some(&b"the-value"[..]));
+        check!(
+            record
+                .headers
+                .iter()
+                .map(|header| (
+                    header.key.as_str(),
+                    header.value.as_deref().map(|v| String::from_utf8_lossy(v).into_owned())
+                ))
+                .collect::<Vec<_>>()
+                == vec![
+                    ("traceparent", Some("00-abc-def-01".to_string())),
+                    ("tracestate", Some("vendor=1".to_string())),
+                ],
+            "headers keep their names, values and order"
+        );
+
+        // No active span means no headers, not an empty-valued one.
+        let bare = super::wal_producer_record(
+            Bytes::from_static(b"k"),
+            b"v".to_vec(),
+            vec![],
+        );
+        check!(bare.headers.is_empty());
     }
 
     /// The HTTP-to-gRPC mapping the error kinds share. Only two codes get a
