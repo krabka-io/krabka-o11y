@@ -1420,6 +1420,32 @@ mod tests {
         span_columns::{COL_NS_LEFT, COL_PARENT_ID, InputSpan},
     };
 
+    /// `int_matches` is the numeric comparison behind every integer attribute
+    /// filter, and each operator is one character from its neighbour. The pairs
+    /// below sit on the boundary, where `>` and `>=` disagree and where `<` and
+    /// `<=` do: away from equality every operator agrees with the one beside
+    /// it, so only the equal case tells them apart.
+    #[test]
+    fn integer_comparisons_are_exact_at_the_boundary() {
+        let int = MatchValue::Int(5);
+        let cmp = |op| int_matches(5, op, &int);
+
+        // Equal to the bound: the strict operators must refuse it.
+        check!(!cmp(MatchCmp::Gt), "5 > 5");
+        check!(!cmp(MatchCmp::Lt), "5 < 5");
+        check!(cmp(MatchCmp::Gte), "5 >= 5");
+        check!(cmp(MatchCmp::Lte), "5 <= 5");
+        check!(cmp(MatchCmp::Eq), "5 == 5");
+        check!(!cmp(MatchCmp::Neq), "5 != 5");
+
+        // Either side of it, so a comparison stuck at one answer is caught too.
+        check!(int_matches(6, MatchCmp::Gt, &int), "6 > 5");
+        check!(int_matches(4, MatchCmp::Lt, &int), "4 < 5");
+        check!(!int_matches(4, MatchCmp::Gt, &int), "4 > 5");
+        check!(!int_matches(6, MatchCmp::Lt, &int), "6 < 5");
+    }
+
+
     fn span(id: u8, parent: Option<u8>, name: &str, attrs: Vec<(&str, AttrValue)>) -> InputSpan {
         InputSpan {
             trace_id: [7; 16],
