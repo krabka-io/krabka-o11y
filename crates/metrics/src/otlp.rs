@@ -1232,39 +1232,14 @@ fn downscaled_spans(
         *merged_count += count;
     }
 
-    Ok(spans_from_buckets(merged))
-}
-
-fn spans_from_buckets(buckets: BTreeMap<i32, u64>) -> (Vec<BucketSpan>, Vec<f64>) {
-    let mut spans = Vec::new();
-    let mut counts = Vec::new();
-    let mut current_span_start = None::<i32>;
-    let mut previous_offset = None::<i32>;
-
-    for (offset, count) in buckets {
-        match (current_span_start, previous_offset) {
-            (Some(_), Some(previous)) if offset == previous + 1 => {}
-            (Some(start), Some(previous)) => spans.push(BucketSpan {
-                offset: start,
-                length: u32::try_from(previous - start + 1).expect("span length fits u32"),
-            }),
-            _ => {}
-        }
-        if previous_offset.is_none_or(|previous| offset != previous + 1) {
-            current_span_start = Some(offset);
-        }
-        previous_offset = Some(offset);
-        counts.push(count.to_f64().unwrap_or(f64::MAX));
-    }
-
-    if let (Some(start), Some(previous)) = (current_span_start, previous_offset) {
-        spans.push(BucketSpan {
-            offset: start,
-            length: u32::try_from(previous - start + 1).expect("span length fits u32"),
-        });
-    }
-
-    (spans, counts)
+    // Counts are carried as f64 downstream, and the span encoder is shared
+    // with the merge path so both produce the same delta-offset form.
+    Ok(compact_spanned_histogram_counts(
+        merged
+            .into_iter()
+            .map(|(index, count)| (index, count.to_f64().unwrap_or(f64::MAX)))
+            .collect(),
+    ))
 }
 
 #[cfg(test)]
@@ -1340,6 +1315,43 @@ mod tests {
             compact(bucket_map(&[(0, 0.0)])) == (vec![], vec![]),
             "only empty buckets is the same as none"
         );
+    }
+
+    /// Downscaling merges neighbouring buckets and re-encodes them as spans.
+    /// The spans it produces are read back by the same delta-offset decoder
+    /// the merge path uses, so the two have to agree: a run that starts three
+    /// buckets after the previous one ended must carry an offset of three,
+    /// not its absolute index.
+    ///
+    /// The input here is deliberately sparse. With a single run the two
+    /// conventions coincide, and the disagreement only shows from the second
+    /// run onwards.
+    #[test]
+    fn downscaled_spans_are_decoded_back_to_the_buckets_they_came_from() {
+        // Source buckets at offset 0: indexes 0..6 with gaps, halved by the
+        // downscale to schema-1, so indexes 0, 1, 2, 3 carry the merged
+        // counts of pairs (0,1), (2,3), (4,5), (6,7).
+        let buckets = exponential_histogram_data_point::Buckets {
+            offset: 0,
+            bucket_counts: vec![1, 0, 0, 0, 2, 0, 0, 3],
+        };
+
+        let (spans, counts) =
+            super::downscaled_spans(Some(&buckets), 0, -1).expect("downscale succeeds");
+
+        // The three populated source buckets merge onto indexes 1, 3 and 4,
+        // and decoding the spans has to land back on exactly those.
+        let decoded = super::spanned_histogram_counts(&spans, &counts);
+        check!(
+            decoded == bucket_map(&[(1, 1.0), (3, 2.0), (4, 3.0)]),
+            "spans {spans:?} counts {counts:?} decoded to {decoded:?}"
+        );
+
+        // The second run begins one index after the first ended, so its
+        // offset is 1. Encoded as an absolute index it would be 3, and the
+        // decoder would place its counts at 5 and 6 instead.
+        check!(spans == vec![span(1, 1), span(1, 2)], "got {spans:?}");
+        check!(counts == vec![1.0, 2.0, 3.0], "got {counts:?}");
     }
 
     /// Decoding spans back into buckets has to undo the delta encoding, so
