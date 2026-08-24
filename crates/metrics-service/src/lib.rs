@@ -2649,6 +2649,101 @@ rules:
         assert2::assert!(body["data"]["groups"][0]["lastEvaluation"] == "1970-01-01T00:01:00Z");
     }
 
+    /// A poll that replays nothing must not commit. Committing on an empty
+    /// batch would advance the group past records it never applied, and the
+    /// state they carry would be lost on the next restart.
+    #[tokio::test]
+    async fn poll_ruler_state_consumer_once_does_not_commit_without_progress() {
+        let state =
+            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![vec![]],
+            commit_calls: 0,
+        };
+        let result = super::poll_ruler_state_consumer_once(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+        )
+        .await
+        .unwrap();
+
+        assert2::assert!(
+            result
+                == super::WalHeadReplayResult {
+                    polled_records: 0,
+                    replayed_records: 0,
+                    committed_offsets: vec![],
+                }
+        );
+        assert2::assert!(consumer.commit_calls == 0, "an empty poll commits nothing");
+
+        // Polled but not replayed: a record from another topic is counted as
+        // seen and applied to nothing. Committing here would advance this
+        // group's offsets on the strength of someone else's records.
+        let state_record = super::RulerStateWalRecord::Group(
+            crabka_promql::RulerGroupStateRecord {
+                tenant: "tenant-a".to_string(),
+                namespace: "team-a".to_string(),
+                group: "recording".to_string(),
+                last_eval_ms: 60_000,
+            },
+        );
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![vec![consumer_record(
+                "some-other-topic",
+                1,
+                7,
+                Some(state_record.encode().unwrap()),
+            )]],
+            commit_calls: 0,
+        };
+        let result = super::poll_ruler_state_consumer_once(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+        )
+        .await
+        .unwrap();
+
+        assert2::assert!(result.polled_records == 1, "the record was seen");
+        assert2::assert!(result.replayed_records == 0, "but it was not ours to apply");
+        assert2::assert!(
+            consumer.commit_calls == 0,
+            "a poll that applies nothing commits nothing"
+        );
+    }
+
+    /// A record with no value cannot be replayed. It is reported with the
+    /// partition and offset it sits at rather than skipped, so the record
+    /// that stalled the replay can be found, and nothing is committed past it.
+    #[tokio::test]
+    async fn a_valueless_ruler_state_record_stops_the_replay_where_it_sits() {
+        let state =
+            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![vec![consumer_record(super::RULER_STATE_TOPIC, 3, 11, None)]],
+            commit_calls: 0,
+        };
+
+        let error = super::poll_ruler_state_consumer_once(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+        )
+        .await
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert2::assert!(message.contains("11"), "the offset is named: {message}");
+        assert2::assert!(message.contains('3'), "so is the partition: {message}");
+        assert2::assert!(consumer.commit_calls == 0, "nothing is committed past it");
+    }
+
     #[tokio::test]
     async fn poll_ruler_state_consumer_once_replays_records_and_commits_on_progress() {
         let state =
