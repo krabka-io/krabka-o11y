@@ -601,6 +601,61 @@ mod tests {
 
     use super::*;
 
+    /// Go-style durations concatenate a number and a unit, and several pairs
+    /// add up. Each unit is checked against the nanoseconds it stands for,
+    /// since a table of multipliers is exactly where one wrong power of ten
+    /// hides.
+    #[test]
+    fn go_durations_sum_their_components() {
+        let parse = super::parse_go_duration_ns;
+
+        check!(parse("1ns").unwrap() == 1);
+        check!(parse("1us").unwrap() == 1_000);
+        check!(parse("1µs").unwrap() == 1_000, "the micro sign is accepted too");
+        check!(parse("1ms").unwrap() == 1_000_000);
+        check!(parse("1s").unwrap() == 1_000_000_000);
+        check!(parse("1m").unwrap() == 60_000_000_000);
+        check!(parse("1h").unwrap() == 3_600_000_000_000);
+
+        // Several components add rather than replace one another.
+        check!(parse("1h30m").unwrap() == 5_400_000_000_000);
+        check!(parse("1m1s1ms").unwrap() == 61_001_000_000);
+        check!(parse("0s").unwrap() == 0);
+
+        // A fractional component scales by its unit.
+        check!(parse("1.5s").unwrap() == 1_500_000_000);
+
+        check!(parse("").is_err(), "an empty duration is not zero");
+        check!(parse("10").is_err(), "a number with no unit");
+        check!(parse("s").is_err(), "a unit with no number");
+        check!(parse("1d").is_err(), "days are not a Go duration unit");
+        check!(parse("1x").is_err(), "nor is anything else");
+    }
+
+    /// Seconds arrive as a decimal string and become whole nanoseconds. The
+    /// fraction is padded rather than parsed as written, so "1.5" is half a
+    /// second and not five nanoseconds.
+    #[test]
+    fn decimal_seconds_become_nanoseconds() {
+        let parse = super::parse_seconds_to_ns;
+
+        check!(parse("0").unwrap() == 0);
+        check!(parse("1").unwrap() == 1_000_000_000);
+        check!(parse("1.5").unwrap() == 1_500_000_000, "the fraction is padded, not read raw");
+        check!(parse("0.000000001").unwrap() == 1, "nine places is the smallest step");
+        check!(parse("1.000000001").unwrap() == 1_000_000_001);
+        check!(parse("-1.5").unwrap() == -1_500_000_000, "the sign applies to the whole value");
+        check!(parse("-0").unwrap() == 0);
+
+        check!(parse("").is_none(), "an empty value is not zero");
+        check!(parse(".5").is_none(), "the whole part is required");
+        check!(parse("1.").unwrap() == 1_000_000_000, "an empty fraction is none");
+        check!(parse("1.0000000001").is_none(), "past nanosecond precision");
+        check!(parse("1.2.3").is_none(), "only one point");
+        check!(parse("abc").is_none());
+        check!(parse("1e9").is_none(), "no exponent form");
+    }
+
     #[test]
     fn step_accepts_seconds_and_go_durations() {
         for (input, want) in [

@@ -2523,6 +2523,42 @@ mod tests {
 
     use arc_swap::ArcSwap;
     use assert2::check;
+
+    /// With no step given, a range query gets roughly a hundred points,
+    /// rounded up to a whole second and never below one second. Both the
+    /// rounding and the floor matter: a sub-second step would return far more
+    /// points than asked for, and a truncating round would return one fewer.
+    #[test]
+    fn a_default_range_step_is_a_whole_second_and_never_zero() {
+        const SECOND: i64 = 1_000_000_000;
+        let step = |start: i64, end: i64| {
+            super::default_query_range_step_ns(UnixNano(start), UnixNano(end))
+        };
+
+        // 1000s over 100 points is 10s exactly.
+        check!(step(0, 1_000 * SECOND) == 10 * SECOND);
+        // 100s over 100 points is 1s exactly, the smallest unrounded step.
+        check!(step(0, 100 * SECOND) == SECOND);
+
+        // Anything that does not divide evenly rounds up rather than down,
+        // so the step still covers the range in a hundred points.
+        check!(step(0, 1_001 * SECOND) == 11 * SECOND, "10.01s rounds up to 11s");
+        check!(step(0, 150 * SECOND) == 2 * SECOND, "1.5s rounds up to 2s");
+
+        // Below a hundred seconds the floor takes over.
+        check!(step(0, 50 * SECOND) == SECOND, "a short range still steps by a second");
+        check!(step(0, 1) == SECOND, "so does a one-nanosecond range");
+        check!(step(0, 0) == SECOND, "and an empty one");
+
+        // A backwards range has no extent and cannot produce a smaller step.
+        check!(step(1_000 * SECOND, 0) == SECOND);
+
+        // The offset does not matter, only the span.
+        check!(
+            step(5_000 * SECOND, 6_000 * SECOND) == 10 * SECOND,
+            "the same span away from zero gives the same step"
+        );
+    }
     use axum::{
         body::Body,
         http::{Request, StatusCode},
