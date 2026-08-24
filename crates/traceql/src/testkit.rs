@@ -656,6 +656,86 @@ query: { .svc = "x" }
         assert!(result.message == "missing query");
     }
 
+    /// A search reports how much span data it scanned, which Tempo surfaces
+    /// as `metrics.inspectedBytes`. It is accumulated across the scans a
+    /// selector plans, so a query that matches nothing still inspects
+    /// something, and a query over more data inspects at least as much.
+    #[tokio::test]
+    async fn a_search_reports_the_span_data_it_scanned() {
+        use crabka_units::convert::ByteSizeExt;
+
+        let engine = super::engine();
+        let inspected = |query: &'static str| async move {
+            super::engine()
+                .search("t", query, 0, 10_000, 20)
+                .await
+                .expect("query runs")
+                .inspected
+        };
+
+        let matched = inspected(r#"{ .http.method = "GET" }"#).await;
+        assert!(
+            matched > <crabka_units::ByteSize as ByteSizeExt>::ZERO,
+            "a search that scans spans reports the bytes it read, got {matched:?}"
+        );
+
+        // A query matching nothing still had to read the spans to find that
+        // out, so the figure reflects scanning rather than results.
+        let unmatched = inspected(r#"{ .http.method = "NOPE" }"#).await;
+        assert!(
+            unmatched > <crabka_units::ByteSize as ByteSizeExt>::ZERO,
+            "a search that matches nothing still scans, got {unmatched:?}"
+        );
+
+        let response = engine
+            .search("t", r#"{ .http.method = "GET" }"#, 0, 10_000, 20)
+            .await
+            .expect("query runs");
+        assert!(response.inspected == matched, "the figure is stable across runs");
+    }
+
+    /// A selector over a nested scope with more than one alternative is
+    /// planned as separate scans and their results merged. Nothing reached
+    /// that path before: the shared fixture carries no events, so every query
+    /// took the single-scan branch.
+    ///
+    /// The bytes each scan inspected have to be summed across them, which is
+    /// what the response reports as Tempo's `metrics.inspectedBytes`.
+    #[tokio::test]
+    async fn a_disjunct_selector_sums_what_each_scan_inspected() {
+        use crate::in_memory::InMemorySpanStore;
+        use crate::result::EventRef;
+        use crabka_units::convert::ByteSizeExt;
+        use crabka_units::{ByteSize, Time};
+
+        let with_event = |id: u8, event: &str| {
+            let mut input = super::span(1, id, None, "root", 100, vec![]);
+            input.events = vec![EventRef {
+                time_since_start: Time::from_nanos(1),
+                name: event.to_string(),
+                attributes: vec![],
+            }];
+            input
+        };
+
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("t", "svc", "root", vec![with_event(1, "alpha"), with_event(2, "beta")]);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+
+        // Two alternatives over a nested scope: this is the disjunct path.
+        let response = engine
+            .search("t", r#"{ event:name = "alpha" || event:name = "beta" }"#, 0, 10_000, 20)
+            .await
+            .expect("query runs");
+
+        assert!(
+            response.inspected > <ByteSize as ByteSizeExt>::ZERO,
+            "the scanned bytes are summed across disjuncts, got {:?}",
+            response.inspected
+        );
+        assert!(!response.traces.is_empty(), "both alternatives match a span");
+    }
+
     /// The metrics and trace-by-id runners each carry a single assertion, so
     /// the only thing standing between a real check and a vacuous pass is
     /// that one comparison. Both are exercised with a case that holds and the
