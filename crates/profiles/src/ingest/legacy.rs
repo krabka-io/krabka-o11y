@@ -1191,6 +1191,128 @@ mod tests {
         check!(err.contains("overflows u64"), "got: {err}");
     }
 
+    /// Encodes one node of Pyroscope's binary tree format: a name, the value
+    /// charged to the node itself, and how many children follow it.
+    fn tree_node(name: &str, self_value: u64, children: u64) -> Vec<u8> {
+        fn varint(mut value: u64, out: &mut Vec<u8>) {
+            loop {
+                let byte = u8::try_from(value & 0x7f).expect("seven bits fit a byte");
+                value >>= 7;
+                if value == 0 {
+                    out.push(byte);
+                    return;
+                }
+                out.push(byte | 0x80);
+            }
+        }
+        let mut out = Vec::new();
+        varint(name.len() as u64, &mut out);
+        out.extend_from_slice(name.as_bytes());
+        varint(self_value, &mut out);
+        varint(children, &mut out);
+        out
+    }
+
+    /// `tree_to_pprof` walks a pre-order node stream, carrying each node's
+    /// path down to its children and charging self values to the path that
+    /// reaches them.
+    ///
+    /// The fixture is an unnamed root over two children, the first of which
+    /// has a child of its own, so the decoder has to resume the root's second
+    /// child after descending. Both a named node with its own value and one
+    /// whose value sits only in a descendant are represented.
+    #[test]
+    fn tree_nodes_decode_into_the_stacks_that_reach_them() {
+        let mut body = Vec::new();
+        body.extend(tree_node("", 0, 3));
+        body.extend(tree_node("a", 10, 1));
+        body.extend(tree_node("a1", 5, 0));
+        body.extend(tree_node("b", 7, 0));
+        // A named node worth nothing on its own. It must not become a sample:
+        // only a positive self value earns one.
+        body.extend(tree_node("c", 0, 0));
+
+        let profile =
+            super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
+
+        check!(profile.sample_types() == vec![("samples".to_string(), "bytes".to_string())]);
+
+        let decoded: Vec<(Vec<&str>, &[i64])> = profile
+            .samples()
+            .iter()
+            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
+            .collect();
+        check!(
+            decoded
+                == vec![
+                    (vec!["a"], [10].as_slice()),
+                    (vec!["a1", "a"], [5].as_slice()),
+                    (vec!["b"], [7].as_slice()),
+                ]
+        );
+    }
+
+    /// A payload that stops immediately after a node name is short, not
+    /// oversized: the name itself fits exactly, and it is the fields *after*
+    /// it that are missing. The distinction decides which error the caller
+    /// sees, so it is pinned here.
+    #[test]
+    fn a_tree_name_ending_at_the_payload_edge_reports_the_missing_field() {
+        let mut body = Vec::new();
+        body.extend(tree_node("", 0, 1));
+        body.extend_from_slice(&[0x01, b'a']);
+
+        let err = super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("ended before node self value"), "got: {err}");
+    }
+
+    /// The node budget counts nodes, so a tree of exactly `max_nodes` is
+    /// allowed and one more is not.
+    #[test]
+    fn the_tree_node_budget_admits_exactly_its_limit() {
+        let mut body = Vec::new();
+        body.extend(tree_node("", 0, 3));
+        body.extend(tree_node("a", 10, 1));
+        body.extend(tree_node("a1", 5, 0));
+        body.extend(tree_node("b", 7, 0));
+        body.extend(tree_node("c", 0, 0));
+
+        let limits = |max_nodes| LegacyDecodeLimits {
+            max_nodes,
+            ..LegacyDecodeLimits::default()
+        };
+        check!(super::tree_to_pprof("app", "bytes", &body, limits(5)).is_ok(), "five nodes fit");
+
+        let err = super::tree_to_pprof("app", "bytes", &body, limits(4))
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("exceeds node budget"), "got: {err}");
+    }
+
+    /// A node may declare one more child than there are bytes left, because a
+    /// child costs at least one byte only once its own fields are counted.
+    /// The check is a cheap early reject, so at the boundary the payload has
+    /// to fail later, on the missing bytes themselves, and say so.
+    #[test]
+    fn a_child_count_at_the_payload_edge_fails_on_the_missing_node() {
+        let body = [0x00, 0x00, 0x01];
+
+        let err = super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("ended before node name length"), "got: {err}");
+
+        // Two children with nothing left is over the line and is rejected up
+        // front instead.
+        let body = [0x00, 0x00, 0x02];
+        let err = super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("children length exceeds remaining payload"), "got: {err}");
+    }
+
     #[test]
     fn parse_query_extracts_name_labels_format() {
         let q =
