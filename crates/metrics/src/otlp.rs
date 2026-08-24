@@ -193,12 +193,11 @@ fn spanned_histogram_counts(spans: &[BucketSpan], counts: &[f64]) -> BTreeMap<i3
     let mut buckets = BTreeMap::new();
     let mut index = 0_i32;
     let mut count_index = 0_usize;
-    for (span_index, span) in spans.iter().enumerate() {
-        if span_index == 0 {
-            index = span.offset;
-        } else {
-            index += span.offset;
-        }
+    // The first span's offset is absolute and every later one is a delta from
+    // where the previous span ended. Starting the running index at zero makes
+    // those the same operation.
+    for span in spans {
+        index += span.offset;
         for _ in 0..span.length {
             let Some(count) = counts.get(count_index).copied() else {
                 return buckets;
@@ -1283,6 +1282,104 @@ mod tests {
         },
         resource::v1::Resource,
     };
+
+    fn span(offset: i32, length: u32) -> crate::histogram::BucketSpan {
+        crate::histogram::BucketSpan { offset, length }
+    }
+
+    fn bucket_map(pairs: &[(i32, f64)]) -> std::collections::BTreeMap<i32, f64> {
+        pairs.iter().copied().collect()
+    }
+
+    /// Sparse histogram buckets are stored as spans of consecutive indexes.
+    /// A span's offset is a *delta* from where the previous span ended, not an
+    /// absolute index, which is the part that is easy to get wrong and
+    /// invisible whenever there is only one span.
+    #[test]
+    fn bucket_spans_encode_gaps_as_deltas_from_the_previous_span() {
+        let compact = super::compact_spanned_histogram_counts;
+
+        // One run starting at zero.
+        check!(
+            compact(bucket_map(&[(0, 1.0), (1, 2.0)]))
+                == (vec![span(0, 2)], vec![1.0, 2.0])
+        );
+
+        // One run starting away from zero: the first offset is absolute.
+        check!(compact(bucket_map(&[(5, 1.0)])) == (vec![span(5, 1)], vec![1.0]));
+
+        // Two runs. The second offset is measured from the end of the first,
+        // so it is 1 rather than 3.
+        check!(
+            compact(bucket_map(&[(0, 1.0), (1, 2.0), (3, 4.0)]))
+                == (vec![span(0, 2), span(1, 1)], vec![1.0, 2.0, 4.0])
+        );
+
+        // Three runs. Only from the second gap onwards is the previous span's
+        // end non-zero, so this is the first case where subtracting it and
+        // adding it give different answers.
+        check!(
+            compact(bucket_map(&[(0, 1.0), (2, 2.0), (4, 3.0)]))
+                == (vec![span(0, 1), span(1, 1), span(1, 1)], vec![1.0, 2.0, 3.0])
+        );
+
+        // Negative indexes are ordinary indexes.
+        check!(
+            compact(bucket_map(&[(-2, 1.0), (-1, 2.0)]))
+                == (vec![span(-2, 2)], vec![1.0, 2.0])
+        );
+
+        // Empty buckets are dropped, which is what creates the gap here.
+        check!(
+            compact(bucket_map(&[(0, 1.0), (1, 0.0), (2, 3.0)]))
+                == (vec![span(0, 1), span(1, 1)], vec![1.0, 3.0])
+        );
+
+        check!(compact(bucket_map(&[])) == (vec![], vec![]), "no buckets, no spans");
+        check!(
+            compact(bucket_map(&[(0, 0.0)])) == (vec![], vec![]),
+            "only empty buckets is the same as none"
+        );
+    }
+
+    /// Decoding spans back into buckets has to undo the delta encoding, so
+    /// the two are checked as a round trip over shapes that exercise each
+    /// part: a single run, several runs, negative indexes, and a gap.
+    #[test]
+    fn bucket_spans_survive_a_round_trip() {
+        for pairs in [
+            vec![],
+            vec![(0, 1.0)],
+            vec![(5, 1.0)],
+            vec![(-3, 1.0)],
+            vec![(0, 1.0), (1, 2.0)],
+            vec![(0, 1.0), (1, 2.0), (3, 4.0)],
+            vec![(-2, 1.0), (-1, 2.0), (4, 3.0), (9, 5.0)],
+        ] {
+            let original = bucket_map(&pairs);
+            let (spans, counts) = super::compact_spanned_histogram_counts(original.clone());
+            let decoded = super::spanned_histogram_counts(&spans, &counts);
+            check!(decoded == original, "round trip of {pairs:?} via {spans:?}");
+        }
+    }
+
+    /// A span may claim more buckets than there are counts to fill them. The
+    /// decoder stops rather than inventing values or panicking, so a truncated
+    /// payload yields the prefix it can actually account for.
+    #[test]
+    fn decoding_stops_when_the_counts_run_out() {
+        let decoded = super::spanned_histogram_counts(&[span(0, 4)], &[1.0, 2.0]);
+        check!(decoded == bucket_map(&[(0, 1.0), (1, 2.0)]));
+
+        let decoded = super::spanned_histogram_counts(&[span(0, 2), span(3, 2)], &[1.0, 2.0, 3.0]);
+        check!(
+            decoded == bucket_map(&[(0, 1.0), (1, 2.0), (5, 3.0)]),
+            "the second span still starts where its offset says"
+        );
+
+        check!(super::spanned_histogram_counts(&[], &[1.0]).is_empty(), "no spans, no buckets");
+    }
+
 
     /// Every OTLP unit the table maps, checked one by one.
     ///
