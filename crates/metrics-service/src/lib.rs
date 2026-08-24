@@ -187,6 +187,23 @@ impl RulerStateWalRecord {
 }
 
 #[must_use]
+/// Builds a keyed producer record for the ruler topics.
+///
+/// Shared by the state and recording-rule sinks so both agree on the shape,
+/// and separated from the send so it can be checked without a broker. The
+/// partition is deliberately absent: the producer keys on `key`, which is
+/// what keeps a compacted topic's records for one entity on one partition.
+fn keyed_producer_record(topic: String, key: Bytes, value: Vec<u8>) -> ProducerRecord {
+    ProducerRecord {
+        topic,
+        partition: None,
+        key: Some(key),
+        value: Some(Bytes::from(value)),
+        ..Default::default()
+    }
+}
+
+#[must_use]
 pub fn ruler_state_compaction_key(record: &RulerStateWalRecord) -> Bytes {
     match record {
         RulerStateWalRecord::Group(record) => Bytes::from(format!(
@@ -633,13 +650,7 @@ impl KafkaRulerStateSink {
             .map_err(|error| RulerWalError::Append(error.to_string()))?;
         let ack = self
             .producer
-            .send(ProducerRecord {
-                topic: self.topic.clone(),
-                partition: None,
-                key: Some(key),
-                value: Some(Bytes::from(value)),
-                ..Default::default()
-            })
+            .send(keyed_producer_record(self.topic.clone(), key, value))
             .await;
         ack.await
             .map_err(|error| RulerWalError::Append(error.to_string()))?
@@ -726,13 +737,7 @@ impl RecordingRuleWalSink for KafkaRecordingRuleWalSink {
         let key = partition_key(&record.tenant, record.series_fingerprint());
         let ack = self
             .producer
-            .send(ProducerRecord {
-                topic: self.topic.clone(),
-                partition: None,
-                key: Some(key),
-                value: Some(Bytes::from(value)),
-                ..Default::default()
-            })
+            .send(keyed_producer_record(self.topic.clone(), key, value))
             .await;
         ack.await
             .map_err(|error| RulerWalError::Append(error.to_string()))?
@@ -1657,6 +1662,79 @@ mod tests {
         },
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
+
+    /// The compaction key decides which records replace one another on a
+    /// compacted topic. Two entities must never share a key, and one entity
+    /// must always produce the same key, so the parts are checked for being
+    /// present, ordered, and separated.
+    #[test]
+    fn ruler_state_compaction_keys_identify_one_entity_each() {
+        let group = |tenant: &str, namespace: &str, name: &str| {
+            super::ruler_state_compaction_key(&super::RulerStateWalRecord::Group(
+                super::RulerGroupStateRecord {
+                    tenant: tenant.into(),
+                    namespace: namespace.into(),
+                    group: name.into(),
+                    // Not part of the key: the record replaces its predecessor.
+                    last_eval_ms: 1,
+                },
+            ))
+        };
+
+        check!(group("t", "ns", "g") == Bytes::from("group\0t\0ns\0g"));
+        check!(group("t", "ns", "g") == group("t", "ns", "g"), "the same entity keys alike");
+        check!(group("t", "ns", "g") != group("t", "ns", "h"), "a different group differs");
+        check!(group("t", "ns", "g") != group("u", "ns", "g"), "so does a different tenant");
+        check!(
+            group("t", "ns", "g") != group("t", "n", "sg"),
+            "the separator stops a shifted split from colliding"
+        );
+
+        let alert = |rule: &str, labels: &[(&str, &str)]| {
+            super::ruler_state_compaction_key(&super::RulerStateWalRecord::Alert(
+                super::RulerAlertStateRecord {
+                    tenant: "t".into(),
+                    rule_id: rule.into(),
+                    labels: labels
+                        .iter()
+                        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                        .collect(),
+                    active_since_ms: Some(1),
+                    keep_firing_until_ms: None,
+                },
+            ))
+        };
+
+        check!(alert("r", &[]) == Bytes::from("alert\0t\0r"));
+        check!(alert("r", &[("a", "1")]) == Bytes::from("alert\0t\0r\0a=1"));
+        check!(
+            alert("r", &[("a", "1"), ("b", "2")]) == Bytes::from("alert\0t\0r\0a=1\0b=2"),
+            "every label is part of the identity"
+        );
+        check!(
+            alert("r", &[("a", "1")]) != alert("r", &[("a", "2")]),
+            "an alert with different label values is a different alert"
+        );
+
+        // A group key and an alert key can never collide, whatever they hold.
+        check!(group("t", "ns", "g") != alert("t\0ns\0g", &[]));
+    }
+
+    /// The producer record both ruler sinks build, checked without a broker.
+    #[test]
+    fn a_ruler_record_carries_its_topic_key_and_value() {
+        let record = super::keyed_producer_record(
+            "ruler-state".to_string(),
+            Bytes::from_static(b"the-key"),
+            b"the-value".to_vec(),
+        );
+
+        check!(record.topic == "ruler-state");
+        check!(record.partition == None, "partitioning is left to the producer");
+        check!(record.key.as_deref() == Some(&b"the-key"[..]));
+        check!(record.value.as_deref() == Some(&b"the-value"[..]));
+    }
+
 
     use super::{current_time_ms, duration_ms, unix_time_ms};
 
