@@ -5656,6 +5656,29 @@ mod tests {
         for (value, want) in cases {
             check!(usize_from_integer_f64(value).ok() == want, "input {value}");
         }
+
+        // Rejecting is not enough: the guard has to be the thing that rejects.
+        // Infinity is non-negative with a zero fractional part, so without the
+        // finiteness check it reaches the parse and fails there instead, with
+        // a message about digits rather than about the value.
+        let err = usize_from_integer_f64(f64::INFINITY).unwrap_err().to_string();
+        check!(err.contains("expected non-negative integer float, got inf"), "got: {err}");
+        let err = usize_from_integer_f64(f64::NAN).unwrap_err().to_string();
+        check!(err.contains("expected non-negative integer float, got NaN"), "got: {err}");
+
+        // A value that is finite, non-negative and whole can still be too
+        // large to hold. That path must report the failure rather than
+        // saturate, which is what a plain cast would do.
+        let too_big = 1e30_f64;
+        let err = usize_from_integer_f64(too_big).unwrap_err().to_string();
+        check!(
+            err.contains("number too large to fit in target type"),
+            "the conversion failure is reported as written, got: {err}"
+        );
+        check!(
+            !err.contains("expected non-negative integer float"),
+            "it passed the guard and failed the conversion, got: {err}"
+        );
     }
 
     #[test]
