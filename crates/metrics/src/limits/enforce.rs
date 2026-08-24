@@ -456,5 +456,52 @@ mod tests {
         check!(QueryEnforcer::check_series_count(&l, 11).is_err());
         check!(QueryEnforcer::check_sample_count(&l, 1001).is_err());
         check!(QueryEnforcer::check_series_count(&l, 10).is_ok());
+        // Exactly at the cap is within it, which is what separates `>` from
+        // `>=`: read the other way, a tenant is refused the last sample the
+        // limit allows them.
+        check!(QueryEnforcer::check_sample_count(&l, 1000).is_ok());
+    }
+
+    /// A label exactly at the length cap is allowed; one byte over is not.
+    ///
+    /// Every one of these limits is a `>` against the configured maximum, and
+    /// away from the boundary `>` and `>=` agree. Read as `>=`, the cap becomes
+    /// one byte tighter than configured and a tenant is refused a label the
+    /// documented limit permits.
+    #[test]
+    fn label_lengths_are_capped_at_the_limit_not_below_it() {
+        let l = Limits {
+            max_label_name_length: bytes(8),
+            max_label_value_length: bytes(4),
+            ..Limits::default()
+        };
+        let labels = |name: &str, value: &str| {
+            let mut out = Labels::new();
+            out.insert(name, value);
+            out
+        };
+
+        check!(IngestEnforcer::check_labels(&l, &labels("12345678", "abcd")).is_ok());
+        check!(IngestEnforcer::check_labels(&l, &labels("123456789", "abcd")).is_err());
+        check!(IngestEnforcer::check_labels(&l, &labels("12345678", "abcde")).is_err());
+    }
+
+    /// The query range and lookback caps, at the boundary.
+    #[test]
+    fn query_extents_are_capped_at_the_limit_not_below_it() {
+        let l = Limits {
+            max_query_length: secs(60),
+            max_query_lookback: secs(600),
+            ..Limits::default()
+        };
+        let now = 1_000_000_000_i64;
+
+        // A range exactly 60s long, ending now: both caps are met exactly.
+        check!(QueryEnforcer::check_range(&l, now - 60_000, now, now).is_ok());
+        // One millisecond longer than the range cap.
+        check!(QueryEnforcer::check_range(&l, now - 60_001, now, now).is_err());
+        // Exactly at the lookback cap, then one millisecond past it.
+        check!(QueryEnforcer::check_range(&l, now - 600_000, now - 599_000, now).is_ok());
+        check!(QueryEnforcer::check_range(&l, now - 600_001, now - 599_000, now).is_err());
     }
 }
