@@ -558,6 +558,64 @@ mod tests {
     use crabka_units::{mebibytes, millis, secs};
     use object_store::{ObjectStore, memory::InMemory};
 
+    /// `block_partition_map` gives every block its own 32-bit namespace so
+    /// stacktrace partition ids from different blocks cannot collide. The
+    /// high half is the block's index plus one; the low half is the
+    /// partition's position after sorting and deduplication, not the value
+    /// the block stored.
+    #[test]
+    fn partition_ids_are_namespaced_by_block_and_renumbered_densely() {
+        let map = |block_idx, stored: &[u64]| super::block_partition_map(block_idx, stored).unwrap();
+
+        // Block 0 occupies the namespace at 1 << 32; the stored ids keep
+        // their identity as keys but are renumbered densely as values.
+        let first: u64 = 1 << 32;
+        check!(
+            map(0, &[7, 3, 9])
+                == std::collections::BTreeMap::from([
+                    (3, first),
+                    (7, first + 1),
+                    (9, first + 2),
+                ]),
+            "sorted by stored id, numbered from zero"
+        );
+
+        // The next block gets the next namespace, so the same stored id maps
+        // somewhere else entirely.
+        let second: u64 = 2 << 32;
+        check!(
+            map(1, &[7, 3, 9])
+                == std::collections::BTreeMap::from([
+                    (3, second),
+                    (7, second + 1),
+                    (9, second + 2),
+                ])
+        );
+
+        // Duplicates collapse rather than consuming a slot each.
+        check!(
+            map(0, &[5, 5, 5]) == std::collections::BTreeMap::from([(5, 1_u64 << 32)])
+        );
+
+        // A block that stored no partitions still gets the default one.
+        check!(
+            map(0, &[]) == std::collections::BTreeMap::from([(super::STACKTRACE_PARTITION, 1_u64 << 32)])
+        );
+    }
+
+    /// A metadata query covering all of time is answered from the index alone,
+    /// so the check has to be exact at both ends.
+    #[test]
+    fn only_the_full_range_counts_as_unbounded() {
+        check!(super::is_unbounded_metadata_range(0, i64::MAX));
+
+        check!(!super::is_unbounded_metadata_range(1, i64::MAX), "a later start is bounded");
+        check!(!super::is_unbounded_metadata_range(-1, i64::MAX), "so is an earlier one");
+        check!(!super::is_unbounded_metadata_range(0, i64::MAX - 1), "an earlier end is bounded");
+        check!(!super::is_unbounded_metadata_range(0, 0), "and so is an empty range");
+    }
+
+
     use super::*;
     use crate::{
         blockbuilder::build_block,
