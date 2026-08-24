@@ -2903,6 +2903,68 @@ mod tests {
         check!(offset(1400) == None, "offset end is exclusive");
     }
 
+    /// `query_param_i64` reads the first parameter matching `name`. The lookup
+    /// compares keys for equality, so a flipped comparison would return some
+    /// *other* parameter's value rather than nothing — the cases below use
+    /// distinct values so that swap is visible.
+    #[test]
+    fn query_params_are_read_by_name_and_must_parse() {
+        let params = [
+            ("limit".to_string(), "10".to_string()),
+            ("offset".to_string(), "20".to_string()),
+            ("limit".to_string(), "30".to_string()),
+            ("depth".to_string(), "-4".to_string()),
+            ("junk".to_string(), "not a number".to_string()),
+        ];
+        let get = |name| super::query_param_i64(&params, name);
+
+        check!(get("limit") == Some(10), "first match wins, not the later one");
+        check!(get("offset") == Some(20), "a distinct key gets its own value");
+        check!(get("depth") == Some(-4), "negatives parse");
+        check!(get("junk") == None, "an unparseable value is not a match");
+        check!(get("absent") == None, "a missing key has no value");
+    }
+
+    /// `label_matcher_value_escape` protects the four characters that would
+    /// otherwise terminate or corrupt a quoted matcher value.
+    #[test]
+    fn label_matcher_values_escape_exactly_four_characters() {
+        let escape = super::label_matcher_value_escape;
+
+        check!(escape(r"a\b") == r"a\\b", "a backslash doubles");
+        check!(escape(r#"a"b"#) == r#"a\"b"#, "a quote is escaped");
+        check!(escape("a\nb") == r"a\nb", "a newline becomes an escape pair");
+        check!(escape("a\tb") == r"a\tb", "a tab becomes an escape pair");
+        check!(escape("plain") == "plain", "ordinary text is untouched");
+        check!(escape("") == "", "an empty value stays empty");
+        check!(
+            escape("\\\"\n\t") == r#"\\\"\n\t"#,
+            "all four together, in order"
+        );
+    }
+
+    /// `is_internal_label` gates the one reserved label name.
+    #[test]
+    fn only_the_profile_id_label_is_internal() {
+        check!(super::is_internal_label(super::PROFILE_ID_LABEL));
+        check!(!super::is_internal_label("service_name"));
+        check!(!super::is_internal_label(""), "the empty name is not reserved");
+    }
+
+    /// `dot_escape` guards a DOT string literal. It is a near-twin of
+    /// `label_matcher_value_escape` but deliberately does *not* escape tabs,
+    /// which DOT accepts literally inside quotes.
+    #[test]
+    fn dot_values_escape_three_characters_and_leave_tabs_alone() {
+        let escape = super::dot_escape;
+
+        check!(escape(r"a\b") == r"a\\b", "a backslash doubles");
+        check!(escape("a\"b") == r#"a\"b"#, "a quote is escaped");
+        check!(escape("a\nb") == r"a\nb", "a newline becomes an escape pair");
+        check!(escape("a\tb") == "a\tb", "a tab is left literal");
+        check!(escape("plain") == "plain", "ordinary text is untouched");
+    }
+
 
     use super::*;
     use crate::{Limits, OverridesProvider};
