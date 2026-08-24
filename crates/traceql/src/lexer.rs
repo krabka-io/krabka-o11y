@@ -52,14 +52,6 @@ pub enum Token {
     Eof,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Prev {
-    None,
-    Dot,
-    Ident,
-    Other,
-}
-
 /// # Errors
 /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
 /// # Panics
@@ -67,7 +59,9 @@ enum Prev {
 pub fn lex(input: &str) -> Result<Vec<Token>> {
     let mut tokens = Vec::new();
     let mut i = 0;
-    let mut prev = Prev::None;
+    // Only one thing about the previous token matters: whether it was a
+    // dot, which is what lets an identifier carry dots of its own.
+    let mut after_dot = false;
 
     while i < input.len() {
         let rest = &input[i..];
@@ -104,7 +98,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
                 return Err(no_progress(i));
             }
             i = next;
-            prev = Prev::Ident;
+            after_dot = false;
             continue;
         }
 
@@ -114,11 +108,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
                 return Err(no_progress(i));
             }
             i = next;
-            prev = match tok {
-                Token::Dot => Prev::Dot,
-                Token::Ident(_) => Prev::Ident,
-                _ => Prev::Other,
-            };
+            after_dot = tok == Token::Dot;
             tokens.push(tok);
             continue;
         }
@@ -131,7 +121,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
                 return Err(no_progress(i));
             }
             i = next;
-            prev = Prev::Other;
+            after_dot = false;
             continue;
         }
 
@@ -143,12 +133,12 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
                 return Err(no_progress(i));
             }
             i = next;
-            prev = Prev::Ident;
+            after_dot = false;
             continue;
         }
 
         if is_ident_start(ch) {
-            let allow_dots = prev == Prev::Dot;
+            let allow_dots = after_dot;
             let (ident, len) = scan_ident(rest, allow_dots);
             tokens.push(keyword_or_ident(ident));
             let next = advance(input, i, len)?;
@@ -156,7 +146,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>> {
                 return Err(no_progress(i));
             }
             i = next;
-            prev = Prev::Ident;
+            after_dot = false;
             continue;
         }
 
