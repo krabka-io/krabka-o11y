@@ -292,6 +292,74 @@ mod tests {
         assert!(hash("ab") != hash("ba"));
     }
 
+    fn relabel(action: RelabelAction, sources: &[&str], regex: &str) -> RelabelConfig {
+        RelabelConfig {
+            source_labels: sources.iter().map(|s| (*s).to_string()).collect(),
+            regex: regex.to_string(),
+            target_label: "target".to_string(),
+            replacement: "new".to_string(),
+            action,
+        }
+    }
+
+    fn labels_of(pairs: &[(&str, &str)]) -> Labels {
+        let mut labels = Labels::new();
+        for (name, value) in pairs {
+            labels.insert(*name, *value);
+        }
+        labels
+    }
+
+    /// `apply_relabel` returns whether the series survives. Drop and Keep are
+    /// mirror images -- one rejects on a match, the other on the absence of
+    /// one -- so both are checked from both sides.
+    #[test]
+    fn relabel_drop_and_keep_are_mirror_images() {
+        let mut labels = labels_of(&[("env", "prod")]);
+
+        assert!(!apply_relabel(&mut labels, &[relabel(RelabelAction::Drop, &["env"], "prod")]));
+        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Drop, &["env"], "dev")]));
+        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["env"], "prod")]));
+        assert!(!apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["env"], "dev")]));
+
+        // The regex is anchored, so a partial match is not a match.
+        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Drop, &["env"], "pro")]));
+
+        // A label that is not set reads as empty rather than skipping the rule.
+        assert!(!apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["absent"], "prod")]));
+        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["absent"], "")]));
+
+        // Several source labels are joined with ';' before matching.
+        let mut two = labels_of(&[("a", "x"), ("b", "y")]);
+        assert!(!apply_relabel(&mut two, &[relabel(RelabelAction::Drop, &["a", "b"], "x;y")]));
+        assert!(apply_relabel(&mut two, &[relabel(RelabelAction::Drop, &["a", "b"], "xy")]));
+
+        // A rule whose regex will not compile is skipped, not treated as a
+        // match: one bad rule must not drop every series.
+        assert!(apply_relabel(&mut labels, &[relabel(RelabelAction::Keep, &["env"], "[")]));
+    }
+
+    /// A Replace rule with an empty replacement removes the target label
+    /// instead of setting it to the empty string, and touches nothing else.
+    #[test]
+    fn relabel_replace_sets_or_removes_only_the_target() {
+        let mut labels = labels_of(&[("env", "prod"), ("target", "old"), ("keep", "me")]);
+        let mut config = relabel(RelabelAction::Replace, &["env"], "prod");
+
+        assert!(apply_relabel(&mut labels, std::slice::from_ref(&config)));
+        assert!(labels == labels_of(&[("env", "prod"), ("target", "new"), ("keep", "me")]));
+
+        config.replacement = String::new();
+        assert!(apply_relabel(&mut labels, std::slice::from_ref(&config)));
+        assert!(labels == labels_of(&[("env", "prod"), ("keep", "me")]));
+
+        // A rule that does not match leaves the labels alone.
+        config.replacement = "other".to_string();
+        config.regex = "dev".to_string();
+        assert!(apply_relabel(&mut labels, std::slice::from_ref(&config)));
+        assert!(labels == labels_of(&[("env", "prod"), ("keep", "me")]));
+    }
+
     fn labels(pairs: &[(&str, &str)]) -> Labels {
         let mut labels = Labels::new();
         for (name, value) in pairs {
