@@ -1660,6 +1660,82 @@ mod tests {
 
     use super::{current_time_ms, duration_ms, unix_time_ms};
 
+    /// The Noop sink's only job is to say so. It drops every alert, and the
+    /// warning is the entire behaviour -- an operator whose alertmanager is
+    /// unconfigured learns it from this line or not at all. A body replaced by
+    /// `Ok(())` is silent, and the negation dropped warns on the empty batch
+    /// and stays silent on the one that had alerts in it.
+    #[test]
+    fn the_noop_alertmanager_sink_warns_only_when_it_drops_something() {
+        use std::sync::{Arc, Mutex};
+
+        use crabka_promql::AlertmanagerSink as _;
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt as _, registry};
+
+        #[derive(Clone, Default)]
+        struct Captured(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Captured {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for Captured {
+            type Writer = Self;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        fn dispatch(alerts: Vec<crabka_promql::AlertmanagerAlert>) -> String {
+            let captured = Captured::default();
+            let subscriber = registry().with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(captured.clone())
+                    .with_ansi(false)
+                    .without_time(),
+            );
+            // `with_default` sets the subscriber for this thread and is sync, so
+            // the runtime is built inside it rather than around it -- a
+            // `#[tokio::test]` would already be driving one and `block_on`
+            // cannot nest.
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("current-thread runtime");
+            with_default(subscriber, || {
+                runtime.block_on(async {
+                    super::NoopAlertmanagerSink
+                        .dispatch_alerts(alerts)
+                        .await
+                        .expect("the noop sink always succeeds");
+                });
+            });
+            String::from_utf8(captured.0.lock().unwrap().clone()).unwrap()
+        }
+
+        let alert = crabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([("alertname".into(), "Down".into())]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 1,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        };
+        let with_alerts = dispatch(vec![alert]);
+        check!(
+            with_alerts.contains("alertmanager sink is not configured"),
+            "captured: {with_alerts:?}"
+        );
+        check!(with_alerts.contains("alert_count=1"), "captured: {with_alerts:?}");
+
+        check!(dispatch(Vec::new()).is_empty());
+    }
+
+
     /// Both clocks convert a duration to milliseconds and saturate rather than
     /// wrap. A constant in either place makes every block-store refresh window
     /// and every ruler timestamp agree on a time that never happened.
