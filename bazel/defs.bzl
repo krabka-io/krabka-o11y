@@ -240,6 +240,16 @@ def crate_tests(
     if mutants:
         # `manual`: a full sweep rebuilds the crate once per mutant, so it runs
         # from the nightly job rather than on every `bazel test //...`.
+        # Suites that need Docker, or are otherwise non-hermetic, stay out: a
+        # sweep reruns them once per mutant, and `manual` is exactly the marker
+        # for the ones that cannot bear that.
+        integration = [
+            ":" + src[len("tests/"):-len(".rs")] + "_test"
+            for src in native.glob(["tests/*.rs"], allow_empty = True)
+            if src[len("tests/"):-len(".rs")] not in manual and
+               src[len("tests/"):-len(".rs")] not in docker
+        ]
+
         cargo_mutants_test(
             name = lib + "_mutants",
             # Every mutant is a full rebuild of the crate plus a test run, so a
@@ -248,6 +258,12 @@ def crate_tests(
             # all, it is an hour of a runner before anyone learns something is
             # wrong. `long` is 900s; crates that legitimately need more say so.
             timeout = mutants_timeout,
+            # The suites under tests/ carry most of the coverage in several of
+            # these crates, and a mutant they catch is not a gap. Without them
+            # logql's syntax.rs reported 165 survivors where the real number is
+            # 1 -- so they are rebuilt and rerun against every mutant.
+            integration_tests = integration,
+            library = ":" + lib,
             jobs = mutants_jobs,
             shard_count = mutants_shards,
             tags = ["manual"],

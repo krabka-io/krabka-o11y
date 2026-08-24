@@ -324,7 +324,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse(mut self) -> Result<StreamQuery, ParseError> {
-        let query = self.parse_stream_query(false)?;
+        let query = self.parse_stream_query()?;
         self.skip_ws();
         if self.pos == self.input.len() {
             Ok(query)
@@ -1235,7 +1235,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_stream_query(&mut self, stop_before_range: bool) -> Result<StreamQuery, ParseError> {
+    fn parse_stream_query(&mut self) -> Result<StreamQuery, ParseError> {
         self.skip_ws();
         self.expect('{')?;
         let matchers = self.parse_matchers()?;
@@ -1245,9 +1245,6 @@ impl<'a> Parser<'a> {
         let mut pipeline = Vec::new();
         loop {
             self.skip_ws();
-            if stop_before_range && matches!(self.peek(), Some('[')) {
-                break;
-            }
             if self.pos == self.input.len() {
                 break;
             }

@@ -21,7 +21,11 @@ git_override(
     # `//mutants:config`, without which the sweep enumerates from a synthetic
     # workspace where this repo's `.cargo/mutants.toml` is not in scope -- so the
     # exclusions written there did not exclude.
-    commit = "fd8902e425382aaa58490c22721f563127ab9467",
+    # Past the config fix for `integration_tests`, which reruns the suites under
+    # tests/ against each mutant. Without it a crate whose coverage lives there
+    # reports almost every mutant as missed: logql's syntax.rs showed 165
+    # survivors on unit tests alone against 1 with the suites included.
+    commit = "80120ba8d223abf1467f611e46c2969789e704fb",
     remote = "https://github.com/robot-head/rules_rs_mutants",
 )
 
