@@ -1313,6 +1313,122 @@ mod tests {
         check!(err.contains("children length exceeds remaining payload"), "got: {err}");
     }
 
+    /// Encodes one node of Pyroscope's binary trie format: the suffix this
+    /// node adds to its parent's key, the value charged to the whole key, and
+    /// how many children follow.
+    fn trie_node(suffix: &str, value: u64, children: u64) -> Vec<u8> {
+        fn varint(mut value: u64, out: &mut Vec<u8>) {
+            loop {
+                let byte = u8::try_from(value & 0x7f).expect("seven bits fit a byte");
+                value >>= 7;
+                if value == 0 {
+                    out.push(byte);
+                    return;
+                }
+                out.push(byte | 0x80);
+            }
+        }
+        let mut out = Vec::new();
+        varint(suffix.len() as u64, &mut out);
+        out.extend_from_slice(suffix.as_bytes());
+        varint(value, &mut out);
+        varint(children, &mut out);
+        out
+    }
+
+    /// `trie_to_pprof` builds each node's key by appending its suffix to its
+    /// parent's, then splits the finished key on ';' into frames.
+    ///
+    /// The fixture shares the prefix "main;" across two children, gives one of
+    /// them a child of its own so the decoder has to unwind two levels, and
+    /// includes a second top-level node so the synthetic forest root is
+    /// exercised rather than a single tree.
+    #[test]
+    fn trie_nodes_extend_their_parents_key() {
+        let mut body = Vec::new();
+        body.extend(trie_node("main;", 0, 2));
+        body.extend(trie_node("work", 7, 1));
+        body.extend(trie_node(";inner", 4, 0));
+        body.extend(trie_node("idle", 3, 0));
+        body.extend(trie_node("other", 2, 0));
+
+        let profile =
+            super::trie_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
+
+        let decoded: Vec<(Vec<&str>, &[i64])> = profile
+            .samples()
+            .iter()
+            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
+            .collect();
+        check!(
+            decoded
+                == vec![
+                    (vec!["idle", "main"], [3].as_slice()),
+                    (vec!["work", "main"], [7].as_slice()),
+                    (vec!["inner", "work", "main"], [4].as_slice()),
+                    (vec!["other"], [2].as_slice()),
+                ]
+        );
+    }
+
+    /// The same five-node trie as above, reused to pin each limit at its
+    /// boundary rather than well inside it. Every one of these guards is an
+    /// inequality, and an inequality tested only far from its edge is
+    /// indistinguishable from the one next to it.
+    #[test]
+    fn the_trie_limits_admit_exactly_their_boundary() {
+        let mut body = Vec::new();
+        body.extend(trie_node("main;", 0, 2));
+        body.extend(trie_node("work", 7, 1));
+        body.extend(trie_node(";inner", 4, 0));
+        body.extend(trie_node("idle", 3, 0));
+        body.extend(trie_node("other", 2, 0));
+        let decode = |limits| super::trie_to_pprof("app", "bytes", &body, limits);
+
+        // Five nodes fit a budget of five, and not one of four.
+        let nodes = |max_nodes| LegacyDecodeLimits {
+            max_nodes,
+            ..LegacyDecodeLimits::default()
+        };
+        check!(decode(nodes(5)).is_ok(), "five nodes fit a budget of five");
+        let err = decode(nodes(4)).unwrap_err().to_string();
+        check!(err.contains("exceeds node budget"), "got: {err}");
+
+        // The deepest node sits under two frames, so a depth cap of two
+        // rejects it and three admits it.
+        let depth = |max_trie_depth| LegacyDecodeLimits {
+            max_trie_depth,
+            ..LegacyDecodeLimits::default()
+        };
+        check!(decode(depth(3)).is_ok(), "three levels fit a cap of three");
+        let err = decode(depth(2)).unwrap_err().to_string();
+        check!(err.contains("exceeds maximum depth"), "got: {err}");
+
+        // Materialized keys total 43 bytes: the shared "main;" prefix is
+        // copied into each descendant, which is the amplification the budget
+        // exists to bound.
+        let path = |n| LegacyDecodeLimits {
+            max_path_bytes: crabka_units::bytes(n),
+            ..LegacyDecodeLimits::default()
+        };
+        check!(decode(path(43)).is_ok(), "43 bytes of keys fit a budget of 43");
+        let err = decode(path(42)).unwrap_err().to_string();
+        check!(err.contains("exceeds path-bytes budget"), "got: {err}");
+    }
+
+    /// A suffix that ends exactly at the payload edge is not oversized; the
+    /// value and child count that should follow it are simply missing, and
+    /// the error names that rather than the suffix.
+    #[test]
+    fn a_trie_suffix_ending_at_the_payload_edge_reports_the_missing_value() {
+        let body = [0x04, b'm', b'a', b'i', b'n'];
+
+        let err = super::trie_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("ended before trie node value"), "got: {err}");
+    }
+
     #[test]
     fn parse_query_extracts_name_labels_format() {
         let q =
