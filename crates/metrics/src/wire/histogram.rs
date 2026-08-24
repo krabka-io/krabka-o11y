@@ -295,6 +295,53 @@ mod tests {
         check!(native.reset_hint == ResetHint::Yes);
     }
 
+    /// `is_v2_float` is a four-way disjunction, and each clause alone is enough
+    /// to make a histogram float-valued: a float count, a float zero-count, or
+    /// any float bucket counts on either side. Joined with `&&` instead of
+    /// `||`, a histogram must satisfy all four at once -- so one carrying only
+    /// float bucket counts is read as integer-valued and decoded down the wrong
+    /// path.
+    #[test]
+    fn any_single_float_field_makes_a_v2_histogram_float() {
+        let integer = pb::v2::Histogram {
+            schema: 0,
+            count: Some(pb::v2::histogram::Count::CountInt(4)),
+            zero_count: Some(pb::v2::histogram::ZeroCount::ZeroCountInt(1)),
+            positive_deltas: vec![1, 2],
+            ..Default::default()
+        };
+        check!(!is_v2_float(&integer), "no float field anywhere");
+
+        check!(
+            is_v2_float(&pb::v2::Histogram {
+                count: Some(pb::v2::histogram::Count::CountFloat(4.0)),
+                ..integer.clone()
+            }),
+            "float count alone"
+        );
+        check!(
+            is_v2_float(&pb::v2::Histogram {
+                zero_count: Some(pb::v2::histogram::ZeroCount::ZeroCountFloat(0.5)),
+                ..integer.clone()
+            }),
+            "float zero-count alone"
+        );
+        check!(
+            is_v2_float(&pb::v2::Histogram {
+                positive_counts: vec![1.5],
+                ..integer.clone()
+            }),
+            "positive float counts alone"
+        );
+        check!(
+            is_v2_float(&pb::v2::Histogram {
+                negative_counts: vec![1.5],
+                ..integer.clone()
+            }),
+            "negative float counts alone"
+        );
+    }
+
     #[test]
     fn v2_float_histogram_preserves_absolute_counts_and_start_timestamp() {
         let histogram = pb::v2::Histogram {
