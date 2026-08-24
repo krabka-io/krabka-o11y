@@ -263,6 +263,107 @@ mod tests {
 
     use super::*;
 
+    fn bucket_span(offset: i32, length: u32) -> BucketSpan {
+        BucketSpan { offset, length }
+    }
+
+    /// Spans and counts have to agree about how many buckets there are, on
+    /// each side independently.
+    #[test]
+    fn spans_and_counts_must_agree_on_each_side() {
+        let ok = validate_spans_and_counts(
+            0,
+            &[bucket_span(0, 2)],
+            &[1.0, 2.0],
+            &[bucket_span(0, 1)],
+            &[3.0],
+            None,
+        );
+        check!(ok.is_ok());
+
+        let err = validate_spans_and_counts(0, &[bucket_span(0, 2)], &[1.0], &[], &[], None)
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("positive spans declare 2 buckets but 1 counts"), "got: {err}");
+
+        let err = validate_spans_and_counts(0, &[], &[], &[bucket_span(0, 1)], &[], None)
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("negative spans declare 1 buckets but 0 counts"), "got: {err}");
+
+        // Lengths sum across spans rather than being taken from the first.
+        let err = validate_spans_and_counts(
+            0,
+            &[bucket_span(0, 2), bucket_span(1, 3)],
+            &[1.0, 2.0],
+            &[],
+            &[],
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        check!(err.contains("declare 5 buckets but 2 counts"), "got: {err}");
+    }
+
+    /// Schema -53 is the custom-bucket form. Its boundaries live in
+    /// `custom_values` and must cover every populated bucket, and it carries
+    /// no negative side at all.
+    #[test]
+    fn custom_bucket_histograms_need_bounds_for_every_bucket() {
+        let nhcb = |positive: &[BucketSpan], counts: &[f64], custom: Option<&[f64]>| {
+            validate_spans_and_counts(-53, positive, counts, &[], &[], custom)
+        };
+
+        // As many bounds as buckets is enough, and more is fine.
+        check!(nhcb(&[bucket_span(0, 2)], &[1.0, 2.0], Some(&[1.0, 2.0])).is_ok());
+        check!(nhcb(&[bucket_span(0, 2)], &[1.0, 2.0], Some(&[1.0, 2.0, 3.0])).is_ok());
+
+        // One bound short is not.
+        let err = nhcb(&[bucket_span(0, 2)], &[1.0, 2.0], Some(&[1.0]))
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("2 populated buckets but only 1 custom values"), "got: {err}");
+
+        // No custom values at all counts as none rather than as unbounded.
+        let err = nhcb(&[bucket_span(0, 1)], &[1.0], None).unwrap_err().to_string();
+        check!(err.contains("1 populated buckets but only 0 custom values"), "got: {err}");
+
+        // A negative side is rejected outright, from either field alone.
+        let err = validate_spans_and_counts(
+            -53,
+            &[bucket_span(0, 1)],
+            &[1.0],
+            &[bucket_span(0, 1)],
+            &[2.0],
+            Some(&[1.0]),
+        )
+        .unwrap_err()
+        .to_string();
+        check!(err.contains("must not carry negative buckets"), "got: {err}");
+
+        // A span of zero length declares no buckets, so the count check
+        // passes with no counts at all -- and the negative side is still
+        // present. That is the only shape where rejecting on either field and
+        // rejecting on both give different answers.
+        let err = validate_spans_and_counts(
+            -53,
+            &[bucket_span(0, 1)],
+            &[1.0],
+            &[bucket_span(0, 0)],
+            &[],
+            Some(&[1.0]),
+        )
+        .unwrap_err()
+        .to_string();
+        check!(err.contains("must not carry negative buckets"), "got: {err}");
+
+        // Any other schema does not get these checks.
+        check!(
+            validate_spans_and_counts(0, &[bucket_span(0, 1)], &[1.0], &[], &[], None).is_ok(),
+            "a normal schema needs no custom values"
+        );
+    }
+
     #[test]
     fn v1_integer_histogram_delta_decodes_to_absolute_counts() {
         let histogram = pb::v1::Histogram {
