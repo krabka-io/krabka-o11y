@@ -284,7 +284,6 @@ fn scan_number_or_duration(s: &str) -> Result<(Token, usize)> {
                 .is_some_and(|(_, next)| next.is_ascii_digit())
         {
             has_dot = true;
-            end = idx + 1;
             chars.next();
         } else {
             break;
@@ -355,6 +354,30 @@ mod tests {
         let mut t = lex(s).unwrap();
         assert!(t.pop() == Some(Token::Eof));
         t
+    }
+
+    /// A decimal point is only part of a number when a digit follows it, and
+    /// only the first one is. Everything else is a separate token, so the
+    /// scanner has to stop in the right place rather than swallow the rest.
+    #[test]
+    fn a_decimal_point_belongs_to_a_number_only_when_a_digit_follows() {
+        assert!(toks("1") == vec![Token::Int(1)]);
+        assert!(toks("1.5") == vec![Token::Float(1.5)]);
+        assert!(toks("0.25") == vec![Token::Float(0.25)]);
+        assert!(toks("10.75") == vec![Token::Float(10.75)], "more than one digit each side");
+
+        // A second point is not part of the number, so it ends there.
+        assert!(
+            toks("1.5.5") == vec![Token::Float(1.5), Token::Float(0.5)],
+            "the first point wins and the rest lexes on its own"
+        );
+
+        // A point with no digit after it is not part of the number at all.
+        assert!(toks("1 .5") == vec![Token::Int(1), Token::Float(0.5)]);
+        assert!(
+            toks("1.") == vec![Token::Int(1), Token::Dot],
+            "a trailing point ends the number rather than joining it"
+        );
     }
 
     #[test]
