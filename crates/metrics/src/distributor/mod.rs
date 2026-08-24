@@ -1625,6 +1625,48 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 mod tests {
     use std::sync::Mutex;
 
+    /// A push failure's gRPC code tells the client what to do next: back off
+    /// (`resource_exhausted`), retry later (`internal`), or stop and fix the
+    /// request (`invalid_argument`). The mapping is a chain of match guards on
+    /// the underlying HTTP status, and a guard forced either way sends the
+    /// wrong instruction -- a rate limit reported as `invalid_argument` makes a
+    /// client give up on a request that would succeed after a pause, and a bad
+    /// request reported as `resource_exhausted` makes it retry-storm one that
+    /// never will.
+    #[test]
+    fn push_errors_map_to_the_grpc_code_the_client_should_act_on() {
+        use crate::limits::LimitError;
+
+        let over_rate = PushError::Limit(LimitError::IngestionRateExceeded {
+            rate: 100.0,
+            observed: 150.0,
+        });
+        check!(
+            status_from_push_error(&over_rate).code() == tonic::Code::ResourceExhausted,
+            "429 limit is resource_exhausted"
+        );
+
+        // A 400-class limit is the client's mistake, not a reason to back off.
+        let too_many_series = PushError::Limit(LimitError::MaxSeriesPerUser {
+            limit: 10,
+            observed: 11,
+        });
+        check!(
+            status_from_push_error(&too_many_series).code() == tonic::Code::InvalidArgument,
+            "400 limit is invalid_argument"
+        );
+
+        let too_long = PushError::Limit(LimitError::LabelNameTooLong {
+            limit: 8,
+            observed: 9,
+        });
+        check!(
+            status_from_push_error(&too_long).code() == tonic::Code::InvalidArgument,
+            "label length is invalid_argument"
+        );
+    }
+
+
     use assert2::{assert, check};
     use axum::{body::Body, http::Request};
     use crabka_blockstore::Labels;
