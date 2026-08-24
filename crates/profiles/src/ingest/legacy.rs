@@ -1429,6 +1429,154 @@ mod tests {
         check!(err.contains("ended before trie node value"), "got: {err}");
     }
 
+    /// Wraps `parts` as a multipart body with a fixed boundary.
+    fn multipart_body(parts: &[(&str, &[u8])]) -> bytes::Bytes {
+        let mut body = Vec::new();
+        for (name, content) in parts {
+            body.extend_from_slice(b"--test-boundary\r\n");
+            body.extend_from_slice(
+                format!("Content-Disposition: form-data; name=\"{name}\"\r\n").as_bytes(),
+            );
+            body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+            body.extend_from_slice(content);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(b"--test-boundary--\r\n");
+        bytes::Bytes::from(body)
+    }
+
+    /// Each ingest format accepts its own part names and ignores the rest.
+    /// The guards are all equality tests against the query's format, so a
+    /// flipped one makes a format reject its own payload and accept every
+    /// other format's -- which only shows up when the same part name is tried
+    /// under a format that should ignore it.
+    #[test]
+    fn multipart_parts_are_accepted_only_under_their_own_format() {
+        let folded = b"main;work 7\n".as_slice();
+        let mut nested_nodes = Vec::new();
+        nested_nodes.extend(tree_node("", 0, 1));
+        nested_nodes.extend(tree_node("main", 7, 0));
+        let shared_prefix = trie_node("main", 7, 0);
+        let speedscope = br#"{
+            "shared": { "frames": [{ "name": "main" }] },
+            "profiles": [{
+              "type": "sampled", "name": "cpu", "unit": "samples",
+              "startValue": 0, "endValue": 10,
+              "samples": [[0]], "weights": [2]
+            }]
+        }"#
+        .as_slice();
+
+        // (format, part name, payload, whether it should yield a profile)
+        let cases: &[(&str, &str, &[u8], bool)] = &[
+            ("groups", "profile", folded, true),
+            ("groups", "groups", folded, true),
+            ("groups", "folded", folded, true),
+            ("groups", "tree", folded, false),
+            ("lines", "profile", folded, true),
+            ("lines", "folded", folded, true),
+            ("tree", "profile", &nested_nodes, true),
+            ("tree", "tree", &nested_nodes, true),
+            ("tree", "trie", &nested_nodes, false),
+            ("trie", "profile", &shared_prefix, true),
+            ("trie", "trie", &shared_prefix, true),
+            ("trie", "tree", &shared_prefix, false),
+            ("speedscope", "profile", speedscope, true),
+            ("speedscope", "speedscope", speedscope, true),
+            ("speedscope", "tree", speedscope, false),
+            // The jfr reader falls back to folded text for input that is not
+            // a binary recording, which keeps this row cheap.
+            ("jfr", "jfr", folded, true),
+            ("jfr", "profile", folded, false),
+        ];
+
+        for (format, part, payload, expect_ok) in cases {
+            let query = parse_ingest_query(&format!("name=app&format={format}")).unwrap();
+            let result = futures::executor::block_on(super::decode_ingest_multipart_with_limits(
+                &query,
+                "multipart/form-data; boundary=test-boundary",
+                multipart_body(&[(part, payload)]),
+                mebibytes(1),
+                LegacyDecodeLimits::default(),
+            ));
+            check!(
+                result.is_ok() == *expect_ok,
+                "format={format} part={part} gave {result:?}"
+            );
+        }
+    }
+
+    /// The per-part size cap rejects what exceeds it, so a part of exactly
+    /// the limit is still accepted.
+    #[test]
+    fn a_multipart_part_of_exactly_the_limit_is_accepted() {
+        let folded = b"main;work 7\n".as_slice();
+        let query = parse_ingest_query("name=app&format=groups").unwrap();
+        let decode = |limit| {
+            futures::executor::block_on(super::decode_ingest_multipart_with_limits(
+                &query,
+                "multipart/form-data; boundary=test-boundary",
+                multipart_body(&[("profile", folded)]),
+                crabka_units::bytes(limit),
+                LegacyDecodeLimits::default(),
+            ))
+        };
+
+        let len = u32::try_from(folded.len()).expect("fixture fits a u32");
+        check!(decode(len).is_ok(), "a part exactly at the limit fits");
+        let err = decode(len - 1).unwrap_err();
+        check!(matches!(err, ProfilesError::TooLarge { .. }), "got: {err:?}");
+    }
+
+    /// A part with no name is not a profile. Nothing downstream distinguishes
+    /// an unnamed part from one named "profile" except this lookup, so an
+    /// anonymous payload must be ignored rather than adopted.
+    #[test]
+    fn an_unnamed_multipart_part_is_ignored() {
+        let query = parse_ingest_query("name=app&format=groups").unwrap();
+        let mut body = Vec::new();
+        body.extend_from_slice(b"--test-boundary\r\n");
+        body.extend_from_slice(b"Content-Disposition: form-data\r\n");
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        body.extend_from_slice(b"main;work 7\n");
+        body.extend_from_slice(b"\r\n--test-boundary--\r\n");
+
+        let result = futures::executor::block_on(super::decode_ingest_multipart_with_limits(
+            &query,
+            "multipart/form-data; boundary=test-boundary",
+            bytes::Bytes::from(body),
+            mebibytes(1),
+            LegacyDecodeLimits::default(),
+        ));
+        check!(result.is_err(), "an unnamed part must not be read as the profile");
+    }
+
+    /// A "labels" part carries extra labels, but only for jfr uploads. Under
+    /// any other format the part is not a labels document and must be left
+    /// alone, so the guard is checked from both sides.
+    #[test]
+    fn a_labels_part_is_read_only_for_jfr_uploads() {
+        let folded = b"main;work 7\n".as_slice();
+        let labels = br#"{"service_name":"payments"}"#.as_slice();
+        let decode = |format: &str, profile_part: &str| {
+            let query = parse_ingest_query(&format!("name=app&format={format}")).unwrap();
+            futures::executor::block_on(super::decode_ingest_multipart_with_limits(
+                &query,
+                "multipart/form-data; boundary=test-boundary",
+                multipart_body(&[("labels", labels), (profile_part, folded)]),
+                mebibytes(1),
+                LegacyDecodeLimits::default(),
+            ))
+        };
+
+        let raw = decode("jfr", "jfr").unwrap();
+        check!(raw.labels.get("service_name") == Some("payments"));
+
+        // The same part under a format that has no labels concept.
+        let raw = decode("groups", "profile").unwrap();
+        check!(raw.labels.get("service_name") == None, "labels: {:?}", raw.labels);
+    }
+
     #[test]
     fn parse_query_extracts_name_labels_format() {
         let q =
