@@ -912,6 +912,126 @@ mod tests {
 
     use super::*;
 
+    /// `positive_or` and `merge_ingest_limits` implement one rule: a
+    /// per-tenant override counts only when it is set, and zero means unset.
+    /// Every field has to make that choice independently, so the case below
+    /// overrides exactly one field at a time and checks the other three still
+    /// come from the base.
+    #[test]
+    fn a_zero_override_falls_back_to_the_base_limit_field_by_field() {
+        let base = crate::ingest::TenantLimits {
+            max_label_name: bytes(11),
+            max_label_names_per_series: 22,
+            max_label_value: bytes(33),
+            session_id_buckets: 44,
+        };
+
+        // Limits::default() is not an empty override: its label caps are
+        // real values that would legitimately win. "Unset" means zero, so
+        // that is what the baseline here has to be.
+        let unset = || Limits {
+            max_label_name: bytes(0),
+            max_label_value: bytes(0),
+            max_label_names_per_series: 0,
+            max_session_id_cardinality: 0,
+            ..Limits::default()
+        };
+
+        check!(
+            super::merge_ingest_limits(&base, &unset()) == base,
+            "an override that sets nothing changes nothing"
+        );
+
+        // Each field on its own, with the rest left unset.
+        check!(
+            super::merge_ingest_limits(
+                &base,
+                &Limits {
+                    max_label_name: bytes(1),
+                    ..unset()
+                }
+            ) == crate::ingest::TenantLimits {
+                max_label_name: bytes(1),
+                ..base.clone()
+            }
+        );
+        check!(
+            super::merge_ingest_limits(
+                &base,
+                &Limits {
+                    max_label_names_per_series: 2,
+                    ..unset()
+                }
+            ) == crate::ingest::TenantLimits {
+                max_label_names_per_series: 2,
+                ..base.clone()
+            }
+        );
+        check!(
+            super::merge_ingest_limits(
+                &base,
+                &Limits {
+                    max_label_value: bytes(3),
+                    ..unset()
+                }
+            ) == crate::ingest::TenantLimits {
+                max_label_value: bytes(3),
+                ..base.clone()
+            }
+        );
+        check!(
+            super::merge_ingest_limits(
+                &base,
+                &Limits {
+                    max_session_id_cardinality: 4,
+                    ..unset()
+                }
+            ) == crate::ingest::TenantLimits {
+                session_id_buckets: 4,
+                ..base.clone()
+            }
+        );
+    }
+
+    /// `rate_tokens_per_sec` rounds a fractional rate up, floors it at one
+    /// token so a trickle still admits something, and caps it at the burst
+    /// size when one is configured.
+    #[test]
+    fn the_token_rate_rounds_up_floors_at_one_and_respects_the_burst_cap() {
+        let rate = |per_second: f64, burst| {
+            super::rate_tokens_per_sec(&Limits {
+                ingestion_rate: Frequency::from_per_sec(per_second),
+                ingestion_burst_profiles: burst,
+                ..Limits::default()
+            })
+        };
+
+        check!(rate(10.0, 0) == 10, "a whole rate with no cap passes through");
+        check!(rate(10.2, 0) == 11, "a fraction rounds up, not down");
+        check!(rate(0.1, 0) == 1, "a trickle still admits one");
+        check!(rate(0.0, 0) == 1, "so does nothing at all");
+
+        // The cap binds only when it is both set and lower than the rate.
+        check!(rate(10.0, 4) == 4, "a lower burst caps the rate");
+        check!(rate(10.0, 10) == 10, "an equal burst leaves it alone");
+        check!(rate(10.0, 40) == 10, "a higher burst does not raise it");
+    }
+
+    /// `u32_from_i64` names the field it could not convert, because the
+    /// caller has several and the message is all that distinguishes them.
+    #[test]
+    fn narrowing_to_u32_names_the_field_that_did_not_fit() {
+        check!(super::u32_from_i64(0, "width").unwrap() == 0);
+        check!(super::u32_from_i64(i64::from(u32::MAX), "width").unwrap() == u32::MAX);
+
+        let err = super::u32_from_i64(-1, "width").unwrap_err().to_string();
+        check!(err.contains("width does not fit u32"), "got: {err}");
+        let err = super::u32_from_i64(i64::from(u32::MAX) + 1, "height")
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("height does not fit u32"), "got: {err}");
+    }
+
     /// `ingest_span_tenant` reads the `X-Scope-OrgID` header. It returns the
     /// value verbatim when the header is present and non-empty. It returns
     /// `"unknown"` when the header is missing or empty.
