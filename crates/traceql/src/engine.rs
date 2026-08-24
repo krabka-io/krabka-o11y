@@ -5637,6 +5637,45 @@ mod tests {
         }
     }
 
+    /// `validate_compare_selection` decides whether a `compare()` selection can
+    /// use the cheap per-row evaluator or has to go through the planner. It
+    /// walks the whole expression, so a selection is only simple when every
+    /// leaf in it is: one unsupported leaf anywhere disqualifies the lot.
+    #[test]
+    fn a_compare_selection_is_simple_only_if_every_leaf_is() {
+        let selection = |query: &str| {
+            crate::parser::parse(query)
+                .unwrap_or_else(|e| panic!("query {query:?} did not parse: {e}"))
+                .root
+        };
+        let simple = |query: &str| validate_compare_selection(&selection(query)).is_ok();
+
+        check!(simple(r#"{ .svc = "a" }"#), "an attribute comparison");
+        check!(simple("{ span:duration > 100ms }"), "a supported intrinsic");
+        check!(simple("{ name = \"x\" }"), "another supported intrinsic");
+        check!(simple(r#"{ .a = "x" } && { .b = "y" }"#), "both sides simple");
+        check!(simple(r#"{ .a = "x" } || { .b = "y" }"#), "either side simple");
+
+        // A structural operator is never simple, wherever it sits.
+        check!(!simple(r#"{ .a = "x" } > { .b = "y" }"#), "a structural selection");
+        check!(
+            !simple(r#"{ .a = "x" } && ({ .b = "y" } > { .c = "z" })"#),
+            "a structural operand inside a conjunction"
+        );
+
+        // An intrinsic the comparison cannot classify disqualifies its whole
+        // expression, however deeply it is nested.
+        check!(!simple("{ span:id = \"abc\" }"), "an unsupported intrinsic");
+        check!(
+            !simple(r#"{ .a = "x" } && { span:id = "abc" }"#),
+            "one unsupported leaf is enough"
+        );
+        check!(
+            !simple(r#"{ .a = "x" && !(span:id = "abc") }"#),
+            "negation is descended into"
+        );
+    }
+
     #[test]
     fn usize_from_integer_f64_validates_and_converts() {
         let cases = [
