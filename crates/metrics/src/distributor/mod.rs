@@ -1649,6 +1649,44 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
 
+    /// `wal_producer_record` shapes one WAL append. The partition is left
+    /// unset deliberately: the producer's partitioner keys on the record key,
+    /// which is what keeps a series on one partition and in order. Setting a
+    /// partition here would silently defeat that, so its absence is asserted
+    /// rather than left unmentioned.
+    #[test]
+    fn a_wal_record_carries_its_key_value_and_headers_without_a_partition() {
+        let record = super::wal_producer_record(
+            Bytes::from_static(b"series-key"),
+            b"payload".to_vec(),
+            vec![
+                ("traceparent".to_string(), "00-abc-def-01".to_string()),
+                ("tracestate".to_string(), "vendor=1".to_string()),
+            ],
+        );
+
+        check!(record.topic == WAL_TOPIC);
+        check!(record.partition == None, "the partitioner must choose, not this");
+        check!(record.key.as_deref() == Some(&b"series-key"[..]));
+        check!(record.value.as_deref() == Some(&b"payload"[..]), "not the key again");
+
+        // Headers keep their order and their pairing; the two values differ so
+        // a swap between them is visible.
+        check!(record.headers.len() == 2);
+        check!(record.headers[0].key == "traceparent");
+        check!(record.headers[0].value.as_deref() == Some(&b"00-abc-def-01"[..]));
+        check!(record.headers[1].key == "tracestate");
+        check!(record.headers[1].value.as_deref() == Some(&b"vendor=1"[..]));
+
+        // No trace context means no headers, rather than empty ones.
+        let bare = super::wal_producer_record(
+            Bytes::from_static(b"k"),
+            b"v".to_vec(),
+            Vec::new(),
+        );
+        check!(bare.headers.is_empty());
+    }
+
     /// `decoded_sample_count` totals three collections across every series.
     /// Each carries a different number, so a term dropped from the sum is a
     /// specific shortfall rather than merely a smaller total -- with equal
