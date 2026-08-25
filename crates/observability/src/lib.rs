@@ -21007,6 +21007,62 @@ mod tests {
         check!(len("1e5x") == Some(3));
     }
 
+    /// The comparison operators are a six-entry table, and every strict one
+    /// has a non-strict twin one character longer. Checking them entry by
+    /// entry is what separates the pairs; sampling would not.
+    #[test]
+    fn every_metric_comparison_operator_maps_to_its_own_variant() {
+        use super::{ComparisonOp, parse_metric_comparison_operator as parse};
+
+        check!(parse("==") == Some(ComparisonOp::Equal));
+        check!(parse("!=") == Some(ComparisonOp::NotEqual));
+        check!(parse(">") == Some(ComparisonOp::Greater));
+        check!(parse(">=") == Some(ComparisonOp::GreaterEqual));
+        check!(parse("<") == Some(ComparisonOp::Less));
+        check!(parse("<=") == Some(ComparisonOp::LessEqual));
+
+        // Nothing else is an operator, including the near-misses.
+        check!(parse("") == None);
+        check!(parse("=") == None, "a single equals is not a comparison");
+        check!(parse("=>") == None);
+        check!(parse("=<") == None);
+        check!(parse("<>") == None);
+        check!(parse("===") == None);
+        check!(parse(">>") == None);
+    }
+
+    /// `parse_vector_group_modifier` returns the modifier it read and how many
+    /// bytes it consumed. The length is the half that matters: a caller
+    /// resumes from it, so an off-by-one there re-reads a character or skips
+    /// one, and the returned text alone would look correct either way.
+    #[test]
+    fn a_vector_group_modifier_reports_what_it_consumed() {
+        let parse = super::parse_vector_group_modifier;
+
+        // Bare, with the length being the whole modifier.
+        check!(parse("group_left", 0) == Some(("group_left".to_string(), 10)));
+        check!(parse("group_right", 0) == Some(("group_right".to_string(), 11)));
+
+        // With labels, the length covers the parentheses too.
+        check!(parse("group_left(a)", 0) == Some(("group_left (a)".to_string(), 13)));
+        check!(parse("group_right(a,b)", 0) == Some(("group_right (a,b)".to_string(), 16)));
+
+        // Empty parentheses are consumed but add no labels.
+        check!(parse("group_left()", 0) == Some(("group_left".to_string(), 12)));
+
+        // The length is relative to the whole query, not to the slice read.
+        check!(parse("x group_left", 2) == Some(("group_left".to_string(), 12)));
+        check!(parse("x group_left(a)", 2) == Some(("group_left (a)".to_string(), 15)));
+
+        // Trailing input is left for the caller rather than swallowed.
+        check!(parse("group_left(a) foo", 0) == Some(("group_left (a)".to_string(), 13)));
+
+        // An unclosed parenthesis is not a modifier at all.
+        check!(parse("group_left(a", 0) == None);
+        check!(parse("nothing", 0) == None);
+        check!(parse("", 0) == None);
+    }
+
     /// `MetricValue` is a rational scaled by a fixed decimal factor, so a
     /// float arriving from a metric has to survive the round trip through that
     /// scale, and the values it cannot represent have to be refused rather
