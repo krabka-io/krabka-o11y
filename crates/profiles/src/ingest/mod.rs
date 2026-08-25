@@ -268,7 +268,114 @@ fn remove_label(labels: &mut Labels, target: &str) {
 
 #[cfg(test)]
 mod tests {
-    use assert2::assert;
+    /// `apply_relabel` returns whether the series survives, and rewrites its
+    /// labels on the way. Each action is checked on both a matching and a
+    /// non-matching config, since every one of them is a no-op on one side and
+    /// the interesting case only appears on the other.
+    #[test]
+    fn relabelling_drops_keeps_and_rewrites_by_action() {
+        use super::RelabelAction::{Drop, Keep, Replace};
+
+        let config = |action, sources: &[&str], regex: &str, target: &str, replacement: &str| {
+            super::RelabelConfig {
+                source_labels: sources.iter().map(|s| (*s).to_string()).collect(),
+                regex: regex.to_string(),
+                target_label: target.to_string(),
+                replacement: replacement.to_string(),
+                action,
+            }
+        };
+        let labels = || {
+            let mut set = Labels::new();
+            set.insert("app", "web");
+            set.insert("env", "prod");
+            set
+        };
+
+        // Drop removes the series when it matches, and leaves it when it does not.
+        let mut set = labels();
+        check!(!super::apply_relabel(&mut set, &[config(Drop, &["app"], "web", "", "")]));
+        let mut set = labels();
+        check!(super::apply_relabel(&mut set, &[config(Drop, &["app"], "api", "", "")]));
+
+        // Keep is the mirror: it removes the series when it does *not* match.
+        let mut set = labels();
+        check!(super::apply_relabel(&mut set, &[config(Keep, &["app"], "web", "", "")]));
+        let mut set = labels();
+        check!(!super::apply_relabel(&mut set, &[config(Keep, &["app"], "api", "", "")]));
+
+        // Replace writes the target label when it matches, and not otherwise.
+        let mut set = labels();
+        check!(super::apply_relabel(&mut set, &[config(Replace, &["app"], "web", "tier", "front")]));
+        check!(set.get("tier") == Some("front"));
+        let mut set = labels();
+        check!(super::apply_relabel(&mut set, &[config(Replace, &["app"], "api", "tier", "front")]));
+        check!(set.get("tier").is_none(), "no match, no write");
+
+        // An empty replacement removes the target rather than setting it empty.
+        let mut set = labels();
+        check!(super::apply_relabel(&mut set, &[config(Replace, &["app"], "web", "env", "")]));
+        check!(set.get("env").is_none(), "removed, not blanked");
+
+        // The regex is anchored at both ends, so neither a prefix nor a
+        // suffix of the value matches. Each end needs its own case: a pattern
+        // matching neither end is rejected however the anchors are written.
+        let mut set = labels();
+        check!(
+            super::apply_relabel(&mut set, &[config(Drop, &["app"], "we", "", "")]),
+            "a prefix must not match"
+        );
+        let mut set = labels();
+        check!(
+            super::apply_relabel(&mut set, &[config(Drop, &["app"], "eb", "", "")]),
+            "nor a suffix"
+        );
+
+        // Source labels join with a separator, so where they divide matters.
+        let mut set = labels();
+        check!(
+            !super::apply_relabel(&mut set, &[config(Drop, &["app", "env"], "web;prod", "", "")]),
+            "the joined value matches"
+        );
+        let mut set = labels();
+        check!(
+            super::apply_relabel(&mut set, &[config(Drop, &["app", "env"], "webprod", "", "")]),
+            "and does not match without the separator"
+        );
+
+        // A missing source label reads as empty rather than skipping the join.
+        let mut set = labels();
+        check!(
+            !super::apply_relabel(&mut set, &[config(Drop, &["app", "absent"], "web;", "", "")]),
+            "the absent label contributes nothing but its separator"
+        );
+
+        // A config whose regex does not compile is skipped rather than taken
+        // as a match. On its own it must leave the series alone -- with a
+        // dropping config after it, both a skip and a drop would return false
+        // and the two could not be told apart.
+        let mut set = labels();
+        check!(
+            super::apply_relabel(&mut set, &[config(Drop, &["app"], "(unclosed", "", "")]),
+            "an uncompilable regex drops nothing"
+        );
+
+        // And the configs after it still apply.
+        let mut set = labels();
+        check!(!super::apply_relabel(
+            &mut set,
+            &[
+                config(Drop, &["app"], "(unclosed", "", ""),
+                config(Drop, &["app"], "web", "", ""),
+            ]
+        ));
+
+        // With no configs at all the series survives untouched.
+        let mut set = labels();
+        check!(super::apply_relabel(&mut set, &[]));
+        check!(set.get("app") == Some("web"));
+    }
+    use assert2::{assert, check};
     use crabka_blockstore::Labels;
 
     use super::*;
