@@ -2517,6 +2517,72 @@ fn base64<const N: usize>(bytes: [u8; N]) -> String {
 #[cfg(test)]
 mod tests {
 
+    /// `otlp_span` copies a span field by field into the OTLP shape, which is
+    /// where a pair of same-typed fields quietly changes places. Every value
+    /// in the fixture is distinct, and the two id fields differ in length as
+    /// well as content, so a swap is visible rather than merely wrong.
+    #[test]
+    fn a_span_maps_field_by_field_into_otlp() {
+        let span = SpanRef {
+            span_id: [2; 8],
+            parent_span_id: Some([3; 8]),
+            name: "GET /users".into(),
+            kind: 2,
+            nested_set_left: 1,
+            nested_set_right: 2,
+            nested_set_parent: 0,
+            start_time_unix_nano: 1_000,
+            duration: nanos(250),
+            status_code: 1,
+            status_message: "boom".into(),
+            instrumentation_name: String::new(),
+            instrumentation_version: String::new(),
+            resource_attributes: Vec::new(),
+            attributes: Vec::new(),
+            events: vec![crabka_traceql::EventRef {
+                time_since_start: nanos(50),
+                name: "retry".into(),
+                attributes: Vec::new(),
+            }],
+            links: vec![crabka_traceql::LinkRef {
+                trace_id: [9; 16],
+                span_id: [8; 8],
+                attributes: Vec::new(),
+            }],
+        };
+
+        let otlp = super::otlp_span([1; 16], &span);
+
+        check!(otlp.trace_id == vec![1_u8; 16], "the trace id is the one passed in");
+        check!(otlp.span_id == vec![2_u8; 8], "not the span's own trace field");
+        check!(otlp.parent_span_id == vec![3_u8; 8]);
+        check!(otlp.name == "GET /users");
+        check!(otlp.kind == 2, "the kind, not the status code beside it");
+        check!(otlp.start_time_unix_nano == 1_000);
+        check!(
+            otlp.end_time_unix_nano == 1_250,
+            "the end is the start plus the duration, not either alone"
+        );
+        check!(otlp.events.len() == 1);
+        check!(otlp.events[0].name == "retry");
+        check!(
+            otlp.events[0].time_unix_nano == 1_050,
+            "an event time is absolute, not relative to the span"
+        );
+        check!(otlp.links.len() == 1, "the link is carried across");
+        check!(otlp.links[0].trace_id == vec![9_u8; 16]);
+        check!(otlp.links[0].span_id == vec![8_u8; 8]);
+        let status = otlp.status.as_ref().expect("a status is always emitted");
+        check!(status.code == 1);
+        check!(status.message == "boom");
+
+        // A root span carries an empty parent rather than a missing field,
+        // which is what OTLP expects and is distinct from a zeroed id.
+        let root = SpanRef { parent_span_id: None, ..span };
+        let otlp = super::otlp_span([1; 16], &root);
+        check!(otlp.parent_span_id.is_empty(), "no parent means no bytes");
+    }
+
     /// `collect_span_intrinsic_values` answers from the span itself, except
     /// for the child count, which it derives by counting the other spans whose
     /// parent index is this span's left bound. That relationship is the only
