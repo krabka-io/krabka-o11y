@@ -904,6 +904,60 @@ fn u32_from_i64(value: i64, field: &str) -> Result<u32, ProfilesError> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `merge_ingest_limits` takes each field from the override when that
+    /// override is positive, and from the base otherwise. The four fields fall
+    /// back independently, so every value here differs from every other: a
+    /// field that reads its neighbour's override still produces a positive
+    /// number, and only distinct values make that visible.
+    #[test]
+    fn ingest_limits_fall_back_field_by_field() {
+        use crabka_units::bytes;
+
+        let base = crate::ingest::TenantLimits {
+            max_label_name: bytes(11),
+            max_label_names_per_series: 22,
+            max_label_value: bytes(33),
+            session_id_buckets: 44,
+        };
+        let zeroed = super::Limits {
+            max_label_name: bytes(0),
+            max_label_value: bytes(0),
+            max_label_names_per_series: 0,
+            max_session_id_cardinality: 0,
+            ..super::Limits::default()
+        };
+
+        // Every override unset: the base survives intact, field for field.
+        let merged = super::merge_ingest_limits(&base, &zeroed);
+        check!(merged.max_label_name == bytes(11));
+        check!(merged.max_label_names_per_series == 22);
+        check!(merged.max_label_value == bytes(33));
+        check!(merged.session_id_buckets == 44);
+
+        // Every override set: each replaces its own field and no other.
+        let overridden = super::Limits {
+            max_label_name: bytes(55),
+            max_label_value: bytes(66),
+            max_label_names_per_series: 77,
+            max_session_id_cardinality: 88,
+            ..super::Limits::default()
+        };
+        let merged = super::merge_ingest_limits(&base, &overridden);
+        check!(merged.max_label_name == bytes(55));
+        check!(merged.max_label_value == bytes(66));
+        check!(merged.max_label_names_per_series == 77);
+        check!(merged.session_id_buckets == 88);
+
+        // One field overridden at a time, so a fallback that reads the wrong
+        // side shows up as the other three changing when they should not.
+        let one = super::Limits { max_label_value: bytes(66), ..zeroed.clone() };
+        let merged = super::merge_ingest_limits(&base, &one);
+        check!(merged.max_label_value == bytes(66), "the overridden one");
+        check!(merged.max_label_name == bytes(11), "and only that one");
+        check!(merged.max_label_names_per_series == 22);
+        check!(merged.session_id_buckets == 44);
+    }
     use std::sync::{Arc, Mutex};
 
     use assert2::{assert, check};
