@@ -63,14 +63,25 @@ for crate in "${crates[@]}"; do
     > "$log" 2>&1
 
   timed_out=$(grep -c 'Test timed out' "$log")
+  # A shard can finish without reporting. cargo-mutants refuses to start when
+  # an unmutated integration suite fails inside its sandbox -- which happens
+  # even for a suite that passes under plain cargo and plain bazel -- and that
+  # shard then measures nothing while the run still looks successful. Compare
+  # what reported against what ran, because the totals below are summed only
+  # from the shards that spoke.
+  shards_run=$(grep -oE 'shard [0-9]+ of [0-9]+' "$log" | sort -u | wc -l)
+  shards_reporting=$(grep -cE 'mutants: [0-9]+ caught' "$log")
+  baseline_refused=$(grep -c 'does not pass; fix it first' "$log")
   printf '%-16s ' "$crate"
   grep -ohE '[0-9]+ mutants: [0-9]+ caught, [0-9]+ missed, [0-9]+ unviable' "$log" \
-    | awk -v t="$timed_out" '
+    | awk -v t="$timed_out" -v ran="$shards_run" -v spoke="$shards_reporting" -v refused="$baseline_refused" '
         {total += $1; caught += $3; missed += $5; unviable += $7}
         END {
           printf "total %-5d caught %-5d missed %-4d unviable %-4d shards %d",
                  total, caught, missed, unviable, NR
-          if (t > 0) printf "  [%d shard(s) TIMED OUT -- totals are incomplete]", t
+          if (t > 0) printf "  [%d shard(s) TIMED OUT]", t
+          if (ran > spoke) printf "  [%d of %d shards SILENT -- totals cover only %d]", ran - spoke, ran, spoke
+          if (refused > 0) printf "  [%d shard(s) refused: a baseline suite fails inside the sandbox]", refused
           printf "\n"
         }'
 done
