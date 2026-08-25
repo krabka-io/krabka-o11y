@@ -623,6 +623,73 @@ fn ns_to_seconds(ns: i64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// The optional decoders read a presence byte, then the value, and leave
+    /// the cursor exactly past what they consumed. Each case checks the
+    /// remaining buffer as well as the value: a decoder that returns the right
+    /// answer but misplaces the cursor corrupts every field after it, and the
+    /// value alone cannot see that.
+    #[test]
+    fn optional_fields_decode_and_leave_the_cursor_past_them() {
+        // Absent: one presence byte consumed, nothing else.
+        let mut buf = &[0_u8, 0xff][..];
+        check!(super::get_optional_i64(&mut buf).expect("absent") == None);
+        check!(buf == &[0xff], "only the presence byte is consumed");
+
+        // Present: presence byte plus eight big-endian bytes.
+        let mut buf = &[1, 0, 0, 0, 0, 0, 0, 0, 7, 0xff][..];
+        check!(super::get_optional_i64(&mut buf).expect("present") == Some(7));
+        check!(buf == &[0xff], "and the value after it");
+
+        // Negative values survive the round trip as two's complement.
+        let mut buf = &[1, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff][..];
+        check!(super::get_optional_i64(&mut buf).expect("present") == Some(-1));
+
+        // Any non-zero presence byte means present, not just 1.
+        let mut buf = &[2, 0, 0, 0, 0, 0, 0, 0, 9][..];
+        check!(super::get_optional_i64(&mut buf).expect("present") == Some(9));
+
+        // Truncation is an error rather than a short read.
+        let mut buf = &[][..];
+        check!(super::get_optional_i64(&mut buf).is_err(), "no presence byte");
+        let mut buf = &[1, 0, 0][..];
+        check!(super::get_optional_i64(&mut buf).is_err(), "value cut short");
+        let mut buf = &[1, 0, 0, 0, 0, 0, 0, 0][..];
+        check!(super::get_optional_i64(&mut buf).is_err(), "one byte short of eight");
+
+        // Strings carry a four-byte length ahead of their bytes.
+        let mut buf = &[1, 0, 0, 0, 2, b'h', b'i', 0xff][..];
+        check!(super::get_optional_string(&mut buf).expect("present") == Some("hi".to_string()));
+        check!(buf == &[0xff], "cursor past the string, not past the buffer");
+
+        let mut buf = &[0, 0xff][..];
+        check!(super::get_optional_string(&mut buf).expect("absent") == None);
+        check!(buf == &[0xff]);
+
+        // An empty string is present and zero-length, which is not absent.
+        let mut buf = &[1, 0, 0, 0, 0, 0xff][..];
+        check!(super::get_optional_string(&mut buf).expect("present") == Some(String::new()));
+        check!(buf == &[0xff]);
+
+        let mut buf = &[1, 0, 0][..];
+        check!(super::get_optional_string(&mut buf).is_err(), "length cut short");
+        // Exactly one byte short of a four-byte length: the bound has to be
+        // `< 4`, and `< 3` would read past the end.
+        let mut buf = &[1, 0, 0, 0][..];
+        check!(super::get_optional_string(&mut buf).is_err(), "three bytes of length");
+        // A string that exactly fills the buffer is complete, not truncated,
+        // which is the case that separates `< len` from `< len + 1`.
+        let mut buf = &[1, 0, 0, 0, 2, b'h', b'i'][..];
+        check!(
+            super::get_optional_string(&mut buf).expect("complete") == Some("hi".to_string()),
+            "a string may end the buffer"
+        );
+        check!(buf.is_empty(), "and leave nothing behind");
+        let mut buf = &[1, 0, 0, 0, 9, b'h'][..];
+        check!(super::get_optional_string(&mut buf).is_err(), "declared longer than remains");
+        let mut buf = &[1, 0, 0, 0, 1, 0xff][..];
+        check!(super::get_optional_string(&mut buf).is_err(), "not valid utf-8");
+    }
     use assert2::check;
     use crabka_units::{ByteSize, convert::ByteSizeExt as _, secs};
 
