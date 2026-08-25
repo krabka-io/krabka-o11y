@@ -2657,6 +2657,77 @@ mod tests {
         }
     }
 
+    /// `intrinsic_matches` reads a different column per key, so the fixture is
+    /// a real span batch rather than a hand-built one: a batch missing a
+    /// column would fail to resolve rather than report a mismatch, and the
+    /// nested event and link columns only exist on a span that has them.
+    ///
+    /// The span here is `span_with_nested_refs`, which carries one event, one
+    /// link, resource and span attributes, and an instrumentation scope.
+    #[test]
+    fn every_span_intrinsic_reads_its_own_column() {
+        // A second event and link, so that "one of them matches" is a
+        // different question from "all of them do". With a single event the
+        // two agree and neither can be tested.
+        let mut span = span_with_nested_refs();
+        span.events.push(EventRecord {
+            time_unix_nano: 1_200,
+            name: "retry".into(),
+            attrs: Vec::new(),
+        });
+        span.links.push(LinkRecord {
+            trace_id: [7; 16],
+            span_id: [6; 8],
+            attrs: Vec::new(),
+        });
+        let batch = span_batch(&[span]).expect("one-span batch");
+        let hit = |key: &str, value: MatchValue| {
+            super::intrinsic_matches(&batch, 0, &matcher(MatchScope::Intrinsic, key, MatchCmp::Eq, value))
+                .expect("intrinsic is readable")
+        };
+        let str_hit = |key: &str, value: &str| hit(key, MatchValue::Str(value.to_string()));
+
+        // Flat span columns.
+        check!(str_hit("span:name", "GET /users"));
+        check!(!str_hit("span:name", "GET /orders"), "a different name does not match");
+        check!(hit("span:duration", MatchValue::Int(500)));
+        check!(!hit("span:duration", MatchValue::Int(501)));
+        check!(str_hit("span:id", "0202020202020202"), "ids render as hex");
+        check!(str_hit("trace:id", "01010101010101010101010101010101"));
+        check!(str_hit("span:statusMessage", ""));
+
+        // The instrumentation scope is its own pair of columns.
+        check!(str_hit("instrumentation:name", "otel-rust"));
+        check!(str_hit("instrumentation:version", "1.2.3"));
+        check!(!str_hit("instrumentation:name", "1.2.3"), "the two are not interchangeable");
+
+        // Trace-level columns are derived from the span set, not the span.
+        check!(str_hit("trace:rootService", "api"));
+        check!(str_hit("trace:rootName", "GET /users"));
+        check!(hit("trace:duration", MatchValue::Int(500)));
+
+        // Nested columns: the event and link the span actually carries.
+        check!(str_hit("event:name", "exception"), "the first event matches");
+        check!(str_hit("event:name", "retry"), "and so does the second");
+        check!(!str_hit("event:name", "timeout"), "the attribute is not the name");
+        check!(hit("event:timeSinceStart", MatchValue::Int(50)), "relative to span start");
+        check!(hit("event:timeSinceStart", MatchValue::Int(200)), "the second event too");
+        check!(str_hit("link:traceID", "09090909090909090909090909090909"));
+        check!(str_hit("link:spanID", "0808080808080808"));
+        check!(str_hit("link:traceID", "07070707070707070707070707070707"), "the second link");
+        check!(
+            !str_hit("link:traceID", "0808080808080808"),
+            "the link's two ids are not interchangeable"
+        );
+
+        // An unknown intrinsic matches everything rather than nothing. That is
+        // the permissive default a filter wants -- an unrecognised predicate
+        // excludes no rows instead of silently emptying the result -- but it
+        // is the opposite of what the named keys above do, so it is pinned.
+        check!(str_hit("span:nonsense", "anything"));
+        check!(str_hit("", "anything"), "including an empty key");
+    }
+
     /// A span with no links still answers link matchers: `= nil` holds and
     /// `!= nil` does not. Everything else is a non-match, and a negated
     /// matcher inverts whatever the answer was.
