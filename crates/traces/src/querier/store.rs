@@ -2647,6 +2647,114 @@ fn block_err(err: &crabka_blockstore::BlockStoreError) -> TraceqlError {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
+    fn matcher(scope: MatchScope, key: &str, op: MatchCmp, value: MatchValue) -> SpanMatcher {
+        SpanMatcher {
+            scope,
+            key: key.to_string(),
+            op,
+            value,
+            negated: false,
+        }
+    }
+
+    /// A span with no links still answers link matchers: `= nil` holds and
+    /// `!= nil` does not. Everything else is a non-match, and a negated
+    /// matcher inverts whatever the answer was.
+    #[test]
+    fn a_span_without_links_matches_only_absence() {
+        let m = |scope, key, op, value| super::link_matcher_matches_absence(&matcher(scope, key, op, value));
+
+        // Scoped at the link itself.
+        check!(m(MatchScope::Link, "anything", MatchCmp::Eq, MatchValue::Nil));
+        check!(!m(MatchScope::Link, "anything", MatchCmp::Neq, MatchValue::Nil));
+        check!(
+            !m(MatchScope::Link, "anything", MatchCmp::Eq, MatchValue::Int(1)),
+            "a real value cannot match a link that is not there"
+        );
+
+        // The two link intrinsics behave the same way.
+        for key in ["link:traceID", "link:spanID"] {
+            check!(m(MatchScope::Intrinsic, key, MatchCmp::Eq, MatchValue::Nil), "{key}");
+            check!(!m(MatchScope::Intrinsic, key, MatchCmp::Neq, MatchValue::Nil), "{key}");
+        }
+
+        // An intrinsic that is not about links does not match at all.
+        check!(!m(MatchScope::Intrinsic, "span:name", MatchCmp::Eq, MatchValue::Nil));
+        check!(!m(MatchScope::Intrinsic, "event:name", MatchCmp::Eq, MatchValue::Nil));
+
+        // Nor does any other scope.
+        for scope in [MatchScope::Span, MatchScope::Resource, MatchScope::Event] {
+            check!(!m(scope, "anything", MatchCmp::Eq, MatchValue::Nil));
+        }
+
+        // Negation flips the answer, both ways.
+        let mut negated = matcher(MatchScope::Link, "x", MatchCmp::Eq, MatchValue::Nil);
+        negated.negated = true;
+        check!(
+            !super::link_matcher_matches_absence(&negated),
+            "a negated absence match is a non-match"
+        );
+        negated.op = MatchCmp::Neq;
+        check!(
+            super::link_matcher_matches_absence(&negated),
+            "and a negated non-match is a match"
+        );
+    }
+
+    /// Events mirror links exactly, over their own scope and intrinsics.
+    #[test]
+    fn a_span_without_events_matches_only_absence() {
+        let m = |scope, key, op, value| super::event_matcher_matches_absence(&matcher(scope, key, op, value));
+
+        check!(m(MatchScope::Event, "anything", MatchCmp::Eq, MatchValue::Nil));
+        check!(!m(MatchScope::Event, "anything", MatchCmp::Neq, MatchValue::Nil));
+
+        for key in ["event:name", "event:timeSinceStart"] {
+            check!(m(MatchScope::Intrinsic, key, MatchCmp::Eq, MatchValue::Nil), "{key}");
+            check!(!m(MatchScope::Intrinsic, key, MatchCmp::Neq, MatchValue::Nil), "{key}");
+        }
+
+        // A link intrinsic is not an event intrinsic, and the reverse holds
+        // in the link matcher above -- the two must not answer for each other.
+        check!(!m(MatchScope::Intrinsic, "link:traceID", MatchCmp::Eq, MatchValue::Nil));
+        check!(!m(MatchScope::Link, "anything", MatchCmp::Eq, MatchValue::Nil));
+
+        let mut negated = matcher(MatchScope::Event, "x", MatchCmp::Eq, MatchValue::Nil);
+        negated.negated = true;
+        check!(!super::event_matcher_matches_absence(&negated));
+    }
+
+    /// `nil_matches` and `nested_presence_matches` are the two ways a matcher
+    /// asks about presence. The first says whether a value that exists can
+    /// match; the second answers for a whole collection and declines to
+    /// answer for any operator other than equality.
+    #[test]
+    fn presence_matchers_answer_only_about_nil() {
+        check!(super::nil_matches(MatchCmp::Eq, &MatchValue::Nil));
+        check!(!super::nil_matches(MatchCmp::Neq, &MatchValue::Nil));
+        check!(!super::nil_matches(MatchCmp::Eq, &MatchValue::Int(0)));
+        check!(!super::nil_matches(MatchCmp::Lt, &MatchValue::Nil));
+
+        // A value that is present is not nil, and differs from nil.
+        check!(super::present_value_matches(MatchCmp::Eq, &MatchValue::Nil) == Some(false));
+        check!(super::present_value_matches(MatchCmp::Neq, &MatchValue::Nil) == Some(true));
+        check!(
+            super::present_value_matches(MatchCmp::Eq, &MatchValue::Int(1)) == None,
+            "a real comparison is left to the caller"
+        );
+        check!(super::present_value_matches(MatchCmp::Lt, &MatchValue::Nil) == None);
+
+        // A collection answers about itself, so the sense flips with content.
+        check!(super::nested_presence_matches(false, MatchCmp::Eq, &MatchValue::Nil) == Some(true));
+        check!(super::nested_presence_matches(true, MatchCmp::Eq, &MatchValue::Nil) == Some(false));
+        check!(super::nested_presence_matches(false, MatchCmp::Neq, &MatchValue::Nil) == Some(false));
+        check!(super::nested_presence_matches(true, MatchCmp::Neq, &MatchValue::Nil) == Some(true));
+        check!(
+            super::nested_presence_matches(true, MatchCmp::Eq, &MatchValue::Int(1)) == None,
+            "only nil is answered here"
+        );
+    }
+
     /// The comparison operators are the whole of a matcher's meaning, so each
     /// is checked on the boundary where the strict and non-strict forms part
     /// company, and either side of it so a comparison stuck on one answer is

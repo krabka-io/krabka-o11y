@@ -876,11 +876,64 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use assert2::check;
+
     use super::*;
     use crate::{
         ids::{TraceIdHigh, TraceIdLow},
         span::{AttrValue, EventRecord, SpanKind, StatusCode},
     };
+
+    /// Jaeger carries the span kind as a `span.kind` tag rather than a field.
+    /// Every name maps to its own kind, an unknown or absent one falls back
+    /// to internal, and a tag whose value is not a string is not a kind at
+    /// all -- a fallback reached by the wrong route still looks right until
+    /// a real kind is present and ignored.
+    #[test]
+    fn the_jaeger_span_kind_tag_maps_each_name_and_falls_back_to_internal() {
+        let tag = |key: &str, value: AttrValue| KeyValue {
+            key: key.to_string(),
+            value,
+        };
+        let str_tag = |key: &str, value: &str| tag(key, AttrValue::Str(value.to_string()));
+        let kind = |tags: Vec<KeyValue>| super::span_kind(&tags);
+
+        for (name, expected) in [
+            ("server", SpanKind::Server),
+            ("client", SpanKind::Client),
+            ("producer", SpanKind::Producer),
+            ("consumer", SpanKind::Consumer),
+            ("internal", SpanKind::Internal),
+        ] {
+            check!(kind(vec![str_tag("span.kind", name)]) == expected, "{name}");
+        }
+
+        check!(kind(vec![]) == SpanKind::Internal, "no tags at all");
+        check!(
+            kind(vec![str_tag("other", "server")]) == SpanKind::Internal,
+            "the key is matched, not the value"
+        );
+        check!(
+            kind(vec![str_tag("span.kind", "gateway")]) == SpanKind::Internal,
+            "an unknown kind falls back"
+        );
+        check!(
+            kind(vec![str_tag("span.kind", "Server")]) == SpanKind::Internal,
+            "the match is case-sensitive"
+        );
+        check!(
+            kind(vec![tag("span.kind", AttrValue::Int(2))]) == SpanKind::Internal,
+            "a non-string value is not a kind"
+        );
+
+        // A decoy in front of the real tag, so the key is shown to be found
+        // rather than the first tag taken.
+        check!(
+            kind(vec![str_tag("service", "api"), str_tag("span.kind", "server")])
+                == SpanKind::Server,
+            "the tag is found wherever it sits"
+        );
+    }
 
     #[test]
     fn decodes_jaeger_thrift_batch() {
