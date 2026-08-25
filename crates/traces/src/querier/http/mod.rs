@@ -2516,6 +2516,85 @@ fn base64<const N: usize>(bytes: [u8; N]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// `collect_span_intrinsic_values` answers from the span itself, except
+    /// for the child count, which it derives by counting the other spans whose
+    /// parent index is this span's left bound. That relationship is the only
+    /// part that can be got wrong by reading a plausible-looking neighbouring
+    /// field, so the fixture gives the parent two children and a third span
+    /// that belongs to neither.
+    #[test]
+    fn span_intrinsics_come_from_the_span_and_children_from_the_set() {
+        let span = |id: u8, left: i32, right: i32, parent: i32| SpanRef {
+            span_id: [id; 8],
+            parent_span_id: None,
+            name: format!("span-{id}"),
+            kind: 2,
+            nested_set_left: left,
+            nested_set_right: right,
+            nested_set_parent: parent,
+            start_time_unix_nano: 1_000,
+            duration: nanos(250),
+            status_code: 1,
+            status_message: String::new(),
+            instrumentation_name: String::new(),
+            instrumentation_version: String::new(),
+            resource_attributes: Vec::new(),
+            attributes: Vec::new(),
+            events: Vec::new(),
+            links: Vec::new(),
+        };
+
+        // Parent at left 1; two children point at it; a fourth span does not.
+        let parent = span(1, 1, 8, 0);
+        let spans = vec![
+            parent.clone(),
+            span(2, 2, 3, 1),
+            span(3, 4, 5, 1),
+            span(4, 6, 7, 9),
+        ];
+        let collect = |source: &SpanRef, tag: &str| {
+            let mut values = BTreeSet::new();
+            super::collect_span_intrinsic_values(source, &spans, tag, &mut values);
+            values.into_iter().collect::<Vec<_>>()
+        };
+        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+
+        // Counted from the set, not read from the span.
+        check!(collect(&parent, "span:childCount") == vec![pair("int", "2")]);
+        check!(
+            collect(&spans[1], "span:childCount") == vec![pair("int", "0")],
+            "a leaf has none"
+        );
+
+        // Read straight from the span, each with its own type name.
+        check!(collect(&parent, "span:duration") == vec![pair("duration", "250")]);
+        check!(collect(&parent, "span:id") == vec![pair("string", "0101010101010101")]);
+        check!(collect(&parent, "span:kind") == vec![pair("int", "2")]);
+        check!(collect(&parent, "span:name") == vec![pair("string", "span-1")]);
+        check!(collect(&parent, "span:status") == vec![pair("int", "1")]);
+        check!(collect(&parent, "span:nestedSetRight") == vec![pair("int", "8")]);
+
+        // Two spellings of the same tag reach the same field.
+        check!(collect(&spans[1], "span:nestedSetParent") == vec![pair("int", "1")]);
+        check!(collect(&spans[1], "span:Parent") == vec![pair("int", "1")]);
+
+        // The three guarded tags are omitted when empty and reported when not.
+        check!(collect(&parent, "span:statusMessage") == vec![]);
+        check!(collect(&parent, "instrumentation:name") == vec![]);
+        check!(collect(&parent, "instrumentation:version") == vec![]);
+
+        let mut filled = parent.clone();
+        filled.status_message = "boom".into();
+        filled.instrumentation_name = "otel".into();
+        filled.instrumentation_version = "2.0".into();
+        check!(collect(&filled, "span:statusMessage") == vec![pair("string", "boom")]);
+        check!(collect(&filled, "instrumentation:name") == vec![pair("string", "otel")]);
+        check!(collect(&filled, "instrumentation:version") == vec![pair("string", "2.0")]);
+
+        // An unknown tag collects nothing.
+        check!(collect(&parent, "span:nonsense") == vec![]);
+    }
     use std::{
         collections::{BTreeMap, BTreeSet},
         sync::Arc,
