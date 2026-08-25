@@ -61,6 +61,11 @@ def run_case(path, original, start, end, case, package):
         return "killed (hung)"
     if "test result:" not in output:
         return "NO-COMPILE"
+    # An empty test filter runs the whole suite, which is how to ask "does
+    # anything at all catch this?" of a function with no test of its own. The
+    # verdict is then whether every test still passed, not whether one did.
+    if not case["test"]:
+        return "SURVIVED" if " 0 failed;" in output and "FAILED" not in output else "killed"
     return "SURVIVED" if "test result: ok. 1 passed" in output else "killed"
 
 
