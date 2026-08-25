@@ -20965,6 +20965,78 @@ mod tests {
 
     use super::*;
 
+    /// `scalar_literal_len` reports how many bytes at the front of `input`
+    /// form a number, so the caller can resume after it. It is a scanner, not
+    /// a parser: it must stop at the first byte that cannot extend the
+    /// literal, and refuse anything that is not one.
+    #[test]
+    fn a_scalar_literal_ends_where_the_number_does() {
+        let len = super::scalar_literal_len;
+
+        check!(len("1") == Some(1));
+        check!(len("1234") == Some(4));
+        check!(len("+1") == Some(2), "a leading sign counts");
+        check!(len("-1") == Some(2));
+
+        // A fraction may sit on either side of the point.
+        check!(len("1.5") == Some(3));
+        check!(len(".5") == Some(2), "no whole part is still a number");
+        check!(len("1.") == Some(2), "a trailing point ends the literal");
+        check!(len("+.5") == Some(3));
+
+        // An exponent takes an optional sign and needs at least one digit.
+        check!(len("1e5") == Some(3));
+        check!(len("1e+5") == Some(4));
+        check!(len("1e-5") == Some(4));
+        check!(len("1.5e10") == Some(6));
+        check!(len("1E5") == Some(3), "an exponent may be upper case");
+        check!(len("1E-5") == Some(4));
+        check!(len("1e") == None, "an exponent with no digits is not a number");
+        check!(len("1e+") == None);
+
+        // Nothing that is not a number.
+        check!(len("") == None);
+        check!(len(".") == None, "a bare point has no digits either side");
+        check!(len("+") == None);
+        check!(len("abc") == None);
+
+        // The scan stops at the first byte it cannot use, rather than
+        // rejecting the whole input.
+        check!(len("1abc") == Some(1));
+        check!(len("1.5]") == Some(3));
+        check!(len("1e5x") == Some(3));
+    }
+
+    /// `detected_duration_unit` maps a unit to its ordinal and its bit. Both
+    /// come from the same table, and a table is exactly where an off-by-one
+    /// goes unnoticed, so every entry is checked rather than sampled -- and
+    /// the bit is checked against the ordinal it is meant to shadow.
+    #[test]
+    fn every_duration_unit_maps_to_its_ordinal_and_bit() {
+        let unit = super::detected_duration_unit;
+
+        for (name, ordinal) in [
+            ("y", 0_u8), ("w", 1), ("d", 2), ("h", 3), ("m", 4),
+            ("s", 5), ("ms", 6), ("us", 7), ("ns", 8),
+        ] {
+            let expected = (ordinal, 1_u16 << ordinal);
+            check!(unit(name) == Some(expected), "{name}");
+        }
+
+        // The bits are distinct, which is what makes them usable as a set.
+        let mut seen = 0_u16;
+        for name in ["y", "w", "d", "h", "m", "s", "ms", "us", "ns"] {
+            let (_, bit) = unit(name).expect("known unit");
+            check!(seen & bit == 0, "{name} reuses a bit");
+            seen |= bit;
+        }
+
+        check!(unit("") == None);
+        check!(unit("Y") == None, "the match is case-sensitive");
+        check!(unit("mo") == None, "months are not a unit here");
+        check!(unit("sec") == None);
+    }
+
     /// `parse_logfmt_pairs` walks a logfmt line byte by byte: whitespace
     /// separates pairs, `=` separates a key from its value, and a quoted value
     /// may contain both. Every case below fixes one decision that boundary
