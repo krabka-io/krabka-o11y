@@ -2657,6 +2657,71 @@ mod tests {
         }
     }
 
+    /// `collect_intrinsic_value` reports a tag's value along with the type
+    /// name a client should read it as, so both halves are pinned. The type is
+    /// the easier half to get wrong: it is a literal beside the value rather
+    /// than derived from the column, so a duration labelled "int" or an id
+    /// labelled "duration" is a change nothing about the value can reveal.
+    #[test]
+    fn collecting_an_intrinsic_reports_its_value_and_type() {
+        let batch = span_batch(&[span_with_nested_refs()]).expect("one-span batch");
+        let collect = |tag: &str| {
+            let mut values = BTreeSet::new();
+            super::collect_intrinsic_value(&batch, 0, tag, &mut values).expect("readable");
+            values.into_iter().collect::<Vec<_>>()
+        };
+        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+
+        // Durations carry their own type name rather than "int".
+        check!(collect("span:duration") == vec![pair("duration", "500")]);
+        check!(collect("trace:duration") == vec![pair("duration", "500")]);
+
+        // Counts and enumerations are ints.
+        check!(collect("span:kind") == vec![pair("int", "2")], "server is kind 2");
+        check!(collect("span:status") == vec![pair("int", "1")], "ok is status 1");
+        check!(collect("span:childCount") == vec![pair("int", "0")]);
+        check!(collect("span:nestedSetLeft") == vec![pair("int", "1")]);
+        check!(collect("span:nestedSetRight") == vec![pair("int", "2")]);
+        check!(collect("span:Parent") == vec![pair("int", "-1")], "a root has no parent index");
+
+        // Ids render as hex strings.
+        check!(collect("span:id") == vec![pair("string", "0202020202020202")]);
+        check!(
+            collect("trace:id") == vec![pair("string", "01010101010101010101010101010101")]
+        );
+
+        // Text columns.
+        check!(collect("span:name") == vec![pair("string", "GET /users")]);
+        check!(collect("trace:rootName") == vec![pair("string", "GET /users")]);
+        check!(collect("trace:rootService") == vec![pair("string", "api")]);
+        check!(collect("instrumentation:name") == vec![pair("string", "otel-rust")]);
+        check!(collect("instrumentation:version") == vec![pair("string", "1.2.3")]);
+
+        // A null parent id contributes nothing rather than an empty string,
+        // which would otherwise appear as a real tag value in the results.
+        check!(collect("span:parentID") == vec![], "this span has no parent");
+
+        // An empty status message is skipped, and a real one is not. Both
+        // sides are needed: with only the empty case, dropping the emptiness
+        // check changes nothing observable.
+        check!(collect("span:statusMessage") == vec![], "empty is omitted");
+        let mut failed = span_with_nested_refs();
+        failed.status_message = "upstream timeout".into();
+        let failed_batch = span_batch(&[failed]).expect("one-span batch");
+        let mut message = BTreeSet::new();
+        super::collect_intrinsic_value(&failed_batch, 0, "span:statusMessage", &mut message)
+            .expect("readable");
+        check!(
+            message.into_iter().collect::<Vec<_>>()
+                == vec![pair("string", "upstream timeout")],
+            "a real message is reported"
+        );
+
+        // An unknown tag collects nothing and is not an error.
+        check!(collect("span:nonsense") == vec![]);
+        check!(collect("") == vec![]);
+    }
+
     /// `intrinsic_matches` reads a different column per key, so the fixture is
     /// a real span batch rather than a hand-built one: a batch missing a
     /// column would fail to resolve rather than report a mismatch, and the
