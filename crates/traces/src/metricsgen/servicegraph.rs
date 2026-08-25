@@ -624,6 +624,80 @@ fn ns_to_seconds(ns: i64) -> f64 {
 #[cfg(test)]
 mod tests {
 
+    /// `EdgeStore::complete` folds one finished edge into the aggregate for
+    /// its client/server/kind triple. Each counter is checked after a run of
+    /// edges rather than after one, since a counter that increments by the
+    /// wrong amount, or from the wrong field, still moves.
+    #[test]
+    fn completing_edges_accumulates_per_triple() {
+        let edge = |client: &str, server: &str, failed: bool, client_ns, server_ns| super::Edge {
+            client_service: Some(client.to_string()),
+            server_service: Some(server.to_string()),
+            client_latency_ns: client_ns,
+            server_latency_ns: server_ns,
+            failed,
+            connection_type: super::ConnectionType::Unset,
+            first_seen_ns: 0,
+        };
+        // Every figure here is a whole number of requests, or a sum of whole
+        // seconds, so each is exactly representable. The comparison carries a
+        // tolerance because a bare `==` on a float is refused, not because any
+        // of these is expected to drift.
+        let is = |actual: f64, expected: f64| (actual - expected).abs() < f64::EPSILON;
+        let key = |client: &str, server: &str| {
+            (client.to_string(), server.to_string(), super::ConnectionType::Unset)
+        };
+
+        let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
+        store.complete(edge("a", "b", false, Some(1_000_000_000), Some(2_000_000_000)));
+        store.complete(edge("a", "b", true, Some(3_000_000_000), None));
+        store.complete(edge("c", "d", false, None, None));
+
+        let agg = &store.aggregates[&key("a", "b")];
+        check!(is(agg.requests, 2.0), "one per completed edge");
+        check!(is(agg.failed, 1.0), "only the failed one counts");
+        check!(is(agg.client_seconds_count, 2.0), "both carried a client latency");
+        check!(is(agg.client_seconds_sum, 4.0), "one second plus three");
+        check!(is(agg.server_seconds_count, 1.0), "only one carried a server latency");
+        check!(is(agg.server_seconds_sum, 2.0));
+
+        // A different triple aggregates separately rather than merging.
+        let other = &store.aggregates[&key("c", "d")];
+        check!(is(other.requests, 1.0));
+        check!(is(other.failed, 0.0), "not failed");
+        check!(is(other.client_seconds_count, 0.0), "no latency recorded at all");
+        check!(is(other.server_seconds_count, 0.0));
+        check!(store.aggregates.len() == 2, "two triples, not one");
+
+        // Messaging latency is off by default, so a messaging edge records
+        // nothing under it even when it carries a latency.
+        let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
+        let mut messaging = edge("a", "b", false, Some(1_000_000_000), Some(2_000_000_000));
+        messaging.connection_type = super::ConnectionType::MessagingSystem;
+        store.complete(messaging.clone());
+        let agg = &store.aggregates[&(
+            "a".to_string(),
+            "b".to_string(),
+            super::ConnectionType::MessagingSystem,
+        )];
+        check!(is(agg.messaging_seconds_count, 0.0), "disabled by default");
+
+        // With it enabled, the server latency is preferred over the client's.
+        let cfg = super::MetricsGenConfig {
+            enable_messaging_system_latency: true,
+            ..super::MetricsGenConfig::default()
+        };
+        let mut store = super::EdgeStore::new(&cfg);
+        store.complete(messaging);
+        let agg = &store.aggregates[&(
+            "a".to_string(),
+            "b".to_string(),
+            super::ConnectionType::MessagingSystem,
+        )];
+        check!(is(agg.messaging_seconds_count, 1.0));
+        check!(is(agg.messaging_seconds_sum, 2.0), "the server latency, not the client's");
+    }
+
     /// An edge survives a round trip through the checkpoint codec.
     ///
     /// Every field holds a value distinct from every other, so a decoder that
