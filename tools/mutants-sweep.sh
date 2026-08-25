@@ -25,7 +25,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 readonly TIMEOUT_SECONDS=36000
-readonly LOG_DIR="${TMPDIR:-/tmp}/krabka-mutants"
+# Deliberately not under /tmp. A sweep runs for hours and this machine clears
+# /tmp on restart -- two sweeps were lost that way, and a lost sweep is worse
+# than a slow one because the totals it never wrote read as "nothing missed".
+readonly LOG_DIR="${KRABKA_MUTANTS_LOG_DIR:-$HOME/krabka-work/sweep-results}"
 mkdir -p "$LOG_DIR"
 
 crates=("$@")
