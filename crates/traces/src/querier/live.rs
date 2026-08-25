@@ -537,6 +537,48 @@ impl LiveTier {
 
 #[cfg(test)]
 mod tests {
+
+    /// `ns_ceil_seconds` rounds nanoseconds up to whole seconds, and rounds
+    /// *up* rather than toward zero -- which is only visible on negatives,
+    /// where the two disagree. Euclidean division is what makes that work.
+    #[test]
+    fn nanoseconds_round_up_to_whole_seconds() {
+        let ceil = super::ns_ceil_seconds;
+
+        check!(ceil(0) == 0);
+        check!(ceil(1) == 1, "any remainder rounds up");
+        check!(ceil(999_999_999) == 1, "just under a second is still a second");
+        check!(ceil(1_000_000_000) == 1, "exactly a second does not round up");
+        check!(ceil(1_000_000_001) == 2);
+        check!(ceil(2_000_000_000) == 2);
+
+        // Negatives round toward positive infinity, not toward zero.
+        check!(ceil(-1) == 0, "just below zero rounds up to zero");
+        check!(ceil(-999_999_999) == 0);
+        check!(ceil(-1_000_000_000) == -1, "exactly a second is exact either way");
+        check!(ceil(-1_000_000_001) == -1);
+    }
+
+    /// `tag_scope_from_name` refuses what it does not know, rather than
+    /// falling back to a scope. Every entry is checked, since a table is where
+    /// two names quietly map to one variant.
+    #[test]
+    fn a_tag_scope_name_maps_only_to_its_own_scope() {
+        use super::TagScope;
+        let scope = super::tag_scope_from_name;
+
+        check!(scope("resource") == Some(TagScope::Resource));
+        check!(scope("span") == Some(TagScope::Span));
+        check!(scope("intrinsic") == Some(TagScope::Intrinsic));
+        check!(scope("event") == Some(TagScope::Event));
+        check!(scope("link") == Some(TagScope::Link));
+        check!(scope("instrumentation") == Some(TagScope::Instrumentation));
+
+        check!(scope("") == None);
+        check!(scope("Span") == None, "case-sensitive");
+        check!(scope("spans") == None, "not a prefix match");
+        check!(scope("unknown") == None);
+    }
     use std::{collections::BTreeMap, sync::Arc};
 
     use arrow::record_batch::RecordBatch;

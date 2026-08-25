@@ -443,6 +443,28 @@ pub async fn run_query_frontend(
 
 #[cfg(test)]
 mod tests {
+
+    /// `parse_scope` defaults to the span scope rather than refusing, so
+    /// "span" and an unknown name reach the same answer by different routes.
+    /// Every named scope is checked so none of them can quietly fall through
+    /// to that default instead of being recognised.
+    #[test]
+    fn a_scope_name_defaults_to_span_only_when_unrecognised() {
+        use crabka_traceql::TagScope;
+        let scope = super::parse_scope;
+
+        check!(scope("resource") == TagScope::Resource);
+        check!(scope("intrinsic") == TagScope::Intrinsic);
+        check!(scope("event") == TagScope::Event);
+        check!(scope("link") == TagScope::Link);
+        check!(scope("instrumentation") == TagScope::Instrumentation);
+
+        // Both routes to Span: named, and by falling through.
+        check!(scope("span") == TagScope::Span, "named explicitly");
+        check!(scope("") == TagScope::Span, "the default");
+        check!(scope("unknown") == TagScope::Span);
+        check!(scope("Resource") == TagScope::Span, "case-sensitive, so this defaults");
+    }
     use assert2::check;
 
     use super::*;
