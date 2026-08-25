@@ -279,6 +279,35 @@ fn secs_ceil(extent: Time) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// `next_touch_stamp` is a logical clock: every call must hand out a value
+    /// no earlier than the last, and never the same one twice. Eviction picks
+    /// the least-recently-touched tenant by comparing these, so a clock that
+    /// stood still would make every tenant equally old.
+    #[test]
+    fn touch_stamps_never_repeat_and_never_go_backwards() {
+        let enforcer = IngestEnforcer::new();
+
+        let first = enforcer.next_touch_stamp();
+        let second = enforcer.next_touch_stamp();
+        let third = enforcer.next_touch_stamp();
+
+        check!(second > first, "{second} follows {first}");
+        check!(third > second, "{third} follows {second}");
+
+        // A run of them is strictly increasing, so no value is handed out
+        // twice however many times it is called.
+        let stamps: Vec<u64> = (0..8).map(|_| enforcer.next_touch_stamp()).collect();
+        check!(
+            stamps.windows(2).all(|pair| pair[1] > pair[0]),
+            "not strictly increasing: {stamps:?}"
+        );
+        check!(stamps[7] > third);
+
+        // Two enforcers keep their own clocks rather than sharing one.
+        let other = IngestEnforcer::new();
+        check!(other.next_touch_stamp() <= first, "a fresh clock starts over");
+    }
     use assert2::{assert, check};
     use crabka_blockstore::Labels;
 

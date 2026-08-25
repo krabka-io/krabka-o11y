@@ -1258,6 +1258,31 @@ mod tests {
         resource::v1::Resource,
     };
 
+    /// Every OTLP ingest failure is a client error, whatever went wrong. The
+    /// code is pinned for each variant rather than once, since a per-variant
+    /// answer is what this would grow into and 400 for one is not 400 for all.
+    #[test]
+    fn every_otlp_error_reports_a_client_error_status() {
+        use super::OtlpError;
+
+        for error in [
+            OtlpError::DeltaUnsupported("m".into()),
+            OtlpError::Invalid("m".into(), "why".into()),
+            OtlpError::Unsupported("m".into(), "why".into()),
+        ] {
+            check!(error.status_code() == 400, "{error}");
+        }
+
+        // A decode failure is a client error too, not a server one. The error
+        // comes from a real failed decode rather than a constructed one, so
+        // the variant is reached the way ingest reaches it.
+        let decode = super::decode_otlp_bytes(&[0xff, 0xff], TranslationStrategy::default())
+            .expect_err("two 0xff bytes are not a MetricsData");
+        check!(matches!(decode, OtlpError::ProtobufDecode(_)), "got {decode:?}");
+        check!(decode.status_code() == 400);
+        check!(decode.status_code() != 500, "not a server error");
+    }
+
     /// `accumulate_sum` adds each delta to a running total, and starts over
     /// when the series reports a new start time. Three conditions have to hold
     /// together for that reset, so each is checked with the other two
