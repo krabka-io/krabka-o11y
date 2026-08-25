@@ -58,7 +58,7 @@ for crate in "${crates[@]}"; do
   bazel test "//crates/$crate:${crate}_mutants" \
     --nocache_test_results --test_output=all --test_timeout="$TIMEOUT_SECONDS" \
     --local_test_jobs="$CONCURRENT_SHARDS" \
-    --local_ram_resources=HOST_RAM*.6 \
+    --local_resources=memory=HOST_RAM*.6 \
     --test_env=TMPDIR="$SCRATCH_DIR" \
     > "$log" 2>&1
 
