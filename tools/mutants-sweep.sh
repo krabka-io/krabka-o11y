@@ -25,6 +25,19 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 readonly TIMEOUT_SECONDS=36000
+
+# Bazel runs one test action per core by default, so a 32-shard sweep reaches
+# the link step 32 ways at once. Each `ld.lld` holds 1.5-2.0 GB, which demands
+# roughly 58 GB against this box's 31 GB and takes the whole VM down -- twice
+# now, both times looking like an unexplained restart rather than an OOM.
+# Shards still divide the work; only how many link at once is bounded.
+readonly CONCURRENT_SHARDS=8
+
+# Scratch for the mutant builds, deliberately on disk. /tmp here is a 15.6 GB
+# tmpfs carved out of the same 31 GB, so anything large written there is paid
+# for twice: once in RAM and again in the memory it denies the linkers.
+readonly SCRATCH_DIR="${KRABKA_MUTANTS_SCRATCH:-$HOME/krabka-work/mutants-scratch}"
+mkdir -p "$SCRATCH_DIR"
 # Deliberately not under /tmp. A sweep runs for hours and this machine clears
 # /tmp on restart -- two sweeps were lost that way, and a lost sweep is worse
 # than a slow one because the totals it never wrote read as "nothing missed".
@@ -44,6 +57,9 @@ for crate in "${crates[@]}"; do
   log="$LOG_DIR/$crate.log"
   bazel test "//crates/$crate:${crate}_mutants" \
     --nocache_test_results --test_output=all --test_timeout="$TIMEOUT_SECONDS" \
+    --local_test_jobs="$CONCURRENT_SHARDS" \
+    --local_ram_resources=HOST_RAM*.6 \
+    --test_env=TMPDIR="$SCRATCH_DIR" \
     > "$log" 2>&1
 
   timed_out=$(grep -c 'Test timed out' "$log")
