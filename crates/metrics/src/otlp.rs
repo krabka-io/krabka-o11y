@@ -1258,6 +1258,67 @@ mod tests {
         resource::v1::Resource,
     };
 
+    /// `add_compatible_native_histogram` refuses to fold a delta into a
+    /// cumulative whose layout differs, and there are five ways it can differ.
+    /// Each is checked with that field alone changed: the conditions are
+    /// joined by `or`, so with two fields differing at once, joining them by
+    /// `and` instead would still reject and the mutant would live.
+    #[test]
+    fn a_delta_histogram_must_match_the_cumulative_layout_in_every_respect() {
+        use crate::{ResetHint, histogram::NativeHistogram};
+
+        let base = || NativeHistogram {
+            schema: 2,
+            is_float: false,
+            reset_hint: ResetHint::Unknown,
+            zero_threshold: 1e-9,
+            zero_count: 0.0,
+            count: 1.0,
+            sum: 1.0,
+            positive_spans: Vec::new(),
+            positive_counts: Vec::new(),
+            negative_spans: Vec::new(),
+            negative_counts: Vec::new(),
+            custom_values: None,
+            start_timestamp_ms: None,
+        };
+
+        // Identical layouts fold without complaint.
+        let mut cumulative = base();
+        check!(super::add_compatible_native_histogram("m", &mut cumulative, &base()).is_ok());
+
+        // Each field alone is enough to refuse.
+        let differs = |mutate: &dyn Fn(&mut NativeHistogram)| {
+            let mut cumulative = base();
+            let mut delta = base();
+            mutate(&mut delta);
+            super::add_compatible_native_histogram("m", &mut cumulative, &delta).is_err()
+        };
+        check!(differs(&|h| h.schema = 3), "schema");
+        check!(differs(&|h| h.is_float = true), "is_float");
+        check!(differs(&|h| h.reset_hint = ResetHint::Gauge), "reset_hint");
+        check!(differs(&|h| h.zero_threshold = 2e-9), "zero_threshold");
+        check!(differs(&|h| h.custom_values = Some(vec![1.0])), "custom_values");
+
+        // The zero threshold is compared by bits, not by value. Positive and
+        // negative zero are equal under `==` and differ in their bits, so this
+        // pair is the only one that separates the two comparisons.
+        let mut cumulative = NativeHistogram { zero_threshold: 0.0, ..base() };
+        let delta = NativeHistogram { zero_threshold: -0.0, ..base() };
+        check!(
+            super::add_compatible_native_histogram("m", &mut cumulative, &delta).is_err(),
+            "negative zero is a different layout from zero"
+        );
+
+        // Fields outside the layout do not make a delta incompatible; they are
+        // what the fold is for.
+        let mut cumulative = base();
+        let mut delta = base();
+        delta.count = 5.0;
+        delta.sum = 9.0;
+        check!(super::add_compatible_native_histogram("m", &mut cumulative, &delta).is_ok());
+    }
+
     fn span(offset: i32, length: u32) -> crate::histogram::BucketSpan {
         crate::histogram::BucketSpan { offset, length }
     }
