@@ -1649,6 +1649,66 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
 
+    /// `decoded_sample_count` totals three collections across every series.
+    /// Each carries a different number, so a term dropped from the sum is a
+    /// specific shortfall rather than merely a smaller total -- with equal
+    /// counts, dropping any one of the three looks the same.
+    #[test]
+    fn a_decoded_batch_counts_samples_histograms_and_exemplars() {
+        use crate::{histogram::NativeHistogram, wire::DecodedExemplar, wire::DecodedSample};
+
+        let series = |samples: usize, histograms: usize, exemplars: usize| DecodedSeries {
+            labels: Labels::default(),
+            samples: (0..samples)
+                .map(|i| DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
+                .collect(),
+            histograms: (0..histograms)
+                .map(|i| {
+                    (
+                        i64::try_from(i).expect("small"),
+                        NativeHistogram {
+                            schema: 0,
+                            is_float: false,
+                            reset_hint: crate::ResetHint::Unknown,
+                            zero_threshold: 0.0,
+                            zero_count: 0.0,
+                            count: 0.0,
+                            sum: 0.0,
+                            positive_spans: Vec::new(),
+                            positive_counts: Vec::new(),
+                            negative_spans: Vec::new(),
+                            negative_counts: Vec::new(),
+                            custom_values: None,
+                            start_timestamp_ms: None,
+                        },
+                    )
+                })
+                .collect(),
+            exemplars: (0..exemplars)
+                .map(|i| DecodedExemplar {
+                    labels: Labels::default(),
+                    timestamp_ms: i64::try_from(i).expect("small"),
+                    value: 1.0,
+                })
+                .collect(),
+            metadata: None,
+        };
+
+        // Three different counts, so dropping any one term is distinguishable
+        // from dropping either other.
+        check!(super::decoded_sample_count(&[series(3, 5, 7)]) == 15);
+        check!(super::decoded_sample_count(&[series(3, 0, 0)]) == 3, "samples alone");
+        check!(super::decoded_sample_count(&[series(0, 5, 0)]) == 5, "histograms alone");
+        check!(super::decoded_sample_count(&[series(0, 0, 7)]) == 7, "exemplars alone");
+
+        // Several series add up rather than the largest winning.
+        check!(super::decoded_sample_count(&[series(3, 0, 0), series(4, 0, 0)]) == 7);
+
+        // Nothing at all is zero, not one.
+        check!(super::decoded_sample_count(&[]) == 0);
+        check!(super::decoded_sample_count(&[series(0, 0, 0)]) == 0, "an empty series counts none");
+    }
+
     /// `tenant_limits_to_limits` copies five fields across and leaves the rest
     /// at their defaults. Two of the five are byte sizes and two are counts,
     /// so every value here is distinct: a field reading its neighbour still

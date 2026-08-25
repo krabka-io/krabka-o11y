@@ -1258,6 +1258,36 @@ mod tests {
         resource::v1::Resource,
     };
 
+    /// `strip_ucum_annotations` removes the `{...}` parts of a UCUM unit,
+    /// which carry a human note rather than a dimension. The braces are the
+    /// only delimiters, and the states they move between are what the cases
+    /// below separate.
+    #[test]
+    fn ucum_annotations_are_removed_and_the_rest_kept() {
+        let strip = super::strip_ucum_annotations;
+
+        check!(strip("s") == "s", "a bare unit is untouched");
+        check!(strip("") == "");
+        check!(strip("{requests}") == "", "an annotation alone leaves nothing");
+        check!(strip("1{requests}") == "1", "the unit survives, the note does not");
+        check!(strip("{requests}1") == "1", "whichever side it is on");
+        check!(strip("m{note}s") == "ms", "and in the middle, joining what it split");
+        check!(strip("{}") == "", "an empty annotation");
+        check!(strip("{a}{b}") == "", "two of them");
+        check!(strip("k{a}g{b}") == "kg");
+
+        // A brace that never closes swallows the rest, since there is no
+        // annotation end to return from.
+        check!(strip("s{note") == "s");
+        // A closing brace with nothing open is *kept*, because the arm that
+        // consumes it is guarded on being inside an annotation and an
+        // unguarded character falls through to the one that copies it. That is
+        // asymmetric with the unclosed open above, so it is pinned rather than
+        // assumed to mirror it.
+        check!(strip("s}") == "s}");
+        check!(strip("}s") == "}s");
+    }
+
     /// Every OTLP ingest failure is a client error, whatever went wrong. The
     /// code is pinned for each variant rather than once, since a per-variant
     /// answer is what this would grow into and 400 for one is not 400 for all.
