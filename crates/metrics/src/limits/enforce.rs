@@ -280,6 +280,44 @@ fn secs_ceil(extent: Time) -> u64 {
 #[cfg(test)]
 mod tests {
 
+    /// Eviction drops the least recently used tenant, not merely *a* tenant.
+    /// A test that only checks the cap holds passes just as well when the
+    /// newest is evicted instead, which would throw away the bucket in active
+    /// use and keep the idle ones.
+    #[test]
+    fn eviction_drops_the_least_recently_used_tenant() {
+        let enforcer = IngestEnforcer::with_max_rate_buckets(2);
+        let limits = Limits {
+            ingestion_rate: per_sec(1_000),
+            ingestion_burst_size: 1_000,
+            ..Limits::default()
+        };
+        let touch = |tenant: &str| {
+            enforcer
+                .check_sample_rate(&limits, tenant, 1)
+                .expect("within the rate");
+        };
+        let holds = |tenant: &str| enforcer.sample_rate_buckets.contains_key(tenant);
+
+        // Three tenants into a cap of two: the first touched is the one to go.
+        touch("a");
+        touch("b");
+        touch("c");
+        check!(enforcer.sample_rate_buckets.len() == 2, "the cap holds");
+        check!(!holds("a"), "the least recently used went");
+        check!(holds("b") && holds("c"), "the other two stayed");
+
+        // Touching b again makes c the oldest, so the next arrival evicts c
+        // rather than b -- which is what separates least-recently-used from
+        // first-in-first-out.
+        touch("b");
+        touch("d");
+        check!(enforcer.sample_rate_buckets.len() == 2);
+        check!(!holds("c"), "c was the least recently used by then");
+        check!(holds("b"), "b was rescued by being touched");
+        check!(holds("d"));
+    }
+
     /// `next_touch_stamp` is a logical clock: every call must hand out a value
     /// no earlier than the last, and never the same one twice. Eviction picks
     /// the least-recently-touched tenant by comparing these, so a clock that
