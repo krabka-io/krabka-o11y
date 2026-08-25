@@ -447,6 +447,57 @@ mod tests {
         );
     }
 
+    /// The four count readers each pull one field out of a oneof that may
+    /// hold an integer, a float, or nothing. They are near-identical, and
+    /// there are two axes to confuse: the wire version, and count against
+    /// zero-count. Every value below is distinct, so a reader reaching for its
+    /// neighbour's field returns a recognisably wrong number rather than a
+    /// plausible one.
+    #[test]
+    fn count_readers_take_their_own_field_from_either_representation() {
+        let is = |actual: f64, expected: f64| (actual - expected).abs() < f64::EPSILON;
+
+        // v2, integers.
+        let v2_int = pb::v2::Histogram {
+            count: Some(pb::v2::histogram::Count::CountInt(11)),
+            zero_count: Some(pb::v2::histogram::ZeroCount::ZeroCountInt(22)),
+            ..Default::default()
+        };
+        check!(is(v2_count(&v2_int), 11.0));
+        check!(is(v2_zero_count(&v2_int), 22.0), "not the count beside it");
+
+        // v2, floats: the same fields in their other representation.
+        let v2_float = pb::v2::Histogram {
+            count: Some(pb::v2::histogram::Count::CountFloat(33.5)),
+            zero_count: Some(pb::v2::histogram::ZeroCount::ZeroCountFloat(44.5)),
+            ..Default::default()
+        };
+        check!(is(v2_count(&v2_float), 33.5), "a float is not truncated");
+        check!(is(v2_zero_count(&v2_float), 44.5));
+
+        // v1 reads its own message, with different values again.
+        let v1_int = pb::v1::Histogram {
+            count: Some(pb::v1::histogram::Count::CountInt(55)),
+            zero_count: Some(pb::v1::histogram::ZeroCount::ZeroCountInt(66)),
+            ..Default::default()
+        };
+        check!(is(v1_count(&v1_int), 55.0));
+        check!(is(v1_zero_count(&v1_int), 66.0));
+
+        // An absent oneof is zero rather than an error or a default of one.
+        let empty = pb::v2::Histogram::default();
+        check!(is(v2_count(&empty), 0.0), "absent means zero");
+        check!(is(v2_zero_count(&empty), 0.0));
+
+        // Zero is a value in its own right, distinct from absent only in that
+        // both answer zero -- so the integer path is exercised at zero too.
+        let zeroed = pb::v2::Histogram {
+            count: Some(pb::v2::histogram::Count::CountInt(0)),
+            ..Default::default()
+        };
+        check!(is(v2_count(&zeroed), 0.0));
+    }
+
     #[test]
     fn any_single_float_field_makes_a_v2_histogram_float() {
         let integer = pb::v2::Histogram {
