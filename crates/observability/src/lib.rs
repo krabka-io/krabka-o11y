@@ -21007,6 +21007,75 @@ mod tests {
         check!(len("1e5x") == Some(3));
     }
 
+    /// A repeated query parameter keeps its first value and ignores the rest.
+    ///
+    /// Each arm of the parse loop is guarded on the field still being unset, so
+    /// a second occurrence falls through to the catch-all and is dropped. With
+    /// the guard gone the last occurrence would win instead, which no test
+    /// passing a well-formed query once can tell apart -- the values have to
+    /// differ and the query has to repeat.
+    #[test]
+    fn a_repeated_volume_parameter_keeps_the_first_value() {
+        let parse = |q: &str| super::parse_volume_params(Some(q)).expect("valid query");
+
+        check!(parse("query=a&query=b").query == "a");
+        check!(parse("query=a&limit=5&limit=9").limit == 5);
+        check!(parse("query=a&start=100&start=200").start == 100);
+        check!(parse("query=a&end=500&end=900").end == 500);
+        check!(parse("query=a&step=5s&step=9s").step == parse("query=a&step=5s").step);
+        check!(
+            parse("query=a&targetLabels=x&targetLabels=y").target_labels
+                == Some(vec!["x".to_string()])
+        );
+        check!(matches!(
+            parse("query=a&aggregateBy=labels&aggregateBy=series").aggregate_by,
+            super::VolumeAggregateBy::Labels
+        ));
+
+        // The defaults still apply when a parameter is absent entirely, which
+        // is a different thing from being repeated.
+        check!(parse("query=a").limit == 100);
+        check!(matches!(parse("query=a").aggregate_by, super::VolumeAggregateBy::Series));
+        check!(parse("query=a").target_labels == None);
+
+        // An empty label in the list is dropped rather than kept as "".
+        check!(
+            parse("query=a&targetLabels=x,,y").target_labels
+                == Some(vec!["x".to_string(), "y".to_string()])
+        );
+
+        // A query with no `query` at all is an error, not a default.
+        check!(super::parse_volume_params(Some("limit=5")).is_err());
+        check!(super::parse_volume_params(None).is_err());
+        // An unknown aggregation is rejected rather than falling back.
+        check!(super::parse_volume_params(Some("query=a&aggregateBy=nonsense")).is_err());
+    }
+
+    /// The detected-fields parser carries the same first-wins contract.
+    #[test]
+    fn a_repeated_detected_fields_parameter_keeps_the_first_value() {
+        let parse = |q: &str| super::parse_detected_fields_params(Some(q)).expect("valid query");
+
+        check!(parse("query=a&query=b").query == "a");
+        check!(parse("query=a&limit=5&limit=9").limit == 5);
+        check!(parse("query=a&start=100&start=200").start == 100);
+        check!(parse("query=a&end=500&end=900").end == 500);
+        check!(parse("query=a&line_limit=7&line_limit=11").line_limit == 7);
+
+        // `field_limit` is an alias for `limit`, guarded on the same field, so
+        // first-wins spans the pair rather than each name separately.
+        check!(parse("query=a&field_limit=9").limit == 9, "the alias sets limit");
+        check!(parse("query=a&limit=5&field_limit=9").limit == 5, "limit first");
+        check!(parse("query=a&field_limit=9&limit=5").limit == 9, "alias first");
+
+        // Defaults apply when absent, which is distinct from being repeated.
+        check!(parse("query=a").limit == 1000);
+        check!(parse("query=a").line_limit == 100);
+
+        check!(super::parse_detected_fields_params(Some("limit=5")).is_err());
+        check!(super::parse_detected_fields_params(None).is_err());
+    }
+
     /// `ScalarSample::compare` orders two rationals by cross-multiplication,
     /// so the fractions below are chosen not to be decided by their numerators
     /// alone: 1/2 against 2/3 orders one way and 2/3 against 1/2 the other,
