@@ -68,8 +68,27 @@ def main():
     spec = json.load(open(sys.argv[1]))
     path = spec["file"]
     original = open(path).read()
-    start = original.index(spec["function"])
-    end = original.index("\n}\n", start) + 3
+    # A name can appear in more than one impl -- two types with their own
+    # `from_f64` is the usual case -- and patching the first one found would
+    # verify a mutant against a function the test never calls. `occurrence`
+    # selects which, and a marker matching more than once without it is an
+    # error rather than a guess.
+    marker = spec["function"]
+    occurrences = [
+        i for i in range(len(original)) if original.startswith(marker, i)
+    ]
+    if not occurrences:
+        raise SystemExit(f"marker not found: {marker}")
+    wanted = spec.get("occurrence")
+    if wanted is None:
+        if len(occurrences) > 1:
+            raise SystemExit(
+                f"marker matches {len(occurrences)} times; set \"occurrence\": {marker}"
+            )
+        wanted = 0
+    start = occurrences[wanted]
+    end = original.index("\n    }\n", start) + 7 if marker.startswith("    ") \
+        else original.index("\n}\n", start) + 3
     backup = path + ".verify-backup"
     shutil.copy(path, backup)
 

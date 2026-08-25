@@ -21007,6 +21007,68 @@ mod tests {
         check!(len("1e5x") == Some(3));
     }
 
+    /// `MetricValue` is a rational scaled by a fixed decimal factor, so a
+    /// float arriving from a metric has to survive the round trip through that
+    /// scale, and the values it cannot represent have to be refused rather
+    /// than rounded into something plausible.
+    #[test]
+    fn metric_values_round_trip_through_their_decimal_scale() {
+        use super::MetricValue;
+
+        let round_trip = |value: f64| MetricValue::from_f64(value).and_then(super::MetricValue::to_f64);
+
+        check!(round_trip(0.0) == Some(0.0));
+        check!(round_trip(1.0) == Some(1.0));
+        check!(round_trip(-1.0) == Some(-1.0));
+        check!(round_trip(0.5) == Some(0.5));
+        check!(round_trip(-2.25) == Some(-2.25));
+        check!(round_trip(1234.5) == Some(1234.5));
+
+        // The scale is a billion, so a nanosecond-sized fraction survives and
+        // anything finer rounds to the nearest step rather than to zero.
+        check!(round_trip(0.000_000_001) == Some(0.000_000_001));
+        check!(round_trip(0.000_000_000_4) == Some(0.0), "below half a step rounds down");
+        check!(round_trip(0.000_000_000_6) == Some(0.000_000_001), "above half rounds up");
+
+        // Values that are not numbers cannot be represented at all.
+        check!(MetricValue::from_f64(f64::NAN) == None);
+        check!(MetricValue::from_f64(f64::INFINITY) == None);
+        check!(MetricValue::from_f64(f64::NEG_INFINITY) == None);
+    }
+
+    /// `MetricValue::modulo` refuses a zero divisor rather than producing a
+    /// NaN, which is the whole reason it is not just `%`.
+    #[test]
+    fn metric_modulo_refuses_a_zero_divisor() {
+        use super::MetricValue;
+
+        let modulo = |a: f64, b: f64| {
+            MetricValue::from_f64(a)?
+                .modulo(MetricValue::from_f64(b)?)
+                .and_then(super::MetricValue::to_f64)
+        };
+
+        check!(modulo(7.0, 3.0) == Some(1.0));
+        check!(modulo(7.5, 2.5) == Some(0.0));
+        check!(modulo(-7.0, 3.0) == Some(-1.0), "the sign follows the dividend");
+        check!(modulo(3.0, 7.0) == Some(3.0), "a smaller dividend is itself");
+        check!(modulo(1.0, 0.0) == None, "a zero divisor has no answer");
+        check!(modulo(0.0, 3.0) == Some(0.0), "but a zero dividend does");
+    }
+
+    /// `has_samples` gates every aggregate that would otherwise divide by a
+    /// count of zero, so it must be false at zero and true at one.
+    #[test]
+    fn a_sample_state_has_samples_from_the_first_one() {
+        let mut state = super::MetricSampleState::default();
+        check!(!state.has_samples(), "an empty state has none");
+
+        state.count = 1;
+        check!(state.has_samples(), "one sample is enough");
+        state.count = 100;
+        check!(state.has_samples());
+    }
+
     /// The main query parser carries the same first-wins contract, across all
     /// ten of its parameters. None of them has a default, so a repeat is the
     /// only way to tell the guard from its absence.
