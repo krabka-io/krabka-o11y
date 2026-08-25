@@ -1648,6 +1648,41 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `tenant_limits_to_limits` copies five fields across and leaves the rest
+    /// at their defaults. Two of the five are byte sizes and two are counts,
+    /// so every value here is distinct: a field reading its neighbour still
+    /// produces a well-formed limit, and only distinct values show it.
+    #[test]
+    fn tenant_limits_map_field_by_field_onto_the_shared_limits() {
+        use crabka_units::{bytes, per_sec, secs};
+
+        let tenant = super::TenantLimits {
+            max_label_name_len: bytes(11),
+            max_label_value_len: bytes(22),
+            max_samples_per_series: 33,
+            max_series_per_request: 44,
+            ingestion_rate: per_sec(55),
+            ingestion_burst_size: 66,
+            out_of_order_time_window: secs(77),
+        };
+
+        let limits = super::tenant_limits_to_limits(&tenant);
+
+        check!(limits.max_label_name_length == bytes(11));
+        check!(limits.max_label_value_length == bytes(22), "not the name length");
+        check!(limits.ingestion_burst_size == 66, "the burst, not a sample count");
+        check!(limits.out_of_order_time_window == secs(77));
+        check!(limits.ingestion_rate == per_sec(55));
+
+        // The fields with no counterpart keep the shared default rather than
+        // picking up a value from the tenant's own limits.
+        let defaults = super::Limits::default();
+        check!(
+            limits.max_global_series_per_user == defaults.max_global_series_per_user,
+            "a field with no source stays at its default"
+        );
+    }
     use std::sync::Mutex;
 
     fn decoded_series(labels: &[(&str, &str)], samples: usize) -> crate::wire::DecodedSeries {
