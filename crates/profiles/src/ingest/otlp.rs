@@ -329,6 +329,78 @@ fn resolve_service_name(rp: &pb::otlp_profiles::ResourceProfiles) -> String {
 #[cfg(test)]
 mod tests {
 
+    /// `resolve_service_name` reads `service.name` from the resource, and
+    /// falls back to a fixed placeholder for every way that can fail. Each way
+    /// is checked separately, since they reach the fallback by different
+    /// routes and a guard removed from one is invisible to the others.
+    #[test]
+    fn a_missing_service_name_falls_back_rather_than_erroring() {
+        use pb::opentelemetry::proto::common::v1::{AnyValue, KeyValue, any_value::Value};
+        use pb::opentelemetry::proto::resource::v1::Resource;
+
+        let with_attrs = |attrs: Vec<KeyValue>| pb::otlp_profiles::ResourceProfiles {
+            resource: Some(Resource { attributes: attrs, ..Resource::default() }),
+            ..pb::otlp_profiles::ResourceProfiles::default()
+        };
+        let attr = |key: &str, value: Option<Value>| KeyValue {
+            key: key.to_string(),
+            value: Some(AnyValue { value }),
+        };
+
+        // The name is found and returned as written.
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "service.name",
+                Some(Value::StringValue("checkout".into()))
+            )])) == "checkout"
+        );
+
+        // Found among others rather than only as the first attribute.
+        check!(
+            super::resolve_service_name(&with_attrs(vec![
+                attr("host.name", Some(Value::StringValue("box".into()))),
+                attr("service.name", Some(Value::StringValue("checkout".into()))),
+            ])) == "checkout"
+        );
+
+        // Every route to the fallback.
+        check!(
+            super::resolve_service_name(&pb::otlp_profiles::ResourceProfiles::default())
+                == "unknown_service",
+            "no resource at all"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(Vec::new())) == "unknown_service",
+            "a resource with no attributes"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "host.name",
+                Some(Value::StringValue("box".into()))
+            )])) == "unknown_service",
+            "the wrong key"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr("service.name", None)]))
+                == "unknown_service",
+            "the key with no value"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "service.name",
+                Some(Value::IntValue(7))
+            )])) == "unknown_service",
+            "a value that is not a string"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "service.name",
+                Some(Value::StringValue(String::new()))
+            )])) == "unknown_service",
+            "an empty name is not a name"
+        );
+    }
+
     /// `otlp_profile_to_pprof` renumbers OTLP's zero-based table indexes into
     /// pprof's one-based ids and copies each table across field by field.
     ///

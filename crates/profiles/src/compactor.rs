@@ -497,6 +497,41 @@ async fn write_batches(
 
 #[cfg(test)]
 mod tests {
+
+    /// `fnv1a` hashes a list of keys into one value, folding a separator
+    /// between them so that where one key ends and the next begins is part of
+    /// the input. Two compaction inputs that join differently must not share
+    /// an output name.
+    ///
+    /// The expected hashes are stated outright rather than compared against
+    /// each other. Inequality is too weak a claim for a hash: dropping the
+    /// separator, or leaving it unmixed, or replacing the xor with an or, all
+    /// still produce different values for different inputs, and all survived
+    /// a version of this test that only asserted the values differed.
+    #[test]
+    fn hashing_keys_folds_a_separator_between_them() {
+        let hash = |keys: &[&str]| {
+            super::fnv1a(&keys.iter().map(|k| (*k).to_string()).collect::<Vec<_>>())
+        };
+
+        // No keys leaves the offset basis untouched.
+        check!(hash(&[]) == 0xcbf2_9ce4_8422_2325);
+
+        // One empty key still folds a separator, so it is not the same as no
+        // key at all.
+        check!(hash(&[""]) == 0xaf64_724c_8602_eb6e);
+        check!(hash(&["a"]) == 0x089b_c907_b544_c769);
+
+        // Order is part of the input.
+        check!(hash(&["a", "b"]) == 0xd2b3_7181_9297_f98a);
+        check!(hash(&["b", "a"]) == 0x0185_7199_9fe5_8c66);
+
+        // So is where the keys divide: the same bytes split two ways, and
+        // joined into one, give three different hashes.
+        check!(hash(&["ab", "c"]) == 0x20ba_9b30_25a8_b421);
+        check!(hash(&["a", "bc"]) == 0xa0a3_542c_19b9_00ab);
+        check!(hash(&["abc"]) == 0xfc18_2483_ee08_06dc);
+    }
     use std::sync::Arc;
 
     use assert2::{assert, check};
