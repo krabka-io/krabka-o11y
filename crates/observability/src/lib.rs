@@ -21007,6 +21007,76 @@ mod tests {
         check!(len("1e5x") == Some(3));
     }
 
+    /// `post_query_params` merges a URL query with a form body. It has a
+    /// near-twin, `post_query_params_body_first`, which differs only in which
+    /// side leads the result -- so every case here asserts the order, not just
+    /// the contents. A test that checked membership alone would pass against
+    /// either function and distinguish neither.
+    #[test]
+    fn a_posted_query_puts_the_url_first_and_the_body_second() {
+        let merge = |raw: Option<&str>, body: &str| {
+            super::post_query_params(raw, &Bytes::from(body.to_owned()))
+                .expect("valid body")
+        };
+        let body_first = |raw: Option<&str>, body: &str| {
+            super::post_query_params_body_first(raw, &Bytes::from(body.to_owned()))
+                .expect("valid body")
+        };
+
+        // Both sides present: the order is the whole difference between the
+        // two functions.
+        check!(merge(Some("a=1"), "b=2") == "a=1&b=2");
+        check!(body_first(Some("a=1"), "b=2") == "b=2&a=1");
+
+        // One side only, where the two agree.
+        check!(merge(Some("a=1"), "") == "a=1");
+        check!(merge(None, "b=2") == "b=2");
+        check!(merge(None, "") == "");
+
+        // An empty URL query is treated as absent rather than concatenated,
+        // which would otherwise leave a leading separator.
+        check!(merge(Some(""), "b=2") == "b=2");
+        check!(merge(Some(""), "") == "");
+        check!(body_first(Some(""), "b=2") == "b=2");
+    }
+
+    /// The rules filters read a Prometheus-shaped query. Each recognised key
+    /// is guarded on its value, so a key carrying something unexpected leaves
+    /// the filter unset rather than setting it to a default.
+    #[test]
+    fn rules_filters_take_only_the_values_they_recognise() {
+        use super::PrometheusRulesFilters as Filters;
+        let parse = |q: &str| Filters::parse(Some(q)).expect("valid query");
+
+        // `type` maps two spellings and rejects the rest.
+        check!(parse("type=alert").rule_kind == Some("alerting"));
+        check!(parse("type=record").rule_kind == Some("recording"));
+        check!(parse("type=other").rule_kind == None, "an unknown type sets nothing");
+        check!(parse("type=").rule_kind == None);
+        check!(parse("type=alerting").rule_kind == None, "the output spelling is not the input");
+
+        // `exclude_alerts` is only true for the exact string.
+        check!(parse("exclude_alerts=true").exclude_alerts);
+        check!(!parse("exclude_alerts=false").exclude_alerts);
+        check!(!parse("exclude_alerts=1").exclude_alerts, "only `true` counts");
+        check!(!parse("exclude_alerts=TRUE").exclude_alerts, "case-sensitively");
+        check!(!Filters::parse(None).expect("no query").exclude_alerts);
+
+        // The repeated keys accept both spellings and collect rather than
+        // replace, and an empty value is skipped rather than collected.
+        let names = parse("rule_name=a&rule_name[]=b&rule_name=").rule_names;
+        check!(names.len() == 2, "got {names:?}");
+        check!(names.contains("a") && names.contains("b"));
+
+        let groups = parse("rule_group=g1&rule_group[]=g2").rule_groups;
+        check!(groups.len() == 2);
+
+        // No query at all is a default set of filters, not an error.
+        let empty = Filters::parse(None).expect("no query");
+        check!(empty.rule_kind == None);
+        check!(empty.rule_names.is_empty());
+    }
+
     /// The comparison operators are a six-entry table, and every strict one
     /// has a non-strict twin one character longer. Checking them entry by
     /// entry is what separates the pairs; sampling would not.
