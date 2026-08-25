@@ -49,7 +49,7 @@ pub enum RecordOutcome {
 }
 
 /// A half-edge until both client and server sides arrive.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Edge {
     pub client_service: Option<String>,
     pub server_service: Option<String>,
@@ -623,6 +623,102 @@ fn ns_to_seconds(ns: i64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// An edge survives a round trip through the checkpoint codec.
+    ///
+    /// Every field holds a value distinct from every other, so a decoder that
+    /// reads them in the wrong order is caught: the two service names and the
+    /// two latencies are adjacent pairs of the same shape, and swapping either
+    /// pair is invisible when both sides carry the same value.
+    #[test]
+    fn an_edge_round_trips_through_the_checkpoint_codec() {
+        let edge = super::Edge {
+            client_service: Some("client-svc".to_string()),
+            server_service: Some("server-svc".to_string()),
+            client_latency_ns: Some(11),
+            server_latency_ns: Some(22),
+            failed: true,
+            connection_type: super::ConnectionType::Database,
+            first_seen_ns: 1_234_567,
+        };
+        let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&edge))
+            .expect("round trip");
+        check!(decoded == edge);
+
+        // Absent optionals stay absent rather than becoming defaults.
+        let sparse = super::Edge {
+            client_service: None,
+            server_service: None,
+            client_latency_ns: None,
+            server_latency_ns: None,
+            failed: false,
+            connection_type: super::ConnectionType::Unset,
+            first_seen_ns: 0,
+        };
+        let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&sparse))
+            .expect("round trip");
+        check!(decoded == sparse);
+
+        // One side present and the other absent, which is what a swapped pair
+        // turns into rather than a difference in value.
+        let half = super::Edge {
+            client_service: Some("only-client".to_string()),
+            server_service: None,
+            client_latency_ns: None,
+            server_latency_ns: Some(99),
+            ..edge.clone()
+        };
+        let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&half))
+            .expect("round trip");
+        check!(decoded == half);
+
+        // Every connection type survives, and each is distinguishable.
+        for connection_type in [
+            super::ConnectionType::Unset,
+            super::ConnectionType::VirtualNode,
+            super::ConnectionType::MessagingSystem,
+            super::ConnectionType::Database,
+        ] {
+            let one = super::Edge { connection_type, ..edge.clone() };
+            let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&one))
+                .expect("round trip");
+            check!(decoded.connection_type == connection_type, "{connection_type:?}");
+        }
+
+        // A negative first-seen timestamp is a value, not a sentinel.
+        let past = super::Edge { first_seen_ns: -5, ..edge.clone() };
+        let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&past))
+            .expect("round trip");
+        check!(decoded.first_seen_ns == -5);
+    }
+
+    /// The checkpoint decoder rejects what it cannot read rather than
+    /// returning a partly-filled edge.
+    #[test]
+    fn a_malformed_checkpoint_value_is_rejected() {
+        // Shorter than the fixed header.
+        check!(super::decode_checkpoint_value(&[]).is_err());
+        check!(super::decode_checkpoint_value(&[0; 9]).is_err(), "one byte short of ten");
+
+        // A connection type outside the four defined ones.
+        let mut bytes = vec![4_u8];
+        bytes.extend_from_slice(&0_i64.to_be_bytes());
+        bytes.push(0);
+        check!(
+            matches!(
+                super::decode_checkpoint_value(&bytes),
+                Err(super::CheckpointCodecError::BadConnectionType)
+            ),
+            "an unknown connection type names itself"
+        );
+
+        // A well-formed header followed by a truncated optional field.
+        let mut bytes = vec![0_u8];
+        bytes.extend_from_slice(&0_i64.to_be_bytes());
+        bytes.push(0);
+        bytes.push(1);
+        check!(super::decode_checkpoint_value(&bytes).is_err(), "string length missing");
+    }
 
     /// The optional decoders read a presence byte, then the value, and leave
     /// the cursor exactly past what they consumed. Each case checks the
