@@ -636,3 +636,145 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 fn non_negative_u64(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use assert2::check;
+    use crabka_traceql::TagScope;
+
+    use super::{LiveSource as _, LiveStore};
+    use crate::{
+        span::{AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode},
+        wal::SpanRecord,
+    };
+
+    fn span_with_everything() -> Span {
+        Span {
+            trace_id: [1; 16],
+            span_id: [2; 8],
+            parent_span_id: None,
+            name: "GET /users".into(),
+            kind: SpanKind::Server,
+            start_ns: 1_000,
+            duration_ns: 500,
+            status: StatusCode::Ok,
+            status_message: String::new(),
+            resource_attrs: vec![KeyValue {
+                key: "service.name".into(),
+                value: AttrValue::Str("api".into()),
+            }],
+            span_attrs: vec![KeyValue {
+                key: "http.method".into(),
+                value: AttrValue::Str("GET".into()),
+            }],
+            events: vec![EventRecord {
+                time_unix_nano: 1_100,
+                name: "exception".into(),
+                attrs: vec![KeyValue {
+                    key: "exception.type".into(),
+                    value: AttrValue::Str("timeout".into()),
+                }],
+            }],
+            links: vec![LinkRecord {
+                trace_id: [9; 16],
+                span_id: [8; 8],
+                attrs: vec![KeyValue {
+                    key: "link.kind".into(),
+                    value: AttrValue::Str("retry".into()),
+                }],
+            }],
+            instrumentation_scope: "otel-rust".into(),
+            instrumentation_version: "1.2.3".into(),
+        }
+    }
+
+    fn store_with_one_span() -> LiveStore {
+        let mut store = LiveStore::new(1_000_000);
+        store.ingest(SpanRecord {
+            tenant: "t".into(),
+            span: span_with_everything(),
+        });
+        store
+    }
+
+    fn tags_for(store: &LiveStore, scope: Option<TagScope>) -> Vec<(TagScope, Vec<String>)> {
+        futures::executor::block_on(store.tag_names("t", scope, 0, 10_000))
+            .expect("tag names are readable")
+            .into_iter()
+            .map(|scoped| (scoped.scope, scoped.tags))
+            .collect()
+    }
+
+    /// `tag_names` groups the tags it finds by scope, and each scope's entry
+    /// appears only when that scope has something in it. Every scope is
+    /// requested individually as well as all together, since a filter that
+    /// ignored its argument would still return the right tags for the
+    /// unfiltered case.
+    #[test]
+    fn tag_names_group_by_scope_and_omit_the_empty_ones() {
+        let store = store_with_one_span();
+
+        // Unfiltered: every scope the span populates, and nothing else.
+        let all = tags_for(&store, None);
+        let scopes: Vec<TagScope> = all.iter().map(|(scope, _)| *scope).collect();
+        check!(
+            scopes
+                == vec![
+                    TagScope::Resource,
+                    TagScope::Span,
+                    TagScope::Event,
+                    TagScope::Link,
+                    TagScope::Intrinsic,
+                    TagScope::Instrumentation,
+                ],
+            "got {scopes:?}"
+        );
+
+        // Each scope alone returns only itself.
+        for scope in [
+            TagScope::Resource,
+            TagScope::Span,
+            TagScope::Event,
+            TagScope::Link,
+            TagScope::Instrumentation,
+        ] {
+            let one = tags_for(&store, Some(scope));
+            check!(one.len() == 1, "{scope:?} returned {} groups", one.len());
+            check!(one[0].0 == scope, "{scope:?} returned {:?}", one[0].0);
+        }
+
+        // The attribute keys reach the scope they were recorded under, and not
+        // the neighbouring one.
+        let resource = tags_for(&store, Some(TagScope::Resource));
+        check!(resource[0].1 == vec!["service.name".to_string()]);
+        let span_tags = tags_for(&store, Some(TagScope::Span));
+        check!(span_tags[0].1 == vec!["http.method".to_string()]);
+
+        // Event and link scopes carry their fixed intrinsics as well as the
+        // attributes found on the records themselves.
+        let event = tags_for(&store, Some(TagScope::Event));
+        check!(event[0].1.contains(&"event:name".to_string()));
+        check!(event[0].1.contains(&"event:timeSinceStart".to_string()));
+        check!(event[0].1.contains(&"exception.type".to_string()));
+        let link = tags_for(&store, Some(TagScope::Link));
+        check!(link[0].1.contains(&"link:traceID".to_string()));
+        check!(link[0].1.contains(&"link.kind".to_string()));
+
+        // A tenant with nothing in it has no scopes at all, rather than a set
+        // of empty ones.
+        let empty = LiveStore::new(1_000_000);
+        check!(
+            futures::executor::block_on(empty.tag_names("t", None, 0, 10_000))
+                .expect("readable")
+                .is_empty()
+        );
+
+        // A window that excludes the span excludes its tags too.
+        check!(
+            futures::executor::block_on(store.tag_names("t", None, 5_000, 6_000))
+                .expect("readable")
+                .is_empty(),
+            "outside the time range"
+        );
+    }
+}
