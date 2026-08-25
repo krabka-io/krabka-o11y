@@ -135,6 +135,34 @@ mod tests {
 
     use super::*;
 
+    /// `symbols` hands back the table's contents in reference order, which is
+    /// what the wire format indexes into. The order is the whole point: a
+    /// table that returned the right strings in the wrong order would resolve
+    /// every reference to the wrong symbol.
+    #[test]
+    fn the_symbol_list_is_returned_in_reference_order() {
+        let mut table = SymbolTable::new();
+        let first = table.intern("__name__");
+        let second = table.intern("http_requests");
+        let third = table.intern("job");
+
+        // Index zero is the required empty symbol, and the rest follow in the
+        // order they were interned.
+        check!(
+            table.symbols() == ["", "__name__", "http_requests", "job"],
+            "got {:?}",
+            table.symbols()
+        );
+
+        // The references the table handed out index into exactly that list.
+        check!(table.symbols()[first as usize] == "__name__");
+        check!(table.symbols()[second as usize] == "http_requests");
+        check!(table.symbols()[third as usize] == "job");
+
+        // A fresh table is not empty: it carries the zero symbol alone.
+        check!(SymbolTable::new().symbols() == [""]);
+    }
+
     #[test]
     fn intern_is_stable_and_zero_is_empty() {
         let mut t = SymbolTable::new();

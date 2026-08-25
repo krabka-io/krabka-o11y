@@ -182,7 +182,41 @@ pub(super) fn snappy_block_decode_raw<E>(
 
 #[cfg(test)]
 mod tests {
-    use assert2::assert;
+
+    /// A decoded sample compares equal to a `(timestamp, value)` pair only
+    /// when it carries no start timestamp. Three conditions have to hold, so
+    /// each case below fails exactly one of them: with two failing at once,
+    /// joining them by `or` instead of `and` would still answer false and the
+    /// mutant would live.
+    #[test]
+    fn a_sample_equals_a_pair_only_without_a_start_timestamp() {
+        use super::DecodedSample;
+
+        let sample = DecodedSample::new(100, 1.5);
+        check!(sample == (100, 1.5), "everything matches");
+
+        // Each condition failing on its own.
+        check!(!(sample == (101, 1.5)), "the timestamp differs");
+        check!(!(sample == (100, 2.5)), "the value differs");
+        let with_start = DecodedSample {
+            timestamp_ms: 100,
+            value: 1.5,
+            start_timestamp_ms: Some(50),
+        };
+        check!(
+            !(with_start == (100, 1.5)),
+            "a start timestamp makes it a different thing from a bare pair"
+        );
+
+        // A start timestamp of zero is still a start timestamp, not an absence.
+        let zero_start = DecodedSample {
+            timestamp_ms: 100,
+            value: 1.5,
+            start_timestamp_ms: Some(0),
+        };
+        check!(!(zero_start == (100, 1.5)));
+    }
+    use assert2::{assert, check};
 
     use super::*;
 
