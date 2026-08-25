@@ -1258,6 +1258,54 @@ mod tests {
         resource::v1::Resource,
     };
 
+    /// `accumulate_sum` adds each delta to a running total, and starts over
+    /// when the series reports a new start time. Three conditions have to hold
+    /// together for that reset, so each is checked with the other two
+    /// satisfied -- otherwise a condition flipped from `!=` to `==` is masked
+    /// by one of its neighbours already being false.
+    #[test]
+    fn delta_sums_accumulate_until_the_series_restarts() {
+        use crabka_blockstore::Labels;
+
+        let mut labels = Labels::default();
+        labels.insert("__name__", "requests");
+        let mut acc = super::DeltaAccumulator::default();
+        let is = |actual: f64, expected: f64| (actual - expected).abs() < f64::EPSILON;
+
+        // Deltas add up while the start time stays the same.
+        check!(is(acc.accumulate_sum(&labels, 100, 1.0), 1.0));
+        check!(is(acc.accumulate_sum(&labels, 100, 2.0), 3.0), "added, not replaced");
+        check!(is(acc.accumulate_sum(&labels, 100, 4.0), 7.0));
+
+        // A new start time means a new series: the total starts over at the
+        // delta rather than continuing.
+        check!(is(acc.accumulate_sum(&labels, 200, 5.0), 5.0), "reset");
+        check!(is(acc.accumulate_sum(&labels, 200, 1.0), 6.0), "then accumulates again");
+
+        // A start time of zero means "not reported" and must not reset, even
+        // though it differs from the recorded one.
+        check!(is(acc.accumulate_sum(&labels, 0, 1.0), 7.0), "zero does not reset");
+
+        // A second series under different labels keeps its own total.
+        let mut other = Labels::default();
+        other.insert("__name__", "errors");
+        check!(is(acc.accumulate_sum(&other, 100, 9.0), 9.0), "separate key");
+        check!(is(acc.accumulate_sum(&labels, 200, 1.0), 8.0), "the first is untouched");
+
+        // A series whose recorded start is still zero accumulates rather than
+        // resetting, then records the start it was given.
+        let mut fresh = super::DeltaAccumulator::default();
+        let mut third = Labels::default();
+        third.insert("__name__", "latency");
+        check!(is(fresh.accumulate_sum(&third, 0, 2.0), 2.0), "no start recorded yet");
+        check!(
+            is(fresh.accumulate_sum(&third, 300, 3.0), 5.0),
+            "the first real start does not reset what came before it"
+        );
+        check!(is(fresh.accumulate_sum(&third, 300, 1.0), 6.0));
+        check!(is(fresh.accumulate_sum(&third, 400, 1.0), 1.0), "but a later change does");
+    }
+
     /// `add_compatible_native_histogram` refuses to fold a delta into a
     /// cumulative whose layout differs, and there are five ways it can differ.
     /// Each is checked with that field alone changed: the conditions are
