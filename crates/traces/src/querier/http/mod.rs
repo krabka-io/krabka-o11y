@@ -2517,6 +2517,63 @@ fn base64<const N: usize>(bytes: [u8; N]) -> String {
 #[cfg(test)]
 mod tests {
 
+    /// `collect_trace_intrinsic_values` reports one trace-level intrinsic
+    /// with the type name a client reads it as. Three of the four arms
+    /// survived: deleting one falls through to the catch-all and reports
+    /// nothing, which looks the same as an unknown tag unless the real tag's
+    /// value is pinned.
+    ///
+    /// The two string-valued names are given different values, so an arm
+    /// reading its neighbour's field still produces a well-formed pair and is
+    /// caught only by the value.
+    #[test]
+    fn a_trace_intrinsic_reports_its_own_value_and_type() {
+        let trace = TraceSpans {
+            trace_id: [9; 16],
+            root_service_name: "svc-a".into(),
+            root_trace_name: "root-a".into(),
+            resource_attributes: Vec::new(),
+            spans: vec![SpanRef {
+                span_id: [1; 8],
+                parent_span_id: None,
+                name: "root-a".into(),
+                kind: 0,
+                nested_set_left: 1,
+                nested_set_right: 2,
+                nested_set_parent: 0,
+                start_time_unix_nano: 1_001,
+                duration: nanos(200),
+                status_code: 0,
+                status_message: String::new(),
+                instrumentation_name: String::new(),
+                instrumentation_version: String::new(),
+                resource_attributes: Vec::new(),
+                attributes: Vec::new(),
+                events: Vec::new(),
+                links: Vec::new(),
+            }],
+        };
+        let collect = |tag: &str| {
+            let mut values = BTreeSet::new();
+            super::collect_trace_intrinsic_values(&trace, tag, &mut values);
+            values.into_iter().collect::<Vec<_>>()
+        };
+        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+
+        check!(collect("trace:id") == vec![pair("string", "09090909090909090909090909090909")]);
+        check!(collect("trace:rootName") == vec![pair("string", "root-a")]);
+        check!(collect("trace:rootService") == vec![pair("string", "svc-a")]);
+        check!(
+            collect("trace:duration") == vec![pair("duration", "200")],
+            "the duration is typed as a duration, not a string"
+        );
+
+        // An unrecognised intrinsic contributes nothing, which is exactly
+        // what a deleted arm looks like -- hence pinning the values above.
+        check!(collect("trace:nonsense").is_empty());
+        check!(collect("").is_empty());
+    }
+
     /// `optional_time_bounds` defaults an absent bound to the widest window
     /// and refuses an inverted one. An empty window -- end equal to start --
     /// is legal, which is the single input separating `<` from `<=`.
