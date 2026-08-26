@@ -837,6 +837,21 @@ mod tests {
 
     use super::*;
 
+    /// `usize::MAX` is the "no limit" sentinel and converts to the zero the
+    /// wire format reads as unlimited. Every other value converts to itself,
+    /// which is what separates the sentinel test from its negation: inverted,
+    /// it is every ordinary value that collapses to zero.
+    #[test]
+    fn the_no_limit_sentinel_converts_to_zero_and_nothing_else_does() {
+        let limit = super::u64_limit_from_usize;
+
+        check!(limit(usize::MAX) == 0, "the sentinel means unlimited");
+        check!(limit(0) == 0, "and a real zero is already zero");
+        check!(limit(1) == 1);
+        check!(limit(7) == 7);
+        check!(limit(usize::MAX - 1) == u64::try_from(usize::MAX - 1).expect("fits in u64"));
+    }
+
     /// `decode_body` bounds how far a compressed body may expand. It reads
     /// one byte past the limit and then rejects anything longer, so both
     /// halves of that pair only differ from their mutations at the exact

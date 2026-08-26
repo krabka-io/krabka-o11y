@@ -538,6 +538,33 @@ impl LiveTier {
 #[cfg(test)]
 mod tests {
 
+    /// `tag_scope_name` names a scope for the wire. The six names are
+    /// asserted to be pairwise distinct, so an arm returning a neighbour's
+    /// name cannot pass for its own.
+    #[test]
+    fn every_tag_scope_has_its_own_wire_name() {
+        let name = super::tag_scope_name;
+
+        check!(name(TagScope::Resource) == "resource");
+        check!(name(TagScope::Span) == "span");
+        check!(name(TagScope::Intrinsic) == "intrinsic");
+        check!(name(TagScope::Event) == "event");
+        check!(name(TagScope::Link) == "link");
+        check!(name(TagScope::Instrumentation) == "instrumentation");
+
+        let mut names = vec![
+            name(TagScope::Resource),
+            name(TagScope::Span),
+            name(TagScope::Intrinsic),
+            name(TagScope::Event),
+            name(TagScope::Link),
+            name(TagScope::Instrumentation),
+        ];
+        names.sort_unstable();
+        names.dedup();
+        check!(names.len() == 6, "the six names must all differ: {names:?}");
+    }
+
     /// `ns_floor_seconds` is the twin of `ns_ceil_seconds`, rounding *down*
     /// rather than toward zero. The two only disagree on negatives, so the
     /// sub-second negative cases are what pin the direction. The answers also

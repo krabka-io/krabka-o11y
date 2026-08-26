@@ -149,9 +149,8 @@ fn apply_search_limits(traces: &mut Vec<TraceJson>, limit: usize, spss: usize) {
     if spss > 0 {
         for trace in traces.iter_mut() {
             for ss in &mut trace.span_sets {
-                if ss.spans.len() > spss {
-                    ss.spans.truncate(spss);
-                }
+                // `truncate` is already a no-op when the set is shorter.
+                ss.spans.truncate(spss);
             }
         }
     }
@@ -373,6 +372,44 @@ mod tests {
             duration_nanos: dur.to_string(),
             attributes: vec![],
         }
+    }
+
+    /// Zero means "no limit" for both knobs, and that is the single input
+    /// separating `> 0` from `>= 0`: at zero the two disagree, and the
+    /// loosened form truncates the results to nothing. A limit that does fire
+    /// must fire *after* the sort, so it keeps the newest traces rather than
+    /// whichever happened to arrive first.
+    #[test]
+    fn a_zero_search_limit_means_no_limit() {
+        let ids = |traces: &[TraceJson]| {
+            traces
+                .iter()
+                .map(|trace| trace.trace_id.clone())
+                .collect::<Vec<_>>()
+        };
+        let mut traces = vec![
+            trace("01", "a", 10, vec![span("01", 10, 5), span("01", 11, 5)]),
+            trace("02", "b", 30, vec![span("02", 30, 5)]),
+            trace("03", "c", 20, vec![span("03", 20, 5)]),
+        ];
+
+        // Zero on both knobs keeps every trace and every span, but still sorts.
+        super::apply_search_limits(&mut traces, 0, 0);
+        check!(ids(&traces) == vec!["02", "03", "01"], "newest first");
+        check!(
+            traces[2].span_sets[0].spans.len() == 2,
+            "a zero span limit leaves the spans alone"
+        );
+
+        // A real limit keeps the newest, which only holds if it is applied
+        // after the sort rather than before it.
+        super::apply_search_limits(&mut traces, 2, 1);
+        check!(ids(&traces) == vec!["02", "03"]);
+        check!(
+            traces
+                .iter()
+                .all(|trace| trace.span_sets.iter().all(|set| set.spans.len() == 1))
+        );
     }
 
     /// `merge_trace` folds a trace into a list, combining it with any entry
