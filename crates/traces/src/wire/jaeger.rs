@@ -877,6 +877,54 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
 
+    /// The two inputs prefix a binary field with different length encodings:
+    /// compact a varint, binary a big-endian i32. Each is given both framings
+    /// and must read only its own, and both are checked where the payload
+    /// exactly fills the buffer -- the case that separates `end > len` from
+    /// `end >= len`.
+    #[test]
+    fn binary_fields_are_framed_by_each_protocol_own_length() {
+        // Compact: a one-byte varint length of three, then three bytes.
+        let compact_bytes = [0x03, b'a', b'b', b'c'];
+        let mut input = super::CompactInput { bytes: &compact_bytes, pos: 0 };
+        check!(input.read_binary().expect("reads") == b"abc".to_vec());
+        check!(input.pos == 4, "the cursor covers the length and the payload");
+
+        // Exactly filling the buffer is complete, not truncated.
+        let mut input = super::CompactInput { bytes: &compact_bytes, pos: 0 };
+        check!(input.read_binary().is_ok(), "a payload may end the buffer");
+
+        // One byte short is truncated.
+        let mut input = super::CompactInput { bytes: &compact_bytes[..3], pos: 0 };
+        check!(input.read_binary().is_err(), "one byte short");
+
+        // Trailing bytes are left for the caller.
+        let with_tail = [0x03, b'a', b'b', b'c', 0xff];
+        let mut input = super::CompactInput { bytes: &with_tail, pos: 0 };
+        check!(input.read_binary().expect("reads") == b"abc".to_vec());
+        check!(input.pos == 4, "and the tail is not consumed");
+
+        // Binary: a four-byte length of three, then three bytes.
+        let binary_bytes = [0x00, 0x00, 0x00, 0x03, b'x', b'y', b'z'];
+        let mut input = super::BinaryInput { bytes: &binary_bytes, pos: 0 };
+        check!(input.read_binary().expect("reads") == b"xyz".to_vec());
+        check!(input.pos == 7, "four length bytes plus three payload");
+
+        let mut input = super::BinaryInput { bytes: &binary_bytes[..6], pos: 0 };
+        check!(input.read_binary().is_err(), "one byte short");
+
+        // An empty payload is a value, not an absence.
+        let mut input = super::CompactInput { bytes: &[0x00], pos: 0 };
+        check!(input.read_binary().expect("reads").is_empty());
+        let mut input = super::BinaryInput { bytes: &[0, 0, 0, 0], pos: 0 };
+        check!(input.read_binary().expect("reads").is_empty());
+
+        // A negative length cannot be a size, and only the binary framing can
+        // express one.
+        let mut input = super::BinaryInput { bytes: &[0xff, 0xff, 0xff, 0xff, 0, 0], pos: 0 };
+        check!(input.read_binary().is_err(), "a negative i32 length is refused");
+    }
+
     /// `read_key_value` dispatches on the field id *and* its wire type
     /// together, so a tag's value takes the variant its type says. Each
     /// variant is built and read back, with values that differ from one
