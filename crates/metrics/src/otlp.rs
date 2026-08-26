@@ -2380,27 +2380,27 @@ mod tests {
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
-        assert_eq!(
-            series,
-            vec![DecodedSeries {
-                labels: labels(&[
-                    ("__name__", "system_cpu_utilization"),
-                    ("host_name", "api-1")
-                ]),
-                samples: vec![DecodedSample {
-                    timestamp_ms: 1,
-                    value: 0.42,
-                    start_timestamp_ms: None,
-                }],
-                histograms: Vec::new(),
-                exemplars: Vec::new(),
-                metadata: Some(DecodedMetadata {
-                    metric_family_name: "system_cpu_utilization".into(),
-                    metric_type: "gauge".into(),
-                    help: String::new(),
-                    unit: String::new(),
-                }),
-            }]
+        check!(
+            series
+                == vec![DecodedSeries {
+                    labels: labels(&[
+                        ("__name__", "system_cpu_utilization"),
+                        ("host_name", "api-1")
+                    ]),
+                    samples: vec![DecodedSample {
+                        timestamp_ms: 1,
+                        value: 0.42,
+                        start_timestamp_ms: None,
+                    }],
+                    histograms: Vec::new(),
+                    exemplars: Vec::new(),
+                    metadata: Some(DecodedMetadata {
+                        metric_family_name: "system_cpu_utilization".into(),
+                        metric_type: "gauge".into(),
+                        help: String::new(),
+                        unit: String::new(),
+                    }),
+                }]
         );
     }
 
@@ -2435,14 +2435,14 @@ mod tests {
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
         let metadata = series[0].metadata.as_ref().expect("metric metadata");
-        assert_eq!(
-            *metadata,
-            DecodedMetadata {
-                metric_family_name: "system_cpu_utilization".into(),
-                metric_type: "gauge".into(),
-                help: "CPU utilization ratio.".into(),
-                unit: "1".into(),
-            }
+        check!(
+            *metadata
+                == DecodedMetadata {
+                    metric_family_name: "system_cpu_utilization".into(),
+                    metric_type: "gauge".into(),
+                    help: "CPU utilization ratio.".into(),
+                    unit: "1".into(),
+                }
         );
     }
 
@@ -2743,32 +2743,32 @@ mod tests {
             help: String::new(),
             unit: String::new(),
         });
-        assert_eq!(
-            series,
-            vec![
-                DecodedSeries {
-                    labels: expected_labels.clone(),
-                    samples: vec![DecodedSample {
-                        timestamp_ms: 2,
-                        value: 7.0,
-                        start_timestamp_ms: Some(1),
-                    }],
-                    histograms: Vec::new(),
-                    exemplars: Vec::new(),
-                    metadata: expected_metadata.clone(),
-                },
-                DecodedSeries {
-                    labels: expected_labels,
-                    samples: vec![DecodedSample {
-                        timestamp_ms: 3,
-                        value: 12.0,
-                        start_timestamp_ms: Some(1),
-                    }],
-                    histograms: Vec::new(),
-                    exemplars: Vec::new(),
-                    metadata: expected_metadata,
-                },
-            ]
+        check!(
+            series
+                == vec![
+                    DecodedSeries {
+                        labels: expected_labels.clone(),
+                        samples: vec![DecodedSample {
+                            timestamp_ms: 2,
+                            value: 7.0,
+                            start_timestamp_ms: Some(1),
+                        }],
+                        histograms: Vec::new(),
+                        exemplars: Vec::new(),
+                        metadata: expected_metadata.clone(),
+                    },
+                    DecodedSeries {
+                        labels: expected_labels,
+                        samples: vec![DecodedSample {
+                            timestamp_ms: 3,
+                            value: 12.0,
+                            start_timestamp_ms: Some(1),
+                        }],
+                        histograms: Vec::new(),
+                        exemplars: Vec::new(),
+                        metadata: expected_metadata,
+                    },
+                ]
         );
     }
 
@@ -3003,19 +3003,19 @@ mod tests {
             .iter()
             .find(|series| series.labels.get("__name__") == Some("http_server_active_requests"))
             .expect("metric series");
-        assert_eq!(
-            metric.labels,
-            labels(&[
-                ("__name__", "http_server_active_requests"),
-                ("otel_scope_library_language", "rust"),
-                ("otel_scope_name", "io.opentelemetry.http"),
-                (
-                    "otel_scope_schema_url",
-                    "https://opentelemetry.io/schemas/1.24.0"
-                ),
-                ("otel_scope_version", "1.2.3"),
-                ("service_name", "checkout"),
-            ])
+        check!(
+            metric.labels
+                == labels(&[
+                    ("__name__", "http_server_active_requests"),
+                    ("otel_scope_library_language", "rust"),
+                    ("otel_scope_name", "io.opentelemetry.http"),
+                    (
+                        "otel_scope_schema_url",
+                        "https://opentelemetry.io/schemas/1.24.0"
+                    ),
+                    ("otel_scope_version", "1.2.3"),
+                    ("service_name", "checkout"),
+                ])
         );
 
         let target = series
@@ -3059,62 +3059,68 @@ mod tests {
             help: String::new(),
             unit: String::new(),
         });
-        assert_eq!(
-            series,
-            vec![
-                DecodedSeries {
-                    labels: labels(&[
-                        ("__name__", "rpc_server_duration"),
-                        ("quantile", "0.5"),
-                        ("route", "/v1")
-                    ]),
-                    samples: vec![DecodedSample {
-                        timestamp_ms: 4,
-                        value: 2.0,
-                        start_timestamp_ms: None,
-                    }],
-                    histograms: Vec::new(),
-                    exemplars: Vec::new(),
-                    metadata: expected_metadata.clone(),
-                },
-                DecodedSeries {
-                    labels: labels(&[
-                        ("__name__", "rpc_server_duration"),
-                        ("quantile", "0.9"),
-                        ("route", "/v1")
-                    ]),
-                    samples: vec![DecodedSample {
-                        timestamp_ms: 4,
-                        value: 4.0,
-                        start_timestamp_ms: None,
-                    }],
-                    histograms: Vec::new(),
-                    exemplars: Vec::new(),
-                    metadata: expected_metadata.clone(),
-                },
-                DecodedSeries {
-                    labels: labels(&[("__name__", "rpc_server_duration_count"), ("route", "/v1")]),
-                    samples: vec![DecodedSample {
-                        timestamp_ms: 4,
-                        value: 9.0,
-                        start_timestamp_ms: None,
-                    }],
-                    histograms: Vec::new(),
-                    exemplars: Vec::new(),
-                    metadata: expected_metadata.clone(),
-                },
-                DecodedSeries {
-                    labels: labels(&[("__name__", "rpc_server_duration_sum"), ("route", "/v1")]),
-                    samples: vec![DecodedSample {
-                        timestamp_ms: 4,
-                        value: 12.5,
-                        start_timestamp_ms: None,
-                    }],
-                    histograms: Vec::new(),
-                    exemplars: Vec::new(),
-                    metadata: expected_metadata,
-                },
-            ]
+        check!(
+            series
+                == vec![
+                    DecodedSeries {
+                        labels: labels(&[
+                            ("__name__", "rpc_server_duration"),
+                            ("quantile", "0.5"),
+                            ("route", "/v1")
+                        ]),
+                        samples: vec![DecodedSample {
+                            timestamp_ms: 4,
+                            value: 2.0,
+                            start_timestamp_ms: None,
+                        }],
+                        histograms: Vec::new(),
+                        exemplars: Vec::new(),
+                        metadata: expected_metadata.clone(),
+                    },
+                    DecodedSeries {
+                        labels: labels(&[
+                            ("__name__", "rpc_server_duration"),
+                            ("quantile", "0.9"),
+                            ("route", "/v1")
+                        ]),
+                        samples: vec![DecodedSample {
+                            timestamp_ms: 4,
+                            value: 4.0,
+                            start_timestamp_ms: None,
+                        }],
+                        histograms: Vec::new(),
+                        exemplars: Vec::new(),
+                        metadata: expected_metadata.clone(),
+                    },
+                    DecodedSeries {
+                        labels: labels(&[
+                            ("__name__", "rpc_server_duration_count"),
+                            ("route", "/v1")
+                        ]),
+                        samples: vec![DecodedSample {
+                            timestamp_ms: 4,
+                            value: 9.0,
+                            start_timestamp_ms: None,
+                        }],
+                        histograms: Vec::new(),
+                        exemplars: Vec::new(),
+                        metadata: expected_metadata.clone(),
+                    },
+                    DecodedSeries {
+                        labels: labels(&[
+                            ("__name__", "rpc_server_duration_sum"),
+                            ("route", "/v1")
+                        ]),
+                        samples: vec![DecodedSample {
+                            timestamp_ms: 4,
+                            value: 12.5,
+                            start_timestamp_ms: None,
+                        }],
+                        histograms: Vec::new(),
+                        exemplars: Vec::new(),
+                        metadata: expected_metadata,
+                    },
+                ]
         );
     }
 
@@ -3201,6 +3207,66 @@ mod tests {
         check!(exemplar.labels.get("trace_id") == Some("01234567"));
         check!(exemplar.labels.get("span_id") == Some("abcd"));
         check!(exemplar.labels.get("span_kind") == Some("server"));
+    }
+
+    /// Both histogram flavours report `"histogram"` as their metadata type.
+    /// Gauge, counter and summary each have a test pinning the whole metadata
+    /// struct; histogram had none, so the type string could read "gauge" on
+    /// every bucket series of both decoders and nothing would notice.
+    #[test]
+    fn both_histogram_flavours_report_the_histogram_metadata_type() {
+        let classic = metric::Data::Histogram(Histogram {
+            data_points: vec![HistogramDataPoint {
+                time_unix_nano: 2_000_000,
+                count: 1,
+                sum: Some(0.5),
+                bucket_counts: vec![1, 0],
+                explicit_bounds: vec![1.0],
+                ..Default::default()
+            }],
+            aggregation_temporality: AggregationTemporality::Cumulative as i32,
+        });
+        let exponential = metric::Data::ExponentialHistogram(ExponentialHistogram {
+            data_points: vec![ExponentialHistogramDataPoint {
+                time_unix_nano: 2_000_000,
+                count: 1,
+                sum: Some(0.5),
+                scale: 0,
+                positive: Some(exponential_histogram_data_point::Buckets {
+                    offset: 0,
+                    bucket_counts: vec![1],
+                }),
+                ..Default::default()
+            }],
+            aggregation_temporality: AggregationTemporality::Cumulative as i32,
+        });
+
+        for data in [classic, exponential] {
+            let series = decode_otlp(
+                &metrics_data(Metric {
+                    name: "rpc.server.duration".into(),
+                    description: "Server call latency.".into(),
+                    unit: "s".into(),
+                    data: Some(data),
+                    ..Default::default()
+                }),
+                TranslationStrategy::default(),
+            )
+            .unwrap();
+
+            assert!(!series.is_empty());
+            for one in &series {
+                check!(
+                    one.metadata
+                        == Some(DecodedMetadata {
+                            metric_family_name: "rpc_server_duration_seconds".into(),
+                            metric_type: "histogram".into(),
+                            help: "Server call latency.".into(),
+                            unit: "s".into(),
+                        })
+                );
+            }
+        }
     }
 
     #[test]
