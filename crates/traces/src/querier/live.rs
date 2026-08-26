@@ -538,6 +538,111 @@ impl LiveTier {
 #[cfg(test)]
 mod tests {
 
+    /// `trace_spans` over the federation endpoint has three outcomes that a
+    /// caller must be able to tell apart: the trace is here, the trace is
+    /// genuinely absent, or the remote failed. A body collapsed to `Ok(None)`
+    /// makes the first two identical, and swapping the not-found test makes
+    /// all three wrong in different directions -- so each outcome is served
+    /// by a real HTTP response rather than asserted in isolation.
+    #[tokio::test]
+    async fn a_remote_live_trace_tells_found_absent_and_failed_apart() {
+        use axum::{
+            Router, body::Body, extract::Path, http::StatusCode, response::Response, routing::get,
+        };
+        use opentelemetry_proto::tonic::{
+            resource::v1::Resource,
+            trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan},
+        };
+        use prost::Message as _;
+
+        use crate::querier::live::LiveSource as _;
+
+        let found = [0xAA_u8; 16];
+        let absent = [0xBB_u8; 16];
+        let failing = [0xCC_u8; 16];
+
+        let mut body = Vec::new();
+        TracesData {
+            resource_spans: vec![ResourceSpans {
+                resource: Some(Resource::default()),
+                scope_spans: vec![ScopeSpans {
+                    spans: vec![OtlpSpan {
+                        trace_id: found.to_vec(),
+                        span_id: vec![1; 8],
+                        name: "root-op".to_string(),
+                        start_time_unix_nano: 1_000,
+                        end_time_unix_nano: 1_200,
+                        ..OtlpSpan::default()
+                    }],
+                    ..ScopeSpans::default()
+                }],
+                ..ResourceSpans::default()
+            }],
+        }
+        .encode(&mut body)
+        .expect("the payload encodes");
+
+        let found_hex = hex::encode(found);
+        let absent_hex = hex::encode(absent);
+        let app = Router::new().route(
+            "/api/traces/{id}",
+            get(move |Path(id): Path<String>| {
+                let body = body.clone();
+                let (found_hex, absent_hex) = (found_hex.clone(), absent_hex.clone());
+                async move {
+                    let (status, payload) = if id == found_hex {
+                        (StatusCode::OK, Body::from(body))
+                    } else if id == absent_hex {
+                        (StatusCode::NOT_FOUND, Body::empty())
+                    } else {
+                        (StatusCode::INTERNAL_SERVER_ERROR, Body::empty())
+                    };
+                    Response::builder()
+                        .status(status)
+                        .body(payload)
+                        .expect("the response builds")
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let addr = listener.local_addr().expect("the port is bound");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("the server runs");
+        });
+
+        let source = RemoteLiveSource::new(
+            Url::parse(&format!("http://{addr}/")).expect("a valid url"),
+            Arc::new(arc_swap::ArcSwap::from_pointee(
+                crabka_blockstore::TraceIndex::new(),
+            )),
+        );
+
+        // Present: the trace comes back, and it is the one that was asked for.
+        let trace = source
+            .trace_spans("t", &found)
+            .await
+            .expect("a found trace is not an error")
+            .expect("a found trace is not absent");
+        check!(trace.trace_id == found);
+        check!(trace.root_trace_name == "root-op");
+
+        // Absent: None, not an error -- a 404 from the live tier means the
+        // trace is not there yet, which callers fall through on.
+        check!(
+            source
+                .trace_spans("t", &absent)
+                .await
+                .expect("a 404 is not an error")
+                .is_none()
+        );
+
+        // Failed: an error, not None. Reporting a broken remote as "absent"
+        // would silently drop results from a federated query.
+        check!(source.trace_spans("t", &failing).await.is_err());
+    }
+
     /// `encode_span_batches` writes an Arrow IPC stream that
     /// `decode_span_batches` reads back. Round-tripping is what pins it: a
     /// body collapsed to a fixed byte is not a decodable stream at all, and
