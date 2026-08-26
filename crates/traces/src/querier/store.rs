@@ -3093,10 +3093,10 @@ mod tests {
     use arc_swap::ArcSwap;
     use arrow::{
         array::{
-            ArrayRef, FixedSizeBinaryBuilder, Int32Array, Int64Array, StringArray,
-            StringDictionaryBuilder,
+            ArrayRef, BooleanArray, FixedSizeBinaryBuilder, Float64Array, Int32Array, Int64Array,
+            PrimitiveDictionaryBuilder, StringArray, StringDictionaryBuilder,
         },
-        datatypes::{DataType, Field, Int32Type, Schema, SchemaRef},
+        datatypes::{DataType, Field, Int32Type, Int64Type, Schema, SchemaRef},
     };
     use assert2::check;
     use crabka_blockstore::{
@@ -3310,6 +3310,94 @@ mod tests {
         methods.append_value("POST");
         columns.push(Arc::new(methods.finish()) as ArrayRef);
         RecordBatch::try_new(schema, columns).unwrap()
+    }
+
+    /// A batch carrying one promoted attribute column of every type the
+    /// reader supports, alongside the three kinds it must skip: a column
+    /// type it does not handle, a null cell, and a dictionary whose values
+    /// are not strings.
+    fn typed_attr_batch() -> RecordBatch {
+        let mut fields = test_schema()
+            .fields()
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect::<Vec<_>>();
+        let mut columns = batch().columns().to_vec();
+
+        let mut dict = StringDictionaryBuilder::<Int32Type>::new();
+        dict.append_value("GET");
+        dict.append_value("POST");
+        // A dictionary of integers, not strings. It must be skipped: the
+        // string reader would misread it.
+        let mut int_dict = PrimitiveDictionaryBuilder::<Int32Type, Int64Type>::new();
+        int_dict.append_value(7);
+        int_dict.append_value(8);
+
+        let string_dict = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
+        let integer_dict =
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Int64));
+        let typed: Vec<(&str, DataType, ArrayRef)> = vec![
+            ("str", DataType::Utf8, Arc::new(StringArray::from(vec!["one", "two"]))),
+            ("dict", string_dict, Arc::new(dict.finish())),
+            ("int", DataType::Int64, Arc::new(Int64Array::from(vec![1, 2]))),
+            ("float", DataType::Float64, Arc::new(Float64Array::from(vec![1.5, 2.5]))),
+            ("bool", DataType::Boolean, Arc::new(BooleanArray::from(vec![true, false]))),
+            ("unsupported", DataType::Int32, Arc::new(Int32Array::from(vec![7, 8]))),
+            ("intdict", integer_dict, Arc::new(int_dict.finish())),
+            // Null in row 0 only, so the skip is provably per-row.
+            ("nullable", DataType::Utf8, Arc::new(StringArray::from(vec![None, Some("x")]))),
+        ];
+        for (name, data_type, column) in typed {
+            fields.push(Field::new(format!("{ATTR_PREFIX}{name}"), data_type, true));
+            columns.push(column);
+        }
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)
+            .expect("the typed attribute batch is well formed")
+    }
+
+    /// `attr_values_with_resource` reads one row's promoted attribute
+    /// columns, turning each into the `AttrValue` its Arrow type implies.
+    /// Every supported type is pinned to a value of that type, since an arm
+    /// borrowed from a neighbouring arm still produces a well-formed pair
+    /// and only the variant gives it away.
+    #[test]
+    fn promoted_attributes_take_the_value_type_their_column_declares() {
+        let batch = typed_attr_batch();
+        let row = |index| {
+            super::attr_values_with_resource(&batch, index, false)
+                .expect("the row is readable")
+        };
+        let str_value = |value: &str| AttrValue::Str(value.to_string());
+
+        // Row 0. `unsupported`, `intdict` and `nullable` are all absent:
+        // an unhandled column type, a non-string dictionary, and a null cell.
+        check!(
+            row(0)
+                == vec![
+                    ("svc".to_string(), str_value("a")),
+                    ("str".to_string(), str_value("one")),
+                    ("dict".to_string(), str_value("GET")),
+                    ("int".to_string(), AttrValue::Int(1)),
+                    ("float".to_string(), AttrValue::Float(1.5)),
+                    ("bool".to_string(), AttrValue::Bool(true)),
+                ]
+        );
+
+        // Row 1 differs in every value, so an arm that ignores its row index
+        // is caught, and `nullable` now appears -- the null skip is per-cell,
+        // not a decision made once for the whole column.
+        check!(
+            row(1)
+                == vec![
+                    ("svc".to_string(), str_value("b")),
+                    ("str".to_string(), str_value("two")),
+                    ("dict".to_string(), str_value("POST")),
+                    ("int".to_string(), AttrValue::Int(2)),
+                    ("float".to_string(), AttrValue::Float(2.5)),
+                    ("bool".to_string(), AttrValue::Bool(false)),
+                    ("nullable".to_string(), str_value("x")),
+                ]
+        );
     }
 
     fn resource_service_matcher(op: MatchCmp, value: MatchValue) -> SpanMatcher {
