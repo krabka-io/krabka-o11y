@@ -21080,6 +21080,112 @@ mod tests {
         check!(scalar(-4, 1).power(scalar(1, 2)).is_none());
     }
 
+    /// `parse_log_level_param` accepts the four levels and refuses everything
+    /// else BY NAME, so the caller can tell "you sent a level I do not know"
+    /// from "you sent no level". It returns on the first `log_level` it finds,
+    /// which is what decides precedence when the handler merges two sources.
+    #[test]
+    fn a_log_level_parameter_names_why_it_was_refused() {
+        let parse = |query: &str| super::parse_log_level_param(Some(query));
+
+        for level in ["debug", "info", "warn", "error"] {
+            check!(parse(&format!("log_level={level}")).ok().as_deref() == Some(level));
+        }
+
+        // The first occurrence wins, which the handler relies on.
+        check!(parse("log_level=info&log_level=warn").ok().as_deref() == Some("info"));
+        // And other parameters are skipped rather than ending the search.
+        check!(parse("other=1&log_level=warn").ok().as_deref() == Some("warn"));
+        check!(parse("log_level=warn&other=1").ok().as_deref() == Some("warn"));
+
+        // Percent and plus escapes are decoded before matching, in the key as
+        // well as the value.
+        check!(parse("log%5Flevel=warn").ok().as_deref() == Some("warn"));
+
+        // The two refusals are distinct: an unrecognised level names what was
+        // sent, a missing one says the parameter was absent.
+        check!(matches!(
+            parse("log_level=verbose"),
+            Err(HttpQueryError::InvalidQueryParameter {
+                name: "log_level",
+                ..
+            })
+        ));
+        check!(matches!(
+            parse("log_level="),
+            Err(HttpQueryError::InvalidQueryParameter { .. }),
+        ), "an empty value is an unrecognised level, not an absent parameter");
+        check!(matches!(
+            parse("other=1"),
+            Err(HttpQueryError::MissingQueryParameter("log_level"))
+        ));
+        check!(matches!(
+            parse(""),
+            Err(HttpQueryError::MissingQueryParameter("log_level"))
+        ));
+        check!(matches!(
+            super::parse_log_level_param(None),
+            Err(HttpQueryError::MissingQueryParameter("log_level"))
+        ));
+
+        // Case matters: the levels are lower-case spellings.
+        check!(parse("log_level=DEBUG").is_err());
+    }
+
+    /// `log_level_post` accepts the level in a query string, a form body, or
+    /// both. When both carry one the BODY wins, because the merged string puts
+    /// it first and the parser returns on the first match -- an ordering that
+    /// only shows when the two disagree.
+    #[tokio::test]
+    async fn a_log_level_post_prefers_the_body_over_the_query_string() {
+        use axum::response::IntoResponse as _;
+
+        let post = |query: Option<&str>, body: &str| {
+            let query = query.map(str::to_string);
+            let body = axum::body::Bytes::from(body.to_string());
+            async move {
+                let response = super::log_level_post(axum::extract::RawQuery(query), body)
+                    .await
+                    .into_response();
+                let status = response.status();
+                let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                    .await
+                    .expect("the response body is readable");
+                (status, String::from_utf8(bytes.to_vec()).expect("utf-8"))
+            }
+        };
+
+        // Either source alone.
+        let (status, body) = post(Some("log_level=debug"), "").await;
+        check!(status == axum::http::StatusCode::OK);
+        check!(body.contains("Log level set to debug"));
+
+        let (status, body) = post(None, "log_level=info").await;
+        check!(status == axum::http::StatusCode::OK);
+        check!(body.contains("Log level set to info"));
+
+        // Both, disagreeing: the body wins.
+        let (status, body) = post(Some("log_level=warn"), "log_level=info").await;
+        check!(status == axum::http::StatusCode::OK);
+        check!(
+            body.contains("Log level set to info"),
+            "the body's level, not the query string's: {body}"
+        );
+
+        // An empty query string alongside a body is not a source.
+        let (status, body) = post(Some(""), "log_level=error").await;
+        check!(status == axum::http::StatusCode::OK);
+        check!(body.contains("Log level set to error"));
+
+        // Neither source, and an unrecognised level, are refused distinctly.
+        let (status, body) = post(None, "").await;
+        check!(status != axum::http::StatusCode::OK);
+        check!(body.contains("unrecognized log level"));
+
+        let (_, body) = post(Some("log_level=verbose"), "").await;
+        check!(body.contains("verbose"), "the refusal names what was sent: {body}");
+    }
+
     /// The dynamic index caches hand back an entry only while it is fresh, and
     /// EVICT a stale one on the way past rather than leaving it to be found
     /// again. That eviction is the part worth pinning: a cache that returns
