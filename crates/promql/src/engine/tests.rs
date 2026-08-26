@@ -4394,6 +4394,60 @@ async fn resets_counts_a_drop_in_any_native_histogram_component() {
     }
 }
 
+/// A counter that holds its value across a step has not reset. The anchored
+/// `increase` correction fires only on a strict decrease, so a flat pair must
+/// contribute nothing -- counting it as a reset adds the whole pre-step value
+/// back and more than triples the answer here.
+#[tokio::test]
+async fn anchored_increase_does_not_treat_a_flat_counter_step_as_a_reset() {
+    let mut store = InMemoryMetricStore::new();
+    for (ts, value) in [(0, 5.0), (60_000, 5.0), (120_000, 7.0)] {
+        store.push_float("tenant-a", labels(&[("__name__", "ctr")]), ts, value);
+    }
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "increase(anchored(ctr[5m]))", 120_000)
+        .await
+        .unwrap();
+
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(samples.len() == 1);
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 2.0));
+}
+
+/// Past the last sample, `smoothed` extrapolates only while the gap stays
+/// within 1.1x the sample interval, and clamps to the last value beyond that.
+/// Both sides of that threshold have to be pinned: a test on either one alone
+/// leaves the slack factor free to move.
+#[tokio::test]
+async fn smoothed_delta_extrapolates_only_within_the_sample_interval_slack() {
+    let mut store = InMemoryMetricStore::new();
+    for (ts, value) in [(0, 0.0), (60_000, 60.0)] {
+        store.push_float("tenant-a", labels(&[("__name__", "m")]), ts, value);
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    // The interval is 60s, so the slack runs to 66s past the last sample.
+    for (case, eval_ms, want) in [
+        ("63s past the last sample extrapolates", 123_000, 120.0),
+        ("70s past it clamps to the last value", 130_000, 50.0),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", "delta(smoothed(m[2m]))", eval_ms)
+            .await
+            .unwrap();
+
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {case}");
+        };
+        assert2::assert!(samples.len() == 1, "{case}");
+        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{case}");
+    }
+}
+
 #[tokio::test]
 async fn instant_irate_uses_last_two_samples_per_second() {
     let mut store = InMemoryMetricStore::new();
