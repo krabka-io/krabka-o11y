@@ -21479,6 +21479,94 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// `split_query_param_pairs` breaks a query string on `&` only when a
+    /// KNOWN key follows it. That is not the usual rule, and it exists because
+    /// a `LogQL` matcher can contain an ampersand -- splitting on every one
+    /// would cut a query in half and leave both halves unparseable.
+    #[test]
+    fn a_query_string_splits_only_before_a_known_key() {
+        fn split(query: &str) -> Vec<&str> {
+            super::split_query_param_pairs(query, &["query", "start", "end"])
+        }
+
+        check!(split("query=up") == vec!["query=up"]);
+        check!(split("query=up&start=1") == vec!["query=up", "start=1"]);
+        check!(split("query=up&start=1&end=2") == vec!["query=up", "start=1", "end=2"]);
+
+        // An ampersand inside a value is kept, because what follows it is not
+        // a known key. This is the case the whole function exists for.
+        check!(
+            split(r#"query={app="a&b"}&start=1"#) == vec![r#"query={app="a&b"}"#, "start=1"],
+            "the matcher keeps its ampersand"
+        );
+        check!(split("query=a&b=c") == vec!["query=a&b=c"], "b is not a known key");
+
+        // A known key needs its `=` to count as one: "&start" alone is text.
+        check!(split("query=a&start") == vec!["query=a&start"]);
+        check!(split("query=a&startle=1") == vec!["query=a&startle=1"], "not a prefix match");
+
+        // Empty segments are dropped rather than yielded as empty strings.
+        check!(split("") == Vec::<&str>::new());
+        check!(split("&query=a") == vec!["query=a"]);
+        // A trailing `&` is KEPT, since nothing follows it to be a known key.
+        // The rule is about what comes after the ampersand, not about the
+        // ampersand itself.
+        check!(split("query=a&") == vec!["query=a&"]);
+    }
+
+    /// `parse_series_params` treats its parameters asymmetrically, and the
+    /// asymmetry is deliberate: matchers ACCUMULATE, because a series request
+    /// may carry several, while the time bounds are FIRST-WINS, because a
+    /// second one is a client mistake rather than an addition. A fixture
+    /// sending each parameter once cannot tell the two rules apart.
+    #[test]
+    fn series_params_accumulate_matchers_but_keep_the_first_time_bound() {
+        let parse = |query: &str| super::parse_series_params(Some(query));
+
+        // Both spellings of a matcher, accumulating in the order sent.
+        let params = parse("match[]=a&match[]=b").expect("matchers parse");
+        check!(params.matchers == vec!["a".to_string(), "b".to_string()]);
+        let params = parse("query=a&query=b").expect("matchers parse");
+        check!(params.matchers == vec!["a".to_string(), "b".to_string()]);
+        // And the two spellings share one list.
+        let params = parse("match[]=a&query=b").expect("matchers parse");
+        check!(params.matchers == vec!["a".to_string(), "b".to_string()]);
+
+        // The percent-encoded spelling of `match[]` is accepted too.
+        let params = parse("match%5B%5D=a").expect("matchers parse");
+        check!(params.matchers == vec!["a".to_string()]);
+
+        // Time bounds keep the FIRST value, not the last. A bare integer is
+        // read as nanoseconds directly rather than as seconds.
+        let params = parse("start=100&start=200").expect("bounds parse");
+        check!(params.start == Some(100), "the first bound, in nanoseconds");
+        let params = parse("end=100&end=200").expect("bounds parse");
+        check!(params.end == Some(100));
+        // A decimal is seconds, and RFC3339 is accepted too -- three
+        // spellings reaching one field.
+        check!(parse("start=1.5").expect("decimal seconds").start == Some(1_500_000_000));
+        check!(
+            parse("start=1970-01-01T00:00:01Z").expect("rfc3339").start == Some(1_000_000_000)
+        );
+
+        // Absent parameters stay absent rather than defaulting.
+        let params = parse("query=a").expect("a query alone parses");
+        check!(params.start.is_none());
+        check!(params.end.is_none());
+        check!(params.since.is_none());
+
+        // No query string at all is not an error.
+        let params = super::parse_series_params(None).expect("no query is valid");
+        check!(params.matchers.is_empty());
+
+        // Unknown parameters are ignored rather than refused.
+        check!(parse("nonsense=1").expect("unknown keys are ignored").matchers.is_empty());
+
+        // A malformed bound IS refused, since silently dropping it would run
+        // the query over a window the client did not ask for.
+        check!(parse("start=nonsense").is_err());
+    }
+
     /// `format_loki_duration_ns` composes a duration from the largest unit
     /// down, SKIPPING units that contribute nothing -- so 3661s is "1h1m1s"
     /// and not "1h1m1s0ms0us0ns". Zero is the one duration spelled with a unit
