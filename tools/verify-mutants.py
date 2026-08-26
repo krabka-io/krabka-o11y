@@ -37,7 +37,7 @@ TIMEOUT_SECONDS = 600
 KILL_GRACE = 10
 
 
-def run_case(path, original, start, end, case, package, target):
+def run_case(path, original, start, end, case, package, target, extra_args):
     body = original[start:end]
     hits = body.count(case["old"])
     if hits != 1:
@@ -50,7 +50,7 @@ def run_case(path, original, start, end, case, package, target):
     with tempfile.NamedTemporaryFile(mode="r", suffix=".log") as log:
         result = subprocess.run(
             ["timeout", "-k", str(KILL_GRACE), str(TIMEOUT_SECONDS),
-             "cargo", "test", "-p", package, target, case["test"]],
+             "cargo", "test", "-p", package, target, *extra_args, case["test"]],
             stdout=log.file, stderr=subprocess.STDOUT,
             start_new_session=True, check=False,
         )
@@ -78,6 +78,10 @@ def main():
     # and every case silently reports NO-COMPILE. `"target"` selects the cargo
     # target set: "--bins" for those, "--lib" (the default) otherwise.
     target = spec.get("target", "--lib")
+    # A crate whose tests sit behind a non-default feature compiles them out of
+    # a plain `cargo test`, so every mutant in the code they cover reports as a
+    # survivor. `"features"` passes them through -- e.g. ["--all-features"].
+    extra_args = spec.get("features", [])
     # A name can appear in more than one impl -- two types with their own
     # `from_f64` is the usual case -- and patching the first one found would
     # verify a mutant against a function the test never calls. `occurrence`
@@ -113,7 +117,7 @@ def main():
     try:
         for case in spec["cases"]:
             verdict = run_case(
-                path, original, start, end, case, spec["package"], target
+                path, original, start, end, case, spec["package"], target, extra_args
             )
             marker = "<-" if verdict == "SURVIVED" else "  "
             print(f"  {verdict:<16} {marker} {case['label']}", flush=True)
