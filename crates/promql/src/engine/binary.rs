@@ -85,6 +85,10 @@ impl BinaryOp {
             T_LSS => Ok(Self::Lt),
             T_GTE => Ok(Self::Gte),
             T_LTE => Ok(Self::Lte),
+            // Unreachable by construction: `combine_instant_binary` routes every
+            // set operator through `SetOp::from_token` before it gets here, so
+            // no query reaches this arm and a sweep will always report it as a
+            // survivor. It stays as the diagnostic for that routing breaking.
             T_LAND | T_LOR | T_LUNLESS => Err(PromqlError::Plan(format!(
                 "set operator `{token}` reached the arithmetic operator path"
             ))),
@@ -260,6 +264,12 @@ impl SetOp {
     }
 }
 
+/// Rejects a modifier that only a set operator may carry.
+///
+/// Unreachable by construction, and so a permanent mutation survivor:
+/// `promql-parser` sets `ManyToMany` only for `and`/`or`/`unless`, and
+/// `combine_instant_binary` routes those away before calling this. It stays as
+/// the guard for that invariant, not as live validation.
 fn validate_binary_modifier(modifier: Option<&BinModifier>) -> Result<()> {
     let Some(modifier) = modifier else {
         return Ok(());
