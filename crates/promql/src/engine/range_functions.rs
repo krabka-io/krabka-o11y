@@ -1123,6 +1123,9 @@ fn extrapolated_rate(
     kind: RangeFn,
 ) -> Option<f64> {
     let n = timestamps.len();
+    // Permanent survivor, and equivalent: at n == 1 dropping this guard only
+    // defers the `None`, because first and last are the same sample and the
+    // zero-width `sampled_interval` returns a few lines below.
     if n < 2 || values.len() != n {
         return None;
     }
@@ -1157,8 +1160,13 @@ fn extrapolated_rate(
         duration_to_end = average_duration_between_samples / 2.0;
     }
 
+    // `> 0.0` is a permanent survivor against `>= 0.0`: at result == 0 the
+    // division below yields an infinity or a NaN, and neither is `<` anything,
+    // so the cut never applies either way.
     if is_counter && result > 0.0 && values[0] >= 0.0 {
         let duration_to_zero = sampled_interval * (values[0] / result);
+        // Another permanent survivor: `<` against `<=` differs only when the
+        // two are equal, and then the assignment stores the value already held.
         if duration_to_zero < duration_to_start {
             duration_to_start = duration_to_zero;
         }
