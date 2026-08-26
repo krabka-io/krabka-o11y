@@ -1649,6 +1649,69 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
 
+    /// A negative out-of-order window disables the check; a zero window does
+    /// not. Zero means no out-of-order tolerance at all, so a sample older
+    /// than the newest already seen is rejected -- which is the case that
+    /// separates `< ZERO` from `<= ZERO`, since every other window agrees.
+    #[test]
+    fn a_zero_out_of_order_window_still_rejects_older_samples() {
+        use crate::wire::DecodedSample;
+
+        let (state, _sink) = test_state();
+        let series = |timestamp_ms: i64| {
+            let mut labels = Labels::default();
+            labels.insert("__name__", "requests");
+            DecodedSeries {
+                labels,
+                samples: vec![DecodedSample::new(timestamp_ms, 1.0)],
+                histograms: Vec::new(),
+                exemplars: Vec::new(),
+                metadata: None,
+            }
+        };
+        let window = |ms: i64| Limits {
+            out_of_order_time_window: Time::from_millis(ms),
+            ..Limits::default()
+        };
+
+        // A zero window: the first sample sets the mark, and one before it is
+        // refused.
+        let zero = window(0);
+        check!(super::enforce_out_of_order_window(&state, &zero, "t", &[series(1_000)]).is_ok());
+        check!(
+            super::enforce_out_of_order_window(&state, &zero, "t", &[series(999)]).is_err(),
+            "one millisecond earlier is out of order"
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &zero, "t", &[series(1_000)]).is_ok(),
+            "the same timestamp is not older"
+        );
+
+        // A positive window admits samples within it and refuses those beyond.
+        let (state, _sink) = test_state();
+        let ten = window(10_000);
+        check!(super::enforce_out_of_order_window(&state, &ten, "t", &[series(100_000)]).is_ok());
+        check!(
+            super::enforce_out_of_order_window(&state, &ten, "t", &[series(90_000)]).is_ok(),
+            "exactly the window back is still allowed"
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &ten, "t", &[series(89_999)]).is_err(),
+            "one millisecond beyond it is not"
+        );
+
+        // A negative window disables the check entirely.
+        let (state, _sink) = test_state();
+        let disabled = window(-1);
+        check!(
+            super::enforce_out_of_order_window(&state, &disabled, "t", &[series(1_000)]).is_ok()
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &disabled, "t", &[series(1)]).is_ok(),
+            "anything goes when the window is negative"
+        );
+    }
+
     /// The per-series sample cap counts samples, histograms and exemplars
     /// together. All three are populated here and the total is placed either
     /// side of the limit, because a sum that subtracts one term instead of
