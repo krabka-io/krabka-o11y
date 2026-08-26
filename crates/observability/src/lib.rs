@@ -21080,6 +21080,92 @@ mod tests {
         check!(scalar(-4, 1).power(scalar(1, 2)).is_none());
     }
 
+    /// `format_metric_value` renders a rational as a decimal, capped at nine
+    /// places and with trailing zeros trimmed. A whole number gets no decimal
+    /// point at all, which is a different branch from one whose decimals all
+    /// trim away -- both are checked, since they produce the same text by
+    /// different routes.
+    #[test]
+    fn a_metric_value_renders_without_trailing_zeros() {
+        let render = |numerator, denominator| {
+            super::format_metric_value(MetricValue::new(numerator, denominator))
+        };
+
+        // Whole numbers take the early return and carry no point.
+        check!(render(5, 1) == "5");
+        check!(render(0, 1) == "0");
+        check!(render(-5, 1) == "-5");
+        // A fraction that reduces to a whole number takes the same branch.
+        check!(render(10, 5) == "2");
+
+        // Exact decimals keep only the digits they need.
+        check!(render(1, 2) == "0.5");
+        check!(render(-1, 2) == "-0.5");
+        check!(render(1, 4) == "0.25");
+        check!(render(3, 2) == "1.5");
+        check!(render(-3, 2) == "-1.5");
+
+        // The sign is on the whole part, and survives a zero whole part --
+        // "-0.5" rather than "0.5" with the minus lost on the way through
+        // `unsigned_abs`.
+        check!(render(-1, 4) == "-0.25");
+
+        // A repeating fraction is cut at nine places, not rounded up: a third
+        // is nine 3s, and two thirds is nine 6s rather than ...667.
+        check!(render(1, 3) == "0.333333333");
+        check!(render(2, 3) == "0.666666666");
+
+        // Trailing zeros are trimmed even when the division produces them.
+        check!(render(1, 8) == "0.125");
+        check!(render(1, 5) == "0.2", "not 0.200000000");
+
+        // The trim only has anything to do when the nine-digit cap lands on a
+        // zero: a terminating fraction stops as soon as the remainder does, so
+        // it never appends one. 1/11 is 0.090909090... -- nine digits ending
+        // in a zero that must come off.
+        check!(render(1, 11) == "0.09090909");
+    }
+
+    /// `strip_outer_parenthesized_expression` unwraps a query that is wholly
+    /// parenthesised, and refuses one that merely starts and ends with
+    /// brackets belonging to different groups -- "(a)+(b)" is not a
+    /// parenthesised expression, and unwrapping it would produce "a)+(b".
+    #[test]
+    fn only_a_wholly_parenthesised_expression_is_unwrapped() {
+        let strip = super::strip_outer_parenthesized_expression;
+
+        check!(strip("(a)") == Some("a"));
+        check!(strip("  (a)  ") == Some("a"), "the query is trimmed first");
+        check!(strip("( a )") == Some("a"), "and so are the contents");
+        check!(strip("((a))") == Some("(a)"), "one layer at a time");
+        check!(strip("(a+b)") == Some("a+b"));
+
+        // The brackets must be the SAME pair. This is the case that a naive
+        // starts-with/ends-with check gets wrong.
+        check!(strip("(a)+(b)").is_none());
+        check!(strip("(a)(b)").is_none());
+
+        // Not parenthesised at all. "a(b)" matters most: it ends with a
+        // bracket whose opener is not the first character, so a precheck
+        // requiring only ONE of the two ends to match would unwrap it to the
+        // nonsense "(b".
+        check!(strip("a(b)").is_none());
+        check!(strip("a").is_none());
+        check!(strip("(a").is_none());
+        check!(strip("a)").is_none());
+        check!(strip("").is_none());
+
+        // Unbalanced inside. Note the `checked_sub` guarding the depth counter
+        // is unreachable: a leading `)` would need the opening precheck to have
+        // passed, which requires a leading `(`. Replacing it with a saturating
+        // subtraction is an equivalent mutation, not a gap.
+        check!(strip("(a))").is_none());
+        check!(strip("((a)").is_none());
+
+        // A parenthesis inside a string is text, not structure.
+        check!(strip(r#"({app="("})"#) == Some(r#"{app="("}"#));
+    }
+
     /// `MetricValue::sqrt` returns zero rather than an error for anything with
     /// no real root, and it FLOORS to nine decimal places rather than rounding
     /// -- so an irrational root is truncated, not nudged up. A NaN reaching a
