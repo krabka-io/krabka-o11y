@@ -538,6 +538,79 @@ impl LiveTier {
 #[cfg(test)]
 mod tests {
 
+    /// `encode_span_batches` writes an Arrow IPC stream that
+    /// `decode_span_batches` reads back. Round-tripping is what pins it: a
+    /// body collapsed to a fixed byte is not a decodable stream at all, and
+    /// one collapsed to no bytes decodes to no batches.
+    #[test]
+    fn span_batches_round_trip_through_the_ipc_stream() {
+        use arrow::{
+            array::Int32Array,
+            datatypes::{DataType, Field, Schema},
+        };
+
+        let schema = Arc::new(Schema::new(vec![Field::new("n", DataType::Int32, false)]));
+        let batch = |values: Vec<i32>| {
+            RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(values))])
+                .expect("the batch is well formed")
+        };
+        // Two batches of different lengths, so a writer that emits only the
+        // first is caught as well as one that emits none.
+        let batches = vec![batch(vec![1, 2, 3]), batch(vec![4])];
+
+        let encoded = super::encode_span_batches(&batches).expect("the batches encode");
+        check!(!encoded.is_empty(), "a real stream has bytes");
+        check!(
+            super::decode_span_batches(&encoded).expect("the stream decodes") == batches,
+            "and reads back as what went in"
+        );
+
+        // No batches means no stream, and no stream means no batches. The
+        // two halves have to agree, or an empty live tier is an error.
+        check!(super::encode_span_batches(&[]).expect("nothing encodes").is_empty());
+        check!(super::decode_span_batches(&[]).expect("nothing decodes").is_empty());
+    }
+
+    /// The block-builder frontier is one nanosecond past the newest block, so
+    /// a reader can ask for everything at or after it without re-reading that
+    /// block. It is a maximum over blocks, not the first or the last, so the
+    /// newest block is placed in the middle of the list.
+    #[test]
+    fn the_block_frontier_is_one_past_the_newest_block() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        use arc_swap::ArcSwap;
+        use crabka_blockstore::{ShardedTraceBloom, TraceBlockStats, TraceIndex};
+
+        let block = |key: &str, min_ts, max_ts| TraceBlockStats {
+            object_key: key.to_string(),
+            min_ts,
+            max_ts,
+            bloom: ShardedTraceBloom::with_tempo_defaults(1),
+            tag_names: BTreeSet::new(),
+            tag_values: BTreeMap::new(),
+        };
+        let mut index = TraceIndex::new();
+        // The newest is neither first nor last, so taking either end is wrong.
+        index.add_trace_block("t", block("a", 100, 500));
+        index.add_trace_block("t", block("b", 200, 900));
+        index.add_trace_block("t", block("c", 300, 700));
+        // A second tenant with a later block, which must not leak across.
+        index.add_trace_block("other", block("d", 400, 5_000));
+
+        let source = RemoteLiveSource::new(
+            Url::parse("http://localhost:1/").expect("a valid url"),
+            Arc::new(ArcSwap::from_pointee(index)),
+        );
+
+        check!(source.block_builder_frontier_ns("t") == 901, "one past the newest");
+        check!(source.block_builder_frontier_ns("other") == 5_001);
+        check!(
+            source.block_builder_frontier_ns("absent") == 0,
+            "a tenant with no blocks has no frontier"
+        );
+    }
+
     /// `trace_spans_from_otlp` folds an OTLP payload into one trace, picking
     /// the root service and root span names as it goes. Both choices are
     /// first-wins, and the guards that make them first-wins are what survived.
