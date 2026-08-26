@@ -1173,9 +1173,18 @@ mod tests {
         };
 
         check!(read(&[0x00]).unwrap() == (0, 1), "zero is one byte");
-        check!(read(&[0x7f]).unwrap() == (127, 1), "the largest single byte");
-        check!(read(&[0x80, 0x01]).unwrap() == (128, 2), "the smallest two-byte value");
-        check!(read(&[0xff, 0x01]).unwrap() == (255, 2), "continuation bits are stripped");
+        check!(
+            read(&[0x7f]).unwrap() == (127, 1),
+            "the largest single byte"
+        );
+        check!(
+            read(&[0x80, 0x01]).unwrap() == (128, 2),
+            "the smallest two-byte value"
+        );
+        check!(
+            read(&[0xff, 0x01]).unwrap() == (255, 2),
+            "continuation bits are stripped"
+        );
         check!(read(&[0xac, 0x02]).unwrap() == (300, 2), "low group first");
         check!(
             read(&[0xff, 0xff, 0xff, 0xff, 0x0f]).unwrap() == (u64::from(u32::MAX), 5),
@@ -1290,7 +1299,10 @@ mod tests {
             max_nodes,
             ..LegacyDecodeLimits::default()
         };
-        check!(super::tree_to_pprof("app", "bytes", &body, limits(5)).is_ok(), "five nodes fit");
+        check!(
+            super::tree_to_pprof("app", "bytes", &body, limits(5)).is_ok(),
+            "five nodes fit"
+        );
 
         let err = super::tree_to_pprof("app", "bytes", &body, limits(4))
             .unwrap_err()
@@ -1317,7 +1329,10 @@ mod tests {
         let err = super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
             .unwrap_err()
             .to_string();
-        check!(err.contains("children length exceeds remaining payload"), "got: {err}");
+        check!(
+            err.contains("children length exceeds remaining payload"),
+            "got: {err}"
+        );
     }
 
     /// Encodes one node of Pyroscope's binary trie format: the suffix this
@@ -1418,7 +1433,10 @@ mod tests {
             max_path_bytes: crabka_units::bytes(n),
             ..LegacyDecodeLimits::default()
         };
-        check!(decode(path(43)).is_ok(), "43 bytes of keys fit a budget of 43");
+        check!(
+            decode(path(43)).is_ok(),
+            "43 bytes of keys fit a budget of 43"
+        );
         let err = decode(path(42)).unwrap_err().to_string();
         check!(err.contains("exceeds path-bytes budget"), "got: {err}");
     }
@@ -1434,6 +1452,49 @@ mod tests {
             .unwrap_err()
             .to_string();
         check!(err.contains("ended before trie node value"), "got: {err}");
+    }
+
+    /// Folded input has four rules and no test held any of them: repeats of a
+    /// stack accumulate, the value is the *last* whitespace-separated field so
+    /// frame names may contain spaces, empty frames between separators are
+    /// dropped, and blank and `#` lines are skipped. Errors name the 1-based
+    /// line.
+    #[test]
+    fn folded_stacks_accumulate_and_take_the_value_from_the_last_field() {
+        fn frames_and_values(profile: &PprofProfile) -> Vec<(String, i64)> {
+            // `stack_frames` returns leaf-first, the pprof convention; folded
+            // input is written root-first.
+            let mut out = profile
+                .samples()
+                .iter()
+                .map(|sample| {
+                    let mut frames = profile
+                        .stack_frames(sample)
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>();
+                    frames.reverse();
+                    (frames.join(";"), sample.value[0])
+                })
+                .collect::<Vec<_>>();
+            out.sort();
+            out
+        }
+
+        let parse = |body: &str| super::folded_to_pprof("app", "count", body);
+
+        // The same stack twice adds up; overwriting would leave 4.
+        let profile = parse("main;work 3\nmain;work 4\n").expect("two folded lines");
+        check!(frames_and_values(&profile) == vec![("main;work".to_string(), 7)]);
+
+        // A comment and a blank are skipped; the value is the last field, so
+        // "my func" survives as one frame; the empty frame is dropped.
+        let profile = parse("# a comment\n\nmy func;;other 5\n").expect("one folded line");
+        check!(frames_and_values(&profile) == vec![("my func;other".to_string(), 5)]);
+
+        // The third line of the body is named as line 3, not 2.
+        let err = parse("main 1\nmain 2\nnovalue\n").unwrap_err().to_string();
+        check!(err.contains("folded line 3 missing value"), "got: {err}");
     }
 
     /// Wraps `parts` as a multipart body with a fixed boundary.
@@ -1532,7 +1593,10 @@ mod tests {
         let len = u32::try_from(folded.len()).expect("fixture fits a u32");
         check!(decode(len).is_ok(), "a part exactly at the limit fits");
         let err = decode(len - 1).unwrap_err();
-        check!(matches!(err, ProfilesError::TooLarge { .. }), "got: {err:?}");
+        check!(
+            matches!(err, ProfilesError::TooLarge { .. }),
+            "got: {err:?}"
+        );
     }
 
     /// A part with no name is not a profile. Nothing downstream distinguishes
@@ -1555,7 +1619,10 @@ mod tests {
             mebibytes(1),
             LegacyDecodeLimits::default(),
         ));
-        check!(result.is_err(), "an unnamed part must not be read as the profile");
+        check!(
+            result.is_err(),
+            "an unnamed part must not be read as the profile"
+        );
     }
 
     /// A "labels" part carries extra labels, but only for jfr uploads. Under
@@ -1581,7 +1648,11 @@ mod tests {
 
         // The same part under a format that has no labels concept.
         let raw = decode("groups", "profile").unwrap();
-        check!(raw.labels.get("service_name") == None, "labels: {:?}", raw.labels);
+        check!(
+            raw.labels.get("service_name") == None,
+            "labels: {:?}",
+            raw.labels
+        );
     }
 
     /// Ingest timestamps arrive as either seconds or milliseconds and are
@@ -1594,7 +1665,10 @@ mod tests {
 
         check!(parse("0").unwrap() == 0);
         check!(parse("1").unwrap() == 1_000, "seconds scale up");
-        check!(parse("  7  ").unwrap() == 7_000, "surrounding space is trimmed");
+        check!(
+            parse("  7  ").unwrap() == 7_000,
+            "surrounding space is trimmed"
+        );
         check!(parse("-1").unwrap() == -1_000, "negative seconds scale too");
         check!(
             parse("9999999999").unwrap() == 9_999_999_999_000,
@@ -1631,11 +1705,20 @@ mod tests {
         check!(decode("%41%42") == "AB", "back to back escapes");
         // Percent is not self-escaping here: "%%" is simply an escape whose
         // first digit is not hex, so both characters survive.
-        check!(decode("100%%") == "100%%", "a doubled percent is not one literal");
+        check!(
+            decode("100%%") == "100%%",
+            "a doubled percent is not one literal"
+        );
 
         // Malformed escapes keep every character they consumed.
-        check!(decode("a%zz") == "a%zz", "unparseable hex is left as written");
-        check!(decode("a%2") == "a%2", "an escape cut short keeps its digit");
+        check!(
+            decode("a%zz") == "a%zz",
+            "unparseable hex is left as written"
+        );
+        check!(
+            decode("a%2") == "a%2",
+            "an escape cut short keeps its digit"
+        );
         check!(decode("a%") == "a%", "a trailing percent stands alone");
         check!(decode("a%2z") == "a%2z", "a bad second digit is kept too");
     }
@@ -1649,12 +1732,14 @@ mod tests {
         let parse = |raw: &str| super::parse_labels_part(raw.as_bytes());
 
         check!(parse("").unwrap() == vec![], "an absent part is no labels");
-        check!(parse("{}").unwrap() == vec![], "an empty object is no labels");
+        check!(
+            parse("{}").unwrap() == vec![],
+            "an empty object is no labels"
+        );
 
-        let labels = parse(
-            r#"{"text":"a","int":7,"float":1.5,"yes":true,"no":false,"nothing":null}"#,
-        )
-        .unwrap();
+        let labels =
+            parse(r#"{"text":"a","int":7,"float":1.5,"yes":true,"no":false,"nothing":null}"#)
+                .unwrap();
         // Document order is kept rather than sorted, so a caller reading the
         // first label gets the first one written.
         check!(
