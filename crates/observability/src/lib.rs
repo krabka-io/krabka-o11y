@@ -21484,6 +21484,83 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// `consume_hot_metric_sample` spends one unit of a per-series, per-instant
+    /// budget, and reports whether it could. Its three refusals are distinct
+    /// causes -- the sample has no timestamp, the series and instant were never
+    /// counted, or their budget is already spent -- and all three return the
+    /// same false, so each is reached separately here.
+    ///
+    /// The decrement is the point: consuming twice from a budget of one must
+    /// succeed then fail. A test that consumed once could not tell a decrement
+    /// from a mere presence check.
+    #[test]
+    fn consuming_a_hot_metric_sample_spends_its_budget_once_per_unit() {
+        let mut labels = Labels::default();
+        labels.insert("app".to_string(), "api".to_string());
+        let other = Labels::default();
+        let sample = serde_json::json!([1_700_000_000, "1"]);
+        let key = |labels: &Labels| (labels.clone(), "1700000000".to_string());
+
+        let mut counts = BTreeMap::new();
+        counts.insert(key(&labels), 2_u64);
+
+        // Two units budgeted, so two succeed and the third does not.
+        check!(super::consume_hot_metric_sample(&mut counts, &labels, &sample));
+        check!(super::consume_hot_metric_sample(&mut counts, &labels, &sample));
+        check!(
+            !super::consume_hot_metric_sample(&mut counts, &labels, &sample),
+            "the budget is spent, not merely present"
+        );
+        check!(counts[&key(&labels)] == 0, "and it stops at zero");
+
+        // A different series has its own budget, not this one's.
+        check!(
+            !super::consume_hot_metric_sample(&mut counts, &other, &sample),
+            "an uncounted series has nothing to spend"
+        );
+
+        // A different instant of the SAME series likewise: the key is the pair.
+        let later = serde_json::json!([1_700_000_001, "1"]);
+        check!(!super::consume_hot_metric_sample(&mut counts, &labels, &later));
+
+        // A sample with no timestamp at all.
+        check!(!super::consume_hot_metric_sample(
+            &mut counts,
+            &labels,
+            &serde_json::json!([])
+        ));
+        check!(!super::consume_hot_metric_sample(
+            &mut counts,
+            &labels,
+            &serde_json::json!("bare")
+        ));
+    }
+
+    /// `loki_vector_sample_value` reads the VALUE half of an instant sample --
+    /// index one, not zero -- and parses it. The timestamp beside it is also a
+    /// number, so reading the wrong index yields something that parses fine and
+    /// is simply wrong.
+    #[test]
+    fn a_loki_vector_sample_reads_its_value_and_not_its_timestamp() {
+        let value = |sample: serde_json::Value| super::loki_vector_sample_value(&sample);
+        let instant = |timestamp, sample_value| {
+            serde_json::json!({"metric": {}, "value": [timestamp, sample_value]})
+        };
+
+        check!(value(instant(1_700_000_000_i64, "42")) == Some(MetricValue::new(42, 1)));
+        check!(value(instant(1_700_000_000_i64, "1.5")) == Some(MetricValue::new(15, 10)));
+
+        // The value is a STRING in Loki's encoding; a bare number is not read.
+        check!(value(serde_json::json!({"value": [1, 42]})).is_none());
+        // And an unparseable one is refused rather than defaulted to zero.
+        check!(value(instant(1, "nonsense")).is_none());
+
+        // Missing pieces: no value key, too short an array, not an array.
+        check!(value(serde_json::json!({"metric": {}})).is_none());
+        check!(value(serde_json::json!({"value": [1]})).is_none());
+        check!(value(serde_json::json!({"value": "1"})).is_none());
+    }
+
     /// `is_prometheus_duration_literal` accepts "1h30m" and refuses "30m1h":
     /// the units must run strictly from larger to smaller, which is what makes
     /// a duration unambiguous without needing to add the parts up. A repeat is
