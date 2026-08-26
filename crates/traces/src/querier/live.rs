@@ -538,6 +538,29 @@ impl LiveTier {
 #[cfg(test)]
 mod tests {
 
+    /// `ns_floor_seconds` is the twin of `ns_ceil_seconds`, rounding *down*
+    /// rather than toward zero. The two only disagree on negatives, so the
+    /// sub-second negative cases are what pin the direction. The answers also
+    /// avoid 0, 1 and -1 where they can, since a body collapsed to any of
+    /// those constants is otherwise indistinguishable.
+    #[test]
+    fn nanoseconds_floor_down_to_whole_seconds() {
+        let floor = super::ns_floor_seconds;
+
+        check!(floor(5_000_000_000) == 5);
+        check!(floor(5_999_999_999) == 5, "a partial second is dropped");
+        check!(floor(7_000_000_000) == 7);
+        check!(floor(0) == 0);
+
+        // Below zero the two roundings part company: truncation would give 0
+        // here, and -1 for the whole second below it.
+        check!(floor(-1) == -1, "rounding down, not toward zero");
+        check!(floor(-999_999_999) == -1);
+        check!(floor(-1_000_000_000) == -1, "an exact second is not rounded further");
+        check!(floor(-1_000_000_001) == -2);
+        check!(floor(-5_000_000_000) == -5);
+    }
+
     /// `ns_ceil_seconds` rounds nanoseconds up to whole seconds, and rounds
     /// *up* rather than toward zero -- which is only visible on negatives,
     /// where the two disagree. Euclidean division is what makes that work.

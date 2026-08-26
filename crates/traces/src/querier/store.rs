@@ -3312,6 +3312,52 @@ mod tests {
         RecordBatch::try_new(schema, columns).unwrap()
     }
 
+    /// The typed column readers each downcast a column and return one cell.
+    /// Every one of them survived as a constant, so the values are chosen to
+    /// avoid the constants: the int column is read at row 1, because row 0
+    /// holds 1, which is itself one of the answers a collapsed body gives.
+    #[test]
+    fn the_typed_column_readers_return_their_own_cell_or_refuse_the_column() {
+        let batch = typed_attr_batch();
+        let column = |name: &str| {
+            batch
+                .column_by_name(&format!("{ATTR_PREFIX}{name}"))
+                .expect("the column is present")
+                .clone()
+        };
+
+        check!(super::int64_array_value(column("int").as_ref(), 1).expect("an int column") == 2);
+        check!(
+            super::float64_array_value(column("float").as_ref(), 0).expect("a float column") == 1.5
+        );
+        // Both rows, since true and false are each a constant a collapsed
+        // body returns and neither alone rules the other out.
+        check!(super::bool_array_value(column("bool").as_ref(), 0).expect("a bool column"));
+        check!(!super::bool_array_value(column("bool").as_ref(), 1).expect("a bool column"));
+        check!(
+            super::string_array_value(column("str").as_ref(), 1).expect("a string column") == "two"
+        );
+
+        // A column of the wrong type is refused rather than reinterpreted.
+        check!(super::int64_array_value(column("str").as_ref(), 0).is_err());
+        check!(super::float64_array_value(column("int").as_ref(), 0).is_err());
+        check!(super::bool_array_value(column("int").as_ref(), 0).is_err());
+
+        // By name: the cell is read from the named column, and an absent name
+        // is an error rather than a default.
+        check!(super::int64_value(&batch, &format!("{ATTR_PREFIX}int"), 1).expect("by name") == 2);
+        // The error must name the absent column: falling back to some other
+        // column also fails, but for the wrong reason and with the wrong
+        // message, which is the only thing separating the two.
+        check!(
+            super::int64_value(&batch, "no.such.column", 0)
+                .expect_err("an absent column is an error")
+                .to_string()
+                .contains("no.such.column"),
+            "the error names the column that is missing"
+        );
+    }
+
     /// `nullable_fixed_value` reads one fixed-width binary cell, or None when
     /// it is null. The trace id is neither all-zero nor all-one, so a body
     /// collapsed to either constant is distinguishable from a real read.
