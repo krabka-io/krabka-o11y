@@ -21474,6 +21474,61 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// `validate_loki_volume_query_range_limit` caps a volume query's span at
+    /// 30 days and a bit. The cap is exclusive of nothing -- a range exactly at
+    /// the limit is allowed and one nanosecond more is not, which is the pair
+    /// separating `>` from `>=`.
+    ///
+    /// A span that overflows an i64 subtraction is refused too, and reports the
+    /// widest length rather than a negative one: a wrapped subtraction would
+    /// otherwise report a query "shorter" than the limit and let it through.
+    #[test]
+    fn a_volume_query_range_is_capped_at_its_limit_exactly() {
+        use crabka_blockstore::TimeRange;
+
+        let max_ns = super::LOKI_VOLUME_MAX_QUERY_RANGE.nanos_i64();
+        let range = |start_ns, end_ns| {
+            super::validate_loki_volume_query_range_limit(
+                TimeRange::new(start_ns, end_ns).expect("a valid range"),
+            )
+        };
+
+        check!(range(0, 0).is_ok(), "an empty range is within any limit");
+        check!(range(0, max_ns).is_ok(), "exactly at the limit");
+        check!(range(1_000, 1_000 + max_ns).is_ok(), "wherever it starts");
+        check!(range(0, max_ns + 1).is_err(), "one nanosecond over");
+
+        // The error names how long the query actually was, so the client can
+        // see by how much it missed.
+        let error = range(0, max_ns + 1).expect_err("over the limit");
+        check!(matches!(error, HttpQueryError::LokiQueryRangeTooLarge { .. }));
+
+        // A span that cannot be subtracted without overflowing is refused
+        // rather than wrapping to a small positive number.
+        check!(range(i64::MIN, i64::MAX).is_err(), "an overflowing span");
+    }
+
+    /// `validate_native_timestamp_ns` refuses a negative timestamp and returns
+    /// the value otherwise. Zero is the boundary -- the Unix epoch is a real
+    /// instant, so it is accepted, which is what separates `< 0` from `<= 0`.
+    #[test]
+    fn a_native_timestamp_may_be_the_epoch_but_not_before_it() {
+        let validate = |timestamp_ns| {
+            super::validate_native_timestamp_ns(timestamp_ns, timestamp_ns.to_string())
+        };
+
+        check!(validate(0).ok() == Some(0), "the epoch is a real instant");
+        check!(validate(1).ok() == Some(1));
+        check!(validate(i64::MAX).ok() == Some(i64::MAX));
+        check!(validate(-1).is_err());
+        check!(validate(i64::MIN).is_err());
+
+        // The refusal carries the value it refused, so a log line names the
+        // timestamp that was wrong rather than only that one was.
+        let error = validate(-42).expect_err("negative is refused");
+        check!(error.to_string().contains("-42"), "got: {error}");
+    }
+
     /// `count_stream_map_lines` counts entries across every stream, optionally
     /// stopping before a timestamp. The bound is EXCLUSIVE, so an entry landing
     /// exactly on it is not counted -- that is the one input separating `<`
