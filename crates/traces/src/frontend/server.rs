@@ -601,6 +601,79 @@ mod tests {
 
     use super::*;
 
+    /// `parse_duration_component_ns` scales one number by its unit. The
+    /// fraction is divided by ten to its own length, so a two-digit fraction
+    /// is hundredths -- which only shows when the fraction's length and its
+    /// value differ, hence the ".05" case beside the ".5" one.
+    #[test]
+    fn a_duration_component_scales_its_fraction_by_length() {
+        let parse = super::parse_duration_component_ns;
+        let second = 1_000_000_000_u128;
+
+        check!(parse("1", second) == Ok(second));
+        check!(parse("2", second) == Ok(2 * second));
+        check!(parse("0", second) == Ok(0));
+
+        // The fraction divides by ten raised to its own length.
+        check!(parse("1.5", second) == Ok(1_500_000_000), "one digit is tenths");
+        check!(parse("1.05", second) == Ok(1_050_000_000), "two digits are hundredths");
+        check!(parse("1.50", second) == Ok(1_500_000_000), "a trailing zero changes nothing");
+        check!(parse(".5", second) == Ok(500_000_000), "no whole part is still a number");
+        check!(parse("1.", second) == Ok(second), "no fraction either");
+
+        // The multiplier is applied to both halves.
+        check!(parse("1.5", 1_000) == Ok(1_500), "a microsecond scales the same way");
+
+        // What is not a number.
+        check!(parse(".", second).is_err(), "a bare point has no digits");
+        check!(parse("", second).is_err());
+        // Two points is an error, and the same error either way: the split
+        // takes the first point, so the second lands in the fraction and fails
+        // to parse with the message the explicit check would have given.
+        check!(
+            parse("1.2.3", second) == Err(r#"invalid number "1.2.3""#.to_string()),
+            "named, not merely refused"
+        );
+        check!(parse("a", second).is_err());
+        check!(parse("-1", second).is_err(), "a component is unsigned");
+
+        // A value too large to scale is refused rather than wrapping.
+        check!(parse(&u128::MAX.to_string(), second).is_err(), "out of range");
+    }
+
+    /// `parse_logfmt_value` returns the value and how many bytes it consumed.
+    /// The length is what the caller resumes from, so every case checks it as
+    /// well as the text -- a quoted value's length has to cover both quotes,
+    /// which the value itself cannot show.
+    #[test]
+    fn a_logfmt_value_reports_what_it_consumed() {
+        let parse = super::parse_logfmt_value;
+
+        // Bare values run to the first whitespace.
+        check!(parse("abc") == Some(("abc".to_string(), 3)));
+        check!(parse("abc def") == Some(("abc".to_string(), 3)), "stops at the space");
+        check!(parse("") == Some((String::new(), 0)), "an empty value consumes nothing");
+
+        // Quoted values consume their quotes: two more than the text.
+        check!(parse(r#""abc""#) == Some(("abc".to_string(), 5)));
+        check!(parse(r#""abc" rest"#) == Some(("abc".to_string(), 5)), "and stop at the close");
+        check!(parse(r#""a b""#) == Some(("a b".to_string(), 5)), "whitespace inside quotes");
+        check!(parse(r#""""#) == Some((String::new(), 2)), "an empty quoted value is two bytes");
+
+        // Escapes: the three named ones become control characters, and anything
+        // else after a backslash is itself.
+        check!(parse(r#""a\nb""#) == Some(("a\nb".to_string(), 6)), "backslash-n is a newline");
+        check!(parse(r#""a\tb""#) == Some(("a\tb".to_string(), 6)), "backslash-t is a tab");
+        check!(parse(r#""a\rb""#) == Some(("a\rb".to_string(), 6)), "backslash-r is a return");
+        check!(parse(r#""a\"b""#) == Some((r#"a"b"#.to_string(), 6)), "an escaped quote");
+        check!(parse(r#""a\\b""#) == Some((r"a\b".to_string(), 6)), "an escaped backslash");
+        check!(parse(r#""a\qb""#) == Some(("aqb".to_string(), 6)), "an unknown escape is itself");
+
+        // An unterminated quote is not a value at all.
+        check!(parse(r#""abc"#) == None);
+        check!(parse(r#"""#) == None);
+    }
+
     /// Go-style durations concatenate a number and a unit, and several pairs
     /// add up. Each unit is checked against the nanoseconds it stands for,
     /// since a table of multipliers is exactly where one wrong power of ten
