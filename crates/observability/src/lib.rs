@@ -21036,6 +21036,90 @@ mod tests {
         ));
     }
 
+    /// `parse_metric_arithmetic_operator` names the six PromQL scalar
+    /// operators. The variants are asserted pairwise distinct, so an arm
+    /// returning a neighbour's operator cannot pass -- and every unrecognised
+    /// spelling is refused rather than defaulted, since a silent default here
+    /// would compute the wrong arithmetic instead of failing the query.
+    #[test]
+    fn every_promql_scalar_operator_parses_to_its_own_variant() {
+        let parse = super::parse_metric_arithmetic_operator;
+
+        check!(parse("+") == Some(MetricScalarArithmeticOp::Add));
+        check!(parse("-") == Some(MetricScalarArithmeticOp::Subtract));
+        check!(parse("*") == Some(MetricScalarArithmeticOp::Multiply));
+        check!(parse("/") == Some(MetricScalarArithmeticOp::Divide));
+        check!(parse("%") == Some(MetricScalarArithmeticOp::Modulo));
+        check!(parse("^") == Some(MetricScalarArithmeticOp::Power));
+
+        // Nothing else parses, including operators PromQL has elsewhere.
+        check!(parse("").is_none());
+        check!(parse("**").is_none());
+        check!(parse("+ ").is_none(), "the operator is not trimmed here");
+        check!(parse("and").is_none());
+        check!(parse("==").is_none(), "a comparison is not arithmetic");
+
+        let variants = [
+            parse("+"),
+            parse("-"),
+            parse("*"),
+            parse("/"),
+            parse("%"),
+            parse("^"),
+        ];
+        for (index, left) in variants.iter().enumerate() {
+            for right in &variants[index + 1..] {
+                check!(left != right, "two operators share a variant: {left:?}");
+            }
+        }
+    }
+
+    /// `split_leading_vector_group_modifier` peels a `group_left`/`group_right`
+    /// off the front of a vector-match clause, with or without a label list.
+    /// Four routes leave the function and each returns a different shape, so
+    /// each is pinned: no modifier, a bare one, one with labels, one with an
+    /// empty list, and an unclosed list -- which returns the query untouched
+    /// rather than a half-parsed modifier.
+    #[test]
+    fn a_leading_vector_group_modifier_is_peeled_with_its_labels() {
+        let split = super::split_leading_vector_group_modifier;
+
+        // No modifier: the query comes back whole.
+        check!(split("foo") == (None, "foo"));
+        check!(split("  foo") == (None, "foo"), "but trimmed at the front");
+        check!(split("") == (None, ""));
+
+        // A bare modifier, with the remainder handed back trimmed.
+        check!(split("group_left foo") == (Some("group_left".to_string()), "foo"));
+        check!(split("group_right foo") == (Some("group_right".to_string()), "foo"));
+
+        // With labels, which are folded into the modifier's own text.
+        check!(
+            split("group_left(instance) foo")
+                == (Some("group_left (instance)".to_string()), " foo")
+        );
+        check!(
+            split("group_right(a,b) foo") == (Some("group_right (a,b)".to_string()), " foo")
+        );
+
+        // An empty label list is the bare modifier again, not "group_left ()".
+        check!(split("group_left() foo") == (Some("group_left".to_string()), " foo"));
+
+        // An unclosed label list is not a modifier at all: the query is
+        // returned untouched rather than half-consumed.
+        check!(split("group_left(instance foo") == (None, "group_left(instance foo"));
+
+        // The match is a bare prefix test, not a word match, so a longer
+        // identifier starting with a modifier name is split mid-word. That is
+        // current behaviour rather than obviously desirable, and it is pinned
+        // so a change to it is deliberate.
+        //
+        // The order the two modifiers are tried in cannot matter: neither is
+        // a prefix of the other, so at most one can ever strip. Swapping them
+        // is an equivalent mutation, not an untested one.
+        check!(split("group_rightish") == (Some("group_right".to_string()), "ish"));
+    }
+
     /// `split_top_level_comparison_query` finds the comparison a PromQL query
     /// is rooted at, ignoring operators nested inside brackets or quotes. The
     /// depth guard is three counters joined by `&&`, and each has to reject on
