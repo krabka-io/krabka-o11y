@@ -1258,6 +1258,136 @@ mod tests {
         resource::v1::Resource,
     };
 
+    /// `accumulate_delta_float_series` turns delta sums into running totals and
+    /// stamps each sample with the series start time -- but only when there IS
+    /// one. A zero start time is OTLP's "unset", not an instant at the epoch,
+    /// so it must leave the stamp absent rather than record a 1970 start.
+    #[test]
+    fn delta_accumulation_stamps_a_start_time_only_when_one_was_sent() {
+        use crate::wire::{DecodedSample, DecodedSeries};
+
+        let series_at = |value| {
+            let mut labels = Labels::new();
+            labels.insert("__name__", "requests_total");
+            vec![DecodedSeries {
+                labels,
+                samples: vec![DecodedSample::new(10, value)],
+                histograms: Vec::new(),
+                exemplars: Vec::new(),
+                metadata: None,
+            }]
+        };
+
+        // With a start time, the stamp is set -- and converted to millis.
+        let mut accumulator = super::DeltaAccumulator::default();
+        let mut series = series_at(1.0);
+        super::accumulate_delta_float_series(&mut series, 1_500_000_000, &mut accumulator);
+        check!(series[0].samples[0].start_timestamp_ms == Some(1_500));
+
+        // Deltas accumulate across calls at the same start time.
+        let mut next = series_at(2.0);
+        super::accumulate_delta_float_series(&mut next, 1_500_000_000, &mut accumulator);
+        check!(next[0].samples[0].value == 3.0, "the running total, not the delta");
+        check!(next[0].samples[0].start_timestamp_ms == Some(1_500));
+
+        // Zero means unset. The value still accumulates, but no start time is
+        // recorded: stamping it would claim the series began at the epoch.
+        let mut unset = super::DeltaAccumulator::default();
+        let mut series = series_at(1.0);
+        super::accumulate_delta_float_series(&mut series, 0, &mut unset);
+        check!(
+            series[0].samples[0].start_timestamp_ms.is_none(),
+            "an unset start time is absent, not 1970"
+        );
+        check!(series[0].samples[0].value == 1.0);
+    }
+
+    /// `resource_metrics_timestamp_ms` reports when a batch was observed,
+    /// taking the first data point it can find and converting nanos to
+    /// millis. It walks five data kinds, so the timestamp is read from each in
+    /// turn -- and the value is chosen so a body collapsed to a constant, or
+    /// one that forgets to convert, is a different number.
+    #[test]
+    fn a_resource_batch_reports_the_first_timestamp_it_can_find() {
+        let point = |nanos| NumberDataPoint {
+            time_unix_nano: nanos,
+            ..NumberDataPoint::default()
+        };
+        let batch = |data: Option<metric::Data>| ResourceMetrics {
+            resource: Some(Resource::default()),
+            scope_metrics: vec![ScopeMetrics {
+                metrics: vec![Metric {
+                    name: "m".to_string(),
+                    data,
+                    ..Metric::default()
+                }],
+                ..ScopeMetrics::default()
+            }],
+            ..ResourceMetrics::default()
+        };
+        let at = |data| super::resource_metrics_timestamp_ms(&batch(Some(data)));
+
+        // 1_500_000_000ns is 1500ms: not 1, and not the nanos it came from.
+        let nanos = 1_500_000_000;
+        check!(
+            at(metric::Data::Gauge(Gauge {
+                data_points: vec![point(nanos)],
+            })) == Some(1_500)
+        );
+        check!(
+            at(metric::Data::Sum(Sum {
+                data_points: vec![point(nanos)],
+                ..Sum::default()
+            })) == Some(1_500)
+        );
+        check!(
+            at(metric::Data::Histogram(Histogram {
+                data_points: vec![HistogramDataPoint {
+                    time_unix_nano: nanos,
+                    ..HistogramDataPoint::default()
+                }],
+                ..Histogram::default()
+            })) == Some(1_500)
+        );
+        check!(
+            at(metric::Data::ExponentialHistogram(ExponentialHistogram {
+                data_points: vec![ExponentialHistogramDataPoint {
+                    time_unix_nano: nanos,
+                    ..ExponentialHistogramDataPoint::default()
+                }],
+                ..ExponentialHistogram::default()
+            })) == Some(1_500)
+        );
+        check!(
+            at(metric::Data::Summary(Summary {
+                data_points: vec![SummaryDataPoint {
+                    time_unix_nano: nanos,
+                    ..SummaryDataPoint::default()
+                }],
+            })) == Some(1_500)
+        );
+
+        // The FIRST point wins, not the last.
+        check!(
+            at(metric::Data::Gauge(Gauge {
+                data_points: vec![point(nanos), point(9_000_000_000)],
+            })) == Some(1_500)
+        );
+
+        // Nothing to report: no data, no points, and no metrics at all.
+        check!(super::resource_metrics_timestamp_ms(&batch(None)).is_none());
+        check!(
+            at(metric::Data::Gauge(Gauge {
+                data_points: Vec::new(),
+            }))
+            .is_none()
+        );
+        check!(
+            super::resource_metrics_timestamp_ms(&ResourceMetrics::default()).is_none(),
+            "an empty batch has no timestamp rather than a zero one"
+        );
+    }
+
     /// `compact_spanned_histogram_counts` run-length-encodes non-zero buckets
     /// into spans, where each span's offset is measured from the END of the
     /// previous one rather than from zero. That relative encoding is all
