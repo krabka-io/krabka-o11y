@@ -428,6 +428,9 @@ impl<'a> CompactInput<'a> {
                 return Ok(out);
             }
             shift += 7;
+            // `shift` only ever takes 7, 14, ... 63, 70, so every threshold in
+            // 64..=70 refuses on exactly the same byte. A sweep reporting a
+            // survivor here has found that equivalence, not a missing test.
             if shift >= 64 {
                 return Err(WireError::Decode("varint too long".into()));
             }
@@ -877,6 +880,34 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
 
+    /// A varint's payload is the low seven bits of each byte, with the top bit
+    /// marking continuation. Every other decode in this file drives only
+    /// single-byte varints, where masking the continuation bit off is a no-op
+    /// -- a value spanning two bytes is the only thing that tells the mask
+    /// apart from keeping the whole byte.
+    #[test]
+    fn a_multi_byte_varint_drops_each_continuation_bit() {
+        let read = |bytes: &[u8]| {
+            let mut input = super::CompactInput { bytes, pos: 0 };
+            input.read_varint()
+        };
+
+        check!(read(&[0x05]).expect("a one-byte varint") == 5);
+        // 300 is 0b1_0010_1100: seven low bits (0x2C) with the continuation
+        // bit set, then 0x02. Keeping the continuation bit would read 428.
+        check!(read(&[0xAC, 0x02]).expect("a two-byte varint") == 300);
+
+        let overlong = read(&[0x80; 10]);
+        check!(
+            matches!(
+                &overlong,
+                Err(crate::wire::WireError::Decode(message))
+                    if message.contains("varint too long")
+            ),
+            "a varint past 64 bits is refused by the length guard"
+        );
+    }
+
     /// `read_binary_ref` dispatches on field id and wire type. Three of its
     /// four fields are i64, so a field reading its neighbour's id still yields
     /// a well-formed reference -- every value here differs, and the two halves
@@ -897,35 +928,59 @@ mod tests {
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         bytes.push(0);
 
-        let mut input = super::BinaryInput { bytes: &bytes, pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &bytes,
+            pos: 0,
+        };
         let reference = super::read_binary_ref(&mut input).expect("reads");
         check!(reference.ref_type == 7);
         check!(reference.trace_id_low == 11, "field two is the low half");
-        check!(reference.trace_id_high == 22, "field three is the high half, not the low");
-        check!(reference.span_id == 33, "field four is the span, not a trace half");
+        check!(
+            reference.trace_id_high == 22,
+            "field three is the high half, not the low"
+        );
+        check!(
+            reference.span_id == 33,
+            "field four is the span, not a trace half"
+        );
 
         // Fields may arrive in any order, since each carries its own id.
         let mut bytes = Vec::new();
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         field(&mut bytes, 10, 2, &11_i64.to_be_bytes());
         bytes.push(0);
-        let mut input = super::BinaryInput { bytes: &bytes, pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &bytes,
+            pos: 0,
+        };
         let reference = super::read_binary_ref(&mut input).expect("reads");
         check!(reference.span_id == 33);
         check!(reference.trace_id_low == 11);
-        check!(reference.trace_id_high == 0, "an absent field keeps its default");
+        check!(
+            reference.trace_id_high == 0,
+            "an absent field keeps its default"
+        );
 
         // An unknown field is skipped rather than consuming the one after it.
         let mut bytes = Vec::new();
         field(&mut bytes, 10, 9, &99_i64.to_be_bytes());
         field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
         bytes.push(0);
-        let mut input = super::BinaryInput { bytes: &bytes, pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &bytes,
+            pos: 0,
+        };
         let reference = super::read_binary_ref(&mut input).expect("reads");
-        check!(reference.span_id == 33, "the field after the unknown one still lands");
+        check!(
+            reference.span_id == 33,
+            "the field after the unknown one still lands"
+        );
 
         // An empty struct is all defaults rather than an error.
-        let mut input = super::BinaryInput { bytes: &[0], pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &[0],
+            pos: 0,
+        };
         let reference = super::read_binary_ref(&mut input).expect("reads");
         check!(reference.ref_type == 0);
         check!(reference.span_id == 0);
@@ -940,43 +995,76 @@ mod tests {
     fn binary_fields_are_framed_by_each_protocol_own_length() {
         // Compact: a one-byte varint length of three, then three bytes.
         let compact_bytes = [0x03, b'a', b'b', b'c'];
-        let mut input = super::CompactInput { bytes: &compact_bytes, pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &compact_bytes,
+            pos: 0,
+        };
         check!(input.read_binary().expect("reads") == b"abc".to_vec());
-        check!(input.pos == 4, "the cursor covers the length and the payload");
+        check!(
+            input.pos == 4,
+            "the cursor covers the length and the payload"
+        );
 
         // Exactly filling the buffer is complete, not truncated.
-        let mut input = super::CompactInput { bytes: &compact_bytes, pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &compact_bytes,
+            pos: 0,
+        };
         check!(input.read_binary().is_ok(), "a payload may end the buffer");
 
         // One byte short is truncated.
-        let mut input = super::CompactInput { bytes: &compact_bytes[..3], pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &compact_bytes[..3],
+            pos: 0,
+        };
         check!(input.read_binary().is_err(), "one byte short");
 
         // Trailing bytes are left for the caller.
         let with_tail = [0x03, b'a', b'b', b'c', 0xff];
-        let mut input = super::CompactInput { bytes: &with_tail, pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &with_tail,
+            pos: 0,
+        };
         check!(input.read_binary().expect("reads") == b"abc".to_vec());
         check!(input.pos == 4, "and the tail is not consumed");
 
         // Binary: a four-byte length of three, then three bytes.
         let binary_bytes = [0x00, 0x00, 0x00, 0x03, b'x', b'y', b'z'];
-        let mut input = super::BinaryInput { bytes: &binary_bytes, pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &binary_bytes,
+            pos: 0,
+        };
         check!(input.read_binary().expect("reads") == b"xyz".to_vec());
         check!(input.pos == 7, "four length bytes plus three payload");
 
-        let mut input = super::BinaryInput { bytes: &binary_bytes[..6], pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &binary_bytes[..6],
+            pos: 0,
+        };
         check!(input.read_binary().is_err(), "one byte short");
 
         // An empty payload is a value, not an absence.
-        let mut input = super::CompactInput { bytes: &[0x00], pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &[0x00],
+            pos: 0,
+        };
         check!(input.read_binary().expect("reads").is_empty());
-        let mut input = super::BinaryInput { bytes: &[0, 0, 0, 0], pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &[0, 0, 0, 0],
+            pos: 0,
+        };
         check!(input.read_binary().expect("reads").is_empty());
 
         // A negative length cannot be a size, and only the binary framing can
         // express one.
-        let mut input = super::BinaryInput { bytes: &[0xff, 0xff, 0xff, 0xff, 0, 0], pos: 0 };
-        check!(input.read_binary().is_err(), "a negative i32 length is refused");
+        let mut input = super::BinaryInput {
+            bytes: &[0xff, 0xff, 0xff, 0xff, 0, 0],
+            pos: 0,
+        };
+        check!(
+            input.read_binary().is_err(),
+            "a negative i32 length is refused"
+        );
     }
 
     /// `read_key_value` dispatches on the field id *and* its wire type
@@ -996,7 +1084,10 @@ mod tests {
             out.push(0);
             out
         };
-        let mut input = super::CompactInput { bytes: &string_tag, pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &string_tag,
+            pos: 0,
+        };
         let tag = super::read_key_value(&mut input).expect("reads");
         check!(tag.key == "http.method");
         check!(tag.value == AttrValue::Str("GET".into()));
@@ -1009,10 +1100,16 @@ mod tests {
             out.push(0);
             out
         };
-        let mut input = super::CompactInput { bytes: &int_tag, pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &int_tag,
+            pos: 0,
+        };
         let tag = super::read_key_value(&mut input).expect("reads");
         check!(tag.key == "http.status");
-        check!(tag.value == AttrValue::Int(503), "an i64 field is an int, not a string");
+        check!(
+            tag.value == AttrValue::Int(503),
+            "an i64 field is an int, not a string"
+        );
 
         // The two boolean types carry their value in the type itself rather
         // than in a payload, so each needs its own field header.
@@ -1022,9 +1119,15 @@ mod tests {
             write_string_field(&mut out, 1, "retryable", &mut last);
             write_field_header(&mut out, type_id, 5, &mut last);
             out.push(0);
-            let mut input = super::CompactInput { bytes: &out, pos: 0 };
+            let mut input = super::CompactInput {
+                bytes: &out,
+                pos: 0,
+            };
             let tag = super::read_key_value(&mut input).expect("reads");
-            check!(tag.value == AttrValue::Bool(expected), "type {type_id} is {expected}");
+            check!(
+                tag.value == AttrValue::Bool(expected),
+                "type {type_id} is {expected}"
+            );
         }
 
         // A tag with no recognised value field falls back to an empty string
@@ -1037,10 +1140,16 @@ mod tests {
             out.push(0);
             out
         };
-        let mut input = super::CompactInput { bytes: &bare, pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &bare,
+            pos: 0,
+        };
         let tag = super::read_key_value(&mut input).expect("reads");
         check!(tag.key == "lonely");
-        check!(tag.value == AttrValue::Str(String::new()), "no value means an empty string");
+        check!(
+            tag.value == AttrValue::Str(String::new()),
+            "no value means an empty string"
+        );
 
         let with_unknown = {
             let mut out = Vec::new();
@@ -1051,7 +1160,10 @@ mod tests {
             out.push(0);
             out
         };
-        let mut input = super::CompactInput { bytes: &with_unknown, pos: 0 };
+        let mut input = super::CompactInput {
+            bytes: &with_unknown,
+            pos: 0,
+        };
         let tag = super::read_key_value(&mut input).expect("reads");
         check!(tag.key == "kept");
         check!(
@@ -1071,31 +1183,55 @@ mod tests {
         let big = value.to_be_bytes();
         check!(little != big, "the fixture must distinguish the two orders");
 
-        let mut compact = super::CompactInput { bytes: &little, pos: 0 };
-        check!(compact.read_double().expect("reads").to_bits() == value.to_bits(), "compact is little-endian");
+        let mut compact = super::CompactInput {
+            bytes: &little,
+            pos: 0,
+        };
+        check!(
+            compact.read_double().expect("reads").to_bits() == value.to_bits(),
+            "compact is little-endian"
+        );
 
-        let mut compact_wrong = super::CompactInput { bytes: &big, pos: 0 };
+        let mut compact_wrong = super::CompactInput {
+            bytes: &big,
+            pos: 0,
+        };
         check!(
             compact_wrong.read_double().expect("reads").to_bits() != value.to_bits(),
             "and does not read the other order as the same number"
         );
 
-        let mut binary = super::BinaryInput { bytes: &big, pos: 0 };
-        check!(binary.read_double().expect("reads").to_bits() == value.to_bits(), "binary is big-endian");
+        let mut binary = super::BinaryInput {
+            bytes: &big,
+            pos: 0,
+        };
+        check!(
+            binary.read_double().expect("reads").to_bits() == value.to_bits(),
+            "binary is big-endian"
+        );
 
-        let mut binary_wrong = super::BinaryInput { bytes: &little, pos: 0 };
+        let mut binary_wrong = super::BinaryInput {
+            bytes: &little,
+            pos: 0,
+        };
         check!(binary_wrong.read_double().expect("reads").to_bits() != value.to_bits());
 
         // Each consumes exactly eight bytes and leaves the rest.
         let mut trailing = [0_u8; 9];
         trailing[..8].copy_from_slice(&big);
         trailing[8] = 0x7f;
-        let mut binary = super::BinaryInput { bytes: &trailing, pos: 0 };
+        let mut binary = super::BinaryInput {
+            bytes: &trailing,
+            pos: 0,
+        };
         check!(binary.read_double().expect("reads").to_bits() == value.to_bits());
         check!(binary.pos == 8, "the cursor stops after the double");
 
         // Seven bytes is not a double.
-        let mut short = super::BinaryInput { bytes: &big[..7], pos: 0 };
+        let mut short = super::BinaryInput {
+            bytes: &big[..7],
+            pos: 0,
+        };
         check!(short.read_double().is_err(), "one byte short");
     }
 
@@ -1103,24 +1239,47 @@ mod tests {
     /// consumes only its own bytes.
     #[test]
     fn binary_thrift_integers_are_big_endian_and_sized() {
-        let bytes = [0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x04];
+        let bytes = [
+            0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x04,
+        ];
 
-        let mut input = super::BinaryInput { bytes: &bytes, pos: 0 };
-        check!(input.read_i32().expect("reads") == 0x0102, "four bytes, most significant first");
+        let mut input = super::BinaryInput {
+            bytes: &bytes,
+            pos: 0,
+        };
+        check!(
+            input.read_i32().expect("reads") == 0x0102,
+            "four bytes, most significant first"
+        );
         check!(input.pos == 4);
 
-        let mut input = super::BinaryInput { bytes: &bytes[4..], pos: 0 };
-        check!(input.read_i64().expect("reads") == 0x0304, "eight bytes, most significant first");
+        let mut input = super::BinaryInput {
+            bytes: &bytes[4..],
+            pos: 0,
+        };
+        check!(
+            input.read_i64().expect("reads") == 0x0304,
+            "eight bytes, most significant first"
+        );
         check!(input.pos == 8);
 
         // A leading high bit makes the value negative.
-        let mut input = super::BinaryInput { bytes: &[0xff, 0xff, 0xff, 0xff], pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &[0xff, 0xff, 0xff, 0xff],
+            pos: 0,
+        };
         check!(input.read_i32().expect("reads") == -1);
 
         // Short input on each width.
-        let mut input = super::BinaryInput { bytes: &[0, 0, 0], pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &[0, 0, 0],
+            pos: 0,
+        };
         check!(input.read_i32().is_err(), "three bytes is not an i32");
-        let mut input = super::BinaryInput { bytes: &[0; 7], pos: 0 };
+        let mut input = super::BinaryInput {
+            bytes: &[0; 7],
+            pos: 0,
+        };
         check!(input.read_i64().is_err(), "seven bytes is not an i64");
     }
     use assert2::check;
@@ -1176,8 +1335,10 @@ mod tests {
         // A decoy in front of the real tag, so the key is shown to be found
         // rather than the first tag taken.
         check!(
-            kind(vec![str_tag("service", "api"), str_tag("span.kind", "server")])
-                == SpanKind::Server,
+            kind(vec![
+                str_tag("service", "api"),
+                str_tag("span.kind", "server")
+            ]) == SpanKind::Server,
             "the tag is found wherever it sits"
         );
     }
