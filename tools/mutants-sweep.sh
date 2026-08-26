@@ -68,9 +68,14 @@ for crate in "${crates[@]}"; do
   # shard then measures nothing while the run still looks successful. Compare
   # what reported against what ran, because the totals below are summed only
   # from the shards that spoke.
+  # A refusal has two spellings: the unmutated UNIT tests failing, and an
+  # unmutated INTEGRATION suite failing. Counting only one hides the other
+  # -- a whole sweep once read as clean while seventeen of its thirty-two
+  # shards had refused on the spelling nobody was grepping for.
+  refused=$(grep -cE 'does not pass; fix it first|do not pass; fix them first' "$log")
   shards_run=$(grep -oE 'shard [0-9]+ of [0-9]+' "$log" | sort -u | wc -l)
   shards_reporting=$(grep -cE 'mutants: [0-9]+ caught' "$log")
-  baseline_refused=$(grep -c 'does not pass; fix it first' "$log")
+  baseline_refused=$refused
   printf '%-16s ' "$crate"
   grep -ohE '[0-9]+ mutants: [0-9]+ caught, [0-9]+ missed, [0-9]+ unviable' "$log" \
     | awk -v t="$timed_out" -v ran="$shards_run" -v spoke="$shards_reporting" -v refused="$baseline_refused" '
