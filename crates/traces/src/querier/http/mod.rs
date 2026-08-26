@@ -2517,6 +2517,54 @@ fn base64<const N: usize>(bytes: [u8; N]) -> String {
 #[cfg(test)]
 mod tests {
 
+    /// The intrinsic tag names are Tempo's API surface: a client asking for
+    /// `span:parentID` gets nothing back if this map spells it `span:parentId`.
+    /// Every variant is named here, and the names are checked for being
+    /// distinct as well as correct -- returning a neighbour's string is the
+    /// failure a per-variant spot check misses. A new variant needs a row.
+    #[test]
+    fn every_intrinsic_maps_to_its_tempo_tag_name() {
+        let cases = [
+            (Intrinsic::Name, "span:name"),
+            (Intrinsic::Duration, "span:duration"),
+            (Intrinsic::Kind, "span:kind"),
+            (Intrinsic::Status, "span:status"),
+            (Intrinsic::StatusMessage, "span:statusMessage"),
+            (Intrinsic::Id, "span:id"),
+            (Intrinsic::ParentId, "span:parentID"),
+            (Intrinsic::ChildCount, "span:childCount"),
+            (Intrinsic::TraceDuration, "trace:duration"),
+            (Intrinsic::TraceRootName, "trace:rootName"),
+            (Intrinsic::TraceRootService, "trace:rootService"),
+            (Intrinsic::TraceId, "trace:id"),
+            (Intrinsic::EventName, "event:name"),
+            (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
+            (Intrinsic::LinkTraceId, "link:traceID"),
+            (Intrinsic::LinkSpanId, "link:spanID"),
+            (Intrinsic::InstrumentationName, "instrumentation:name"),
+            (Intrinsic::InstrumentationVersion, "instrumentation:version"),
+            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
+            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
+            (Intrinsic::NestedSetParent, "span:nestedSetParent"),
+        ];
+
+        for (intrinsic, want) in &cases {
+            check!(
+                super::intrinsic_tag_name(intrinsic) == *want,
+                "{intrinsic:?}"
+            );
+        }
+
+        let names = cases
+            .iter()
+            .map(|(_, name)| *name)
+            .collect::<std::collections::BTreeSet<_>>();
+        check!(
+            names.len() == cases.len(),
+            "every intrinsic has its own name"
+        );
+    }
+
     /// `collect_trace_intrinsic_values` reports one trace-level intrinsic
     /// with the type name a client reads it as. Three of the four arms
     /// survived: deleting one falls through to the catch-all and reports
@@ -2654,8 +2702,14 @@ mod tests {
 
         let otlp = super::otlp_span([1; 16], &span);
 
-        check!(otlp.trace_id == vec![1_u8; 16], "the trace id is the one passed in");
-        check!(otlp.span_id == vec![2_u8; 8], "not the span's own trace field");
+        check!(
+            otlp.trace_id == vec![1_u8; 16],
+            "the trace id is the one passed in"
+        );
+        check!(
+            otlp.span_id == vec![2_u8; 8],
+            "not the span's own trace field"
+        );
         check!(otlp.parent_span_id == vec![3_u8; 8]);
         check!(otlp.name == "GET /users");
         check!(otlp.kind == 2, "the kind, not the status code beside it");
@@ -2676,9 +2730,15 @@ mod tests {
 
         // Attributes cross over on both the link and the event. Each carries a
         // different key, so a mapper reading the other's list is visible.
-        check!(otlp.links[0].attributes.len() == 1, "the link keeps its attribute");
+        check!(
+            otlp.links[0].attributes.len() == 1,
+            "the link keeps its attribute"
+        );
         check!(otlp.links[0].attributes[0].key == "link.kind");
-        check!(otlp.events[0].attributes.len() == 1, "and the event keeps its own");
+        check!(
+            otlp.events[0].attributes.len() == 1,
+            "and the event keeps its own"
+        );
         check!(otlp.events[0].attributes[0].key == "event.reason");
         let status = otlp.status.as_ref().expect("a status is always emitted");
         check!(status.code == 1);
@@ -2686,7 +2746,10 @@ mod tests {
 
         // A root span carries an empty parent rather than a missing field,
         // which is what OTLP expects and is distinct from a zeroed id.
-        let root = SpanRef { parent_span_id: None, ..span };
+        let root = SpanRef {
+            parent_span_id: None,
+            ..span
+        };
         let otlp = super::otlp_span([1; 16], &root);
         check!(otlp.parent_span_id.is_empty(), "no parent means no bytes");
     }
@@ -2795,11 +2858,17 @@ mod tests {
 
         // Anything that does not divide evenly rounds up rather than down,
         // so the step still covers the range in a hundred points.
-        check!(step(0, 1_001 * SECOND) == 11 * SECOND, "10.01s rounds up to 11s");
+        check!(
+            step(0, 1_001 * SECOND) == 11 * SECOND,
+            "10.01s rounds up to 11s"
+        );
         check!(step(0, 150 * SECOND) == 2 * SECOND, "1.5s rounds up to 2s");
 
         // Below a hundred seconds the floor takes over.
-        check!(step(0, 50 * SECOND) == SECOND, "a short range still steps by a second");
+        check!(
+            step(0, 50 * SECOND) == SECOND,
+            "a short range still steps by a second"
+        );
         check!(step(0, 1) == SECOND, "so does a one-nanosecond range");
         check!(step(0, 0) == SECOND, "and an empty one");
 
