@@ -1663,6 +1663,110 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
+    /// Manifest listing has three rules with no test between them: the range
+    /// filter is an *overlap* test, so a manifest ending exactly when the query
+    /// starts still counts; the extension match is deliberately case
+    /// insensitive; and a manifest deleted from the store has to leave the
+    /// cache rather than be served from it forever.
+    #[tokio::test]
+    async fn manifest_listing_covers_its_boundaries() {
+        use crabka_metrics::{CompactionIndexManifest, MetricBlockKind};
+        use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
+
+        fn manifest(index_key: &str, min_ts: i64, max_ts: i64) -> CompactionIndexManifest {
+            CompactionIndexManifest {
+                tenant: "tenant-a".to_string(),
+                kind: MetricBlockKind::Float,
+                block_key: format!("{index_key}.parquet"),
+                index_key: index_key.to_string(),
+                first_offset: 0,
+                last_offset: 0,
+                row_count: 1,
+                min_ts,
+                max_ts,
+                fingerprints: vec![1],
+                series: Vec::new(),
+            }
+        }
+
+        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        for entry in [
+            manifest("m/a.index", 0, 100),
+            manifest("m/b.INDEX", 300, 400),
+        ] {
+            store
+                .put(
+                    &Path::from(entry.index_key.clone()),
+                    PutPayload::from(entry.encode().unwrap()),
+                )
+                .await
+                .unwrap();
+        }
+        // Not an index sidecar, so it must never be decoded.
+        store
+            .put(&Path::from("m/notes.txt"), PutPayload::from("ignore me"))
+            .await
+            .unwrap();
+
+        // Case-insensitive extension: both sidecars are found, the .txt is not.
+        let all = super::load_compaction_manifests(store.clone(), "m")
+            .await
+            .unwrap();
+        assert2::assert!(all.len() == 2, "an uppercase .INDEX is still an index");
+
+        // Overlap, not containment: `a` ends exactly when the range starts.
+        let touching = super::load_compaction_manifests_for_range(store.clone(), "m", 100, 200)
+            .await
+            .unwrap();
+        assert2::assert!(
+            touching
+                .iter()
+                .map(|m| m.index_key.as_str())
+                .collect::<Vec<_>>()
+                == vec!["m/a.index"],
+            "a manifest ending at the range start overlaps it"
+        );
+
+        // The other end of the same overlap test: `b` begins exactly when the
+        // range stops, so it overlaps too.
+        let both = super::load_compaction_manifests_for_range(store.clone(), "m", 100, 300)
+            .await
+            .unwrap();
+        assert2::assert!(
+            both.iter()
+                .map(|m| m.index_key.as_str())
+                .collect::<Vec<_>>()
+                == vec!["m/a.index", "m/b.INDEX"],
+            "a manifest starting at the range end overlaps it"
+        );
+
+        // A manifest that leaves the store leaves the cache with it.
+        let cache = tokio::sync::RwLock::new(std::collections::BTreeMap::new());
+        super::load_compaction_manifests_filtered_with_cache(
+            store.clone(),
+            "m",
+            None,
+            Some(&cache),
+        )
+        .await
+        .unwrap();
+        assert2::assert!(cache.read().await.len() == 2);
+
+        store.delete(&Path::from("m/a.index")).await.unwrap();
+        super::load_compaction_manifests_filtered_with_cache(
+            store.clone(),
+            "m",
+            None,
+            Some(&cache),
+        )
+        .await
+        .unwrap();
+        assert2::assert!(
+            cache.read().await.keys().cloned().collect::<Vec<_>>() == vec!["m/b.INDEX".to_string()],
+            "the deleted manifest is evicted"
+        );
+    }
+
     /// The compaction key decides which records replace one another on a
     /// compacted topic. Two entities must never share a key, and one entity
     /// must always produce the same key, so the parts are checked for being
@@ -1682,9 +1786,18 @@ mod tests {
         };
 
         check!(group("t", "ns", "g") == Bytes::from("group\0t\0ns\0g"));
-        check!(group("t", "ns", "g") == group("t", "ns", "g"), "the same entity keys alike");
-        check!(group("t", "ns", "g") != group("t", "ns", "h"), "a different group differs");
-        check!(group("t", "ns", "g") != group("u", "ns", "g"), "so does a different tenant");
+        check!(
+            group("t", "ns", "g") == group("t", "ns", "g"),
+            "the same entity keys alike"
+        );
+        check!(
+            group("t", "ns", "g") != group("t", "ns", "h"),
+            "a different group differs"
+        );
+        check!(
+            group("t", "ns", "g") != group("u", "ns", "g"),
+            "so does a different tenant"
+        );
         check!(
             group("t", "ns", "g") != group("t", "n", "sg"),
             "the separator stops a shifted split from colliding"
@@ -1730,11 +1843,13 @@ mod tests {
         );
 
         check!(record.topic == "ruler-state");
-        check!(record.partition == None, "partitioning is left to the producer");
+        check!(
+            record.partition == None,
+            "partitioning is left to the producer"
+        );
         check!(record.key.as_deref() == Some(&b"the-key"[..]));
         check!(record.value.as_deref() == Some(&b"the-value"[..]));
     }
-
 
     use super::{current_time_ms, duration_ms, unix_time_ms};
 
@@ -1808,11 +1923,13 @@ mod tests {
             with_alerts.contains("alertmanager sink is not configured"),
             "captured: {with_alerts:?}"
         );
-        check!(with_alerts.contains("alert_count=1"), "captured: {with_alerts:?}");
+        check!(
+            with_alerts.contains("alert_count=1"),
+            "captured: {with_alerts:?}"
+        );
 
         check!(dispatch(Vec::new()).is_empty());
     }
-
 
     /// Both clocks convert a duration to milliseconds and saturate rather than
     /// wrap. A constant in either place makes every block-store refresh window
@@ -2106,7 +2223,10 @@ mod tests {
         check!(!card_names.is_empty(), "cardinality names: {card_names:?}");
 
         let card_values = store.cardinality_label_values("acme").await.unwrap();
-        check!(!card_values.is_empty(), "cardinality values: {card_values:?}");
+        check!(
+            !card_values.is_empty(),
+            "cardinality values: {card_values:?}"
+        );
 
         let blocks = store.tsdb_blocks("acme").await;
         check!(blocks.is_ok(), "tsdb blocks: {blocks:?}");
@@ -2677,7 +2797,12 @@ rules:
                     consumer_record(super::RULER_STATE_TOPIC, 0, 1, Some(record("a"))),
                     consumer_record(super::RULER_STATE_TOPIC, 1, 5, Some(record("b"))),
                 ],
-                vec![consumer_record(super::RULER_STATE_TOPIC, 2, 9, Some(record("c")))],
+                vec![consumer_record(
+                    super::RULER_STATE_TOPIC,
+                    2,
+                    9,
+                    Some(record("c")),
+                )],
                 vec![],
             ],
             commit_calls: 0,
@@ -2693,7 +2818,10 @@ rules:
         .await
         .unwrap();
 
-        assert2::assert!(summary.polls == 3, "one count per poll, including the empty one");
+        assert2::assert!(
+            summary.polls == 3,
+            "one count per poll, including the empty one"
+        );
         assert2::assert!(summary.polled_records == 3, "2 + 1 + 0");
         assert2::assert!(summary.replayed_records == 3);
         assert2::assert!(
@@ -2742,7 +2870,10 @@ rules:
         .unwrap();
 
         assert2::assert!(summary.polls == 1, "stopping at once still polls once");
-        assert2::assert!(consumer.batches.len() == 1, "and consumes exactly one batch");
+        assert2::assert!(
+            consumer.batches.len() == 1,
+            "and consumes exactly one batch"
+        );
     }
 
     /// A poll that replays nothing must not commit. Committing on an empty
@@ -2779,14 +2910,13 @@ rules:
         // Polled but not replayed: a record from another topic is counted as
         // seen and applied to nothing. Committing here would advance this
         // group's offsets on the strength of someone else's records.
-        let state_record = super::RulerStateWalRecord::Group(
-            crabka_promql::RulerGroupStateRecord {
+        let state_record =
+            super::RulerStateWalRecord::Group(crabka_promql::RulerGroupStateRecord {
                 tenant: "tenant-a".to_string(),
                 namespace: "team-a".to_string(),
                 group: "recording".to_string(),
                 last_eval_ms: 60_000,
-            },
-        );
+            });
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![vec![consumer_record(
                 "some-other-topic",
