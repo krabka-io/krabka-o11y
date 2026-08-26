@@ -2562,12 +2562,18 @@ mod tests {
             events: vec![crabka_traceql::EventRef {
                 time_since_start: nanos(50),
                 name: "retry".into(),
-                attributes: Vec::new(),
+                attributes: vec![(
+                    "event.reason".to_string(),
+                    crabka_traceql::AttrValue::Str("throttled".into()),
+                )],
             }],
             links: vec![crabka_traceql::LinkRef {
                 trace_id: [9; 16],
                 span_id: [8; 8],
-                attributes: Vec::new(),
+                attributes: vec![(
+                    "link.kind".to_string(),
+                    crabka_traceql::AttrValue::Str("retry".into()),
+                )],
             }],
         };
 
@@ -2592,6 +2598,13 @@ mod tests {
         check!(otlp.links.len() == 1, "the link is carried across");
         check!(otlp.links[0].trace_id == vec![9_u8; 16]);
         check!(otlp.links[0].span_id == vec![8_u8; 8]);
+
+        // Attributes cross over on both the link and the event. Each carries a
+        // different key, so a mapper reading the other's list is visible.
+        check!(otlp.links[0].attributes.len() == 1, "the link keeps its attribute");
+        check!(otlp.links[0].attributes[0].key == "link.kind");
+        check!(otlp.events[0].attributes.len() == 1, "and the event keeps its own");
+        check!(otlp.events[0].attributes[0].key == "event.reason");
         let status = otlp.status.as_ref().expect("a status is always emitted");
         check!(status.code == 1);
         check!(status.message == "boom");
