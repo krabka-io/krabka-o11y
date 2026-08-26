@@ -811,6 +811,13 @@ fn binary_match_key(labels: &Labels, modifier: Option<&BinModifier>) -> String {
         Some(LabelModifier::Exclude(exclude)) => {
             let excluded = exclude.labels.iter().collect::<BTreeSet<_>>();
             for (name, value) in labels.iter() {
+                // Only `__name__` here, deliberately: with an explicit
+                // `ignoring (...)` clause Prometheus leaves `__type__` and
+                // `__unit__` in the match key, so series differing only in
+                // those do *not* pair up. Default matching below drops all
+                // three. Making the two agree fails the upstream
+                // `type_and_unit.test` case
+                // `... / ignoring(group) ...`, which must yield no samples.
                 if name == "__name__" || excluded.contains(name) {
                     continue;
                 }
