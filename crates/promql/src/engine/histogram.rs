@@ -1073,6 +1073,63 @@ mod tests {
         assert2::assert!(left.positive_counts.is_empty());
     }
 
+    /// A bucket whose lower bound is *exactly* the zero threshold sits outside
+    /// the zero region, so `>= threshold` stops there and the bucket survives
+    /// the merge intact. Every other zero-bucket test puts the bucket strictly
+    /// below the threshold, where `>` and `>=` agree and it is folded in
+    /// either way -- which also leaves the matching keep test in
+    /// `reduced_counts_outside_zero` free to drop the boundary bucket.
+    #[test]
+    fn add_keeps_a_bucket_whose_lower_bound_is_exactly_the_zero_threshold() {
+        let mut left = histogram(0, ResetHint::No);
+        left.zero_threshold = 2.0;
+        left.zero_count = 1.0;
+        left.positive_spans = vec![BucketSpan {
+            offset: 2,
+            length: 1,
+        }];
+        left.positive_counts = vec![5.0];
+        let mut right = histogram(0, ResetHint::No);
+        right.zero_threshold = 2.0;
+        right.zero_count = 3.0;
+
+        add_compatible_native_histogram(&mut left, &right).unwrap();
+
+        assert2::assert!((left.zero_threshold - 2.0).abs() < f64::EPSILON);
+        assert2::assert!((left.zero_count - 4.0).abs() < f64::EPSILON);
+        assert2::assert!(
+            left.positive_spans
+                == vec![BucketSpan {
+                    offset: 2,
+                    length: 1
+                }]
+        );
+        assert2::assert!(left.positive_counts == vec![5.0]);
+    }
+
+    /// An *empty* bucket below the zero threshold must not widen the zero
+    /// region: only a bucket that actually holds observations forces the
+    /// threshold out to its upper bound.
+    #[test]
+    fn add_does_not_widen_the_zero_region_for_an_empty_bucket() {
+        let mut left = histogram(0, ResetHint::No);
+        left.zero_threshold = 0.75;
+        left.zero_count = 1.0;
+        left.positive_spans = vec![BucketSpan {
+            offset: 0,
+            length: 1,
+        }];
+        left.positive_counts = vec![0.0];
+        let mut right = histogram(0, ResetHint::No);
+        right.zero_threshold = 0.75;
+        right.zero_count = 2.0;
+
+        add_compatible_native_histogram(&mut left, &right).unwrap();
+
+        assert2::assert!((left.zero_threshold - 0.75).abs() < f64::EPSILON);
+        assert2::assert!((left.zero_count - 3.0).abs() < f64::EPSILON);
+    }
+
     #[test]
     fn add_reconciles_custom_bucket_bounds() {
         let mut left = histogram(-53, ResetHint::No);
