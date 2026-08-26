@@ -705,6 +705,77 @@ mod tests {
             .collect()
     }
 
+    /// `tag_values` reads one tag's values across the live spans. Three of its
+    /// filters survived the sweep, and all three are only visible when the
+    /// whole result set is pinned rather than checked for membership: each
+    /// mutant *adds* a value belonging to a different tag, so an assertion
+    /// that merely finds the right value still passes.
+    #[test]
+    fn live_tag_values_return_only_the_asked_for_tag() {
+        let mut span = span_with_everything();
+        // A second attribute in each scope, so a mutant that inverts a key
+        // filter selects the neighbour rather than nothing -- a wrong answer
+        // rather than an empty one.
+        span.resource_attrs.push(KeyValue {
+            key: "service.version".into(),
+            value: AttrValue::Str("2.0".into()),
+        });
+        span.span_attrs.push(KeyValue {
+            key: "http.status_code".into(),
+            value: AttrValue::Str("200".into()),
+        });
+        let mut store = LiveStore::new(1_000_000);
+        store.ingest(SpanRecord {
+            tenant: "t".into(),
+            span,
+        });
+
+        let values = |tag: &str| {
+            futures::executor::block_on(store.tag_values("t", tag, 0, 10_000))
+                .expect("tag values are readable")
+                .into_iter()
+                .map(|value| (value.type_, value.value))
+                .collect::<Vec<_>>()
+        };
+        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+
+        // Each attribute reads its own value, not its neighbour's.
+        check!(values("service.name") == vec![pair("string", "api")]);
+        check!(values("service.version") == vec![pair("string", "2.0")]);
+        check!(values("http.method") == vec![pair("string", "GET")]);
+        check!(values("http.status_code") == vec![pair("string", "200")]);
+
+        // The instrumentation tags are guarded by a name test AND a non-empty
+        // test. Pinning the whole result is what catches loosening that pair
+        // to `||`: the scope would then be appended to every tag's values.
+        check!(values("instrumentation:name") == vec![pair("string", "otel-rust")]);
+        check!(values("instrumentation:version") == vec![pair("string", "1.2.3")]);
+
+        // A `resource.` or `span.` prefix restricts which half is searched.
+        // Without a scoped tag both guards are trivially true and a mutant
+        // that removes either one is invisible.
+        check!(values("resource.service.name") == vec![pair("string", "api")]);
+        check!(values("span.http.method") == vec![pair("string", "GET")]);
+        check!(
+            values("span.service.name").is_empty(),
+            "a resource attribute is not reachable under the span scope"
+        );
+        check!(
+            values("resource.http.method").is_empty(),
+            "nor a span attribute under the resource scope"
+        );
+
+        // TraceQL writes an unscoped attribute as `.name`, and the leading
+        // dot is stripped before the lookup. Without this the strip can be
+        // deleted outright and every other case still passes.
+        check!(values(".service.name") == vec![pair("string", "api")]);
+        check!(values(".http.method") == vec![pair("string", "GET")]);
+
+        // An unknown tag has no values at all -- in particular it does not
+        // pick up the instrumentation scope or version.
+        check!(values("nonsense").is_empty());
+    }
+
     /// `collect_span_intrinsic_value` reports a tag's value with the type a
     /// client reads it as. Each tag is checked against a neighbouring field as
     /// well as its own, since the fields are same-typed and a swap produces a
