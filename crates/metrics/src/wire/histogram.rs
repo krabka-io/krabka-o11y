@@ -263,6 +263,55 @@ mod tests {
 
     use super::*;
 
+    /// `is_v2_float` asks whether a v2 histogram carries float counts, and
+    /// four independent signals each answer yes. They are joined by `||`, so
+    /// every one has to be decisive on its own: a histogram carrying only
+    /// that signal must be float, or the clause could be `&&`-ed away
+    /// unnoticed.
+    #[test]
+    fn a_v2_histogram_is_float_on_any_one_of_its_four_signals() {
+        let float = super::is_v2_float;
+
+        // An integer histogram, and the baseline: no signal at all.
+        check!(!float(&pb::v2::Histogram::default()));
+        check!(!float(&pb::v2::Histogram {
+            count: Some(pb::v2::histogram::Count::CountInt(11)),
+            zero_count: Some(pb::v2::histogram::ZeroCount::ZeroCountInt(22)),
+            positive_deltas: vec![1, 2],
+            negative_deltas: vec![3],
+            ..Default::default()
+        }));
+
+        // Each signal alone, with everything else left integer or empty.
+        check!(float(&pb::v2::Histogram {
+            count: Some(pb::v2::histogram::Count::CountFloat(1.5)),
+            ..Default::default()
+        }));
+        check!(float(&pb::v2::Histogram {
+            zero_count: Some(pb::v2::histogram::ZeroCount::ZeroCountFloat(1.5)),
+            ..Default::default()
+        }));
+        check!(float(&pb::v2::Histogram {
+            positive_counts: vec![1.5],
+            ..Default::default()
+        }));
+        check!(float(&pb::v2::Histogram {
+            negative_counts: vec![1.5],
+            ..Default::default()
+        }));
+
+        // The two count vectors are read for emptiness, not for content: a
+        // zero is still a float count.
+        check!(float(&pb::v2::Histogram {
+            positive_counts: vec![0.0],
+            ..Default::default()
+        }));
+        check!(float(&pb::v2::Histogram {
+            negative_counts: vec![0.0],
+            ..Default::default()
+        }));
+    }
+
     fn bucket_span(offset: i32, length: u32) -> BucketSpan {
         BucketSpan { offset, length }
     }
