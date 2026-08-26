@@ -1649,6 +1649,74 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
 
+    /// The per-series sample cap counts samples, histograms and exemplars
+    /// together. All three are populated here and the total is placed either
+    /// side of the limit, because a sum that subtracts one term instead of
+    /// adding it still produces a number -- just a smaller one that slips
+    /// under the cap.
+    #[test]
+    fn the_per_series_sample_cap_counts_all_three_collections() {
+        use crate::{histogram::NativeHistogram, wire::DecodedExemplar, wire::DecodedSample};
+
+        let histogram = || NativeHistogram {
+            schema: 0,
+            is_float: false,
+            reset_hint: crate::ResetHint::Unknown,
+            zero_threshold: 0.0,
+            zero_count: 0.0,
+            count: 0.0,
+            sum: 0.0,
+            positive_spans: Vec::new(),
+            positive_counts: Vec::new(),
+            negative_spans: Vec::new(),
+            negative_counts: Vec::new(),
+            custom_values: None,
+            start_timestamp_ms: None,
+        };
+        let series = |samples: usize, histograms: usize, exemplars: usize| {
+            let mut labels = Labels::default();
+            labels.insert("__name__", "requests");
+            DecodedSeries {
+                labels,
+                samples: (0..samples).map(|i| DecodedSample::new(i64::try_from(i).expect("small"), 1.0)).collect(),
+                histograms: (0..histograms).map(|i| (i64::try_from(i).expect("small"), histogram())).collect(),
+                exemplars: (0..exemplars)
+                    .map(|i| DecodedExemplar {
+                        labels: Labels::default(),
+                        timestamp_ms: i64::try_from(i).expect("small"),
+                        value: 1.0,
+                    })
+                    .collect(),
+                metadata: None,
+            }
+        };
+        let limits = super::TenantLimits {
+            max_samples_per_series: 6,
+            max_series_per_request: 10,
+            ..super::TenantLimits::default()
+        };
+
+        // Three, two and one make exactly the cap, which is allowed.
+        check!(super::validate(&[series(3, 2, 1)], &limits).is_ok(), "exactly at the cap");
+
+        // One more of any kind is over it, whichever collection grows.
+        check!(super::validate(&[series(4, 2, 1)], &limits).is_err(), "one more sample");
+        check!(super::validate(&[series(3, 3, 1)], &limits).is_err(), "one more histogram");
+        check!(super::validate(&[series(3, 2, 2)], &limits).is_err(), "one more exemplar");
+
+        // Each collection alone reaches the cap on its own terms.
+        check!(super::validate(&[series(6, 0, 0)], &limits).is_ok());
+        check!(super::validate(&[series(7, 0, 0)], &limits).is_err());
+        check!(super::validate(&[series(0, 7, 0)], &limits).is_err());
+        check!(super::validate(&[series(0, 0, 7)], &limits).is_err());
+
+        // The series cap is separate and counts series, not samples.
+        let many = vec![series(1, 0, 0); 10];
+        check!(super::validate(&many, &limits).is_ok(), "ten series is the cap");
+        let too_many = vec![series(1, 0, 0); 11];
+        check!(super::validate(&too_many, &limits).is_err(), "eleven is over it");
+    }
+
     /// `wal_producer_record` shapes one WAL append. The partition is left
     /// unset deliberately: the producer's partitioner keys on the record key,
     /// which is what keeps a series on one partition and in order. Setting a
