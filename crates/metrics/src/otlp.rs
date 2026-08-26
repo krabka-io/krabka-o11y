@@ -1302,6 +1302,100 @@ mod tests {
         check!(series[0].samples[0].value == 1.0);
     }
 
+    /// A cumulative or unspecified sum or histogram is ingested as-is, a delta
+    /// one is accumulated -- `decode_otlp` supplies a per-call accumulator, so
+    /// delta is supported here rather than refused -- and an aggregation
+    /// temporality that is none of the three is refused rather than guessed at.
+    ///
+    /// The guard reads `!= Cumulative && != Unspecified`, so BOTH accepted
+    /// temporalities have to be exercised: with only one of them, flipping
+    /// either comparison leaves the other still passing. All three metric
+    /// kinds carry their own copy of the guard, so each is checked.
+    #[test]
+    fn only_cumulative_and_unspecified_temporalities_are_ingested_directly() {
+        use prost::Message as _;
+
+        let point = || NumberDataPoint {
+            time_unix_nano: 1_000_000_000,
+            value: Some(number_data_point::Value::AsDouble(1.0)),
+            ..NumberDataPoint::default()
+        };
+        let body = |data: metric::Data| {
+            let mut bytes = Vec::new();
+            MetricsData {
+                resource_metrics: vec![ResourceMetrics {
+                    resource: Some(Resource::default()),
+                    scope_metrics: vec![ScopeMetrics {
+                        scope: Some(InstrumentationScope::default()),
+                        metrics: vec![Metric {
+                            name: "requests".to_string(),
+                            data: Some(data),
+                            ..Metric::default()
+                        }],
+                        ..ScopeMetrics::default()
+                    }],
+                    ..ResourceMetrics::default()
+                }],
+            }
+            .encode(&mut bytes)
+            .expect("the payload encodes");
+            bytes
+        };
+        let decodes = |data: metric::Data| {
+            super::decode_otlp_bytes(&body(data), TranslationStrategy::default()).is_ok()
+        };
+
+        // An unrecognised temporality. Neither of the accepted values, and
+        // not delta either, so only the guard can reject it.
+        const UNKNOWN: i32 = 99;
+        let cumulative = AggregationTemporality::Cumulative as i32;
+        let unspecified = AggregationTemporality::Unspecified as i32;
+        let delta = AggregationTemporality::Delta as i32;
+
+        let sum = |temporality| {
+            metric::Data::Sum(Sum {
+                data_points: vec![point()],
+                aggregation_temporality: temporality,
+                is_monotonic: true,
+            })
+        };
+        check!(decodes(sum(cumulative)));
+        check!(decodes(sum(unspecified)));
+        check!(decodes(sum(delta)), "delta is accumulated, not refused, on this path");
+        check!(!decodes(sum(UNKNOWN)), "but an unknown temporality is refused");
+
+        let histogram = |temporality| {
+            metric::Data::Histogram(Histogram {
+                data_points: vec![HistogramDataPoint {
+                    time_unix_nano: 1_000_000_000,
+                    count: 0,
+                    ..HistogramDataPoint::default()
+                }],
+                aggregation_temporality: temporality,
+            })
+        };
+        check!(decodes(histogram(cumulative)));
+        check!(decodes(histogram(unspecified)));
+        check!(decodes(histogram(delta)));
+        check!(!decodes(histogram(UNKNOWN)));
+
+        let exponential = |temporality| {
+            metric::Data::ExponentialHistogram(ExponentialHistogram {
+                data_points: vec![ExponentialHistogramDataPoint {
+                    time_unix_nano: 1_000_000_000,
+                    count: 0,
+                    scale: 0,
+                    ..ExponentialHistogramDataPoint::default()
+                }],
+                aggregation_temporality: temporality,
+            })
+        };
+        check!(decodes(exponential(cumulative)));
+        check!(decodes(exponential(unspecified)));
+        check!(decodes(exponential(delta)));
+        check!(!decodes(exponential(UNKNOWN)));
+    }
+
     /// `exponential_histogram_to_native` maps an OTLP scale onto a native
     /// histogram schema. The two ends behave differently and that asymmetry is
     /// the point: a scale below the minimum is REFUSED, because there is no
