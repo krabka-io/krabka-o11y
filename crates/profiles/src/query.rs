@@ -2847,6 +2847,60 @@ mod tests {
     use crabka_pprof::{FunctionRec, LineRec, LocationRec};
     use crabka_units::secs;
 
+    /// Converting a heatmap to its wire form derives a step from the time
+    /// span and stamps each slot with its own *end*. The span is `end - start`
+    /// and every existing fixture starts at zero, where subtracting and adding
+    /// agree -- so the heatmap here starts at 1000ms, making the two differ.
+    ///
+    /// The whole series is compared rather than the step alone, because the
+    /// step is not a field: it only shows through the slot timestamps.
+    #[test]
+    fn a_heatmap_stamps_each_slot_with_the_end_of_its_own_bucket() {
+        let series = pb::querier::v1::HeatmapSeries::from(crabka_pprof::Heatmap {
+            start_ms: 1_000,
+            end_ms: 5_000,
+            time_buckets: 4,
+            value_buckets: 2,
+            min_value: 0,
+            max_value: 100,
+            counts: vec![vec![1, 2], vec![3, 4], vec![5, 6], vec![7, 8]],
+        });
+
+        // A 4000ms span over 4 buckets is a 1000ms step, so the slots end at
+        // 2000..5000. Adding instead of subtracting would give a 1500ms step
+        // and run the last slot out to 7000, past the heatmap's own end.
+        let slot = |timestamp, counts: Vec<i32>| pb::querier::v1::HeatmapSlot {
+            timestamp,
+            y_min: vec![0.0, 50.0],
+            counts,
+            exemplars: Vec::new(),
+        };
+        check!(
+            series
+                == pb::querier::v1::HeatmapSeries {
+                    labels: Vec::new(),
+                    slots: vec![
+                        slot(2_000, vec![1, 2]),
+                        slot(3_000, vec![3, 4]),
+                        slot(4_000, vec![5, 6]),
+                        slot(5_000, vec![7, 8]),
+                    ],
+                }
+        );
+
+        // No time buckets means no step to derive and no slots to stamp.
+        let empty = pb::querier::v1::HeatmapSeries::from(crabka_pprof::Heatmap {
+            start_ms: 1_000,
+            end_ms: 5_000,
+            time_buckets: 0,
+            value_buckets: 2,
+            min_value: 0,
+            max_value: 100,
+            counts: Vec::new(),
+        });
+        check!(empty.slots.is_empty());
+    }
+
     /// `heatmap_slot_timestamp` places a sample in one of `time_buckets` slots
     /// and returns the slot's *end*. Everything here is boundary work: the
     /// guard is four clauses joined by `||`, so each has to reject on its own,

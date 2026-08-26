@@ -1086,6 +1086,96 @@ mod tests {
         check!(err.contains("height does not fit u32"), "got: {err}");
     }
 
+    fn state_with_ingestion(rate: f64, burst: u64, max_tenants: usize) -> Arc<DistributorState> {
+        Arc::new(DistributorState {
+            sink: Arc::new(RecordingSink(Mutex::default())),
+            limits: TenantLimitConfig::default(),
+            profile_overrides: OverridesProvider::from_yaml(&format!(
+                "overrides:\n  tenant-a:\n    ingestion_rate_profiles_per_sec: {rate}\n    ingestion_burst_profiles: {burst}\n"
+            ))
+            .expect("the overrides parse"),
+            active_series: Mutex::default(),
+            ingestion_buckets: Mutex::default(),
+            relabel: vec![],
+            max_decompressed: mebibytes(16),
+            max_tracked_tenants: max_tenants,
+            legacy_decode_limits: LegacyDecodeLimits::default(),
+            metrics: ServiceMetrics::new(),
+        })
+    }
+
+    /// A burst cap rejects an over-sized batch outright, before the token
+    /// bucket is consulted.
+    ///
+    /// The `> 0` in that guard cannot be tested from outside:
+    /// `rate_tokens_per_sec` clamps the bucket's own rate to the burst
+    /// whenever the burst is positive, so any batch the guard would reject
+    /// the bucket rejects too, with the same error. The guard is an early
+    /// exit, not a distinct behaviour. What IS pinned here is the zero case
+    /// -- a zero burst means unlimited rather than "reject everything" --
+    /// and the boundary, where a batch of exactly the burst is allowed.
+    #[test]
+    fn a_burst_cap_rejects_an_over_sized_batch_before_the_bucket() {
+        let state = state_with_ingestion(1_000_000.0, 2, 4096);
+
+        check!(super::enforce_ingestion_rate(&state, "tenant-a", 2).is_ok(), "at the cap");
+        check!(
+            super::enforce_ingestion_rate(&state, "tenant-a", 3).is_err(),
+            "one over the cap, with a rate that would otherwise allow it"
+        );
+
+        // A zero burst means "no burst cap", not "reject everything", so the
+        // guard must be `> 0` rather than a plain non-zero test.
+        let unlimited = state_with_ingestion(1_000_000.0, 0, 4096);
+        check!(super::enforce_ingestion_rate(&unlimited, "tenant-a", 5_000).is_ok());
+
+        // A tenant with no override of its own is not rate limited at all --
+        // asked for well past the DEFAULT burst of 10_000, which is what
+        // separates "skipped entirely" from "happened to fit under the
+        // default cap".
+        check!(super::enforce_ingestion_rate(&state, "tenant-b", 20_000).is_ok());
+        // And an empty batch is never rejected, whatever the caps say.
+        check!(super::enforce_ingestion_rate(&state, "tenant-a", 0).is_ok());
+    }
+
+    /// The per-tenant bucket map is capped, evicting one existing tenant
+    /// before admitting a new one. The cap is only reached by admitting more
+    /// tenants than it allows, and the eviction is only observable in the
+    /// map's size -- so the test counts buckets rather than trusting a
+    /// tenant to still be present.
+    #[test]
+    fn the_bucket_map_evicts_before_admitting_a_tenant_past_its_cap() {
+        let state = state_with_ingestion(1_000_000.0, 0, 2);
+        let rate = crabka_units::Frequency::from_per_sec_u64(10);
+        let buckets = |state: &DistributorState| {
+            state
+                .ingestion_buckets
+                .lock()
+                .expect("the bucket lock is held")
+                .len()
+        };
+
+        for tenant in ["a", "b"] {
+            super::ingestion_bucket_for_tenant(&state, tenant, rate).expect("a bucket is issued");
+        }
+        check!(buckets(&state) == 2, "both tenants fit under the cap");
+
+        // The third tenant is one past the cap, so admitting it must evict.
+        super::ingestion_bucket_for_tenant(&state, "c", rate).expect("a bucket is issued");
+        check!(buckets(&state) == 2, "the map does not grow past its cap");
+
+        // Re-asking for a tenant already held must not evict anything. Which
+        // tenant an eviction picks is arbitrary, so both consequences are
+        // checked: dropping some other tenant shrinks the map, and dropping
+        // this one hands back a different bucket.
+        let before = super::ingestion_bucket_for_tenant(&state, "c", rate)
+            .expect("a bucket is issued");
+        let again = super::ingestion_bucket_for_tenant(&state, "c", rate)
+            .expect("a bucket is issued");
+        check!(buckets(&state) == 2, "no other tenant was evicted");
+        check!(Arc::ptr_eq(&before, &again), "and this tenant kept its bucket");
+    }
+
     fn state_with_max_series(limit: u64) -> Arc<DistributorState> {
         Arc::new(DistributorState {
             sink: Arc::new(RecordingSink(Mutex::default())),
