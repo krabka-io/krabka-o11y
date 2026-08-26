@@ -1046,6 +1046,9 @@ fn over_time_mean(values: impl Iterator<Item = f64>) -> f64 {
     for value in values {
         count += 1.0;
         if mean.is_infinite() {
+            // Both `> 0.0` here are permanent survivors against `>= 0.0`:
+            // each operand is already known infinite, so neither is ever 0.0
+            // and the two spellings pick the same sign.
             if value.is_infinite() && (value > 0.0) == (mean > 0.0) {
                 // Same-sign infinity: the mean stays that infinity.
                 continue;
@@ -1072,7 +1075,15 @@ pub(super) fn kahan_sum_inc(increment: f64, sum: f64, comp: f64) -> (f64, f64) {
     let new_sum = sum + increment;
     // Recover the rounding error lost when `increment` is small relative to
     // `sum` (or vice versa), matching Prometheus' branch on magnitude.
-    let new_comp = if sum.abs() >= increment.abs() {
+    //
+    // An infinite running sum drops the compensation instead. Without this the
+    // very first infinite increment leaves `(inf - inf) + x`, which is NaN, and
+    // the NaN rides `comp` all the way to the `sum + comp` at the end -- so
+    // `avg_over_time` over a series holding a single +Inf returned NaN where
+    // Prometheus returns +Inf. Matches the `IsInf(t, 0)` arm of `kahanSumInc`.
+    let new_comp = if new_sum.is_infinite() {
+        0.0
+    } else if sum.abs() >= increment.abs() {
         comp + ((sum - new_sum) + increment)
     } else {
         comp + ((increment - new_sum) + sum)
