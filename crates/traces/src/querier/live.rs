@@ -587,7 +587,9 @@ mod tests {
                     async move {
                         // Refuse anything but the tenant under test, so a
                         // request that sends a fixed tenant fails outright.
-                        if headers.get("x-scope-orgid").map(|value| value.as_bytes())
+                        if headers
+                            .get("x-scope-orgid")
+                            .map(object_store::HeaderValue::as_bytes)
                             != Some(b"t".as_slice())
                         {
                             return Response::builder()
@@ -604,24 +606,26 @@ mod tests {
             )
             .route(
                 "/api/v2/search/tags",
-                get(move |headers: HeaderMap, RawQuery(query): RawQuery| async move {
-                    // Echo both the tenant and the requested scope, so a
-                    // request that drops either is distinguishable from one
-                    // that sends it.
-                    let tenant = headers
-                        .get("x-scope-orgid")
-                        .and_then(|value| value.to_str().ok())
-                        .unwrap_or("none")
-                        .to_string();
-                    let scope = query
-                        .unwrap_or_default()
-                        .split('&')
-                        .find_map(|pair| pair.strip_prefix("scope=").map(str::to_string))
-                        .unwrap_or_else(|| "no-scope".to_string());
-                    json_ok(format!(
-                        r#"{{"scopes":[{{"name":"span","tags":["{tenant}","{scope}"]}}]}}"#
-                    ))
-                }),
+                get(
+                    move |headers: HeaderMap, RawQuery(query): RawQuery| async move {
+                        // Echo both the tenant and the requested scope, so a
+                        // request that drops either is distinguishable from one
+                        // that sends it.
+                        let tenant = headers
+                            .get("x-scope-orgid")
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or("none")
+                            .to_string();
+                        let scope = query
+                            .unwrap_or_default()
+                            .split('&')
+                            .find_map(|pair| pair.strip_prefix("scope=").map(str::to_string))
+                            .unwrap_or_else(|| "no-scope".to_string());
+                        json_ok(format!(
+                            r#"{{"scopes":[{{"name":"span","tags":["{tenant}","{scope}"]}}]}}"#
+                        ))
+                    },
+                ),
             )
             .route(
                 "/api/v2/search/tag/{tag}/values",
@@ -660,7 +664,11 @@ mod tests {
 
         // Span batches come back as sent, not as an empty tier.
         check!(
-            source.span_batches("t", 0, 10_000).await.expect("batches read") == batches,
+            source
+                .span_batches("t", 0, 10_000)
+                .await
+                .expect("batches read")
+                == batches,
             "the remote's batches are returned, not an empty list"
         );
 
@@ -680,7 +688,10 @@ mod tests {
         // Tag values echo the tag asked for, so a request built with a fixed
         // tag is caught alongside a body that returns nothing.
         check!(
-            source.tag_values("t", "http.method", 0, 10_000).await.expect("values read")
+            source
+                .tag_values("t", "http.method", 0, 10_000)
+                .await
+                .expect("values read")
                 == vec![TypedValue {
                     type_: "string".to_string(),
                     value: "http.method".to_string(),
@@ -825,8 +836,16 @@ mod tests {
 
         // No batches means no stream, and no stream means no batches. The
         // two halves have to agree, or an empty live tier is an error.
-        check!(super::encode_span_batches(&[]).expect("nothing encodes").is_empty());
-        check!(super::decode_span_batches(&[]).expect("nothing decodes").is_empty());
+        check!(
+            super::encode_span_batches(&[])
+                .expect("nothing encodes")
+                .is_empty()
+        );
+        check!(
+            super::decode_span_batches(&[])
+                .expect("nothing decodes")
+                .is_empty()
+        );
     }
 
     /// The block-builder frontier is one nanosecond past the newest block, so
@@ -861,7 +880,10 @@ mod tests {
             Arc::new(ArcSwap::from_pointee(index)),
         );
 
-        check!(source.block_builder_frontier_ns("t") == 901, "one past the newest");
+        check!(
+            source.block_builder_frontier_ns("t") == 901,
+            "one past the newest"
+        );
         check!(source.block_builder_frontier_ns("other") == 5_001);
         check!(
             source.block_builder_frontier_ns("absent") == 0,
@@ -922,7 +944,10 @@ mod tests {
             &[7; 16],
             payload(
                 vec![span("root-op", 1, None)],
-                vec![attr("cloud.region", "us-east-1"), attr("service.name", "svc")],
+                vec![
+                    attr("cloud.region", "us-east-1"),
+                    attr("service.name", "svc"),
+                ],
             ),
         )
         .expect("the payload converts");
@@ -946,7 +971,10 @@ mod tests {
         let trace = super::trace_spans_from_otlp(
             &[7; 16],
             payload(
-                vec![span("child-op", 2, Some(1)), span("other-child", 3, Some(1))],
+                vec![
+                    span("child-op", 2, Some(1)),
+                    span("other-child", 3, Some(1)),
+                ],
                 vec![attr("service.name", "svc")],
             ),
         )
@@ -1028,7 +1056,10 @@ mod tests {
         // here, and -1 for the whole second below it.
         check!(floor(-1) == -1, "rounding down, not toward zero");
         check!(floor(-999_999_999) == -1);
-        check!(floor(-1_000_000_000) == -1, "an exact second is not rounded further");
+        check!(
+            floor(-1_000_000_000) == -1,
+            "an exact second is not rounded further"
+        );
         check!(floor(-1_000_000_001) == -2);
         check!(floor(-5_000_000_000) == -5);
     }
@@ -1042,15 +1073,24 @@ mod tests {
 
         check!(ceil(0) == 0);
         check!(ceil(1) == 1, "any remainder rounds up");
-        check!(ceil(999_999_999) == 1, "just under a second is still a second");
-        check!(ceil(1_000_000_000) == 1, "exactly a second does not round up");
+        check!(
+            ceil(999_999_999) == 1,
+            "just under a second is still a second"
+        );
+        check!(
+            ceil(1_000_000_000) == 1,
+            "exactly a second does not round up"
+        );
         check!(ceil(1_000_000_001) == 2);
         check!(ceil(2_000_000_000) == 2);
 
         // Negatives round toward positive infinity, not toward zero.
         check!(ceil(-1) == 0, "just below zero rounds up to zero");
         check!(ceil(-999_999_999) == 0);
-        check!(ceil(-1_000_000_000) == -1, "exactly a second is exact either way");
+        check!(
+            ceil(-1_000_000_000) == -1,
+            "exactly a second is exact either way"
+        );
         check!(ceil(-1_000_000_001) == -1);
     }
 
