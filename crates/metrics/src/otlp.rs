@@ -1287,7 +1287,10 @@ mod tests {
         // Deltas accumulate across calls at the same start time.
         let mut next = series_at(2.0);
         super::accumulate_delta_float_series(&mut next, 1_500_000_000, &mut accumulator);
-        check!(next[0].samples[0].value == 3.0, "the running total, not the delta");
+        check!(
+            (next[0].samples[0].value - 3.0).abs() < f64::EPSILON,
+            "the running total, not the delta"
+        );
         check!(next[0].samples[0].start_timestamp_ms == Some(1_500));
 
         // Zero means unset. The value still accumulates, but no start time is
@@ -1299,7 +1302,7 @@ mod tests {
             series[0].samples[0].start_timestamp_ms.is_none(),
             "an unset start time is absent, not 1970"
         );
-        check!(series[0].samples[0].value == 1.0);
+        check!((series[0].samples[0].value - 1.0).abs() < f64::EPSILON);
     }
 
     /// A cumulative or unspecified sum or histogram is ingested as-is, a delta
@@ -1347,7 +1350,7 @@ mod tests {
 
         // An unrecognised temporality. Neither of the accepted values, and
         // not delta either, so only the guard can reject it.
-        const UNKNOWN: i32 = 99;
+        let unknown = 99_i32;
         let cumulative = AggregationTemporality::Cumulative as i32;
         let unspecified = AggregationTemporality::Unspecified as i32;
         let delta = AggregationTemporality::Delta as i32;
@@ -1362,7 +1365,7 @@ mod tests {
         check!(decodes(sum(cumulative)));
         check!(decodes(sum(unspecified)));
         check!(decodes(sum(delta)), "delta is accumulated, not refused, on this path");
-        check!(!decodes(sum(UNKNOWN)), "but an unknown temporality is refused");
+        check!(!decodes(sum(unknown)), "but an unknown temporality is refused");
 
         let histogram = |temporality| {
             metric::Data::Histogram(Histogram {
@@ -1377,7 +1380,7 @@ mod tests {
         check!(decodes(histogram(cumulative)));
         check!(decodes(histogram(unspecified)));
         check!(decodes(histogram(delta)));
-        check!(!decodes(histogram(UNKNOWN)));
+        check!(!decodes(histogram(unknown)));
 
         let exponential = |temporality| {
             metric::Data::ExponentialHistogram(ExponentialHistogram {
@@ -1393,7 +1396,7 @@ mod tests {
         check!(decodes(exponential(cumulative)));
         check!(decodes(exponential(unspecified)));
         check!(decodes(exponential(delta)));
-        check!(!decodes(exponential(UNKNOWN)));
+        check!(!decodes(exponential(unknown)));
     }
 
     /// `exponential_histogram_to_native` maps an OTLP scale onto a native
@@ -1436,6 +1439,115 @@ mod tests {
         check!(schema(8) == Some(8), "exactly at the maximum");
         check!(schema(9) == Some(8), "one above it clamps, not errors");
         check!(schema(127) == Some(8));
+    }
+
+    /// `reject_far_future_points` refuses a batch carrying any timestamp past
+    /// the year 2200. A clock-skewed producer can otherwise pin a series'
+    /// upper time bound centuries out, which no query range will ever reach
+    /// again -- the damage outlives the bad batch.
+    ///
+    /// The bound is exclusive of itself: a point landing exactly on the limit
+    /// is accepted and one millisecond past it is not. All five data kinds
+    /// carry their own extraction, so each is checked, and a good point is
+    /// placed BEFORE a bad one so the scan cannot pass by looking only at the
+    /// first.
+    #[test]
+    fn a_far_future_data_point_is_refused_whatever_kind_carries_it() {
+        let limit_ns = super::MAX_SAMPLE_TIMESTAMP_MS * 1_000_000;
+        let ok = 1_500_000_000_000_000_000_u64;
+
+        let number = |time_unix_nano| NumberDataPoint {
+            time_unix_nano,
+            ..NumberDataPoint::default()
+        };
+        let check_kind = |data: metric::Data| super::reject_far_future_points("m", &data);
+
+        // Each kind, with a good point first and a far-future one after it.
+        check!(
+            check_kind(metric::Data::Gauge(Gauge {
+                data_points: vec![number(ok), number(limit_ns + 1_000_000)],
+            }))
+            .is_err(),
+            "a gauge's later point is still scanned"
+        );
+        check!(
+            check_kind(metric::Data::Sum(Sum {
+                data_points: vec![number(ok), number(limit_ns + 1_000_000)],
+                ..Sum::default()
+            }))
+            .is_err()
+        );
+        check!(
+            check_kind(metric::Data::Histogram(Histogram {
+                data_points: vec![HistogramDataPoint {
+                    time_unix_nano: limit_ns + 1_000_000,
+                    ..HistogramDataPoint::default()
+                }],
+                ..Histogram::default()
+            }))
+            .is_err()
+        );
+        check!(
+            check_kind(metric::Data::ExponentialHistogram(ExponentialHistogram {
+                data_points: vec![ExponentialHistogramDataPoint {
+                    time_unix_nano: limit_ns + 1_000_000,
+                    ..ExponentialHistogramDataPoint::default()
+                }],
+                ..ExponentialHistogram::default()
+            }))
+            .is_err()
+        );
+        check!(
+            check_kind(metric::Data::Summary(Summary {
+                data_points: vec![SummaryDataPoint {
+                    time_unix_nano: limit_ns + 1_000_000,
+                    ..SummaryDataPoint::default()
+                }],
+            }))
+            .is_err()
+        );
+
+        // Exactly at the limit is accepted; one millisecond past is not.
+        check!(
+            check_kind(metric::Data::Gauge(Gauge {
+                data_points: vec![number(limit_ns)],
+            }))
+            .is_ok(),
+            "the limit itself is a usable timestamp"
+        );
+        check!(
+            check_kind(metric::Data::Gauge(Gauge {
+                data_points: vec![number(limit_ns + 1_000_000)],
+            }))
+            .is_err(),
+            "one millisecond past it is not"
+        );
+        // Sub-millisecond precision is truncated before the comparison, so a
+        // point within the same millisecond as the limit is still accepted.
+        check!(
+            check_kind(metric::Data::Gauge(Gauge {
+                data_points: vec![number(limit_ns + 999_999)],
+            }))
+            .is_ok(),
+            "still the same millisecond"
+        );
+
+        // Ordinary and empty batches pass.
+        check!(check_kind(metric::Data::Gauge(Gauge {
+            data_points: vec![number(ok)],
+        }))
+        .is_ok());
+        check!(check_kind(metric::Data::Gauge(Gauge {
+            data_points: Vec::new(),
+        }))
+        .is_ok());
+
+        // The refusal names the metric and the offending timestamp.
+        let error = check_kind(metric::Data::Gauge(Gauge {
+            data_points: vec![number(limit_ns + 1_000_000)],
+        }))
+        .expect_err("a far-future point is refused");
+        check!(error.to_string().contains(&(limit_ns + 1_000_000).to_string()));
     }
 
     /// `resource_metrics_timestamp_ms` reports when a batch was observed,
