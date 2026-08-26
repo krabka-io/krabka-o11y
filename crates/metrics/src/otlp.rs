@@ -1258,6 +1258,52 @@ mod tests {
         resource::v1::Resource,
     };
 
+    /// `compact_spanned_histogram_counts` run-length-encodes non-zero buckets
+    /// into spans, where each span's offset is measured from the END of the
+    /// previous one rather than from zero. That relative encoding is all
+    /// subtraction and off-by-ones, and the survivors were every one of those
+    /// operators -- so the fixture has three spans whose offsets and lengths
+    /// are all distinct, and none of which is zero or one.
+    #[test]
+    fn compacting_histogram_buckets_encodes_each_span_relative_to_the_last() {
+        let compact = |buckets: &[(i32, f64)]| {
+            super::compact_spanned_histogram_counts(buckets.iter().copied().collect())
+        };
+        let span = |offset, length| BucketSpan { offset, length };
+
+        // Buckets 1-2, then 5, then 9-10. Offsets are 1, 2 and 3 counting
+        // from each previous span's end; lengths are 2, 1 and 2.
+        check!(
+            compact(&[(1, 5.0), (2, 6.0), (5, 7.0), (9, 8.0), (10, 9.0)])
+                == (
+                    vec![span(1, 2), span(2, 1), span(3, 2)],
+                    vec![5.0, 6.0, 7.0, 8.0, 9.0],
+                )
+        );
+
+        // Empty buckets are dropped before spanning, so a zero in the middle
+        // splits one span into two rather than being carried as a count.
+        check!(
+            compact(&[(1, 5.0), (2, 0.0), (3, 6.0)])
+                == (vec![span(1, 1), span(1, 1)], vec![5.0, 6.0])
+        );
+
+        // A single bucket at zero is offset zero, length one -- the identity
+        // case, which is why the fixture above avoids those values.
+        check!(compact(&[(0, 5.0)]) == (vec![span(0, 1)], vec![5.0]));
+
+        // Negative indices are below the zero bucket and offset accordingly.
+        check!(compact(&[(-2, 5.0)]) == (vec![span(-2, 1)], vec![5.0]));
+        check!(
+            compact(&[(-2, 5.0), (-1, 6.0), (2, 7.0)])
+                == (vec![span(-2, 2), span(2, 1)], vec![5.0, 6.0, 7.0])
+        );
+
+        // Nothing to encode: no buckets, and buckets that are all empty.
+        check!(compact(&[]) == (Vec::new(), Vec::new()));
+        check!(compact(&[(1, 0.0), (2, 0.0)]) == (Vec::new(), Vec::new()));
+    }
+
     /// `prometheus_unit_suffix` turns a UCUM unit into a metric-name suffix.
     /// The dimensionless spellings produce no suffix at all, which is distinct
     /// from producing an empty one, and a rate keeps its numerator's suffix
