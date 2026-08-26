@@ -266,6 +266,43 @@ mod tests {
         series::{Series, SeriesSample},
     };
 
+    /// `dimension_labels` builds the four label pairs a span is aggregated
+    /// under, sorted by name. Each value differs from every other, so a pair
+    /// reading its neighbour's field still produces a well-formed label and is
+    /// caught only by the values disagreeing.
+    #[test]
+    fn span_dimensions_carry_four_sorted_pairs() {
+        let record = span("checkout", "GET /orders", SpanKind::Client, StatusCode::Error, 5, 1);
+
+        let labels = super::dimension_labels(&record);
+        check!(
+            labels
+                == vec![
+                    ("service".to_string(), "checkout".to_string()),
+                    ("span_kind".to_string(), "SPAN_KIND_CLIENT".to_string()),
+                    ("span_name".to_string(), "GET /orders".to_string()),
+                    ("status_code".to_string(), "STATUS_CODE_ERROR".to_string()),
+                ],
+            "got {labels:?}"
+        );
+
+        // Sorted by name, not by the order they are written in the source: the
+        // kind comes before the name alphabetically though it is built after.
+        let names: Vec<&str> = labels.iter().map(|(name, _)| name.as_str()).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        check!(names == sorted, "labels are not sorted: {names:?}");
+
+        // A different kind and status reach different values, so neither is a
+        // constant.
+        let other = span("api", "POST /x", SpanKind::Server, StatusCode::Ok, 5, 1);
+        let other = super::dimension_labels(&other);
+        check!(other[1].1 == "SPAN_KIND_SERVER");
+        check!(other[3].1 == "STATUS_CODE_OK");
+        check!(other[0].1 == "api", "the service follows its span");
+        check!(other[2].1 == "POST /x");
+    }
+
     fn span(
         service: &str,
         name: &str,
