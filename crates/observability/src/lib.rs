@@ -14044,9 +14044,8 @@ fn is_bytes_literal(value: &str) -> bool {
     let unit_start = value
         .find(|ch: char| ch.is_ascii_alphabetic())
         .unwrap_or(value.len());
-    if unit_start == value.len() {
-        return false;
-    }
+    // No early return for a value with no letters: the unit is then the
+    // empty string, which `detected_bytes_unit` already refuses.
     let Ok(amount) = value[..unit_start].parse::<f64>() else {
         return false;
     };
@@ -21478,6 +21477,82 @@ mod tests {
         // A token naming no group is a client error, not an empty page: it
         // usually means the group was deleted between requests.
         check!(page(Some(2), Some("nonsense")).is_err());
+    }
+
+    /// `format_loki_duration_ns` composes a duration from the largest unit
+    /// down, SKIPPING units that contribute nothing -- so 3661s is "1h1m1s"
+    /// and not "1h1m1s0ms0us0ns". Zero is the one duration spelled with a unit
+    /// it does not contain, because "" would not read as a duration at all.
+    #[test]
+    fn a_loki_duration_composes_only_the_units_it_needs() {
+        let format = super::format_loki_duration_ns;
+
+        // Each unit alone.
+        check!(format(3_600_000_000_000) == Some("1h".to_string()));
+        check!(format(60_000_000_000) == Some("1m".to_string()));
+        check!(format(1_000_000_000) == Some("1s".to_string()));
+        check!(format(1_000_000) == Some("1ms".to_string()));
+        check!(format(1_000) == Some("1us".to_string()));
+        check!(format(1) == Some("1ns".to_string()));
+
+        // Composed, with the gaps left out rather than written as zeros.
+        check!(format(3_661_000_000_000) == Some("1h1m1s".to_string()));
+        check!(format(3_600_000_000_001) == Some("1h1ns".to_string()), "no zero units between");
+        check!(format(90_000_000_000) == Some("1m30s".to_string()));
+        check!(format(1_500_000) == Some("1ms500us".to_string()));
+
+        // Counts above one, and a unit that repeats rather than rolling over
+        // into the next -- 90 minutes is an hour and a half, not "90m".
+        check!(format(2 * 3_600_000_000_000) == Some("2h".to_string()));
+        check!(format(90 * 60_000_000_000) == Some("1h30m".to_string()));
+
+        // Zero and negative are different answers: a zero duration is a
+        // duration, a negative one is not.
+        check!(format(0) == Some("0s".to_string()));
+        check!(format(-1).is_none());
+        check!(format(-3_600_000_000_000).is_none());
+    }
+
+    /// `is_bytes_literal` accepts "1MB" and "1.5GiB": a non-negative finite
+    /// number followed by a unit it knows. The split is at the first letter,
+    /// so the number and the unit are never ambiguous -- and both the decimal
+    /// and binary spellings of each magnitude are units, since Loki accepts
+    /// both.
+    #[test]
+    fn a_bytes_literal_needs_a_number_and_a_unit_it_knows() {
+        let is_bytes = super::is_bytes_literal;
+
+        for unit in ["B", "kB", "KB", "MB", "GB", "TB", "KiB", "MiB", "GiB", "TiB"] {
+            check!(is_bytes(&format!("1{unit}")), "{unit}");
+        }
+        check!(is_bytes("1.5GiB"), "a fractional amount");
+        check!(is_bytes("0B"), "zero bytes is a size");
+
+        // A number with no unit, or a unit with no number.
+        check!(!is_bytes("1"));
+        check!(!is_bytes(""));
+        check!(!is_bytes("MB"), "the amount is empty, which does not parse");
+
+        // Units it does not know, including near-misses.
+        check!(!is_bytes("1PB"));
+        check!(!is_bytes("1mb"), "the units are case-sensitive");
+        check!(!is_bytes("1MBs"));
+        check!(!is_bytes("1Mib"));
+
+        // A negative amount is refused rather than clamped to zero.
+        check!(!is_bytes("-1MB"));
+
+        // "inf" and "NaN" contain letters, so the split puts them in the UNIT
+        // and leaves the amount empty -- they are refused for having no
+        // number, not for being non-finite.
+        check!(!is_bytes("infMB"));
+        check!(!is_bytes("NaNMB"));
+
+        // The finiteness check is reached by a number with no letters in it at
+        // all: four hundred digits overflow an f64 to infinity, and a size of
+        // infinity is not a size.
+        let overflowing = format!("{}MB", "1".repeat(400));
+        check!(!is_bytes(&overflowing), "an amount that overflows to infinity");
     }
 
     /// `eligible_tail_record_count` holds a tail back by `delay_for`, so a
