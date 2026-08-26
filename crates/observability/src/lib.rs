@@ -21080,6 +21080,71 @@ mod tests {
         check!(scalar(-4, 1).power(scalar(1, 2)).is_none());
     }
 
+    /// `decode_form_component` decodes one `application/x-www-form-urlencoded`
+    /// field: `+` is a space, `%XX` is a byte, and everything else is itself.
+    /// A truncated or malformed escape is an error rather than a literal `%`,
+    /// and the decoded bytes still have to be UTF-8 -- a valid escape can name
+    /// a byte that is not.
+    #[test]
+    fn a_form_component_decodes_its_escapes_or_refuses_them() {
+        let decode = |value: &str| super::decode_form_component(value).ok();
+
+        check!(decode("plain") == Some("plain".to_string()));
+        check!(decode("") == Some(String::new()));
+        check!(decode("a+b") == Some("a b".to_string()), "plus is a space");
+        check!(decode("a%20b") == Some("a b".to_string()), "and so is %20");
+        check!(decode("%2F") == Some("/".to_string()));
+        check!(decode("%2f") == Some("/".to_string()), "hex is case-insensitive");
+        check!(decode("%C3%A9") == Some("\u{e9}".to_string()), "a multi-byte character");
+
+        // A `%` that does not introduce two hex digits is an error, not a
+        // literal percent sign -- at the end of the string and mid-string.
+        check!(decode("a%").is_none());
+        check!(decode("a%2").is_none());
+        check!(decode("a%ZZb").is_none());
+        check!(decode("100%").is_none());
+
+        // A well-formed escape naming a byte that is not valid UTF-8.
+        check!(decode("%FF").is_none());
+    }
+
+    /// `has_word_boundary` asks whether a match at `index` stands alone rather
+    /// than sitting inside a longer word. Both sides have to hold, so each is
+    /// broken on its own -- and the ends of the string count as boundaries,
+    /// which is what `is_none_or` is doing there.
+    #[test]
+    fn a_word_boundary_needs_whitespace_or_an_end_on_both_sides() {
+        let boundary = super::has_word_boundary;
+
+        check!(boundary("a and b", 2, 3), "space either side");
+        check!(boundary("and", 0, 3), "both ends of the string");
+        check!(boundary("and b", 0, 3), "the start, and a space after");
+        check!(boundary("a and", 2, 3), "a space before, and the end");
+
+        // Each side broken on its own.
+        check!(!boundary("aand b", 1, 3), "no boundary before");
+        check!(!boundary("a andb", 2, 3), "no boundary after");
+        check!(!boundary("aandb", 1, 3), "neither side");
+    }
+
+    /// `line_number` counts the newlines before a position, one-based, and
+    /// clamps a position past the end rather than panicking on it -- a parse
+    /// error can report a position at the very end of the input.
+    #[test]
+    fn a_line_number_counts_from_one_and_clamps_past_the_end() {
+        let line = super::line_number;
+
+        check!(line("abc", 0) == 1, "the first line is one, not zero");
+        check!(line("abc", 3) == 1);
+        check!(line("a\nb", 0) == 1);
+        check!(line("a\nb", 2) == 2, "past the newline");
+        check!(line("a\nb", 1) == 1, "the newline itself is still line one");
+        check!(line("a\n\nb", 3) == 3, "a blank line counts");
+        check!(line("a\nb", 99) == 2, "a position past the end clamps");
+        check!(line("", 0) == 1);
+        check!(line("", 99) == 1);
+    }
+
     /// `parse_metric_arithmetic_operator` names the six PromQL scalar
     /// operators. The variants are asserted pairwise distinct, so an arm
     /// returning a neighbour's operator cannot pass -- and every unrecognised
