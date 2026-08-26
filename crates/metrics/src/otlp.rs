@@ -1258,6 +1258,8 @@ mod tests {
         resource::v1::Resource,
     };
 
+    use crate::wire::DecodedExemplar;
+
     /// `accumulate_delta_float_series` turns delta sums into running totals and
     /// stamps each sample with the series start time -- but only when there IS
     /// one. A zero start time is OTLP's "unset", not an instant at the epoch,
@@ -1364,8 +1366,14 @@ mod tests {
         };
         check!(decodes(sum(cumulative)));
         check!(decodes(sum(unspecified)));
-        check!(decodes(sum(delta)), "delta is accumulated, not refused, on this path");
-        check!(!decodes(sum(unknown)), "but an unknown temporality is refused");
+        check!(
+            decodes(sum(delta)),
+            "delta is accumulated, not refused, on this path"
+        );
+        check!(
+            !decodes(sum(unknown)),
+            "but an unknown temporality is refused"
+        );
 
         let histogram = |temporality| {
             metric::Data::Histogram(Histogram {
@@ -1533,21 +1541,29 @@ mod tests {
         );
 
         // Ordinary and empty batches pass.
-        check!(check_kind(metric::Data::Gauge(Gauge {
-            data_points: vec![number(ok)],
-        }))
-        .is_ok());
-        check!(check_kind(metric::Data::Gauge(Gauge {
-            data_points: Vec::new(),
-        }))
-        .is_ok());
+        check!(
+            check_kind(metric::Data::Gauge(Gauge {
+                data_points: vec![number(ok)],
+            }))
+            .is_ok()
+        );
+        check!(
+            check_kind(metric::Data::Gauge(Gauge {
+                data_points: Vec::new(),
+            }))
+            .is_ok()
+        );
 
         // The refusal names the metric and the offending timestamp.
         let error = check_kind(metric::Data::Gauge(Gauge {
             data_points: vec![number(limit_ns + 1_000_000)],
         }))
         .expect_err("a far-future point is refused");
-        check!(error.to_string().contains(&(limit_ns + 1_000_000).to_string()));
+        check!(
+            error
+                .to_string()
+                .contains(&(limit_ns + 1_000_000).to_string())
+        );
     }
 
     /// `resource_metrics_timestamp_ms` reports when a batch was observed,
@@ -1735,7 +1751,10 @@ mod tests {
         check!(suffix("") == None);
         check!(suffix("1") == None, "one is dimensionless");
         check!(suffix("  ") == None, "whitespace trims to empty");
-        check!(suffix("{requests}") == None, "an annotation alone is dimensionless");
+        check!(
+            suffix("{requests}") == None,
+            "an annotation alone is dimensionless"
+        );
 
         // Surrounding whitespace and annotations are removed before matching.
         check!(suffix(" s ") == Some("seconds".to_string()));
@@ -1761,17 +1780,22 @@ mod tests {
             explicit_bounds: vec![10.0, 20.0],
             ..Default::default()
         };
-        let belongs = |value: f64, bucket: usize| {
-            super::exemplar_belongs_to_bucket(value, &point, bucket)
-        };
+        let belongs =
+            |value: f64, bucket: usize| super::exemplar_belongs_to_bucket(value, &point, bucket);
 
         // The first bucket has no lower bound and is closed at ten.
         check!(belongs(5.0, 0));
-        check!(belongs(10.0, 0), "the upper bound belongs to its own bucket");
+        check!(
+            belongs(10.0, 0),
+            "the upper bound belongs to its own bucket"
+        );
         check!(!belongs(10.1, 0));
 
         // The middle bucket is open below and closed above.
-        check!(!belongs(10.0, 1), "the lower bound belongs to the bucket below");
+        check!(
+            !belongs(10.0, 1),
+            "the lower bound belongs to the bucket below"
+        );
         check!(belongs(10.1, 1));
         check!(belongs(20.0, 1));
         check!(!belongs(20.1, 1));
@@ -1779,7 +1803,10 @@ mod tests {
         // The last bucket has no upper bound.
         check!(belongs(20.1, 2));
         check!(belongs(1e9, 2));
-        check!(!belongs(20.0, 2), "twenty belongs to the bucket that closes at it");
+        check!(
+            !belongs(20.0, 2),
+            "twenty belongs to the bucket that closes at it"
+        );
     }
 
     /// `strip_ucum_annotations` removes the `{...}` parts of a UCUM unit,
@@ -1792,10 +1819,19 @@ mod tests {
 
         check!(strip("s") == "s", "a bare unit is untouched");
         check!(strip("") == "");
-        check!(strip("{requests}") == "", "an annotation alone leaves nothing");
-        check!(strip("1{requests}") == "1", "the unit survives, the note does not");
+        check!(
+            strip("{requests}") == "",
+            "an annotation alone leaves nothing"
+        );
+        check!(
+            strip("1{requests}") == "1",
+            "the unit survives, the note does not"
+        );
         check!(strip("{requests}1") == "1", "whichever side it is on");
-        check!(strip("m{note}s") == "ms", "and in the middle, joining what it split");
+        check!(
+            strip("m{note}s") == "ms",
+            "and in the middle, joining what it split"
+        );
         check!(strip("{}") == "", "an empty annotation");
         check!(strip("{a}{b}") == "", "two of them");
         check!(strip("k{a}g{b}") == "kg");
@@ -1832,7 +1868,10 @@ mod tests {
         // the variant is reached the way ingest reaches it.
         let decode = super::decode_otlp_bytes(&[0xff, 0xff], TranslationStrategy::default())
             .expect_err("two 0xff bytes are not a MetricsData");
-        check!(matches!(decode, OtlpError::ProtobufDecode(_)), "got {decode:?}");
+        check!(
+            matches!(decode, OtlpError::ProtobufDecode(_)),
+            "got {decode:?}"
+        );
         check!(decode.status_code() == 400);
         check!(decode.status_code() != 500, "not a server error");
     }
@@ -1845,6 +1884,7 @@ mod tests {
     #[test]
     fn delta_histograms_fold_until_the_series_restarts() {
         use crabka_blockstore::Labels;
+
         use crate::{ResetHint, histogram::NativeHistogram};
 
         let hist = |count: f64| NativeHistogram {
@@ -1868,36 +1908,53 @@ mod tests {
         let is = |actual: f64, expected: f64| (actual - expected).abs() < f64::EPSILON;
 
         // Deltas fold together while the start time holds.
-        let first = acc.accumulate_histogram("m", &labels, 100, hist(1.0)).expect("folds");
+        let first = acc
+            .accumulate_histogram("m", &labels, 100, hist(1.0))
+            .expect("folds");
         check!(is(first.count, 1.0));
-        let second = acc.accumulate_histogram("m", &labels, 100, hist(2.0)).expect("folds");
+        let second = acc
+            .accumulate_histogram("m", &labels, 100, hist(2.0))
+            .expect("folds");
         check!(is(second.count, 3.0), "folded, not replaced");
-        let third = acc.accumulate_histogram("m", &labels, 100, hist(4.0)).expect("folds");
+        let third = acc
+            .accumulate_histogram("m", &labels, 100, hist(4.0))
+            .expect("folds");
         check!(is(third.count, 7.0));
 
         // A new start time restarts the cumulative at the delta.
-        let restarted = acc.accumulate_histogram("m", &labels, 200, hist(5.0)).expect("folds");
+        let restarted = acc
+            .accumulate_histogram("m", &labels, 200, hist(5.0))
+            .expect("folds");
         check!(is(restarted.count, 5.0), "reset");
-        let after = acc.accumulate_histogram("m", &labels, 200, hist(1.0)).expect("folds");
+        let after = acc
+            .accumulate_histogram("m", &labels, 200, hist(1.0))
+            .expect("folds");
         check!(is(after.count, 6.0), "then folds again");
 
         // A start time of zero means "not reported" and must not restart.
-        let unreported = acc.accumulate_histogram("m", &labels, 0, hist(1.0)).expect("folds");
+        let unreported = acc
+            .accumulate_histogram("m", &labels, 0, hist(1.0))
+            .expect("folds");
         check!(is(unreported.count, 7.0), "zero does not reset");
 
         // A second series keeps its own cumulative.
         let mut other = Labels::default();
         other.insert("__name__", "other");
-        let separate = acc.accumulate_histogram("m", &other, 100, hist(9.0)).expect("folds");
+        let separate = acc
+            .accumulate_histogram("m", &other, 100, hist(9.0))
+            .expect("folds");
         check!(is(separate.count, 9.0), "separate key");
-        let back = acc.accumulate_histogram("m", &labels, 200, hist(1.0)).expect("folds");
+        let back = acc
+            .accumulate_histogram("m", &labels, 200, hist(1.0))
+            .expect("folds");
         check!(is(back.count, 8.0), "the first is untouched");
 
         // A delta whose layout differs is refused rather than folded.
         let mut incompatible = hist(1.0);
         incompatible.schema = 3;
         check!(
-            acc.accumulate_histogram("m", &labels, 200, incompatible).is_err(),
+            acc.accumulate_histogram("m", &labels, 200, incompatible)
+                .is_err(),
             "an incompatible layout cannot fold"
         );
     }
@@ -1918,36 +1975,57 @@ mod tests {
 
         // Deltas add up while the start time stays the same.
         check!(is(acc.accumulate_sum(&labels, 100, 1.0), 1.0));
-        check!(is(acc.accumulate_sum(&labels, 100, 2.0), 3.0), "added, not replaced");
+        check!(
+            is(acc.accumulate_sum(&labels, 100, 2.0), 3.0),
+            "added, not replaced"
+        );
         check!(is(acc.accumulate_sum(&labels, 100, 4.0), 7.0));
 
         // A new start time means a new series: the total starts over at the
         // delta rather than continuing.
         check!(is(acc.accumulate_sum(&labels, 200, 5.0), 5.0), "reset");
-        check!(is(acc.accumulate_sum(&labels, 200, 1.0), 6.0), "then accumulates again");
+        check!(
+            is(acc.accumulate_sum(&labels, 200, 1.0), 6.0),
+            "then accumulates again"
+        );
 
         // A start time of zero means "not reported" and must not reset, even
         // though it differs from the recorded one.
-        check!(is(acc.accumulate_sum(&labels, 0, 1.0), 7.0), "zero does not reset");
+        check!(
+            is(acc.accumulate_sum(&labels, 0, 1.0), 7.0),
+            "zero does not reset"
+        );
 
         // A second series under different labels keeps its own total.
         let mut other = Labels::default();
         other.insert("__name__", "errors");
-        check!(is(acc.accumulate_sum(&other, 100, 9.0), 9.0), "separate key");
-        check!(is(acc.accumulate_sum(&labels, 200, 1.0), 8.0), "the first is untouched");
+        check!(
+            is(acc.accumulate_sum(&other, 100, 9.0), 9.0),
+            "separate key"
+        );
+        check!(
+            is(acc.accumulate_sum(&labels, 200, 1.0), 8.0),
+            "the first is untouched"
+        );
 
         // A series whose recorded start is still zero accumulates rather than
         // resetting, then records the start it was given.
         let mut fresh = super::DeltaAccumulator::default();
         let mut third = Labels::default();
         third.insert("__name__", "latency");
-        check!(is(fresh.accumulate_sum(&third, 0, 2.0), 2.0), "no start recorded yet");
+        check!(
+            is(fresh.accumulate_sum(&third, 0, 2.0), 2.0),
+            "no start recorded yet"
+        );
         check!(
             is(fresh.accumulate_sum(&third, 300, 3.0), 5.0),
             "the first real start does not reset what came before it"
         );
         check!(is(fresh.accumulate_sum(&third, 300, 1.0), 6.0));
-        check!(is(fresh.accumulate_sum(&third, 400, 1.0), 1.0), "but a later change does");
+        check!(
+            is(fresh.accumulate_sum(&third, 400, 1.0), 1.0),
+            "but a later change does"
+        );
     }
 
     /// `add_compatible_native_histogram` refuses to fold a delta into a
@@ -1990,13 +2068,22 @@ mod tests {
         check!(differs(&|h| h.is_float = true), "is_float");
         check!(differs(&|h| h.reset_hint = ResetHint::Gauge), "reset_hint");
         check!(differs(&|h| h.zero_threshold = 2e-9), "zero_threshold");
-        check!(differs(&|h| h.custom_values = Some(vec![1.0])), "custom_values");
+        check!(
+            differs(&|h| h.custom_values = Some(vec![1.0])),
+            "custom_values"
+        );
 
         // The zero threshold is compared by bits, not by value. Positive and
         // negative zero are equal under `==` and differ in their bits, so this
         // pair is the only one that separates the two comparisons.
-        let mut cumulative = NativeHistogram { zero_threshold: 0.0, ..base() };
-        let delta = NativeHistogram { zero_threshold: -0.0, ..base() };
+        let mut cumulative = NativeHistogram {
+            zero_threshold: 0.0,
+            ..base()
+        };
+        let delta = NativeHistogram {
+            zero_threshold: -0.0,
+            ..base()
+        };
         check!(
             super::add_compatible_native_histogram("m", &mut cumulative, &delta).is_err(),
             "negative zero is a different layout from zero"
@@ -2028,10 +2115,7 @@ mod tests {
         let compact = super::compact_spanned_histogram_counts;
 
         // One run starting at zero.
-        check!(
-            compact(bucket_map(&[(0, 1.0), (1, 2.0)]))
-                == (vec![span(0, 2)], vec![1.0, 2.0])
-        );
+        check!(compact(bucket_map(&[(0, 1.0), (1, 2.0)])) == (vec![span(0, 2)], vec![1.0, 2.0]));
 
         // One run starting away from zero: the first offset is absolute.
         check!(compact(bucket_map(&[(5, 1.0)])) == (vec![span(5, 1)], vec![1.0]));
@@ -2048,14 +2132,14 @@ mod tests {
         // adding it give different answers.
         check!(
             compact(bucket_map(&[(0, 1.0), (2, 2.0), (4, 3.0)]))
-                == (vec![span(0, 1), span(1, 1), span(1, 1)], vec![1.0, 2.0, 3.0])
+                == (
+                    vec![span(0, 1), span(1, 1), span(1, 1)],
+                    vec![1.0, 2.0, 3.0]
+                )
         );
 
         // Negative indexes are ordinary indexes.
-        check!(
-            compact(bucket_map(&[(-2, 1.0), (-1, 2.0)]))
-                == (vec![span(-2, 2)], vec![1.0, 2.0])
-        );
+        check!(compact(bucket_map(&[(-2, 1.0), (-1, 2.0)])) == (vec![span(-2, 2)], vec![1.0, 2.0]));
 
         // Empty buckets are dropped, which is what creates the gap here.
         check!(
@@ -2063,7 +2147,10 @@ mod tests {
                 == (vec![span(0, 1), span(1, 1)], vec![1.0, 3.0])
         );
 
-        check!(compact(bucket_map(&[])) == (vec![], vec![]), "no buckets, no spans");
+        check!(
+            compact(bucket_map(&[])) == (vec![], vec![]),
+            "no buckets, no spans"
+        );
         check!(
             compact(bucket_map(&[(0, 0.0)])) == (vec![], vec![]),
             "only empty buckets is the same as none"
@@ -2142,9 +2229,11 @@ mod tests {
             "the second span still starts where its offset says"
         );
 
-        check!(super::spanned_histogram_counts(&[], &[1.0]).is_empty(), "no spans, no buckets");
+        check!(
+            super::spanned_histogram_counts(&[], &[1.0]).is_empty(),
+            "no spans, no buckets"
+        );
     }
-
 
     /// Every OTLP unit the table maps, checked one by one.
     ///
@@ -2195,7 +2284,6 @@ mod tests {
         assert2::check!(super::prometheus_base_unit_suffix("furlong") == None);
         assert2::check!(super::prometheus_base_unit_suffix("") == None);
     }
-
 
     use super::{DeltaAccumulator, TranslationStrategy, decode_otlp, decode_otlp_stateful};
     use crate::{
@@ -2383,6 +2471,67 @@ mod tests {
 
         assert!(series.len() == 1);
         assert!(series[0].exemplars.is_empty());
+    }
+
+    /// A monotonic sum keeps its exemplars; a non-monotonic one drops them,
+    /// the rule `gauge_datapoint_drops_exemplars` already pins for gauges.
+    /// Every other exemplar assertion in this file runs through a histogram
+    /// path, so without a case that *keeps* one here, number datapoints could
+    /// discard every exemplar they carry and the whole suite would still pass.
+    #[test]
+    fn only_a_monotonic_sum_keeps_its_number_datapoint_exemplars() {
+        let sum_carrying_an_exemplar = |is_monotonic| {
+            metrics_data(Metric {
+                name: "http.server.requests".into(),
+                data: Some(metric::Data::Sum(Sum {
+                    data_points: vec![NumberDataPoint {
+                        time_unix_nano: 3_000_000,
+                        value: Some(number_data_point::Value::AsDouble(7.0)),
+                        exemplars: vec![Exemplar {
+                            filtered_attributes: vec![kv("user.id", "alice")],
+                            time_unix_nano: 2_500_000,
+                            value: Some(otlp_exemplar::Value::AsDouble(0.9)),
+                            span_id: vec![0xab, 0xcd],
+                            trace_id: vec![0x01, 0x23, 0x45, 0x67],
+                        }],
+                        ..Default::default()
+                    }],
+                    aggregation_temporality: AggregationTemporality::Cumulative as i32,
+                    is_monotonic,
+                })),
+                ..Default::default()
+            })
+        };
+
+        let kept = decode_otlp(
+            &sum_carrying_an_exemplar(true),
+            TranslationStrategy::default(),
+        )
+        .unwrap();
+
+        assert!(kept.len() == 1);
+        assert!(kept[0].exemplars.len() == 1);
+        let mut labels = Labels::new();
+        labels.insert("user_id", "alice");
+        labels.insert("trace_id", "01234567");
+        labels.insert("span_id", "abcd");
+        check!(
+            kept[0].exemplars[0]
+                == DecodedExemplar {
+                    labels,
+                    timestamp_ms: 2,
+                    value: 0.9,
+                }
+        );
+
+        let dropped = decode_otlp(
+            &sum_carrying_an_exemplar(false),
+            TranslationStrategy::default(),
+        )
+        .unwrap();
+
+        assert!(dropped.len() == 1);
+        check!(dropped[0].exemplars.is_empty());
     }
 
     #[test]
