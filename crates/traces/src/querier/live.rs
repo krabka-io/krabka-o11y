@@ -538,6 +538,120 @@ impl LiveTier {
 #[cfg(test)]
 mod tests {
 
+    /// `trace_spans_from_otlp` folds an OTLP payload into one trace, picking
+    /// the root service and root span names as it goes. Both choices are
+    /// first-wins, and the guards that make them first-wins are what survived.
+    ///
+    /// The root-name guard is `name is empty AND this span has no parent`.
+    /// Loosening it to `OR` is invisible on an ordinary trace: any span that
+    /// satisfies one half is followed by one satisfying both, which overwrites
+    /// the difference away. The two shapes below are the ones where it shows.
+    #[test]
+    fn an_otlp_trace_takes_its_root_names_from_the_first_span_that_qualifies() {
+        use opentelemetry_proto::tonic::{
+            common::v1::KeyValue as OtlpKv,
+            resource::v1::Resource,
+            trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan},
+        };
+
+        let attr = |key: &str, value: &str| OtlpKv {
+            key: key.to_string(),
+            value: Some(AnyValue {
+                value: Some(OtlpValue::StringValue(value.to_string())),
+            }),
+            ..OtlpKv::default()
+        };
+        let span = |name: &str, id: u8, parent: Option<u8>| OtlpSpan {
+            trace_id: vec![7; 16],
+            span_id: vec![id; 8],
+            parent_span_id: parent.map(|p| vec![p; 8]).unwrap_or_default(),
+            name: name.to_string(),
+            start_time_unix_nano: 1_000,
+            end_time_unix_nano: 1_200,
+            ..OtlpSpan::default()
+        };
+        let resource = |spans: Vec<OtlpSpan>, attrs: Vec<OtlpKv>| ResourceSpans {
+            resource: Some(Resource {
+                attributes: attrs,
+                ..Resource::default()
+            }),
+            scope_spans: vec![ScopeSpans {
+                spans,
+                ..ScopeSpans::default()
+            }],
+            ..ResourceSpans::default()
+        };
+        let payload = |spans: Vec<OtlpSpan>, attrs: Vec<OtlpKv>| TracesData {
+            resource_spans: vec![resource(spans, attrs)],
+        };
+
+        // The service name is read from the attribute of that name, not from
+        // whichever attribute happens to come first.
+        let trace = super::trace_spans_from_otlp(
+            &[7; 16],
+            payload(
+                vec![span("root-op", 1, None)],
+                vec![attr("cloud.region", "us-east-1"), attr("service.name", "svc")],
+            ),
+        )
+        .expect("the payload converts");
+        check!(trace.root_service_name == "svc");
+        check!(trace.root_trace_name == "root-op");
+
+        // Two roots: the first wins. Loosening the guard to `OR` lets the
+        // second overwrite it, since its name is non-empty but it is a root.
+        let trace = super::trace_spans_from_otlp(
+            &[7; 16],
+            payload(
+                vec![span("first-root", 1, None), span("second-root", 2, None)],
+                vec![attr("service.name", "svc")],
+            ),
+        )
+        .expect("the payload converts");
+        check!(trace.root_trace_name == "first-root", "the first root wins");
+
+        // No root span at all: the guard never fires, and a fallback names the
+        // trace after its first span rather than leaving it blank.
+        let trace = super::trace_spans_from_otlp(
+            &[7; 16],
+            payload(
+                vec![span("child-op", 2, Some(1)), span("other-child", 3, Some(1))],
+                vec![attr("service.name", "svc")],
+            ),
+        )
+        .expect("the payload converts");
+        check!(
+            trace.root_trace_name == "child-op",
+            "the fallback names a rootless trace after its first span"
+        );
+        check!(trace.spans.len() == 2, "and its spans are still carried");
+
+        // Two resource batches naming different services: the first wins.
+        // With only one batch the first-wins guard is trivially true, so
+        // dropping it changes nothing -- this is the shape that shows it.
+        let trace = super::trace_spans_from_otlp(
+            &[7; 16],
+            TracesData {
+                resource_spans: vec![
+                    resource(
+                        vec![span("root-op", 1, None)],
+                        vec![attr("service.name", "first-svc")],
+                    ),
+                    resource(
+                        vec![span("later-op", 2, Some(1))],
+                        vec![attr("service.name", "second-svc")],
+                    ),
+                ],
+            },
+        )
+        .expect("the payload converts");
+        check!(
+            trace.root_service_name == "first-svc",
+            "the first resource batch names the trace"
+        );
+        check!(trace.spans.len() == 2, "and both batches contribute spans");
+    }
+
     /// `tag_scope_name` names a scope for the wire. The six names are
     /// asserted to be pairwise distinct, so an arm returning a neighbour's
     /// name cannot pass for its own.
