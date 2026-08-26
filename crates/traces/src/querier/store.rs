@@ -4621,6 +4621,111 @@ mod tests {
         );
     }
 
+    /// `cold_batches` consults a job's block before scanning it, and refuses
+    /// a window it cannot serve. Its three tests survived because no case
+    /// made either half of the overlap check fail on its own, and because
+    /// every window used was an ordinary forward one.
+    ///
+    /// The block spans two spans rather than one, so `min_ts` and `max_ts`
+    /// differ. With a single span they are equal, and an inverted window
+    /// cannot then also overlap the block -- which is the shape that
+    /// separates the early return from the overlap test doing the same job.
+    #[tokio::test]
+    async fn cold_batches_scans_only_a_job_whose_block_overlaps_the_window() {
+        let object_store = Arc::new(InMemory::new());
+        let blocks = Arc::new(BlockStore::new(
+            object_store.clone(),
+            Url::parse("memory:///").expect("a valid url"),
+        ));
+        let writer = BlockWriter::new(object_store);
+
+        let mut early = span_with_nested_refs();
+        early.start_ns = 1_000;
+        let mut late = span_with_nested_refs();
+        late.span_id = [3; 8];
+        late.start_ns = 5_000;
+        let batch = span_batch(&[early.clone(), late]).expect("the spans form a batch");
+        let meta = writer
+            .write_block_with_decl(
+                "tenant",
+                "blocks/cold.parquet",
+                span_block_schema(),
+                &[batch],
+                &span_block_decl(),
+                SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+            )
+            .await
+            .expect("the block writes");
+
+        let mut index = TraceIndex::new();
+        let mut bloom = ShardedTraceBloom::with_tempo_defaults(1);
+        bloom.insert(&early.trace_id);
+        index.add_trace_block(
+            "tenant",
+            TraceBlockStats {
+                object_key: meta.object_key.clone(),
+                min_ts: meta.min_ts,
+                max_ts: meta.max_ts,
+                bloom,
+                tag_names: BTreeSet::new(),
+                tag_values: BTreeMap::new(),
+            },
+        );
+        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let (min, max) = (meta.min_ts, meta.max_ts);
+        check!(min < max, "the block must span a range for these cases to differ");
+
+        let scan = |start: i64, end: i64, object_key: String| {
+            let store = &store;
+            async move {
+                let job = ScanJob {
+                    object_key,
+                    row_group_start: 0,
+                    row_group_end: 1,
+                };
+                store
+                    .cold_batches("tenant", start, end, Some(&job))
+                    .await
+                    .expect("the scan runs")
+                    .iter()
+                    .map(RecordBatch::num_rows)
+                    .sum::<usize>()
+            }
+        };
+        let key = meta.object_key.clone();
+
+        // The job's own block over its own range: rows come back.
+        check!(scan(min, max, key.clone()).await > 0);
+
+        // A zero-width window inside the block is legal and still scans. This
+        // is the only input separating `end < start` from `end <= start`.
+        check!(
+            scan(max, max, key.clone()).await > 0,
+            "an empty window is not an inverted one"
+        );
+
+        // An inverted window that would otherwise overlap the block. The
+        // early return must catch it, and it is the overlap that makes this
+        // case distinguish `<` from `==` rather than reaching the same
+        // answer by a different route.
+        check!(scan(max, min, key.clone()).await == 0, "end before start");
+
+        // Windows that miss the block on one side each. Each fails exactly
+        // one half of the overlap test, so loosening either `&&` shows.
+        check!(
+            scan(min - 100, min - 1, key.clone()).await == 0,
+            "the window ends before the block starts"
+        );
+        check!(
+            scan(max + 1, max + 100, key.clone()).await == 0,
+            "the window starts after the block ends"
+        );
+
+        // A job naming a block the index does not hold scans nothing, even
+        // though the window overlaps a block that IS held.
+        check!(scan(min, max, "blocks/absent.parquet".to_string()).await == 0);
+    }
+
     fn span_with_nested_refs() -> Span {
         Span {
             trace_id: [1; 16],
