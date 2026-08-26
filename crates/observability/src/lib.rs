@@ -21479,6 +21479,60 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// `scalar_vector_expression_result` evaluates the scalar-and-vector
+    /// sub-language: arithmetic over numbers, and `vector(...)` producing a
+    /// series. Two things about it are easy to get wrong and are pinned here.
+    ///
+    /// First, whitespace is stripped BEFORE parsing rather than skipped during
+    /// it, so "1 + 1" and "1+1" are the same expression -- and so, less
+    /// happily, are "1 1" and "11". Second, the parser
+    /// must be FINISHED: "1+1x" is refused rather than evaluated as "1+1" with
+    /// the tail ignored, which would silently accept a typo as a valid query.
+    #[test]
+    fn a_scalar_vector_expression_must_consume_its_whole_query() {
+        use super::ScalarVectorExpressionResult;
+
+        let result = super::scalar_vector_expression_result;
+        let scalar = |query: &str| match result(query) {
+            Some(ScalarVectorExpressionResult::Scalar { sample }) => Some(sample),
+            _ => None,
+        };
+
+        // Plain arithmetic, with and without spaces.
+        check!(scalar("1").as_deref() == Some("1"));
+        check!(scalar("1+1").as_deref() == Some("2"));
+        check!(scalar("1 + 1").as_deref() == Some("2"), "whitespace is stripped first");
+        check!(scalar("  2 * 3  ").as_deref() == Some("6"));
+        check!(scalar("(1+2)*3").as_deref() == Some("9"), "parentheses group");
+
+        // A vector literal is the other result shape.
+        check!(matches!(
+            result("vector(1)"),
+            Some(ScalarVectorExpressionResult::Vector { .. })
+        ));
+        check!(matches!(
+            result("vector( 1 )"),
+            Some(ScalarVectorExpressionResult::Vector { .. }),
+            ), "whitespace inside the call too");
+
+        // Trailing junk is refused rather than ignored. This is the case that
+        // the `is_finished` check exists for: without it "1+1x" evaluates to 2
+        // and a typo becomes a valid query.
+        check!(result("1+1x").is_none());
+        check!(result("vector(1)x").is_none());
+        // But "1 1" is not junk -- stripping whitespace FIRST makes it the
+        // single number eleven. That follows from the strip being a rewrite of
+        // the input rather than a skip during parsing, and it is pinned
+        // because it is surprising, not because it is desirable.
+        check!(scalar("1 1").as_deref() == Some("11"));
+
+        // Not this sub-language at all.
+        check!(result("up").is_none());
+        check!(result("").is_none());
+        check!(result("+").is_none());
+        check!(result("(1").is_none(), "an unclosed group is not finished");
+    }
+
     /// `format_loki_query_length` always writes all three units, including the
     /// zero ones -- "0h5m0s" rather than "5m". That is the opposite of
     /// `format_loki_duration_ns`, which skips empty units, and the two are
