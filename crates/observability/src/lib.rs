@@ -21479,6 +21479,127 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// The two error classifiers decide whether a compaction failure came from
+    /// the OBJECT STORE, which is the retryable kind -- a transient 503 should
+    /// be retried where a malformed block never will be. Misclassifying either
+    /// way is bad in its own direction: retrying a permanent failure spins,
+    /// and giving up on a transient one loses data.
+    #[test]
+    fn only_an_object_store_failure_is_classified_as_retryable() {
+        use crabka_blockstore::LogBlockStoreError as BlockStoreError;
+
+        let is_object_store = super::compaction_error_is_object_store;
+        let object_store_error = || {
+            BlockStoreError::ObjectStore(object_store::Error::NotFound {
+                path: "block".to_string(),
+                source: "gone".into(),
+            })
+        };
+
+        // The one that is.
+        check!(super::block_store_error_is_object_store(&object_store_error()));
+        check!(is_object_store(&super::CompactionError::BlockStore(
+            object_store_error()
+        )));
+
+        // Every other block-store failure is not, including an I/O error,
+        // which also arrives while talking to storage but is not the object
+        // store reporting it.
+        let others = || {
+            vec![
+                BlockStoreError::EmptyBlockScan,
+                BlockStoreError::InvalidTimeRange {
+                    start_ns: 10,
+                    end_ns: 1,
+                },
+                BlockStoreError::InvalidManifestVersion {
+                    actual: 1,
+                    expected: 2,
+                },
+                BlockStoreError::Io(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            ]
+        };
+        for error in others() {
+            check!(!super::block_store_error_is_object_store(&error), "{error}");
+        }
+        for error in others() {
+            check!(!is_object_store(&super::CompactionError::BlockStore(error)));
+        }
+
+        // And every compaction failure that is not a block-store one at all.
+        check!(!is_object_store(&super::CompactionError::EmptyWalBatch));
+        check!(!is_object_store(&super::CompactionError::AllRowsDeleted));
+        check!(!is_object_store(&super::CompactionError::MissingWalPosition {
+            timestamp_ns: 1
+        }));
+        check!(!is_object_store(&super::CompactionError::MixedTenant {
+            expected: "a".to_string(),
+            actual: "b".to_string(),
+        }));
+        check!(!is_object_store(&super::CompactionError::MixedPartition {
+            expected: 1,
+            actual: 2,
+        }));
+    }
+
+    /// `prometheus_alert_key_matches_rule` picks out the alerts belonging to
+    /// one rule that were NOT seen in this evaluation -- the ones that may need
+    /// retaining as resolved. All four conditions are and-ed, so each is broken
+    /// on its own against a key the other three accept.
+    ///
+    /// The last is the negated one: a key still active this round is excluded,
+    /// which is what stops a firing alert being retained twice.
+    #[test]
+    fn a_retained_alert_key_belongs_to_its_rule_and_was_not_just_seen() {
+        let key = |tenant: &str, alert: &str, query: &str| super::PrometheusAlertKey {
+            tenant: tenant.to_string(),
+            alert_name: alert.to_string(),
+            query: query.to_string(),
+            labels: Labels::default(),
+        };
+        let subject = key("tenant", "HighErrors", "up");
+        let active = BTreeSet::new();
+        let templates = Labels::default();
+        let params = |active_keys| super::PrometheusRetainedAlertParams {
+            tenant: "tenant",
+            alert_name: "HighErrors",
+            query: "up",
+            evaluation_time: 0,
+            hold_duration_ns: 0,
+            keep_firing_for_ns: 0,
+            active_keys,
+            annotation_templates: &templates,
+        };
+
+        check!(super::prometheus_alert_key_matches_rule(&subject, &params(&active)));
+
+        // Each of the three identity fields, wrong on its own.
+        check!(!super::prometheus_alert_key_matches_rule(
+            &key("other", "HighErrors", "up"),
+            &params(&active)
+        ));
+        check!(!super::prometheus_alert_key_matches_rule(
+            &key("tenant", "Other", "up"),
+            &params(&active)
+        ));
+        check!(!super::prometheus_alert_key_matches_rule(
+            &key("tenant", "HighErrors", "down"),
+            &params(&active)
+        ));
+
+        // And the negated one: a key seen this round is not retained.
+        let mut seen = BTreeSet::new();
+        seen.insert(subject.clone());
+        check!(
+            !super::prometheus_alert_key_matches_rule(&subject, &params(&seen)),
+            "an alert still firing is not also retained"
+        );
+        // A different key being active does not exclude this one.
+        let mut other_seen = BTreeSet::new();
+        other_seen.insert(key("tenant", "HighErrors", "other"));
+        check!(super::prometheus_alert_key_matches_rule(&subject, &params(&other_seen)));
+    }
+
     /// `matches_rule` filters the rules response by kind, by name, and by label
     /// selector. The three are independent AND conditions, each inactive when
     /// its filter is unset, so each is broken on its own against a rule the
