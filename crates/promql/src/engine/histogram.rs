@@ -1124,6 +1124,56 @@ mod tests {
         assert2::assert!((left.zero_count - 3.0).abs() < f64::EPSILON);
     }
 
+    /// Adding two histograms recompacts the merged buckets back into spans.
+    /// Three runs separated by gaps of different widths pin the offset
+    /// arithmetic: with a single run there is none, and with two the first
+    /// emitted span still has a zero `previous_span_end` to subtract, where
+    /// subtracting and adding it agree.
+    #[test]
+    fn add_recompacts_merged_buckets_into_separate_runs() {
+        let mut left = histogram(0, ResetHint::No);
+        left.positive_spans = vec![
+            BucketSpan {
+                offset: 1,
+                length: 2,
+            },
+            BucketSpan {
+                offset: 7,
+                length: 2,
+            },
+        ];
+        left.positive_counts = vec![1.0, 2.0, 3.0, 4.0];
+        let mut right = histogram(0, ResetHint::No);
+        right.positive_spans = vec![BucketSpan {
+            offset: 5,
+            length: 2,
+        }];
+        right.positive_counts = vec![5.0, 6.0];
+
+        add_compatible_native_histogram(&mut left, &right).unwrap();
+
+        // Left holds 1,2 and 10,11; right holds 5,6. The merge runs
+        // 1..=2, 5..=6, 10..=11 -- gaps of two and of three.
+        assert2::assert!(
+            left.positive_spans
+                == vec![
+                    BucketSpan {
+                        offset: 1,
+                        length: 2
+                    },
+                    BucketSpan {
+                        offset: 2,
+                        length: 2
+                    },
+                    BucketSpan {
+                        offset: 3,
+                        length: 2
+                    },
+                ]
+        );
+        assert2::assert!(left.positive_counts == vec![1.0, 2.0, 5.0, 6.0, 3.0, 4.0]);
+    }
+
     #[test]
     fn add_reconciles_custom_bucket_bounds() {
         let mut left = histogram(-53, ResetHint::No);
