@@ -705,6 +705,36 @@ mod tests {
             .collect()
     }
 
+    /// `collect_span_intrinsic_value` reports a tag's value with the type a
+    /// client reads it as. Each tag is checked against a neighbouring field as
+    /// well as its own, since the fields are same-typed and a swap produces a
+    /// well-formed pair.
+    #[test]
+    fn collecting_a_live_span_intrinsic_reports_value_and_type() {
+        let span = span_with_everything();
+        let collect = |tag: &str| {
+            let mut values = std::collections::BTreeSet::new();
+            super::collect_span_intrinsic_value(&span, tag, &mut values);
+            values.into_iter().collect::<Vec<_>>()
+        };
+        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+
+        // A duration carries its own type name rather than "int".
+        check!(collect("span:duration") == vec![pair("duration", "500")]);
+        check!(collect("span:kind") == vec![pair("int", "2")], "server is kind 2");
+        check!(collect("span:status") == vec![pair("int", "1")], "ok is status 1");
+        check!(collect("span:name") == vec![pair("string", "GET /users")]);
+        check!(collect("span:id") == vec![pair("string", "0202020202020202")]);
+
+        // A root span contributes no parent id at all, rather than an empty
+        // string or a zeroed one.
+        check!(collect("span:parentID") == vec![], "this span has no parent");
+
+        // An unknown tag collects nothing and is not an error.
+        check!(collect("span:nonsense") == vec![]);
+        check!(collect("") == vec![]);
+    }
+
     /// `tag_names` groups the tags it finds by scope, and each scope's entry
     /// appears only when that scope has something in it. Every scope is
     /// requested individually as well as all together, since a filter that

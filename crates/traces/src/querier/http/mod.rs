@@ -2517,6 +2517,26 @@ fn base64<const N: usize>(bytes: [u8; N]) -> String {
 #[cfg(test)]
 mod tests {
 
+    /// `span_kind_json` names the five kinds OTLP defines a string for.
+    /// Unspecified is deliberately not among them -- it maps to nothing rather
+    /// than to a name -- so zero is checked alongside the values either side
+    /// of the range.
+    #[test]
+    fn span_kind_json_names_five_kinds_and_refuses_the_rest() {
+        let name = super::span_kind_json;
+
+        check!(name(1) == Some("SPAN_KIND_INTERNAL"));
+        check!(name(2) == Some("SPAN_KIND_SERVER"));
+        check!(name(3) == Some("SPAN_KIND_CLIENT"));
+        check!(name(4) == Some("SPAN_KIND_PRODUCER"));
+        check!(name(5) == Some("SPAN_KIND_CONSUMER"));
+
+        check!(name(0) == None, "unspecified has no name here");
+        check!(name(6) == None, "one past the last kind");
+        check!(name(-1) == None, "nor does a negative kind");
+        check!(name(i32::MAX) == None);
+    }
+
     /// `otlp_span` copies a span field by field into the OTLP shape, which is
     /// where a pair of same-typed fields quietly changes places. Every value
     /// in the fixture is distinct, and the two id fields differ in length as
