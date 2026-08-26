@@ -345,6 +345,9 @@ fn classic_histogram_quantile(quantile: f64, buckets: &mut [ClassicBucket]) -> f
         return f64::NAN;
     }
     let rank = quantile * total;
+    // The fallback is a permanent mutation survivor because it is never
+    // taken: counts are made monotonic above, the last one is the total, and
+    // `rank` is at most that total, so the search always finds a bucket.
     let bucket_index = buckets
         .iter()
         .position(|bucket| bucket.count >= rank)
@@ -440,6 +443,10 @@ fn classic_histogram_fraction(lower: f64, upper: f64, buckets: &mut [ClassicBuck
         return f64::NAN;
     }
 
+    // `||` here is a permanent survivor against `&&`: normalization runs a
+    // maximum from zero over the counts, so the total is never negative, and
+    // at exactly zero every bucket is empty and the division below reaches NaN
+    // on its own.
     let total = buckets.last().map_or(0.0, |bucket| bucket.count);
     if total <= 0.0 || total.is_nan() {
         return f64::NAN;
