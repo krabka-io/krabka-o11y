@@ -1780,6 +1780,25 @@ mod tests {
         check!(super::validate(&too_many, &limits).is_err(), "eleven is over it");
     }
 
+    /// `keyed_producer_record` takes its topic from the caller, unlike the WAL
+    /// record beside it which fixes one. The partition is still left unset so
+    /// the partitioner keys on the record key.
+    #[test]
+    fn a_keyed_record_takes_the_topic_it_is_given() {
+        let record = super::keyed_producer_record(
+            "elections".to_string(),
+            Bytes::from_static(b"tenant-key"),
+            b"payload".to_vec(),
+        );
+
+        check!(record.topic == "elections", "the given topic, not the WAL one");
+        check!(record.topic != WAL_TOPIC);
+        check!(record.partition == None, "the partitioner must choose");
+        check!(record.key.as_deref() == Some(&b"tenant-key"[..]));
+        check!(record.value.as_deref() == Some(&b"payload"[..]), "not the key again");
+        check!(record.headers.is_empty(), "no trace context on this path");
+    }
+
     /// `wal_producer_record` shapes one WAL append. The partition is left
     /// unset deliberately: the producer's partitioner keys on the record key,
     /// which is what keeps a series on one partition and in order. Setting a

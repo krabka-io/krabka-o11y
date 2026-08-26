@@ -1258,6 +1258,71 @@ mod tests {
         resource::v1::Resource,
     };
 
+    /// `prometheus_unit_suffix` turns a UCUM unit into a metric-name suffix.
+    /// The dimensionless spellings produce no suffix at all, which is distinct
+    /// from producing an empty one, and a rate keeps its numerator's suffix
+    /// rather than the whole unit's.
+    #[test]
+    fn unit_suffixes_drop_the_dimensionless_and_keep_rate_numerators() {
+        let suffix = super::prometheus_unit_suffix;
+
+        check!(suffix("s") == Some("seconds".to_string()));
+        check!(suffix("By") == Some("bytes".to_string()));
+
+        // Dimensionless: no suffix, not an empty one. These reach None twice
+        // over -- the early return catches them, and the unit table has no
+        // entry for them either -- so the guard is a statement of intent
+        // rather than the thing producing the answer.
+        check!(suffix("") == None);
+        check!(suffix("1") == None, "one is dimensionless");
+        check!(suffix("  ") == None, "whitespace trims to empty");
+        check!(suffix("{requests}") == None, "an annotation alone is dimensionless");
+
+        // Surrounding whitespace and annotations are removed before matching.
+        check!(suffix(" s ") == Some("seconds".to_string()));
+        check!(suffix("s{cpu}") == Some("seconds".to_string()));
+
+        // A rate takes its numerator's suffix and appends the period.
+        check!(suffix("By/s") == Some("bytes_per_second".to_string()));
+        check!(suffix("s/s") == Some("seconds_per_second".to_string()));
+
+        // A rate whose numerator is not a known unit is not a rate.
+        check!(suffix("zz/s") == None);
+        // Nor is an unknown unit a unit.
+        check!(suffix("zz") == None);
+    }
+
+    /// `exemplar_belongs_to_bucket` places a value in a half-open bucket:
+    /// above the lower bound, at or below the upper. Both edges are checked
+    /// on the same bucket, since a bound that flipped inclusivity would move
+    /// the value only at the boundary itself.
+    #[test]
+    fn an_exemplar_belongs_to_the_bucket_that_upper_bounds_it() {
+        let point = HistogramDataPoint {
+            explicit_bounds: vec![10.0, 20.0],
+            ..Default::default()
+        };
+        let belongs = |value: f64, bucket: usize| {
+            super::exemplar_belongs_to_bucket(value, &point, bucket)
+        };
+
+        // The first bucket has no lower bound and is closed at ten.
+        check!(belongs(5.0, 0));
+        check!(belongs(10.0, 0), "the upper bound belongs to its own bucket");
+        check!(!belongs(10.1, 0));
+
+        // The middle bucket is open below and closed above.
+        check!(!belongs(10.0, 1), "the lower bound belongs to the bucket below");
+        check!(belongs(10.1, 1));
+        check!(belongs(20.0, 1));
+        check!(!belongs(20.1, 1));
+
+        // The last bucket has no upper bound.
+        check!(belongs(20.1, 2));
+        check!(belongs(1e9, 2));
+        check!(!belongs(20.0, 2), "twenty belongs to the bucket that closes at it");
+    }
+
     /// `strip_ucum_annotations` removes the `{...}` parts of a UCUM unit,
     /// which carry a human note rather than a dimension. The braces are the
     /// only delimiters, and the states they move between are what the cases
