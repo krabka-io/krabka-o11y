@@ -1304,6 +1304,41 @@ mod tests {
         check!(compact(&[(1, 0.0), (2, 0.0)]) == (Vec::new(), Vec::new()));
     }
 
+    /// `strip_ucum_annotations` drops the `{...}` annotations UCUM allows on a
+    /// unit, keeping everything else. The two braces are handled by different
+    /// arms and are deliberately not symmetric: an unmatched `{` swallows the
+    /// rest of the string, while an unmatched `}` is kept as an ordinary
+    /// character. Both are pinned, since a mutant collapsing either arm looks
+    /// reasonable against balanced input alone.
+    #[test]
+    fn stripping_ucum_annotations_keeps_everything_outside_the_braces() {
+        let strip = super::strip_ucum_annotations;
+
+        // Nothing to strip.
+        check!(strip("By") == "By");
+        check!(strip("") == "");
+
+        // A whole unit that is only an annotation leaves nothing.
+        check!(strip("{packets}") == "");
+
+        // Annotations are removed in place, before and after real text.
+        check!(strip("1{fraction}") == "1");
+        check!(strip("{spans}/s") == "/s");
+        check!(strip("m{tilt}/s") == "m/s");
+        check!(strip("{a}b{c}d") == "bd", "several annotations in one unit");
+
+        // Braces are not symmetric. An unmatched `{` opens an annotation that
+        // never closes, so the remainder is dropped ...
+        check!(strip("a{b") == "a");
+        // ... while an unmatched `}` was never in one, and is kept.
+        check!(strip("a}b") == "a}b");
+        check!(strip("}") == "}");
+
+        // A nested `{` inside an annotation stays inside it: the flag is a
+        // boolean, not a depth counter, so the first `}` closes it.
+        check!(strip("{a{b}c") == "c");
+    }
+
     /// `prometheus_unit_suffix` turns a UCUM unit into a metric-name suffix.
     /// The dimensionless spellings produce no suffix at all, which is distinct
     /// from producing an empty one, and a rate keeps its numerator's suffix
