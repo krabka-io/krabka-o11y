@@ -538,6 +538,159 @@ impl LiveTier {
 #[cfg(test)]
 mod tests {
 
+    /// The remaining remote reads -- span batches, tag names and tag values --
+    /// each collapse to an empty result, and each shares one failure path
+    /// through `get_json`. An empty result is what a caller sees when the
+    /// live tier genuinely holds nothing, so a body that always returns empty
+    /// is invisible unless something non-empty comes back; and a remote that
+    /// fails must raise rather than report emptiness, or a federated query
+    /// silently loses a shard.
+    ///
+    /// The tenant header is echoed into the response, so a request that drops
+    /// it is caught too: without that, every tenant reads alike.
+    #[tokio::test]
+    async fn the_remote_live_reads_return_what_the_remote_sent() {
+        use axum::{
+            Router,
+            body::Body,
+            extract::{Path, RawQuery},
+            http::{HeaderMap, StatusCode},
+            response::Response,
+            routing::get,
+        };
+
+        use crate::querier::live::LiveSource as _;
+
+        let schema = Arc::new(arrow::datatypes::Schema::new(vec![
+            arrow::datatypes::Field::new("n", arrow::datatypes::DataType::Int32, false),
+        ]));
+        let batches = vec![
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![Arc::new(arrow::array::Int32Array::from(vec![1, 2, 3]))],
+            )
+            .expect("the batch is well formed"),
+        ];
+        let stream = super::encode_span_batches(&batches).expect("the batches encode");
+
+        let json_ok = |body: String| {
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from(body))
+                .expect("the response builds")
+        };
+        let app = Router::new()
+            .route(
+                super::LIVE_SPAN_BATCHES_PATH,
+                get(move |headers: HeaderMap| {
+                    let stream = stream.clone();
+                    async move {
+                        // Refuse anything but the tenant under test, so a
+                        // request that sends a fixed tenant fails outright.
+                        if headers.get("x-scope-orgid").map(|value| value.as_bytes())
+                            != Some(b"t".as_slice())
+                        {
+                            return Response::builder()
+                                .status(StatusCode::FORBIDDEN)
+                                .body(Body::empty())
+                                .expect("the response builds");
+                        }
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .body(Body::from(stream))
+                            .expect("the response builds")
+                    }
+                }),
+            )
+            .route(
+                "/api/v2/search/tags",
+                get(move |headers: HeaderMap, RawQuery(query): RawQuery| async move {
+                    // Echo both the tenant and the requested scope, so a
+                    // request that drops either is distinguishable from one
+                    // that sends it.
+                    let tenant = headers
+                        .get("x-scope-orgid")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("none")
+                        .to_string();
+                    let scope = query
+                        .unwrap_or_default()
+                        .split('&')
+                        .find_map(|pair| pair.strip_prefix("scope=").map(str::to_string))
+                        .unwrap_or_else(|| "no-scope".to_string());
+                    json_ok(format!(
+                        r#"{{"scopes":[{{"name":"span","tags":["{tenant}","{scope}"]}}]}}"#
+                    ))
+                }),
+            )
+            .route(
+                "/api/v2/search/tag/{tag}/values",
+                get(move |Path(tag): Path<String>| async move {
+                    if tag == "boom" {
+                        // Valid JSON with a 500. If the status check is
+                        // dropped, this parses cleanly and the call wrongly
+                        // succeeds -- an empty body would have failed to
+                        // parse and hidden that.
+                        return Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(Body::from(
+                                r#"{"tagValues":[{"type":"string","value":"boom"}]}"#,
+                            ))
+                            .expect("the response builds");
+                    }
+                    json_ok(format!(
+                        r#"{{"tagValues":[{{"type":"string","value":"{tag}"}}]}}"#
+                    ))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let addr = listener.local_addr().expect("the port is bound");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("the server runs");
+        });
+
+        let source = RemoteLiveSource::new(
+            Url::parse(&format!("http://{addr}/")).expect("a valid url"),
+            Arc::new(arc_swap::ArcSwap::from_pointee(
+                crabka_blockstore::TraceIndex::new(),
+            )),
+        );
+
+        // Span batches come back as sent, not as an empty tier.
+        check!(
+            source.span_batches("t", 0, 10_000).await.expect("batches read") == batches,
+            "the remote's batches are returned, not an empty list"
+        );
+
+        // Tag names carry the scope, and the echoed tenant proves the header
+        // reached the remote.
+        let tags = source
+            .tag_names("t", Some(TagScope::Span), 0, 10_000)
+            .await
+            .expect("tags read");
+        check!(tags.len() == 1);
+        check!(tags[0].scope == TagScope::Span);
+        check!(
+            tags[0].tags == vec!["t".to_string(), "span".to_string()],
+            "the tenant header and the scope parameter both reached the remote"
+        );
+
+        // Tag values echo the tag asked for, so a request built with a fixed
+        // tag is caught alongside a body that returns nothing.
+        check!(
+            source.tag_values("t", "http.method", 0, 10_000).await.expect("values read")
+                == vec![TypedValue {
+                    type_: "string".to_string(),
+                    value: "http.method".to_string(),
+                }]
+        );
+
+        // A failing remote raises rather than reporting an empty result.
+        check!(source.tag_values("t", "boom", 0, 10_000).await.is_err());
+    }
+
     /// `trace_spans` over the federation endpoint has three outcomes that a
     /// caller must be able to tell apart: the trace is here, the trace is
     /// genuinely absent, or the remote failed. A body collapsed to `Ok(None)`
