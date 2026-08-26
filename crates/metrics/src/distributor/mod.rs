@@ -1649,6 +1649,95 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
 
+    /// A push failure reaches an HTTP client as a status code and a gRPC
+    /// client as a code, and the two mappings are separate pieces of code
+    /// over the same errors. Both are pinned per variant, because a variant
+    /// that borrows its neighbour's status still produces a valid response
+    /// and only the code itself gives it away.
+    #[test]
+    fn a_push_failure_reaches_http_and_grpc_clients_as_its_own_status() {
+        use axum::response::IntoResponse as _;
+
+        use crate::limits::LimitError;
+
+        let rate_limited = || LimitError::IngestionRateExceeded {
+            rate: 1.0,
+            observed: 2.0,
+        };
+        let bad_request = || LimitError::MaxSeriesPerUser {
+            limit: 1,
+            observed: 2,
+        };
+        let unprocessable = || LimitError::SamplesPerQueryExceeded {
+            limit: 1,
+            observed: 2,
+        };
+
+        // The three-way gRPC mapping. 429 and 500 each have their own code;
+        // everything else is an invalid argument, including codes that are
+        // neither an obvious client nor server fault.
+        let grpc = |http| super::status_from_http_status(http, "boom".to_string()).code();
+        check!(grpc(429) == tonic::Code::ResourceExhausted);
+        check!(grpc(500) == tonic::Code::Internal);
+        check!(grpc(400) == tonic::Code::InvalidArgument);
+        check!(grpc(422) == tonic::Code::InvalidArgument);
+        check!(grpc(200) == tonic::Code::InvalidArgument, "even a success code");
+        check!(
+            super::status_from_http_status(429, "boom".to_string()).message() == "boom",
+            "the message is carried through, not replaced"
+        );
+
+        // Per-variant gRPC codes.
+        let code = |error: &super::PushError| super::status_from_push_error(error).code();
+        check!(code(&super::PushError::MissingTenant) == tonic::Code::InvalidArgument);
+        check!(code(&super::PushError::InvalidTenant("x".to_string())) == tonic::Code::InvalidArgument);
+        check!(
+            code(&super::PushError::TooOldSample {
+                timestamp_ms: 1,
+                oldest_allowed_ms: 2,
+            }) == tonic::Code::InvalidArgument
+        );
+        check!(code(&super::PushError::Limit(rate_limited())) == tonic::Code::ResourceExhausted);
+        check!(code(&super::PushError::Limit(bad_request())) == tonic::Code::InvalidArgument);
+        check!(code(&super::PushError::Limit(unprocessable())) == tonic::Code::InvalidArgument);
+        check!(
+            code(&super::PushError::Produce(super::ProduceError::Append("io".to_string())))
+                == tonic::Code::Internal,
+            "a produce failure is ours, not the client's"
+        );
+
+        // Per-variant HTTP statuses, which are a separate mapping over the
+        // same errors and disagree with the gRPC one on the 422 case.
+        let http = |error: super::PushError| error.into_response().status();
+        check!(http(super::PushError::MissingTenant) == axum::http::StatusCode::BAD_REQUEST);
+        check!(
+            http(super::PushError::InvalidTenant("x".to_string()))
+                == axum::http::StatusCode::BAD_REQUEST
+        );
+        check!(
+            http(super::PushError::TooOldSample {
+                timestamp_ms: 1,
+                oldest_allowed_ms: 2,
+            }) == axum::http::StatusCode::BAD_REQUEST
+        );
+        check!(
+            http(super::PushError::Limit(rate_limited()))
+                == axum::http::StatusCode::TOO_MANY_REQUESTS
+        );
+        check!(
+            http(super::PushError::Limit(bad_request())) == axum::http::StatusCode::BAD_REQUEST
+        );
+        check!(
+            http(super::PushError::Limit(unprocessable()))
+                == axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "422 survives the HTTP path though gRPC folds it into invalid-argument"
+        );
+        check!(
+            http(super::PushError::Produce(super::ProduceError::Append("io".to_string())))
+                == axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
     /// A negative out-of-order window disables the check; a zero window does
     /// not. Zero means no out-of-order tolerance at all, so a sample older
     /// than the newest already seen is rejected -- which is the case that
