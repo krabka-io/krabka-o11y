@@ -898,6 +898,42 @@ mod tests {
         AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode, batch::span_batch,
     };
 
+    /// `MetadataValueArray::string_value` renders one cell of an Arrow column
+    /// as text, and each of the four implementations formats a different type.
+    /// The values are chosen so that no two render alike -- an implementation
+    /// reaching the wrong column would otherwise produce something plausible.
+    #[test]
+    fn every_metadata_column_renders_its_own_cell_as_text() {
+        let strings = StringArray::from(vec!["alpha", "beta"]);
+        check!(strings.string_value(0) == "alpha");
+        check!(strings.string_value(1) == "beta", "the index selects the cell");
+
+        let ints = Int64Array::from(vec![42_i64, -7]);
+        check!(ints.string_value(0) == "42");
+        check!(ints.string_value(1) == "-7", "a negative keeps its sign");
+
+        let floats = Float64Array::from(vec![1.5_f64, 0.0]);
+        check!(floats.string_value(0) == "1.5", "a fraction is not truncated");
+        check!(floats.string_value(1) == "0", "zero renders without a fraction");
+
+        let bools = BooleanArray::from(vec![true, false]);
+        check!(bools.string_value(0) == "true");
+        check!(bools.string_value(1) == "false", "and false is not empty");
+
+        // No two of the four render the same text for their first cell, so an
+        // implementation borrowed from a neighbouring type is visible.
+        let rendered = [
+            strings.string_value(0),
+            ints.string_value(0),
+            floats.string_value(0),
+            bools.string_value(0),
+        ];
+        let mut unique = rendered.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        check!(unique.len() == 4, "the four renderings must differ: {rendered:?}");
+    }
+
     fn span() -> Span {
         Span {
             trace_id: [1; 16],
