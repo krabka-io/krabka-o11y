@@ -296,6 +296,10 @@ fn anchored_float_range_value(
             {
                 selected.push((*timestamps.get(index)?, values.get(index).copied()?));
             }
+            // `>` is a permanent survivor against `>=`: a sample sitting
+            // exactly on `range_start_ms` is already pushed just above, and
+            // this arm only serves `changes` and `resets`, which see no change
+            // and no reset between two copies of the same value.
             selected.extend(timestamps.iter().zip(values.iter()).filter_map(
                 |(timestamp, value)| (*timestamp > range_start_ms).then_some((*timestamp, *value)),
             ));
@@ -303,6 +307,9 @@ fn anchored_float_range_value(
             .iter()
             .position(|timestamp| *timestamp == range_start_ms)
         {
+            // `<` is a permanent survivor against `<=`: `start_index` is the
+            // first timestamp equal to `range_start_ms`, so everything before
+            // it is strictly below and the two spellings pick the same sample.
             if let Some(previous_index) = timestamps[..start_index]
                 .iter()
                 .rposition(|timestamp| *timestamp < range_start_ms)
@@ -385,6 +392,9 @@ fn smoothed_float_range_value(
     if !matches!(kind, RangeFn::Delta | RangeFn::Increase | RangeFn::Rate) {
         return None;
     }
+    // Permanent survivor against `&&`: the caller builds both slices from one
+    // series, so the lengths always agree, and an empty window returns `None`
+    // from `boundary_value` below anyway.
     if timestamps.len() != values.len() || timestamps.is_empty() {
         return None;
     }
@@ -397,6 +407,10 @@ fn smoothed_float_range_value(
     let start = boundary_value(timestamps, &smoothed_values, range_start_ms)?;
     let end = boundary_value(timestamps, &smoothed_values, range_end_ms)?;
     let mut result = end - start;
+    // `< 0.0` is a permanent survivor against `== 0.0` and `<= 0.0`:
+    // `counter_corrected_values` returns a non-decreasing series, and
+    // interpolating or extrapolating one never puts the start above the end,
+    // so `result` is never negative and at zero the clamp is a no-op.
     if matches!(kind, RangeFn::Increase | RangeFn::Rate) && result < 0.0 {
         result = 0.0;
     }

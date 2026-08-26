@@ -4416,6 +4416,20 @@ async fn anchored_increase_does_not_treat_a_flat_counter_step_as_a_reset() {
     };
     assert2::assert!(samples.len() == 1);
     assert2::assert!(approx_eq(float_value(&samples[0].value), 2.0));
+
+    // The same fold as `rate`, divided by the range in seconds. `increase`
+    // never reaches that division.
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "rate(anchored(ctr[5m]))", 120_000)
+        .await
+        .expect("an anchored rate")
+    else {
+        panic!("expected a vector");
+    };
+    assert2::assert!(approx_eq(
+        float_value(&samples[0].value),
+        0.006_666_666_666_666_667
+    ));
 }
 
 /// Past the last sample, `smoothed` extrapolates only while the gap stays
@@ -4446,6 +4460,19 @@ async fn smoothed_delta_extrapolates_only_within_the_sample_interval_slack() {
         assert2::assert!(samples.len() == 1, "{case}");
         assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{case}");
     }
+
+    // `delta` stops at the difference; only `rate` divides by the range.
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "rate(smoothed(m[3m]))", 123_000)
+        .await
+        .expect("a smoothed rate")
+    else {
+        panic!("expected a vector");
+    };
+    assert2::assert!(approx_eq(
+        float_value(&samples[0].value),
+        0.683_333_333_333_333_3
+    ));
 }
 
 /// Fill modifiers are meaningless for set operators and are refused. Each
