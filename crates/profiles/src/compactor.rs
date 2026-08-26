@@ -552,13 +552,19 @@ mod tests {
             super::fnv1a(&keys.iter().map(|k| (*k).to_string()).collect::<Vec<_>>())
         };
 
-        check!(hash(&[]) == 0xcbf2_9ce4_8422_2325, "no keys is the offset basis");
+        check!(
+            hash(&[]) == 0xcbf2_9ce4_8422_2325,
+            "no keys is the offset basis"
+        );
         check!(hash(&["a"]) == 0x089b_c907_b544_c769);
         check!(hash(&["ab"]) == 0xe720_2e19_0542_452f);
         check!(hash(&["a", "b"]) == 0xd2b3_7181_9297_f98a);
 
         // The three relationships the separator exists to guarantee.
-        check!(hash(&["ab"]) != hash(&["a", "b"]), "a split is not the same as a join");
+        check!(
+            hash(&["ab"]) != hash(&["a", "b"]),
+            "a split is not the same as a join"
+        );
         check!(hash(&["a", "b"]) != hash(&["b", "a"]), "order matters");
         check!(hash(&["a"]) != hash(&[]), "a key is not nothing");
     }
@@ -605,7 +611,6 @@ mod tests {
                 != super::compacted_key("tenant", &blocks, &inputs)
         );
     }
-
 
     use super::*;
     use crate::{
@@ -840,6 +845,39 @@ mod tests {
         );
         let dests: BTreeSet<u64> = map.values().copied().collect();
         assert!(dests.len() == 3);
+    }
+
+    /// A partition the map does not mention keeps its own id. Falling back to
+    /// the default instead would collapse every unmapped partition onto zero,
+    /// aliasing them together -- the exact failure
+    /// [`recompacting_an_already_compacted_block_does_not_alias_partitions`]
+    /// exists to prevent, but which no test reached through this function.
+    #[test]
+    fn remap_partitions_keeps_a_partition_the_map_does_not_mention() {
+        use arrow::datatypes::{DataType, Field, Schema};
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            PCOL_STACKTRACE_PARTITION,
+            DataType::UInt64,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(UInt64Array::from(vec![7_u64, 9, 7])) as ArrayRef],
+        )
+        .unwrap();
+
+        let remapped =
+            remap_partitions(&batch, &BTreeMap::from([(7_u64, 42_u64)])).expect("remaps");
+
+        let column = remapped.column(0).as_primitive::<UInt64Type>();
+        let values = (0..remapped.num_rows())
+            .map(|row| column.value(row))
+            .collect::<Vec<_>>();
+        assert!(
+            values == vec![42_u64, 9, 42],
+            "9 is unmapped and keeps its id"
+        );
     }
 
     #[test]
