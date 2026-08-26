@@ -20965,6 +20965,73 @@ mod tests {
 
     use super::*;
 
+    /// `hex_value` maps a hex digit to its value across three ranges. Every
+    /// range boundary is checked together with the character immediately
+    /// outside it, since a range widened or narrowed by one is invisible from
+    /// the middle -- and the two letter ranges must not be confused, because
+    /// their offsets differ by the distance between the cases.
+    #[test]
+    fn hex_digits_map_across_all_three_ranges_and_nothing_else() {
+        let value = super::hex_value;
+
+        check!(value(b'0') == Some(0), "the low edge of the digits");
+        check!(value(b'9') == Some(9), "and the high edge");
+        check!(value(b'5') == Some(5));
+        check!(value(b'a') == Some(10), "lower-case a continues from nine");
+        check!(value(b'f') == Some(15));
+        check!(value(b'A') == Some(10), "upper-case is the same value");
+        check!(value(b'F') == Some(15));
+
+        // One character outside each range, on both sides.
+        check!(value(b'/') == None, "just below '0'");
+        check!(value(b':') == None, "just above '9'");
+        check!(value(b'`') == None, "just below 'a'");
+        check!(value(b'g') == None, "just above 'f'");
+        check!(value(b'@') == None, "just below 'A'");
+        check!(value(b'G') == None, "just above 'F'");
+
+        // The gap between the two letter ranges is not a range.
+        check!(value(b'Z') == None);
+        check!(value(b' ') == None);
+    }
+
+    /// `parse_decimal_seconds_timestamp` reads seconds with a fractional part
+    /// into whole nanoseconds. The fraction is positional -- the first digit
+    /// is tenths, not units -- so a scale applied the wrong way round is the
+    /// mistake worth catching, and it only shows on a fraction shorter than
+    /// nine digits.
+    #[test]
+    fn decimal_second_timestamps_scale_their_fraction_by_position() {
+        let parse = super::parse_decimal_seconds_timestamp;
+
+        check!(parse("0.0") == Some(0));
+        check!(parse("1.0") == Some(1_000_000_000));
+        check!(parse("1.5") == Some(1_500_000_000), "one digit is tenths, not units");
+        check!(parse("0.5") == Some(500_000_000));
+        check!(parse("0.05") == Some(50_000_000), "the second digit is hundredths");
+        check!(parse("0.000000001") == Some(1), "nine digits reach nanoseconds");
+
+        // Past nine digits the rest is dropped rather than overflowing the
+        // scale into zero or below.
+        check!(parse("0.0000000019") == Some(1), "the tenth digit is ignored");
+
+        // Signs, on both sides of zero.
+        check!(parse("-1.5") == Some(-1_500_000_000));
+        check!(parse("+1.5") == Some(1_500_000_000), "an explicit plus is allowed");
+        check!(parse("-0.0") == Some(0));
+
+        // A missing part on either side of the point is still a number.
+        check!(parse("1.") == Some(1_000_000_000), "no fraction");
+        check!(parse(".5") == Some(500_000_000), "no whole part");
+
+        // What is not a decimal at all.
+        check!(parse("1") == None, "a point is required");
+        check!(parse(".") == None, "and digits on one side of it");
+        check!(parse("") == None);
+        check!(parse("a.b") == None);
+        check!(parse("1.5x") == None, "trailing text is not a fraction");
+    }
+
     /// `scalar_literal_len` reports how many bytes at the front of `input`
     /// form a number, so the caller can resume after it. It is a scanner, not
     /// a parser: it must stop at the first byte that cannot extend the
