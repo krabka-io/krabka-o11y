@@ -1302,6 +1302,48 @@ mod tests {
         check!(series[0].samples[0].value == 1.0);
     }
 
+    /// `exponential_histogram_to_native` maps an OTLP scale onto a native
+    /// histogram schema. The two ends behave differently and that asymmetry is
+    /// the point: a scale below the minimum is REFUSED, because there is no
+    /// schema to represent it, while one above the maximum is CLAMPED, because
+    /// a finer scale can always be downscaled into a coarser schema.
+    ///
+    /// Both are strict boundaries, so each is checked exactly at its edge and
+    /// one step outside it.
+    #[test]
+    fn an_exponential_histogram_scale_is_clamped_above_and_refused_below() {
+        let at_scale = |scale| ExponentialHistogramDataPoint {
+            scale,
+            count: 0,
+            sum: None,
+            zero_count: 0,
+            positive: None,
+            negative: None,
+            ..ExponentialHistogramDataPoint::default()
+        };
+        let schema = |scale| {
+            super::exponential_histogram_to_native(&at_scale(scale))
+                .ok()
+                .map(|native| native.schema)
+        };
+
+        // -4 is the lowest schema there is, so it converts rather than being
+        // refused as out of range.
+        check!(schema(-4) == Some(-4), "exactly at the minimum");
+        check!(schema(-5).is_none(), "one below it has no schema");
+        check!(schema(-100).is_none());
+
+        // Between the ends the scale passes through untouched.
+        check!(schema(0) == Some(0));
+        check!(schema(3) == Some(3));
+
+        // 8 is the highest schema, and anything finer is clamped to it rather
+        // than refused -- the buckets are merged down instead.
+        check!(schema(8) == Some(8), "exactly at the maximum");
+        check!(schema(9) == Some(8), "one above it clamps, not errors");
+        check!(schema(127) == Some(8));
+    }
+
     /// `resource_metrics_timestamp_ms` reports when a batch was observed,
     /// taking the first data point it can find and converting nanos to
     /// millis. It walks five data kinds, so the timestamp is read from each in
