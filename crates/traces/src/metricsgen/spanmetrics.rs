@@ -473,6 +473,43 @@ mod tests {
         }
     }
 
+    /// An exemplar carries the span's start time in milliseconds and its
+    /// duration in seconds. The shared fixture starts every span at zero,
+    /// where dividing, multiplying and taking a remainder all give zero, so
+    /// the timestamp conversion was untested however many exemplar tests ran.
+    /// Both numbers are given values that tell the three operations apart.
+    #[test]
+    fn an_exemplar_converts_start_to_millis_and_duration_to_seconds() {
+        let cfg = MetricsGenConfig {
+            max_exemplars_per_series: 2,
+            ..MetricsGenConfig::default()
+        };
+        let mut reg = SpanMetricsRegistry::new(&cfg);
+        let mut record = span(
+            "api",
+            "GET /x",
+            SpanKind::Server,
+            StatusCode::Ok,
+            2_500_000_000,
+            1,
+        );
+        // 1.5s in, so the timestamp is 1500ms: multiplying instead gives
+        // 1.5e15 and a remainder gives 0, and neither passes for 1500.
+        record.start_ns = 1_500_000_000;
+        reg.record_span(&record);
+
+        let out = reg.drain(1_000);
+        let lat = find(&out, "traces_spanmetrics_latency", "GET /x");
+        assert2::check!(lat.exemplars.len() == 1);
+        let exemplar = &lat.exemplars[0];
+        assert2::check!(exemplar.timestamp_ms == 1_500, "milliseconds, not nanos");
+        // 2.5s likewise: a remainder gives 5e8 and a product gives 2.5e18.
+        assert2::check!(
+            (exemplar.value - 2.5).abs() < 1e-9,
+            "seconds, not nanos or a remainder"
+        );
+    }
+
     #[test]
     fn exemplar_carries_trace_id_when_enabled() {
         let cfg = MetricsGenConfig {

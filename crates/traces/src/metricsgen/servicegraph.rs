@@ -942,6 +942,52 @@ mod tests {
             })
     }
 
+    /// An edge completes only once BOTH sides have been seen. Every other
+    /// test pairs a client with a server, where the edge is two-sided by the
+    /// time the update path runs and `&&` and `||` agree; and the creating
+    /// span never reaches that test at all. A second client span on the same
+    /// edge is the case that separates them.
+    #[test]
+    fn an_edge_needs_both_sides_before_it_completes() {
+        let mut store = EdgeStore::new(&MetricsGenConfig::default());
+        let client = span(
+            "frontend",
+            [0xA; 8],
+            [0; 8],
+            SpanKind::Client,
+            StatusCode::Ok,
+            10_000_000,
+        );
+        // Same edge, same side: a retry of the same call.
+        let retry = span(
+            "frontend",
+            [0xA; 8],
+            [0; 8],
+            SpanKind::Client,
+            StatusCode::Ok,
+            12_000_000,
+        );
+        let server = span(
+            "backend",
+            [0xB; 8],
+            [0xA; 8],
+            SpanKind::Server,
+            StatusCode::Ok,
+            8_000_000,
+        );
+
+        // The first span creates the edge. The second takes the update path
+        // with the server side still missing, and must not complete it.
+        assert2::check!(store.record_span(&client, 0) == RecordOutcome::Recorded);
+        assert2::check!(
+            store.record_span(&retry, 1) == RecordOutcome::Recorded,
+            "an edge with only a client side is still incomplete"
+        );
+
+        // Only the other side finishes it.
+        assert2::check!(store.record_span(&server, 2) == RecordOutcome::Completed);
+    }
+
     #[test]
     fn pairs_client_then_server_into_one_request() {
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
