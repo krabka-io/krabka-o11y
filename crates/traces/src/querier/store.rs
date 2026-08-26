@@ -2793,6 +2793,73 @@ mod tests {
         check!(str_hit("", "anything"), "including an empty key");
     }
 
+    /// `link_matcher_matches_link` answers one matcher against one link. Its
+    /// two scopes read different halves of the link -- Link reads the
+    /// attributes, Intrinsic reads the two ids -- so a hit and a miss are
+    /// pinned in each: a mutant that answers a constant is invisible to
+    /// whichever half it happens to agree with.
+    #[test]
+    fn a_link_matcher_reads_the_link_it_is_given() {
+        let link = LinkRef {
+            trace_id: [9; 16],
+            span_id: [8; 8],
+            // Two keys with different values, so a mutant that inverts the
+            // key filter selects the *other* attribute rather than nothing,
+            // and returns a wrong answer instead of an empty one.
+            attributes: vec![
+                ("link.kind".into(), AttrValue::Str("retry".into())),
+                ("link.reason".into(), AttrValue::Str("timeout".into())),
+            ],
+        };
+        let m = |scope, key, op, value| {
+            super::link_matcher_matches_link(&link, &matcher(scope, key, op, value))
+        };
+        let eq = |scope, key, value: &str| {
+            m(scope, key, MatchCmp::Eq, MatchValue::Str(value.into()))
+        };
+
+        // Link scope reads the attributes, and each key reads its own value.
+        check!(eq(MatchScope::Link, "link.kind", "retry"));
+        check!(eq(MatchScope::Link, "link.reason", "timeout"));
+        check!(!eq(MatchScope::Link, "link.kind", "timeout"), "not the other key's value");
+        check!(!eq(MatchScope::Link, "link.reason", "retry"));
+        check!(!eq(MatchScope::Link, "link.absent", "retry"), "an absent key matches nothing");
+
+        // Intrinsic scope reads the two ids, hex-encoded and not interchangeable.
+        let trace_hex = "09090909090909090909090909090909";
+        let span_hex = "0808080808080808";
+        check!(eq(MatchScope::Intrinsic, "link:traceID", trace_hex));
+        check!(eq(MatchScope::Intrinsic, "link:spanID", span_hex));
+        check!(!eq(MatchScope::Intrinsic, "link:traceID", span_hex), "ids do not cross over");
+        check!(!eq(MatchScope::Intrinsic, "link:spanID", trace_hex));
+
+        // A link always has both ids, so `= nil` is false and `!= nil` holds.
+        check!(!m(MatchScope::Intrinsic, "link:traceID", MatchCmp::Eq, MatchValue::Nil));
+        check!(m(MatchScope::Intrinsic, "link:traceID", MatchCmp::Neq, MatchValue::Nil));
+        check!(!m(MatchScope::Intrinsic, "link:spanID", MatchCmp::Eq, MatchValue::Nil));
+        check!(m(MatchScope::Intrinsic, "link:spanID", MatchCmp::Neq, MatchValue::Nil));
+
+        // An unrecognised intrinsic key is a non-match here. Note this is the
+        // opposite of the span-level matcher, which lets an unknown intrinsic
+        // through; the two defaults disagree and both are load-bearing.
+        check!(!eq(MatchScope::Intrinsic, "link:nonsense", "anything"));
+        check!(!eq(MatchScope::Intrinsic, "", "anything"));
+
+        // Any other scope is a non-match whatever the key says.
+        check!(!eq(MatchScope::Span, "link.kind", "retry"));
+        check!(!eq(MatchScope::Resource, "link.kind", "retry"));
+        check!(!eq(MatchScope::Event, "link.kind", "retry"));
+
+        // Negation inverts whatever the answer was, in both directions.
+        let negated = |scope, key, value: &str| {
+            let mut matcher = matcher(scope, key, MatchCmp::Eq, MatchValue::Str(value.into()));
+            matcher.negated = true;
+            super::link_matcher_matches_link(&link, &matcher)
+        };
+        check!(!negated(MatchScope::Link, "link.kind", "retry"), "a hit becomes a miss");
+        check!(negated(MatchScope::Link, "link.kind", "timeout"), "and a miss becomes a hit");
+    }
+
     /// A span with no links still answers link matchers: `= nil` holds and
     /// `!= nil` does not. Everything else is a non-match, and a negated
     /// matcher inverts whatever the answer was.
