@@ -21479,6 +21479,77 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// `parse_vector_matching_modifier` reads an `on(...)`/`ignoring(...)`
+    /// clause and returns BOTH the rendered modifier and the position just
+    /// past it. The position is what the caller resumes from, so an
+    /// off-by-one there leaves a stray bracket in the rest of the query --
+    /// each case checks the remainder, not just the modifier.
+    #[test]
+    fn a_vector_matching_modifier_reports_where_it_ended() {
+        let parse = super::parse_vector_matching_modifier;
+        let after = |query: &str, position: usize| {
+            parse(query, position).map(|(modifier, end)| (modifier, query[end..].to_string()))
+        };
+
+        check!(
+            after("on(job) foo", 0)
+                == Some(("on (job)".to_string(), " foo".to_string())),
+            "the remainder starts after the closing bracket"
+        );
+        check!(
+            after("ignoring(pod) foo", 0)
+                == Some(("ignoring (pod)".to_string(), " foo".to_string()))
+        );
+        check!(
+            after("on(a,b) foo", 0) == Some(("on (a,b)".to_string(), " foo".to_string()))
+        );
+        check!(
+            after("on() foo", 0) == Some(("on ()".to_string(), " foo".to_string())),
+            "an empty label list is still a modifier"
+        );
+
+        // Parsing from part-way in, which is how the caller uses it.
+        check!(
+            after("up on(job) foo", 3)
+                == Some(("on (job)".to_string(), " foo".to_string())),
+            "the position is an offset into the whole query"
+        );
+
+        // Not a modifier at this position.
+        check!(parse("foo on(job)", 0).is_none());
+        check!(parse("", 0).is_none());
+        // The bracket must follow immediately: a space between is not this
+        // spelling, and neither is an unclosed list.
+        check!(parse("on (job)", 0).is_none());
+        check!(parse("on(job", 0).is_none());
+    }
+
+    /// `format_logfmt_parser_flags` renders a parser's options back into the
+    /// query text. The leading space belongs to the FLAGS, not to the caller:
+    /// with no flags the string is empty rather than a lone space, which would
+    /// otherwise leave a trailing space in every query without options.
+    #[test]
+    fn logfmt_parser_flags_carry_their_own_leading_space() {
+        use crabka_logql::{LogfmtExtraction, LogfmtParserConfig};
+
+        // The flags are only accepted alongside an extraction, so every
+        // config here names one.
+        let flags = |strict, keep_empty| {
+            let extraction = LogfmtExtraction::same("level").expect("a valid extraction");
+            let config = LogfmtParserConfig::with_options(vec![extraction], strict, keep_empty)
+                .expect("the options are valid");
+            super::format_logfmt_parser_flags(&config)
+        };
+
+        check!(flags(false, false) == "", "no flags, no space");
+        check!(flags(true, false) == " --strict");
+        check!(flags(false, true) == " --keep-empty");
+        check!(
+            flags(true, true) == " --keep-empty --strict",
+            "both, in a fixed order, sharing one leading space"
+        );
+    }
+
     /// `log_pattern_token` masks the variable part of a log token so lines that
     /// differ only in their ids collapse to one pattern. A `key=value` token
     /// keeps its KEY and masks only the value, because the key is what makes
