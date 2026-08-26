@@ -3526,6 +3526,114 @@ async fn vector_vector_group_right_fill_left_preserves_unmatched_many_side() {
     assert2::assert!(approx_eq(values["c"].1, 7.0));
 }
 
+/// Fills are not commutative, but every fill test above uses `+`, where
+/// `0 + present` and `present + 0` agree -- so the operand order on both fill
+/// paths was free to be backwards. `-` tells them apart: a series present only
+/// on the right must yield `0 - value`, not `value - 0`.
+#[tokio::test]
+async fn one_to_one_fill_subtracts_in_the_declared_operand_order() {
+    let mut store = InMemoryMetricStore::new();
+    for (name, job, value) in [
+        ("a", "shared", 3.0),
+        ("a", "left_only", 4.0),
+        ("b", "shared", 1.0),
+        ("b", "right_only", 5.0),
+    ] {
+        store.push_float(
+            "tenant-a",
+            labels(&[("__name__", name), ("job", job)]),
+            10_000,
+            value,
+        );
+    }
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "a - on (job) fill(0) b", 10_000)
+        .await
+        .unwrap();
+
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    let values = samples
+        .iter()
+        .map(|sample| {
+            (
+                sample.labels.get("job").expect("job label"),
+                float_value(&sample.value),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert2::assert!(values.len() == 3);
+    assert2::assert!(approx_eq(values["shared"], 2.0));
+    assert2::assert!(approx_eq(values["left_only"], 4.0));
+    assert2::assert!(approx_eq(values["right_only"], -5.0));
+}
+
+/// `on (...)` builds the result labels from the clause itself, so naming a
+/// metadata label there would otherwise carry `__name__` into the output of an
+/// arithmetic expression -- which never has one.
+#[tokio::test]
+async fn matching_on_a_metadata_label_keeps_it_out_of_the_result() {
+    let mut store = InMemoryMetricStore::new();
+    store.push_float(
+        "tenant-a",
+        labels(&[("__name__", "x"), ("job", "a")]),
+        10_000,
+        7.0,
+    );
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "x - on (__name__) x", 10_000)
+        .await
+        .unwrap();
+
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(samples.len() == 1);
+    assert2::assert!(samples[0].labels.iter().count() == 0);
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 0.0));
+}
+
+/// `group_left (...)` copies the named labels off the one side. A metadata
+/// label named there must still be skipped, or every result row inherits the
+/// *other* operand's metric name.
+#[tokio::test]
+async fn group_left_does_not_copy_a_metadata_label_from_the_one_side() {
+    let mut store = InMemoryMetricStore::new();
+    for (instance, value) in [("1", 3.0), ("2", 4.0)] {
+        store.push_float(
+            "tenant-a",
+            labels(&[("__name__", "a"), ("job", "x"), ("instance", instance)]),
+            10_000,
+            value,
+        );
+    }
+    store.push_float(
+        "tenant-a",
+        labels(&[("__name__", "b"), ("job", "x")]),
+        10_000,
+        10.0,
+    );
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "a + on (job) group_left(__name__) b", 10_000)
+        .await
+        .unwrap();
+
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(samples.len() == 2);
+    for sample in &samples {
+        assert2::assert!(sample.labels.get("__name__") == None);
+    }
+}
+
 #[tokio::test]
 async fn info_function_adds_target_info_data_labels_by_job_and_instance() {
     let mut store = InMemoryMetricStore::new();
