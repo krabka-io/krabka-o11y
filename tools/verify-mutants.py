@@ -76,8 +76,8 @@ def main():
     # A name can appear in more than one impl -- two types with their own
     # `from_f64` is the usual case -- and patching the first one found would
     # verify a mutant against a function the test never calls. `occurrence`
-    # selects which, and a marker matching more than once without it is an
-    # error rather than a guess.
+    # selects which -- **0-indexed**, so the second match is 1, not 2 -- and a
+    # marker matching more than once without it is an error rather than a guess.
     marker = spec["function"]
     occurrences = [
         i for i in range(len(original)) if original.startswith(marker, i)
@@ -88,9 +88,17 @@ def main():
     if wanted is None:
         if len(occurrences) > 1:
             raise SystemExit(
-                f"marker matches {len(occurrences)} times; set \"occurrence\": {marker}"
+                f"marker matches {len(occurrences)} times, so it is ambiguous; "
+                f"set \"occurrence\" to one of 0..{len(occurrences) - 1} "
+                f"(0-indexed) to pick one: {marker}"
             )
         wanted = 0
+    if not 0 <= wanted < len(occurrences):
+        raise SystemExit(
+            f"\"occurrence\": {wanted} is out of range; the marker matches "
+            f"{len(occurrences)} times, so it must be 0..{len(occurrences) - 1} "
+            f"(0-indexed): {marker}"
+        )
     start = occurrences[wanted]
     end = original.index("\n    }\n", start) + 7 if marker.startswith("    ") \
         else original.index("\n}\n", start) + 3
