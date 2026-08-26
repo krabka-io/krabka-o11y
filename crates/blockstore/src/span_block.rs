@@ -563,6 +563,104 @@ mod tests {
         }
     }
 
+    /// Every attribute value type reaches its own column, and the array flag
+    /// is carried per attribute. The shared fixture gives each row a single
+    /// scalar `Int` attribute, so dropping the `Double` or `Bool` arm and
+    /// forcing `is_array` to false are all invisible through it.
+    #[test]
+    fn every_attribute_value_type_reaches_its_own_column() {
+        use crate::span_schema::{
+            SCOL_ATTR_IS_ARRAY, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL,
+            SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT,
+        };
+
+        let mut row = sample_row(1, None, 0);
+        row.attrs = vec![
+            SpanAttr {
+                key: "s".into(),
+                is_array: false,
+                value: AttrValue::Str(vec!["one".into()]),
+            },
+            SpanAttr {
+                key: "i".into(),
+                is_array: false,
+                value: AttrValue::Int(vec![7]),
+            },
+            SpanAttr {
+                key: "d".into(),
+                is_array: false,
+                value: AttrValue::Double(vec![1.5]),
+            },
+            SpanAttr {
+                key: "b".into(),
+                is_array: true,
+                value: AttrValue::Bool(vec![true, false]),
+            },
+        ];
+
+        let batch = encode_span_rows(&[row]).expect("encodes");
+        let column = |name: &str| {
+            let index = batch.schema().index_of(name).expect("a column");
+            batch
+                .column(index)
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .expect("a list column")
+                .clone()
+        };
+        let leaf = |name: &str| {
+            column(name)
+                .values()
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .expect("a list of lists")
+                .values()
+                .clone()
+        };
+
+        let strings = leaf(SCOL_ATTR_VALUE);
+        let strings = strings
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("utf8");
+        assert2::assert!(strings.iter().flatten().collect::<Vec<_>>() == vec!["one"]);
+
+        let ints = leaf(SCOL_ATTR_VALUE_INT);
+        let ints = ints.as_any().downcast_ref::<Int64Array>().expect("i64");
+        assert2::assert!(ints.iter().flatten().collect::<Vec<_>>() == vec![7_i64]);
+
+        let doubles = leaf(SCOL_ATTR_VALUE_DOUBLE);
+        let doubles = doubles
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("f64");
+        assert2::assert!(doubles.len() == 1, "the double attribute keeps its value");
+        assert2::assert!((doubles.value(0) - 1.5).abs() < f64::EPSILON);
+
+        let bools = leaf(SCOL_ATTR_VALUE_BOOL);
+        let bools = bools.as_any().downcast_ref::<BooleanArray>().expect("bool");
+        assert2::assert!(bools.iter().flatten().collect::<Vec<_>>() == vec![true, false]);
+
+        let keys = column(SCOL_ATTR_KEYS);
+        let keys = keys
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("utf8");
+        assert2::assert!(keys.iter().flatten().collect::<Vec<_>>() == vec!["s", "i", "d", "b"]);
+
+        // The flag is per attribute, and only the last one is an array.
+        let flags = column(SCOL_ATTR_IS_ARRAY);
+        let flags = flags
+            .values()
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .expect("bool");
+        assert2::assert!(
+            flags.iter().flatten().collect::<Vec<_>>() == vec![false, false, false, true]
+        );
+    }
+
     #[test]
     fn encode_matches_schema_and_columns() {
         let rows = vec![sample_row(1, None, 1), sample_row(2, Some(1), 2)];
