@@ -1454,6 +1454,28 @@ mod tests {
         check!(err.contains("ended before trie node value"), "got: {err}");
     }
 
+    /// The (stack, value) pairs a decoded profile carries, root-first and
+    /// sorted so a comparison does not depend on map order.
+    fn frames_and_values(profile: &PprofProfile) -> Vec<(String, i64)> {
+        // `stack_frames` returns leaf-first, the pprof convention; folded
+        // input is written root-first.
+        let mut out = profile
+            .samples()
+            .iter()
+            .map(|sample| {
+                let mut frames = profile
+                    .stack_frames(sample)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                frames.reverse();
+                (frames.join(";"), sample.value[0])
+            })
+            .collect::<Vec<_>>();
+        out.sort();
+        out
+    }
+
     /// Folded input has four rules and no test held any of them: repeats of a
     /// stack accumulate, the value is the *last* whitespace-separated field so
     /// frame names may contain spaces, empty frames between separators are
@@ -1461,26 +1483,6 @@ mod tests {
     /// line.
     #[test]
     fn folded_stacks_accumulate_and_take_the_value_from_the_last_field() {
-        fn frames_and_values(profile: &PprofProfile) -> Vec<(String, i64)> {
-            // `stack_frames` returns leaf-first, the pprof convention; folded
-            // input is written root-first.
-            let mut out = profile
-                .samples()
-                .iter()
-                .map(|sample| {
-                    let mut frames = profile
-                        .stack_frames(sample)
-                        .into_iter()
-                        .map(str::to_string)
-                        .collect::<Vec<_>>();
-                    frames.reverse();
-                    (frames.join(";"), sample.value[0])
-                })
-                .collect::<Vec<_>>();
-            out.sort();
-            out
-        }
-
         let parse = |body: &str| super::folded_to_pprof("app", "count", body);
 
         // The same stack twice adds up; overwriting would leave 4.
@@ -1495,6 +1497,31 @@ mod tests {
         // The third line of the body is named as line 3, not 2.
         let err = parse("main 1\nmain 2\nnovalue\n").unwrap_err().to_string();
         check!(err.contains("folded line 3 missing value"), "got: {err}");
+    }
+
+    /// `lines` input is folded input without a value: each line counts once.
+    /// It shares the comment, blank and empty-frame rules with
+    /// [`folded_to_pprof`] and had no test for any of them, nor for a body
+    /// that yields nothing being an error rather than an empty profile.
+    #[test]
+    fn lines_input_counts_one_per_line_and_skips_comments() {
+        let parse = |body: &str| super::lines_to_pprof("app", "count", body);
+
+        // The comment and the blank are skipped, the empty frame is dropped,
+        // and both remaining lines fold into one stack counted twice.
+        let profile = parse("# comment\n\nmain;;work\nmain;work\n").expect("two counted lines");
+        check!(frames_and_values(&profile) == vec![("main;work".to_string(), 2)]);
+
+        // Nothing countable is an error, not a profile with no samples.
+        let err = parse("# only a comment\n").unwrap_err().to_string();
+        check!(err.contains("lines profile has no samples"), "got: {err}");
+
+        // The empty stack is on the third line, and the error says so.
+        let err = parse("main\nmain\n;;\n").unwrap_err().to_string();
+        check!(
+            err.contains("lines profile line 3 has empty stack"),
+            "got: {err}"
+        );
     }
 
     /// Wraps `parts` as a multipart body with a fixed boundary.
