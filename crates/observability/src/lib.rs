@@ -128,7 +128,7 @@ use url::Url;
 
 use crate::metrics::ServiceMetrics;
 
-/// Loki's `reject_old_samples_max_age` default: samples older than this are
+/// `Loki`'s `reject_old_samples_max_age` default: samples older than this are
 /// refused on ingest.
 const LOKI_REJECT_OLD_SAMPLES_MAX_AGE: Time = days(7);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -7155,14 +7155,14 @@ fn parse_log_level_param(raw_query: Option<&str>) -> Result<String, HttpQueryErr
 
 /// The `target` that `/config` reports, for every role.
 ///
-/// Loki reports the components its process runs. Crabka serves the full Loki
-/// surface from each role, so its ops endpoints answer as single-binary Loki
+/// `Loki` reports the components its process runs. Crabka serves the full `Loki`
+/// surface from each role, so its ops endpoints answer as single-binary `Loki`
 /// does: [`status_services`] lists every component whichever role serves it,
 /// and `/config` reports the target that goes with that list.
 /// `real_loki_and_crabka_return_same_stable_config_status_lines` compares this
-/// against a real Loki container, which reports `all`.
+/// against a real `Loki` container, which reports `all`.
 ///
-/// The per-role name stays in [`RoleOps::target`] for `/metrics`, where Loki
+/// The per-role name stays in [`RoleOps::target`] for `/metrics`, where `Loki`
 /// does report the running component.
 const LOKI_CONFIG_TARGET: &str = "all";
 
@@ -11349,11 +11349,11 @@ fn validate_loki_query_range_resolution(
     Ok(())
 }
 
-/// Renders an extent the way Loki spells a query length in its own error text.
+/// Renders an extent the way `Loki` spells a query length in its own error text.
 ///
 /// The whole seconds come from the nanosecond count by integer division, not
 /// from [`TimeExt::secs_i64`]. That method rounds to nearest and would report a
-/// second more than Loki does for the same window.
+/// second more than `Loki` does for the same window.
 fn format_loki_query_length(range: Time) -> String {
     let total_seconds = range.nanos_i64().max(0) / 1_000_000_000;
     let hours = total_seconds / 3_600;
@@ -17089,7 +17089,7 @@ const LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS: i64 = 11_000;
 /// Longest `delay_for` a tail request may ask the querier to hold back.
 const LOKI_MAX_TAIL_DELAY: Time = secs(5);
 /// Widest window `/loki/api/v1/index/volume` and the range endpoints accept
-/// (Loki's 30d 1h default, to the nanosecond).
+/// (`Loki`'s 30d 1h default, to the nanosecond).
 const LOKI_VOLUME_MAX_QUERY_RANGE: Time = secs(2_595_600);
 
 fn current_unix_time_ns() -> i64 {
@@ -20983,7 +20983,7 @@ mod tests {
 
     use super::*;
 
-    /// Both ends of the Loki ingestion window are strict comparisons: a
+    /// Both ends of the `Loki` ingestion window are strict comparisons: a
     /// timestamp exactly at the oldest or the newest acceptable value is
     /// accepted. That is the only input separating `<` from `<=`, and against
     /// a wall clock it is unreachable -- `now` advances between choosing the
@@ -21232,7 +21232,7 @@ mod tests {
         check!(line("", 99) == 1);
     }
 
-    /// `parse_metric_arithmetic_operator` names the six PromQL scalar
+    /// `parse_metric_arithmetic_operator` names the six `PromQL` scalar
     /// operators. The variants are asserted pairwise distinct, so an arm
     /// returning a neighbour's operator cannot pass -- and every unrecognised
     /// spelling is refused rather than defaulted, since a silent default here
@@ -21316,7 +21316,7 @@ mod tests {
         check!(split("group_rightish") == (Some("group_right".to_string()), "ish"));
     }
 
-    /// A Prometheus alert is PENDING until it has been continuously active for
+    /// A `Prometheus` alert is PENDING until it has been continuously active for
     /// its `for` duration, then FIRING. The transition is at `>=`, so an alert
     /// exactly at its hold duration is already firing -- one nanosecond either
     /// side of that instant is the only pair separating `>=` from `>`.
@@ -21392,7 +21392,7 @@ mod tests {
         check!(alerts[0]["state"] == "firing");
     }
 
-    /// `signed_vector_function_literal_error` catches `vector(+1)`, which LogQL
+    /// `signed_vector_function_literal_error` catches `vector(+1)`, which `LogQL`
     /// does not accept -- the argument must be a bare number. It skips any
     /// whitespace after the parenthesis before looking, so the reported column
     /// is the SIGN's, not the parenthesis's, and the message names which sign
@@ -21457,7 +21457,7 @@ mod tests {
     }
 
     /// `unspaced_vector_set_operator_error` catches `)and` written without a
-    /// space -- a LogQL typo that would otherwise fail somewhere unhelpful --
+    /// space -- a `LogQL` typo that would otherwise fail somewhere unhelpful --
     /// and reports the column the operator starts at.
     ///
     /// That column is a CHARACTER count, not a byte offset, so one case puts
@@ -21511,8 +21511,8 @@ mod tests {
     }
 
     /// `format_vector_aggregation_query` renders an aggregation back to its
-    /// LogQL spelling. Most operators take an optional grouping clause, but
-    /// three -- approx_topk, sort and sort_desc -- have no grouped form and
+    /// `LogQL` spelling. Most operators take an optional grouping clause, but
+    /// three -- `approx_topk`, sort and `sort_desc` -- have no grouped form and
     /// must refuse rather than render one, so each is checked BOTH ways.
     ///
     /// The two limit-taking operators put their limit inside the parentheses
@@ -21682,7 +21682,7 @@ mod tests {
         );
     }
 
-    /// A PromQL comparison between two vectors drops the samples that fail it
+    /// A `PromQL` comparison between two vectors drops the samples that fail it
     /// and gives the survivors the LEFT operand's value -- the comparison is a
     /// filter, not a rewrite to a boolean. With the `bool` modifier it becomes
     /// the opposite: nothing is dropped and every value becomes "1" or "0".
@@ -21905,7 +21905,7 @@ mod tests {
         ));
     }
 
-    /// `split_top_level_set_query` is the third splitter, over PromQL's set
+    /// `split_top_level_set_query` is the third splitter, over `PromQL`'s set
     /// operators. Unlike the symbol splitters these are WORDS, so a match must
     /// also stand alone: "android" starts with "and" and is not a set
     /// operation. That word-boundary test is the whole difference between this
@@ -21980,7 +21980,7 @@ mod tests {
         check!(split("a").is_none());
     }
 
-    /// `split_top_level_comparison_query` finds the comparison a PromQL query
+    /// `split_top_level_comparison_query` finds the comparison a `PromQL` query
     /// is rooted at, ignoring operators nested inside brackets or quotes. The
     /// depth guard is three counters joined by `&&`, and each has to reject on
     /// its own -- so a matcher inside braces and a comparison inside
@@ -22027,7 +22027,7 @@ mod tests {
         check!(split(r#"{app!="a"}"#).is_none(), "a matcher alone is not one");
     }
 
-    /// `format_loki_offset_duration_ns` spells a duration the way Loki does,
+    /// `format_loki_offset_duration_ns` spells a duration the way `Loki` does,
     /// picking the largest unit that fits. Each `>=` is the boundary between
     /// two units, so each is checked exactly at its own threshold and one
     /// step below it -- a `<` there sends the value to the next unit down.
@@ -22112,8 +22112,8 @@ mod tests {
         check!(kept(&super::apply_loki_stream_limit(streams(&[9]), None)) == vec![9]);
     }
 
-    /// The two LogQL token namers turn a parser's own wording into the token
-    /// names Loki's clients expect. Each named arm falls through to a generic
+    /// The two `LogQL` token namers turn a parser's own wording into the token
+    /// names `Loki`'s clients expect. Each named arm falls through to a generic
     /// rewrite when deleted, so every one is pinned to its own answer.
     #[test]
     fn logql_parse_errors_name_the_tokens_loki_clients_expect() {
@@ -22458,7 +22458,7 @@ mod tests {
         check!(body_first(Some(""), "b=2") == "b=2");
     }
 
-    /// The rules filters read a Prometheus-shaped query. Each recognised key
+    /// The rules filters read a `Prometheus`-shaped query. Each recognised key
     /// is guarded on its value, so a key carrying something unexpected leaves
     /// the filter unset rather than setting it to a default.
     #[test]
@@ -23160,7 +23160,7 @@ mod tests {
         );
     }
 
-    /// The OTLP/HTTP logs handler must decompress `Content-Encoding: gzip`
+    /// The `OTLP`/HTTP logs handler must decompress `Content-Encoding: gzip`
     /// before it protobuf-decodes. The OpenTelemetry SDK's `otlphttp` exporter,
     /// which the demo's Alloy uses, gzips by default, so a regression here
     /// means every emitted log line silently fails to decode, and no logs are

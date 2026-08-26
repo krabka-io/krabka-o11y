@@ -1711,23 +1711,23 @@ async fn compactor_service_accumulates_adjacent_small_wal_polls_into_one_block()
             Vec::new(),
         ]));
 
-    let descriptors = run_compactor_until_shutdown(
-        &config,
-        dependencies,
-        Some(&store),
-        // real-time wait (not a progress poll): shutdown future — this sleep is the
-        // compactor's run-duration budget, not a poll cadence for a condition.
-        tokio::time::sleep(Duration::from_millis(50)),
-    )
+    // The two small polls must land in ONE block spanning both offsets and
+    // both timestamps. Waiting for that exact block is a progress poll rather
+    // than a run-duration budget: a fixed sleep here asserted that the work
+    // had finished by a wall-clock deadline, which under load it sometimes had
+    // not -- the suite then failed roughly one run in two hundred, and inside
+    // a mutation sweep often enough to refuse four shards of thirty-two.
+    let prefix = ObjectPath::from("observability/logs");
+    let expected = BlockKey::new("tenant-a", 6, 42, 43, TimeRange::new(10, 20).unwrap());
+    let descriptors = run_compactor_until_shutdown(&config, dependencies, Some(&store), async {
+        let _ = wait_for_log_block(&store, &prefix, &expected).await;
+    })
     .await
     .unwrap();
 
     assert!(descriptors.len() == 1);
-    assert!(
-        descriptors[0].key == BlockKey::new("tenant-a", 6, 42, 43, TimeRange::new(10, 20).unwrap())
-    );
+    assert!(descriptors[0].key == expected);
 
-    let prefix = ObjectPath::from("observability/logs");
     let rows = read_log_block_from_object_store(&store, &prefix, &descriptors[0].key)
         .await
         .unwrap();
