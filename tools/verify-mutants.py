@@ -37,7 +37,7 @@ TIMEOUT_SECONDS = 600
 KILL_GRACE = 10
 
 
-def run_case(path, original, start, end, case, package):
+def run_case(path, original, start, end, case, package, target):
     body = original[start:end]
     hits = body.count(case["old"])
     if hits != 1:
@@ -50,7 +50,7 @@ def run_case(path, original, start, end, case, package):
     with tempfile.NamedTemporaryFile(mode="r", suffix=".log") as log:
         result = subprocess.run(
             ["timeout", "-k", str(KILL_GRACE), str(TIMEOUT_SECONDS),
-             "cargo", "test", "-p", package, "--lib", case["test"]],
+             "cargo", "test", "-p", package, target, case["test"]],
             stdout=log.file, stderr=subprocess.STDOUT,
             start_new_session=True, check=False,
         )
@@ -73,6 +73,11 @@ def main():
     spec = json.load(open(sys.argv[1]))
     path = spec["file"]
     original = open(path).read()
+    # Most crates keep their logic in the library, but a service's CLI value
+    # parsers and config wiring live in main.rs, where `--lib` cannot see them
+    # and every case silently reports NO-COMPILE. `"target"` selects the cargo
+    # target set: "--bins" for those, "--lib" (the default) otherwise.
+    target = spec.get("target", "--lib")
     # A name can appear in more than one impl -- two types with their own
     # `from_f64` is the usual case -- and patching the first one found would
     # verify a mutant against a function the test never calls. `occurrence`
@@ -107,7 +112,9 @@ def main():
 
     try:
         for case in spec["cases"]:
-            verdict = run_case(path, original, start, end, case, spec["package"])
+            verdict = run_case(
+                path, original, start, end, case, spec["package"], target
+            )
             marker = "<-" if verdict == "SURVIVED" else "  "
             print(f"  {verdict:<16} {marker} {case['label']}", flush=True)
     finally:
