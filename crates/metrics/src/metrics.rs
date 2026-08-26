@@ -204,7 +204,32 @@ async fn export(
 
 #[cfg(test)]
 mod tests {
-    use assert2::assert;
+
+    /// `record_blocks_compacted` skips a zero rather than adding it. The
+    /// counter would be unchanged either way, so the skip is only observable
+    /// as a difference from a non-zero call -- the test therefore records a
+    /// real count, then a zero, and checks the total did not move.
+    #[test]
+    fn compacted_blocks_accumulate_and_a_zero_is_skipped() {
+        let metrics = super::ServiceMetrics::new();
+        check!(metrics.blocks_compacted.get() == 0, "a fresh counter is at zero");
+
+        metrics.record_blocks_compacted(3);
+        check!(metrics.blocks_compacted.get() == 3);
+
+        // Counts add rather than replace.
+        metrics.record_blocks_compacted(4);
+        check!(metrics.blocks_compacted.get() == 7, "added, not replaced");
+
+        // A zero leaves the total where it was.
+        metrics.record_blocks_compacted(0);
+        check!(metrics.blocks_compacted.get() == 7, "zero changed nothing");
+
+        // And a later real count still lands.
+        metrics.record_blocks_compacted(1);
+        check!(metrics.blocks_compacted.get() == 8);
+    }
+    use assert2::{assert, check};
     use axum::{
         body::Body,
         http::{Request, StatusCode},
