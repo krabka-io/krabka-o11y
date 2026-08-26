@@ -21479,6 +21479,87 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// `format_loki_query_length` always writes all three units, including the
+    /// zero ones -- "0h5m0s" rather than "5m". That is the opposite of
+    /// `format_loki_duration_ns`, which skips empty units, and the two are
+    /// pinned separately because the difference is deliberate: this one is a
+    /// fixed-shape field a client parses positionally.
+    #[test]
+    fn a_loki_query_length_always_writes_all_three_units() {
+        let format = |seconds: i64| super::format_loki_query_length(Time::from_nanos(seconds));
+        let secs = 1_000_000_000_i64;
+
+        check!(format(0) == "0h0m0s", "every unit, even at zero");
+        check!(format(5 * secs) == "0h0m5s");
+        check!(format(300 * secs) == "0h5m0s", "zero seconds still written");
+        check!(format(3_600 * secs) == "1h0m0s");
+        check!(format(3_661 * secs) == "1h1m1s");
+        check!(format(7_322 * secs) == "2h2m2s");
+
+        // Hours accumulate rather than rolling into a larger unit.
+        check!(format(100 * 3_600 * secs) == "100h0m0s");
+
+        // Sub-second precision is dropped, not rounded up.
+        check!(format(secs - 1) == "0h0m0s");
+
+        // A negative range is clamped to zero rather than writing minus signs
+        // into a field a client parses positionally.
+        check!(format(-secs) == "0h0m0s");
+    }
+
+    /// `validate_loki_interval` refuses a negative step and accepts everything
+    /// else, including zero and an absent one. Zero is the boundary that
+    /// separates `< 0` from `<= 0`, and an absent interval is not the same as
+    /// a zero one -- absent means the caller did not ask.
+    #[test]
+    fn a_loki_interval_is_refused_only_when_negative() {
+        let validate = super::validate_loki_interval;
+
+        check!(validate(None).is_ok(), "an absent interval is not an error");
+        check!(validate(Some(0)).is_ok(), "and neither is zero");
+        check!(validate(Some(1)).is_ok());
+        check!(validate(Some(i64::MAX)).is_ok());
+        check!(matches!(validate(Some(-1)), Err(HttpQueryError::InvalidInterval)));
+        check!(validate(Some(i64::MIN)).is_err());
+    }
+
+    /// `normalize_loki_vector_sample_timestamps_to_seconds` rewrites each
+    /// instant sample's timestamp from nanoseconds to seconds in place. It
+    /// accepts the timestamp as a JSON number OR a string, since both spellings
+    /// reach it, and it writes back a whole number when the nanos divide
+    /// exactly and a float otherwise -- a client parsing "1700000000" as an
+    /// integer must not be handed "1700000000.0".
+    #[test]
+    fn loki_vector_timestamps_are_rewritten_from_nanos_to_seconds() {
+        let normalize = |timestamp: serde_json::Value| {
+            let mut value = serde_json::json!({
+                "data": {"result": [{"metric": {}, "value": [timestamp, "1"]}]}
+            });
+            super::normalize_loki_vector_sample_timestamps_to_seconds(&mut value);
+            value["data"]["result"][0]["value"][0].clone()
+        };
+
+        // An exact second becomes an integer, in both spellings.
+        check!(normalize(serde_json::json!(1_700_000_000_000_000_000_u64)) == 1_700_000_000);
+        check!(normalize(serde_json::json!("1700000000000000000")) == 1_700_000_000);
+
+        // A fractional second becomes a float rather than being truncated.
+        check!(normalize(serde_json::json!(1_500_000_000_u64)) == 1.5);
+        check!(normalize(serde_json::json!("1500000000")) == 1.5);
+
+        check!(normalize(serde_json::json!(0_u64)) == 0);
+
+        // A timestamp that is neither a number nor a string is left alone
+        // rather than replaced with a default.
+        check!(normalize(serde_json::json!(true)) == true);
+
+        // A response with no result array is left untouched.
+        let mut empty = serde_json::json!({"status": "success"});
+        let before = empty.clone();
+        super::normalize_loki_vector_sample_timestamps_to_seconds(&mut empty);
+        check!(empty == before);
+    }
+
     /// `parse_metric_vector_comparison_expression` recognises a comparison
     /// between a metric query and a `vector(...)` literal, and records WHICH
     /// side the literal was on -- the two are not interchangeable, since
