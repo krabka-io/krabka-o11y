@@ -283,6 +283,39 @@ mod tests {
         }
     }
 
+    /// The `Option` form of the same adapter, used by the sparse per-tenant
+    /// override struct. It has to make the same three-way distinction as its
+    /// twin above and one more: an absent field is None, which means "inherit
+    /// the default", and is not the same as a present zero, which means
+    /// "turn the cap off for this tenant".
+    #[test]
+    fn an_optional_query_span_cap_tells_absent_from_zero() {
+        #[derive(serde::Deserialize)]
+        struct MaybeCap {
+            #[serde(default, with = "super::option_non_negative_time")]
+            cap: Option<Time>,
+        }
+
+        let parse = |body: &str| serde_json::from_str::<MaybeCap>(body).map(|parsed| parsed.cap);
+
+        // Absent and zero are different answers, and conflating them would
+        // silently turn off a cap the tenant never mentioned.
+        check!(parse("{}").unwrap().is_none(), "an absent cap inherits");
+        check!(parse("{\"cap\":\"0s\"}").unwrap() == Some(Time::default()), "a zero cap is off");
+        check!(parse("{\"cap\":\"1h\"}").unwrap() == Some(crabka_units::hours(1)));
+        check!(parse("{\"cap\":\"1ms\"}").unwrap() == Some(crabka_units::millis(1)));
+
+        // Negatives are refused here too, with the same message.
+        for rejected in ["-1s", "-1ms", "-1h"] {
+            let body = String::from("{\"cap\":\"") + rejected + "\"}";
+            let err = parse(&body).unwrap_err().to_string();
+            check!(
+                err.contains("cannot be negative"),
+                "{rejected} should be rejected, got: {err}"
+            );
+        }
+    }
+
     #[test]
     fn default_limits_are_generous_and_finite() {
         let l = Limits::default();
