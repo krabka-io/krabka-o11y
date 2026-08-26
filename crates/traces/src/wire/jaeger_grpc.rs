@@ -139,6 +139,25 @@ mod tests {
 
     use super::{duration_micros, timestamp_micros, trace_id_parts};
 
+    /// `span_id_part` reads a span id as a big-endian i64 and insists on
+    /// exactly eight bytes. The values are chosen so none of the constants a
+    /// collapsed body could return -- 0, 1, -1 -- passes for a real answer,
+    /// and byte order is pinned by a value that differs when reversed.
+    #[test]
+    fn a_grpc_span_id_is_eight_big_endian_bytes() {
+        let part = super::span_id_part;
+
+        check!(part(&[0, 0, 0, 0, 0, 0, 0, 2]).expect("eight bytes") == 2);
+        check!(part(&[1, 0, 0, 0, 0, 0, 0, 0]).expect("eight bytes") == 1 << 56);
+        check!(part(&[0, 0, 0, 0, 0, 0, 0, 0]).expect("eight bytes") == 0);
+        check!(part(&[255; 8]).expect("eight bytes") == -1, "the id is signed");
+
+        // Seven or nine bytes is a decode error, not a pad or a truncation.
+        check!(part(&[0; 7]).is_err());
+        check!(part(&[0; 9]).is_err());
+        check!(part(&[]).is_err());
+    }
+
     /// `timestamp_micros` and `duration_micros` are near-twins over different
     /// types, so each is given values the other does not share. Both truncate
     /// sub-microsecond nanos rather than rounding, which is the behaviour a

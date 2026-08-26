@@ -3312,6 +3312,32 @@ mod tests {
         RecordBatch::try_new(schema, columns).unwrap()
     }
 
+    /// `nullable_fixed_value` reads one fixed-width binary cell, or None when
+    /// it is null. The trace id is neither all-zero nor all-one, so a body
+    /// collapsed to either constant is distinguishable from a real read.
+    #[test]
+    fn a_nullable_fixed_column_reads_its_own_row_or_none() {
+        let batch = batch();
+        let trace_id = |row| {
+            super::nullable_fixed_value::<16>(&batch, COL_TRACE_ID, row)
+                .expect("the trace id column is readable")
+        };
+
+        check!(trace_id(0) == Some([7; 16]));
+        check!(trace_id(1) == Some([9; 16]), "and each row reads its own cell");
+        check!(
+            super::nullable_fixed_value::<8>(&batch, COL_PARENT_SPAN_ID, 0)
+                .expect("the parent column is readable")
+                .is_none(),
+            "a null cell is None, not a zeroed id"
+        );
+
+        // A width that disagrees with the column is an error rather than a
+        // silent truncation, and an absent column is an error too.
+        check!(super::nullable_fixed_value::<4>(&batch, COL_TRACE_ID, 0).is_err());
+        check!(super::nullable_fixed_value::<16>(&batch, "no.such.column", 0).is_err());
+    }
+
     /// A batch carrying one promoted attribute column of every type the
     /// reader supports, alongside the three kinds it must skip: a column
     /// type it does not handle, a null cell, and a dictionary whose values

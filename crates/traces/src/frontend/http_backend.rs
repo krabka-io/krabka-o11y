@@ -444,6 +444,34 @@ pub async fn run_query_frontend(
 #[cfg(test)]
 mod tests {
 
+    /// `scope_param` is the inverse of `parse_scope`: it names a scope for a
+    /// query string. The six names are asserted to be distinct, so a scope
+    /// borrowed from a neighbouring arm cannot pass unnoticed.
+    #[test]
+    fn every_tag_scope_has_its_own_query_parameter_name() {
+        use crabka_traceql::TagScope;
+        let name = super::scope_param;
+
+        check!(name(TagScope::Resource) == "resource");
+        check!(name(TagScope::Span) == "span");
+        check!(name(TagScope::Intrinsic) == "intrinsic");
+        check!(name(TagScope::Event) == "event");
+        check!(name(TagScope::Link) == "link");
+        check!(name(TagScope::Instrumentation) == "instrumentation");
+
+        let mut names = vec![
+            name(TagScope::Resource),
+            name(TagScope::Span),
+            name(TagScope::Intrinsic),
+            name(TagScope::Event),
+            name(TagScope::Link),
+            name(TagScope::Instrumentation),
+        ];
+        names.sort_unstable();
+        names.dedup();
+        check!(names.len() == 6, "the six names must all differ: {names:?}");
+    }
+
     /// `parse_scope` defaults to the span scope rather than refusing, so
     /// "span" and an unknown name reach the same answer by different routes.
     /// Every named scope is checked so none of them can quietly fall through

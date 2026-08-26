@@ -601,6 +601,44 @@ mod tests {
 
     use super::*;
 
+    /// The frontend's query parameters each have a boundary that only one
+    /// input distinguishes: an empty window is legal but an inverted one is
+    /// not, and a step must be strictly positive rather than merely parsed.
+    #[test]
+    fn frontend_time_bounds_and_step_reject_only_what_they_should() {
+        let uri = |query: &str| {
+            format!("http://x/api?{query}")
+                .parse::<Uri>()
+                .expect("a valid uri")
+        };
+
+        // end == start is an empty window and allowed, so `<` must not become
+        // `<=`; end < start is refused, so it must not become `==` either.
+        check!(super::optional_time_bounds(&uri("start=5&end=5")).is_ok());
+        check!(super::optional_time_bounds(&uri("start=5&end=4")).is_err());
+        check!(super::optional_time_bounds(&uri("start=5&end=6")).is_ok());
+        check!(super::optional_time_bounds(&uri("")) == Ok((0, i64::MAX)));
+
+        // A step is required, must parse, and must be strictly positive.
+        check!(super::required_step(&uri("step=5s")) == Ok(5_000_000_000));
+        check!(super::required_step(&uri("step=0")).is_err(), "zero is not positive");
+        check!(super::required_step(&uri("step=-1s")).is_err(), "nor is a negative step");
+        check!(super::required_step(&uri("")).is_err(), "and it is not optional");
+        check!(super::required_step(&uri("step=abc")).is_err());
+
+        // The scope is optional, but an unrecognised name is refused rather
+        // than quietly treated as absent.
+        check!(
+            super::scope_param(&uri("scope=span")) == Ok(Some(crabka_traceql::TagScope::Span))
+        );
+        check!(
+            super::scope_param(&uri("scope=resource"))
+                == Ok(Some(crabka_traceql::TagScope::Resource))
+        );
+        check!(super::scope_param(&uri("")) == Ok(None));
+        check!(super::scope_param(&uri("scope=nonsense")).is_err());
+    }
+
     /// `parse_duration_component_ns` scales one number by its unit. The
     /// fraction is divided by ten to its own length, so a two-digit fraction
     /// is hundredths -- which only shows when the fraction's length and its

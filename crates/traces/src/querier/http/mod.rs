@@ -2517,6 +2517,24 @@ fn base64<const N: usize>(bytes: [u8; N]) -> String {
 #[cfg(test)]
 mod tests {
 
+    /// `optional_time_bounds` defaults an absent bound to the widest window
+    /// and refuses an inverted one. An empty window -- end equal to start --
+    /// is legal, which is the single input separating `<` from `<=`.
+    #[test]
+    fn querier_time_bounds_allow_an_empty_window_but_not_an_inverted_one() {
+        let uri = |query: &str| {
+            format!("http://x/api?{query}")
+                .parse::<Uri>()
+                .expect("a valid uri")
+        };
+
+        check!(super::optional_time_bounds(&uri("start=5&end=5")).is_ok());
+        check!(super::optional_time_bounds(&uri("start=5&end=4")).is_err());
+        check!(super::optional_time_bounds(&uri("start=5&end=6")).is_ok());
+        check!(super::optional_time_bounds(&uri("")) == Ok((0, i64::MAX)));
+        check!(super::optional_time_bounds(&uri("start=abc")).is_err());
+    }
+
     /// `span_kind_json` names the five kinds OTLP defines a string for.
     /// Unspecified is deliberately not among them -- it maps to nothing rather
     /// than to a name -- so zero is checked alongside the values either side
