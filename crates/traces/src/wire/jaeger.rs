@@ -876,6 +876,70 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+
+    /// The two Thrift inputs read doubles with opposite byte order: compact is
+    /// little-endian, binary is big-endian. That is a real protocol
+    /// difference, not an accident of two similar functions, so each reader is
+    /// given both encodings and must take only its own.
+    #[test]
+    fn the_two_thrift_inputs_read_doubles_with_opposite_byte_order() {
+        let value = 1.5_f64;
+        let little = value.to_le_bytes();
+        let big = value.to_be_bytes();
+        check!(little != big, "the fixture must distinguish the two orders");
+
+        let mut compact = super::CompactInput { bytes: &little, pos: 0 };
+        check!(compact.read_double().expect("reads").to_bits() == value.to_bits(), "compact is little-endian");
+
+        let mut compact_wrong = super::CompactInput { bytes: &big, pos: 0 };
+        check!(
+            compact_wrong.read_double().expect("reads").to_bits() != value.to_bits(),
+            "and does not read the other order as the same number"
+        );
+
+        let mut binary = super::BinaryInput { bytes: &big, pos: 0 };
+        check!(binary.read_double().expect("reads").to_bits() == value.to_bits(), "binary is big-endian");
+
+        let mut binary_wrong = super::BinaryInput { bytes: &little, pos: 0 };
+        check!(binary_wrong.read_double().expect("reads").to_bits() != value.to_bits());
+
+        // Each consumes exactly eight bytes and leaves the rest.
+        let mut trailing = [0_u8; 9];
+        trailing[..8].copy_from_slice(&big);
+        trailing[8] = 0x7f;
+        let mut binary = super::BinaryInput { bytes: &trailing, pos: 0 };
+        check!(binary.read_double().expect("reads").to_bits() == value.to_bits());
+        check!(binary.pos == 8, "the cursor stops after the double");
+
+        // Seven bytes is not a double.
+        let mut short = super::BinaryInput { bytes: &big[..7], pos: 0 };
+        check!(short.read_double().is_err(), "one byte short");
+    }
+
+    /// The binary input reads its integers big-endian too, and each width
+    /// consumes only its own bytes.
+    #[test]
+    fn binary_thrift_integers_are_big_endian_and_sized() {
+        let bytes = [0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x04];
+
+        let mut input = super::BinaryInput { bytes: &bytes, pos: 0 };
+        check!(input.read_i32().expect("reads") == 0x0102, "four bytes, most significant first");
+        check!(input.pos == 4);
+
+        let mut input = super::BinaryInput { bytes: &bytes[4..], pos: 0 };
+        check!(input.read_i64().expect("reads") == 0x0304, "eight bytes, most significant first");
+        check!(input.pos == 8);
+
+        // A leading high bit makes the value negative.
+        let mut input = super::BinaryInput { bytes: &[0xff, 0xff, 0xff, 0xff], pos: 0 };
+        check!(input.read_i32().expect("reads") == -1);
+
+        // Short input on each width.
+        let mut input = super::BinaryInput { bytes: &[0, 0, 0], pos: 0 };
+        check!(input.read_i32().is_err(), "three bytes is not an i32");
+        let mut input = super::BinaryInput { bytes: &[0; 7], pos: 0 };
+        check!(input.read_i64().is_err(), "seven bytes is not an i64");
+    }
     use assert2::check;
 
     use super::*;
