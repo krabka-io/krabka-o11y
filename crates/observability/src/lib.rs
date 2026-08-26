@@ -8194,7 +8194,7 @@ async fn prometheus_alerts(
     )
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq)]
 struct PrometheusRulesFilters {
     rule_kind: Option<&'static str>,
     rule_names: BTreeSet<String>,
@@ -25873,6 +25873,22 @@ mod tests {
             tied.last == Some((10, value(1))),
             "a tie keeps the last already held"
         );
+    }
+
+    /// Every rules filter that takes a value ignores an empty one. Without
+    /// that guard `time=`, `group_limit=` and `match=` are handed the empty
+    /// string to parse and the whole request fails, while `rule_group=`,
+    /// `file=` and `group_next_token=` quietly filter on "" and match nothing.
+    /// A query naming all of them with no values is indistinguishable from no
+    /// query at all.
+    #[test]
+    fn empty_prometheus_rules_filter_values_are_ignored() {
+        let filters = super::PrometheusRulesFilters::parse(Some(
+            "time=&rule_name=&rule_group=&file=&group_limit=&group_next_token=&match=",
+        ))
+        .expect("empty values are ignored, not rejected");
+
+        check!(filters == super::PrometheusRulesFilters::default());
     }
 
     /// The main query parser carries the same first-wins contract, across all
