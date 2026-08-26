@@ -175,6 +175,78 @@ impl LimitError {
 
 #[cfg(test)]
 mod tests {
+
+    /// A limit error's message is what a rejected client is told, so every
+    /// variant has to name its own limit and what was observed. Four of the
+    /// eight share the same field names and integer types, which is exactly
+    /// where one variant's text would be reused for another -- so each is
+    /// given a distinct pair and the numbers are looked for in the message.
+    #[test]
+    fn every_limit_error_names_its_own_limit_and_observation() {
+        use super::LimitError;
+
+        // Each case names the phrase, then the exact substrings that bind a
+        // number to its role. Checking only that both numbers appear cannot
+        // tell a message that has swapped them, and every variant here puts
+        // the observation and the limit in the same sentence.
+        let cases: &[(LimitError, &str, &[&str])] = &[
+            (
+                LimitError::IngestionRateExceeded { rate: 11.0, observed: 22.0 },
+                "ingestion rate",
+                &["observed 22", "limit 11"],
+            ),
+            (
+                LimitError::MaxSeriesPerUser { limit: 33, observed: 44 },
+                "active series",
+                &["observed 44", "limit 33"],
+            ),
+            (
+                LimitError::LabelNameTooLong { limit: 55, observed: 66 },
+                "label name",
+                &["observed 66", "limit 55"],
+            ),
+            (
+                LimitError::LabelValueTooLong { limit: 77, observed: 88 },
+                "label value",
+                &["observed 88", "limit 77"],
+            ),
+            (
+                LimitError::SamplesPerQueryExceeded { limit: 99, observed: 111 },
+                "samples per query",
+                &["observed 111", "limit 99"],
+            ),
+            (
+                LimitError::SeriesPerQueryExceeded { limit: 122, observed: 133 },
+                "series per query",
+                &["observed 133", "limit 122"],
+            ),
+            (
+                LimitError::QueryLookbackExceeded { limit_secs: 144, observed_secs: 155 },
+                "lookback",
+                &["observed 155s", "limit 144s"],
+            ),
+            (
+                LimitError::QueryRangeTooLong { limit_secs: 166, observed_secs: 177 },
+                "range too long",
+                &["observed 177s", "limit 166s"],
+            ),
+        ];
+
+        for (error, phrase, numbers) in cases {
+            let message = error.message();
+            check!(!message.is_empty(), "{error:?} said nothing");
+            check!(message.contains(phrase), "{message:?} does not mention {phrase:?}");
+            for fragment in *numbers {
+                check!(message.contains(fragment), "{message:?} omits {fragment:?}");
+            }
+        }
+
+        // The message is the display text, not a fixed string: two variants
+        // must not say the same thing.
+        let first = LimitError::LabelNameTooLong { limit: 1, observed: 2 }.message();
+        let second = LimitError::LabelValueTooLong { limit: 1, observed: 2 }.message();
+        check!(first != second, "name and value limits read alike: {first:?}");
+    }
     use assert2::{assert, check};
 
     use super::*;
