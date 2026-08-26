@@ -877,6 +877,60 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
 
+    /// `read_binary_ref` dispatches on field id and wire type. Three of its
+    /// four fields are i64, so a field reading its neighbour's id still yields
+    /// a well-formed reference -- every value here differs, and the two halves
+    /// of the trace id differ from each other as well as from the span id.
+    #[test]
+    fn a_binary_span_reference_takes_each_field_from_its_own_id() {
+        /// Binary Thrift: a type byte, a two-byte field id, then the payload.
+        fn field(out: &mut Vec<u8>, type_id: u8, id: i16, payload: &[u8]) {
+            out.push(type_id);
+            out.extend_from_slice(&id.to_be_bytes());
+            out.extend_from_slice(payload);
+        }
+
+        let mut bytes = Vec::new();
+        field(&mut bytes, 8, 1, &7_i32.to_be_bytes());
+        field(&mut bytes, 10, 2, &11_i64.to_be_bytes());
+        field(&mut bytes, 10, 3, &22_i64.to_be_bytes());
+        field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
+        bytes.push(0);
+
+        let mut input = super::BinaryInput { bytes: &bytes, pos: 0 };
+        let reference = super::read_binary_ref(&mut input).expect("reads");
+        check!(reference.ref_type == 7);
+        check!(reference.trace_id_low == 11, "field two is the low half");
+        check!(reference.trace_id_high == 22, "field three is the high half, not the low");
+        check!(reference.span_id == 33, "field four is the span, not a trace half");
+
+        // Fields may arrive in any order, since each carries its own id.
+        let mut bytes = Vec::new();
+        field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
+        field(&mut bytes, 10, 2, &11_i64.to_be_bytes());
+        bytes.push(0);
+        let mut input = super::BinaryInput { bytes: &bytes, pos: 0 };
+        let reference = super::read_binary_ref(&mut input).expect("reads");
+        check!(reference.span_id == 33);
+        check!(reference.trace_id_low == 11);
+        check!(reference.trace_id_high == 0, "an absent field keeps its default");
+
+        // An unknown field is skipped rather than consuming the one after it.
+        let mut bytes = Vec::new();
+        field(&mut bytes, 10, 9, &99_i64.to_be_bytes());
+        field(&mut bytes, 10, 4, &33_i64.to_be_bytes());
+        bytes.push(0);
+        let mut input = super::BinaryInput { bytes: &bytes, pos: 0 };
+        let reference = super::read_binary_ref(&mut input).expect("reads");
+        check!(reference.span_id == 33, "the field after the unknown one still lands");
+
+        // An empty struct is all defaults rather than an error.
+        let mut input = super::BinaryInput { bytes: &[0], pos: 0 };
+        let reference = super::read_binary_ref(&mut input).expect("reads");
+        check!(reference.ref_type == 0);
+        check!(reference.span_id == 0);
+    }
+
     /// The two inputs prefix a binary field with different length encodings:
     /// compact a varint, binary a big-endian i32. Each is given both framings
     /// and must read only its own, and both are checked where the payload
