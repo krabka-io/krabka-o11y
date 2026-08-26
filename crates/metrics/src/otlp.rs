@@ -1313,6 +1313,71 @@ mod tests {
         check!(decode.status_code() != 500, "not a server error");
     }
 
+    /// `accumulate_histogram` folds each delta into a running cumulative, and
+    /// starts over when the series reports a new start time. It shares the
+    /// three-condition reset guard with `accumulate_sum`, so each condition is
+    /// checked with the other two satisfied, and the counts differ per delta
+    /// so a fold that replaces instead of adding is visible.
+    #[test]
+    fn delta_histograms_fold_until_the_series_restarts() {
+        use crabka_blockstore::Labels;
+        use crate::{ResetHint, histogram::NativeHistogram};
+
+        let hist = |count: f64| NativeHistogram {
+            schema: 0,
+            is_float: false,
+            reset_hint: ResetHint::Unknown,
+            zero_threshold: 0.0,
+            zero_count: 0.0,
+            count,
+            sum: count,
+            positive_spans: Vec::new(),
+            positive_counts: Vec::new(),
+            negative_spans: Vec::new(),
+            negative_counts: Vec::new(),
+            custom_values: None,
+            start_timestamp_ms: None,
+        };
+        let mut labels = Labels::default();
+        labels.insert("__name__", "latency");
+        let mut acc = super::DeltaAccumulator::default();
+        let is = |actual: f64, expected: f64| (actual - expected).abs() < f64::EPSILON;
+
+        // Deltas fold together while the start time holds.
+        let first = acc.accumulate_histogram("m", &labels, 100, hist(1.0)).expect("folds");
+        check!(is(first.count, 1.0));
+        let second = acc.accumulate_histogram("m", &labels, 100, hist(2.0)).expect("folds");
+        check!(is(second.count, 3.0), "folded, not replaced");
+        let third = acc.accumulate_histogram("m", &labels, 100, hist(4.0)).expect("folds");
+        check!(is(third.count, 7.0));
+
+        // A new start time restarts the cumulative at the delta.
+        let restarted = acc.accumulate_histogram("m", &labels, 200, hist(5.0)).expect("folds");
+        check!(is(restarted.count, 5.0), "reset");
+        let after = acc.accumulate_histogram("m", &labels, 200, hist(1.0)).expect("folds");
+        check!(is(after.count, 6.0), "then folds again");
+
+        // A start time of zero means "not reported" and must not restart.
+        let unreported = acc.accumulate_histogram("m", &labels, 0, hist(1.0)).expect("folds");
+        check!(is(unreported.count, 7.0), "zero does not reset");
+
+        // A second series keeps its own cumulative.
+        let mut other = Labels::default();
+        other.insert("__name__", "other");
+        let separate = acc.accumulate_histogram("m", &other, 100, hist(9.0)).expect("folds");
+        check!(is(separate.count, 9.0), "separate key");
+        let back = acc.accumulate_histogram("m", &labels, 200, hist(1.0)).expect("folds");
+        check!(is(back.count, 8.0), "the first is untouched");
+
+        // A delta whose layout differs is refused rather than folded.
+        let mut incompatible = hist(1.0);
+        incompatible.schema = 3;
+        check!(
+            acc.accumulate_histogram("m", &labels, 200, incompatible).is_err(),
+            "an incompatible layout cannot fold"
+        );
+    }
+
     /// `accumulate_sum` adds each delta to a running total, and starts over
     /// when the series reports a new start time. Three conditions have to hold
     /// together for that reset, so each is checked with the other two
