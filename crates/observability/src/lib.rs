@@ -21489,6 +21489,91 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// `parse_decimal_seconds_timestamp` reads "seconds.fraction" as
+    /// nanoseconds. It REQUIRES the point -- a bare integer is handled
+    /// elsewhere, as seconds or as nanos depending on context, and guessing
+    /// here would pre-empt that. The fraction is padded to nine places and
+    /// truncated past them, so a microsecond timestamp scales correctly.
+    ///
+    /// The `take(9)` bounding that loop is belt-and-braces: the scale divides
+    /// by ten each digit and reaches zero by integer division after the ninth,
+    /// so a tenth digit contributes nothing whether it is read or not.
+    /// Widening the take is an equivalent mutation.
+    #[test]
+    fn a_decimal_seconds_timestamp_scales_its_fraction_to_nanos() {
+        let parse = super::parse_decimal_seconds_timestamp;
+
+        // The fraction is positional: one digit is tenths, not nanos.
+        check!(parse("5.5") == Some(5_500_000_000));
+        check!(parse("5.05") == Some(5_050_000_000));
+        check!(parse("0.000000001") == Some(1), "one nanosecond");
+        check!(parse("1.000000000") == Some(1_000_000_000));
+
+        // Past nine places the rest is dropped rather than rounded.
+        check!(parse("0.0000000009") == Some(0), "a tenth of a nanosecond is lost");
+        check!(parse("1.9999999999") == Some(1_999_999_999));
+
+        // Either side may be empty, but not both.
+        check!(parse(".5") == Some(500_000_000));
+        check!(parse("5.") == Some(5_000_000_000));
+        check!(parse(".").is_none());
+
+        // Signs, including a negative instant.
+        check!(parse("-5.5") == Some(-5_500_000_000));
+        check!(parse("+5.5") == Some(5_500_000_000));
+
+        // The point is required: a bare integer is somebody else's problem.
+        check!(parse("5").is_none(), "no point, no answer");
+        check!(parse("").is_none());
+        check!(parse("abc").is_none());
+        check!(parse("5.abc").is_none());
+        check!(parse("5.5.5").is_none(), "the second point is not a digit");
+    }
+
+    /// `metric_binary_sample_timestamp_ns_candidates` offers every reading a
+    /// sample's timestamp could plausibly have. Which readings depends on how
+    /// it was encoded, and each JSON type takes its own branch: an integer is
+    /// ambiguous and offers two, a float is seconds and offers one, a string
+    /// may parse either way and offers whichever succeed.
+    #[test]
+    fn a_sample_timestamp_offers_every_reading_its_encoding_allows() {
+        let candidates = |timestamp: serde_json::Value| {
+            super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([
+                timestamp, "1"
+            ]))
+        };
+
+        // An integer is ambiguous: both the raw value and it read as seconds.
+        check!(candidates(serde_json::json!(5)) == Some(vec![5, 5_000_000_000]));
+        // Zero collapses to one reading, since both are the same number.
+        check!(candidates(serde_json::json!(0)) == Some(vec![0]));
+
+        // A float is seconds, rounded to the nearest nanosecond, and offers
+        // only that -- there is no second reading to be ambiguous about.
+        check!(candidates(serde_json::json!(5.5)) == Some(vec![5_500_000_000]));
+        // Rounded, not truncated. 5.5 lands on a whole nanosecond and cannot
+        // show the difference; 1.7 nanoseconds rounds up to 2 where flooring
+        // gives 1, which is the sub-nanosecond precision a float carries and
+        // an integer count cannot.
+        check!(candidates(serde_json::json!(1.7e-9)) == Some(vec![2]));
+
+        // A string is tried both ways and offers whichever parse. "5" has no
+        // decimal point so only the integer reading applies; "5.5" is the
+        // reverse.
+        check!(candidates(serde_json::json!("5")) == Some(vec![5, 5_000_000_000]));
+        check!(candidates(serde_json::json!("5.5")) == Some(vec![5_500_000_000]));
+
+        // Nothing parses, or there is nothing to parse.
+        check!(candidates(serde_json::json!("nonsense")).is_none());
+        check!(candidates(serde_json::json!(true)).is_none());
+        check!(super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([]))
+            .is_none());
+        check!(
+            super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!("bare"))
+                .is_none()
+        );
+    }
+
     /// Two samples share an instant if any of their candidate readings agree.
     /// A bare integer is ambiguous -- Prometheus writes timestamps in seconds
     /// and Loki in nanoseconds -- so each yields both readings, and 5 matches
