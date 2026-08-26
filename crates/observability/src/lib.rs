@@ -21032,9 +21032,8 @@ mod tests {
     #[test]
     fn scalar_division_and_power_refuse_what_has_no_answer() {
         let scalar = super::ScalarSample::new;
-        let value = |result: Option<super::ScalarSample>| {
-            result.and_then(super::ScalarSample::to_f64)
-        };
+        let value =
+            |result: Option<super::ScalarSample>| result.and_then(super::ScalarSample::to_f64);
 
         // Exact division, and a repeating fraction held as a rational rather
         // than rounded on the way in.
@@ -21055,9 +21054,15 @@ mod tests {
 
         // Powers, including the ones that are easy to get backwards.
         check!(value(scalar(2, 1).power(scalar(3, 1))) == Some(8.0));
-        check!(value(scalar(3, 1).power(scalar(2, 1))) == Some(9.0), "not the other way round");
+        check!(
+            value(scalar(3, 1).power(scalar(2, 1))) == Some(9.0),
+            "not the other way round"
+        );
         check!(value(scalar(2, 1).power(scalar(-1, 1))) == Some(0.5));
-        check!(value(scalar(4, 1).power(scalar(1, 2))) == Some(2.0), "a fractional exponent");
+        check!(
+            value(scalar(4, 1).power(scalar(1, 2))) == Some(2.0),
+            "a fractional exponent"
+        );
         check!(value(scalar(5, 1).power(scalar(0, 1))) == Some(1.0));
 
         // A negative base to a fractional power is NaN, which must be refused
@@ -21096,10 +21101,13 @@ mod tests {
                 ..
             })
         ));
-        check!(matches!(
-            parse("log_level="),
-            Err(HttpQueryError::InvalidQueryParameter { .. }),
-        ), "an empty value is an unrecognised level, not an absent parameter");
+        check!(
+            matches!(
+                parse("log_level="),
+                Err(HttpQueryError::InvalidQueryParameter { .. }),
+            ),
+            "an empty value is an unrecognised level, not an absent parameter"
+        );
         check!(matches!(
             parse("other=1"),
             Err(HttpQueryError::MissingQueryParameter("log_level"))
@@ -21168,7 +21176,10 @@ mod tests {
         check!(body.contains("unrecognized log level"));
 
         let (_, body) = post(Some("log_level=verbose"), "").await;
-        check!(body.contains("verbose"), "the refusal names what was sent: {body}");
+        check!(
+            body.contains("verbose"),
+            "the refusal names what was sent: {body}"
+        );
     }
 
     /// The dynamic index caches hand back an entry only while it is fresh, and
@@ -21202,11 +21213,7 @@ mod tests {
         };
         let held = |cache: &super::DynamicIndexCache| {
             (
-                cache
-                    .entries
-                    .lock()
-                    .expect("the cache lock is held")
-                    .len(),
+                cache.entries.lock().expect("the cache lock is held").len(),
                 cache
                     .shard_indexes
                     .lock()
@@ -21220,7 +21227,10 @@ mod tests {
         fresh.insert_shard_index(shard_key(), LabelIndex::default(), BlockIndex::default());
         check!(fresh.get(&key()).is_some());
         check!(fresh.get_shard_index(&shard_key()).is_some());
-        check!(held(&fresh) == (1, 1), "a fresh hit leaves the entry in place");
+        check!(
+            held(&fresh) == (1, 1),
+            "a fresh hit leaves the entry in place"
+        );
 
         // Past the TTL: a miss, and the entry is gone rather than merely
         // ignored -- so a second lookup finds nothing to evict.
@@ -21232,10 +21242,13 @@ mod tests {
         check!(held(&stale) == (0, 0), "and evicted on the way past");
 
         // A key that was never inserted is a miss without disturbing anything.
-        check!(fresh.get(&super::DynamicIndexCacheKey::TenantManifest {
-            tenant: "other".to_string(),
-        })
-        .is_none());
+        check!(
+            fresh
+                .get(&super::DynamicIndexCacheKey::TenantManifest {
+                    tenant: "other".to_string(),
+                })
+                .is_none()
+        );
         check!(held(&fresh) == (1, 1), "an absent key evicts nothing");
 
         // The two caches have their OWN durations -- five seconds and five
@@ -21254,7 +21267,10 @@ mod tests {
             LabelIndex::default(),
             BlockIndex::default(),
         );
-        check!(short_manifest.get(&key()).is_none(), "the manifest ttl is zero");
+        check!(
+            short_manifest.get(&key()).is_none(),
+            "the manifest ttl is zero"
+        );
         check!(
             short_manifest.get_shard_index(&shard_key()).is_some(),
             "but the shard ttl is an hour"
@@ -21267,7 +21283,10 @@ mod tests {
         };
         short_shard.insert(key(), LabelIndex::default(), BlockIndex::default());
         short_shard.insert_shard_index(shard_key(), LabelIndex::default(), BlockIndex::default());
-        check!(short_shard.get(&key()).is_some(), "the manifest ttl is an hour");
+        check!(
+            short_shard.get(&key()).is_some(),
+            "the manifest ttl is an hour"
+        );
         check!(
             short_shard.get_shard_index(&shard_key()).is_none(),
             "but the shard ttl is zero"
@@ -21316,21 +21335,33 @@ mod tests {
         check!(parse("1e3") == Some((1_000, 1)));
         check!(parse("1.5e2") == Some((150, 1)), "past the decimal places");
         check!(parse("1.5e1") == Some((15, 1)), "exactly cancelling them");
-        check!(parse("1.25e1") == Some((125, 10)), "partially cancelling them");
+        check!(
+            parse("1.25e1") == Some((125, 10)),
+            "partially cancelling them"
+        );
 
         // A negative exponent adds places, raising the denominator.
         check!(parse("1e-3") == Some((1, 1_000)));
         check!(parse("1.5e-2") == Some((15, 1_000)));
-        check!(parse("15E-1") == Some((15, 10)), "the exponent marker is either case");
+        check!(
+            parse("15E-1") == Some((15, 10)),
+            "the exponent marker is either case"
+        );
 
         // Refusals: nothing to parse, or not a number.
         check!(parse("").is_none());
         check!(parse("-").is_none());
         check!(parse("abc").is_none());
-        check!(parse("1.2.3").is_none(), "a second point is part of the fraction");
+        check!(
+            parse("1.2.3").is_none(),
+            "a second point is part of the fraction"
+        );
         check!(parse("1e2e3").is_none(), "and a second exponent is refused");
         check!(parse("1e").is_none());
-        check!(parse(" 1").is_none(), "no trimming: whitespace is not a digit");
+        check!(
+            parse(" 1").is_none(),
+            "no trimming: whitespace is not a digit"
+        );
     }
 
     /// `metric_scalar_comparison_matches` compares a sample against a scalar,
@@ -21392,10 +21423,19 @@ mod tests {
 
         // Spelled out for the case the table exists to protect: the scalar's
         // side changes the answer for an ordered operator and not for equality.
-        check!(matches(one, ComparisonOp::Less, two, false), "x < 1 where x is smaller");
-        check!(!matches(one, ComparisonOp::Less, two, true), "but 1 < x is not");
+        check!(
+            matches(one, ComparisonOp::Less, two, false),
+            "x < 1 where x is smaller"
+        );
+        check!(
+            !matches(one, ComparisonOp::Less, two, true),
+            "but 1 < x is not"
+        );
         check!(matches(one, ComparisonOp::Equal, one, false));
-        check!(matches(one, ComparisonOp::Equal, one, true), "equality is side-blind");
+        check!(
+            matches(one, ComparisonOp::Equal, one, true),
+            "equality is side-blind"
+        );
     }
 
     /// `page_groups` pages the rules response by group, resuming AFTER the
@@ -21442,10 +21482,16 @@ mod tests {
         // returned, and the next page starts after it.
         let first = page(Some(2), None).expect("a first page");
         check!(names(&first) == vec!["a", "b"]);
-        check!(first.next_token.as_deref() == Some("b"), "the LAST group of the page");
+        check!(
+            first.next_token.as_deref() == Some("b"),
+            "the LAST group of the page"
+        );
 
         let second = page(Some(2), Some("b")).expect("a second page");
-        check!(names(&second) == vec!["c", "d"], "resumes after b, not at it");
+        check!(
+            names(&second) == vec!["c", "d"],
+            "resumes after b, not at it"
+        );
         check!(second.next_token.as_deref() == Some("d"));
 
         // The final page is short and offers no token, because nothing follows.
@@ -21628,19 +21674,28 @@ mod tests {
         // Inside the range, and a series the plan wants.
         check!(appended(known, 50).ok() == Some(1));
         // Exactly on each bound: both inclusive.
-        check!(appended(known, 10).ok() == Some(1), "the start bound is inclusive");
+        check!(
+            appended(known, 10).ok() == Some(1),
+            "the start bound is inclusive"
+        );
         check!(appended(known, 90).ok() == Some(1), "and so is the end");
         // One step outside each.
         check!(appended(known, 9).ok() == Some(0), "before the range");
         check!(appended(known, 91).ok() == Some(0), "after it");
         // A series the plan did not ask for, inside the range.
-        check!(appended(unwanted, 50).ok() == Some(0), "not a wanted series");
+        check!(
+            appended(unwanted, 50).ok() == Some(0),
+            "not a wanted series"
+        );
 
         // A fingerprint the label index cannot name is an error, not a skip --
         // but only once the row has passed the range and series filters, so a
         // nameless series the plan never wanted is still simply skipped.
         let nameless = 999_999_u64;
-        check!(appended(nameless, 50).ok() == Some(0), "not wanted, so not named");
+        check!(
+            appended(nameless, 50).ok() == Some(0),
+            "not wanted, so not named"
+        );
         let mut wants_nameless = plan.clone();
         wants_nameless.fingerprints.insert(nameless);
         let mut streams = BTreeMap::new();
@@ -21738,15 +21793,11 @@ mod tests {
             "a record at the window start belongs to the previous window"
         );
         // One nanosecond past the start is inside.
-        check!(
-            windows_hit(&record("tenant", 10_000_000_001), &open) == [20_000_000_000].into()
-        );
+        check!(windows_hit(&record("tenant", 10_000_000_001), &open) == [20_000_000_000].into());
         // In the overlap of neither window.
         check!(windows_hit(&record("tenant", 5_000_000_000), &open).is_empty());
         // Inside the second window only.
-        check!(
-            windows_hit(&record("tenant", 25_000_000_000), &open) == [30_000_000_000].into()
-        );
+        check!(windows_hit(&record("tenant", 25_000_000_000), &open) == [30_000_000_000].into());
 
         // A record for another tenant is skipped even when it is in range.
         check!(windows_hit(&record("other", 20_000_000_000), &open).is_empty());
@@ -21836,8 +21887,7 @@ mod tests {
 
         // The operands are carried through trimmed, not with the whitespace
         // the split left on them.
-        let Some(Expression::Arithmetic { left, right, .. }) =
-            parse(&format!("{replace}  +  up"))
+        let Some(Expression::Arithmetic { left, right, .. }) = parse(&format!("{replace}  +  up"))
         else {
             panic!("an arithmetic expression");
         };
@@ -21885,7 +21935,10 @@ mod tests {
 
         // The grid runs 1000, 1300, 1600 -- not 900, 1200, 1500, which is what
         // flooring from the epoch would give.
-        check!(bucket(1_000, start, step) == 1_000, "the start is its own bucket");
+        check!(
+            bucket(1_000, start, step) == 1_000,
+            "the start is its own bucket"
+        );
         check!(bucket(1_001, start, step) == 1_000);
         check!(bucket(1_299, start, step) == 1_000, "one short of the next");
         check!(bucket(1_300, start, step) == 1_300, "exactly on the next");
@@ -22028,11 +22081,8 @@ mod tests {
         )
         .expect("the block writes");
 
-        let state = super::QuerierState::new(
-            dir.path(),
-            LabelIndex::default(),
-            BlockIndex::default(),
-        );
+        let state =
+            super::QuerierState::new(dir.path(), LabelIndex::default(), BlockIndex::default());
         let plan = |fingerprints: &[u64], start_ns, end_ns| StreamPlan {
             tenant: "tenant".to_string(),
             time_range: TimeRange::new(start_ns, end_ns).expect("a valid range"),
@@ -22055,16 +22105,25 @@ mod tests {
         // Series 1 has rows at 9, 10, 50, 90 and 91. Within 10..=90 that is
         // three: the ones at 9 and 91 fall outside, and series 2's row is a
         // different series.
-        check!(count(plan(&[1], 10, 90)).await == 3, "both bounds inclusive");
+        check!(
+            count(plan(&[1], 10, 90)).await == 3,
+            "both bounds inclusive"
+        );
 
         // Each bound moved in by one drops the row sitting exactly on it,
         // which is what makes the bounds observably inclusive.
-        check!(count(plan(&[1], 11, 90)).await == 2, "the row at 10 is dropped");
+        check!(
+            count(plan(&[1], 11, 90)).await == 2,
+            "the row at 10 is dropped"
+        );
         check!(count(plan(&[1], 10, 89)).await == 2, "and the row at 90");
 
         // The series filter, alone.
         check!(count(plan(&[2], 0, 100)).await == 1, "only series 2's row");
-        check!(count(plan(&[1, 2], 0, 100)).await == 6, "both series, whole range");
+        check!(
+            count(plan(&[1, 2], 0, 100)).await == 6,
+            "both series, whole range"
+        );
         check!(count(plan(&[], 0, 100)).await == 0, "no series, no rows");
 
         // A range that excludes everything, and a plan with no blocks.
@@ -22136,7 +22195,10 @@ mod tests {
         let base = || super::QuerierState::new(".", LabelIndex::default(), BlockIndex::default());
 
         // Series: three fingerprints against a limit of three, then two.
-        check!(super::validate_query_series_limit(&base(), &plan(3, &[])).is_ok(), "unset");
+        check!(
+            super::validate_query_series_limit(&base(), &plan(3, &[])).is_ok(),
+            "unset"
+        );
         check!(
             super::validate_query_series_limit(&base().with_max_query_series(3), &plan(3, &[]))
                 .is_ok(),
@@ -22151,7 +22213,10 @@ mod tests {
         // Bytes: the planned total is SUMMED across blocks, so two blocks are
         // used -- one block cannot tell a sum from a maximum.
         let two_blocks = plan(0, &[40, 60]);
-        check!(super::validate_query_bytes_limit(&base(), &two_blocks).is_ok(), "unset");
+        check!(
+            super::validate_query_bytes_limit(&base(), &two_blocks).is_ok(),
+            "unset"
+        );
         check!(
             super::validate_query_bytes_limit(
                 &base().with_max_query_read(crabka_units::bytes(100)),
@@ -22171,10 +22236,15 @@ mod tests {
 
         // Length: measured in bytes of the query text.
         let query = "{app=\"api\"}";
-        check!(super::validate_query_length_limit(&base(), query).is_ok(), "unset");
+        check!(
+            super::validate_query_length_limit(&base(), query).is_ok(),
+            "unset"
+        );
         check!(
             super::validate_query_length_limit(
-                &base().with_max_query_length(crabka_units::bytes(u32::try_from(query.len()).expect("a short query"))),
+                &base().with_max_query_length(crabka_units::bytes(
+                    u32::try_from(query.len()).expect("a short query")
+                )),
                 query,
             )
             .is_ok(),
@@ -22182,7 +22252,9 @@ mod tests {
         );
         check!(
             super::validate_query_length_limit(
-                &base().with_max_query_length(crabka_units::bytes(u32::try_from(query.len()).expect("a short query") - 1)),
+                &base().with_max_query_length(crabka_units::bytes(
+                    u32::try_from(query.len()).expect("a short query") - 1
+                )),
                 query,
             )
             .is_err(),
@@ -22237,7 +22309,10 @@ mod tests {
         // The error names how long the query actually was, so the client can
         // see by how much it missed.
         let error = range(0, max_ns + 1).expect_err("over the limit");
-        check!(matches!(error, HttpQueryError::LokiQueryRangeTooLarge { .. }));
+        check!(matches!(
+            error,
+            HttpQueryError::LokiQueryRangeTooLarge { .. }
+        ));
 
         // A span that cannot be subtracted without overflowing is refused
         // rather than wrapping to a small positive number.
@@ -22306,10 +22381,7 @@ mod tests {
         // An unparseable timestamp is counted, bounded or not.
         let odd = streams(&[("api", &["1", "nonsense", "9"])]);
         check!(count(&odd, None) == 3);
-        check!(
-            count(&odd, Some(2)) == 2,
-            "1 and the odd entry, but not 9"
-        );
+        check!(count(&odd, Some(2)) == 2, "1 and the odd entry, but not 9");
 
         // Nothing to count.
         check!(count(&BTreeMap::new(), None) == 0);
@@ -22358,7 +22430,10 @@ mod tests {
             kept(stream(&["0", "5", "10", "15", "20"]), Some(10)) == vec!["0", "10", "20"],
             "an entry exactly at the boundary is kept"
         );
-        check!(kept(stream(&["0", "9"]), Some(10)) == vec!["0"], "one short is dropped");
+        check!(
+            kept(stream(&["0", "9"]), Some(10)) == vec!["0"],
+            "one short is dropped"
+        );
 
         // No interval, and a zero interval, both leave the stream alone.
         check!(kept(stream(&["0", "1", "2"]), None) == vec!["0", "1", "2"]);
@@ -22386,7 +22461,10 @@ mod tests {
         });
         super::apply_loki_stream_interval(&mut empty, Some(10));
         check!(
-            empty["data"]["result"].as_array().expect("an array").is_empty(),
+            empty["data"]["result"]
+                .as_array()
+                .expect("an array")
+                .is_empty(),
             "an empty stream is dropped rather than sent"
         );
     }
@@ -22437,7 +22515,10 @@ mod tests {
         check!(parse("1.5h").is_none(), "not an integer count");
 
         // A total that will not fit is refused rather than wrapping.
-        check!(parse("999999999999y").is_none(), "overflow is not a duration");
+        check!(
+            parse("999999999999y").is_none(),
+            "overflow is not a duration"
+        );
     }
 
     /// `hex_string` renders bytes as lower-case hex, high nibble first. The
@@ -22475,7 +22556,9 @@ mod tests {
         };
 
         // The one that is.
-        check!(super::block_store_error_is_object_store(&object_store_error()));
+        check!(super::block_store_error_is_object_store(
+            &object_store_error()
+        ));
         check!(is_object_store(&super::CompactionError::BlockStore(
             object_store_error()
         )));
@@ -22507,9 +22590,9 @@ mod tests {
         // And every compaction failure that is not a block-store one at all.
         check!(!is_object_store(&super::CompactionError::EmptyWalBatch));
         check!(!is_object_store(&super::CompactionError::AllRowsDeleted));
-        check!(!is_object_store(&super::CompactionError::MissingWalPosition {
-            timestamp_ns: 1
-        }));
+        check!(!is_object_store(
+            &super::CompactionError::MissingWalPosition { timestamp_ns: 1 }
+        ));
         check!(!is_object_store(&super::CompactionError::MixedTenant {
             expected: "a".to_string(),
             actual: "b".to_string(),
@@ -22549,7 +22632,10 @@ mod tests {
             annotation_templates: &templates,
         };
 
-        check!(super::prometheus_alert_key_matches_rule(&subject, &params(&active)));
+        check!(super::prometheus_alert_key_matches_rule(
+            &subject,
+            &params(&active)
+        ));
 
         // Each of the three identity fields, wrong on its own.
         check!(!super::prometheus_alert_key_matches_rule(
@@ -22575,7 +22661,10 @@ mod tests {
         // A different key being active does not exclude this one.
         let mut other_seen = BTreeSet::new();
         other_seen.insert(key("tenant", "HighErrors", "other"));
-        check!(super::prometheus_alert_key_matches_rule(&subject, &params(&other_seen)));
+        check!(super::prometheus_alert_key_matches_rule(
+            &subject,
+            &params(&other_seen)
+        ));
     }
 
     /// `matches_rule` filters the rules response by kind, by name, and by label
@@ -22604,14 +22693,13 @@ mod tests {
             matchers,
             pipeline: Vec::new(),
         };
-        let filters = |kind, names: &[&str], selectors: Vec<StreamQuery>| {
-            super::PrometheusRulesFilters {
+        let filters =
+            |kind, names: &[&str], selectors: Vec<StreamQuery>| super::PrometheusRulesFilters {
                 rule_kind: kind,
                 rule_names: names.iter().map(|name| (*name).to_string()).collect(),
                 label_selectors: selectors,
                 ..super::PrometheusRulesFilters::default()
-            }
-        };
+            };
 
         // No filters at all accepts everything.
         check!(filters(None, &[], Vec::new()).matches_rule(&rule, &source));
@@ -22688,7 +22776,10 @@ mod tests {
         check!(params.query == "up");
         check!(params.start == 100);
         check!(params.end == 200);
-        check!(params.step == 1_000_000_000, "the step defaults to a second");
+        check!(
+            params.step == 1_000_000_000,
+            "the step defaults to a second"
+        );
 
         // A repeated parameter keeps the LAST value.
         let params = parse("query=a&query=b&start=100&end=200").expect("parses");
@@ -22735,17 +22826,14 @@ mod tests {
         };
 
         check!(
-            after("on(job) foo", 0)
-                == Some(("on (job)".to_string(), " foo".to_string())),
+            after("on(job) foo", 0) == Some(("on (job)".to_string(), " foo".to_string())),
             "the remainder starts after the closing bracket"
         );
         check!(
             after("ignoring(pod) foo", 0)
                 == Some(("ignoring (pod)".to_string(), " foo".to_string()))
         );
-        check!(
-            after("on(a,b) foo", 0) == Some(("on (a,b)".to_string(), " foo".to_string()))
-        );
+        check!(after("on(a,b) foo", 0) == Some(("on (a,b)".to_string(), " foo".to_string())));
         check!(
             after("on() foo", 0) == Some(("on ()".to_string(), " foo".to_string())),
             "an empty label list is still a modifier"
@@ -22753,8 +22841,7 @@ mod tests {
 
         // Parsing from part-way in, which is how the caller uses it.
         check!(
-            after("up on(job) foo", 3)
-                == Some(("on (job)".to_string(), " foo".to_string())),
+            after("up on(job) foo", 3) == Some(("on (job)".to_string(), " foo".to_string())),
             "the position is an offset into the whole query"
         );
 
@@ -22808,7 +22895,10 @@ mod tests {
 
         // A key=value token keeps the key and masks the value.
         check!(token("user_id=12345") == "user_id=<_>");
-        check!(token("status=ok") == "status=ok", "a non-variable value is kept");
+        check!(
+            token("status=ok") == "status=ok",
+            "a non-variable value is kept"
+        );
         check!(
             token("id=550e8400-e29b-41d4-a716-446655440000") == "id=<_>",
             "a uuid is variable"
@@ -22822,7 +22912,10 @@ mod tests {
 
         // Only the FIRST equals splits, so a value containing one is masked
         // whole rather than re-split.
-        check!(token("q=a=12345") == "q=a=12345", "the value is not variable");
+        check!(
+            token("q=a=12345") == "q=a=12345",
+            "the value is not variable"
+        );
         check!(token("") == "");
     }
 
@@ -22848,7 +22941,10 @@ mod tests {
         check!(could_be("vector(1)"));
         check!(could_be("label_replace(vector(1),\"a\",\"b\",\"c\",\"d\")"));
         check!(could_be("label_join(vector(1),\"a\",\"b\")"));
-        check!(!could_be("sum(rate(x[5m]))"), "an aggregation is parsed elsewhere");
+        check!(
+            !could_be("sum(rate(x[5m]))"),
+            "an aggregation is parsed elsewhere"
+        );
         check!(!could_be("up"));
 
         // The identifier must match WHOLE: a longer name starting with one of
@@ -22859,7 +22955,10 @@ mod tests {
         // Nothing, and things that start with neither.
         check!(!could_be(""));
         check!(!could_be("   "));
-        check!(!could_be("{app=\"a\"}"), "a matcher is not a scalar expression");
+        check!(
+            !could_be("{app=\"a\"}"),
+            "a matcher is not a scalar expression"
+        );
         check!(!could_be("\"quoted\""));
     }
 
@@ -22888,8 +22987,13 @@ mod tests {
 
         // Both series are known, so both are copied.
         let mut target = LabelIndex::default();
-        super::insert_descriptor_labels(&mut target, &source, "tenant", &descriptor(&[known, also_known]))
-            .expect("both series are known");
+        super::insert_descriptor_labels(
+            &mut target,
+            &source,
+            "tenant",
+            &descriptor(&[known, also_known]),
+        )
+        .expect("both series are known");
         check!(target.labels_for("tenant", known) == Some(&labels));
         check!(target.labels_for("tenant", also_known) == Some(&other));
 
@@ -22902,7 +23006,12 @@ mod tests {
             labels
         });
         check!(matches!(
-            super::insert_descriptor_labels(&mut target, &source, "tenant", &descriptor(&[stranger])),
+            super::insert_descriptor_labels(
+                &mut target,
+                &source,
+                "tenant",
+                &descriptor(&[stranger])
+            ),
             Err(CompactorRunError::MissingSeriesLabels { .. })
         ));
 
@@ -22937,7 +23046,8 @@ mod tests {
 
         // Absent: no rules, no error.
         let absent = dir.path().join("absent.json");
-        let tenants = super::read_loki_rule_tenants(&absent).expect("an absent file is not an error");
+        let tenants =
+            super::read_loki_rule_tenants(&absent).expect("an absent file is not an error");
         check!(tenants.is_empty());
 
         // Present and valid: the rules come back.
@@ -22999,19 +23109,28 @@ mod tests {
         // Plain arithmetic, with and without spaces.
         check!(scalar("1").as_deref() == Some("1"));
         check!(scalar("1+1").as_deref() == Some("2"));
-        check!(scalar("1 + 1").as_deref() == Some("2"), "whitespace is stripped first");
+        check!(
+            scalar("1 + 1").as_deref() == Some("2"),
+            "whitespace is stripped first"
+        );
         check!(scalar("  2 * 3  ").as_deref() == Some("6"));
-        check!(scalar("(1+2)*3").as_deref() == Some("9"), "parentheses group");
+        check!(
+            scalar("(1+2)*3").as_deref() == Some("9"),
+            "parentheses group"
+        );
 
         // A vector literal is the other result shape.
         check!(matches!(
             result("vector(1)"),
             Some(ScalarVectorExpressionResult::Vector { .. })
         ));
-        check!(matches!(
-            result("vector( 1 )"),
-            Some(ScalarVectorExpressionResult::Vector { .. }),
-            ), "whitespace inside the call too");
+        check!(
+            matches!(
+                result("vector( 1 )"),
+                Some(ScalarVectorExpressionResult::Vector { .. }),
+            ),
+            "whitespace inside the call too"
+        );
 
         // Trailing junk is refused rather than ignored. This is the case that
         // the `is_finished` check exists for: without it "1+1x" evaluates to 2
@@ -23071,7 +23190,10 @@ mod tests {
         check!(validate(Some(0)).is_ok(), "and neither is zero");
         check!(validate(Some(1)).is_ok());
         check!(validate(Some(i64::MAX)).is_ok());
-        check!(matches!(validate(Some(-1)), Err(HttpQueryError::InvalidInterval)));
+        check!(matches!(
+            validate(Some(-1)),
+            Err(HttpQueryError::InvalidInterval)
+        ));
         check!(validate(Some(i64::MIN)).is_err());
     }
 
@@ -23142,7 +23264,10 @@ mod tests {
         // The `bool` modifier is stripped from the right and remembered.
         let modified = parse("up > bool vector(1)").expect("bool is allowed");
         check!(modified.bool_modifier);
-        check!(modified.vector_query == "vector(1)", "bool is not part of the query");
+        check!(
+            modified.vector_query == "vector(1)",
+            "bool is not part of the query"
+        );
         check!(modified.metric_query == "up");
 
         // Every comparison operator reaches the expression.
@@ -23230,11 +23355,17 @@ mod tests {
             split(r#"query={app="a&b"}&start=1"#) == vec![r#"query={app="a&b"}"#, "start=1"],
             "the matcher keeps its ampersand"
         );
-        check!(split("query=a&b=c") == vec!["query=a&b=c"], "b is not a known key");
+        check!(
+            split("query=a&b=c") == vec!["query=a&b=c"],
+            "b is not a known key"
+        );
 
         // A known key needs its `=` to count as one: "&start" alone is text.
         check!(split("query=a&start") == vec!["query=a&start"]);
-        check!(split("query=a&startle=1") == vec!["query=a&startle=1"], "not a prefix match");
+        check!(
+            split("query=a&startle=1") == vec!["query=a&startle=1"],
+            "not a prefix match"
+        );
 
         // Empty segments are dropped rather than yielded as empty strings.
         check!(split("") == Vec::<&str>::new());
@@ -23276,9 +23407,7 @@ mod tests {
         // A decimal is seconds, and RFC3339 is accepted too -- three
         // spellings reaching one field.
         check!(parse("start=1.5").expect("decimal seconds").start == Some(1_500_000_000));
-        check!(
-            parse("start=1970-01-01T00:00:01Z").expect("rfc3339").start == Some(1_000_000_000)
-        );
+        check!(parse("start=1970-01-01T00:00:01Z").expect("rfc3339").start == Some(1_000_000_000));
 
         // Absent parameters stay absent rather than defaulting.
         let params = parse("query=a").expect("a query alone parses");
@@ -23291,7 +23420,12 @@ mod tests {
         check!(params.matchers.is_empty());
 
         // Unknown parameters are ignored rather than refused.
-        check!(parse("nonsense=1").expect("unknown keys are ignored").matchers.is_empty());
+        check!(
+            parse("nonsense=1")
+                .expect("unknown keys are ignored")
+                .matchers
+                .is_empty()
+        );
 
         // A malformed bound IS refused, since silently dropping it would run
         // the query over a window the client did not ask for.
@@ -23316,7 +23450,10 @@ mod tests {
 
         // Composed, with the gaps left out rather than written as zeros.
         check!(format(3_661_000_000_000) == Some("1h1m1s".to_string()));
-        check!(format(3_600_000_000_001) == Some("1h1ns".to_string()), "no zero units between");
+        check!(
+            format(3_600_000_000_001) == Some("1h1ns".to_string()),
+            "no zero units between"
+        );
         check!(format(90_000_000_000) == Some("1m30s".to_string()));
         check!(format(1_500_000) == Some("1ms500us".to_string()));
 
@@ -23341,7 +23478,9 @@ mod tests {
     fn a_bytes_literal_needs_a_number_and_a_unit_it_knows() {
         let is_bytes = super::is_bytes_literal;
 
-        for unit in ["B", "kB", "KB", "MB", "GB", "TB", "KiB", "MiB", "GiB", "TiB"] {
+        for unit in [
+            "B", "kB", "KB", "MB", "GB", "TB", "KiB", "MiB", "GiB", "TiB",
+        ] {
             check!(is_bytes(&format!("1{unit}")), "{unit}");
         }
         check!(is_bytes("1.5GiB"), "a fractional amount");
@@ -23371,7 +23510,10 @@ mod tests {
         // all: four hundred digits overflow an f64 to infinity, and a size of
         // infinity is not a size.
         let overflowing = format!("{}MB", "1".repeat(400));
-        check!(!is_bytes(&overflowing), "an amount that overflows to infinity");
+        check!(
+            !is_bytes(&overflowing),
+            "an amount that overflows to infinity"
+        );
     }
 
     /// `eligible_tail_record_count` holds a tail back by `delay_for`, so a
@@ -23398,7 +23540,10 @@ mod tests {
 
         // No delay means no holding back, whatever the timestamps.
         check!(count(&[record(old), record(future)], 0) == 2);
-        check!(count(&[record(future)], -1) == 1, "a negative delay is not a delay");
+        check!(
+            count(&[record(future)], -1) == 1,
+            "a negative delay is not a delay"
+        );
 
         // With a delay, old records are eligible and future ones are not.
         check!(count(&[record(old), record(old)], 1) == 2);
@@ -23457,11 +23602,21 @@ mod tests {
         };
 
         // The first stream takes 2 of the 5 and the second takes the rest.
-        check!(kept(&super::apply_loki_tail_frame_limit(frame(&[2, 10]), Some(5))) == vec![2, 3]);
+        check!(
+            kept(&super::apply_loki_tail_frame_limit(
+                frame(&[2, 10]),
+                Some(5)
+            )) == vec![2, 3]
+        );
         // A stream that exhausts the budget leaves nothing for the later ones,
         // and emptied streams are dropped rather than sent with no values --
         // the same rule as the search path.
-        check!(kept(&super::apply_loki_tail_frame_limit(frame(&[5, 10]), Some(5))) == vec![5]);
+        check!(
+            kept(&super::apply_loki_tail_frame_limit(
+                frame(&[5, 10]),
+                Some(5)
+            )) == vec![5]
+        );
         check!(kept(&super::apply_loki_tail_frame_limit(frame(&[2, 2]), Some(5))) == vec![2, 2]);
         check!(kept(&super::apply_loki_tail_frame_limit(frame(&[9]), None)) == vec![9]);
         check!(
@@ -23500,8 +23655,16 @@ mod tests {
         counts.insert(key(&labels), 2_u64);
 
         // Two units budgeted, so two succeed and the third does not.
-        check!(super::consume_hot_metric_sample(&mut counts, &labels, &sample));
-        check!(super::consume_hot_metric_sample(&mut counts, &labels, &sample));
+        check!(super::consume_hot_metric_sample(
+            &mut counts,
+            &labels,
+            &sample
+        ));
+        check!(super::consume_hot_metric_sample(
+            &mut counts,
+            &labels,
+            &sample
+        ));
         check!(
             !super::consume_hot_metric_sample(&mut counts, &labels, &sample),
             "the budget is spent, not merely present"
@@ -23516,7 +23679,11 @@ mod tests {
 
         // A different instant of the SAME series likewise: the key is the pair.
         let later = serde_json::json!([1_700_000_001, "1"]);
-        check!(!super::consume_hot_metric_sample(&mut counts, &labels, &later));
+        check!(!super::consume_hot_metric_sample(
+            &mut counts,
+            &labels,
+            &later
+        ));
 
         // A sample with no timestamp at all.
         check!(!super::consume_hot_metric_sample(
@@ -23538,9 +23705,7 @@ mod tests {
     #[test]
     fn a_loki_vector_sample_reads_its_value_and_not_its_timestamp() {
         let value = |sample: serde_json::Value| super::loki_vector_sample_value(&sample);
-        let instant = |timestamp, sample_value| {
-            serde_json::json!({"metric": {}, "value": [timestamp, sample_value]})
-        };
+        let instant = |timestamp, sample_value| serde_json::json!({"metric": {}, "value": [timestamp, sample_value]});
 
         check!(value(instant(1_700_000_000_i64, "42")) == Some(MetricValue::new(42, 1)));
         check!(value(instant(1_700_000_000_i64, "1.5")) == Some(MetricValue::new(15, 10)));
@@ -23675,9 +23840,8 @@ mod tests {
 
         // The instant shape, where the same clone-before-write applies to the
         // single sample.
-        let instant = |ts: i64, value: &str| {
-            serde_json::json!({"metric": {}, "value": [ts, value]})
-        };
+        let instant =
+            |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
         let mut left = instant(1, "10");
         check!(super::apply_metric_binary_arithmetic_to_series(
             &mut left,
@@ -23742,7 +23906,10 @@ mod tests {
         check!(empty.get("store").is_none());
         check!(empty.get("ingester").is_none());
         check!(empty["summary"]["totalLinesProcessed"] == 0);
-        check!(empty["summary"]["totalBytesProcessed"] == 4_096, "bytes are unconditional");
+        check!(
+            empty["summary"]["totalBytesProcessed"] == 4_096,
+            "bytes are unconditional"
+        );
 
         // The store section is gated on CHUNKS, not on lines: a chunk that
         // matched no lines was still downloaded and still cost bytes.
@@ -23772,7 +23939,10 @@ mod tests {
         check!(parse("1.000000000") == Some(1_000_000_000));
 
         // Past nine places the rest is dropped rather than rounded.
-        check!(parse("0.0000000009") == Some(0), "a tenth of a nanosecond is lost");
+        check!(
+            parse("0.0000000009") == Some(0),
+            "a tenth of a nanosecond is lost"
+        );
         check!(parse("1.9999999999") == Some(1_999_999_999));
 
         // Either side may be empty, but not both.
@@ -23828,8 +23998,9 @@ mod tests {
         // Nothing parses, or there is nothing to parse.
         check!(candidates(serde_json::json!("nonsense")).is_none());
         check!(candidates(serde_json::json!(true)).is_none());
-        check!(super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([]))
-            .is_none());
+        check!(
+            super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([])).is_none()
+        );
         check!(
             super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!("bare"))
                 .is_none()
@@ -23850,11 +24021,17 @@ mod tests {
         // The same number, and the same instant written two ways.
         check!(matches(at(serde_json::json!(5)), at(serde_json::json!(5))));
         check!(
-            matches(at(serde_json::json!(5)), at(serde_json::json!(5_000_000_000_i64))),
+            matches(
+                at(serde_json::json!(5)),
+                at(serde_json::json!(5_000_000_000_i64))
+            ),
             "seconds and nanoseconds for the same moment"
         );
         check!(
-            matches(at(serde_json::json!(5_000_000_000_i64)), at(serde_json::json!(5))),
+            matches(
+                at(serde_json::json!(5_000_000_000_i64)),
+                at(serde_json::json!(5))
+            ),
             "and the other way round"
         );
 
@@ -24017,7 +24194,10 @@ mod tests {
         let value = |numerator, denominator| MetricValue::new(numerator, denominator);
 
         check!(value(5, 1).subtract(value(3, 1)) == value(2, 1));
-        check!(value(3, 1).subtract(value(5, 1)) == value(-2, 1), "and the other way");
+        check!(
+            value(3, 1).subtract(value(5, 1)) == value(-2, 1),
+            "and the other way"
+        );
 
         // 1/2 - 1/3 is exactly 1/6, which no float can hold.
         check!(value(1, 2).subtract(value(1, 3)) == value(1, 6));
@@ -24076,8 +24256,14 @@ mod tests {
         check!(decode("a+b") == Some("a b".to_string()), "plus is a space");
         check!(decode("a%20b") == Some("a b".to_string()), "and so is %20");
         check!(decode("%2F") == Some("/".to_string()));
-        check!(decode("%2f") == Some("/".to_string()), "hex is case-insensitive");
-        check!(decode("%C3%A9") == Some("\u{e9}".to_string()), "a multi-byte character");
+        check!(
+            decode("%2f") == Some("/".to_string()),
+            "hex is case-insensitive"
+        );
+        check!(
+            decode("%C3%A9") == Some("\u{e9}".to_string()),
+            "a multi-byte character"
+        );
 
         // A `%` that does not introduce two hex digits is an error, not a
         // literal percent sign -- at the end of the string and mid-string.
@@ -24189,9 +24375,7 @@ mod tests {
             split("group_left(instance) foo")
                 == (Some("group_left (instance)".to_string()), " foo")
         );
-        check!(
-            split("group_right(a,b) foo") == (Some("group_right (a,b)".to_string()), " foo")
-        );
+        check!(split("group_right(a,b) foo") == (Some("group_right (a,b)".to_string()), " foo"));
 
         // An empty label list is the bare modifier again, not "group_left ()".
         check!(split("group_left() foo") == (Some("group_left".to_string()), " foo"));
@@ -24420,7 +24604,12 @@ mod tests {
         let render = |op, grouping| {
             super::format_vector_aggregation_query(&VectorAggregation { op, grouping }, "up")
         };
-        let by = || Some(VectorGrouping::By(vec!["job".to_string(), "app".to_string()]));
+        let by = || {
+            Some(VectorGrouping::By(vec![
+                "job".to_string(),
+                "app".to_string(),
+            ]))
+        };
         let without = || Some(VectorGrouping::Without(vec!["pod".to_string()]));
 
         // Plain operators, ungrouped and grouped both ways.
@@ -24435,7 +24624,8 @@ mod tests {
         // The grouping is joined with a comma and sits before the parentheses.
         check!(render(VectorAggregationOp::Sum, by()) == Some("sum by (job,app)(up)".to_string()));
         check!(
-            render(VectorAggregationOp::Max, without()) == Some("max without (pod)(up)".to_string())
+            render(VectorAggregationOp::Max, without())
+                == Some("max without (pod)(up)".to_string())
         );
 
         // The limit-taking operators put their limit inside, before the inner
@@ -24443,7 +24633,8 @@ mod tests {
         check!(render(VectorAggregationOp::TopK(3), None) == Some("topk(3,up)".to_string()));
         check!(render(VectorAggregationOp::BottomK(3), None) == Some("bottomk(3,up)".to_string()));
         check!(
-            render(VectorAggregationOp::TopK(5), by()) == Some("topk by (job,app)(5,up)".to_string())
+            render(VectorAggregationOp::TopK(5), by())
+                == Some("topk by (job,app)(5,up)".to_string())
         );
 
         // These three have no grouped form: rendered ungrouped, refused with
@@ -24504,10 +24695,11 @@ mod tests {
         let right = || series(&[(1, "2"), (2, "1"), (3, "1"), (4, "5"), (5, "5"), (6, "1")]);
         let apply = |op| {
             let mut output = right();
-            let kept =
-                super::apply_metric_binary_arithmetic_to_series_with_left_operand(
-                    &mut output, &left, op,
-                );
+            let kept = super::apply_metric_binary_arithmetic_to_series_with_left_operand(
+                &mut output,
+                &left,
+                op,
+            );
             (kept, pairs(&output))
         };
 
@@ -24548,22 +24740,25 @@ mod tests {
 
         // A division with no answer drops its sample rather than emitting one.
         let mut output = series(&[(1, "0")]);
-        check!(!super::apply_metric_binary_arithmetic_to_series_with_left_operand(
-            &mut output,
-            &left,
-            MetricScalarArithmeticOp::Divide,
-        ));
+        check!(
+            !super::apply_metric_binary_arithmetic_to_series_with_left_operand(
+                &mut output,
+                &left,
+                MetricScalarArithmeticOp::Divide,
+            )
+        );
 
         // The instant shape again, where nothing pre-matches the timestamps.
-        let instant = |ts: i64, value: &str| {
-            serde_json::json!({"metric": {}, "value": [ts, value]})
-        };
+        let instant =
+            |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
         let mut output = instant(1, "2");
-        check!(super::apply_metric_binary_arithmetic_to_series_with_left_operand(
-            &mut output,
-            &instant(1, "10"),
-            MetricScalarArithmeticOp::Subtract,
-        ));
+        check!(
+            super::apply_metric_binary_arithmetic_to_series_with_left_operand(
+                &mut output,
+                &instant(1, "10"),
+                MetricScalarArithmeticOp::Subtract,
+            )
+        );
         check!(output["value"][1] == "8");
 
         let mut output = instant(1, "2");
@@ -24621,12 +24816,14 @@ mod tests {
         let right = || series(&[(1, "1"), (2, "1"), (3, "1"), (4, "30"), (5, "30"), (6, "1")]);
 
         let mut output = right();
-        check!(super::apply_metric_binary_comparison_to_series_with_left_operand(
-            &mut output,
-            &left,
-            ComparisonOp::Greater,
-            false,
-        ));
+        check!(
+            super::apply_metric_binary_comparison_to_series_with_left_operand(
+                &mut output,
+                &left,
+                ComparisonOp::Greater,
+                false,
+            )
+        );
         check!(
             pairs(&output) == vec![(1, "10".to_string())],
             "only 10 > 1 survives, carrying the LEFT value"
@@ -24635,12 +24832,14 @@ mod tests {
         // With `bool`, the failures stay and report 0 -- but a sample the left
         // side never had is still dropped, because there is nothing to compare.
         let mut output = right();
-        check!(super::apply_metric_binary_comparison_to_series_with_left_operand(
-            &mut output,
-            &left,
-            ComparisonOp::Greater,
-            true,
-        ));
+        check!(
+            super::apply_metric_binary_comparison_to_series_with_left_operand(
+                &mut output,
+                &left,
+                ComparisonOp::Greater,
+                true,
+            )
+        );
         check!(
             pairs(&output)
                 == vec![
@@ -24653,39 +24852,44 @@ mod tests {
         // The operator is honoured, not assumed: the same pair under `<`
         // keeps exactly the samples `>` dropped.
         let mut output = right();
-        check!(super::apply_metric_binary_comparison_to_series_with_left_operand(
-            &mut output,
-            &left,
-            ComparisonOp::Less,
-            false,
-        ));
+        check!(
+            super::apply_metric_binary_comparison_to_series_with_left_operand(
+                &mut output,
+                &left,
+                ComparisonOp::Less,
+                false,
+            )
+        );
         check!(pairs(&output) == vec![(4, "20".to_string()), (5, "20".to_string())]);
 
         // Everything filtered out reports false so the caller drops the series.
         let mut output = series(&[(1, "99")]);
-        check!(!super::apply_metric_binary_comparison_to_series_with_left_operand(
-            &mut output,
-            &left,
-            ComparisonOp::Greater,
-            false,
-        ));
+        check!(
+            !super::apply_metric_binary_comparison_to_series_with_left_operand(
+                &mut output,
+                &left,
+                ComparisonOp::Greater,
+                false,
+            )
+        );
 
         // A left series with no values at all matches nothing.
         let mut output = right();
-        check!(!super::apply_metric_binary_comparison_to_series_with_left_operand(
-            &mut output,
-            &serde_json::json!({"metric": {}}),
-            ComparisonOp::Greater,
-            false,
-        ));
+        check!(
+            !super::apply_metric_binary_comparison_to_series_with_left_operand(
+                &mut output,
+                &serde_json::json!({"metric": {}}),
+                ComparisonOp::Greater,
+                false,
+            )
+        );
 
         // The instant-vector shape carries one `value`, and nothing pre-matches
         // its timestamp the way the range path does -- so the comparison itself
         // has to refuse two samples from different instants. Comparing them
         // would report a result for a moment neither side observed.
-        let instant = |ts: i64, value: &str| {
-            serde_json::json!({"metric": {}, "value": [ts, value]})
-        };
+        let instant =
+            |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
         let mut output = instant(1, "1");
         check!(
             super::apply_metric_binary_comparison_to_series_with_left_operand(
@@ -24756,9 +24960,11 @@ mod tests {
         // When the filter empties the series it reports false, so the caller
         // can drop it rather than emitting an empty series.
         let mut left = range(&[1, 4]);
-        check!(
-            !super::apply_metric_binary_set_to_series(&mut left, &right, MetricBinarySetOp::And)
-        );
+        check!(!super::apply_metric_binary_set_to_series(
+            &mut left,
+            &right,
+            MetricBinarySetOp::And
+        ));
         check!(timestamps(&left).is_empty());
 
         // `or` keeps a series the right side never matches at all.
@@ -24906,9 +25112,7 @@ mod tests {
         check!(split(r#"{app="x>y"} > 1"#) == Some((r#"{app="x>y"} "#, ">", "1")));
 
         // A range selector's brackets nest too.
-        check!(
-            split("sum(rate(up[5m])) > 0.5") == Some(("sum(rate(up[5m])) ", ">", "0.5"))
-        );
+        check!(split("sum(rate(up[5m])) > 0.5") == Some(("sum(rate(up[5m])) ", ">", "0.5")));
 
         // The bracket counter is defensive: no real range selector contains a
         // comparison, so nothing valid exercises it. This input is not a
@@ -24919,7 +25123,10 @@ mod tests {
         // No top-level comparison at all.
         check!(split("up").is_none());
         check!(split("sum(rate(up[5m]))").is_none());
-        check!(split(r#"{app!="a"}"#).is_none(), "a matcher alone is not one");
+        check!(
+            split(r#"{app!="a"}"#).is_none(),
+            "a matcher alone is not one"
+        );
     }
 
     /// `format_loki_offset_duration_ns` spells a duration the way `Loki` does,
@@ -25030,10 +25237,19 @@ mod tests {
         // the case separating `==` from `!=` in that test.
         check!(unexpected("_foo", 0) == "IDENTIFIER");
         check!(unexpected("foo", 0) == "IDENTIFIER");
-        check!(unexpected("{app=\"a\"}", 0) == "{", "punctuation names itself");
-        check!(unexpected("1", 0) == "1", "and a digit is not an identifier");
+        check!(
+            unexpected("{app=\"a\"}", 0) == "{",
+            "punctuation names itself"
+        );
+        check!(
+            unexpected("1", 0) == "1",
+            "and a digit is not an identifier"
+        );
         check!(unexpected("", 0) == "$end");
-        check!(unexpected("abc", 99) == "$end", "a position past the end is the end");
+        check!(
+            unexpected("abc", 99) == "$end",
+            "a position past the end is the end"
+        );
     }
 
     /// `hex_value` maps a hex digit to its value across three ranges. Every
@@ -25077,18 +25293,33 @@ mod tests {
 
         check!(parse("0.0") == Some(0));
         check!(parse("1.0") == Some(1_000_000_000));
-        check!(parse("1.5") == Some(1_500_000_000), "one digit is tenths, not units");
+        check!(
+            parse("1.5") == Some(1_500_000_000),
+            "one digit is tenths, not units"
+        );
         check!(parse("0.5") == Some(500_000_000));
-        check!(parse("0.05") == Some(50_000_000), "the second digit is hundredths");
-        check!(parse("0.000000001") == Some(1), "nine digits reach nanoseconds");
+        check!(
+            parse("0.05") == Some(50_000_000),
+            "the second digit is hundredths"
+        );
+        check!(
+            parse("0.000000001") == Some(1),
+            "nine digits reach nanoseconds"
+        );
 
         // Past nine digits the rest is dropped rather than overflowing the
         // scale into zero or below.
-        check!(parse("0.0000000019") == Some(1), "the tenth digit is ignored");
+        check!(
+            parse("0.0000000019") == Some(1),
+            "the tenth digit is ignored"
+        );
 
         // Signs, on both sides of zero.
         check!(parse("-1.5") == Some(-1_500_000_000));
-        check!(parse("+1.5") == Some(1_500_000_000), "an explicit plus is allowed");
+        check!(
+            parse("+1.5") == Some(1_500_000_000),
+            "an explicit plus is allowed"
+        );
         check!(parse("-0.0") == Some(0));
 
         // A missing part on either side of the point is still a number.
@@ -25129,7 +25360,10 @@ mod tests {
         check!(len("1.5e10") == Some(6));
         check!(len("1E5") == Some(3), "an exponent may be upper case");
         check!(len("1E-5") == Some(4));
-        check!(len("1e") == None, "an exponent with no digits is not a number");
+        check!(
+            len("1e") == None,
+            "an exponent with no digits is not a number"
+        );
         check!(len("1e+") == None);
 
         // Nothing that is not a number.
@@ -25151,11 +25385,13 @@ mod tests {
     /// before this test, so every part of it is pinned here.
     #[tokio::test]
     async fn metadata_label_sets_are_distinct_filtered_and_stripped() {
-        async fn sets(
-            state: &QuerierState,
-            matchers: Vec<String>,
-        ) -> Vec<Labels> {
-            let params = SeriesParams { matchers, start: None, end: None, since: None };
+        async fn sets(state: &QuerierState, matchers: Vec<String>) -> Vec<Labels> {
+            let params = SeriesParams {
+                matchers,
+                start: None,
+                end: None,
+                since: None,
+            };
             super::metadata_label_sets(state, "t", &params)
                 .await
                 .expect("readable")
@@ -25192,7 +25428,8 @@ mod tests {
 
         // Another tenant's series are not this tenant's.
         check!(
-            all.iter().all(|set| set.get("app").map(String::as_str) != Some("elsewhere")),
+            all.iter()
+                .all(|set| set.get("app").map(String::as_str) != Some("elsewhere")),
             "tenant isolation"
         );
 
@@ -25202,7 +25439,10 @@ mod tests {
         check!(web[0].get("app").map(String::as_str) == Some("web"));
 
         let none = sets(&state, vec![r#"{app="absent"}"#.to_string()]).await;
-        check!(none.is_empty(), "a matcher that matches nothing returns nothing");
+        check!(
+            none.is_empty(),
+            "a matcher that matches nothing returns nothing"
+        );
     }
 
     /// `format_logql_query` returns the canonical spelling of a query, and
@@ -25212,7 +25452,8 @@ mod tests {
     /// returning an empty string passed the whole suite.
     #[test]
     fn formatting_a_logql_query_canonicalises_by_kind() {
-        let format = |query: &str| super::format_logql_query(query).map_err(|error| error.to_string());
+        let format =
+            |query: &str| super::format_logql_query(query).map_err(|error| error.to_string());
 
         // Stream selectors and pipelines come back as they went in.
         check!(format(r#"{app="web"}"#).unwrap() == r#"{app="web"}"#);
@@ -25224,9 +25465,7 @@ mod tests {
             format(r#"rate({app="web"}[5m])"#).unwrap() == r#"rate({app="web"}[5m])"#,
             "and a range aggregation"
         );
-        check!(
-            format(r#"sum(rate({app="web"}[5m]))"#).unwrap() == r#"sum(rate({app="web"}[5m]))"#
-        );
+        check!(format(r#"sum(rate({app="web"}[5m]))"#).unwrap() == r#"sum(rate({app="web"}[5m]))"#);
 
         // Surrounding whitespace is not part of the query. A stream selector
         // is rebuilt from its parse, so it would come back canonical however
@@ -25266,7 +25505,10 @@ mod tests {
         let error = format("not a query at all").unwrap_err();
         check!(error.contains("byte 0"), "got: {error}");
         let error = format("{").unwrap_err();
-        check!(error.contains("label name"), "a partial selector names what it wanted: {error}");
+        check!(
+            error.contains("label name"),
+            "a partial selector names what it wanted: {error}"
+        );
     }
 
     /// The shard-range cache answers only when its entry is both fresh and
@@ -25278,31 +25520,48 @@ mod tests {
     fn a_stale_or_short_shard_range_entry_is_evicted_not_reused() {
         use std::time::{Duration, Instant};
 
-        let key = super::DynamicShardRangesCacheKey { tenant: "t".to_string() };
-        let ranges = vec![super::TimeRange { start_ns: 100, end_ns: 200 }];
+        let key = super::DynamicShardRangesCacheKey {
+            tenant: "t".to_string(),
+        };
+        let ranges = vec![super::TimeRange {
+            start_ns: 100,
+            end_ns: 200,
+        }];
 
         let seed = |loaded_at: Instant, listed_from_ns: i64| {
             let cache = super::DynamicIndexCache::default();
             cache.shard_ranges.lock().expect("fresh lock").insert(
                 key.clone(),
-                super::CachedShardRanges { loaded_at, listed_from_ns, ranges: ranges.clone() },
+                super::CachedShardRanges {
+                    loaded_at,
+                    listed_from_ns,
+                    ranges: ranges.clone(),
+                },
             );
             cache
         };
-        let entries = |cache: &super::DynamicIndexCache| {
-            cache.shard_ranges.lock().expect("fresh lock").len()
-        };
+        let entries =
+            |cache: &super::DynamicIndexCache| cache.shard_ranges.lock().expect("fresh lock").len();
 
         // Fresh, and covering back to 100: a request from 100 or later is served.
         let cache = seed(Instant::now(), 100);
-        check!(cache.get_shard_ranges(&key, 100) == Some(ranges.clone()), "exactly covered");
-        check!(cache.get_shard_ranges(&key, 150) == Some(ranges.clone()), "more than covered");
+        check!(
+            cache.get_shard_ranges(&key, 100) == Some(ranges.clone()),
+            "exactly covered"
+        );
+        check!(
+            cache.get_shard_ranges(&key, 150) == Some(ranges.clone()),
+            "more than covered"
+        );
         check!(entries(&cache) == 1, "a usable entry stays");
 
         // Asked for earlier than the entry was listed from: not usable, and
         // dropped so the next call refetches rather than re-rejecting.
         let cache = seed(Instant::now(), 100);
-        check!(cache.get_shard_ranges(&key, 99) == None, "one nanosecond short");
+        check!(
+            cache.get_shard_ranges(&key, 99) == None,
+            "one nanosecond short"
+        );
         check!(entries(&cache) == 0, "and evicted");
 
         // Older than the five-second default TTL.
@@ -25328,8 +25587,7 @@ mod tests {
     #[test]
     fn a_posted_query_puts_the_url_first_and_the_body_second() {
         let merge = |raw: Option<&str>, body: &str| {
-            super::post_query_params(raw, &Bytes::from(body.to_owned()))
-                .expect("valid body")
+            super::post_query_params(raw, &Bytes::from(body.to_owned())).expect("valid body")
         };
         let body_first = |raw: Option<&str>, body: &str| {
             super::post_query_params_body_first(raw, &Bytes::from(body.to_owned()))
@@ -25364,15 +25622,27 @@ mod tests {
         // `type` maps two spellings and rejects the rest.
         check!(parse("type=alert").rule_kind == Some("alerting"));
         check!(parse("type=record").rule_kind == Some("recording"));
-        check!(parse("type=other").rule_kind == None, "an unknown type sets nothing");
+        check!(
+            parse("type=other").rule_kind == None,
+            "an unknown type sets nothing"
+        );
         check!(parse("type=").rule_kind == None);
-        check!(parse("type=alerting").rule_kind == None, "the output spelling is not the input");
+        check!(
+            parse("type=alerting").rule_kind == None,
+            "the output spelling is not the input"
+        );
 
         // `exclude_alerts` is only true for the exact string.
         check!(parse("exclude_alerts=true").exclude_alerts);
         check!(!parse("exclude_alerts=false").exclude_alerts);
-        check!(!parse("exclude_alerts=1").exclude_alerts, "only `true` counts");
-        check!(!parse("exclude_alerts=TRUE").exclude_alerts, "case-sensitively");
+        check!(
+            !parse("exclude_alerts=1").exclude_alerts,
+            "only `true` counts"
+        );
+        check!(
+            !parse("exclude_alerts=TRUE").exclude_alerts,
+            "case-sensitively"
+        );
         check!(!Filters::parse(None).expect("no query").exclude_alerts);
 
         // The repeated keys accept both spellings and collect rather than
@@ -25454,7 +25724,8 @@ mod tests {
     fn metric_values_round_trip_through_their_decimal_scale() {
         use super::MetricValue;
 
-        let round_trip = |value: f64| MetricValue::from_f64(value).and_then(super::MetricValue::to_f64);
+        let round_trip =
+            |value: f64| MetricValue::from_f64(value).and_then(super::MetricValue::to_f64);
 
         check!(round_trip(0.0) == Some(0.0));
         check!(round_trip(1.0) == Some(1.0));
@@ -25466,8 +25737,14 @@ mod tests {
         // The scale is a billion, so a nanosecond-sized fraction survives and
         // anything finer rounds to the nearest step rather than to zero.
         check!(round_trip(0.000_000_001) == Some(0.000_000_001));
-        check!(round_trip(0.000_000_000_4) == Some(0.0), "below half a step rounds down");
-        check!(round_trip(0.000_000_000_6) == Some(0.000_000_001), "above half rounds up");
+        check!(
+            round_trip(0.000_000_000_4) == Some(0.0),
+            "below half a step rounds down"
+        );
+        check!(
+            round_trip(0.000_000_000_6) == Some(0.000_000_001),
+            "above half rounds up"
+        );
 
         // Values that are not numbers cannot be represented at all.
         check!(MetricValue::from_f64(f64::NAN) == None);
@@ -25489,8 +25766,14 @@ mod tests {
 
         check!(modulo(7.0, 3.0) == Some(1.0));
         check!(modulo(7.5, 2.5) == Some(0.0));
-        check!(modulo(-7.0, 3.0) == Some(-1.0), "the sign follows the dividend");
-        check!(modulo(3.0, 7.0) == Some(3.0), "a smaller dividend is itself");
+        check!(
+            modulo(-7.0, 3.0) == Some(-1.0),
+            "the sign follows the dividend"
+        );
+        check!(
+            modulo(3.0, 7.0) == Some(3.0),
+            "a smaller dividend is itself"
+        );
         check!(modulo(1.0, 0.0) == None, "a zero divisor has no answer");
         check!(modulo(0.0, 3.0) == Some(0.0), "but a zero dividend does");
     }
@@ -25506,6 +25789,90 @@ mod tests {
         check!(state.has_samples(), "one sample is enough");
         state.count = 100;
         check!(state.has_samples());
+    }
+
+    /// Merging two partial sample states keeps the smaller minimum, the larger
+    /// maximum, the earliest first and the latest last, taking each from
+    /// whichever side holds it. A tie on the timestamp keeps the side already
+    /// held -- the only thing that separates `<` from `<=` at either end.
+    #[test]
+    fn merging_sample_states_keeps_the_extremes_and_the_ends() {
+        let value = |numerator: i128| super::MetricValue {
+            numerator,
+            denominator: 1,
+        };
+
+        let mut left = super::MetricSampleState {
+            count: 1,
+            min: Some(value(5)),
+            max: Some(value(5)),
+            first: Some((10, value(1))),
+            last: Some((10, value(1))),
+            ..Default::default()
+        };
+        // Every field of the incoming state wins: a lower minimum, a higher
+        // maximum, an earlier first and a later last.
+        left.merge(super::MetricSampleState {
+            count: 1,
+            min: Some(value(3)),
+            max: Some(value(9)),
+            first: Some((5, value(2))),
+            last: Some((20, value(3))),
+            ..Default::default()
+        });
+
+        check!(left.count == 2);
+        check!(left.min == Some(value(3)), "the smaller minimum wins");
+        check!(left.max == Some(value(9)), "the larger maximum wins");
+        check!(left.first == Some((5, value(2))), "the earlier first wins");
+        check!(left.last == Some((20, value(3))), "the later last wins");
+
+        // Now the other way round, so neither side is simply preferred.
+        let mut right = super::MetricSampleState {
+            count: 1,
+            min: Some(value(3)),
+            max: Some(value(9)),
+            first: Some((5, value(2))),
+            last: Some((20, value(3))),
+            ..Default::default()
+        };
+        right.merge(super::MetricSampleState {
+            count: 1,
+            min: Some(value(5)),
+            max: Some(value(5)),
+            first: Some((10, value(1))),
+            last: Some((10, value(1))),
+            ..Default::default()
+        });
+        check!(right.min == Some(value(3)), "the held minimum survives");
+        check!(right.max == Some(value(9)), "the held maximum survives");
+        check!(
+            right.first == Some((5, value(2))),
+            "the held first survives"
+        );
+        check!(right.last == Some((20, value(3))), "the held last survives");
+
+        // Matching timestamps on both sides: the value already held stays.
+        let mut tied = super::MetricSampleState {
+            count: 1,
+            first: Some((10, value(1))),
+            last: Some((10, value(1))),
+            ..Default::default()
+        };
+        tied.merge(super::MetricSampleState {
+            count: 1,
+            first: Some((10, value(7))),
+            last: Some((10, value(7))),
+            ..Default::default()
+        });
+        check!(
+            tied.first == Some((10, value(1))),
+            "a tie keeps the first already held"
+        );
+        check!(
+            tied.last == Some((10, value(1))),
+            "a tie keeps the last already held"
+        );
     }
 
     /// The main query parser carries the same first-wins contract, across all
@@ -25552,7 +25919,10 @@ mod tests {
             parse("query=a&b&limit=5").query == "a&b",
             "and so is one followed by an unknown key"
         );
-        check!(parse("query=a&b&limit=5").limit == Some(5), "the known key still splits");
+        check!(
+            parse("query=a&b&limit=5").limit == Some(5),
+            "the known key still splits"
+        );
 
         // A query parameter is still required.
         check!(super::parse_query_params(Some("limit=5")).is_err());
@@ -25587,7 +25957,10 @@ mod tests {
         // The defaults still apply when a parameter is absent entirely, which
         // is a different thing from being repeated.
         check!(parse("query=a").limit == 100);
-        check!(matches!(parse("query=a").aggregate_by, super::VolumeAggregateBy::Series));
+        check!(matches!(
+            parse("query=a").aggregate_by,
+            super::VolumeAggregateBy::Series
+        ));
         check!(parse("query=a").target_labels == None);
 
         // An empty label in the list is dropped rather than kept as "".
@@ -25616,9 +25989,18 @@ mod tests {
 
         // `field_limit` is an alias for `limit`, guarded on the same field, so
         // first-wins spans the pair rather than each name separately.
-        check!(parse("query=a&field_limit=9").limit == 9, "the alias sets limit");
-        check!(parse("query=a&limit=5&field_limit=9").limit == 5, "limit first");
-        check!(parse("query=a&field_limit=9&limit=5").limit == 9, "alias first");
+        check!(
+            parse("query=a&field_limit=9").limit == 9,
+            "the alias sets limit"
+        );
+        check!(
+            parse("query=a&limit=5&field_limit=9").limit == 5,
+            "limit first"
+        );
+        check!(
+            parse("query=a&field_limit=9&limit=5").limit == 9,
+            "alias first"
+        );
 
         // Defaults apply when absent, which is distinct from being repeated.
         check!(parse("query=a").limit == 1000);
@@ -25649,7 +26031,10 @@ mod tests {
         // Equal values with different representations.
         check!(cmp(1, 2, Op::Equal, 2, 4) == Some(true));
         check!(cmp(1, 2, Op::NotEqual, 2, 4) == Some(false));
-        check!(cmp(1, 2, Op::LessOrEqual, 2, 4) == Some(true), "equal satisfies <=");
+        check!(
+            cmp(1, 2, Op::LessOrEqual, 2, 4) == Some(true),
+            "equal satisfies <="
+        );
         check!(cmp(1, 2, Op::GreaterOrEqual, 2, 4) == Some(true), "and >=");
         check!(cmp(1, 2, Op::Less, 2, 4) == Some(false), "but not <");
         check!(cmp(1, 2, Op::Greater, 2, 4) == Some(false), "nor >");
@@ -25663,9 +26048,15 @@ mod tests {
 
         // Signs, including a negative on either side of zero.
         check!(cmp(-1, 2, Op::Less, 1, 2) == Some(true));
-        check!(cmp(-1, 2, Op::Less, -1, 3) == Some(true), "-1/2 is below -1/3");
+        check!(
+            cmp(-1, 2, Op::Less, -1, 3) == Some(true),
+            "-1/2 is below -1/3"
+        );
         check!(cmp(-1, 2, Op::Equal, -2, 4) == Some(true));
-        check!(cmp(0, 1, Op::Equal, 0, 5) == Some(true), "zero is zero at any scale");
+        check!(
+            cmp(0, 1, Op::Equal, 0, 5) == Some(true),
+            "zero is zero at any scale"
+        );
 
         // A product that cannot fit answers nothing rather than wrapping.
         check!(cmp(i128::MAX, 1, Op::Greater, 1, 2) == None);
@@ -25691,13 +26082,23 @@ mod tests {
         check!(ns("h") == 60 * ns("m"));
         check!(ns("d") == 24 * ns("h"));
         check!(ns("w") == 7 * ns("d"));
-        check!(ns("y") == 365 * ns("d"), "a year here is 365 days, not 52 weeks");
+        check!(
+            ns("y") == 365 * ns("d"),
+            "a year here is 365 days, not 52 weeks"
+        );
 
         // The ordinal and bit columns carry the same contract as the detected
         // table, so they get the same check.
         for (name, ordinal) in [
-            ("y", 0_u8), ("w", 1), ("d", 2), ("h", 3), ("m", 4),
-            ("s", 5), ("ms", 6), ("us", 7), ("ns", 8),
+            ("y", 0_u8),
+            ("w", 1),
+            ("d", 2),
+            ("h", 3),
+            ("m", 4),
+            ("s", 5),
+            ("ms", 6),
+            ("us", 7),
+            ("ns", 8),
         ] {
             let (got, bit, _) = super::prometheus_duration_unit(name).expect("known unit");
             check!(got == ordinal, "{name} ordinal");
@@ -25706,7 +26107,10 @@ mod tests {
 
         check!(super::prometheus_duration_unit("") == None);
         check!(super::prometheus_duration_unit("mo") == None);
-        check!(super::prometheus_duration_unit("S") == None, "case-sensitive");
+        check!(
+            super::prometheus_duration_unit("S") == None,
+            "case-sensitive"
+        );
     }
 
     /// `detected_duration_unit` maps a unit to its ordinal and its bit. Both
@@ -25718,8 +26122,15 @@ mod tests {
         let unit = super::detected_duration_unit;
 
         for (name, ordinal) in [
-            ("y", 0_u8), ("w", 1), ("d", 2), ("h", 3), ("m", 4),
-            ("s", 5), ("ms", 6), ("us", 7), ("ns", 8),
+            ("y", 0_u8),
+            ("w", 1),
+            ("d", 2),
+            ("h", 3),
+            ("m", 4),
+            ("s", 5),
+            ("ms", 6),
+            ("us", 7),
+            ("ns", 8),
         ] {
             let expected = (ordinal, 1_u16 << ordinal);
             check!(unit(name) == Some(expected), "{name}");
@@ -25753,9 +26164,7 @@ mod tests {
         // An unquoted value carrying letters, so a transformation of the slice
         // is visible: digits alone survive most of them unchanged.
         check!(parse("level=warn") == vec![pair("level", "warn")]);
-        check!(
-            parse("msg=hello level=warn") == vec![pair("msg", "hello"), pair("level", "warn")]
-        );
+        check!(parse("msg=hello level=warn") == vec![pair("msg", "hello"), pair("level", "warn")]);
         check!(parse("a=1 b=2") == vec![pair("a", "1"), pair("b", "2")]);
         check!(
             parse("  a=1   b=2  ") == vec![pair("a", "1"), pair("b", "2")],
@@ -25779,9 +26188,15 @@ mod tests {
         check!(parse("=1 a=2") == vec![pair("a", "2")]);
 
         // Quoted values hold what unquoted ones cannot.
-        check!(parse(r#"a="x y""#) == vec![pair("a", "x y")], "whitespace inside quotes");
+        check!(
+            parse(r#"a="x y""#) == vec![pair("a", "x y")],
+            "whitespace inside quotes"
+        );
         check!(parse(r#"a="x y" b=2"#) == vec![pair("a", "x y"), pair("b", "2")]);
-        check!(parse(r#"a="""#) == vec![pair("a", "")], "an empty quoted value");
+        check!(
+            parse(r#"a="""#) == vec![pair("a", "")],
+            "an empty quoted value"
+        );
         check!(
             parse(r#"a="x\"y" b=2"#) == vec![pair("a", "x\"y"), pair("b", "2")],
             "an escaped quote does not end the value"
