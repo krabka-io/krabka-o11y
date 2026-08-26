@@ -822,12 +822,12 @@ pub(crate) mod test_support {
         write_varint(out, zigzag_i32(value));
     }
 
-    fn write_i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
+    pub fn write_i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
         write_field_header(out, 6, id, last);
         write_varint(out, zigzag_i64(value));
     }
 
-    fn write_string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
+    pub fn write_string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
         write_field_header(out, 8, id, last);
         write_varint(out, u64::try_from(value.len()).unwrap());
         out.extend_from_slice(value.as_bytes());
@@ -837,7 +837,7 @@ pub(crate) mod test_support {
         write_field_header(out, if value { 1 } else { 2 }, id, last);
     }
 
-    fn write_field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
+    pub fn write_field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
         let delta = id - *last;
         if (1..=15).contains(&delta) {
             out.push((u8::try_from(delta).unwrap() << 4) | type_id);
@@ -876,6 +876,87 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+
+    /// `read_key_value` dispatches on the field id *and* its wire type
+    /// together, so a tag's value takes the variant its type says. Each
+    /// variant is built and read back, with values that differ from one
+    /// another so a variant reading a neighbouring field is visible.
+    #[test]
+    fn a_jaeger_tag_takes_the_variant_its_wire_type_names() {
+        use super::test_support::{write_field_header, write_i64_field, write_string_field};
+
+        // Key in field 1, then one value field, then the stop byte.
+        let string_tag = {
+            let mut out = Vec::new();
+            let mut last = 0;
+            write_string_field(&mut out, 1, "http.method", &mut last);
+            write_string_field(&mut out, 3, "GET", &mut last);
+            out.push(0);
+            out
+        };
+        let mut input = super::CompactInput { bytes: &string_tag, pos: 0 };
+        let tag = super::read_key_value(&mut input).expect("reads");
+        check!(tag.key == "http.method");
+        check!(tag.value == AttrValue::Str("GET".into()));
+
+        let int_tag = {
+            let mut out = Vec::new();
+            let mut last = 0;
+            write_string_field(&mut out, 1, "http.status", &mut last);
+            write_i64_field(&mut out, 6, 503, &mut last);
+            out.push(0);
+            out
+        };
+        let mut input = super::CompactInput { bytes: &int_tag, pos: 0 };
+        let tag = super::read_key_value(&mut input).expect("reads");
+        check!(tag.key == "http.status");
+        check!(tag.value == AttrValue::Int(503), "an i64 field is an int, not a string");
+
+        // The two boolean types carry their value in the type itself rather
+        // than in a payload, so each needs its own field header.
+        for (type_id, expected) in [(1_u8, true), (2_u8, false)] {
+            let mut out = Vec::new();
+            let mut last = 0;
+            write_string_field(&mut out, 1, "retryable", &mut last);
+            write_field_header(&mut out, type_id, 5, &mut last);
+            out.push(0);
+            let mut input = super::CompactInput { bytes: &out, pos: 0 };
+            let tag = super::read_key_value(&mut input).expect("reads");
+            check!(tag.value == AttrValue::Bool(expected), "type {type_id} is {expected}");
+        }
+
+        // A tag with no recognised value field falls back to an empty string
+        // rather than failing, and an unknown field is skipped rather than
+        // consuming the ones after it.
+        let bare = {
+            let mut out = Vec::new();
+            let mut last = 0;
+            write_string_field(&mut out, 1, "lonely", &mut last);
+            out.push(0);
+            out
+        };
+        let mut input = super::CompactInput { bytes: &bare, pos: 0 };
+        let tag = super::read_key_value(&mut input).expect("reads");
+        check!(tag.key == "lonely");
+        check!(tag.value == AttrValue::Str(String::new()), "no value means an empty string");
+
+        let with_unknown = {
+            let mut out = Vec::new();
+            let mut last = 0;
+            write_string_field(&mut out, 1, "kept", &mut last);
+            write_i64_field(&mut out, 9, 77, &mut last);
+            write_i64_field(&mut out, 6, 42, &mut last);
+            out.push(0);
+            out
+        };
+        let mut input = super::CompactInput { bytes: &with_unknown, pos: 0 };
+        let tag = super::read_key_value(&mut input).expect("reads");
+        check!(tag.key == "kept");
+        check!(
+            tag.value == AttrValue::Int(42),
+            "the unknown field is skipped, not read as the value"
+        );
+    }
 
     /// The two Thrift inputs read doubles with opposite byte order: compact is
     /// little-endian, binary is big-endian. That is a real protocol
