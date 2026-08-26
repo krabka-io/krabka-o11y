@@ -837,6 +837,62 @@ mod tests {
 
     use super::*;
 
+    /// `decode_body` bounds how far a compressed body may expand. It reads
+    /// one byte past the limit and then rejects anything longer, so both
+    /// halves of that pair only differ from their mutations at the exact
+    /// boundary: a payload of precisely the limit must come back whole, and
+    /// one byte more must be refused.
+    #[test]
+    fn decoding_a_body_enforces_the_limit_at_the_exact_boundary() {
+        let limit = ByteSize::from_bytes(64);
+        let gzip = |payload: &[u8]| {
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(payload).expect("gzip accepts the payload");
+            encoder.finish().expect("the gzip stream finishes")
+        };
+        let encoded = |name: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_ENCODING, name.parse().expect("a valid header value"));
+            headers
+        };
+        let exact = vec![b'a'; 64];
+        let over = vec![b'a'; 65];
+        let gzipped = encoded("gzip");
+
+        // Exactly at the limit: accepted, and returned whole. Reading only
+        // `limit - 1` bytes would truncate this silently; rejecting on `>=`
+        // would refuse it outright.
+        check!(super::decode_body(&gzipped, &gzip(&exact), limit).expect("at the limit") == exact);
+
+        // One byte over: refused. Reading only `limit` bytes would truncate
+        // to exactly the limit and then report success.
+        check!(let Err(TracesError::TooLarge { limit: 64 }) =
+            super::decode_body(&gzipped, &gzip(&over), limit));
+
+        // An absent header means identity, which is bounded by the same test.
+        let plain = HeaderMap::new();
+        check!(super::decode_body(&plain, &exact, limit).expect("no encoding header") == exact);
+        check!(let Err(TracesError::TooLarge { .. }) = super::decode_body(&plain, &over, limit));
+        check!(
+            super::decode_body(&encoded("identity"), &exact, limit).expect("named identity")
+                == exact
+        );
+
+        // The encoding name is matched case-insensitively ...
+        check!(
+            super::decode_body(&encoded("GZIP"), &gzip(&exact), limit).expect("GZIP is gzip")
+                == exact
+        );
+        check!(
+            super::decode_body(&encoded("Identity"), &exact, limit).expect("Identity is identity")
+                == exact
+        );
+
+        // ... and any other encoding is refused by name rather than guessed at.
+        check!(let Err(TracesError::UnsupportedContentType(_)) =
+            super::decode_body(&encoded("br"), &exact, limit));
+    }
+
     #[derive(Default)]
     struct RecordingSink {
         records: Mutex<Vec<SpanRecord>>,
