@@ -2207,7 +2207,10 @@ fn f64_from_usize(value: usize) -> Result<f64> {
 }
 
 fn usize_from_integer_f64(value: f64) -> Result<usize> {
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+    // No finiteness clause: `fract()` of an infinity or a NaN is NaN, and
+    // `NaN != 0.0` holds, so the fractional test already refuses every
+    // non-finite value. A separate `is_finite` test is unreachable.
+    if value < 0.0 || value.fract() != 0.0 {
         return Err(TraceqlError::Exec(format!(
             "expected non-negative integer float, got {value}"
         )));
@@ -2637,10 +2640,10 @@ mod tests {
     use std::sync::Arc;
 
     /// `usize_from_integer_f64` refuses anything that is not a non-negative
-    /// whole number, and each clause of the guard rejects a different value.
-    /// Joined with `&&` instead of `||`, a value has to be all three kinds of
-    /// wrong at once to be refused -- so a negative, a fractional, or an
-    /// infinite limit sails through and is parsed as a count.
+    /// whole number. Joined with `&&` instead of `||`, a value has to be both
+    /// kinds of wrong at once to be refused -- so a negative or a fractional
+    /// limit sails through and is parsed as a count. Infinities and NaNs are
+    /// refused by the fractional clause, whose `fract()` is NaN for both.
     #[test]
     fn a_limit_must_be_a_non_negative_whole_number() {
         use super::usize_from_integer_f64;
@@ -2648,7 +2651,8 @@ mod tests {
         check!(usize_from_integer_f64(0.0).unwrap() == 0);
         check!(usize_from_integer_f64(42.0).unwrap() == 42);
 
-        // Each is wrong in exactly one way, so each isolates one clause.
+        // The first two are wrong in exactly one way, so each isolates one
+        // clause; the non-finite pair rides on the fractional clause.
         //
         // The guard's *message* is what has to be asserted, not merely that an
         // error came back: `-1.0` and `1.5` both fail the `parse::<usize>()`
@@ -2666,7 +2670,6 @@ mod tests {
         check!(refused(f64::INFINITY), "infinite");
         check!(refused(f64::NAN), "not a number");
     }
-
 
     use arrow::{
         array::{
@@ -5653,11 +5656,20 @@ mod tests {
         check!(simple(r#"{ .svc = "a" }"#), "an attribute comparison");
         check!(simple("{ span:duration > 100ms }"), "a supported intrinsic");
         check!(simple("{ name = \"x\" }"), "another supported intrinsic");
-        check!(simple(r#"{ .a = "x" } && { .b = "y" }"#), "both sides simple");
-        check!(simple(r#"{ .a = "x" } || { .b = "y" }"#), "either side simple");
+        check!(
+            simple(r#"{ .a = "x" } && { .b = "y" }"#),
+            "both sides simple"
+        );
+        check!(
+            simple(r#"{ .a = "x" } || { .b = "y" }"#),
+            "either side simple"
+        );
 
         // A structural operator is never simple, wherever it sits.
-        check!(!simple(r#"{ .a = "x" } > { .b = "y" }"#), "a structural selection");
+        check!(
+            !simple(r#"{ .a = "x" } > { .b = "y" }"#),
+            "a structural selection"
+        );
         check!(
             !simple(r#"{ .a = "x" } && ({ .b = "y" } > { .c = "z" })"#),
             "a structural operand inside a conjunction"
@@ -5686,8 +5698,8 @@ mod tests {
             // negative is rejected (distinguishes `<` from `<=`/`==`).
             (-0.5, None),
             (-1.0, None),
-            // The `|| value < 0.0 ||` chain: a NaN (non-finite) and a fractional
-            // value are both rejected, so neither `&&` form would pass them.
+            // A NaN, an infinity and a fractional value are all rejected by
+            // the fractional clause -- `fract()` is NaN for both non-finites.
             (f64::NAN, None),
             (f64::INFINITY, None),
             (2.5, None),
@@ -5700,10 +5712,18 @@ mod tests {
         // Infinity is non-negative with a zero fractional part, so without the
         // finiteness check it reaches the parse and fails there instead, with
         // a message about digits rather than about the value.
-        let err = usize_from_integer_f64(f64::INFINITY).unwrap_err().to_string();
-        check!(err.contains("expected non-negative integer float, got inf"), "got: {err}");
+        let err = usize_from_integer_f64(f64::INFINITY)
+            .unwrap_err()
+            .to_string();
+        check!(
+            err.contains("expected non-negative integer float, got inf"),
+            "got: {err}"
+        );
         let err = usize_from_integer_f64(f64::NAN).unwrap_err().to_string();
-        check!(err.contains("expected non-negative integer float, got NaN"), "got: {err}");
+        check!(
+            err.contains("expected non-negative integer float, got NaN"),
+            "got: {err}"
+        );
 
         // A value that is finite, non-negative and whole can still be too
         // large to hold. That path must report the failure rather than
