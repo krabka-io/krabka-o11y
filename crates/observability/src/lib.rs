@@ -21479,6 +21479,76 @@ mod tests {
         check!(page(Some(2), Some("nonsense")).is_err());
     }
 
+    /// `log_pattern_token` masks the variable part of a log token so lines that
+    /// differ only in their ids collapse to one pattern. A `key=value` token
+    /// keeps its KEY and masks only the value, because the key is what makes
+    /// two lines the same kind of line.
+    #[test]
+    fn a_log_pattern_token_masks_only_its_variable_part() {
+        let token = super::log_pattern_token;
+
+        // A bare token is masked whole, or kept whole.
+        check!(token("connected") == "connected", "a word is not variable");
+        check!(token("12345") == "<_>", "a number is");
+        check!(token("1.5") == "<_>");
+
+        // A key=value token keeps the key and masks the value.
+        check!(token("user_id=12345") == "user_id=<_>");
+        check!(token("status=ok") == "status=ok", "a non-variable value is kept");
+        check!(
+            token("id=550e8400-e29b-41d4-a716-446655440000") == "id=<_>",
+            "a uuid is variable"
+        );
+
+        // Half a pair is not a pair: an empty key or value leaves the token
+        // alone rather than producing "=<_>" or "<_>=".
+        check!(token("=12345") == "=12345");
+        check!(token("user_id=") == "user_id=");
+        check!(token("=") == "=");
+
+        // Only the FIRST equals splits, so a value containing one is masked
+        // whole rather than re-split.
+        check!(token("q=a=12345") == "q=a=12345", "the value is not variable");
+        check!(token("") == "");
+    }
+
+    /// `could_be_scalar_vector_expression` is the cheap gate two of the query
+    /// parsers run before doing real work. It admits anything starting like a
+    /// number or a parenthesis, and among identifiers ONLY the three functions
+    /// that can produce a vector -- so `sum(...)` is turned away here and
+    /// parsed elsewhere.
+    #[test]
+    fn only_a_number_or_a_vector_function_could_be_a_scalar_vector_expression() {
+        let could_be = super::could_be_scalar_vector_expression;
+
+        // Numbers and the characters a numeric expression can open with.
+        check!(could_be("1"));
+        check!(could_be("1+1"));
+        check!(could_be("+1"));
+        check!(could_be("-1"));
+        check!(could_be(".5"));
+        check!(could_be("(1+1)"));
+        check!(could_be("  1"), "leading whitespace is trimmed");
+
+        // The three vector-producing functions, and nothing else.
+        check!(could_be("vector(1)"));
+        check!(could_be("label_replace(vector(1),\"a\",\"b\",\"c\",\"d\")"));
+        check!(could_be("label_join(vector(1),\"a\",\"b\")"));
+        check!(!could_be("sum(rate(x[5m]))"), "an aggregation is parsed elsewhere");
+        check!(!could_be("up"));
+
+        // The identifier must match WHOLE: a longer name starting with one of
+        // the three is not one of them.
+        check!(!could_be("vectorise(1)"));
+        check!(!could_be("vector_total"));
+
+        // Nothing, and things that start with neither.
+        check!(!could_be(""));
+        check!(!could_be("   "));
+        check!(!could_be("{app=\"a\"}"), "a matcher is not a scalar expression");
+        check!(!could_be("\"quoted\""));
+    }
+
     /// `insert_descriptor_labels` copies a block's series labels from one index
     /// to another, and REFUSES when the source cannot supply them. A missing
     /// series is a corrupt index rather than an empty block, so carrying on
