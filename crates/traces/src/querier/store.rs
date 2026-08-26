@@ -3094,8 +3094,10 @@ mod tests {
     use arrow::{
         array::{
             ArrayRef, BooleanArray, FixedSizeBinaryBuilder, Float64Array, Int32Array, Int64Array,
-            PrimitiveDictionaryBuilder, StringArray, StringDictionaryBuilder,
+            ListArray, ListBuilder, PrimitiveDictionaryBuilder, StringArray, StringBuilder,
+            StringDictionaryBuilder,
         },
+        buffer::{NullBuffer, OffsetBuffer},
         datatypes::{DataType, Field, Int32Type, Int64Type, Schema, SchemaRef},
     };
     use assert2::check;
@@ -3310,6 +3312,109 @@ mod tests {
         methods.append_value("POST");
         columns.push(Arc::new(methods.finish()) as ArrayRef);
         RecordBatch::try_new(schema, columns).unwrap()
+    }
+
+    /// `nested_string_attrs` pairs a row's attribute keys with the first
+    /// value of each key's value list, skipping anything incomplete. Its skip
+    /// conditions are `||` pairs that survived because no fixture made the
+    /// two halves disagree, so every skip below fires for exactly one reason.
+    ///
+    /// Two further properties need shapes a naive fixture does not have: one
+    /// key has *two* values, without which taking the first and taking the
+    /// last are the same read; and there is one more key than value list,
+    /// without which pairing by the shorter and by the longer agree.
+    #[test]
+    fn nested_attributes_pair_each_key_with_its_first_value() {
+        let mut keys = ListBuilder::new(StringBuilder::new());
+        for key in ["a", "", "c", "d", "e", "f"] {
+            if key.is_empty() {
+                keys.values().append_null();
+            } else {
+                keys.values().append_value(key);
+            }
+        }
+        keys.append(true);
+        keys.append_null();
+        let keys = keys.finish();
+
+        let mut values = ListBuilder::new(ListBuilder::new(StringBuilder::new()));
+        fn list(
+            values: &mut ListBuilder<ListBuilder<StringBuilder>>,
+            entries: &[Option<&str>],
+        ) {
+            for entry in entries {
+                match entry {
+                    Some(value) => values.values().values().append_value(value),
+                    None => values.values().values().append_null(),
+                }
+            }
+            values.values().append(true);
+        }
+        list(&mut values, &[Some("1")]);
+        list(&mut values, &[Some("2")]);
+        list(&mut values, &[]);
+        list(&mut values, &[None]);
+        list(&mut values, &[Some("first"), Some("second")]);
+        // Five value lists against six keys, so pairing by the longer runs
+        // off the end.
+        values.append(true);
+        // A second row, whose keys list is null while this one is not.
+        list(&mut values, &[Some("z")]);
+        values.append(true);
+        let values = values.finish();
+
+        let attrs = |row| super::nested_string_attrs(&keys, &values, row).expect("the row reads");
+
+        // "" has a null key, "c" an empty value list, "d" a null first value,
+        // and "f" no value list at all. Each is skipped for its own reason,
+        // so loosening any one guard admits a different spurious pair.
+        check!(
+            attrs(0)
+                == vec![
+                    ("a".to_string(), AttrValue::Str("1".to_string())),
+                    ("e".to_string(), AttrValue::Str("first".to_string())),
+                ]
+        );
+
+        // A row whose keys are null yields nothing, whatever the values hold.
+        check!(attrs(1).is_empty());
+    }
+
+    /// A null list row still carries offsets, and Arrow does not require them
+    /// to be empty -- a builder always writes an empty range, but the format
+    /// permits a null row to span real values, and a Parquet reader may hand
+    /// one over. So the row-level null check must be honoured rather than
+    /// inferred from the row reading as empty.
+    ///
+    /// This is the only shape that separates the two halves of that check:
+    /// with a builder-made array, reading through a null row yields nothing
+    /// anyway, and skipping it or walking it give the same empty answer.
+    #[test]
+    fn a_null_attribute_row_is_skipped_even_when_it_spans_values() {
+        let item = |name, data_type| Arc::new(Field::new(name, data_type, true));
+
+        // Row 0 is null, yet its offsets cover the single key "x".
+        let keys = ListArray::new(
+            item("item", DataType::Utf8),
+            OffsetBuffer::new(vec![0, 1].into()),
+            Arc::new(StringArray::from(vec!["x"])),
+            Some(NullBuffer::from(vec![false])),
+        );
+
+        // The matching values row is present and well formed, so the only
+        // reason to skip is the null flag on the keys.
+        let mut values = ListBuilder::new(ListBuilder::new(StringBuilder::new()));
+        values.values().values().append_value("v");
+        values.values().append(true);
+        values.append(true);
+        let values = values.finish();
+
+        check!(
+            super::nested_string_attrs(&keys, &values, 0)
+                .expect("the row reads")
+                .is_empty(),
+            "a null keys row contributes nothing, whatever its offsets span"
+        );
     }
 
     /// The typed column readers each downcast a column and return one cell.
