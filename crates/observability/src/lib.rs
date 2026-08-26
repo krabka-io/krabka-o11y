@@ -5520,7 +5520,28 @@ fn validate_loki_timestamp_window(
     max_age: Option<Time>,
     creation_grace_period: Option<Time>,
 ) -> Result<(), DistributorError> {
-    let now_ns = current_unix_time_ns();
+    validate_loki_timestamp_window_at(
+        timestamp_ns,
+        current_unix_time_ns(),
+        stream_labels,
+        max_age,
+        creation_grace_period,
+    )
+}
+
+/// The window check against a caller-supplied `now`.
+///
+/// Split out so the two bounds can be tested exactly at their edges. Both are
+/// strict comparisons -- a timestamp precisely at the oldest or newest
+/// acceptable value is accepted -- and against a wall clock that boundary is
+/// unreachable: `now` advances between choosing the timestamp and reading it.
+fn validate_loki_timestamp_window_at(
+    timestamp_ns: i64,
+    now_ns: i64,
+    stream_labels: &Labels,
+    max_age: Option<Time>,
+    creation_grace_period: Option<Time>,
+) -> Result<(), DistributorError> {
     if let Some(max_age) = max_age {
         let oldest_acceptable_timestamp_ns = now_ns.saturating_sub(max_age.nanos_i64());
         if timestamp_ns < oldest_acceptable_timestamp_ns {
@@ -20961,6 +20982,106 @@ mod tests {
     use crabka_units::{bytes, bytes_per_sec};
 
     use super::*;
+
+    /// Both ends of the Loki ingestion window are strict comparisons: a
+    /// timestamp exactly at the oldest or the newest acceptable value is
+    /// accepted. That is the only input separating `<` from `<=`, and against
+    /// a wall clock it is unreachable -- `now` advances between choosing the
+    /// timestamp and the function reading it. Hence the `_at` seam, which
+    /// takes `now` rather than reading it.
+    #[test]
+    fn the_loki_ingestion_window_accepts_its_own_boundaries() {
+        use crabka_units::{hours, nanos};
+
+        let now = 1_000_000_000_000_i64;
+        let labels = Labels::default();
+        let check_at = |timestamp: i64, max_age, grace| {
+            super::validate_loki_timestamp_window_at(timestamp, now, &labels, max_age, grace)
+        };
+        let hour_ns = hours(1).nanos_i64();
+
+        // Exactly at the oldest acceptable timestamp: accepted. One
+        // nanosecond older: refused.
+        check!(check_at(now - hour_ns, Some(hours(1)), None).is_ok());
+        check!(check_at(now - hour_ns + 1, Some(hours(1)), None).is_ok());
+        check!(check_at(now - hour_ns - 1, Some(hours(1)), None).is_err());
+
+        // Exactly at the newest acceptable timestamp: accepted. One
+        // nanosecond newer: refused.
+        check!(check_at(now + hour_ns, None, Some(hours(1))).is_ok());
+        check!(check_at(now + hour_ns - 1, None, Some(hours(1))).is_ok());
+        check!(check_at(now + hour_ns + 1, None, Some(hours(1))).is_err());
+
+        // A bound that is absent imposes nothing, and the two are
+        // independent: an ancient timestamp passes with no max age, and a
+        // far-future one passes with no grace period.
+        check!(check_at(0, None, Some(hours(1))).is_ok());
+        check!(check_at(i64::MAX / 2, Some(hours(1)), None).is_ok());
+        check!(check_at(0, None, None).is_ok());
+        check!(check_at(i64::MAX, None, None).is_ok());
+
+        // A zero window admits only the instant itself.
+        check!(check_at(now, Some(nanos(0)), Some(nanos(0))).is_ok());
+        check!(check_at(now - 1, Some(nanos(0)), None).is_err());
+        check!(check_at(now + 1, None, Some(nanos(0))).is_err());
+
+        // The refusals name their own direction rather than sharing one error.
+        check!(matches!(
+            check_at(now - hour_ns - 1, Some(hours(1)), None),
+            Err(DistributorError::TimestampTooOld { .. })
+        ));
+        check!(matches!(
+            check_at(now + hour_ns + 1, None, Some(hours(1))),
+            Err(DistributorError::TimestampTooNew { .. })
+        ));
+    }
+
+    /// `split_top_level_comparison_query` finds the comparison a PromQL query
+    /// is rooted at, ignoring operators nested inside brackets or quotes. The
+    /// depth guard is three counters joined by `&&`, and each has to reject on
+    /// its own -- so a matcher inside braces and a comparison inside
+    /// parentheses are both checked, each of which a loosened guard would
+    /// split at instead.
+    #[test]
+    fn a_top_level_comparison_ignores_operators_nested_inside_the_query() {
+        let split = super::split_top_level_comparison_query;
+
+        // Every operator, and the longest match wins: `>=` is not `>`.
+        check!(split("up > 1") == Some(("up ", ">", "1")));
+        check!(split("up >= 1") == Some(("up ", ">=", "1")));
+        check!(split("up < 1") == Some(("up ", "<", "1")));
+        check!(split("up <= 1") == Some(("up ", "<=", "1")));
+        check!(split("up == 1") == Some(("up ", "==", "1")));
+        check!(split("up != 1") == Some(("up ", "!=", "1")));
+        check!(split("up>=1") == Some(("up", ">=", "1")), "without spaces");
+
+        // A label matcher inside braces is not a top-level comparison. This is
+        // the case the brace counter exists for: loosening the guard splits
+        // the query at the matcher's own `!=` and leaves a broken left side.
+        check!(split(r#"{app!="a"} > 1"#) == Some((r#"{app!="a"} "#, ">", "1")));
+
+        // Nor is a comparison inside parentheses -- the outer one wins.
+        check!(split("(a > b) > 2") == Some(("(a > b) ", ">", "2")));
+
+        // Nor one inside a quoted string, which the quote tracking skips.
+        check!(split(r#"{app="x>y"} > 1"#) == Some((r#"{app="x>y"} "#, ">", "1")));
+
+        // A range selector's brackets nest too.
+        check!(
+            split("sum(rate(up[5m])) > 0.5") == Some(("sum(rate(up[5m])) ", ">", "0.5"))
+        );
+
+        // The bracket counter is defensive: no real range selector contains a
+        // comparison, so nothing valid exercises it. This input is not a
+        // PromQL query, but the scanner takes any string, and the counter's
+        // whole purpose is to not split inside brackets.
+        check!(split("a[>]b > 1") == Some(("a[>]b ", ">", "1")));
+
+        // No top-level comparison at all.
+        check!(split("up").is_none());
+        check!(split("sum(rate(up[5m]))").is_none());
+        check!(split(r#"{app!="a"}"#).is_none(), "a matcher alone is not one");
+    }
 
     /// `format_loki_offset_duration_ns` spells a duration the way Loki does,
     /// picking the largest unit that fits. Each `>=` is the boundary between
