@@ -151,6 +151,32 @@ pub fn decode_zipkin(body: &[u8]) -> Result<Vec<Span>, WireError> {
 #[cfg(test)]
 mod tests {
 
+    /// `zipkin_kind` names four kinds and falls back to internal for
+    /// everything else, so "INTERNAL" and an unknown string reach the same
+    /// answer by different routes. Both routes are pinned, and every named
+    /// kind is checked so none can quietly fall through to the default.
+    #[test]
+    fn zipkin_kind_falls_back_to_internal_only_when_unrecognised() {
+        use assert2::check;
+
+        use crate::span::SpanKind;
+        let kind = super::zipkin_kind;
+
+        check!(kind(Some("SERVER")) == SpanKind::Server);
+        check!(kind(Some("CLIENT")) == SpanKind::Client);
+        check!(kind(Some("PRODUCER")) == SpanKind::Producer);
+        check!(kind(Some("CONSUMER")) == SpanKind::Consumer);
+
+        // Both ways to reach internal.
+        check!(kind(Some("INTERNAL")) == SpanKind::Internal, "by falling through");
+        check!(kind(None) == SpanKind::Internal, "and by being absent");
+        check!(kind(Some("")) == SpanKind::Internal);
+        check!(kind(Some("nonsense")) == SpanKind::Internal);
+
+        // The match is case-sensitive, so a lower-case spelling defaults.
+        check!(kind(Some("server")) == SpanKind::Internal, "case-sensitive");
+    }
+
     use super::*;
     use crate::span::EventRecord;
 
