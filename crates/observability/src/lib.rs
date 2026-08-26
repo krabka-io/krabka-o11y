@@ -2882,6 +2882,9 @@ impl IngestQuotaBucket {
     fn update_rate(&mut self, rate: ByteRate) {
         self.refill();
         self.rate = rate;
+        // `>` is a permanent mutation survivor against `>=`: the two differ
+        // only when the two are already equal, and then the assignment stores
+        // the value already held.
         if self.available > self.capacity() {
             self.available = self.capacity();
         }
@@ -25873,6 +25876,36 @@ mod tests {
         check!(state.has_samples());
     }
 
+    /// Recording keeps the earliest sample and the latest, and a later record
+    /// at a timestamp already held changes neither. The four below arrive out
+    /// of order and revisit both ends: without the revisits, the guards could
+    /// take the last writer at each end instead of the first.
+    #[test]
+    fn recording_samples_keeps_the_earliest_and_the_latest() {
+        let value = |numerator: i128| super::MetricValue {
+            numerator,
+            denominator: 1,
+        };
+        let mut state = super::MetricSampleState::default();
+
+        state.record(10, value(1));
+        state.record(5, value(2));
+        // Neither of these displaces an end: one repeats the latest timestamp,
+        // the other the earliest.
+        state.record(10, value(3));
+        state.record(5, value(4));
+
+        check!(state.count == 4);
+        check!(
+            state.first == Some((5, value(2))),
+            "the earliest timestamp, from the first record that reached it"
+        );
+        check!(
+            state.last == Some((10, value(1))),
+            "the latest timestamp, from the first record that reached it"
+        );
+    }
+
     /// Merging two partial sample states keeps the smaller minimum, the larger
     /// maximum, the earliest first and the latest last, taking each from
     /// whichever side holds it. A tie on the timestamp keeps the side already
@@ -28005,6 +28038,28 @@ mod tests {
         bucket.update_rate(bytes_per_sec(20));
         check!(bucket.available >= bytes(4));
         check!(bucket.consume(bytes(4)));
+
+        // Neither assertion above reaches the clamp: the bucket is empty by
+        // then, so nothing is banked over the new capacity and `available`
+        // could have been left alone -- or topped up to the new capacity --
+        // without either inequality noticing.
+        //
+        // Lowering the rate shrinks the capacity, and what was banked above it
+        // is given up.
+        bucket.available = bytes(20);
+        bucket.update_rate(bytes_per_sec(5));
+        check!(bucket.available == bytes(5), "clamped to the new capacity");
+
+        // Raising it grows the capacity and hands out nothing: a bucket
+        // refills over time, not on a configuration change. The bound is loose
+        // by a byte because `update_rate` refills first, over however long the
+        // two statements took.
+        bucket.available = bytes(2);
+        bucket.update_rate(bytes_per_sec(50));
+        check!(
+            bucket.available < bytes(3),
+            "not topped up to the new capacity"
+        );
 
         let bucket = IngestQuotaBucket::new(bytes_per_sec(10), secs(2));
         check!(bucket.capacity() == bytes(20));
