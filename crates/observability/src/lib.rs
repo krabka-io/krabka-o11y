@@ -7102,6 +7102,12 @@ async fn log_level_post(RawQuery(raw_query): RawQuery, body: Bytes) -> Response 
         Ok(body_query) => body_query,
         Err(error) => return error.into_response(),
     };
+    // Both `!raw_query.is_empty()` guards are permanent mutation survivors
+    // against `true`, and only against `true`. An empty query string with an
+    // empty body falls through to the same empty string either way; with a
+    // non-empty body it would merely append a trailing `&`, which the
+    // parameter parser skips. Dropping them the other way, to `false`, does
+    // change the answer: a level named only in the query string is lost.
     let raw_params = match (raw_query.as_deref(), body_query.is_empty()) {
         (Some(raw_query), true) if !raw_query.is_empty() => raw_query.to_owned(),
         (Some(raw_query), false) if !raw_query.is_empty() => format!("{body_query}&{raw_query}"),
@@ -21174,6 +21180,17 @@ mod tests {
         check!(
             body.contains("Log level set to info"),
             "the body's level, not the query string's: {body}"
+        );
+
+        // A body that carries no level at all, alongside a query string that
+        // does. Every case above has the level in the body whenever the body is
+        // non-empty, so the merge could have dropped the query string entirely
+        // and they would all still pass.
+        let (status, body) = post(Some("log_level=debug"), "other=1").await;
+        check!(status == axum::http::StatusCode::OK);
+        check!(
+            body.contains("Log level set to debug"),
+            "the query string supplies what the body lacks: {body}"
         );
 
         // An empty query string alongside a body is not a source.
