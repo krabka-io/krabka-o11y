@@ -1,0 +1,169 @@
+// Crabka clock confidence signal, version 1.
+// One reading is one clock, on one host, at one moment. The host reports the
+// clock reading and the half-width of the interval around it. A query can then
+// state how far the host's time can be from true time.
+// The ingester stamps its own receive time on each row. The difference between
+// the two readings is a measured skew between two named hosts, and no single
+// exporter can compute it.
+// License: Apache-2.0.
+syntax = "proto3";
+
+package krabka.clocks.v1;
+
+// One agent push. The agent groups every clock it reads into one batch.
+message ClockReadingBatch {
+  repeated ClockReading readings = 1;
+}
+
+// One clock, on one host, at one moment.
+message ClockReading {
+  // Identity.
+
+  // The host that owns the clock.
+  string node = 1;
+
+  // The clock on that host, such as `CLOCK_REALTIME` or `/dev/ptp0`.
+  string clock = 2;
+
+  // Where the clock gets its time.
+  SourceKind source_kind = 3;
+
+  reserved 4 to 9;
+
+  // The reading.
+
+  // The host's own reading of the clock, in nanoseconds since the Unix epoch.
+  int64 reading_unix_nanos = 10;
+
+  // The half-width of the interval around the reading. True time is in
+  // `reading_unix_nanos` plus or minus `uncertainty_nanos`.
+  int64 uncertainty_nanos = 11;
+
+  // The signed offset of this clock from its reference. A positive value means
+  // the clock is ahead of the reference.
+  int64 offset_nanos = 12;
+
+  reserved 13 to 19;
+
+  // Discipline state.
+
+  // What the clock discipline does now.
+  SyncState sync_state = 20;
+
+  // The reference this clock follows. It holds the PTP `gmIdentity`, the NTP
+  // peer, or the GNSS constellation.
+  string reference_id = 21;
+
+  // When this clock last had a valid reference, in nanoseconds since the Unix
+  // epoch. A query computes the holdover duration in plain PromQL as
+  // `time() - last_sync`.
+  int64 last_sync_unix_nanos = 22;
+
+  // The frequency correction the discipline applies, in parts per billion.
+  int64 frequency_ppb = 23;
+
+  // The magnitude of the most recent step the discipline applied.
+  int64 last_step_nanos = 24;
+
+  reserved 25 to 29;
+
+  // NTP, from RFC 5905. RFC 5905 names the sum of half the root delay and the
+  // root dispersion the synchronization distance. That sum is the real NTP
+  // uncertainty bound, and neither term alone is.
+
+  // The round-trip delay to the stratum 1 root.
+  int64 root_delay_nanos = 30;
+
+  // The accumulated dispersion to the stratum 1 root.
+  int64 root_dispersion_nanos = 31;
+
+  // The distance in NTP hops from a reference clock.
+  uint32 stratum = 32;
+
+  reserved 33 to 39;
+
+  // PTP, from `pmc GET TIME_STATUS_NP`, `CURRENT_DATA_SET` and
+  // `PARENT_DATA_SET`.
+
+  // The one-way path delay the port measures to the master.
+  int64 mean_path_delay_nanos = 40;
+
+  // The count of boundary clocks between this port and the grandmaster.
+  uint32 steps_removed = 41;
+
+  // The grandmaster `clockClass`, which states how traceable its time is.
+  uint32 gm_clock_class = 42;
+
+  // The grandmaster `clockAccuracy`, which states the expected error of its
+  // time.
+  uint32 gm_clock_accuracy = 43;
+
+  reserved 44 to 49;
+
+  // Kernel clock discipline, from `adjtimex(2)`.
+
+  // The kernel `maxerror`. The kernel grows this value at 500 ppm between
+  // updates and sets the `STA_UNSYNC` bit at 16 s, so `maxerror` is already an
+  // uncertainty bound.
+  int64 max_error_nanos = 50;
+
+  // The kernel `esterror`, which is the discipline's own error estimate.
+  int64 est_error_nanos = 51;
+
+  // The kernel `STA_UNSYNC` bit.
+  bool unsynchronized = 52;
+
+  reserved 53 to 59;
+
+  // GNSS.
+
+  // The count of satellites in the position solution.
+  uint32 satellites_used = 60;
+
+  // The quality of the position solution.
+  GnssFix gnss_fix = 61;
+
+  reserved 62 to 69;
+}
+
+// Where a clock gets its time.
+enum SourceKind {
+  SOURCE_KIND_UNSPECIFIED = 0;
+  // IEEE 1588 Precision Time Protocol.
+  PTP = 1;
+  // Network Time Protocol.
+  NTP = 2;
+  // A satellite receiver.
+  GNSS = 3;
+  // The kernel clock discipline that `adjtimex(2)` reports.
+  KERNEL_TIMEX = 4;
+  // A PTP hardware clock device.
+  PHC = 5;
+}
+
+// What a clock discipline does now.
+enum SyncState {
+  SYNC_STATE_UNSPECIFIED = 0;
+  // The clock tracks a valid reference.
+  SYNCHRONIZED = 1;
+  // The reference is gone. The clock runs on the rate it learned before.
+  HOLDOVER = 2;
+  // The clock never had a reference.
+  FREE_RUNNING = 3;
+  // The clock lost its reference and holds no rate estimate.
+  UNSYNCHRONIZED = 4;
+  // The discipline stepped the clock. Time is not continuous across this
+  // reading.
+  STEPPED = 5;
+}
+
+// The quality of a GNSS position solution.
+enum GnssFix {
+  GNSS_FIX_UNSPECIFIED = 0;
+  // The receiver has no fix.
+  NONE = 1;
+  // The receiver has a two-dimensional fix.
+  TWO_D = 2;
+  // The receiver has a three-dimensional fix.
+  THREE_D = 3;
+}
