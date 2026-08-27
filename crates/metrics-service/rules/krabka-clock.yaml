@@ -9,14 +9,17 @@
 # publishes one sample per family, with the labels `node`, `clock`, and
 # `source`. A state family publishes one series for every value of the enum,
 # with the current value at 1 and every other value at 0.
+#
+# Every scalar here stays on one line. The repository formatter runs yamlfmt,
+# which collapses a folded block onto one line anyway.
 groups:
   - name: krabka-clock
     interval: 1m
     rules:
       # The uncertainty bound the brokers promise. A rolling config change
       # leaves two values live for a short time. `max()` takes the larger one,
-      # because the larger bound is the weaker promise. An alert measures the
-      # fleet against the weakest promise the fleet currently makes.
+      # because the larger bound is the weaker promise, and an alert has to
+      # measure the fleet against the weakest promise it currently makes.
       - record: krabka_clock:declared_bound_seconds
         expr: max(crabka_broker_delivery_clock_uncertainty_seconds)
 
@@ -30,9 +33,7 @@ groups:
       # difference between any two clocks that the fleet's own uncertainty
       # admits.
       - record: krabka_clock:fleet_skew_bound_seconds
-        expr: >-
-          max(krabka_clock_offset_seconds + krabka_clock_uncertainty_seconds)
-          - min(krabka_clock_offset_seconds - krabka_clock_uncertainty_seconds)
+        expr: max(krabka_clock_offset_seconds + krabka_clock_uncertainty_seconds) - min(krabka_clock_offset_seconds - krabka_clock_uncertainty_seconds)
 
       # How much of the declared bound the worst clock spends. Both inputs are
       # recording rules above. The ruler writes them to the WAL, and the store
@@ -42,8 +43,7 @@ groups:
         expr: krabka_clock:uncertainty_seconds:max / krabka_clock:declared_bound_seconds
 
       # Each clock reports exactly one sync state at 1, so this counts the
-      # clocks that do not track a reference. A node that runs one clock, which
-      # is the usual case, counts once. `count()` over an empty vector is
+      # clocks that do not track a reference. `count()` over an empty vector is
       # an empty vector, and an empty result records no sample at all. The
       # `or vector(0)` writes the explicit zero, so a healthy fleet keeps a
       # series to graph and to compare against.
@@ -65,11 +65,7 @@ groups:
           severity: critical
         annotations:
           summary: Clock on node {{ $labels.node }} tracks no reference
-          description: >-
-            The clock discipline on node {{ $labels.node }} reports the
-            {{ $labels.state }} state, so the clock tracks no reference and
-            holds no rate estimate. Its offset grows without a bound. No
-            delivery batch from this node carries an honest uncertainty.
+          description: The clock discipline on node {{ $labels.node }} reports the {{ $labels.state }} state, so the clock tracks no reference and holds no rate estimate. Its offset grows without a bound. No delivery batch from this node carries an honest uncertainty.
 
       # The left side carries `node`, `clock`, and `source`. The right side is
       # one series with no labels at all, so the comparison joins on the empty
@@ -81,17 +77,11 @@ groups:
           severity: critical
         annotations:
           summary: Clock uncertainty on node {{ $labels.node }} is above the declared bound
-          description: >-
-            The clock on node {{ $labels.node }} reports {{ $value }} seconds of
-            uncertainty, which is more than the bound the brokers declare. A
-            delivery batch that activates under the declared bound makes a
-            promise this clock does not keep.
+          description: The clock on node {{ $labels.node }} reports {{ $value }} seconds of uncertainty, which is more than the bound the brokers declare. A delivery batch that activates under the declared bound makes a promise this clock does not keep.
 
       # Two clocks that each stay honestly inside a bound `e` differ by at most
       # `2e`. A fleet skew bound above `2e` says the fleet as a whole does not
       # keep the promise the brokers make, even when each clock keeps it alone.
-      # Both sides of the comparison carry no labels, so they match on the empty
-      # label set and the comparison needs no join modifier.
       - alert: ClockFleetSkewExceedsDeclaredBound
         expr: krabka_clock:fleet_skew_bound_seconds > 2 * krabka_clock:declared_bound_seconds
         for: 5m
@@ -99,10 +89,7 @@ groups:
           severity: critical
         annotations:
           summary: Fleet clock skew is above twice the declared bound
-          description: >-
-            The fleet skew bound is {{ $value }} seconds. Two clocks that each
-            stay inside the declared bound differ by at most twice that bound,
-            so the fleet admits a larger difference than the brokers declare.
+          description: The fleet skew bound is {{ $value }} seconds. Two clocks that each stay inside the declared bound differ by at most twice that bound, so the fleet admits a larger difference than the brokers declare.
 
       - alert: ClockUncertaintyBudgetHigh
         expr: krabka_clock:uncertainty_budget_ratio > 0.5
@@ -111,10 +98,7 @@ groups:
           severity: warning
         annotations:
           summary: The fleet spends more than half of the declared clock budget
-          description: >-
-            The worst clock in the fleet spends {{ $value }} of the declared
-            bound. The margin left for a network or reference problem is small,
-            and the fleet has no headroom before the bound breaks.
+          description: The worst clock in the fleet spends {{ $value }} of the declared bound. The margin left for a network or reference problem is small, and the fleet has no headroom before the bound breaks.
 
       # The exporter reports the cumulative magnitude of the steps the
       # discipline applied, so any increase inside the window means it stepped
@@ -126,11 +110,7 @@ groups:
           severity: critical
         annotations:
           summary: The clock discipline stepped the clock on node {{ $labels.node }}
-          description: >-
-            The discipline on node {{ $labels.node }} stepped the clock by
-            {{ $value }} seconds in the last 5 minutes. A step breaks the
-            monotonic relation between two readings, so any interval that spans
-            the step is wrong.
+          description: The discipline on node {{ $labels.node }} stepped the clock by {{ $value }} seconds in the last 5 minutes. A step breaks the monotonic relation between two readings, so any interval that spans the step is wrong.
 
       - alert: ClockInHoldover
         expr: krabka_clock_sync_state{state="holdover"} == 1
@@ -139,14 +119,8 @@ groups:
           severity: warning
         annotations:
           summary: Clock on node {{ $labels.node }} runs in holdover
-          description: >-
-            The clock on node {{ $labels.node }} lost its reference and runs on
-            the rate it learned before. The uncertainty grows for as long as the
-            holdover lasts.
+          description: The clock on node {{ $labels.node }} lost its reference and runs on the rate it learned before. The uncertainty grows for as long as the holdover lasts.
 
-      # A settled domain advertises a new clock class only on a real handover.
-      # More than two changes in fifteen minutes is an election that does not
-      # settle.
       - alert: PtpGrandmasterFlapping
         expr: changes(krabka_clock_class[15m]) > 2
         for: 5m
@@ -154,11 +128,7 @@ groups:
           severity: warning
         annotations:
           summary: The PTP grandmaster for node {{ $labels.node }} changes repeatedly
-          description: >-
-            The advertised clock class for node {{ $labels.node }} changed
-            {{ $value }} times in the last 15 minutes. The best-master election
-            does not settle, and each change moves the time base under the
-            clock.
+          description: The advertised clock class for node {{ $labels.node }} changed {{ $value }} times in the last 15 minutes. The best-master election does not settle, and each change moves the time base under the clock.
 
       - alert: GnssFixLost
         expr: krabka_gnss_fix{fix="none"} == 1
@@ -167,27 +137,17 @@ groups:
           severity: warning
         annotations:
           summary: The GNSS receiver on node {{ $labels.node }} has no fix
-          description: >-
-            The receiver on node {{ $labels.node }} reports no position fix, so
-            it disciplines nothing. The clock falls back to holdover and its
-            uncertainty grows.
+          description: The receiver on node {{ $labels.node }} reports no position fix, so it disciplines nothing. The clock falls back to holdover and its uncertainty grows.
 
-      # A silent clock agent looks exactly like a healthy clock, so an absent
-      # reading needs its own alert. The first term covers a fleet that reports
-      # nothing at all. The second term names the single clock that stopped:
-      # the range selector still sees it in the last hour, and the instant
-      # vector no longer does.
+      # A silent clock agent looks exactly like a healthy clock, so absence has
+      # to alert. The first term covers a fleet that reports nothing at all. The
+      # second term names the single clock that stopped: the range selector
+      # still sees it in the last hour, and the instant vector no longer does.
       - alert: ClockTelemetryStale
-        expr: >-
-          absent(krabka_clock_uncertainty_seconds)
-          or (count_over_time(krabka_clock_uncertainty_seconds[1h]) unless krabka_clock_uncertainty_seconds)
+        expr: absent(krabka_clock_uncertainty_seconds) or (count_over_time(krabka_clock_uncertainty_seconds[1h]) unless krabka_clock_uncertainty_seconds)
         for: 5m
         labels:
           severity: critical
         annotations:
-          summary: A clock stopped reporting
-          description: >-
-            No clock reading arrived from node {{ $labels.node }}. An empty node
-            name here means the whole fleet reports nothing. A clock that reports
-            nothing looks the same as a healthy clock, so treat it as an unknown
-            clock and not as a working one.
+          summary: No clock reading arrived
+          description: No clock reading arrived for node {{ $labels.node }}. A clock that reports nothing looks the same as a healthy clock, so treat this as an unknown clock and not as a working one.
