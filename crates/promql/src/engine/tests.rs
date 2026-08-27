@@ -4734,6 +4734,23 @@ async fn instant_predict_linear_extrapolates_gauge_series() {
     check!(samples[0].labels.get("__name__").is_none());
     check!(samples[0].labels.get("job") == Some("api"));
     check!(approx_eq(float_value(&samples[0].value), 7.0));
+    // The same series over a window that admits all three samples. `[2m]`
+    // starts exactly at the first one, and the window excludes its own start,
+    // so only two ever reached the regression -- leaving a guard that refused
+    // three samples with nothing to refuse.
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant(
+            "tenant-a",
+            "predict_linear(disk_free_bytes[3m], 60)",
+            120_000,
+        )
+        .await
+        .expect("a prediction")
+    else {
+        panic!("expected a vector");
+    };
+    check!(samples.len() == 1, "three samples still predict");
+    check!(approx_eq(float_value(&samples[0].value), 7.0));
 }
 
 #[cfg(not(feature = "experimental-functions"))]
