@@ -2718,7 +2718,7 @@ pub(crate) fn template_parse_error(message: &str) -> ParseError {
 mod tests {
 
     /// `evaluate_template_function` is the whole Go-template function surface
-    /// LogQL exposes through `line_format`, and it carried by far the largest
+    /// `LogQL` exposes through `line_format`, and it carried by far the largest
     /// concentration of surviving mutants in this crate: thirty-nine dispatch
     /// arms, each an arithmetic or comparison the tests never pinned to a
     /// value. An arm that returns the wrong operand, or a comparison read the
