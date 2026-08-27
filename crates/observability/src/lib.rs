@@ -28202,8 +28202,45 @@ mod tests {
                 entry.resource_name
             );
         }
+        // A literal "*" resource name matches any topic. Neither entry in the
+        // loop above asks it: one names the topic, the other is a prefix.
+        check!(matches_acl_topic_pattern(
+            &deny_write,
+            "some-unrelated-topic"
+        ));
+
         check!(acl_matches_tenant_wal_write(
             &allow_write,
+            "User:tenant-a",
+            "__crabka_observability_logs_wal"
+        ));
+
+        // The wildcard principal grants on the write side too. Only the read
+        // entry above carries one, so the write side's own check was free.
+        check!(acl_matches_tenant_wal_write(
+            &acl_entry(
+                ResourceType::Topic,
+                "__crabka_observability_logs_wal",
+                PatternType::Literal,
+                "User:*",
+                AclOperation::Write,
+                PermissionType::Allow,
+            ),
+            "User:tenant-a",
+            "__crabka_observability_logs_wal"
+        ));
+
+        // And a non-Topic resource is refused reading, as it already is
+        // writing.
+        check!(!acl_matches_tenant_wal_read(
+            &acl_entry(
+                ResourceType::Group,
+                "__crabka_observability_logs_wal",
+                PatternType::Literal,
+                "User:tenant-a",
+                AclOperation::Read,
+                PermissionType::Allow,
+            ),
             "User:tenant-a",
             "__crabka_observability_logs_wal"
         ));
