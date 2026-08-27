@@ -10574,6 +10574,10 @@ fn could_be_scalar_vector_expression(query: &str) -> bool {
     if first.is_ascii_digit() || matches!(first, '+' | '-' | '.' | '(') {
         return true;
     }
+    // `== '_'` against `!= '_'` is a permanent survivor. The branch it guards
+    // returns true only for three literal identifiers: a leading `_` cannot
+    // begin any of them, and every other character the mutation newly admits
+    // takes an empty identifier, which matches none of them.
     if first.is_ascii_alphabetic() || first == '_' {
         let ident_len = trimmed
             .chars()
@@ -10967,6 +10971,11 @@ impl<'a> VectorScalarExpressionParser<'a> {
             return None;
         }
 
+        // `+= 1` against `*= 1` is a permanent survivor here. The first byte
+        // has just been checked to be a letter or an underscore, and the loop
+        // below accepts exactly those plus digits -- so leaving the position
+        // on it lets the loop step over it instead, and the name ends in the
+        // same place either way.
         self.position += 1;
         while matches!(
             bytes.get(self.position),
@@ -11189,6 +11198,9 @@ impl ScalarSample {
         let mut denominator = i128::try_from(self.denominator)
             .ok()?
             .checked_mul(other.numerator)?;
+        // `< 0` against `<= 0` is a permanent survivor: `ScalarSample::new`
+        // normalises a zero denominator to one, and the divisor's numerator was
+        // rejected above, so this product is never zero.
         if denominator < 0 {
             numerator = numerator.checked_neg()?;
             denominator = denominator.checked_neg()?;
@@ -20994,6 +21006,33 @@ mod tests {
     use crabka_units::{bytes, bytes_per_sec};
 
     use super::*;
+
+    /// `count_values` and `approx_topk` are both refused before a query is
+    /// planned. The two predicates read different aggregation fields, so a
+    /// query using one must not trip the other.
+    #[test]
+    fn count_values_and_approx_topk_are_recognised_apart_from_each_other() {
+        for (query, count_values, approx_topk) in [
+            (
+                r#"count_values("status", rate({job="api"}[1m]))"#,
+                true,
+                false,
+            ),
+            (r#"approx_topk(3, rate({job="api"}[1m]))"#, false, true),
+            (r#"sum(rate({job="api"}[1m]))"#, false, false),
+            (r#"rate({job="api"}[1m])"#, false, false),
+        ] {
+            let parsed = parse_metric_query(query).expect(query);
+            check!(
+                metric_query_uses_count_values(&parsed) == count_values,
+                "{query}"
+            );
+            check!(
+                metric_query_uses_approx_topk(&parsed) == approx_topk,
+                "{query}"
+            );
+        }
+    }
 
     /// A JSON field's detected type comes from the JSON type itself, not from
     /// re-parsing its rendered text. Both integer widths count as `Int` --
