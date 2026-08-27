@@ -28879,6 +28879,22 @@ mod tests {
         assert_eq!(params.start_time, 10);
         assert_eq!(params.end_time, 20);
         assert!(parse_create_delete_request_params(Some("query=x&start=20&end=10")).is_err());
+        // A window of zero width is allowed: "end before start" is the error,
+        // not "end not after start".
+        check!(
+            parse_create_delete_request_params(Some("query=x&start=10&end=10")).is_ok(),
+            "a start and end at the same instant"
+        );
+        // `max_interval` is parsed for its own sake -- the value is discarded,
+        // so only an invalid one shows the parse happening at all. The case
+        // above passes `1h`, which is accepted whether or not it is read.
+        check!(
+            parse_create_delete_request_params(Some(
+                "query=x&start=10&end=20&max_interval=notaduration"
+            ))
+            .is_err(),
+            "an unparseable max_interval is refused"
+        );
 
         let list = parse_list_delete_requests_params(Some("start=10&end=20")).unwrap();
         assert_eq!(list.start_time, Some(10));
