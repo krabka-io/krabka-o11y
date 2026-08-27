@@ -1823,7 +1823,9 @@ dependencies = [
  "mutants",
  "num-traits",
  "object_store",
+ "opentelemetry",
  "opentelemetry-proto",
+ "opentelemetry_sdk",
  "parquet",
  "prometheus-client",
  "prost 0.14.4",
@@ -1843,6 +1845,8 @@ dependencies = [
  "tonic",
  "tower",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
  "url",
 ]
 
