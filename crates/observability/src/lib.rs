@@ -28659,6 +28659,24 @@ mod tests {
             loki_json_push_streams_parse_error(body.as_bytes(), &json!("not-array"))
                 .contains("|{\"streams\":\"not-array\"}|")
         );
+        // That assertion reads the *bigger* context, which is the whole body
+        // either way. The narrow window is twenty bytes from nine before the
+        // value, and stops short of the closing brace.
+        check!(
+            loki_json_push_streams_parse_error(body.as_bytes(), &json!("not-array"))
+                .contains(r#"...|streams":"not-array"|..."#),
+            "the narrow window is twenty bytes wide"
+        );
+
+        // The payload error's window is eleven bytes from the first
+        // non-whitespace byte. A body that starts with one puts that at zero,
+        // which is the only offset where a width computed by multiplying
+        // rather than adding gives a different answer.
+        check!(
+            loki_json_push_payload_parse_error(b"\"not-json-at-all\"")
+                .contains(r#"...|"not-json-a|..."#),
+            "eleven bytes from the start"
+        );
 
         let structured =
             br#"{"streams":[{"stream":{"app":"api"},"values":[["1","line",{"ok":true}]]}]}"#;
@@ -28688,6 +28706,18 @@ mod tests {
             r#"{app="api",env="prod"}"#
         );
         check!(loki_push_label_parse_error(&rendered_labels, "bad-name").contains("1:5"));
+        // Every character of "bad-name" is judged the same way whether or not
+        // it is treated as the first, so that case cannot tell the two apart.
+        // A digit can: it is allowed anywhere except at the start.
+        let digit_then_invalid = loki_push_label_parse_error(&rendered_labels, "b9-name");
+        check!(
+            digit_then_invalid.contains("1:4"),
+            "the hyphen is the third character: {digit_then_invalid}"
+        );
+        check!(
+            digit_then_invalid.contains("'-'"),
+            "and the hyphen is what is reported: {digit_then_invalid}"
+        );
         check!(
             loki_proto_label_parse_error(r#"{9bad="x"}"#)
                 .unwrap()
