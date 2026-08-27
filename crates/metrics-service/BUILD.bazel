@@ -8,6 +8,9 @@ exports_files(["Cargo.toml"])
 crate_library(name = "metrics-service")
 
 crate_tests(
+    # The shipped clock rule bundle. `clock_rules_bundle` loads it from this
+    # path and evaluates it, so the suite reads the file a deployment ships.
+    data = ["rules/krabka-clock.yaml"],
     # Suites that drive a real Grafana-stack component and compare against
     # it, with the images each one starts. //bazel/images pins those by
     # digest and //bazel/defs.bzl loads them before the suite runs.

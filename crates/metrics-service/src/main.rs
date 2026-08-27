@@ -24,8 +24,8 @@ use crabka_metrics::{OverridesProvider, WAL_TOPIC};
 use crabka_metrics_service::{
     KafkaRecordingRuleWalSink, KafkaRulerStateSink, PrometheusRulerStateSink, RULER_STATE_TOPIC,
     RulerAlertmanagerSink, RulerStateFanoutSink, WalHeadConsumerCommit, WalHeadConsumerPoll,
-    run_ruler_evaluation_loop, run_ruler_state_consumer_loop, run_wal_head_consumer_loop,
-    serve_prometheus_router_joinable,
+    install_bundled_rule_groups, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
+    run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
 use crabka_promql::{
     EngineOpts, PrometheusApiState, QueryFrontendOptions, RulerShard, WalHead, prometheus_router,
@@ -156,6 +156,13 @@ struct Cli {
     ruler_shard_total: usize,
     #[arg(long, env = "CRABKA_METRICS_RULER_ALERTMANAGER_URL")]
     ruler_alertmanager_url: Option<String>,
+    /// A Prometheus rule file the ruler installs at startup.
+    ///
+    /// The ruler posts each group of the file to its own ruler-config API, so a
+    /// bundled group and a group an operator posts behave the same way. The
+    /// start stops when the ruler cannot read, parse, or install the file.
+    #[arg(long, env = "CRABKA_METRICS_RULER_BUNDLED_RULES")]
+    ruler_bundled_rules: Option<PathBuf>,
     #[arg(
         long,
         env = "CRABKA_METRICS_RULER_STATE_TOPIC",
@@ -369,6 +376,17 @@ async fn run_ruler(
     let state = Arc::new(state);
     let router = prometheus_router(Arc::clone(&state));
     let shard = RulerShard::new(cli.ruler_shard_index, cli.ruler_shard_total)?;
+
+    // Install the bundled rules before the ruler reaches Kafka, so a rule file
+    // an operator names but the ruler cannot install stops the start early.
+    if let Some(path) = cli.ruler_bundled_rules.as_deref() {
+        let groups = install_bundled_rule_groups(&router, path, &cli.ruler_tenant).await?;
+        tracing::info!(
+            path = %path.display(),
+            groups = groups.len(),
+            "metrics ruler installed the bundled rule groups"
+        );
+    }
 
     let bootstrap = cli.wal_bootstrap.clone().ok_or_else(|| {
         std::io::Error::new(
@@ -692,6 +710,8 @@ mod tests {
             "http://alertmanager.example/api/v2/alerts",
             "--ruler-state-topic",
             "__tenant_a_ruler_state",
+            "--ruler-bundled-rules",
+            "/etc/crabka/rules/krabka-clock.yaml",
         ])
         .unwrap();
 
@@ -705,6 +725,17 @@ mod tests {
                 == Some("http://alertmanager.example/api/v2/alerts")
         );
         assert2::assert!(cli.ruler_state_topic.as_str() == "__tenant_a_ruler_state");
+        assert2::assert!(
+            cli.ruler_bundled_rules.as_deref()
+                == Some(Path::new("/etc/crabka/rules/krabka-clock.yaml"))
+        );
+    }
+
+    #[test]
+    fn ruler_bundled_rules_are_absent_by_default() {
+        let cli = Cli::try_parse_from(["crabka-metrics-service", "--target", "ruler"]).unwrap();
+
+        assert2::assert!(cli.ruler_bundled_rules.is_none());
     }
 
     #[test]

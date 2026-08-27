@@ -125,12 +125,11 @@ impl InMemoryMetricStore {
                 help,
                 unit,
             } => self.push_metadata(&record.tenant, metric_family_name, metric_type, help, unit),
-            SamplePayload::Exemplars => {}
-            // A clock reading carries no float sample of its own. The
-            // distributor writes the projected series beside it as their own
-            // `Float` records, and those reach this head through the arm
-            // above.
-            SamplePayload::ClockReading(_) => {}
+            // Neither payload carries a float sample for this head. An
+            // exemplar record is drained by the exemplar loop below, and a
+            // clock reading publishes its projected series as their own
+            // `Float` records, which reach this head through the arm above.
+            SamplePayload::Exemplars | SamplePayload::ClockReading(_) => {}
         }
         for exemplar in &record.exemplars {
             self.push_exemplar(
