@@ -1030,6 +1030,53 @@ mod tests {
         }
     }
 
+    /// Two histograms are range-compatible only when *every* shape field
+    /// agrees. Each case below differs in exactly one of them, and each is on
+    /// its own enough to make the pair incompatible.
+    #[test]
+    fn range_compatibility_needs_every_shape_field_to_agree() {
+        type Difference = (&'static str, fn(&mut NativeHistogram));
+        let span = |offset, length| BucketSpan { offset, length };
+        let base = || {
+            let mut histogram = histogram(0, ResetHint::Unknown);
+            histogram.positive_spans = vec![span(1, 2)];
+            histogram.positive_counts = vec![1.0, 2.0];
+            histogram.negative_spans = vec![span(0, 1)];
+            histogram.negative_counts = vec![3.0];
+            histogram
+        };
+        assert2::check!(native_histograms_are_range_compatible(&base(), &base()));
+
+        let differing: [Difference; 8] = [
+            ("schema", |h| h.schema = 1),
+            ("is_float", |h| h.is_float = !h.is_float),
+            ("zero_threshold", |h| h.zero_threshold = 1.0),
+            ("custom_values", |h| h.custom_values = Some(vec![1.0])),
+            ("positive_spans", |h| {
+                h.positive_spans = vec![BucketSpan {
+                    offset: 2,
+                    length: 2,
+                }];
+            }),
+            ("negative_spans", |h| {
+                h.negative_spans = vec![BucketSpan {
+                    offset: 1,
+                    length: 1,
+                }];
+            }),
+            ("positive_counts length", |h| h.positive_counts.push(9.0)),
+            ("negative_counts length", |h| h.negative_counts.push(9.0)),
+        ];
+        for (name, differ) in differing {
+            let mut right = base();
+            differ(&mut right);
+            assert2::check!(
+                !native_histograms_are_range_compatible(&base(), &right),
+                "{name} alone must make the pair incompatible"
+            );
+        }
+    }
+
     #[test]
     fn add_downscales_exponential_buckets() {
         let mut left = histogram(1, ResetHint::No);
