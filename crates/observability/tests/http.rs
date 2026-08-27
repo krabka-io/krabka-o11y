@@ -18274,6 +18274,89 @@ async fn patterns_endpoint_returns_loki_error_for_invalid_logql() {
 }
 
 #[tokio::test]
+async fn detected_fields_stops_scanning_at_the_line_limit() {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api_block = write_log_block(
+        &dir,
+        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
+        vec![
+            LogRow::new(
+                api,
+                10,
+                r#"{"status":500,"ok":false,"path":"/checkout"}"#,
+                BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+            ),
+            LogRow::new(
+                api,
+                11,
+                "level=warn duration=12ms bytes=1.5MiB status=503",
+                BTreeMap::new(),
+            ),
+        ],
+    )
+    .unwrap();
+    let mut block_index = BlockIndex::default();
+    block_index.insert(api_block);
+    let state = QuerierState::new(dir, label_index, block_index);
+    let app = loki_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=10&end=20&limit=10&line_limit=1")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(response.status() == StatusCode::OK);
+    // Only the first row is scanned, so the second row's logfmt fields --
+    // `duration`, `bytes`, and its own `status` and `level` -- never appear.
+    assert!(
+        json_body(response).await
+            == json!({
+                "fields": [
+                    {
+                        "label": "detected_level",
+                        "type": "string",
+                        "cardinality": 1,
+                        "parsers": null
+                    },
+                    {
+                        "label": "ok",
+                        "type": "boolean",
+                        "cardinality": 1,
+                        "parsers": ["json"]
+                    },
+                    {
+                        "label": "path",
+                        "type": "string",
+                        "cardinality": 1,
+                        "parsers": ["json"]
+                    },
+                    {
+                        "label": "status",
+                        "type": "int",
+                        "cardinality": 1,
+                        "parsers": ["json"]
+                    },
+                    {
+                        "label": "trace_id",
+                        "type": "string",
+                        "cardinality": 1,
+                        "parsers": ["structured_metadata"]
+                    }
+                ],
+                "limit": 10
+            })
+    );
+}
+
+#[tokio::test]
 async fn detected_fields_endpoint_discovers_json_logfmt_and_structured_metadata() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();

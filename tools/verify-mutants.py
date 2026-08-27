@@ -53,7 +53,7 @@ def run_case(path, original, start, end, case, package, target, extra_args):
     with tempfile.NamedTemporaryFile(mode="r", suffix=".log") as log:
         result = subprocess.run(
             ["timeout", "-k", str(KILL_GRACE), str(TIMEOUT_SECONDS),
-             "cargo", "test", "-p", package, target, *extra_args, case["test"]],
+             "cargo", "test", "-p", package, *target, *extra_args, case["test"]],
             stdout=log.file, stderr=subprocess.STDOUT,
             start_new_session=True, check=False,
         )
@@ -89,8 +89,12 @@ def main():
     # Most crates keep their logic in the library, but a service's CLI value
     # parsers and config wiring live in main.rs, where `--lib` cannot see them
     # and every case silently reports NO-COMPILE. `"target"` selects the cargo
-    # target set: "--bins" for those, "--lib" (the default) otherwise.
+    # target set: "--bins" for those, "--lib" (the default) otherwise. A test
+    # that only exists in an integration suite needs two arguments, so a list
+    # is accepted too -- ["--test", "http"].
     target = spec.get("target", "--lib")
+    if isinstance(target, str):
+        target = [target]
     # A crate whose tests sit behind a non-default feature compiles them out of
     # a plain `cargo test`, so every mutant in the code they cover reports as a
     # survivor. `"features"` passes them through -- e.g. ["--all-features"].
