@@ -28317,7 +28317,14 @@ mod tests {
         let structured =
             br#"{"streams":[{"stream":{"app":"api"},"values":[["1","line",{"ok":true}]]}]}"#;
         let error = loki_structured_metadata_value_parse_error(structured, "ok", &json!(true));
-        assert!(error.contains("ok\":true"));
+        // The context window starts three bytes before the VALUE, which sits
+        // one past the quoted key and its colon. A `contains` on the key and
+        // value together is satisfied by any nearby offset -- the whole
+        // eighty-byte window holds them -- so the window is pinned exactly.
+        check!(
+            error.contains(r#"...|k":true}]]}]}|..."#),
+            "the context starts three bytes into the value: {error}"
+        );
 
         let text = "ab\u{20ac}cd";
         assert_eq!(previous_char_boundary(text, 4), 2);
