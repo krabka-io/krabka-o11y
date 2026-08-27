@@ -33,7 +33,10 @@ import tempfile
 # while the test binary it spawned keeps spinning and holding the output pipe,
 # so a piped read blocks for as long as the process lives. Output goes to a
 # file and the whole process group is killed.
-TIMEOUT_SECONDS = 600
+# A mutation can make a loop non-terminating -- dropping the digit cap in a
+# decimal formatter is enough -- so a case that hangs costs this in full.
+# Override it for a spec whose tests are fast: VERIFY_MUTANTS_TIMEOUT=60.
+TIMEOUT_SECONDS = int(os.environ.get("VERIFY_MUTANTS_TIMEOUT", "600"))
 KILL_GRACE = 10
 
 
@@ -72,6 +75,16 @@ def run_case(path, original, start, end, case, package, target, extra_args):
 def main():
     spec = json.load(open(sys.argv[1]))
     path = spec["file"]
+    # A run killed outright -- Ctrl-C is handled by the `finally` at the end,
+    # SIGKILL is not -- leaves the file mutated and its backup behind. Restore
+    # before reading anything: otherwise that mutated source becomes the
+    # baseline, and every verdict printed afterwards is measured against code
+    # nobody wrote.
+    backup = path + ".verify-backup"
+    if os.path.exists(backup):
+        print(f"stale backup found: restoring {path} from a killed run", flush=True)
+        shutil.copy(backup, path)
+        os.remove(backup)
     original = open(path).read()
     # Most crates keep their logic in the library, but a service's CLI value
     # parsers and config wiring live in main.rs, where `--lib` cannot see them
@@ -111,7 +124,6 @@ def main():
     start = occurrences[wanted]
     end = original.index("\n    }\n", start) + 7 if marker.startswith("    ") \
         else original.index("\n}\n", start) + 3
-    backup = path + ".verify-backup"
     shutil.copy(path, backup)
 
     try:
