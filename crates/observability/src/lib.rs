@@ -11012,6 +11012,9 @@ impl<'a> VectorScalarExpressionParser<'a> {
     fn parse_string_literal(&mut self) -> Option<String> {
         self.consume('"').then_some(())?;
         let mut value = String::new();
+        // `<` is a permanent mutation survivor against `<=`: the extra pass it
+        // allows slices an empty remainder, whose first character is `None`,
+        // and the `?` returns the same `None` the loop would have fallen to.
         while self.position < self.input.len() {
             let ch = self.input[self.position..].chars().next()?;
             self.position += ch.len_utf8();
@@ -23169,6 +23172,50 @@ mod tests {
         // the input rather than a skip during parsing, and it is pinned
         // because it is surprising, not because it is desirable.
         check!(scalar("1 1").as_deref() == Some("11"));
+
+        // A set operator needs a vector on BOTH sides. Each of the two counts
+        // is a strict increase over the terms seen before that side was
+        // parsed, and "at least as many" is trivially true -- so a side with
+        // no vector at all is the only thing that separates them.
+        check!(matches!(
+            result("vector(1) and vector(2)"),
+            Some(ScalarVectorExpressionResult::Vector { .. })
+        ));
+        check!(result("1 and vector(1)").is_none(), "no vector on the left");
+        check!(result("vector(1) and 1").is_none(), "none on the right");
+        check!(result("1 and 1").is_none(), "none on either side");
+
+        // A comparison carrying `on(...)`/`ignoring(...)` needs a vector on
+        // both sides too. Without a modifier the same comparison is fine, so
+        // the modifier is what turns the requirement on.
+        check!(
+            result("vector(1) > 0").is_some(),
+            "no modifier, no requirement"
+        );
+        check!(matches!(
+            result("vector(1) > on() vector(2)"),
+            Some(ScalarVectorExpressionResult::Vector { .. })
+        ));
+        check!(
+            result("1 > on() vector(1)").is_none(),
+            "a modifier with no vector on the left"
+        );
+        check!(
+            result("vector(1) > ignoring() 1").is_none(),
+            "and none on the right"
+        );
+
+        // An escape inside a string literal is decoded, and the parser advances
+        // PAST it. Every other string here is escape-free, where advancing the
+        // wrong way would go unnoticed.
+        let replaced = result(r#"label_replace(vector(1),"dst","a\nb","src","(.*)")"#);
+        let Some(ScalarVectorExpressionResult::Vector { metric, .. }) = replaced else {
+            panic!("expected a vector result");
+        };
+        check!(
+            metric.get("dst").map(String::as_str) == Some("a\nb"),
+            "got {metric:?}"
+        );
 
         // Not this sub-language at all.
         check!(result("up").is_none());
