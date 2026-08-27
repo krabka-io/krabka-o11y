@@ -5151,10 +5151,9 @@ fn loki_proto_label_parse_error(labels: &str) -> Option<String> {
                 expecting_name = true;
                 first_name_char = true;
             }
-            '=' => {
-                expecting_name = false;
-                first_name_char = true;
-            }
+            // No `first_name_char` here: nothing reads it until a `,` starts
+            // the next name, and that arm sets it itself.
+            '=' => expecting_name = false,
             '}' => break,
             value if expecting_name && value.is_whitespace() => {}
             value if expecting_name => {
@@ -28299,6 +28298,25 @@ mod tests {
                 .unwrap()
                 .contains("1:12")
         );
+        // A digit is fine once a name has started. Both cases above are
+        // rejections, so without this the tracking could judge every character
+        // by the first one's rule and they would still pass.
+        check!(loki_proto_label_parse_error(r#"{a9="x"}"#).is_none());
+        check!(loki_proto_label_parse_error(r#"{app="api",b9="x"}"#).is_none());
+
+        // A comma starts a new name even when no `=` came between: in
+        // `{app="api",...}` the `=` has already reset the tracking, so only a
+        // list without values shows the comma doing it.
+        check!(
+            loki_proto_label_parse_error("{app,9bad}")
+                .unwrap()
+                .contains("1:6")
+        );
+        check!(loki_proto_label_parse_error("{app,b9}").is_none());
+        // After `=` the parser stops looking for a name, so an unquoted value
+        // is not judged as one. A quoted value never shows this: the string
+        // handling swallows it before the name check is reached.
+        check!(loki_proto_label_parse_error("{app=bad-value}").is_none());
 
         let mut detected = BTreeMap::from([("app".to_string(), "api".to_string())]);
         discover_detected_level_label(&mut detected, "api ERROR happened");
