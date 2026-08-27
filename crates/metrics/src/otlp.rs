@@ -31,7 +31,7 @@ const MIN_NATIVE_HISTOGRAM_SCHEMA: i32 = -4;
 /// still reachable from a `u64` `time_unix_nano`, whose ceiling is about the
 /// year 2554. An absurd point such as `u64::MAX` is therefore rejected, which
 /// matches how Prometheus rejects a future sample.
-const MAX_SAMPLE_TIMESTAMP_MS: u64 = 7_258_118_400_000;
+pub(crate) const MAX_SAMPLE_TIMESTAMP_MS: u64 = 7_258_118_400_000;
 
 /// Prometheus translation strategy for OTLP metric names.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

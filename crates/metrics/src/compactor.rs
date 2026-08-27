@@ -6,8 +6,11 @@ use std::{
 };
 
 use arrow::{
-    array::{ArrayRef, Float64Builder, Int64Builder, MapBuilder, StringBuilder, UInt64Builder},
-    datatypes::{DataType, Field},
+    array::{
+        ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, MapBuilder, StringBuilder,
+        StringDictionaryBuilder, UInt32Builder, UInt64Builder,
+    },
+    datatypes::{DataType, Field, Int32Type},
     record_batch::RecordBatch,
 };
 use async_trait::async_trait;
@@ -24,8 +27,17 @@ use tracing::Instrument as _;
 use crate::{
     NativeHistogram, encode_float_samples, encode_native_histograms,
     histogram::HistogramCodecError,
-    schema::{exemplar_schema, metadata_schema},
-    wal::{SamplePayload, WalError, WalExemplar, WalRecord},
+    schema::{
+        CCOL_CLOCK, CCOL_EST_ERROR_NANOS, CCOL_FREQUENCY_PPB, CCOL_GM_CLOCK_ACCURACY,
+        CCOL_GM_CLOCK_CLASS, CCOL_GNSS_FIX, CCOL_INGEST_UNIX_NANOS, CCOL_LAST_STEP_NANOS,
+        CCOL_LAST_SYNC_UNIX_NANOS, CCOL_MAX_ERROR_NANOS, CCOL_MEAN_PATH_DELAY_NANOS, CCOL_NODE,
+        CCOL_OFFSET_NANOS, CCOL_READING_UNIX_NANOS, CCOL_REFERENCE_ID, CCOL_ROOT_DELAY_NANOS,
+        CCOL_ROOT_DISPERSION_NANOS, CCOL_SATELLITES_USED, CCOL_SOURCE_KIND, CCOL_STEPS_REMOVED,
+        CCOL_STRATUM, CCOL_SYNC_STATE, CCOL_UNCERTAINTY_NANOS, CCOL_UNSYNCHRONIZED,
+        COL_FINGERPRINT, COL_TIMESTAMP, clock_reading_schema, exemplar_schema, metadata_schema,
+    },
+    wal::{ClockReadingPayload, SamplePayload, WalError, WalExemplar, WalRecord},
+    wire::{GnssFix, UnixNanos},
 };
 
 /// One sorted float sample row ready for block encoding.
@@ -55,6 +67,18 @@ pub struct ExemplarRow {
     pub labels: Vec<(String, String)>,
 }
 
+/// One sorted clock confidence row ready for block encoding.
+///
+/// The row keeps the whole [`ClockReadingPayload`] rather than a flattened copy
+/// of its two dozen fields, so the block encoder and the WAL payload can never
+/// drift apart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClockReadingRow {
+    pub fingerprint: u64,
+    pub timestamp_ms: i64,
+    pub reading: ClockReadingPayload,
+}
+
 /// One metric metadata row ready for indexing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MetadataRow {
@@ -74,6 +98,7 @@ pub struct TenantCompactionRows {
     pub histogram_rows: Vec<NativeHistogramRow>,
     pub exemplar_rows: Vec<ExemplarRow>,
     pub metadata_rows: Vec<MetadataRow>,
+    pub clock_rows: Vec<ClockReadingRow>,
 }
 
 /// One series label set persisted in a compaction manifest.
@@ -89,6 +114,7 @@ pub struct TenantBatches {
     pub native_histograms: Option<RecordBatch>,
     pub exemplars: Option<RecordBatch>,
     pub metadata: Option<RecordBatch>,
+    pub clock_readings: Option<RecordBatch>,
 }
 
 /// Metric block payload kind used in deterministic object keys.
@@ -98,6 +124,7 @@ pub enum MetricBlockKind {
     NativeHistograms,
     Exemplars,
     Metadata,
+    ClockReadings,
 }
 
 impl MetricBlockKind {
@@ -107,6 +134,7 @@ impl MetricBlockKind {
             Self::NativeHistograms => "native-histograms",
             Self::Exemplars => "exemplars",
             Self::Metadata => "metadata",
+            Self::ClockReadings => "clock-readings",
         }
     }
 }
@@ -881,6 +909,7 @@ pub fn compaction_object_plan_for_rows(
         MetricBlockKind::NativeHistograms => rows.histogram_rows.len(),
         MetricBlockKind::Exemplars => rows.exemplar_rows.len(),
         MetricBlockKind::Metadata => rows.metadata_rows.len(),
+        MetricBlockKind::ClockReadings => rows.clock_rows.len(),
     };
     plan
 }
@@ -1019,6 +1048,24 @@ where
                     last_offset,
                     batch,
                     series: series_labels_for_kind(rows, MetricBlockKind::Metadata),
+                },
+            )
+            .await?,
+        );
+    }
+    if let Some(batch) = batches.clock_readings {
+        writes.push(
+            write_compacted_block(
+                block_writer,
+                index_sink,
+                CompactedBlockRequest {
+                    tenant: &rows.tenant,
+                    kind: MetricBlockKind::ClockReadings,
+                    partition,
+                    first_offset,
+                    last_offset,
+                    batch,
+                    series: series_labels_for_kind(rows, MetricBlockKind::ClockReadings),
                 },
             )
             .await?,
@@ -1757,6 +1804,7 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
                 histogram_rows: Vec::new(),
                 exemplar_rows: Vec::new(),
                 metadata_rows: Vec::new(),
+                clock_rows: Vec::new(),
             });
         rows.series_labels
             .entry(fingerprint)
@@ -1791,6 +1839,11 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
                 help: help.clone(),
                 unit: unit.clone(),
             }),
+            SamplePayload::ClockReading(payload) => rows.clock_rows.push(ClockReadingRow {
+                fingerprint,
+                timestamp_ms: payload.timestamp_ms(),
+                reading: (**payload).clone(),
+            }),
             SamplePayload::Exemplars => {}
         }
 
@@ -1809,6 +1862,8 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
         rows.histogram_rows
             .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
         rows.exemplar_rows
+            .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
+        rows.clock_rows
             .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
         rows.metadata_rows.sort_by(|left, right| {
             (
@@ -1852,6 +1907,11 @@ fn series_labels_for_kind(
             .collect::<BTreeSet<_>>(),
         MetricBlockKind::Metadata => rows
             .metadata_rows
+            .iter()
+            .map(|row| row.fingerprint)
+            .collect::<BTreeSet<_>>(),
+        MetricBlockKind::ClockReadings => rows
+            .clock_rows
             .iter()
             .map(|row| row.fingerprint)
             .collect::<BTreeSet<_>>(),
@@ -1911,11 +1971,18 @@ pub fn encode_tenant_batches(
         Some(encode_metadata_rows(&rows.metadata_rows)?)
     };
 
+    let clock_readings = if rows.clock_rows.is_empty() {
+        None
+    } else {
+        Some(encode_clock_reading_rows(&rows.clock_rows)?)
+    };
+
     Ok(TenantBatches {
         float,
         native_histograms,
         exemplars,
         metadata,
+        clock_readings,
     })
 }
 
@@ -1946,6 +2013,229 @@ fn encode_metadata_rows(rows: &[MetadataRow]) -> Result<RecordBatch, HistogramCo
     ];
 
     Ok(RecordBatch::try_new(metadata_schema(), columns)?)
+}
+
+/// Column builders for one clock reading block.
+///
+/// The clock schema has 26 columns, so the builders travel in a struct rather
+/// than as 26 locals. Every method appends to exactly one column, and
+/// [`ClockColumns::finish`] hands them back in schema order.
+struct ClockColumns {
+    fingerprints: UInt64Builder,
+    timestamps: Int64Builder,
+    nodes: StringDictionaryBuilder<Int32Type>,
+    clocks: StringDictionaryBuilder<Int32Type>,
+    source_kinds: StringDictionaryBuilder<Int32Type>,
+    reading_unix_nanos: Int64Builder,
+    uncertainty_nanos: Int64Builder,
+    offset_nanos: Int64Builder,
+    sync_states: StringDictionaryBuilder<Int32Type>,
+    reference_ids: StringDictionaryBuilder<Int32Type>,
+    last_sync_unix_nanos: Int64Builder,
+    frequency_ppb: Int64Builder,
+    last_step_nanos: Int64Builder,
+    root_delay_nanos: Int64Builder,
+    root_dispersion_nanos: Int64Builder,
+    stratum: UInt32Builder,
+    mean_path_delay_nanos: Int64Builder,
+    steps_removed: UInt32Builder,
+    gm_clock_class: UInt32Builder,
+    gm_clock_accuracy: UInt32Builder,
+    max_error_nanos: Int64Builder,
+    est_error_nanos: Int64Builder,
+    unsynchronized: BooleanBuilder,
+    satellites_used: UInt32Builder,
+    gnss_fixes: StringDictionaryBuilder<Int32Type>,
+    ingest_unix_nanos: Int64Builder,
+}
+
+impl ClockColumns {
+    fn new() -> Self {
+        Self {
+            fingerprints: UInt64Builder::new(),
+            timestamps: Int64Builder::new(),
+            nodes: StringDictionaryBuilder::new(),
+            clocks: StringDictionaryBuilder::new(),
+            source_kinds: StringDictionaryBuilder::new(),
+            reading_unix_nanos: Int64Builder::new(),
+            uncertainty_nanos: Int64Builder::new(),
+            offset_nanos: Int64Builder::new(),
+            sync_states: StringDictionaryBuilder::new(),
+            reference_ids: StringDictionaryBuilder::new(),
+            last_sync_unix_nanos: Int64Builder::new(),
+            frequency_ppb: Int64Builder::new(),
+            last_step_nanos: Int64Builder::new(),
+            root_delay_nanos: Int64Builder::new(),
+            root_dispersion_nanos: Int64Builder::new(),
+            stratum: UInt32Builder::new(),
+            mean_path_delay_nanos: Int64Builder::new(),
+            steps_removed: UInt32Builder::new(),
+            gm_clock_class: UInt32Builder::new(),
+            gm_clock_accuracy: UInt32Builder::new(),
+            max_error_nanos: Int64Builder::new(),
+            est_error_nanos: Int64Builder::new(),
+            unsynchronized: BooleanBuilder::new(),
+            satellites_used: UInt32Builder::new(),
+            gnss_fixes: StringDictionaryBuilder::new(),
+            ingest_unix_nanos: Int64Builder::new(),
+        }
+    }
+
+    fn append(&mut self, row: &ClockReadingRow) {
+        let reading = &row.reading.reading;
+        self.fingerprints.append_value(row.fingerprint);
+        self.timestamps.append_value(row.timestamp_ms);
+        self.nodes.append_value(&reading.node);
+        self.clocks.append_value(&reading.clock);
+        self.source_kinds
+            .append_value(reading.source_kind.as_label());
+        self.reading_unix_nanos
+            .append_value(reading.reading_unix_nanos.as_i64());
+        self.uncertainty_nanos
+            .append_value(reading.uncertainty_nanos);
+        self.offset_nanos.append_value(reading.offset_nanos);
+        self.sync_states.append_value(reading.sync_state.as_label());
+        self.reference_ids
+            .append_option(reading.reference_id.as_deref());
+        self.last_sync_unix_nanos
+            .append_option(reading.last_sync_unix_nanos.map(UnixNanos::as_i64));
+        self.frequency_ppb.append_option(reading.frequency_ppb);
+        self.last_step_nanos.append_option(reading.last_step_nanos);
+
+        // A source-specific column stays null when this reading came from a
+        // different kind of clock. The schema declares them nullable for
+        // exactly that reason.
+        self.root_delay_nanos
+            .append_option(reading.ntp.map(|ntp| ntp.root_delay_nanos));
+        self.root_dispersion_nanos
+            .append_option(reading.ntp.map(|ntp| ntp.root_dispersion_nanos));
+        self.stratum
+            .append_option(reading.ntp.map(|ntp| ntp.stratum));
+
+        self.mean_path_delay_nanos
+            .append_option(reading.ptp.map(|ptp| ptp.mean_path_delay_nanos));
+        self.steps_removed
+            .append_option(reading.ptp.map(|ptp| ptp.steps_removed));
+        self.gm_clock_class
+            .append_option(reading.ptp.map(|ptp| ptp.gm_clock_class));
+        self.gm_clock_accuracy
+            .append_option(reading.ptp.map(|ptp| ptp.gm_clock_accuracy));
+
+        self.max_error_nanos
+            .append_option(reading.timex.map(|timex| timex.max_error_nanos));
+        self.est_error_nanos
+            .append_option(reading.timex.map(|timex| timex.est_error_nanos));
+        self.unsynchronized
+            .append_option(reading.timex.map(|timex| timex.unsynchronized));
+
+        self.satellites_used
+            .append_option(reading.gnss.map(|gnss| gnss.satellites_used));
+        self.gnss_fixes.append_option(
+            reading
+                .gnss
+                .and_then(|gnss| gnss.fix)
+                .map(GnssFix::as_label),
+        );
+
+        self.ingest_unix_nanos
+            .append_value(row.reading.ingest_unix_nanos.as_i64());
+    }
+
+    /// The finished arrays, each paired with the schema column it fills.
+    ///
+    /// The caller orders them by the schema rather than by this list, so a
+    /// reordered schema stays correct and a column this list forgets becomes a
+    /// build error instead of a silently shifted block.
+    fn finish(mut self) -> Vec<(&'static str, ArrayRef)> {
+        vec![
+            (COL_FINGERPRINT, Arc::new(self.fingerprints.finish())),
+            (COL_TIMESTAMP, Arc::new(self.timestamps.finish())),
+            (CCOL_NODE, Arc::new(self.nodes.finish())),
+            (CCOL_CLOCK, Arc::new(self.clocks.finish())),
+            (CCOL_SOURCE_KIND, Arc::new(self.source_kinds.finish())),
+            (
+                CCOL_READING_UNIX_NANOS,
+                Arc::new(self.reading_unix_nanos.finish()),
+            ),
+            (
+                CCOL_UNCERTAINTY_NANOS,
+                Arc::new(self.uncertainty_nanos.finish()),
+            ),
+            (CCOL_OFFSET_NANOS, Arc::new(self.offset_nanos.finish())),
+            (CCOL_SYNC_STATE, Arc::new(self.sync_states.finish())),
+            (CCOL_REFERENCE_ID, Arc::new(self.reference_ids.finish())),
+            (
+                CCOL_LAST_SYNC_UNIX_NANOS,
+                Arc::new(self.last_sync_unix_nanos.finish()),
+            ),
+            (CCOL_FREQUENCY_PPB, Arc::new(self.frequency_ppb.finish())),
+            (
+                CCOL_LAST_STEP_NANOS,
+                Arc::new(self.last_step_nanos.finish()),
+            ),
+            (
+                CCOL_ROOT_DELAY_NANOS,
+                Arc::new(self.root_delay_nanos.finish()),
+            ),
+            (
+                CCOL_ROOT_DISPERSION_NANOS,
+                Arc::new(self.root_dispersion_nanos.finish()),
+            ),
+            (CCOL_STRATUM, Arc::new(self.stratum.finish())),
+            (
+                CCOL_MEAN_PATH_DELAY_NANOS,
+                Arc::new(self.mean_path_delay_nanos.finish()),
+            ),
+            (CCOL_STEPS_REMOVED, Arc::new(self.steps_removed.finish())),
+            (CCOL_GM_CLOCK_CLASS, Arc::new(self.gm_clock_class.finish())),
+            (
+                CCOL_GM_CLOCK_ACCURACY,
+                Arc::new(self.gm_clock_accuracy.finish()),
+            ),
+            (
+                CCOL_MAX_ERROR_NANOS,
+                Arc::new(self.max_error_nanos.finish()),
+            ),
+            (
+                CCOL_EST_ERROR_NANOS,
+                Arc::new(self.est_error_nanos.finish()),
+            ),
+            (CCOL_UNSYNCHRONIZED, Arc::new(self.unsynchronized.finish())),
+            (
+                CCOL_SATELLITES_USED,
+                Arc::new(self.satellites_used.finish()),
+            ),
+            (CCOL_GNSS_FIX, Arc::new(self.gnss_fixes.finish())),
+            (
+                CCOL_INGEST_UNIX_NANOS,
+                Arc::new(self.ingest_unix_nanos.finish()),
+            ),
+        ]
+    }
+}
+
+/// Encodes sorted clock rows into a block against
+/// [`clock_reading_schema`](crate::schema::clock_reading_schema).
+fn encode_clock_reading_rows(rows: &[ClockReadingRow]) -> Result<RecordBatch, HistogramCodecError> {
+    let mut columns = ClockColumns::new();
+    for row in rows {
+        columns.append(row);
+    }
+
+    let schema = clock_reading_schema();
+    let mut named = columns.finish();
+    named.sort_by_key(|(name, _)| schema.index_of(name).unwrap_or(usize::MAX));
+    // `index_of` returns an error for a name the schema does not declare, and
+    // the sort parks such a column last. Ask again here so the mismatch becomes
+    // an error rather than a block with its columns in the wrong order.
+    for (name, _) in &named {
+        schema.index_of(name)?;
+    }
+
+    Ok(RecordBatch::try_new(
+        Arc::clone(&schema),
+        named.into_iter().map(|(_, array)| array).collect(),
+    )?)
 }
 
 fn encode_exemplar_rows(rows: &[ExemplarRow]) -> Result<RecordBatch, HistogramCodecError> {
@@ -2549,6 +2839,7 @@ mod tests {
             histogram_rows: Vec::new(),
             exemplar_rows: Vec::new(),
             metadata_rows: Vec::new(),
+            clock_rows: Vec::new(),
         };
 
         let writes = super::write_compacted_tenant_blocks(&block_writer, &sink, &rows, 42, 99)
@@ -2591,6 +2882,7 @@ mod tests {
                 help: "Total HTTP requests.".to_string(),
                 unit: "requests".to_string(),
             }],
+            clock_rows: Vec::new(),
         };
 
         let writes = super::write_compacted_tenant_blocks(&block_writer, &sink, &rows, 42, 99)

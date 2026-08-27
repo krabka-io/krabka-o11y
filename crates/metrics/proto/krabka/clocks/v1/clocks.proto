@@ -55,7 +55,7 @@ message ClockReading {
   string reference_id = 21;
 
   // When this clock last had a valid reference, in nanoseconds since the Unix
-  // epoch. A query computes the holdover duration in plain PromQL as
+  // epoch. A query computes the holdover duration in plain `PromQL` as
   // `time() - last_sync`.
   int64 last_sync_unix_nanos = 22;
 

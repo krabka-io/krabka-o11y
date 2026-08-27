@@ -2,12 +2,17 @@
 //! content negotiation, snappy decode, and the decode to the shared
 //! `DecodedSeries`.
 
+mod clocks;
 mod decoded;
 mod histogram;
 mod remote_read;
 mod v1;
 mod v2;
 
+pub use clocks::{
+    ClockSourceKind, ClockSyncState, ClockWireError, DecodedClockReading, GnssFix, GnssReading,
+    NtpReading, PtpReading, TimexReading, UnixNanos, decode_clock_readings,
+};
 pub use decoded::{
     DecodedExemplar, DecodedMetadata, DecodedSample, DecodedSeries, WireError, WireFormat,
     negotiate, snappy_block_decode,
@@ -30,6 +35,11 @@ pub mod pb {
     /// `remote_write` v2 (`io.prometheus.write.v2.Request`).
     pub mod v2 {
         include!(concat!(env!("OUT_DIR"), "/io.prometheus.write.v2.rs"));
+    }
+
+    /// Crabka clock confidence signal (`krabka.clocks.v1.ClockReadingBatch`).
+    pub mod clocks {
+        include!(concat!(env!("OUT_DIR"), "/krabka.clocks.v1.rs"));
     }
 }
 

@@ -22,13 +22,13 @@ pub mod wal;
 pub mod wire;
 
 pub use compactor::{
-    CompactedBlockWrite, CompactionBatchResult, CompactionClock, CompactionCommitError,
-    CompactionConsumerCommit, CompactionConsumerCommitError, CompactionConsumerCommitMut,
-    CompactionConsumerCommitter, CompactionConsumerPoll, CompactionConsumerPollError,
-    CompactionConsumerRecordError, CompactionIndexError, CompactionIndexManifest,
-    CompactionIndexSink, CompactionLoopConfig, CompactionLoopResult, CompactionObjectPlan,
-    CompactionOffsetCommitter, CompactionPartitionOffset, CompactionPollError,
-    CompactionPollResult, CompactionRetentionError, CompactionRetentionStats,
+    ClockReadingRow, CompactedBlockWrite, CompactionBatchResult, CompactionClock,
+    CompactionCommitError, CompactionConsumerCommit, CompactionConsumerCommitError,
+    CompactionConsumerCommitMut, CompactionConsumerCommitter, CompactionConsumerPoll,
+    CompactionConsumerPollError, CompactionConsumerRecordError, CompactionIndexError,
+    CompactionIndexManifest, CompactionIndexSink, CompactionLoopConfig, CompactionLoopResult,
+    CompactionObjectPlan, CompactionOffsetCommitter, CompactionPartitionOffset,
+    CompactionPollError, CompactionPollResult, CompactionRetentionError, CompactionRetentionStats,
     CompactionSeriesLabels, CompactionWalRecord, CompactionWindowError, CompactionWindowResult,
     CompactionWriteError, DEFAULT_FLUSH_MAX_AGE, DEFAULT_FLUSH_MAX_ROWS, ExemplarRow, FloatRow,
     MetricBlockKind, MetricsCompactorBuildError, MetricsCompactorConfig,
@@ -62,8 +62,11 @@ pub use schema::{
     COL_FINGERPRINT, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS,
     COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT, COL_NH_SCHEMA,
     COL_NH_START_TS, COL_NH_SUM, COL_NH_ZERO_COUNT, COL_NH_ZERO_THRESHOLD, COL_TIMESTAMP,
-    exemplar_schema, float_sample_schema, metadata_schema, native_histogram_schema,
+    clock_reading_decl, clock_reading_schema, exemplar_schema, float_sample_schema,
+    metadata_schema, native_histogram_schema,
 };
 pub use symbols::{SymbolError, SymbolTable};
 pub use tenant::validate_tenant;
-pub use wal::{SamplePayload, WAL_TOPIC, WalError, WalExemplar, WalRecord, partition_key};
+pub use wal::{
+    ClockReadingPayload, SamplePayload, WAL_TOPIC, WalError, WalExemplar, WalRecord, partition_key,
+};
