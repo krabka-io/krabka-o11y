@@ -26130,9 +26130,20 @@ mod tests {
             parse("query=a&direction=forward&direction=backward").direction
                 == Some("forward".to_string())
         );
+        // The four duration parameters, which the cases above never repeat.
+        // Two hours against thirty minutes, so neither reading is the other.
+        check!(parse("query=a&since=2h&since=30m").since == Some(7_200_000_000_000));
+        check!(parse("query=a&step=2h&step=30m").step == Some(7_200_000_000_000));
+        check!(parse("query=a&interval=2h&interval=30m").interval == Some(7_200_000_000_000));
+        // `delay_for` reads a bare number as seconds.
+        check!(parse("query=a&delay_for=1&delay_for=2").delay_for == Some(1_000_000_000));
 
         // Absent parameters stay absent rather than acquiring a value.
         let bare = parse("query=a");
+        check!(bare.since == None);
+        check!(bare.step == None);
+        check!(bare.interval == None);
+        check!(bare.delay_for == None);
         check!(bare.time == None);
         check!(bare.start == None);
         check!(bare.end == None);
