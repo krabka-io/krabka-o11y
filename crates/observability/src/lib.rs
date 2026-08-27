@@ -1358,6 +1358,29 @@ async fn materialize_log_deletes_before_compaction(
     Ok(())
 }
 
+/// Re-parents `span` into the trace carried by the first record whose headers
+/// include a `traceparent`.
+///
+/// There is one span per poll batch rather than one per record, so the first
+/// record carrying a trace context stands for the batch. A record without one
+/// is skipped rather than used: extracting from its headers would find no
+/// context and leave the batch in a trace of its own.
+fn set_remote_parent_from_wal_records(span: &tracing::Span, records: &[KafkaWalRecord]) {
+    let Some(parent) = records
+        .iter()
+        .find(|rec| rec.headers.iter().any(|h| h.key == "traceparent"))
+    else {
+        return;
+    };
+    crabka_telemetry::propagation::set_remote_parent(
+        span,
+        parent
+            .headers
+            .iter()
+            .map(|h| (h.key.as_str(), h.value.as_deref().unwrap_or(&[][..]))),
+    );
+}
+
 async fn compact_polled_kafka_wal_records_to_object_store_from_existing_manifest(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
@@ -1378,18 +1401,7 @@ async fn compact_polled_kafka_wal_records_to_object_store_from_existing_manifest
         otel.kind = "consumer",
         crabka.wal.records = records.len(),
     );
-    if let Some(parent) = records
-        .iter()
-        .find(|rec| rec.headers.iter().any(|h| h.key == "traceparent"))
-    {
-        crabka_telemetry::propagation::set_remote_parent(
-            &span,
-            parent
-                .headers
-                .iter()
-                .map(|h| (h.key.as_str(), h.value.as_deref().unwrap_or(&[][..]))),
-        );
-    }
+    set_remote_parent_from_wal_records(&span, &records);
 
     compact_polled_kafka_wal_records_inner(
         store,
@@ -21020,6 +21032,57 @@ mod tests {
     use crabka_units::{bytes, bytes_per_sec};
 
     use super::*;
+
+    /// The compaction span belongs to the producer's trace, taken from the
+    /// first record that actually carries a `traceparent`. A record without
+    /// one sits first on purpose: selecting it instead extracts no context and
+    /// leaves the batch in a trace of its own.
+    #[test]
+    fn a_compaction_batch_is_reparented_into_the_producers_trace() {
+        use opentelemetry::trace::{TraceContextExt as _, TraceId, TracerProvider as _};
+        use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+        use tracing_subscriber::prelude::*;
+
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+        );
+        let provider = SdkTracerProvider::builder()
+            .with_sampler(Sampler::AlwaysOn)
+            .build();
+        let tracer = provider.tracer("observability-compaction-test");
+        let subscriber =
+            tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let record = |key: &str, value: &str| KafkaWalRecord {
+                value: Vec::new(),
+                partition: PartitionIndex(0),
+                offset: Offset(0),
+                timestamp_ms: None,
+                headers: vec![KafkaWalHeader {
+                    key: key.to_owned(),
+                    value: Some(value.as_bytes().to_vec()),
+                }],
+            };
+            let records = vec![
+                record("tenant", "tenant-a"),
+                record(
+                    "traceparent",
+                    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+                ),
+            ];
+
+            let span = tracing::info_span!("logs_compaction");
+            set_remote_parent_from_wal_records(&span, &records);
+
+            let context = span.context().span().span_context().clone();
+            check!(
+                context.trace_id()
+                    == TraceId::from_hex("0af7651916cd43dd8448eb211c80319c").expect("a trace id")
+            );
+        });
+    }
 
     /// A dynamic tenant index is built only when the querier serves every
     /// tenant *and* was pointed at a tenant index source. Either condition

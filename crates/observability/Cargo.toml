@@ -62,11 +62,18 @@ tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling",
 assert2 = { workspace = true }
 flate2 = { workspace = true }
 mutants = { workspace = true }
+# OTel stack for the `set_remote_parent_from_wal_records` re-parenting test --
+# mirrors the export-less tracer subscriber `crabka-traces` uses for the same
+# check. Test-only, hence dev-dependencies.
+opentelemetry = { workspace = true, features = ["trace"] }
+opentelemetry_sdk = { workspace = true, features = ["trace"] }
 temp-env = "0.3"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
 tokio-tungstenite = { workspace = true }
 tower = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true
