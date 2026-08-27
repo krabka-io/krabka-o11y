@@ -28724,9 +28724,22 @@ mod tests {
             detected.get("detected_level").map(String::as_str),
             Some("error")
         );
-        let mut explicit = BTreeMap::from([("level".to_string(), "custom".to_string())]);
-        discover_detected_level_label(&mut explicit, "api error happened");
-        assert!(!explicit.contains_key("detected_level"));
+        // Any one of the four labels already present stops the discovery, and
+        // each has to be the ONLY one present -- a guard that needed two of
+        // them would still be stopped by a pair.
+        for held in ["detected_level", "level", "severity", "severity_text"] {
+            let mut labels = BTreeMap::from([(held.to_string(), "custom".to_string())]);
+            discover_detected_level_label(&mut labels, "api error happened");
+            check!(
+                labels.get("detected_level").map(String::as_str)
+                    == if held == "detected_level" {
+                        Some("custom")
+                    } else {
+                        None
+                    },
+                "{held} alone stops the discovery"
+            );
+        }
         for (line, want) in [
             ("error happened", true),
             ("happened error", true),
@@ -28738,6 +28751,46 @@ mod tests {
         for (byte, want) in [(b'a', true), (b'1', true), (b'_', true), (b'-', false)] {
             assert_eq!(is_log_level_word_byte(byte), want);
         }
+    }
+
+    /// `remove_empty_object_field` drops a field only when it is an object
+    /// with nothing in it. A field that holds something stays, and so does one
+    /// that is not an object at all -- an empty array is not an empty object.
+    #[test]
+    fn an_empty_object_field_is_removed_and_nothing_else_is() {
+        let mut value = serde_json::json!({
+            "empty": {},
+            "full": {"a": 1},
+            "array": [],
+            "null": null,
+        });
+        for field in ["empty", "full", "array", "null"] {
+            super::remove_empty_object_field(&mut value, field);
+        }
+        check!(
+            value == serde_json::json!({"full": {"a": 1}, "array": [], "null": null}),
+            "got {value}"
+        );
+
+        // A value that is not an object at all is left alone rather than
+        // panicking on the way past.
+        let mut scalar = serde_json::json!(7);
+        super::remove_empty_object_field(&mut scalar, "empty");
+        check!(scalar == serde_json::json!(7));
+    }
+
+    /// The three `LogQL` set operators each map to their own variant, and an
+    /// unknown word maps to none. Deleting an arm does not fail to compile --
+    /// it falls to the catch-all and the operator simply stops existing.
+    #[test]
+    fn every_metric_set_operator_maps_to_its_own_variant() {
+        use super::MetricBinarySetOp;
+
+        check!(super::parse_metric_set_operator("and") == Some(MetricBinarySetOp::And));
+        check!(super::parse_metric_set_operator("or") == Some(MetricBinarySetOp::Or));
+        check!(super::parse_metric_set_operator("unless") == Some(MetricBinarySetOp::Unless));
+        check!(super::parse_metric_set_operator("nor") == None);
+        check!(super::parse_metric_set_operator("") == None);
     }
 
     #[test]
