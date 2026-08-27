@@ -28372,6 +28372,25 @@ mod tests {
             "not topped up to the new capacity"
         );
 
+        // Refilling adds the rate over however long has passed. Every case
+        // above reaches it only through `update_rate`, which calls it against
+        // a bucket whose clock has not moved -- so with the body removed they
+        // all behave the same.
+        let mut refilling = IngestQuotaBucket::new(bytes_per_sec(10), secs(1));
+        refilling.available = bytes(0);
+        refilling.updated_at = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_millis(500))
+            .expect("the process has been running for at least half a second");
+        refilling.refill();
+        check!(
+            refilling.available >= bytes(5),
+            "half a second at ten bytes a second is at least five bytes"
+        );
+        check!(
+            refilling.available <= bytes(10),
+            "and never past the capacity"
+        );
+
         let bucket = IngestQuotaBucket::new(bytes_per_sec(10), secs(2));
         check!(bucket.capacity() == bytes(20));
     }
@@ -28427,6 +28446,33 @@ mod tests {
             stamps(0, minute * 2) == vec![0, minute, minute * 2],
             "a window spanning every bucket returns every record"
         );
+    }
+
+    /// Whether a compactor run failed on the object store decides whether the
+    /// run is retried, and every variant that is not one has to say so. With
+    /// the classifier stuck at true, a decode failure or a missing commit
+    /// position would be retried forever.
+    #[test]
+    fn only_an_object_store_compactor_error_is_classified_as_one() {
+        use super::{CompactionFrontierStoreError, CompactorRunError};
+
+        check!(super::compactor_run_error_is_object_store(
+            &CompactorRunError::Frontier(CompactionFrontierStoreError::ObjectStore(
+                object_store::Error::NotFound {
+                    path: "p".to_string(),
+                    source: "gone".into(),
+                }
+            ))
+        ));
+        check!(!super::compactor_run_error_is_object_store(
+            &CompactorRunError::MissingCommitPosition
+        ));
+        check!(!super::compactor_run_error_is_object_store(
+            &CompactorRunError::Frontier(CompactionFrontierStoreError::InvalidVersion {
+                expected: 1,
+                actual: 2,
+            })
+        ));
     }
 
     #[test]
