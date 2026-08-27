@@ -27863,6 +27863,32 @@ mod tests {
             "--wal-connect-max-backoff=1s",
         ]);
         check!(validate_distributor_policy(&initial_above_max).is_err());
+
+        // Equal is not "exceeds". Both cases above are rejections, so the
+        // comparisons could have refused a timeout that merely *matches* its
+        // deadline and nothing would have noticed.
+        for (deadline, timeout) in [
+            (
+                "--wal-connect-startup-deadline=1s",
+                "--wal-connect-attempt-timeout=1s",
+            ),
+            (
+                "--wal-connect-initial-backoff=1s",
+                "--wal-connect-max-backoff=1s",
+            ),
+        ] {
+            let at_the_limit = ServiceConfig::parse_from([
+                "crabka-observability",
+                "--target",
+                "distributor",
+                deadline,
+                timeout,
+            ]);
+            check!(
+                validate_distributor_policy(&at_the_limit).is_ok(),
+                "{deadline} with {timeout}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -27955,6 +27981,29 @@ mod tests {
             "--compactor-object-store-max-backoff=1s",
         ]);
         check!(validate_compactor_policy(&initial_above_max).is_err());
+
+        // And the same pair of boundaries here.
+        for (window, timeout) in [
+            (
+                "--compactor-accumulation-window=1s",
+                "--compactor-accumulation-poll-timeout=1s",
+            ),
+            (
+                "--compactor-object-store-initial-backoff=1s",
+                "--compactor-object-store-max-backoff=1s",
+            ),
+        ] {
+            let at_the_limit = ServiceConfig::parse_from([
+                "crabka-observability",
+                "--target=compactor",
+                window,
+                timeout,
+            ]);
+            check!(
+                validate_compactor_policy(&at_the_limit).is_ok(),
+                "{window} with {timeout}"
+            );
+        }
     }
 
     #[test]
