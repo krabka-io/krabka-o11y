@@ -440,6 +440,10 @@ fn counter_corrected_values(values: &[f64]) -> Option<Vec<f64>> {
 }
 
 fn boundary_value(timestamps: &[i64], values: &[f64], target_ms: i64) -> Option<f64> {
+    // `||` against `&&` is a permanent mutation survivor. Both callers pair the
+    // timestamps with values derived from them, so the lengths always agree and
+    // the second arm alone decides -- and both callers have already returned
+    // `None` for an empty series before they get here.
     if timestamps.len() != values.len() || timestamps.is_empty() {
         return None;
     }
@@ -452,6 +456,9 @@ fn boundary_value(timestamps: &[i64], values: &[f64], target_ms: i64) -> Option<
     {
         return values.get(index).copied();
     }
+    // `>` against `>=` is a permanent mutation survivor: a timestamp equal to
+    // the target was already returned by the exact-match search above, so by
+    // here no timestamp can equal it and the two spellings select the same one.
     if let Some(after_index) = timestamps
         .iter()
         .position(|timestamp| *timestamp > target_ms)
@@ -976,6 +983,14 @@ fn range_samples(
     series
         .samples
         .iter()
+        // Both comparisons here are permanent mutation survivors, and so is the
+        // `&&`. Every `RangeEval` arrives from a matrix selector or a subquery
+        // that has already fetched exactly `(end - range, end]`, so this
+        // re-applies a window that is always a no-op -- removing the filter
+        // outright leaves the whole suite, conformance corpus included, green.
+        // It stays as the function's stated contract: four construction sites
+        // feed `RangeEval`, and a fifth should not be able to widen a window
+        // by forgetting to trim.
         .filter(move |(timestamp, _)| *timestamp > range_start_ms && *timestamp <= range_end_ms)
         .map(|(timestamp, value)| (*timestamp, value))
 }
@@ -999,6 +1014,11 @@ impl ExtremumKind {
         if running.is_nan() {
             return true;
         }
+        // Both comparisons are permanent mutation survivors. Loosening either
+        // one only lets an *equal* candidate replace the running value, and
+        // `running` is a bare `f64`: swapping it for its own equal leaves the
+        // fold's result identical. A NaN candidate compares false under all
+        // four spellings.
         match self {
             Self::Min => running > candidate,
             Self::Max => running < candidate,
