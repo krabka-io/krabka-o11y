@@ -5896,6 +5896,9 @@ impl DynamicIndexCache {
             .lock()
             .expect("dynamic index cache lock poisoned");
         let entry = entries.get(key)?;
+        // `>` is a permanent mutation survivor against `>=` in all three of
+        // these lookups: they differ only for an entry whose age equals its TTL
+        // to the nanosecond, which a monotonic clock does not hand out.
         if entry.loaded_at.elapsed().as_time() > self.cache_ttl {
             entries.remove(key);
             return None;
@@ -21290,6 +21293,39 @@ mod tests {
                 .is_none()
         );
         check!(held(&fresh) == (1, 1), "an absent key evicts nothing");
+
+        // `clear` drops all three maps at once. It is what a configuration
+        // reload calls, so with its body gone the querier keeps answering from
+        // indexes built for the configuration it just replaced.
+        fresh.insert(key(), LabelIndex::default(), BlockIndex::default());
+        fresh.insert_shard_index(shard_key(), LabelIndex::default(), BlockIndex::default());
+        fresh.insert_shard_ranges(
+            super::DynamicShardRangesCacheKey {
+                tenant: "tenant".to_string(),
+            },
+            0,
+            Vec::new(),
+        );
+        check!(
+            fresh
+                .shard_ranges
+                .lock()
+                .expect("the shard range lock is held")
+                .len()
+                == 1,
+            "the third map is populated too"
+        );
+        fresh.clear();
+        check!(held(&fresh) == (0, 0), "cleared");
+        check!(
+            fresh
+                .shard_ranges
+                .lock()
+                .expect("the shard range lock is held")
+                .is_empty(),
+            "including the shard ranges"
+        );
+        check!(fresh.get(&key()).is_none(), "and a lookup misses");
 
         // The two caches have their OWN durations -- five seconds and five
         // minutes by default -- so each must read its own. With both set alike
