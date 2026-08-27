@@ -2996,6 +2996,9 @@ impl HotTailBuffer {
             .filter(|record| !frontier.is_compacted(record))
             .collect();
         let pruned = before - self.records.len();
+        // `> 0` is a permanent survivor against `>= 0`: rebuilding the bucket
+        // index from an unchanged record list produces the index already held,
+        // and shrinking spare capacity is not observable.
         if pruned > 0 {
             self.records.shrink_to_fit();
             self.rebuild_buckets();
@@ -3059,6 +3062,11 @@ pub struct BufferedLogHotTail {
 }
 
 impl BufferedLogHotTail {
+    // Both mutations of this function are permanent survivors, and both are
+    // equivalent: `HotTailBuffer::default()` already carries a one-minute
+    // width, and the width is an index granularity that push and query both
+    // read from the same field. Whatever it is, the two stay consistent and no
+    // record is found or lost because of it.
     fn with_bucket_width(bucket_width: Time) -> Self {
         Self {
             buffer: Arc::new(Mutex::new(HotTailBuffer {
@@ -4283,6 +4291,8 @@ fn encode_otlp_status_message(message: &str) -> Vec<u8> {
 
 fn encode_varint(mut value: u64, body: &mut Vec<u8>) {
     while value >= 0x80 {
+        // `|` against `^` is a permanent mutation survivor here: the masked
+        // byte has its top bit clear, so setting it and flipping it agree.
         body.push(u8::try_from(value & 0x7f).expect("masked varint byte fits in u8") | 0x80);
         value >>= 7;
     }
@@ -28376,6 +28386,47 @@ mod tests {
         check!(hot_tail_bucket_key(-bucket_width.nanos_i64(), bucket_width) == -1);
         check!(hot_tail_bucket_key(-bucket_width.nanos_i64() - 1, bucket_width) == -2);
         check!(hot_tail_bucket_key(minutes(2).nanos_i64(), minutes(2)) == 1);
+    }
+
+    /// The buffer answers a range query through its bucket index, and nothing
+    /// had exercised that path. The index is a granularity, not a filter: the
+    /// exact bound is applied within the buckets it scans, so what has to hold
+    /// is that no record in the window is left behind in a bucket the scan
+    /// skipped.
+    #[test]
+    fn a_hot_tail_buffer_range_query_loses_no_record_to_its_buckets() {
+        let minute = minutes(1).nanos_i64();
+        let record = |timestamp_ns: i64| WalLogRecord {
+            tenant: "t".to_string(),
+            labels: Labels::default(),
+            timestamp_ns,
+            line: timestamp_ns.to_string(),
+            structured_metadata: BTreeMap::new(),
+            position: None,
+        };
+
+        let tail = super::BufferedLogHotTail::with_bucket_width(minutes(1));
+        tail.append_records(vec![record(0), record(minute), record(minute * 2)]);
+
+        let stamps = |start: i64, end: i64| {
+            tail.records_in_range(start, end)
+                .into_iter()
+                .map(|record| record.timestamp_ns)
+                .collect::<Vec<_>>()
+        };
+        check!(tail.records().len() == 3, "every record is kept");
+        check!(
+            stamps(0, minute) == vec![0, minute],
+            "both ends are inclusive"
+        );
+        check!(
+            stamps(1, minute - 1) == Vec::<i64>::new(),
+            "a window between two records holds neither"
+        );
+        check!(
+            stamps(0, minute * 2) == vec![0, minute, minute * 2],
+            "a window spanning every bucket returns every record"
+        );
     }
 
     #[test]
