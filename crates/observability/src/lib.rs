@@ -5930,6 +5930,8 @@ impl DynamicIndexCache {
             .lock()
             .expect("dynamic index shard range cache lock poisoned");
         let entry = ranges.get(key)?;
+        // The TTL comparison is a permanent survivor for the reason given at
+        // `DynamicIndexCache::get`.
         if entry.loaded_at.elapsed().as_time() > self.cache_ttl
             || entry.listed_from_ns > required_from_ns
         {
@@ -5964,6 +5966,8 @@ impl DynamicIndexCache {
             .lock()
             .expect("dynamic index shard cache lock poisoned");
         let entry = entries.get(key)?;
+        // The TTL comparison is a permanent survivor for the reason given at
+        // `DynamicIndexCache::get`.
         if entry.loaded_at.elapsed().as_time() > self.shard_cache_ttl {
             entries.remove(key);
             return None;
@@ -14287,6 +14291,12 @@ fn form_body_query(body: &Bytes) -> Result<String, HttpQueryError> {
     String::from_utf8(body.to_vec()).map_err(|_| HttpQueryError::InvalidPercentEncoding)
 }
 
+/// Merges a POST query's URL query string with its form body, URL first.
+///
+/// The first arm's guard is a permanent mutation survivor against `true`:
+/// dropping it lets an empty `raw_query` take that arm, and it is only reached
+/// when the body is empty too, so the arm returns the same empty string the
+/// fall-through would have.
 fn post_query_params(raw_query: Option<&str>, body: &Bytes) -> Result<String, HttpQueryError> {
     let body_query = form_body_query(body)?;
     match (raw_query, body_query.is_empty()) {
@@ -14298,6 +14308,10 @@ fn post_query_params(raw_query: Option<&str>, body: &Bytes) -> Result<String, Ht
     }
 }
 
+/// Merges a POST query's URL query string with its form body, body first.
+///
+/// Its first arm's guard is a permanent survivor for the same reason as
+/// [`post_query_params`].
 fn post_query_params_body_first(
     raw_query: Option<&str>,
     body: &Bytes,
@@ -28426,6 +28440,31 @@ mod tests {
         ));
         check!(acl_matches_tenant_wal_read(
             &allow_read,
+            "User:tenant-a",
+            "__crabka_observability_logs_wal"
+        ));
+
+        // A concrete principal grants itself and nobody else. `allow_read`
+        // above carries the wildcard, so its second arm answered for both and
+        // nothing yet separated "this principal" from "any principal but this
+        // one".
+        let read_as = |principal: &str| {
+            acl_entry(
+                ResourceType::Topic,
+                "__crabka_observability_logs_wal",
+                PatternType::Literal,
+                principal,
+                AclOperation::Read,
+                PermissionType::Allow,
+            )
+        };
+        check!(acl_matches_tenant_wal_read(
+            &read_as("User:tenant-a"),
+            "User:tenant-a",
+            "__crabka_observability_logs_wal"
+        ));
+        check!(!acl_matches_tenant_wal_read(
+            &read_as("User:tenant-b"),
             "User:tenant-a",
             "__crabka_observability_logs_wal"
         ));
