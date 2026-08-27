@@ -26555,6 +26555,21 @@ mod tests {
             "whitespace inside quotes"
         );
         check!(parse(r#"a="x y" b=2"#) == vec![pair("a", "x y"), pair("b", "2")]);
+        // An escape inside a quoted value. Every other quoted case here is
+        // escape-free, so the two steps the escape branch takes -- over the
+        // backslash and over what it protects -- were never taken at all.
+        check!(
+            parse(r#"a="x \"y\" z""#) == vec![pair("a", r#"x "y" z"#)],
+            "an escaped quote is content, not the end of the value"
+        );
+        check!(
+            parse(r#"a="x\\y""#) == vec![pair("a", r"x\y")],
+            "an escaped backslash is one backslash"
+        );
+        // A backslash with nothing after it is not an escape: there is no
+        // second byte to step over.
+        check!(parse("a=\"x\\") == vec![pair("a", "x\\")]);
+
         check!(
             parse(r#"a="""#) == vec![pair("a", "")],
             "an empty quoted value"
@@ -26573,6 +26588,53 @@ mod tests {
         check!(parse(r#"a="x y"#) == vec![pair("a", "x y")]);
         // A trailing backslash has nothing to escape and is taken literally.
         check!(parse(r#"a="x\"#) == vec![pair("a", "x\\")]);
+    }
+
+    /// Sorting a Loki vector result orders it by sample value, and touches
+    /// nothing else: a matrix carries the same shape but must come back in the
+    /// order it arrived. Nothing had called this at all, so returning without
+    /// doing anything -- or sorting exactly the results it should not -- both
+    /// passed.
+    #[test]
+    fn sorting_a_loki_vector_result_orders_only_a_vector() {
+        let sample = |value: &str| serde_json::json!({"metric": {"n": value}, "value": [0, value]});
+        let order = |value: &serde_json::Value| {
+            value
+                .pointer("/data/result")
+                .and_then(serde_json::Value::as_array)
+                .expect("a result array")
+                .iter()
+                .map(|entry| {
+                    entry
+                        .pointer("/metric/n")
+                        .and_then(serde_json::Value::as_str)
+                        .expect("a name")
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let mut vector = serde_json::json!({
+            "data": { "resultType": "vector", "result": [sample("3"), sample("1"), sample("2")] }
+        });
+        super::sort_loki_vector_result(&mut vector, false);
+        check!(order(&vector) == vec!["1", "2", "3"], "ascending");
+
+        super::sort_loki_vector_result(&mut vector, true);
+        check!(
+            order(&vector) == vec!["3", "2", "1"],
+            "descending reverses it"
+        );
+
+        // Same shape, different result type: left exactly as it came.
+        let mut matrix = serde_json::json!({
+            "data": { "resultType": "matrix", "result": [sample("3"), sample("1")] }
+        });
+        super::sort_loki_vector_result(&mut matrix, false);
+        check!(
+            order(&matrix) == vec!["3", "1"],
+            "a matrix is not reordered"
+        );
     }
 
     /// `ingest_tenant` returns a present non-empty `X-Scope-OrgID` verbatim,
