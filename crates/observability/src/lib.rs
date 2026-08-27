@@ -9693,15 +9693,11 @@ async fn execute_http_multi_tenant_query(
         validate_loki_query_range_resolution(params, kind, time_range)?;
         let value = match kind {
             QueryKind::Instant => loki_instant_scalar_or_vector_response(time_range.end_ns, result),
-            QueryKind::Range => {
-                let step_ns = params
-                    .step
-                    .unwrap_or_else(|| default_metric_range_step(time_range));
-                if step_ns <= 0 {
-                    return Err(HttpQueryError::InvalidStep);
-                }
-                loki_range_vector_response(time_range, step_ns, result)
-            }
+            QueryKind::Range => loki_range_vector_response(
+                time_range,
+                resolved_range_step(params.step, time_range)?,
+                result,
+            ),
         };
         return Ok(add_loki_query_stats(value));
     }
@@ -9740,15 +9736,11 @@ async fn execute_http_query_for_tenant(
     if let Some(result) = scalar_vector_expression_result(&params.query) {
         let value = match kind {
             QueryKind::Instant => loki_instant_scalar_or_vector_response(time_range.end_ns, result),
-            QueryKind::Range => {
-                let step_ns = params
-                    .step
-                    .unwrap_or_else(|| default_metric_range_step(time_range));
-                if step_ns <= 0 {
-                    return Err(HttpQueryError::InvalidStep);
-                }
-                loki_range_vector_response(time_range, step_ns, result)
-            }
+            QueryKind::Range => loki_range_vector_response(
+                time_range,
+                resolved_range_step(params.step, time_range)?,
+                result,
+            ),
         };
         return Ok(add_loki_query_stats(value));
     }
@@ -11346,6 +11338,18 @@ fn validate_loki_range_query_range_limit(
     Ok(())
 }
 
+/// Resolves a range query's step in nanoseconds, defaulting it from the range.
+///
+/// `Loki` refuses a non-positive step outright rather than dividing by it, and
+/// every range-vector response resolves its step through here.
+fn resolved_range_step(step: Option<i64>, time_range: TimeRange) -> Result<i64, HttpQueryError> {
+    let step_ns = step.unwrap_or_else(|| default_metric_range_step(time_range));
+    if step_ns <= 0 {
+        return Err(HttpQueryError::InvalidStep);
+    }
+    Ok(step_ns)
+}
+
 fn validate_loki_query_range_resolution(
     params: &QueryParams,
     kind: QueryKind,
@@ -11354,12 +11358,7 @@ fn validate_loki_query_range_resolution(
     if !matches!(kind, QueryKind::Range) {
         return Ok(());
     }
-    let step_ns = params
-        .step
-        .unwrap_or_else(|| default_metric_range_step(time_range));
-    if step_ns <= 0 {
-        return Err(HttpQueryError::InvalidStep);
-    }
+    let step_ns = resolved_range_step(params.step, time_range)?;
     let query_range = time_range
         .end_ns
         .checked_sub(time_range.start_ns)
@@ -11495,13 +11494,11 @@ async fn execute_http_metric_expression_query(
     {
         let value = match kind {
             QueryKind::Instant => loki_instant_scalar_or_vector_response(time_range.end_ns, result),
-            QueryKind::Range => {
-                let step_ns = step.unwrap_or_else(|| default_metric_range_step(time_range));
-                if step_ns <= 0 {
-                    return Err(HttpQueryError::InvalidStep);
-                }
-                loki_range_vector_response(time_range, step_ns, result)
-            }
+            QueryKind::Range => loki_range_vector_response(
+                time_range,
+                resolved_range_step(step, time_range)?,
+                result,
+            ),
         };
         return Ok(add_loki_query_stats(value));
     }
@@ -11950,13 +11947,11 @@ fn execute_http_scalar_vector_expression_result(
         QueryKind::Instant => {
             loki_instant_scalar_or_vector_response(time_range.end_ns, vector_result)
         }
-        QueryKind::Range => {
-            let step_ns = step.unwrap_or_else(|| default_metric_range_step(time_range));
-            if step_ns <= 0 {
-                return Err(HttpQueryError::InvalidStep);
-            }
-            loki_range_vector_response(time_range, step_ns, vector_result)
-        }
+        QueryKind::Range => loki_range_vector_response(
+            time_range,
+            resolved_range_step(step, time_range)?,
+            vector_result,
+        ),
     };
     Ok(add_loki_query_stats(value))
 }
@@ -20999,6 +20994,30 @@ mod tests {
     use crabka_units::{bytes, bytes_per_sec};
 
     use super::*;
+
+    /// A range query's step is refused only when it is not positive; an absent
+    /// one falls back to the range's own default rather than to zero.
+    #[test]
+    fn a_range_step_is_refused_only_when_it_is_not_positive() {
+        let range = TimeRange::new(0, 60_000_000_000).unwrap();
+        for (name, step, expected) in [
+            (
+                "a positive step is kept as given",
+                Some(1_000_000_i64),
+                Some(1_000_000_i64),
+            ),
+            ("zero is refused", Some(0), None),
+            ("a negative step is refused", Some(-1), None),
+            (
+                "an absent step defaults off the range",
+                None,
+                Some(default_metric_range_step(range)),
+            ),
+        ] {
+            check!(resolved_range_step(step, range).ok() == expected, "{name}");
+        }
+        check!(default_metric_range_step(range) > 0);
+    }
 
     /// `max_query_range` and the `Loki` resolution cap are both inclusive: a
     /// query sitting exactly on the limit is served, and only the next
