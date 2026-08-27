@@ -21021,6 +21021,55 @@ mod tests {
 
     use super::*;
 
+    /// `loki_boltdb_shipper_compactor_running` is the one line in the status
+    /// page that varies by component: it reads 1 for the compactor and 0 for
+    /// everything else.
+    #[tokio::test]
+    async fn the_status_page_flags_only_the_compactor_as_running() {
+        for (component, running) in [("compactor", 1), ("querier", 0), ("distributor", 0)] {
+            let response = status_metrics(component);
+            check!(response.status() == StatusCode::OK, "{component}");
+            let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .expect("the response body is readable");
+            let body = String::from_utf8(bytes.to_vec()).expect("utf-8");
+            check!(
+                body.contains(&format!(
+                    "loki_boltdb_shipper_compactor_running {running}\n"
+                )),
+                "{component}: {body}"
+            );
+            check!(
+                body.contains(&format!(
+                    "crabka_observability_service_up{{component=\"{component}\"}} 1"
+                )),
+                "{component}"
+            );
+        }
+    }
+
+    /// A JSON push whose value is the empty string carries no timestamp of its
+    /// own, so it is refused outright against the stale-sample window rather
+    /// than dated to the epoch. With no window configured there is nothing to
+    /// refuse it against.
+    #[test]
+    fn an_empty_json_value_is_refused_only_when_a_stale_window_is_set() {
+        use crabka_units::hours;
+
+        let labels = Labels::default();
+        check!(validate_loki_empty_json_value_timestamp_window(&labels, None).is_ok());
+
+        let error = validate_loki_empty_json_value_timestamp_window(&labels, Some(hours(1)))
+            .expect_err("a configured window refuses an undated sample");
+        check!(matches!(
+            error,
+            DistributorError::TimestampTooOldString {
+                timestamp: "0001-01-01T00:00:00Z",
+                ..
+            }
+        ));
+    }
+
     /// `count_values` and `approx_topk` are both refused before a query is
     /// planned. The two predicates read different aggregation fields, so a
     /// query using one must not trip the other.
