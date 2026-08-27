@@ -60,6 +60,13 @@ impl MetricBlockStore {
                     let store = metadata.get_or_insert_with(|| float_store.empty_like());
                     apply_manifest_to_blockstore(store, manifest);
                 }
+                // A clock block is the source of truth for a clock reading, and
+                // it holds the interval, the sync state and the reference
+                // identity together in one row. `PromQL` reads the projection
+                // the distributor writes beside it, which arrives here as
+                // ordinary float samples, so this store registers no clock
+                // block.
+                MetricBlockKind::ClockReadings => {}
             }
         }
         Self {

@@ -1,4 +1,7 @@
-//! Generates prost message types from the vendored `remote_write` v1/v2 protos.
+//! Generates prost message types from the crate's protos.
+//!
+//! The set holds the vendored `remote_write` v1 and v2 surfaces and the Crabka
+//! clock confidence signal.
 //!
 //! This script drives codegen through a vendored `protoc` binary,
 //! `protoc-bin-vendored`, so the build is hermetic. It needs no system
@@ -9,6 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protos = [
         "proto/prometheus/remote.proto",
         "proto/io/prometheus/write/v2/types.proto",
+        "proto/krabka/clocks/v1/clocks.proto",
     ];
     let includes = ["proto"];
 
@@ -26,7 +30,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn rewrite_generated_enums() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);
-    for file in ["prometheus.rs", "io.prometheus.write.v2.rs"] {
+    for file in [
+        "prometheus.rs",
+        "io.prometheus.write.v2.rs",
+        "krabka.clocks.v1.rs",
+    ] {
         let path = out_dir.join(file);
         let generated = std::fs::read_to_string(&path)?;
         let rewritten = generated

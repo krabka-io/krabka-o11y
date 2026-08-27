@@ -8,14 +8,18 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
-    path::Path as StdPath,
+    path::{Path as StdPath, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod ids;
 
-use axum::Router;
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, StatusCode, header},
+};
 use bytes::Bytes;
 use crabka_blockstore::{BlockStore, LabelMatcher, Labels};
 use crabka_client_consumer::{Consumer, ConsumerRecord};
@@ -34,6 +38,7 @@ use futures::TryStreamExt;
 pub use ids::{Offset, PartitionIndex};
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
 use tokio::{net::TcpListener, task::JoinHandle};
+use tower::ServiceExt as _;
 use url::Url;
 
 pub const RULER_STATE_TOPIC: &str = "__crabka_metrics_ruler_state";
@@ -102,6 +107,59 @@ pub enum RulerStateConsumerError {
 
     #[error("ruler state consumer commit failed: {0}")]
     Commit(String),
+}
+
+/// Errors that stop the ruler from installing a bundled rule file.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BundledRulesError {
+    #[error("bundled rule file `{path}` is unreadable: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("bundled rule file `{path}` is not a Prometheus rule file: {source}")]
+    Decode {
+        path: PathBuf,
+        #[source]
+        source: serde_yaml::Error,
+    },
+
+    #[error("bundled rule file `{path}` holds no rule group")]
+    NoGroups { path: PathBuf },
+
+    #[error("bundled rule file `{path}` has no file stem to name the rule namespace")]
+    NoNamespace { path: PathBuf },
+
+    #[error("bundled rule group `{group}` does not encode back to YAML: {source}")]
+    Encode {
+        group: String,
+        #[source]
+        source: serde_yaml::Error,
+    },
+
+    #[error("the ruler config request for bundled rule group `{group}` is not valid: {source}")]
+    Request {
+        group: String,
+        #[source]
+        source: axum::http::Error,
+    },
+
+    #[error("the ruler config API rejected bundled rule group `{group}`: HTTP {status}, {body}")]
+    Rejected {
+        group: String,
+        status: StatusCode,
+        body: String,
+    },
+
+    #[error("the ruler config response for bundled rule group `{group}` is unreadable: {source}")]
+    ResponseBody {
+        group: String,
+        #[source]
+        source: axum::Error,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -879,6 +937,119 @@ where
         tokio::time::sleep(interval.to_std()).await;
     }
     Ok(())
+}
+
+/// One Prometheus rule file, as the ruler reads it from disk.
+#[derive(Debug, serde::Deserialize)]
+struct BundledRuleFile {
+    groups: Vec<serde_yaml::Value>,
+}
+
+/// The largest ruler-config response body this reads back for an error message.
+const BUNDLED_RULES_RESPONSE_MAX: ByteSize = kibibytes(64);
+
+/// Installs every rule group of a bundled rule file into the ruler config store.
+///
+/// The ruler role calls this once at startup for `--ruler-bundled-rules`. It
+/// posts each group to the Mimir ruler-config API of `router`, so a bundled
+/// group takes the same validation and the same storage as a group an operator
+/// posts. The file stem names the rule namespace, and `/api/v1/rules` renders
+/// that namespace as the rule file.
+///
+/// Returns the name of each installed group, in file order.
+///
+/// # Errors
+///
+/// Returns an error when the file is unreadable, when it is not a Prometheus
+/// rule file, when it holds no rule group, or when the ruler config API rejects
+/// a group. An operator who names a rule file and gets no rules has an alerting
+/// gap and no signal, so each of these cases stops the start.
+pub async fn install_bundled_rule_groups(
+    router: &Router,
+    path: &StdPath,
+    tenant: &str,
+) -> Result<Vec<String>, BundledRulesError> {
+    let text = std::fs::read_to_string(path).map_err(|source| BundledRulesError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let file: BundledRuleFile =
+        serde_yaml::from_str(&text).map_err(|source| BundledRulesError::Decode {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if file.groups.is_empty() {
+        return Err(BundledRulesError::NoGroups {
+            path: path.to_path_buf(),
+        });
+    }
+    let namespace = bundled_rules_namespace(path)?;
+
+    let mut installed = Vec::with_capacity(file.groups.len());
+    for (index, group) in file.groups.iter().enumerate() {
+        let label = bundled_group_label(index, group);
+        let body = serde_yaml::to_string(group).map_err(|source| BundledRulesError::Encode {
+            group: label.clone(),
+            source,
+        })?;
+        let request = Request::builder()
+            .method("POST")
+            .uri(format!("/prometheus/config/v1/rules/{namespace}"))
+            .header("X-Scope-OrgID", tenant)
+            .header(header::CONTENT_TYPE, "application/yaml")
+            .body(Body::from(body))
+            .map_err(|source| BundledRulesError::Request {
+                group: label.clone(),
+                source,
+            })?;
+        // The router answers every request, so its service error is uninhabited.
+        let response = match router.clone().oneshot(request).await {
+            Ok(response) => response,
+            Err(never) => match never {},
+        };
+        let status = response.status();
+        if !status.is_success() {
+            let body = axum::body::to_bytes(
+                response.into_body(),
+                BUNDLED_RULES_RESPONSE_MAX.bytes_usize(),
+            )
+            .await
+            .map_err(|source| BundledRulesError::ResponseBody {
+                group: label.clone(),
+                source,
+            })?;
+            return Err(BundledRulesError::Rejected {
+                group: label,
+                status,
+                body: String::from_utf8_lossy(&body).into_owned(),
+            });
+        }
+        installed.push(label);
+    }
+    Ok(installed)
+}
+
+/// Names the rule namespace of a bundled rule file from its file stem.
+fn bundled_rules_namespace(path: &StdPath) -> Result<String, BundledRulesError> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| BundledRulesError::NoNamespace {
+            path: path.to_path_buf(),
+        })
+}
+
+/// Names one group of a bundled rule file for an error message.
+///
+/// The ruler config API rejects a group that carries no name. The position in
+/// the file names that group instead, so an operator can find it.
+fn bundled_group_label(index: usize, group: &serde_yaml::Value) -> String {
+    group
+        .get("name")
+        .and_then(serde_yaml::Value::as_str)
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| format!("#{index}"), str::to_string)
 }
 
 fn current_time_ms() -> i64 {

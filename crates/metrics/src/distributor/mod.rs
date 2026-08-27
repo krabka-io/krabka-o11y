@@ -48,15 +48,23 @@ use crate::{
         decode_otlp_stateful_bytes,
     },
     validate_tenant,
-    wal::{SamplePayload, WAL_TOPIC, WalExemplar, WalRecord, partition_key},
+    wal::{ClockReadingPayload, SamplePayload, WAL_TOPIC, WalExemplar, WalRecord, partition_key},
     wire::{
-        DecodedExemplar, DecodedSeries, WireError, WireFormat, WrittenCounts, decode_v1, decode_v2,
-        negotiate,
+        ClockSyncState, ClockWireError, DecodedClockReading, DecodedExemplar, DecodedSample,
+        DecodedSeries, GnssFix, UnixNanos, WireError, WireFormat, WrittenCounts,
+        decode_clock_readings, decode_v1, decode_v2, negotiate,
     },
 };
 
 const MAX_EXEMPLAR_LABEL_CODEPOINTS: usize = 128;
 pub const DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED: ByteSize = mebibytes(32);
+
+/// Metric name of the clock reading series itself.
+///
+/// The columnar clock block is the source of truth for a reading. This series
+/// names it so the block rows fingerprint, index, and shard exactly as every
+/// other series does.
+pub const CLOCK_READING_METRIC: &str = "krabka_clock_reading";
 
 /// Structural per-request limits enforced before WAL append.
 #[derive(Clone, Debug, PartialEq)]
@@ -483,6 +491,10 @@ pub fn router(state: Arc<DistributorState>) -> Router {
             post(push).layer(DefaultBodyLimit::max(max_body)),
         )
         .route(
+            "/api/v1/clocks",
+            post(clocks_push).layer(DefaultBodyLimit::max(max_body)),
+        )
+        .route(
             "/otlp/v1/metrics",
             post(otlp_push).layer(DefaultBodyLimit::max(max_body)),
         )
@@ -645,6 +657,67 @@ async fn push_inner(
     Ok((PushSuccess::NoContent { counts }, items))
 }
 
+async fn clocks_push(
+    State(state): State<Arc<DistributorState>>,
+    headers: HeaderMap,
+    body: BodyBytes,
+) -> Response {
+    let started = std::time::Instant::now();
+    let body_size = ByteSize::from_bytes(body.len() as u64);
+    // ONE ingest span per clock batch, as on the `remote_write` push path.
+    let span = ingest_span(&headers, body_size);
+    let result = clocks_push_inner(&state, &headers, &body)
+        .instrument(span)
+        .await;
+    record_ingest_outcome(&state, &result, body_size, started.elapsed().as_time());
+    match result {
+        Ok((success, _items)) => success.into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn clocks_push_inner(
+    state: &DistributorState,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<(PushSuccess, u64), PushError> {
+    let tenant = tenant_from_headers(headers)?;
+    require_snappy_encoding(headers)?;
+    let readings = decode_clock_readings(body, state.max_decompressed)?;
+    // Stamp the receive time once for the whole request. A per-record stamp
+    // would spread the decode cost of the batch across the readings and report
+    // a skew that grows with the batch size.
+    let ingest_unix_nanos = ingest_stamp();
+
+    let items = readings.len() as u64;
+    // Backfill the decoded reading count onto the enclosing span.
+    tracing::Span::current().record("crabka.ingest.series", items);
+
+    if !append_clock_readings(state, tenant, &readings, ingest_unix_nanos).await? {
+        return Ok((PushSuccess::Accepted { counts: None }, items));
+    }
+
+    if let Some(metrics) = &state.metrics {
+        metrics.record_ingest_series(tenant, items);
+    }
+    Ok((PushSuccess::NoContent { counts: None }, items))
+}
+
+/// This ingester's own clock, at the moment a clock batch arrives.
+///
+/// A clock before the epoch, or one past the `i64` nanosecond ceiling in the
+/// year 2262, saturates rather than wrapping. Either reading is already a
+/// broken host clock, and the skew series is what says so.
+fn ingest_stamp() -> UnixNanos {
+    UnixNanos::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| {
+                i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX)
+            }),
+    )
+}
+
 fn require_snappy_encoding(headers: &HeaderMap) -> Result<(), WireError> {
     let encoding = headers
         .get(axum::http::header::CONTENT_ENCODING)
@@ -768,6 +841,23 @@ async fn append_decoded_series(
     tenant: &str,
     series: &mut [DecodedSeries],
 ) -> Result<bool, PushError> {
+    if !enforce_ingest_limits(state, tenant, series).await? {
+        return Ok(false);
+    }
+    append_wal_records(state, tenant, wal_records_from_series(tenant, series)).await?;
+    Ok(true)
+}
+
+/// Applies every per-tenant ingest gate to `series`, in the order the push path
+/// needs them.
+///
+/// Returns `false` when the HA tracker drops the request, which is an accepted
+/// request that writes nothing.
+async fn enforce_ingest_limits(
+    state: &DistributorState,
+    tenant: &str,
+    series: &mut [DecodedSeries],
+) -> Result<bool, PushError> {
     validate(series, &state.limits)?;
     let limits = state.limits_for_tenant(tenant);
     enforce_label_limits(&limits, series)?;
@@ -793,7 +883,16 @@ async fn append_decoded_series(
     enforce_and_record_active_series(state, &limits, tenant, series)?;
     enforce_ingestion_rate(state, &limits, tenant, series)?;
     enforce_out_of_order_window(state, &limits, tenant, series)?;
-    for record in wal_records_from_series(tenant, series) {
+    Ok(true)
+}
+
+/// Appends already-gated records to the WAL, one produce per record.
+async fn append_wal_records(
+    state: &DistributorState,
+    tenant: &str,
+    records: Vec<WalRecord>,
+) -> Result<(), PushError> {
+    for record in records {
         let key = partition_key(tenant, record.series_fingerprint());
         if let Err(error) = state.sink.append(key, record).await {
             // The actual WAL/produce error site — count it distinctly from
@@ -805,6 +904,25 @@ async fn append_decoded_series(
             return Err(error.into());
         }
     }
+    Ok(())
+}
+
+/// Gates a clock batch and appends both the clock block records and the
+/// projected float records.
+async fn append_clock_readings(
+    state: &DistributorState,
+    tenant: &str,
+    readings: &[DecodedClockReading],
+    ingest_unix_nanos: UnixNanos,
+) -> Result<bool, PushError> {
+    let mut series = clock_series(readings, ingest_unix_nanos);
+    if !enforce_ingest_limits(state, tenant, &mut series).await? {
+        return Ok(false);
+    }
+
+    let mut records = clock_wal_records(tenant, readings, ingest_unix_nanos);
+    records.extend(wal_records_from_series(tenant, &series));
+    append_wal_records(state, tenant, records).await?;
     Ok(true)
 }
 
@@ -1148,6 +1266,8 @@ enum PushError {
     #[error(transparent)]
     Wire(#[from] WireError),
     #[error(transparent)]
+    Clock(#[from] ClockWireError),
+    #[error(transparent)]
     Otlp(#[from] OtlpError),
     #[error(transparent)]
     Produce(#[from] ProduceError),
@@ -1164,6 +1284,9 @@ impl IntoResponse for PushError {
             }
             Self::Wire(error) => StatusCode::from_u16(error.status_code())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Self::Clock(error) => {
+                StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::BAD_REQUEST)
+            }
             Self::Otlp(error) => {
                 StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::BAD_REQUEST)
             }
@@ -1199,6 +1322,7 @@ fn status_from_push_error(error: &PushError) -> Status {
         | PushError::TooOldSample { .. }
         | PushError::Limit(_)
         | PushError::Wire(_)
+        | PushError::Clock(_)
         | PushError::Otlp(_) => Status::invalid_argument(error.to_string()),
     }
 }
@@ -1271,6 +1395,222 @@ pub fn wal_records_from_series(tenant: &str, series: &[DecodedSeries]) -> Vec<Wa
         }
     }
     out
+}
+
+/// Builds the clock block WAL records, one per reading.
+///
+/// The record rides the ordinary [`WalRecord`] envelope, with the node and
+/// clock identity in its labels, so fingerprinting, partitioning, and tenancy
+/// work on it exactly as they do on a float sample.
+#[must_use]
+pub fn clock_wal_records(
+    tenant: &str,
+    readings: &[DecodedClockReading],
+    ingest_unix_nanos: UnixNanos,
+) -> Vec<WalRecord> {
+    readings
+        .iter()
+        .map(|reading| WalRecord {
+            tenant: tenant.to_string(),
+            labels: clock_identity_labels(reading),
+            payload: SamplePayload::ClockReading(Box::new(ClockReadingPayload {
+                reading: reading.clone(),
+                ingest_unix_nanos,
+            })),
+            exemplars: Vec::new(),
+        })
+        .collect()
+}
+
+/// Builds every series a clock batch publishes.
+///
+/// The first series of each reading is the clock block's own identity, which
+/// carries no float sample. The rest are the projection: ordinary float series
+/// that `PromQL`, the ruler, and Grafana read with no query-path change. The
+/// block stays the source of truth, and the projection is a derived view of it.
+#[must_use]
+pub fn clock_series(
+    readings: &[DecodedClockReading],
+    ingest_unix_nanos: UnixNanos,
+) -> Vec<DecodedSeries> {
+    let mut out = Vec::new();
+    for reading in readings {
+        out.push(decoded_series(clock_identity_labels(reading), None));
+        out.extend(clock_projection(reading, ingest_unix_nanos));
+    }
+    out
+}
+
+/// The label set that identifies one clock on one host.
+fn clock_identity_labels(reading: &DecodedClockReading) -> Vec<(String, String)> {
+    projected_labels(reading, CLOCK_READING_METRIC, &[])
+}
+
+/// Builds the projected float series for one reading.
+fn clock_projection(
+    reading: &DecodedClockReading,
+    ingest_unix_nanos: UnixNanos,
+) -> Vec<DecodedSeries> {
+    let timestamp_ms = reading.timestamp_ms();
+    let payload = ClockReadingPayload {
+        reading: reading.clone(),
+        ingest_unix_nanos,
+    };
+    let mut out = Vec::new();
+
+    let mut gauge = |name: &str, value: f64| {
+        out.push(decoded_series(
+            projected_labels(reading, name, &[]),
+            Some(DecodedSample::new(timestamp_ms, value)),
+        ));
+    };
+
+    // Always present.
+    gauge(
+        "krabka_clock_uncertainty_seconds",
+        reading.uncertainty().secs_f64(),
+    );
+    gauge(
+        "krabka_clock_offset_seconds",
+        Time::from_nanos(reading.offset_nanos).secs_f64(),
+    );
+    gauge(
+        "krabka_clock_ingest_skew_seconds",
+        payload.ingest_skew().secs_f64(),
+    );
+
+    // Discipline state, when the host reported it.
+    if let Some(last_sync) = reading.last_sync_unix_nanos {
+        gauge("krabka_clock_last_sync_seconds", last_sync.epoch_secs_f64());
+    }
+    if let Some(frequency_ppb) = reading.frequency_ppb {
+        gauge("krabka_clock_frequency_ppb", widen(frequency_ppb));
+    }
+    if let Some(last_step_nanos) = reading.last_step_nanos {
+        gauge(
+            "krabka_clock_step_seconds_total",
+            Time::from_nanos(last_step_nanos).secs_f64(),
+        );
+    }
+
+    // NTP.
+    if let Some(ntp) = reading.ntp {
+        gauge(
+            "krabka_clock_root_delay_seconds",
+            Time::from_nanos(ntp.root_delay_nanos).secs_f64(),
+        );
+        gauge(
+            "krabka_clock_root_dispersion_seconds",
+            Time::from_nanos(ntp.root_dispersion_nanos).secs_f64(),
+        );
+        gauge("krabka_clock_stratum", f64::from(ntp.stratum));
+    }
+
+    // PTP and PHC.
+    if let Some(ptp) = reading.ptp {
+        gauge(
+            "krabka_clock_path_delay_seconds",
+            Time::from_nanos(ptp.mean_path_delay_nanos).secs_f64(),
+        );
+        gauge("krabka_clock_steps_removed", f64::from(ptp.steps_removed));
+        gauge("krabka_clock_class", f64::from(ptp.gm_clock_class));
+    }
+
+    // GNSS.
+    if let Some(gnss) = reading.gnss {
+        gauge(
+            "krabka_gnss_satellites_used",
+            f64::from(gnss.satellites_used),
+        );
+    }
+
+    out.extend(clock_state_series(reading, timestamp_ms));
+    out
+}
+
+/// Builds the two state-enum families a clock reading publishes.
+///
+/// Prometheus carries an enumerated state as one series per value with an extra
+/// label, the current value at `1` and every other value at `0`. Every value
+/// goes out on every reading, so a transition overwrites the old `1` with a `0`
+/// in the same scrape rather than leaving it to go stale.
+fn clock_state_series(reading: &DecodedClockReading, timestamp_ms: i64) -> Vec<DecodedSeries> {
+    let mut out = ClockSyncState::ALL
+        .iter()
+        .map(|state| {
+            decoded_series(
+                projected_labels(
+                    reading,
+                    "krabka_clock_sync_state",
+                    &[("state", state.as_label())],
+                ),
+                Some(DecodedSample::new(
+                    timestamp_ms,
+                    indicator(*state == reading.sync_state),
+                )),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // A reading from a source other than GNSS carries no fix quality, so it
+    // publishes no fix family at all rather than a family of zeros.
+    if let Some(current) = reading.gnss.and_then(|gnss| gnss.fix) {
+        out.extend(GnssFix::ALL.iter().map(|fix| {
+            decoded_series(
+                projected_labels(reading, "krabka_gnss_fix", &[("fix", fix.as_label())]),
+                Some(DecodedSample::new(timestamp_ms, indicator(*fix == current))),
+            )
+        }));
+    }
+    out
+}
+
+/// The label set for one projected series: the clock identity, the metric
+/// name, and any state label the family adds.
+fn projected_labels(
+    reading: &DecodedClockReading,
+    name: &str,
+    extra: &[(&str, &str)],
+) -> Vec<(String, String)> {
+    let mut labels = vec![
+        ("__name__".to_string(), name.to_string()),
+        ("node".to_string(), reading.node.clone()),
+        ("clock".to_string(), reading.clock.clone()),
+        (
+            "source".to_string(),
+            reading.source_kind.as_label().to_string(),
+        ),
+    ];
+    labels.extend(
+        extra
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), (*value).to_string())),
+    );
+    labels
+}
+
+fn decoded_series(labels: Vec<(String, String)>, sample: Option<DecodedSample>) -> DecodedSeries {
+    DecodedSeries {
+        labels: labels.into_iter().collect(),
+        samples: sample.into_iter().collect(),
+        histograms: Vec::new(),
+        exemplars: Vec::new(),
+        metadata: None,
+    }
+}
+
+/// The Prometheus encoding of a boolean: `1` when it holds, `0` when it does
+/// not.
+fn indicator(holds: bool) -> f64 {
+    f64::from(u8::from(holds))
+}
+
+/// Widens a signed count for a projected sample value.
+///
+/// `i64::to_f64` never fails, so the fallback is unreachable. It keeps the
+/// conversion free of a lossy `as` cast.
+fn widen(value: i64) -> f64 {
+    num_traits::ToPrimitive::to_f64(&value).unwrap_or(f64::MAX)
 }
 
 fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {

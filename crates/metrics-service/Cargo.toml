@@ -40,9 +40,11 @@ reqwest = { workspace = true, features = ["json"] }
 refined_type = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 time = { version = "0.3", default-features = false, features = ["formatting"] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower = { workspace = true, features = ["util"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 url = { workspace = true }
@@ -54,6 +56,6 @@ tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling",
 prost = { workspace = true }
 snap = { workspace = true }
 temp-env = "0.3"
+tempfile = { workspace = true }
 testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tower = { workspace = true, features = ["util"] }

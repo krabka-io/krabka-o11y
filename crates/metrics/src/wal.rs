@@ -2,9 +2,13 @@
 
 use bytes::Bytes;
 use crabka_blockstore::Labels;
+use crabka_units::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::NativeHistogram;
+use crate::{
+    NativeHistogram,
+    wire::{DecodedClockReading, UnixNanos},
+};
 
 /// The metrics WAL topic name.
 pub const WAL_TOPIC: &str = "__crabka_metrics_wal";
@@ -19,7 +23,45 @@ pub enum WalError {
     Decode(String),
 }
 
+/// One clock confidence reading, plus the stamp the ingester wrote on it.
+///
+/// The host reports the reading. The ingester stamps [`Self::ingest_unix_nanos`]
+/// from its own clock the moment the request arrives, and the difference
+/// between the two is a measured skew between two named hosts. No single
+/// exporter can compute that number, which is why the stamp lives here and not
+/// on the wire.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClockReadingPayload {
+    /// What the host reported.
+    pub reading: DecodedClockReading,
+    /// When this process received the reading, by its own clock.
+    pub ingest_unix_nanos: UnixNanos,
+}
+
+impl ClockReadingPayload {
+    /// The block timestamp for this reading, in epoch milliseconds.
+    #[must_use]
+    pub const fn timestamp_ms(&self) -> i64 {
+        self.reading.timestamp_ms()
+    }
+
+    /// The skew between the host's clock and this ingester's clock.
+    ///
+    /// A positive extent means the host reads behind the ingester.
+    #[must_use]
+    pub fn ingest_skew(&self) -> Time {
+        self.reading
+            .reading_unix_nanos
+            .extent_to(self.ingest_unix_nanos)
+    }
+}
+
 /// One sample's WAL payload.
+///
+/// A clock reading carries far more fields than any other payload, so it lives
+/// behind a box. Without one the enum would be as wide as its widest variant,
+/// and every float sample in the WAL would pay for the clock fields it does not
+/// hold.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SamplePayload {
     Float {
@@ -31,6 +73,7 @@ pub enum SamplePayload {
         timestamp_ms: i64,
         hist: NativeHistogram,
     },
+    ClockReading(Box<ClockReadingPayload>),
     Metadata {
         metric_family_name: String,
         metric_type: String,
@@ -41,12 +84,16 @@ pub enum SamplePayload {
 }
 
 impl SamplePayload {
+    /// The block timestamp this payload sorts and indexes by, in epoch
+    /// milliseconds. A payload that carries no sample, such as metadata, has
+    /// none.
     #[must_use]
     pub fn timestamp_ms(&self) -> Option<i64> {
         match self {
             Self::Float { timestamp_ms, .. } | Self::Hist { timestamp_ms, .. } => {
                 Some(*timestamp_ms)
             }
+            Self::ClockReading(payload) => Some(payload.timestamp_ms()),
             Self::Metadata { .. } | Self::Exemplars => None,
         }
     }
