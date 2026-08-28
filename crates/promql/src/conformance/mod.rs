@@ -799,6 +799,38 @@ pub mod testkit {
 
         use super::*;
 
+        /// A report's case count is what its pass ratio divides by, and only
+        /// `eval` statements are cases -- a `load` or a `clear` is setup.
+        #[test]
+        fn only_eval_statements_count_as_cases() {
+            let file = parse_test_file(
+                r#"
+load 1m
+  up{job="api"} 0+1x2
+
+eval instant at 1m up{job="api"}
+  up{job="api"} 1
+
+eval range from 0m to 2m step 1m up{job="api"}
+  up{job="api"} 0 1 2
+
+clear
+
+load 1m
+  down{job="api"} 0+1x2
+
+eval instant at 2m down{job="api"}
+  down{job="api"} 2
+"#,
+            )
+            .expect("the test file parses");
+            check!(count_eval_cases(&file) == 3);
+
+            let setup_only = parse_test_file("load 1m\n  up{job=\"api\"} 0+1x2\n")
+                .expect("the setup-only file parses");
+            check!(count_eval_cases(&setup_only) == 0);
+        }
+
         /// Only `limit.test` needs `experimental-functions`; every other
         /// corpus file runs in a default build. The check reads the file name,
         /// not the whole path, so a directory of that name does not count.
