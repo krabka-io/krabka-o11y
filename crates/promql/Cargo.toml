@@ -55,6 +55,7 @@ datatest-stable = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
 tower = { workspace = true, features = ["util"] }
 

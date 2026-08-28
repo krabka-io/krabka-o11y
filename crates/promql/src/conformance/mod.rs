@@ -278,11 +278,20 @@ pub mod testkit {
     }
 
     fn corpus_path_enabled(path: &Path) -> bool {
-        if cfg!(feature = "experimental-functions") {
-            return true;
-        }
+        // `-> true` is a permanent mutation survivor under
+        // `experimental-functions`, where the first arm already answers for
+        // every path. The filename test that decides it otherwise lives in
+        // `corpus_path_needs_experimental_functions`, which no feature gate
+        // hides from a test.
+        cfg!(feature = "experimental-functions") || !corpus_path_needs_experimental_functions(path)
+    }
 
-        path.file_name().and_then(|name| name.to_str()) != Some("limit.test")
+    /// Whether a corpus file can only run with `experimental-functions` on.
+    ///
+    /// `limit.test` is the one such file: it exercises `limitk` and
+    /// `limit_ratio`, which do not exist in a default build.
+    fn corpus_path_needs_experimental_functions(path: &Path) -> bool {
+        path.file_name().and_then(|name| name.to_str()) == Some("limit.test")
     }
 
     async fn run_corpus_path(dir: &Path, path: &Path) -> FileResult {
@@ -789,6 +798,101 @@ pub mod testkit {
         use crabka_metrics::{NativeHistogram, ResetHint};
 
         use super::*;
+
+        /// Only `limit.test` needs `experimental-functions`; every other
+        /// corpus file runs in a default build. The check reads the file name,
+        /// not the whole path, so a directory of that name does not count.
+        #[test]
+        fn only_the_limit_corpus_file_needs_experimental_functions() {
+            for (path, needs) in [
+                ("corpus/limit.test", true),
+                ("limit.test", true),
+                ("corpus/limits.test", false),
+                ("corpus/limit.test/inner.test", false),
+                ("corpus/aggregators.test", false),
+                ("", false),
+            ] {
+                check!(
+                    corpus_path_needs_experimental_functions(Path::new(path)) == needs,
+                    "{path}"
+                );
+            }
+        }
+
+        /// The report names every file it ran, its pass state, and its case
+        /// counts, and writes that same text to disk -- creating the parent
+        /// directory on the way.
+        #[test]
+        fn a_report_renders_and_writes_every_file_it_ran() {
+            let report = Report {
+                files: vec![
+                    FileResult {
+                        name: "good.test".to_owned(),
+                        passed: true,
+                        passed_cases: 3,
+                        total_cases: 3,
+                        error: None,
+                    },
+                    FileResult {
+                        name: "bad.test".to_owned(),
+                        passed: false,
+                        passed_cases: 1,
+                        total_cases: 4,
+                        error: Some("boom".to_owned()),
+                    },
+                ],
+            };
+            let expected = "PromQL conformance report\n\
+                 files: 2\n\
+                 PASS good.test 3/3\n\
+                 FAIL bad.test 1/4\n  boom\n";
+            check!(report.to_string() == expected);
+
+            let dir = tempfile::tempdir().expect("a temp dir");
+            let path = dir.path().join("nested").join("report.txt");
+            report.write_to(&path).expect("the report is written");
+            let written = std::fs::read_to_string(&path).expect("the report is readable");
+            check!(written == expected);
+        }
+
+        /// An instant expectation carries exactly one value. Anything else --
+        /// no value, a placeholder, or several -- is refused, and the two
+        /// refusals say different things.
+        #[test]
+        fn an_instant_expectation_takes_exactly_one_value() {
+            let line = |values: Vec<SampleSpec>| ExpectLine {
+                metric: "m".to_owned(),
+                values,
+            };
+            let single = expect_single_instant_value(&line(vec![SampleSpec::Value(2.5)]))
+                .expect("one value is accepted");
+            check!(single == SampleValue::Float(2.5));
+
+            for (name, values, message) in [
+                (
+                    "no value at all",
+                    Vec::new(),
+                    "execution error: expected one value for instant expectation `m`",
+                ),
+                (
+                    "a placeholder",
+                    vec![SampleSpec::Missing],
+                    "execution error: expected one value for instant expectation `m`",
+                ),
+                (
+                    "two values",
+                    vec![SampleSpec::Value(1.0), SampleSpec::Value(2.0)],
+                    "execution error: expected one value for instant expectation `m`, got 2",
+                ),
+            ] {
+                let error = expect_single_instant_value(&line(values))
+                    .expect_err("not a single instant value");
+                // Exact, not `contains`: the fall-through message starts with
+                // the same words and only adds a count, so a substring check
+                // would accept either arm answering for the other.
+                check!(error.to_string() == message, "{name}: {error}");
+            }
+        }
 
         /// The corpus's annotation oracle: `warn`/`info` need at least one of
         /// that kind, `no_warn`/`no_info` need none, and a `msg:` directive
