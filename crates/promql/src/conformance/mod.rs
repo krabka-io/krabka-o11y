@@ -2357,6 +2357,26 @@ mod tests {
 
     use super::*;
 
+    /// Bucket indices accumulate across spans: the first span's offset is the
+    /// starting index, and every later one steps on from where the previous
+    /// span left off. A span whose counts run out ends the walk there.
+    #[test]
+    fn later_histogram_spans_step_on_from_the_previous_one() {
+        let span = |offset, length| BucketSpan { offset, length };
+        assert2::check!(
+            spanned_histogram_counts(&[span(2, 2), span(3, 2)], &[1.0, 2.0, 3.0, 4.0])
+                == BTreeMap::from([(2, 1.0), (3, 2.0), (7, 3.0), (8, 4.0)])
+        );
+        assert2::check!(
+            spanned_histogram_counts(&[span(2, 2)], &[1.0, 2.0])
+                == BTreeMap::from([(2, 1.0), (3, 2.0)])
+        );
+        assert2::check!(
+            spanned_histogram_counts(&[span(2, 2), span(3, 2)], &[1.0, 2.0, 3.0])
+                == BTreeMap::from([(2, 1.0), (3, 2.0), (7, 3.0)])
+        );
+    }
+
     #[test]
     fn parse_legacy_test_file_load_eval_and_clear() {
         let file = parse_test_file(
