@@ -790,6 +790,126 @@ pub mod testkit {
 
         use super::*;
 
+        /// The corpus's annotation oracle: `warn`/`info` need at least one of
+        /// that kind, `no_warn`/`no_info` need none, and a `msg:` directive
+        /// needs an exact match. A failure names the expectation it could not
+        /// satisfy, so the description is checked against literal text rather
+        /// than against the describing function's own output.
+        #[test]
+        fn annotation_expectations_are_checked_against_what_was_raised() {
+            let none = Annotations::default();
+            let warned = Annotations {
+                warnings: vec!["w one".to_owned()],
+                infos: Vec::new(),
+            };
+            let informed = Annotations {
+                warnings: Vec::new(),
+                infos: vec!["i one".to_owned()],
+            };
+
+            for (expect, raised, unsatisfied_description) in [
+                (AnnotationExpect::AnyWarn, &warned, None),
+                (AnnotationExpect::AnyWarn, &none, Some("expect warn")),
+                (AnnotationExpect::AnyInfo, &informed, None),
+                (AnnotationExpect::AnyInfo, &none, Some("expect info")),
+                (AnnotationExpect::NoWarn, &none, None),
+                (AnnotationExpect::NoWarn, &warned, Some("expect no_warn")),
+                (AnnotationExpect::NoInfo, &none, None),
+                (AnnotationExpect::NoInfo, &informed, Some("expect no_info")),
+                (AnnotationExpect::WarnMsg("w one".to_owned()), &warned, None),
+                (
+                    AnnotationExpect::WarnMsg("w two".to_owned()),
+                    &warned,
+                    Some("expect warn msg:w two"),
+                ),
+                (
+                    AnnotationExpect::InfoMsg("i one".to_owned()),
+                    &informed,
+                    None,
+                ),
+                (
+                    AnnotationExpect::InfoMsg("i two".to_owned()),
+                    &informed,
+                    Some("expect info msg:i two"),
+                ),
+                (AnnotationExpect::Ordered, &none, None),
+            ] {
+                let result = compare_annotations(std::slice::from_ref(&expect), raised);
+                match unsatisfied_description {
+                    None => {
+                        check!(result.is_ok(), "{expect:?} against {raised:?}");
+                    }
+                    Some(description) => {
+                        let message = result
+                            .expect_err("the expectation is not satisfied")
+                            .to_string();
+                        check!(message.contains(description), "{expect:?}: {message}");
+                    }
+                }
+            }
+        }
+
+        /// An expected-failure directive matches when the raised error contains
+        /// its text, and an empty directive accepts any error at all.
+        #[test]
+        fn an_expected_failure_must_appear_in_the_raised_error() {
+            let error = PromqlError::Exec("vector cannot contain metrics".to_owned());
+            for (expected, matches) in [
+                ("", true),
+                ("cannot contain", true),
+                ("vector cannot contain metrics", true),
+                ("some other failure", false),
+            ] {
+                check!(
+                    compare_expected_failure(&error, expected).is_ok() == matches,
+                    "{expected:?}"
+                );
+            }
+        }
+
+        /// Splitting an expected line's label set is the corpus's own parser:
+        /// a comma only separates pairs outside a quoted value, a backslash
+        /// only escapes inside one, and a trailing comma ends the list rather
+        /// than starting an empty pair.
+        #[test]
+        fn label_pairs_split_only_on_commas_outside_quotes() {
+            for (name, inside, expected) in [
+                (
+                    "two plain pairs",
+                    r#"a="x",b="y""#,
+                    vec![r#"a="x""#, r#"b="y""#],
+                ),
+                (
+                    "surrounding space is trimmed",
+                    r#"a="x" , b="y""#,
+                    vec![r#"a="x""#, r#"b="y""#],
+                ),
+                (
+                    "a comma inside a value does not separate",
+                    r#"a="x,y",b="z""#,
+                    vec![r#"a="x,y""#, r#"b="z""#],
+                ),
+                (
+                    "an escaped quote does not end the value",
+                    r#"a="x\",y",b="z""#,
+                    vec![r#"a="x\",y""#, r#"b="z""#],
+                ),
+                (
+                    "a backslash outside a value escapes nothing",
+                    r#"a=\,b="x""#,
+                    vec![r"a=\", r#"b="x""#],
+                ),
+                (
+                    "a trailing comma ends the list",
+                    r#"a="x","#,
+                    vec![r#"a="x""#],
+                ),
+                ("nothing at all", "", Vec::new()),
+            ] {
+                check!(split_label_pairs(inside) == expected, "{name}");
+            }
+        }
+
         /// The corpus's own oracle. Every comparison below is what decides
         /// whether a `.test` file passed, so a loosened one would quietly
         /// accept every wrong answer the engine could give.
