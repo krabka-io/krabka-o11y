@@ -799,6 +799,163 @@ pub mod testkit {
 
         use super::*;
 
+        /// The corpus's range comparison: the result must be a matrix, must
+        /// carry the expected series, and every step must match. Each failure
+        /// is a distinct refusal, so none of them can stand in for another.
+        #[test]
+        fn a_range_result_is_compared_series_by_series_and_step_by_step() {
+            let step = crabka_units::minutes(1);
+            let matrix = |values: &[f64]| {
+                QueryResult::RangeMatrix(vec![crate::RangeSeries {
+                    labels: metric_to_labels(r#"up{job="api"}"#),
+                    samples: values
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            (
+                                i64::try_from(index).expect("index fits i64") * 60_000,
+                                SampleValue::Float(*value),
+                            )
+                        })
+                        .collect(),
+                }])
+            };
+            let expect = vec![ExpectLine {
+                metric: r#"up{job="api"}"#.to_owned(),
+                values: vec![
+                    SampleSpec::Value(0.0),
+                    SampleSpec::Value(1.0),
+                    SampleSpec::Value(2.0),
+                ],
+            }];
+
+            check!(compare_range_result(matrix(&[0.0, 1.0, 2.0]), &expect, 0, step).is_ok());
+
+            let wrong_value = compare_range_result(matrix(&[0.0, 9.0, 2.0]), &expect, 0, step);
+            check!(wrong_value.is_err(), "a differing step must be refused");
+
+            let wrong_length = compare_range_result(matrix(&[0.0, 1.0]), &expect, 0, step);
+            check!(wrong_length.is_err(), "a missing step must be refused");
+
+            let no_series =
+                compare_range_result(QueryResult::RangeMatrix(Vec::new()), &expect, 0, step);
+            check!(
+                no_series
+                    .expect_err("an empty matrix is not one series")
+                    .to_string()
+                    .contains("expected 1 series, got 0")
+            );
+
+            let not_a_matrix = compare_range_result(
+                QueryResult::Scalar {
+                    ts_ms: 0,
+                    value: 1.0,
+                },
+                &expect,
+                0,
+                step,
+            );
+            check!(
+                not_a_matrix
+                    .expect_err("a scalar is not a matrix")
+                    .to_string()
+                    .contains("expected range matrix result, got scalar")
+            );
+        }
+
+        /// A range evaluation's outcome is routed by whether the query was
+        /// expected to fail: an unexpected success, an unexpected error, and a
+        /// mismatching result are each refused, and only a matching result
+        /// with satisfied annotations passes.
+        #[test]
+        fn a_range_evaluation_routes_its_outcome_by_what_the_test_expected() {
+            let step = crabka_units::minutes(1);
+            let expect = vec![ExpectLine {
+                metric: r#"up{job="api"}"#.to_owned(),
+                values: vec![SampleSpec::Value(7.0)],
+            }];
+            let matrix = |value: f64| {
+                QueryResult::RangeMatrix(vec![crate::RangeSeries {
+                    labels: metric_to_labels(r#"up{job="api"}"#),
+                    samples: vec![(0, SampleValue::Float(value))],
+                }])
+            };
+            let raised = Annotations::default();
+
+            check!(
+                handle_range_eval_result(
+                    Ok((matrix(7.0), raised.clone())),
+                    &expect,
+                    &[],
+                    None,
+                    0,
+                    step
+                )
+                .is_ok(),
+                "a matching result passes"
+            );
+            check!(
+                handle_range_eval_result(
+                    Ok((matrix(8.0), raised.clone())),
+                    &expect,
+                    &[],
+                    None,
+                    0,
+                    step
+                )
+                .is_err(),
+                "a differing result is refused"
+            );
+            check!(
+                handle_range_eval_result(
+                    Ok((matrix(7.0), raised.clone())),
+                    &expect,
+                    &[],
+                    Some("boom"),
+                    0,
+                    step
+                )
+                .is_err(),
+                "a success where failure was expected is refused"
+            );
+            check!(
+                handle_range_eval_result(
+                    Err(PromqlError::Exec("boom happened".to_owned())),
+                    &expect,
+                    &[],
+                    Some("boom"),
+                    0,
+                    step
+                )
+                .is_ok(),
+                "the expected failure passes"
+            );
+            check!(
+                handle_range_eval_result(
+                    Err(PromqlError::Exec("boom happened".to_owned())),
+                    &expect,
+                    &[],
+                    None,
+                    0,
+                    step
+                )
+                .is_err(),
+                "an unexpected failure is refused"
+            );
+            check!(
+                handle_range_eval_result(
+                    Ok((matrix(7.0), raised)),
+                    &expect,
+                    &[AnnotationExpect::AnyWarn],
+                    None,
+                    0,
+                    step
+                )
+                .is_err(),
+                "an unsatisfied annotation is refused"
+            );
+        }
+
         /// A report's case count is what its pass ratio divides by, and only
         /// `eval` statements are cases -- a `load` or a `clear` is setup.
         #[test]
