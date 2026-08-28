@@ -2481,6 +2481,10 @@ mod tests {
                 help: String::new(),
                 unit: String::new(),
             }],
+            // `ClockReadings` arrived after this test did, and building a
+            // reading needs a whole decoded payload. The four kinds below are
+            // what it pins.
+            clock_rows: Vec::new(),
         };
 
         for (kind, want) in [
