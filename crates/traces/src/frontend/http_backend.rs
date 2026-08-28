@@ -491,7 +491,10 @@ mod tests {
         check!(scope("span") == TagScope::Span, "named explicitly");
         check!(scope("") == TagScope::Span, "the default");
         check!(scope("unknown") == TagScope::Span);
-        check!(scope("Resource") == TagScope::Span, "case-sensitive, so this defaults");
+        check!(
+            scope("Resource") == TagScope::Span,
+            "case-sensitive, so this defaults"
+        );
     }
     use assert2::check;
 

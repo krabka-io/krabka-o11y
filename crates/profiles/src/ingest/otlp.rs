@@ -335,11 +335,16 @@ mod tests {
     /// routes and a guard removed from one is invisible to the others.
     #[test]
     fn a_missing_service_name_falls_back_rather_than_erroring() {
-        use pb::opentelemetry::proto::common::v1::{AnyValue, KeyValue, any_value::Value};
-        use pb::opentelemetry::proto::resource::v1::Resource;
+        use pb::opentelemetry::proto::{
+            common::v1::{AnyValue, KeyValue, any_value::Value},
+            resource::v1::Resource,
+        };
 
         let with_attrs = |attrs: Vec<KeyValue>| pb::otlp_profiles::ResourceProfiles {
-            resource: Some(Resource { attributes: attrs, ..Resource::default() }),
+            resource: Some(Resource {
+                attributes: attrs,
+                ..Resource::default()
+            }),
             ..pb::otlp_profiles::ResourceProfiles::default()
         };
         let attr = |key: &str, value: Option<Value>| KeyValue {
@@ -417,12 +422,14 @@ mod tests {
 
         let dict = ProfilesDictionary {
             //             0   1          2        3       4       5        6
-            string_table: ["", "samples", "count", "fn_a", "fn_b", "sys_a", "sys_b",
-            //             7        8        9        10
-                           "file_a", "file_b", "map_a", "map_b"]
-                .into_iter()
-                .map(String::from)
-                .collect(),
+            string_table: [
+                "", "samples", "count", "fn_a", "fn_b", "sys_a", "sys_b",
+                //             7        8        9        10
+                "file_a", "file_b", "map_a", "map_b",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             mapping_table: vec![
                 Mapping {
                     memory_start: 0x10,
@@ -457,7 +464,11 @@ mod tests {
                 Location {
                     mapping_index: 0,
                     address: 0x100,
-                    lines: vec![Line { function_index: 0, line: 1, column: 2 }],
+                    lines: vec![Line {
+                        function_index: 0,
+                        line: 1,
+                        column: 2,
+                    }],
                     ..Default::default()
                 },
                 // References the *second* mapping and function, so a
@@ -465,17 +476,29 @@ mod tests {
                 Location {
                     mapping_index: 1,
                     address: 0x200,
-                    lines: vec![Line { function_index: 1, line: 3, column: 4 }],
+                    lines: vec![Line {
+                        function_index: 1,
+                        line: 3,
+                        column: 4,
+                    }],
                     ..Default::default()
                 },
             ],
-            stack_table: vec![Stack { location_indices: vec![1, 0] }],
+            stack_table: vec![Stack {
+                location_indices: vec![1, 0],
+            }],
             ..Default::default()
         };
 
         let profile = Profile {
-            sample_type: Some(ValueType { type_strindex: 1, unit_strindex: 2 }),
-            period_type: Some(ValueType { type_strindex: 2, unit_strindex: 1 }),
+            sample_type: Some(ValueType {
+                type_strindex: 1,
+                unit_strindex: 2,
+            }),
+            period_type: Some(ValueType {
+                type_strindex: 2,
+                unit_strindex: 1,
+            }),
             period: 99,
             time_unix_nano: 1_700_000_000_000_000_000,
             duration_nano: 5_000,
@@ -537,14 +560,22 @@ mod tests {
                         id: 1,
                         mapping_id: 1,
                         address: 0x100,
-                        line: vec![crabka_pprof::proto::Line { function_id: 1, line: 1, column: 2 }],
+                        line: vec![crabka_pprof::proto::Line {
+                            function_id: 1,
+                            line: 1,
+                            column: 2
+                        }],
                         ..Default::default()
                     },
                     crabka_pprof::proto::Location {
                         id: 2,
                         mapping_id: 2,
                         address: 0x200,
-                        line: vec![crabka_pprof::proto::Line { function_id: 2, line: 3, column: 4 }],
+                        line: vec![crabka_pprof::proto::Line {
+                            function_id: 2,
+                            line: 3,
+                            column: 4
+                        }],
                         ..Default::default()
                     },
                 ]
@@ -564,13 +595,11 @@ mod tests {
         check!(inner.duration_nanos == 5_000);
         check!(inner.period == 99);
         check!(
-            inner.sample_type
-                == vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            inner.sample_type == vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
             "sample type keeps type and unit in order"
         );
         check!(
-            inner.period_type
-                == Some(crabka_pprof::proto::ValueType { r#type: 2, unit: 1 }),
+            inner.period_type == Some(crabka_pprof::proto::ValueType { r#type: 2, unit: 1 }),
             "period type is not the sample type"
         );
     }
@@ -581,21 +610,36 @@ mod tests {
     /// rather than an error.
     #[test]
     fn a_table_index_equal_to_the_length_is_out_of_bounds() {
-        use pb::otlp_profiles::{Function, Line, Location, Profile, ProfilesDictionary, Sample, Stack};
+        use pb::otlp_profiles::{
+            Function, Line, Location, Profile, ProfilesDictionary, Sample, Stack,
+        };
 
         let dict = ProfilesDictionary {
             string_table: vec![String::new(), "fn_a".into()],
-            function_table: vec![Function { name_strindex: 1, ..Default::default() }],
+            function_table: vec![Function {
+                name_strindex: 1,
+                ..Default::default()
+            }],
             location_table: vec![Location {
-                lines: vec![Line { function_index: 0, line: 1, column: 0 }],
+                lines: vec![Line {
+                    function_index: 0,
+                    line: 1,
+                    column: 0,
+                }],
                 ..Default::default()
             }],
             // One location exists, so index 1 is the first one past the end.
-            stack_table: vec![Stack { location_indices: vec![1] }],
+            stack_table: vec![Stack {
+                location_indices: vec![1],
+            }],
             ..Default::default()
         };
         let profile = Profile {
-            samples: vec![Sample { stack_index: 0, values: vec![1], ..Default::default() }],
+            samples: vec![Sample {
+                stack_index: 0,
+                values: vec![1],
+                ..Default::default()
+            }],
             ..Default::default()
         };
 
@@ -606,7 +650,9 @@ mod tests {
 
         // A negative index cannot convert at all and is rejected the same way.
         let mut dict = dict;
-        dict.stack_table = vec![Stack { location_indices: vec![-1] }];
+        dict.stack_table = vec![Stack {
+            location_indices: vec![-1],
+        }];
         let err = super::otlp_profile_to_pprof(&profile, &dict)
             .unwrap_err()
             .to_string();
@@ -619,11 +665,16 @@ mod tests {
     /// unattributable.
     #[test]
     fn the_service_name_falls_back_whenever_it_is_not_a_usable_string() {
-        use pb::opentelemetry::proto::common::v1::{AnyValue, KeyValue, any_value::Value};
-        use pb::opentelemetry::proto::resource::v1::Resource;
+        use pb::opentelemetry::proto::{
+            common::v1::{AnyValue, KeyValue, any_value::Value},
+            resource::v1::Resource,
+        };
 
         let with_attrs = |attrs: Vec<KeyValue>| pb::otlp_profiles::ResourceProfiles {
-            resource: Some(Resource { attributes: attrs, ..Default::default() }),
+            resource: Some(Resource {
+                attributes: attrs,
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let attr = |key: &str, value: Option<Value>| KeyValue {
@@ -642,21 +693,33 @@ mod tests {
         check!(
             super::resolve_service_name(&with_attrs(vec![
                 attr("other", Some(Value::StringValue("first".to_string()))),
-                attr("service.name", Some(Value::StringValue("payments".to_string()))),
+                attr(
+                    "service.name",
+                    Some(Value::StringValue("payments".to_string()))
+                ),
             ])) == "payments"
         );
 
         // Each way the attribute can be present but unusable.
         for (name, rp) in [
-            ("no resource at all", pb::otlp_profiles::ResourceProfiles::default()),
+            (
+                "no resource at all",
+                pb::otlp_profiles::ResourceProfiles::default(),
+            ),
             ("no attributes", with_attrs(vec![])),
             (
                 "a different key",
-                with_attrs(vec![attr("host.name", Some(Value::StringValue("h".into())))]),
+                with_attrs(vec![attr(
+                    "host.name",
+                    Some(Value::StringValue("h".into())),
+                )]),
             ),
             (
                 "an empty name",
-                with_attrs(vec![attr("service.name", Some(Value::StringValue(String::new())))]),
+                with_attrs(vec![attr(
+                    "service.name",
+                    Some(Value::StringValue(String::new())),
+                )]),
             ),
             (
                 "a non-string value",

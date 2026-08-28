@@ -150,7 +150,10 @@ mod tests {
         check!(part(&[0, 0, 0, 0, 0, 0, 0, 2]).expect("eight bytes") == 2);
         check!(part(&[1, 0, 0, 0, 0, 0, 0, 0]).expect("eight bytes") == 1 << 56);
         check!(part(&[0, 0, 0, 0, 0, 0, 0, 0]).expect("eight bytes") == 0);
-        check!(part(&[255; 8]).expect("eight bytes") == -1, "the id is signed");
+        check!(
+            part(&[255; 8]).expect("eight bytes") == -1,
+            "the id is signed"
+        );
 
         // Seven or nine bytes is a decode error, not a pad or a truncation.
         check!(part(&[0; 7]).is_err());
@@ -164,7 +167,10 @@ mod tests {
     /// division swapped for a multiplication would destroy.
     #[test]
     fn timestamps_and_durations_convert_to_whole_microseconds() {
-        check!(timestamp_micros(None) == 0, "an absent timestamp is the epoch");
+        check!(
+            timestamp_micros(None) == 0,
+            "an absent timestamp is the epoch"
+        );
         check!(duration_micros(None) == 0, "an absent duration is nothing");
 
         let stamp = |seconds, nanos| Timestamp { seconds, nanos };
@@ -172,12 +178,24 @@ mod tests {
 
         // Seconds scale to microseconds and nanos divide down into them.
         check!(timestamp_micros(Some(&stamp(1, 0))) == 1_000_000);
-        check!(timestamp_micros(Some(&stamp(0, 1_000))) == 1, "a thousand nanos is one micro");
-        check!(timestamp_micros(Some(&stamp(1, 500_000))) == 1_000_500, "both parts add");
+        check!(
+            timestamp_micros(Some(&stamp(0, 1_000))) == 1,
+            "a thousand nanos is one micro"
+        );
+        check!(
+            timestamp_micros(Some(&stamp(1, 500_000))) == 1_000_500,
+            "both parts add"
+        );
 
         // Sub-microsecond nanos truncate rather than round.
-        check!(timestamp_micros(Some(&stamp(0, 999))) == 0, "under a micro is nothing");
-        check!(timestamp_micros(Some(&stamp(0, 1_999))) == 1, "not rounded up to two");
+        check!(
+            timestamp_micros(Some(&stamp(0, 999))) == 0,
+            "under a micro is nothing"
+        );
+        check!(
+            timestamp_micros(Some(&stamp(0, 1_999))) == 1,
+            "not rounded up to two"
+        );
 
         // The duration twin carries its own values, so a call routed to the
         // wrong one returns a recognisably different number.

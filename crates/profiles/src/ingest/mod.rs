@@ -294,27 +294,48 @@ mod tests {
 
         // Drop removes the series when it matches, and leaves it when it does not.
         let mut set = labels();
-        check!(!super::apply_relabel(&mut set, &[config(Drop, &["app"], "web", "", "")]));
+        check!(!super::apply_relabel(
+            &mut set,
+            &[config(Drop, &["app"], "web", "", "")]
+        ));
         let mut set = labels();
-        check!(super::apply_relabel(&mut set, &[config(Drop, &["app"], "api", "", "")]));
+        check!(super::apply_relabel(
+            &mut set,
+            &[config(Drop, &["app"], "api", "", "")]
+        ));
 
         // Keep is the mirror: it removes the series when it does *not* match.
         let mut set = labels();
-        check!(super::apply_relabel(&mut set, &[config(Keep, &["app"], "web", "", "")]));
+        check!(super::apply_relabel(
+            &mut set,
+            &[config(Keep, &["app"], "web", "", "")]
+        ));
         let mut set = labels();
-        check!(!super::apply_relabel(&mut set, &[config(Keep, &["app"], "api", "", "")]));
+        check!(!super::apply_relabel(
+            &mut set,
+            &[config(Keep, &["app"], "api", "", "")]
+        ));
 
         // Replace writes the target label when it matches, and not otherwise.
         let mut set = labels();
-        check!(super::apply_relabel(&mut set, &[config(Replace, &["app"], "web", "tier", "front")]));
+        check!(super::apply_relabel(
+            &mut set,
+            &[config(Replace, &["app"], "web", "tier", "front")]
+        ));
         check!(set.get("tier") == Some("front"));
         let mut set = labels();
-        check!(super::apply_relabel(&mut set, &[config(Replace, &["app"], "api", "tier", "front")]));
+        check!(super::apply_relabel(
+            &mut set,
+            &[config(Replace, &["app"], "api", "tier", "front")]
+        ));
         check!(set.get("tier").is_none(), "no match, no write");
 
         // An empty replacement removes the target rather than setting it empty.
         let mut set = labels();
-        check!(super::apply_relabel(&mut set, &[config(Replace, &["app"], "web", "env", "")]));
+        check!(super::apply_relabel(
+            &mut set,
+            &[config(Replace, &["app"], "web", "env", "")]
+        ));
         check!(set.get("env").is_none(), "removed, not blanked");
 
         // The regex is anchored at both ends, so neither a prefix nor a
@@ -334,19 +355,28 @@ mod tests {
         // Source labels join with a separator, so where they divide matters.
         let mut set = labels();
         check!(
-            !super::apply_relabel(&mut set, &[config(Drop, &["app", "env"], "web;prod", "", "")]),
+            !super::apply_relabel(
+                &mut set,
+                &[config(Drop, &["app", "env"], "web;prod", "", "")]
+            ),
             "the joined value matches"
         );
         let mut set = labels();
         check!(
-            super::apply_relabel(&mut set, &[config(Drop, &["app", "env"], "webprod", "", "")]),
+            super::apply_relabel(
+                &mut set,
+                &[config(Drop, &["app", "env"], "webprod", "", "")]
+            ),
             "and does not match without the separator"
         );
 
         // A missing source label reads as empty rather than skipping the join.
         let mut set = labels();
         check!(
-            !super::apply_relabel(&mut set, &[config(Drop, &["app", "absent"], "web;", "", "")]),
+            !super::apply_relabel(
+                &mut set,
+                &[config(Drop, &["app", "absent"], "web;", "", "")]
+            ),
             "the absent label contributes nothing but its separator"
         );
 
@@ -388,7 +418,10 @@ mod tests {
     fn fnv1a_matches_the_published_vectors() {
         let hash = |s: &str| super::fnv1a(s.as_bytes());
 
-        assert!(hash("") == 0xcbf2_9ce4_8422_2325, "the empty input is the offset basis");
+        assert!(
+            hash("") == 0xcbf2_9ce4_8422_2325,
+            "the empty input is the offset basis"
+        );
         assert!(hash("a") == 0xaf63_dc4c_8601_ec8c);
         assert!(hash("b") == 0xaf63_df4c_8601_f1a5);
         assert!(hash("c") == 0xaf63_de4c_8601_eff2);
@@ -416,26 +449,56 @@ mod tests {
     fn relabel_drop_and_keep_are_mirror_images() {
         let mut series = labels(&[("env", "prod")]);
 
-        assert!(!apply_relabel(&mut series, &[relabel(RelabelAction::Drop, &["env"], "prod")]));
-        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Drop, &["env"], "dev")]));
-        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["env"], "prod")]));
-        assert!(!apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["env"], "dev")]));
+        assert!(!apply_relabel(
+            &mut series,
+            &[relabel(RelabelAction::Drop, &["env"], "prod")]
+        ));
+        assert!(apply_relabel(
+            &mut series,
+            &[relabel(RelabelAction::Drop, &["env"], "dev")]
+        ));
+        assert!(apply_relabel(
+            &mut series,
+            &[relabel(RelabelAction::Keep, &["env"], "prod")]
+        ));
+        assert!(!apply_relabel(
+            &mut series,
+            &[relabel(RelabelAction::Keep, &["env"], "dev")]
+        ));
 
         // The regex is anchored, so a partial match is not a match.
-        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Drop, &["env"], "pro")]));
+        assert!(apply_relabel(
+            &mut series,
+            &[relabel(RelabelAction::Drop, &["env"], "pro")]
+        ));
 
         // A label that is not set reads as empty rather than skipping the rule.
-        assert!(!apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["absent"], "prod")]));
-        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["absent"], "")]));
+        assert!(!apply_relabel(
+            &mut series,
+            &[relabel(RelabelAction::Keep, &["absent"], "prod")]
+        ));
+        assert!(apply_relabel(
+            &mut series,
+            &[relabel(RelabelAction::Keep, &["absent"], "")]
+        ));
 
         // Several source labels are joined with ';' before matching.
         let mut two = labels(&[("a", "x"), ("b", "y")]);
-        assert!(!apply_relabel(&mut two, &[relabel(RelabelAction::Drop, &["a", "b"], "x;y")]));
-        assert!(apply_relabel(&mut two, &[relabel(RelabelAction::Drop, &["a", "b"], "xy")]));
+        assert!(!apply_relabel(
+            &mut two,
+            &[relabel(RelabelAction::Drop, &["a", "b"], "x;y")]
+        ));
+        assert!(apply_relabel(
+            &mut two,
+            &[relabel(RelabelAction::Drop, &["a", "b"], "xy")]
+        ));
 
         // A rule whose regex will not compile is skipped, not treated as a
         // match: one bad rule must not drop every series.
-        assert!(apply_relabel(&mut series, &[relabel(RelabelAction::Keep, &["env"], "[")]));
+        assert!(apply_relabel(
+            &mut series,
+            &[relabel(RelabelAction::Keep, &["env"], "[")]
+        ));
     }
 
     /// A Replace rule with an empty replacement removes the target label
@@ -484,7 +547,9 @@ mod tests {
         assert!(err.contains("`abcd` name exceeds 3 bytes"));
 
         let long_value = labels(&[("a", "wxyz!")]);
-        let err = enforce_limits(&long_value, &limits).unwrap_err().to_string();
+        let err = enforce_limits(&long_value, &limits)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("`a` value exceeds 4 bytes"));
     }
 
@@ -502,9 +567,15 @@ mod tests {
             serde_json::from_str::<TenantLimits>(&json).map(|limits| limits.max_label_name)
         };
 
-        assert!(parse("0B").unwrap() == crabka_units::bytes(0), "zero is a limit");
+        assert!(
+            parse("0B").unwrap() == crabka_units::bytes(0),
+            "zero is a limit"
+        );
         assert!(parse("3B").unwrap() == crabka_units::bytes(3));
-        assert!(parse("1KiB").unwrap() == crabka_units::bytes(1024), "units are honoured");
+        assert!(
+            parse("1KiB").unwrap() == crabka_units::bytes(1024),
+            "units are honoured"
+        );
 
         for rejected in ["1.5B", "-1B", "-0.5B", "18446744073709551616B"] {
             let err = parse(rejected).unwrap_err().to_string();

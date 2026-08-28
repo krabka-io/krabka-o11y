@@ -960,7 +960,10 @@ mod tests {
 
         check!(ints(SCOL_NESTED_SET_LEFT) == vec![1]);
         check!(ints(SCOL_NESTED_SET_RIGHT) == vec![2]);
-        check!(ints(SCOL_PARENT_ID) == vec![-1], "a root, not a child of itself");
+        check!(
+            ints(SCOL_PARENT_ID) == vec![-1],
+            "a root, not a child of itself"
+        );
         check!(ints(SCOL_CHILD_COUNT) == vec![0]);
     }
 
@@ -972,15 +975,24 @@ mod tests {
     fn every_metadata_column_renders_its_own_cell_as_text() {
         let strings = StringArray::from(vec!["alpha", "beta"]);
         check!(strings.string_value(0) == "alpha");
-        check!(strings.string_value(1) == "beta", "the index selects the cell");
+        check!(
+            strings.string_value(1) == "beta",
+            "the index selects the cell"
+        );
 
         let ints = Int64Array::from(vec![42_i64, -7]);
         check!(ints.string_value(0) == "42");
         check!(ints.string_value(1) == "-7", "a negative keeps its sign");
 
         let floats = Float64Array::from(vec![1.5_f64, 0.0]);
-        check!(floats.string_value(0) == "1.5", "a fraction is not truncated");
-        check!(floats.string_value(1) == "0", "zero renders without a fraction");
+        check!(
+            floats.string_value(0) == "1.5",
+            "a fraction is not truncated"
+        );
+        check!(
+            floats.string_value(1) == "0",
+            "zero renders without a fraction"
+        );
 
         let bools = BooleanArray::from(vec![true, false]);
         check!(bools.string_value(0) == "true");
@@ -997,7 +1009,10 @@ mod tests {
         let mut unique = rendered.to_vec();
         unique.sort_unstable();
         unique.dedup();
-        check!(unique.len() == 4, "the four renderings must differ: {rendered:?}");
+        check!(
+            unique.len() == 4,
+            "the four renderings must differ: {rendered:?}"
+        );
     }
 
     fn span() -> Span {

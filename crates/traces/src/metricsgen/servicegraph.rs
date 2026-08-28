@@ -645,27 +645,46 @@ mod tests {
         // of these is expected to drift.
         let is = |actual: f64, expected: f64| (actual - expected).abs() < f64::EPSILON;
         let key = |client: &str, server: &str| {
-            (client.to_string(), server.to_string(), super::ConnectionType::Unset)
+            (
+                client.to_string(),
+                server.to_string(),
+                super::ConnectionType::Unset,
+            )
         };
 
         let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
-        store.complete(edge("a", "b", false, Some(1_000_000_000), Some(2_000_000_000)));
+        store.complete(edge(
+            "a",
+            "b",
+            false,
+            Some(1_000_000_000),
+            Some(2_000_000_000),
+        ));
         store.complete(edge("a", "b", true, Some(3_000_000_000), None));
         store.complete(edge("c", "d", false, None, None));
 
         let agg = &store.aggregates[&key("a", "b")];
         check!(is(agg.requests, 2.0), "one per completed edge");
         check!(is(agg.failed, 1.0), "only the failed one counts");
-        check!(is(agg.client_seconds_count, 2.0), "both carried a client latency");
+        check!(
+            is(agg.client_seconds_count, 2.0),
+            "both carried a client latency"
+        );
         check!(is(agg.client_seconds_sum, 4.0), "one second plus three");
-        check!(is(agg.server_seconds_count, 1.0), "only one carried a server latency");
+        check!(
+            is(agg.server_seconds_count, 1.0),
+            "only one carried a server latency"
+        );
         check!(is(agg.server_seconds_sum, 2.0));
 
         // A different triple aggregates separately rather than merging.
         let other = &store.aggregates[&key("c", "d")];
         check!(is(other.requests, 1.0));
         check!(is(other.failed, 0.0), "not failed");
-        check!(is(other.client_seconds_count, 0.0), "no latency recorded at all");
+        check!(
+            is(other.client_seconds_count, 0.0),
+            "no latency recorded at all"
+        );
         check!(is(other.server_seconds_count, 0.0));
         check!(store.aggregates.len() == 2, "two triples, not one");
 
@@ -695,7 +714,10 @@ mod tests {
             super::ConnectionType::MessagingSystem,
         )];
         check!(is(agg.messaging_seconds_count, 1.0));
-        check!(is(agg.messaging_seconds_sum, 2.0), "the server latency, not the client's");
+        check!(
+            is(agg.messaging_seconds_sum, 2.0),
+            "the server latency, not the client's"
+        );
     }
 
     /// An edge survives a round trip through the checkpoint codec.
@@ -753,14 +775,23 @@ mod tests {
             super::ConnectionType::MessagingSystem,
             super::ConnectionType::Database,
         ] {
-            let one = super::Edge { connection_type, ..edge.clone() };
+            let one = super::Edge {
+                connection_type,
+                ..edge.clone()
+            };
             let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&one))
                 .expect("round trip");
-            check!(decoded.connection_type == connection_type, "{connection_type:?}");
+            check!(
+                decoded.connection_type == connection_type,
+                "{connection_type:?}"
+            );
         }
 
         // A negative first-seen timestamp is a value, not a sentinel.
-        let past = super::Edge { first_seen_ns: -5, ..edge.clone() };
+        let past = super::Edge {
+            first_seen_ns: -5,
+            ..edge.clone()
+        };
         let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&past))
             .expect("round trip");
         check!(decoded.first_seen_ns == -5);
@@ -772,7 +803,10 @@ mod tests {
     fn a_malformed_checkpoint_value_is_rejected() {
         // Shorter than the fixed header.
         check!(super::decode_checkpoint_value(&[]).is_err());
-        check!(super::decode_checkpoint_value(&[0; 9]).is_err(), "one byte short of ten");
+        check!(
+            super::decode_checkpoint_value(&[0; 9]).is_err(),
+            "one byte short of ten"
+        );
 
         // A connection type outside the four defined ones.
         let mut bytes = vec![4_u8];
@@ -791,7 +825,10 @@ mod tests {
         bytes.extend_from_slice(&0_i64.to_be_bytes());
         bytes.push(0);
         bytes.push(1);
-        check!(super::decode_checkpoint_value(&bytes).is_err(), "string length missing");
+        check!(
+            super::decode_checkpoint_value(&bytes).is_err(),
+            "string length missing"
+        );
     }
 
     /// The optional decoders read a presence byte, then the value, and leave
@@ -821,16 +858,28 @@ mod tests {
 
         // Truncation is an error rather than a short read.
         let mut buf = &[][..];
-        check!(super::get_optional_i64(&mut buf).is_err(), "no presence byte");
+        check!(
+            super::get_optional_i64(&mut buf).is_err(),
+            "no presence byte"
+        );
         let mut buf = &[1, 0, 0][..];
-        check!(super::get_optional_i64(&mut buf).is_err(), "value cut short");
+        check!(
+            super::get_optional_i64(&mut buf).is_err(),
+            "value cut short"
+        );
         let mut buf = &[1, 0, 0, 0, 0, 0, 0, 0][..];
-        check!(super::get_optional_i64(&mut buf).is_err(), "one byte short of eight");
+        check!(
+            super::get_optional_i64(&mut buf).is_err(),
+            "one byte short of eight"
+        );
 
         // Strings carry a four-byte length ahead of their bytes.
         let mut buf = &[1, 0, 0, 0, 2, b'h', b'i', 0xff][..];
         check!(super::get_optional_string(&mut buf).expect("present") == Some("hi".to_string()));
-        check!(buf == &[0xff], "cursor past the string, not past the buffer");
+        check!(
+            buf == &[0xff],
+            "cursor past the string, not past the buffer"
+        );
 
         let mut buf = &[0, 0xff][..];
         check!(super::get_optional_string(&mut buf).expect("absent") == None);
@@ -842,11 +891,17 @@ mod tests {
         check!(buf == &[0xff]);
 
         let mut buf = &[1, 0, 0][..];
-        check!(super::get_optional_string(&mut buf).is_err(), "length cut short");
+        check!(
+            super::get_optional_string(&mut buf).is_err(),
+            "length cut short"
+        );
         // Exactly one byte short of a four-byte length: the bound has to be
         // `< 4`, and `< 3` would read past the end.
         let mut buf = &[1, 0, 0, 0][..];
-        check!(super::get_optional_string(&mut buf).is_err(), "three bytes of length");
+        check!(
+            super::get_optional_string(&mut buf).is_err(),
+            "three bytes of length"
+        );
         // A string that exactly fills the buffer is complete, not truncated,
         // which is the case that separates `< len` from `< len + 1`.
         let mut buf = &[1, 0, 0, 0, 2, b'h', b'i'][..];
@@ -856,9 +911,15 @@ mod tests {
         );
         check!(buf.is_empty(), "and leave nothing behind");
         let mut buf = &[1, 0, 0, 0, 9, b'h'][..];
-        check!(super::get_optional_string(&mut buf).is_err(), "declared longer than remains");
+        check!(
+            super::get_optional_string(&mut buf).is_err(),
+            "declared longer than remains"
+        );
         let mut buf = &[1, 0, 0, 0, 1, 0xff][..];
-        check!(super::get_optional_string(&mut buf).is_err(), "not valid utf-8");
+        check!(
+            super::get_optional_string(&mut buf).is_err(),
+            "not valid utf-8"
+        );
     }
     use assert2::check;
     use crabka_units::{ByteSize, convert::ByteSizeExt as _, secs};

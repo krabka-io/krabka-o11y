@@ -2918,8 +2918,14 @@ mod tests {
         check!(slot(-1) == None, "before start");
         check!(slot(100) == None, "end is exclusive");
         check!(slot(101) == None, "past end");
-        check!(super::heatmap_slot_timestamp(100, 0, 4, 50) == None, "inverted");
-        check!(super::heatmap_slot_timestamp(0, 100, 0, 50) == None, "no buckets");
+        check!(
+            super::heatmap_slot_timestamp(100, 0, 4, 50) == None,
+            "inverted"
+        );
+        check!(
+            super::heatmap_slot_timestamp(0, 100, 0, 50) == None,
+            "no buckets"
+        );
 
         // Inside: the first instant, each bucket edge, and the last instant.
         check!(slot(0) == Some(25), "start of the first bucket");
@@ -2933,7 +2939,10 @@ mod tests {
         // invisible, so repeat over 1000..1400 (step 100).
         let offset = |ts| super::heatmap_slot_timestamp(1000, 1400, 4, ts);
         check!(offset(999) == None, "before an offset start");
-        check!(offset(1000) == Some(1100), "first instant of an offset range");
+        check!(
+            offset(1000) == Some(1100),
+            "first instant of an offset range"
+        );
         check!(offset(1150) == Some(1200), "mid offset range");
         check!(offset(1399) == Some(1400), "last ms of an offset range");
         check!(offset(1400) == None, "offset end is exclusive");
@@ -2954,8 +2963,14 @@ mod tests {
         ];
         let get = |name| super::query_param_i64(&params, name);
 
-        check!(get("limit") == Some(10), "first match wins, not the later one");
-        check!(get("offset") == Some(20), "a distinct key gets its own value");
+        check!(
+            get("limit") == Some(10),
+            "first match wins, not the later one"
+        );
+        check!(
+            get("offset") == Some(20),
+            "a distinct key gets its own value"
+        );
         check!(get("depth") == Some(-4), "negatives parse");
         check!(get("junk") == None, "an unparseable value is not a match");
         check!(get("absent") == None, "a missing key has no value");
@@ -2969,7 +2984,10 @@ mod tests {
 
         check!(escape(r"a\b") == r"a\\b", "a backslash doubles");
         check!(escape(r#"a"b"#) == r#"a\"b"#, "a quote is escaped");
-        check!(escape("a\nb") == r"a\nb", "a newline becomes an escape pair");
+        check!(
+            escape("a\nb") == r"a\nb",
+            "a newline becomes an escape pair"
+        );
         check!(escape("a\tb") == r"a\tb", "a tab becomes an escape pair");
         check!(escape("plain") == "plain", "ordinary text is untouched");
         check!(escape("") == "", "an empty value stays empty");
@@ -2984,7 +3002,10 @@ mod tests {
     fn only_the_profile_id_label_is_internal() {
         check!(super::is_internal_label(super::PROFILE_ID_LABEL));
         check!(!super::is_internal_label("service_name"));
-        check!(!super::is_internal_label(""), "the empty name is not reserved");
+        check!(
+            !super::is_internal_label(""),
+            "the empty name is not reserved"
+        );
     }
 
     /// `dot_escape` guards a DOT string literal. It is a near-twin of
@@ -2996,7 +3017,10 @@ mod tests {
 
         check!(escape(r"a\b") == r"a\\b", "a backslash doubles");
         check!(escape("a\"b") == r#"a\"b"#, "a quote is escaped");
-        check!(escape("a\nb") == r"a\nb", "a newline becomes an escape pair");
+        check!(
+            escape("a\nb") == r"a\nb",
+            "a newline becomes an escape pair"
+        );
         check!(escape("a\tb") == "a\tb", "a tab is left literal");
         check!(escape("plain") == "plain", "ordinary text is untouched");
     }
@@ -3014,18 +3038,22 @@ mod tests {
 
         // No ids: the selector is handed back untouched, brackets and all.
         check!(merge(r#"{service="api"}"#, &[]).unwrap() == r#"{service="api"}"#);
-        check!(merge("", &[]).unwrap() == "", "an empty selector stays empty");
+        check!(
+            merge("", &[]).unwrap() == "",
+            "an empty selector stays empty"
+        );
 
         // One id uses an exact match; more than one uses an anchored
         // alternation. The boundary between the two forms is at exactly 1.
         check!(merge("", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#);
-        check!(
-            merge("", &["abc", "def"]).unwrap() == r#"{__profile_id__=~"^(?:abc|def)$"}"#
-        );
+        check!(merge("", &["abc", "def"]).unwrap() == r#"{__profile_id__=~"^(?:abc|def)$"}"#);
 
         // The four selector shapes an empty-vs-braced-vs-populated input takes.
         check!(merge("{}", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#);
-        check!(merge("  ", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#, "blank trims to empty");
+        check!(
+            merge("  ", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#,
+            "blank trims to empty"
+        );
         check!(
             merge(r#"{service="api"}"#, &["abc"]).unwrap()
                 == r#"{service="api",__profile_id__="abc"}"#
@@ -3047,19 +3075,34 @@ mod tests {
         check!(parse("1m").unwrap() == 60_000);
         check!(parse("1h").unwrap() == 3_600_000);
         check!(parse("1d").unwrap() == 86_400_000);
-        check!(parse("90m").unwrap() == 5_400_000, "counts above one scale too");
+        check!(
+            parse("90m").unwrap() == 5_400_000,
+            "counts above one scale too"
+        );
         check!(parse("0s").unwrap() == 0);
-        check!(parse("-30m").unwrap() == -1_800_000, "an offset may look forward");
+        check!(
+            parse("-30m").unwrap() == -1_800_000,
+            "an offset may look forward"
+        );
 
         // The unit is the last character and the count is everything before it.
         let err = parse("1w").unwrap_err().to_string();
         check!(err.contains("duration unit \"w\""), "got: {err}");
         let err = parse("s").unwrap_err().to_string();
-        check!(err.contains("invalid render relative duration"), "got: {err}");
+        check!(
+            err.contains("invalid render relative duration"),
+            "got: {err}"
+        );
         let err = parse("").unwrap_err().to_string();
-        check!(err.contains("invalid render relative duration"), "got: {err}");
+        check!(
+            err.contains("invalid render relative duration"),
+            "got: {err}"
+        );
         let err = parse("1.5h").unwrap_err().to_string();
-        check!(err.contains("invalid render relative duration"), "got: {err}");
+        check!(
+            err.contains("invalid render relative duration"),
+            "got: {err}"
+        );
 
         // An offset too large to express in milliseconds is an error rather
         // than a silently different lookback.
@@ -3105,15 +3148,23 @@ mod tests {
         let graph = crabka_pprof::FlameGraph {
             names: vec!["root".to_string(), "a\"quoted".to_string(), "b".to_string()],
             levels: vec![
-                crabka_pprof::Level { values: vec![0, 10, 2, 0] },
-                crabka_pprof::Level { values: vec![0, 4, 4, 1, 0, 6, 6, 2] },
+                crabka_pprof::Level {
+                    values: vec![0, 10, 2, 0],
+                },
+                crabka_pprof::Level {
+                    values: vec![0, 4, 4, 1, 0, 6, 6, 2],
+                },
                 // Offset 4 from a running end of 0 puts this under "b", not "a".
-                crabka_pprof::Level { values: vec![4, 6, 6, 9] },
+                crabka_pprof::Level {
+                    values: vec![4, 6, 6, 9],
+                },
                 // A negative name index cannot convert at all, which is a
                 // different failure from index 9 above: that one converts and
                 // then misses. Both fall back to a placeholder rather than
                 // naming some unrelated frame.
-                crabka_pprof::Level { values: vec![0, 6, 6, -1] },
+                crabka_pprof::Level {
+                    values: vec![0, 6, 6, -1],
+                },
             ],
             total: 10,
             max_self: 6,
@@ -3134,7 +3185,6 @@ mod tests {
         );
         check!(super::flamegraph_dot(&graph) == expected);
     }
-
 
     use super::*;
     use crate::{Limits, OverridesProvider};

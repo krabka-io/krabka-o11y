@@ -280,10 +280,10 @@ fn block_status(status: super::StatusCode) -> StatusCode {
 
 #[cfg(test)]
 mod tests {
-    use assert2::check;
     use arrow::array::{
         Array, BooleanArray, FixedSizeBinaryArray, Int32Array, ListArray, StringArray,
     };
+    use assert2::check;
     use crabka_blockstore::{
         SCOL_ATTR_IS_ARRAY, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_NESTED_SET_LEFT,
         SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_ROOT_SERVICE_NAME, SCOL_SPAN_ID, SCOL_TRACE_ID,
@@ -312,8 +312,10 @@ mod tests {
             ) == BlockAttrValue::Str(vec!["a".into(), "b".into(), "c".into()])
         );
         check!(
-            extend(BlockAttrValue::Int(vec![1]), BlockAttrValue::Int(vec![2, 3]))
-                == BlockAttrValue::Int(vec![1, 2, 3])
+            extend(
+                BlockAttrValue::Int(vec![1]),
+                BlockAttrValue::Int(vec![2, 3])
+            ) == BlockAttrValue::Int(vec![1, 2, 3])
         );
         check!(
             extend(

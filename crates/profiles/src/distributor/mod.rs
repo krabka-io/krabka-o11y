@@ -951,7 +951,10 @@ mod tests {
 
         // One field overridden at a time, so a fallback that reads the wrong
         // side shows up as the other three changing when they should not.
-        let one = super::Limits { max_label_value: bytes(66), ..zeroed.clone() };
+        let one = super::Limits {
+            max_label_value: bytes(66),
+            ..zeroed.clone()
+        };
         let merged = super::merge_ingest_limits(&base, &one);
         check!(merged.max_label_value == bytes(66), "the overridden one");
         check!(merged.max_label_name == bytes(11), "and only that one");
@@ -1060,7 +1063,10 @@ mod tests {
             })
         };
 
-        check!(rate(10.0, 0) == 10, "a whole rate with no cap passes through");
+        check!(
+            rate(10.0, 0) == 10,
+            "a whole rate with no cap passes through"
+        );
         check!(rate(10.2, 0) == 11, "a fraction rounds up, not down");
         check!(rate(0.1, 0) == 1, "a trickle still admits one");
         check!(rate(0.0, 0) == 1, "so does nothing at all");
@@ -1118,7 +1124,10 @@ mod tests {
     fn a_burst_cap_rejects_an_over_sized_batch_before_the_bucket() {
         let state = state_with_ingestion(1_000_000.0, 2, 4096);
 
-        check!(super::enforce_ingestion_rate(&state, "tenant-a", 2).is_ok(), "at the cap");
+        check!(
+            super::enforce_ingestion_rate(&state, "tenant-a", 2).is_ok(),
+            "at the cap"
+        );
         check!(
             super::enforce_ingestion_rate(&state, "tenant-a", 3).is_err(),
             "one over the cap, with a rate that would otherwise allow it"
@@ -1168,12 +1177,15 @@ mod tests {
         // tenant an eviction picks is arbitrary, so both consequences are
         // checked: dropping some other tenant shrinks the map, and dropping
         // this one hands back a different bucket.
-        let before = super::ingestion_bucket_for_tenant(&state, "c", rate)
-            .expect("a bucket is issued");
-        let again = super::ingestion_bucket_for_tenant(&state, "c", rate)
-            .expect("a bucket is issued");
+        let before =
+            super::ingestion_bucket_for_tenant(&state, "c", rate).expect("a bucket is issued");
+        let again =
+            super::ingestion_bucket_for_tenant(&state, "c", rate).expect("a bucket is issued");
         check!(buckets(&state) == 2, "no other tenant was evicted");
-        check!(Arc::ptr_eq(&before, &again), "and this tenant kept its bucket");
+        check!(
+            Arc::ptr_eq(&before, &again),
+            "and this tenant kept its bucket"
+        );
     }
 
     fn state_with_max_series(limit: u64) -> Arc<DistributorState> {
@@ -1230,7 +1242,10 @@ mod tests {
 
         // A repeated series counts once, so this fits a budget of two.
         let two = [series_record("a"), series_record("b"), series_record("a")];
-        check!(reserved(&two).unwrap().len() == 2, "three records, two series");
+        check!(
+            reserved(&two).unwrap().len() == 2,
+            "three records, two series"
+        );
         check!(held() == 2);
 
         // Re-offering what is already held adds nothing and stays within budget.
@@ -1262,7 +1277,10 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        check!(state.active_series.lock().unwrap().is_empty(), "no tenant is tracked");
+        check!(
+            state.active_series.lock().unwrap().is_empty(),
+            "no tenant is tracked"
+        );
     }
 
     /// pprof ids are indexes into a reference table. The optional form treats
@@ -1272,20 +1290,29 @@ mod tests {
     fn pprof_ids_resolve_through_the_reference_table() {
         let refs = HashMap::from([(7_u64, 1_u32), (9, 2)]);
 
-        check!(super::normalize_optional_pprof_id(0, &refs, "f").unwrap() == 0, "zero is absent");
+        check!(
+            super::normalize_optional_pprof_id(0, &refs, "f").unwrap() == 0,
+            "zero is absent"
+        );
         check!(super::normalize_optional_pprof_id(7, &refs, "f").unwrap() == 1);
         check!(super::normalize_optional_pprof_id(9, &refs, "f").unwrap() == 2);
         let err = super::normalize_optional_pprof_id(8, &refs, "location")
             .unwrap_err()
             .to_string();
-        check!(err.contains("location references missing id 8"), "got: {err}");
+        check!(
+            err.contains("location references missing id 8"),
+            "got: {err}"
+        );
 
         // The required form differs only in how it treats zero.
         check!(super::normalize_required_pprof_id(7, &refs, "f").unwrap() == 1);
         let err = super::normalize_required_pprof_id(0, &refs, "function")
             .unwrap_err()
             .to_string();
-        check!(err.contains("function references missing id 0"), "got: {err}");
+        check!(
+            err.contains("function references missing id 0"),
+            "got: {err}"
+        );
     }
 
     /// Every limit breach maps to the status the client should act on:
@@ -1294,11 +1321,17 @@ mod tests {
     fn every_limit_error_maps_to_the_code_the_client_should_act_on() {
         let cases = [
             (
-                crate::limits::LimitError::IngestionRateExceeded { rate: 1.0, observed: 2.0 },
+                crate::limits::LimitError::IngestionRateExceeded {
+                    rate: 1.0,
+                    observed: 2.0,
+                },
                 Code::ResourceExhausted,
             ),
             (
-                crate::limits::LimitError::MaxSeries { limit: 1, observed: 2 },
+                crate::limits::LimitError::MaxSeries {
+                    limit: 1,
+                    observed: 2,
+                },
                 Code::ResourceExhausted,
             ),
             (
@@ -1306,19 +1339,31 @@ mod tests {
                 Code::ResourceExhausted,
             ),
             (
-                crate::limits::LimitError::LabelNameTooLong { limit: 1, observed: 2 },
+                crate::limits::LimitError::LabelNameTooLong {
+                    limit: 1,
+                    observed: 2,
+                },
                 Code::InvalidArgument,
             ),
             (
-                crate::limits::LimitError::LabelValueTooLong { limit: 1, observed: 2 },
+                crate::limits::LimitError::LabelValueTooLong {
+                    limit: 1,
+                    observed: 2,
+                },
                 Code::InvalidArgument,
             ),
             (
-                crate::limits::LimitError::TooManyLabels { limit: 1, observed: 2 },
+                crate::limits::LimitError::TooManyLabels {
+                    limit: 1,
+                    observed: 2,
+                },
                 Code::InvalidArgument,
             ),
             (
-                crate::limits::LimitError::QueryLengthExceeded { limit_secs: 1, observed_secs: 2 },
+                crate::limits::LimitError::QueryLengthExceeded {
+                    limit_secs: 1,
+                    observed_secs: 2,
+                },
                 Code::InvalidArgument,
             ),
         ];

@@ -333,12 +333,18 @@ mod tests {
         let err = validate_spans_and_counts(0, &[bucket_span(0, 2)], &[1.0], &[], &[], None)
             .unwrap_err()
             .to_string();
-        check!(err.contains("positive spans declare 2 buckets but 1 counts"), "got: {err}");
+        check!(
+            err.contains("positive spans declare 2 buckets but 1 counts"),
+            "got: {err}"
+        );
 
         let err = validate_spans_and_counts(0, &[], &[], &[bucket_span(0, 1)], &[], None)
             .unwrap_err()
             .to_string();
-        check!(err.contains("negative spans declare 1 buckets but 0 counts"), "got: {err}");
+        check!(
+            err.contains("negative spans declare 1 buckets but 0 counts"),
+            "got: {err}"
+        );
 
         // Lengths sum across spans rather than being taken from the first.
         let err = validate_spans_and_counts(
@@ -371,11 +377,19 @@ mod tests {
         let err = nhcb(&[bucket_span(0, 2)], &[1.0, 2.0], Some(&[1.0]))
             .unwrap_err()
             .to_string();
-        check!(err.contains("2 populated buckets but only 1 custom values"), "got: {err}");
+        check!(
+            err.contains("2 populated buckets but only 1 custom values"),
+            "got: {err}"
+        );
 
         // No custom values at all counts as none rather than as unbounded.
-        let err = nhcb(&[bucket_span(0, 1)], &[1.0], None).unwrap_err().to_string();
-        check!(err.contains("1 populated buckets but only 0 custom values"), "got: {err}");
+        let err = nhcb(&[bucket_span(0, 1)], &[1.0], None)
+            .unwrap_err()
+            .to_string();
+        check!(
+            err.contains("1 populated buckets but only 0 custom values"),
+            "got: {err}"
+        );
 
         // A negative side is rejected outright, from either field alone.
         let err = validate_spans_and_counts(
@@ -388,7 +402,10 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        check!(err.contains("must not carry negative buckets"), "got: {err}");
+        check!(
+            err.contains("must not carry negative buckets"),
+            "got: {err}"
+        );
 
         // A span of zero length declares no buckets, so the count check
         // passes with no counts at all -- and the negative side is still
@@ -404,7 +421,10 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        check!(err.contains("must not carry negative buckets"), "got: {err}");
+        check!(
+            err.contains("must not carry negative buckets"),
+            "got: {err}"
+        );
 
         // Any other schema does not get these checks.
         check!(

@@ -476,13 +476,28 @@ mod tests {
         // Milliseconds, and wide enough to cover both records.
         let (all_start, all_end) = (0_i64, 10_000_i64);
 
-        let names = store.label_names("tenant-a", &[], all_start, all_end).await.unwrap();
-        check!(names.contains(&"service_name".to_string()), "got: {names:?}");
-        check!(!names.contains(&"region".to_string()), "tenant-b's label must not leak");
+        let names = store
+            .label_names("tenant-a", &[], all_start, all_end)
+            .await
+            .unwrap();
+        check!(
+            names.contains(&"service_name".to_string()),
+            "got: {names:?}"
+        );
+        check!(
+            !names.contains(&"region".to_string()),
+            "tenant-b's label must not leak"
+        );
 
-        let names = store.label_names("tenant-b", &[], all_start, all_end).await.unwrap();
+        let names = store
+            .label_names("tenant-b", &[], all_start, all_end)
+            .await
+            .unwrap();
         check!(names.contains(&"region".to_string()), "got: {names:?}");
-        check!(!names.contains(&"service_name".to_string()), "tenant-a's label must not leak");
+        check!(
+            !names.contains(&"service_name".to_string()),
+            "tenant-a's label must not leak"
+        );
 
         let values = store
             .label_values("tenant-a", "service_name", &[], all_start, all_end)
@@ -490,22 +505,53 @@ mod tests {
             .unwrap();
         check!(values == vec!["api".to_string()], "got: {values:?}");
 
-        let types = store.profile_types("tenant-a", all_start, all_end).await.unwrap();
+        let types = store
+            .profile_types("tenant-a", all_start, all_end)
+            .await
+            .unwrap();
         check!(!types.is_empty(), "tenant-a has a profile type");
         check!(
-            store.profile_types("tenant-c", all_start, all_end).await.unwrap() == Vec::<String>::new(),
+            store
+                .profile_types("tenant-c", all_start, all_end)
+                .await
+                .unwrap()
+                == Vec::<String>::new(),
             "an unknown tenant has none"
         );
 
-        let series = store.series("tenant-a", &[], &[], all_start, all_end).await.unwrap();
+        let series = store
+            .series("tenant-a", &[], &[], all_start, all_end)
+            .await
+            .unwrap();
         check!(series.len() == 1, "got: {series:?}");
 
         // The window is honoured at both ends: tenant-a's sample sits at
         // 1000ms, so a window that stops before it or starts after it is
         // empty. A delegation that swapped the ends would answer differently.
-        check!(store.series("tenant-a", &[], &[], 0, 500).await.unwrap().is_empty(), "before");
-        check!(store.series("tenant-a", &[], &[], 2_000, 10_000).await.unwrap().is_empty(), "after");
-        check!(!store.series("tenant-a", &[], &[], 900, 1_100).await.unwrap().is_empty(), "around");
+        check!(
+            store
+                .series("tenant-a", &[], &[], 0, 500)
+                .await
+                .unwrap()
+                .is_empty(),
+            "before"
+        );
+        check!(
+            store
+                .series("tenant-a", &[], &[], 2_000, 10_000)
+                .await
+                .unwrap()
+                .is_empty(),
+            "after"
+        );
+        check!(
+            !store
+                .series("tenant-a", &[], &[], 900, 1_100)
+                .await
+                .unwrap()
+                .is_empty(),
+            "around"
+        );
     }
 
     #[tokio::test]

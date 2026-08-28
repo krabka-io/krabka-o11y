@@ -354,7 +354,10 @@ mod tests {
         assert!(toks("1") == vec![Token::Int(1)]);
         assert!(toks("1.5") == vec![Token::Float(1.5)]);
         assert!(toks("0.25") == vec![Token::Float(0.25)]);
-        assert!(toks("10.75") == vec![Token::Float(10.75)], "more than one digit each side");
+        assert!(
+            toks("10.75") == vec![Token::Float(10.75)],
+            "more than one digit each side"
+        );
 
         // A second point is not part of the number, so it ends there.
         assert!(

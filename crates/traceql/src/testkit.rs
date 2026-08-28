@@ -602,8 +602,14 @@ query: { .svc = "x" }
         assert!(parse(None) == Vec::<u8>::new(), "an absent list is empty");
         assert!(parse(Some("")) == Vec::<u8>::new());
         assert!(parse(Some("1,2,3")) == vec![1, 2, 3]);
-        assert!(parse(Some(" 1 , 2 ")) == vec![1, 2], "space around entries is trimmed");
-        assert!(parse(Some("1,,2")) == vec![1, 2], "a blank entry is skipped");
+        assert!(
+            parse(Some(" 1 , 2 ")) == vec![1, 2],
+            "space around entries is trimmed"
+        );
+        assert!(
+            parse(Some("1,,2")) == vec![1, 2],
+            "a blank entry is skipped"
+        );
         assert!(parse(Some("1,2,")) == vec![1, 2], "so is a trailing comma");
         assert!(parse(Some("7")) == vec![7], "a single id needs no comma");
         assert!(parse(Some("0,255")) == vec![0, 255], "the full byte range");
@@ -635,12 +641,18 @@ query: { .svc = "x" }
         // Each expectation on its own must be able to fail the case.
         let result = super::run_search_case(&engine, case("2", "1")).await;
         assert!(!result.passed, "a wrong trace id must fail");
-        assert!(result.passed_assertions == 1, "the span assertion still held");
+        assert!(
+            result.passed_assertions == 1,
+            "the span assertion still held"
+        );
         assert!(result.message.contains("trace ids expected"));
 
         let result = super::run_search_case(&engine, case("1", "2")).await;
         assert!(!result.passed, "a wrong span id must fail");
-        assert!(result.passed_assertions == 1, "the trace assertion still held");
+        assert!(
+            result.passed_assertions == 1,
+            "the trace assertion still held"
+        );
         assert!(result.message.contains("span ids expected"));
 
         let result = super::run_search_case(&engine, case("2", "2")).await;
@@ -691,7 +703,10 @@ query: { .svc = "x" }
             .search("t", r#"{ .http.method = "GET" }"#, 0, 10_000, 20)
             .await
             .expect("query runs");
-        assert!(response.inspected == matched, "the figure is stable across runs");
+        assert!(
+            response.inspected == matched,
+            "the figure is stable across runs"
+        );
     }
 
     /// A selector over a nested scope with more than one alternative is
@@ -703,10 +718,9 @@ query: { .svc = "x" }
     /// what the response reports as Tempo's `metrics.inspectedBytes`.
     #[tokio::test]
     async fn a_disjunct_selector_sums_what_each_scan_inspected() {
-        use crate::in_memory::InMemorySpanStore;
-        use crate::result::EventRef;
-        use crabka_units::convert::ByteSizeExt;
-        use crabka_units::{ByteSize, Time};
+        use crabka_units::{ByteSize, Time, convert::ByteSizeExt};
+
+        use crate::{in_memory::InMemorySpanStore, result::EventRef};
 
         let with_event = |id: u8, event: &str| {
             let mut input = super::span(1, id, None, "root", 100, vec![]);
@@ -719,12 +733,23 @@ query: { .svc = "x" }
         };
 
         let mut store = InMemorySpanStore::new();
-        store.push_trace("t", "svc", "root", vec![with_event(1, "alpha"), with_event(2, "beta")]);
+        store.push_trace(
+            "t",
+            "svc",
+            "root",
+            vec![with_event(1, "alpha"), with_event(2, "beta")],
+        );
         let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
 
         // Two alternatives over a nested scope: this is the disjunct path.
         let response = engine
-            .search("t", r#"{ event:name = "alpha" || event:name = "beta" }"#, 0, 10_000, 20)
+            .search(
+                "t",
+                r#"{ event:name = "alpha" || event:name = "beta" }"#,
+                0,
+                10_000,
+                20,
+            )
             .await
             .expect("query runs");
 
@@ -733,7 +758,10 @@ query: { .svc = "x" }
             "the scanned bytes are summed across disjuncts, got {:?}",
             response.inspected
         );
-        assert!(!response.traces.is_empty(), "both alternatives match a span");
+        assert!(
+            !response.traces.is_empty(),
+            "both alternatives match a span"
+        );
     }
 
     /// The metrics and trace-by-id runners each carry a single assertion, so
@@ -839,8 +867,9 @@ query: { .svc = "x" }
     /// gathered across span sets whose order is not meaningful.
     #[test]
     fn trace_ids_keep_engine_order_and_span_ids_are_sorted() {
-        use crate::result::{SearchResponse, SpanRef, SpanSet, TraceResult};
         use crabka_units::{bytes, millis};
+
+        use crate::result::{SearchResponse, SpanRef, SpanSet, TraceResult};
 
         // Only the first byte of each id is read, but the ids are fixed-size,
         // so both are widened from the byte under test.
@@ -880,8 +909,14 @@ query: { .svc = "x" }
             inspected: bytes(0),
         };
 
-        assert!(super::trace_ids(&resp) == vec![3, 1], "engine order is kept");
-        assert!(super::span_ids(&resp) == vec![1, 5, 9], "span ids are sorted");
+        assert!(
+            super::trace_ids(&resp) == vec![3, 1],
+            "engine order is kept"
+        );
+        assert!(
+            super::span_ids(&resp) == vec![1, 5, 9],
+            "span ids are sorted"
+        );
     }
 
     #[test]

@@ -344,7 +344,10 @@ mod tests {
 
         // Two enforcers keep their own clocks rather than sharing one.
         let other = IngestEnforcer::new();
-        check!(other.next_touch_stamp() <= first, "a fresh clock starts over");
+        check!(
+            other.next_touch_stamp() <= first,
+            "a fresh clock starts over"
+        );
     }
     use assert2::{assert, check};
     use crabka_blockstore::Labels;
@@ -361,13 +364,25 @@ mod tests {
             ..Limits::default()
         };
 
-        check!(QueryEnforcer::check_sample_count(&limits(0), u64::MAX).is_ok(), "zero is off");
-        check!(QueryEnforcer::check_sample_count(&limits(10), 10).is_ok(), "ten fits ten");
+        check!(
+            QueryEnforcer::check_sample_count(&limits(0), u64::MAX).is_ok(),
+            "zero is off"
+        );
+        check!(
+            QueryEnforcer::check_sample_count(&limits(10), 10).is_ok(),
+            "ten fits ten"
+        );
         check!(QueryEnforcer::check_sample_count(&limits(10), 0).is_ok());
 
         let err = QueryEnforcer::check_sample_count(&limits(10), 11).unwrap_err();
         check!(
-            matches!(err, LimitError::SamplesPerQueryExceeded { limit: 10, observed: 11 }),
+            matches!(
+                err,
+                LimitError::SamplesPerQueryExceeded {
+                    limit: 10,
+                    observed: 11
+                }
+            ),
             "got: {err:?}"
         );
     }
@@ -388,21 +403,39 @@ mod tests {
             set
         };
 
-        check!(IngestEnforcer::check_labels(&limits, &label("abcd", "vwxyz")).is_ok(), "both at edge");
+        check!(
+            IngestEnforcer::check_labels(&limits, &label("abcd", "vwxyz")).is_ok(),
+            "both at edge"
+        );
 
         let err = IngestEnforcer::check_labels(&limits, &label("abcde", "v")).unwrap_err();
         check!(
-            matches!(err, LimitError::LabelNameTooLong { limit: 4, observed: 5 }),
+            matches!(
+                err,
+                LimitError::LabelNameTooLong {
+                    limit: 4,
+                    observed: 5
+                }
+            ),
             "got: {err:?}"
         );
 
         let err = IngestEnforcer::check_labels(&limits, &label("ab", "vwxyz!")).unwrap_err();
         check!(
-            matches!(err, LimitError::LabelValueTooLong { limit: 5, observed: 6 }),
+            matches!(
+                err,
+                LimitError::LabelValueTooLong {
+                    limit: 5,
+                    observed: 6
+                }
+            ),
             "got: {err:?}"
         );
 
-        check!(IngestEnforcer::check_labels(&limits, &Labels::new()).is_ok(), "no labels, no limit");
+        check!(
+            IngestEnforcer::check_labels(&limits, &Labels::new()).is_ok(),
+            "no labels, no limit"
+        );
     }
 
     /// Both query caps are off when zero and otherwise reject only what
@@ -426,7 +459,13 @@ mod tests {
         check!(QueryEnforcer::check_range(&limits(10, 0), start, now, now).is_ok());
         let err = QueryEnforcer::check_range(&limits(10, 0), start - 1, now, now).unwrap_err();
         check!(
-            matches!(err, LimitError::QueryRangeTooLong { limit_secs: 10, observed_secs: 11 }),
+            matches!(
+                err,
+                LimitError::QueryRangeTooLong {
+                    limit_secs: 10,
+                    observed_secs: 11
+                }
+            ),
             "got: {err:?}"
         );
 
@@ -435,7 +474,13 @@ mod tests {
         check!(QueryEnforcer::check_range(&limits(0, 10), start, now, now).is_ok());
         let err = QueryEnforcer::check_range(&limits(0, 10), start - 1, now, now).unwrap_err();
         check!(
-            matches!(err, LimitError::QueryLookbackExceeded { limit_secs: 10, observed_secs: 11 }),
+            matches!(
+                err,
+                LimitError::QueryLookbackExceeded {
+                    limit_secs: 10,
+                    observed_secs: 11
+                }
+            ),
             "got: {err:?}"
         );
 
@@ -448,8 +493,14 @@ mod tests {
     #[test]
     fn reported_seconds_round_up() {
         check!(secs_ceil(crabka_units::millis(0)) == 0);
-        check!(secs_ceil(crabka_units::millis(1)) == 1, "any remainder rounds up");
-        check!(secs_ceil(crabka_units::millis(1_000)) == 1, "a whole second stays whole");
+        check!(
+            secs_ceil(crabka_units::millis(1)) == 1,
+            "any remainder rounds up"
+        );
+        check!(
+            secs_ceil(crabka_units::millis(1_000)) == 1,
+            "a whole second stays whole"
+        );
         check!(secs_ceil(crabka_units::millis(1_001)) == 2);
         check!(secs_ceil(crabka_units::secs(90)) == 90);
     }

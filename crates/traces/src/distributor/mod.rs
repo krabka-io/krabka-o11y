@@ -862,12 +862,17 @@ mod tests {
         let limit = ByteSize::from_bytes(64);
         let gzip = |payload: &[u8]| {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(payload).expect("gzip accepts the payload");
+            encoder
+                .write_all(payload)
+                .expect("gzip accepts the payload");
             encoder.finish().expect("the gzip stream finishes")
         };
         let encoded = |name: &str| {
             let mut headers = HeaderMap::new();
-            headers.insert(CONTENT_ENCODING, name.parse().expect("a valid header value"));
+            headers.insert(
+                CONTENT_ENCODING,
+                name.parse().expect("a valid header value"),
+            );
             headers
         };
         let exact = vec![b'a'; 64];

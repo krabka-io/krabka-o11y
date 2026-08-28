@@ -397,7 +397,10 @@ mod tests {
 
         m.record_ingest(false, IngestBytes(1), IngestItems(1), millis(1));
         m.record_ingest(false, IngestBytes(1), IngestItems(1), millis(1));
-        check!(count("ok") == 1, "a failure must not land on the success series");
+        check!(
+            count("ok") == 1,
+            "a failure must not land on the success series"
+        );
         check!(count("error") == 2);
     }
 

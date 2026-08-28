@@ -272,7 +272,14 @@ mod tests {
     /// caught only by the values disagreeing.
     #[test]
     fn span_dimensions_carry_four_sorted_pairs() {
-        let record = span("checkout", "GET /orders", SpanKind::Client, StatusCode::Error, 5, 1);
+        let record = span(
+            "checkout",
+            "GET /orders",
+            SpanKind::Client,
+            StatusCode::Error,
+            5,
+            1,
+        );
 
         let labels = super::dimension_labels(&record);
         check!(

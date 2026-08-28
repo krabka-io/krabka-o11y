@@ -792,14 +792,23 @@ mod tests {
 
         // A duration carries its own type name rather than "int".
         check!(collect("span:duration") == vec![pair("duration", "500")]);
-        check!(collect("span:kind") == vec![pair("int", "2")], "server is kind 2");
-        check!(collect("span:status") == vec![pair("int", "1")], "ok is status 1");
+        check!(
+            collect("span:kind") == vec![pair("int", "2")],
+            "server is kind 2"
+        );
+        check!(
+            collect("span:status") == vec![pair("int", "1")],
+            "ok is status 1"
+        );
         check!(collect("span:name") == vec![pair("string", "GET /users")]);
         check!(collect("span:id") == vec![pair("string", "0202020202020202")]);
 
         // A root span contributes no parent id at all, rather than an empty
         // string or a zeroed one.
-        check!(collect("span:parentID") == vec![], "this span has no parent");
+        check!(
+            collect("span:parentID") == vec![],
+            "this span has no parent"
+        );
 
         // An unknown tag collects nothing and is not an error.
         check!(collect("span:nonsense") == vec![]);

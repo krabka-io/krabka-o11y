@@ -372,7 +372,9 @@ mod tests {
 
         // Selecting nothing is distinct from the wrapper answering nothing:
         // both are empty here, so the assertion above is what separates them.
-        let none = read_block_row_groups(store, "b.parquet", &[]).await.unwrap();
+        let none = read_block_row_groups(store, "b.parquet", &[])
+            .await
+            .unwrap();
         assert2::check!(none.iter().map(RecordBatch::num_rows).sum::<usize>() == 0);
     }
 

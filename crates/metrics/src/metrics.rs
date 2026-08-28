@@ -212,7 +212,10 @@ mod tests {
     #[test]
     fn compacted_blocks_accumulate_and_a_zero_is_skipped() {
         let metrics = super::ServiceMetrics::new();
-        check!(metrics.blocks_compacted.get() == 0, "a fresh counter is at zero");
+        check!(
+            metrics.blocks_compacted.get() == 0,
+            "a fresh counter is at zero"
+        );
 
         metrics.record_blocks_compacted(3);
         check!(metrics.blocks_compacted.get() == 3);

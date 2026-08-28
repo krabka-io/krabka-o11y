@@ -191,42 +191,66 @@ mod tests {
         // the observation and the limit in the same sentence.
         let cases: &[(LimitError, &str, &[&str])] = &[
             (
-                LimitError::IngestionRateExceeded { rate: 11.0, observed: 22.0 },
+                LimitError::IngestionRateExceeded {
+                    rate: 11.0,
+                    observed: 22.0,
+                },
                 "ingestion rate",
                 &["observed 22", "limit 11"],
             ),
             (
-                LimitError::MaxSeriesPerUser { limit: 33, observed: 44 },
+                LimitError::MaxSeriesPerUser {
+                    limit: 33,
+                    observed: 44,
+                },
                 "active series",
                 &["observed 44", "limit 33"],
             ),
             (
-                LimitError::LabelNameTooLong { limit: 55, observed: 66 },
+                LimitError::LabelNameTooLong {
+                    limit: 55,
+                    observed: 66,
+                },
                 "label name",
                 &["observed 66", "limit 55"],
             ),
             (
-                LimitError::LabelValueTooLong { limit: 77, observed: 88 },
+                LimitError::LabelValueTooLong {
+                    limit: 77,
+                    observed: 88,
+                },
                 "label value",
                 &["observed 88", "limit 77"],
             ),
             (
-                LimitError::SamplesPerQueryExceeded { limit: 99, observed: 111 },
+                LimitError::SamplesPerQueryExceeded {
+                    limit: 99,
+                    observed: 111,
+                },
                 "samples per query",
                 &["observed 111", "limit 99"],
             ),
             (
-                LimitError::SeriesPerQueryExceeded { limit: 122, observed: 133 },
+                LimitError::SeriesPerQueryExceeded {
+                    limit: 122,
+                    observed: 133,
+                },
                 "series per query",
                 &["observed 133", "limit 122"],
             ),
             (
-                LimitError::QueryLookbackExceeded { limit_secs: 144, observed_secs: 155 },
+                LimitError::QueryLookbackExceeded {
+                    limit_secs: 144,
+                    observed_secs: 155,
+                },
                 "lookback",
                 &["observed 155s", "limit 144s"],
             ),
             (
-                LimitError::QueryRangeTooLong { limit_secs: 166, observed_secs: 177 },
+                LimitError::QueryRangeTooLong {
+                    limit_secs: 166,
+                    observed_secs: 177,
+                },
                 "range too long",
                 &["observed 177s", "limit 166s"],
             ),
@@ -235,7 +259,10 @@ mod tests {
         for (error, phrase, numbers) in cases {
             let message = error.message();
             check!(!message.is_empty(), "{error:?} said nothing");
-            check!(message.contains(phrase), "{message:?} does not mention {phrase:?}");
+            check!(
+                message.contains(phrase),
+                "{message:?} does not mention {phrase:?}"
+            );
             for fragment in *numbers {
                 check!(message.contains(fragment), "{message:?} omits {fragment:?}");
             }
@@ -243,9 +270,20 @@ mod tests {
 
         // The message is the display text, not a fixed string: two variants
         // must not say the same thing.
-        let first = LimitError::LabelNameTooLong { limit: 1, observed: 2 }.message();
-        let second = LimitError::LabelValueTooLong { limit: 1, observed: 2 }.message();
-        check!(first != second, "name and value limits read alike: {first:?}");
+        let first = LimitError::LabelNameTooLong {
+            limit: 1,
+            observed: 2,
+        }
+        .message();
+        let second = LimitError::LabelValueTooLong {
+            limit: 1,
+            observed: 2,
+        }
+        .message();
+        check!(
+            first != second,
+            "name and value limits read alike: {first:?}"
+        );
     }
     use assert2::{assert, check};
 
@@ -270,9 +308,15 @@ mod tests {
             serde_json::from_str::<OnlyCap>(&json).map(|parsed| parsed.cap)
         };
 
-        check!(parse("0s").unwrap() == Time::default(), "zero turns the cap off");
+        check!(
+            parse("0s").unwrap() == Time::default(),
+            "zero turns the cap off"
+        );
         check!(parse("1h").unwrap() == crabka_units::hours(1));
-        check!(parse("1ms").unwrap() == crabka_units::millis(1), "the smallest positive cap");
+        check!(
+            parse("1ms").unwrap() == crabka_units::millis(1),
+            "the smallest positive cap"
+        );
 
         for rejected in ["-1s", "-1ms", "-1h"] {
             let err = parse(rejected).unwrap_err().to_string();
@@ -301,7 +345,10 @@ mod tests {
         // Absent and zero are different answers, and conflating them would
         // silently turn off a cap the tenant never mentioned.
         check!(parse("{}").unwrap().is_none(), "an absent cap inherits");
-        check!(parse("{\"cap\":\"0s\"}").unwrap() == Some(Time::default()), "a zero cap is off");
+        check!(
+            parse("{\"cap\":\"0s\"}").unwrap() == Some(Time::default()),
+            "a zero cap is off"
+        );
         check!(parse("{\"cap\":\"1h\"}").unwrap() == Some(crabka_units::hours(1)));
         check!(parse("{\"cap\":\"1ms\"}").unwrap() == Some(crabka_units::millis(1)));
 

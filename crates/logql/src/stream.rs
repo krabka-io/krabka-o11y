@@ -648,7 +648,9 @@ mod tests {
         use super::{LabelMatcher, MatchOp};
 
         let labels: std::collections::BTreeMap<String, String> =
-            [("job".to_string(), "api".to_string())].into_iter().collect();
+            [("job".to_string(), "api".to_string())]
+                .into_iter()
+                .collect();
 
         let m = |op, value: &str| LabelMatcher::new("job", op, value).expect("valid matcher");
         let absent = |op, value: &str| LabelMatcher::new("missing", op, value).expect("valid");
@@ -708,11 +710,16 @@ mod tests {
         ];
 
         for (input, want_logfmt, want_json) in cases {
-            assert2::check!(sanitize_logfmt_field_name(input) == want_logfmt, "logfmt {input:?}");
-            assert2::check!(sanitize_json_field_name(input) == want_json, "json {input:?}");
+            assert2::check!(
+                sanitize_logfmt_field_name(input) == want_logfmt,
+                "logfmt {input:?}"
+            );
+            assert2::check!(
+                sanitize_json_field_name(input) == want_json,
+                "json {input:?}"
+            );
         }
     }
-
 
     #[test]
     fn parse_pattern_parts_omits_empty_literals_around_captures() {

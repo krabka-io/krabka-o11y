@@ -1445,7 +1445,6 @@ mod tests {
         check!(!int_matches(6, MatchCmp::Lt, &int), "6 < 5");
     }
 
-
     fn span(id: u8, parent: Option<u8>, name: &str, attrs: Vec<(&str, AttrValue)>) -> InputSpan {
         InputSpan {
             trace_id: [7; 16],

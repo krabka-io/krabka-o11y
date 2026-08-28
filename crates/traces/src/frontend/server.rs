@@ -621,16 +621,23 @@ mod tests {
 
         // A step is required, must parse, and must be strictly positive.
         check!(super::required_step(&uri("step=5s")) == Ok(5_000_000_000));
-        check!(super::required_step(&uri("step=0")).is_err(), "zero is not positive");
-        check!(super::required_step(&uri("step=-1s")).is_err(), "nor is a negative step");
-        check!(super::required_step(&uri("")).is_err(), "and it is not optional");
+        check!(
+            super::required_step(&uri("step=0")).is_err(),
+            "zero is not positive"
+        );
+        check!(
+            super::required_step(&uri("step=-1s")).is_err(),
+            "nor is a negative step"
+        );
+        check!(
+            super::required_step(&uri("")).is_err(),
+            "and it is not optional"
+        );
         check!(super::required_step(&uri("step=abc")).is_err());
 
         // The scope is optional, but an unrecognised name is refused rather
         // than quietly treated as absent.
-        check!(
-            super::scope_param(&uri("scope=span")) == Ok(Some(crabka_traceql::TagScope::Span))
-        );
+        check!(super::scope_param(&uri("scope=span")) == Ok(Some(crabka_traceql::TagScope::Span)));
         check!(
             super::scope_param(&uri("scope=resource"))
                 == Ok(Some(crabka_traceql::TagScope::Resource))
@@ -653,14 +660,29 @@ mod tests {
         check!(parse("0", second) == Ok(0));
 
         // The fraction divides by ten raised to its own length.
-        check!(parse("1.5", second) == Ok(1_500_000_000), "one digit is tenths");
-        check!(parse("1.05", second) == Ok(1_050_000_000), "two digits are hundredths");
-        check!(parse("1.50", second) == Ok(1_500_000_000), "a trailing zero changes nothing");
-        check!(parse(".5", second) == Ok(500_000_000), "no whole part is still a number");
+        check!(
+            parse("1.5", second) == Ok(1_500_000_000),
+            "one digit is tenths"
+        );
+        check!(
+            parse("1.05", second) == Ok(1_050_000_000),
+            "two digits are hundredths"
+        );
+        check!(
+            parse("1.50", second) == Ok(1_500_000_000),
+            "a trailing zero changes nothing"
+        );
+        check!(
+            parse(".5", second) == Ok(500_000_000),
+            "no whole part is still a number"
+        );
         check!(parse("1.", second) == Ok(second), "no fraction either");
 
         // The multiplier is applied to both halves.
-        check!(parse("1.5", 1_000) == Ok(1_500), "a microsecond scales the same way");
+        check!(
+            parse("1.5", 1_000) == Ok(1_500),
+            "a microsecond scales the same way"
+        );
 
         // What is not a number.
         check!(parse(".", second).is_err(), "a bare point has no digits");
@@ -676,7 +698,10 @@ mod tests {
         check!(parse("-1", second).is_err(), "a component is unsigned");
 
         // A value too large to scale is refused rather than wrapping.
-        check!(parse(&u128::MAX.to_string(), second).is_err(), "out of range");
+        check!(
+            parse(&u128::MAX.to_string(), second).is_err(),
+            "out of range"
+        );
     }
 
     /// `parse_logfmt_value` returns the value and how many bytes it consumed.
@@ -689,23 +714,56 @@ mod tests {
 
         // Bare values run to the first whitespace.
         check!(parse("abc") == Some(("abc".to_string(), 3)));
-        check!(parse("abc def") == Some(("abc".to_string(), 3)), "stops at the space");
-        check!(parse("") == Some((String::new(), 0)), "an empty value consumes nothing");
+        check!(
+            parse("abc def") == Some(("abc".to_string(), 3)),
+            "stops at the space"
+        );
+        check!(
+            parse("") == Some((String::new(), 0)),
+            "an empty value consumes nothing"
+        );
 
         // Quoted values consume their quotes: two more than the text.
         check!(parse(r#""abc""#) == Some(("abc".to_string(), 5)));
-        check!(parse(r#""abc" rest"#) == Some(("abc".to_string(), 5)), "and stop at the close");
-        check!(parse(r#""a b""#) == Some(("a b".to_string(), 5)), "whitespace inside quotes");
-        check!(parse(r#""""#) == Some((String::new(), 2)), "an empty quoted value is two bytes");
+        check!(
+            parse(r#""abc" rest"#) == Some(("abc".to_string(), 5)),
+            "and stop at the close"
+        );
+        check!(
+            parse(r#""a b""#) == Some(("a b".to_string(), 5)),
+            "whitespace inside quotes"
+        );
+        check!(
+            parse(r#""""#) == Some((String::new(), 2)),
+            "an empty quoted value is two bytes"
+        );
 
         // Escapes: the three named ones become control characters, and anything
         // else after a backslash is itself.
-        check!(parse(r#""a\nb""#) == Some(("a\nb".to_string(), 6)), "backslash-n is a newline");
-        check!(parse(r#""a\tb""#) == Some(("a\tb".to_string(), 6)), "backslash-t is a tab");
-        check!(parse(r#""a\rb""#) == Some(("a\rb".to_string(), 6)), "backslash-r is a return");
-        check!(parse(r#""a\"b""#) == Some((r#"a"b"#.to_string(), 6)), "an escaped quote");
-        check!(parse(r#""a\\b""#) == Some((r"a\b".to_string(), 6)), "an escaped backslash");
-        check!(parse(r#""a\qb""#) == Some(("aqb".to_string(), 6)), "an unknown escape is itself");
+        check!(
+            parse(r#""a\nb""#) == Some(("a\nb".to_string(), 6)),
+            "backslash-n is a newline"
+        );
+        check!(
+            parse(r#""a\tb""#) == Some(("a\tb".to_string(), 6)),
+            "backslash-t is a tab"
+        );
+        check!(
+            parse(r#""a\rb""#) == Some(("a\rb".to_string(), 6)),
+            "backslash-r is a return"
+        );
+        check!(
+            parse(r#""a\"b""#) == Some((r#"a"b"#.to_string(), 6)),
+            "an escaped quote"
+        );
+        check!(
+            parse(r#""a\\b""#) == Some((r"a\b".to_string(), 6)),
+            "an escaped backslash"
+        );
+        check!(
+            parse(r#""a\qb""#) == Some(("aqb".to_string(), 6)),
+            "an unknown escape is itself"
+        );
 
         // An unterminated quote is not a value at all.
         check!(parse(r#""abc"#) == None);
@@ -722,7 +780,10 @@ mod tests {
 
         check!(parse("1ns").unwrap() == 1);
         check!(parse("1us").unwrap() == 1_000);
-        check!(parse("1µs").unwrap() == 1_000, "the micro sign is accepted too");
+        check!(
+            parse("1µs").unwrap() == 1_000,
+            "the micro sign is accepted too"
+        );
         check!(parse("1ms").unwrap() == 1_000_000);
         check!(parse("1s").unwrap() == 1_000_000_000);
         check!(parse("1m").unwrap() == 60_000_000_000);
@@ -752,15 +813,27 @@ mod tests {
 
         check!(parse("0").unwrap() == 0);
         check!(parse("1").unwrap() == 1_000_000_000);
-        check!(parse("1.5").unwrap() == 1_500_000_000, "the fraction is padded, not read raw");
-        check!(parse("0.000000001").unwrap() == 1, "nine places is the smallest step");
+        check!(
+            parse("1.5").unwrap() == 1_500_000_000,
+            "the fraction is padded, not read raw"
+        );
+        check!(
+            parse("0.000000001").unwrap() == 1,
+            "nine places is the smallest step"
+        );
         check!(parse("1.000000001").unwrap() == 1_000_000_001);
-        check!(parse("-1.5").unwrap() == -1_500_000_000, "the sign applies to the whole value");
+        check!(
+            parse("-1.5").unwrap() == -1_500_000_000,
+            "the sign applies to the whole value"
+        );
         check!(parse("-0").unwrap() == 0);
 
         check!(parse("").is_none(), "an empty value is not zero");
         check!(parse(".5").is_none(), "the whole part is required");
-        check!(parse("1.").unwrap() == 1_000_000_000, "an empty fraction is none");
+        check!(
+            parse("1.").unwrap() == 1_000_000_000,
+            "an empty fraction is none"
+        );
         check!(parse("1.0000000001").is_none(), "past nanosecond precision");
         check!(parse("1.2.3").is_none(), "only one point");
         check!(parse("abc").is_none());

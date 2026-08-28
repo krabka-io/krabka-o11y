@@ -168,7 +168,10 @@ mod tests {
         check!(kind(Some("CONSUMER")) == SpanKind::Consumer);
 
         // Both ways to reach internal.
-        check!(kind(Some("INTERNAL")) == SpanKind::Internal, "by falling through");
+        check!(
+            kind(Some("INTERNAL")) == SpanKind::Internal,
+            "by falling through"
+        );
         check!(kind(None) == SpanKind::Internal, "and by being absent");
         check!(kind(Some("")) == SpanKind::Internal);
         check!(kind(Some("nonsense")) == SpanKind::Internal);

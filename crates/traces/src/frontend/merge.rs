@@ -428,31 +428,46 @@ mod tests {
         }];
 
         // An unrelated id is appended rather than merged.
-        super::merge_trace(&mut merged, TraceJson {
-            trace_id: "other".to_string(),
-            root_service_name: "elsewhere".to_string(),
-            root_trace_name: "POST /x".to_string(),
-            start_time_unix_nano: "1000".to_string(),
-            duration: millis(9),
-            span_sets: Vec::new(),
-        });
+        super::merge_trace(
+            &mut merged,
+            TraceJson {
+                trace_id: "other".to_string(),
+                root_service_name: "elsewhere".to_string(),
+                root_trace_name: "POST /x".to_string(),
+                start_time_unix_nano: "1000".to_string(),
+                duration: millis(9),
+                span_sets: Vec::new(),
+            },
+        );
         check!(merged.len() == 2, "a different trace is its own entry");
         check!(merged[1].trace_id == "other");
-        check!(merged[0].start_time_unix_nano == "2000", "and leaves the first alone");
+        check!(
+            merged[0].start_time_unix_nano == "2000",
+            "and leaves the first alone"
+        );
 
         // The same id merges: earlier start wins, longer duration wins, and a
         // blank name is filled from the incoming trace while a set one is not.
-        super::merge_trace(&mut merged, TraceJson {
-            trace_id: "abc".to_string(),
-            root_service_name: "ignored".to_string(),
-            root_trace_name: "GET /orders".to_string(),
-            start_time_unix_nano: "1500".to_string(),
-            duration: millis(3),
-            span_sets: Vec::new(),
-        });
+        super::merge_trace(
+            &mut merged,
+            TraceJson {
+                trace_id: "abc".to_string(),
+                root_service_name: "ignored".to_string(),
+                root_trace_name: "GET /orders".to_string(),
+                start_time_unix_nano: "1500".to_string(),
+                duration: millis(3),
+                span_sets: Vec::new(),
+            },
+        );
         check!(merged.len() == 2, "merged, not appended");
-        check!(merged[0].start_time_unix_nano == "1500", "the earlier start wins");
-        check!(merged[0].duration == millis(5), "the longer duration wins, not the newer");
+        check!(
+            merged[0].start_time_unix_nano == "1500",
+            "the earlier start wins"
+        );
+        check!(
+            merged[0].duration == millis(5),
+            "the longer duration wins, not the newer"
+        );
         check!(
             merged[0].root_service_name == "api",
             "a name already set is kept, not overwritten"
@@ -463,17 +478,29 @@ mod tests {
         );
 
         // A later start does not move the mark back.
-        super::merge_trace(&mut merged, TraceJson {
-            trace_id: "abc".to_string(),
-            root_service_name: String::new(),
-            root_trace_name: String::new(),
-            start_time_unix_nano: "9000".to_string(),
-            duration: millis(1),
-            span_sets: Vec::new(),
-        });
-        check!(merged[0].start_time_unix_nano == "1500", "a later start is ignored");
-        check!(merged[0].duration == millis(5), "and a shorter duration too");
-        check!(merged[0].root_trace_name == "GET /orders", "a blank incoming name clears nothing");
+        super::merge_trace(
+            &mut merged,
+            TraceJson {
+                trace_id: "abc".to_string(),
+                root_service_name: String::new(),
+                root_trace_name: String::new(),
+                start_time_unix_nano: "9000".to_string(),
+                duration: millis(1),
+                span_sets: Vec::new(),
+            },
+        );
+        check!(
+            merged[0].start_time_unix_nano == "1500",
+            "a later start is ignored"
+        );
+        check!(
+            merged[0].duration == millis(5),
+            "and a shorter duration too"
+        );
+        check!(
+            merged[0].root_trace_name == "GET /orders",
+            "a blank incoming name clears nothing"
+        );
     }
 
     fn trace(tid: &str, svc: &str, start: u64, spans: Vec<SpanJson>) -> TraceJson {
