@@ -676,6 +676,21 @@ pub mod testkit {
     fn relative_floats_equal(actual: f64, expected: f64) -> bool {
         let abs_sum = actual.abs() + expected.abs();
         let diff = (actual - expected).abs();
+        // Three permanent mutation survivors sit in what follows.
+        //
+        // The first `||` can become `&&`: they differ only when exactly one
+        // side is zero and the sum still reaches the smallest normal, and there
+        // the absolute band asks whether the other side is under 1e-314 while
+        // the relative one divides it by itself -- both say no.
+        //
+        // `abs_sum <` can become `<=`: at a sum of exactly `MIN_POSITIVE` the
+        // two branches agree everywhere, meeting at the same crossing where a
+        // difference of `FLOAT_TOLERANCE * MIN_POSITIVE` is excluded either way.
+        //
+        // The final `<` can become `<=`: that needs the quotient to land
+        // exactly on `FLOAT_TOLERANCE`, which is not itself a representable
+        // double -- searching the neighbourhood of the exact solution across
+        // forty binades finds no pair of doubles that divide to it.
         if matches!(actual.classify(), std::num::FpCategory::Zero)
             || matches!(expected.classify(), std::num::FpCategory::Zero)
             || abs_sum < f64::MIN_POSITIVE
@@ -767,6 +782,118 @@ pub mod testkit {
             .unwrap_or(value)
             .replace("\\\"", "\"")
             .replace("\\\\", "\\")
+    }
+    #[cfg(test)]
+    mod tests {
+        use assert2::check;
+        use crabka_metrics::{NativeHistogram, ResetHint};
+
+        use super::*;
+
+        /// The corpus's own oracle. Every comparison below is what decides
+        /// whether a `.test` file passed, so a loosened one would quietly
+        /// accept every wrong answer the engine could give.
+        #[test]
+        fn float_comparison_accepts_only_what_prometheus_calls_equal() {
+            for (name, actual, expected, equal) in [
+                ("plainly different values", 1.0, 2.0, false),
+                ("the same value", 1.0, 1.0, true),
+                ("two zeroes", 0.0, 0.0, true),
+                ("matching infinities", f64::INFINITY, f64::INFINITY, true),
+                (
+                    "opposing infinities",
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    false,
+                ),
+                ("an infinity against a number", f64::INFINITY, 1.0, false),
+                ("two NaNs", f64::NAN, f64::NAN, true),
+                ("a NaN against a number", f64::NAN, 1.0, false),
+            ] {
+                check!(floats_equal(actual, expected) == equal, "{name}");
+            }
+
+            for (name, actual, expected, equal) in [
+                // Half the tolerance apart relative to their sum, and one and
+                // a half times it relative to their product: the denominator
+                // has to be the sum.
+                ("just inside the tolerance", 1.0, 1.000_001_5, true),
+                // Zero against a value far above the absolute band. The band
+                // is the tolerance times the smallest normal, not either one
+                // of them on its own.
+                ("zero against a small number", 0.0, 1e-300, false),
+                // Exactly on the absolute band, which is excluded.
+                (
+                    "zero against the band itself",
+                    0.0,
+                    FLOAT_TOLERANCE * f64::MIN_POSITIVE,
+                    false,
+                ),
+                // Neither is zero and neither rounds to it, but together they
+                // fall under the smallest normal, so the absolute band decides
+                // -- by relative difference they are a third apart.
+                ("two subnormals", 1e-320, 2e-320, true),
+            ] {
+                check!(
+                    relative_floats_equal(actual, expected) == equal,
+                    "{name}: {actual} vs {expected}"
+                );
+            }
+        }
+
+        /// A float and a histogram are never equal, whatever they hold.
+        #[test]
+        fn instant_values_of_different_kinds_are_never_equal() {
+            let histogram = SampleValue::Histogram(NativeHistogram {
+                schema: 0,
+                is_float: true,
+                reset_hint: ResetHint::Unknown,
+                zero_threshold: 0.0,
+                zero_count: 0.0,
+                count: 0.0,
+                sum: 0.0,
+                positive_spans: Vec::new(),
+                positive_counts: Vec::new(),
+                negative_spans: Vec::new(),
+                negative_counts: Vec::new(),
+                custom_values: None,
+                start_timestamp_ms: None,
+            });
+            for (name, actual, expected, equal) in [
+                (
+                    "equal floats",
+                    SampleValue::Float(1.0),
+                    SampleValue::Float(1.0),
+                    true,
+                ),
+                (
+                    "different floats",
+                    SampleValue::Float(1.0),
+                    SampleValue::Float(2.0),
+                    false,
+                ),
+                (
+                    "equal histograms",
+                    histogram.clone(),
+                    histogram.clone(),
+                    true,
+                ),
+                (
+                    "a float against a histogram",
+                    SampleValue::Float(0.0),
+                    histogram.clone(),
+                    false,
+                ),
+                (
+                    "a histogram against a float",
+                    histogram,
+                    SampleValue::Float(0.0),
+                    false,
+                ),
+            ] {
+                check!(instant_values_equal(&actual, &expected) == equal, "{name}");
+            }
+        }
     }
 }
 
