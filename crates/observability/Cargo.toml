@@ -9,8 +9,8 @@ rust-version.workspace = true
 # cannot be published to crates.io; matches krabka-blockstore / krabka-profiles.
 publish = false
 description = "Role-selectable observability service for Krabka's Loki-compatible logs path"
-repository = "https://github.com/robot-head/crabka"
-homepage = "https://github.com/robot-head/crabka"
+repository = "https://github.com/krabka-io/krabka-o11y"
+homepage = "https://github.com/krabka-io/krabka-o11y"
 documentation = "https://docs.rs/krabka-observability"
 readme = "../../README.md"
 keywords = ["observability", "loki", "logs", "krabka"]
