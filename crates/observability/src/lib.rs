@@ -84,10 +84,11 @@ use krabka_logql::{
     MetricScalarComparison, MetricVectorGroupModifier, MetricVectorMatching, ParseError,
     ParserStage, PipelineStage, PlanError, Quantile, RangeAggregation, StreamPlan, StreamQuery,
     UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion, VectorAggregation, VectorAggregationOp,
-    VectorGrouping, parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
-    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
-    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
-    parse_query, plan_stream_query,
+    VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
+    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
+    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
+    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
+    plan_stream_query,
 };
 use krabka_units::{
     ByteRate, ByteSize, Time,
@@ -14401,6 +14402,12 @@ fn format_logql_query(query: &str) -> Result<String, HttpQueryError> {
                 Ok(formatted)
             } else if let Ok(metric_query) = parse_metric_query(query) {
                 Ok(format_metric_query(&metric_query).unwrap_or_else(|| query.trim().to_string()))
+            } else if let Ok(expression) = parse_logql_expr(query) {
+                // The legacy formatters above preserve Loki's established
+                // canonical spelling for the expression shapes they support.
+                // The central recursive AST is the typed fallback for nested
+                // expressions those shallow parsers cannot represent.
+                Ok(expression.to_string())
             // The label_replace and binary arms below are shadowed: for every
             // query that could be constructed, the dedicated `format_*` branch
             // above accepts exactly what the corresponding `parse_*` here
@@ -26235,6 +26242,25 @@ mod tests {
         check!(
             error.contains("label name"),
             "a partial selector names what it wanted: {error}"
+        );
+    }
+
+    /// Nested metric functions are formatted from `krabka-logql`'s recursive
+    /// AST when the older HTTP-layer shape-specific formatters cannot represent
+    /// the inner expression.
+    #[test]
+    fn formatting_uses_the_recursive_logql_ast_for_nested_expressions() {
+        let query = concat!(
+            r#"label_replace(label_replace(rate({app="web"}[5m]),"inner","$1","app","(.*)"),"#,
+            r#"outer","$1","inner","(.*)")"#,
+        );
+
+        check!(
+            super::format_logql_query(query).expect("the nested expression formats")
+                == concat!(
+                    r#"label_replace(label_replace(rate({app="web"}[5m]), "inner", "$1", "app", "(.*)"), "#,
+                    r#""outer", "$1", "inner", "(.*)")"#,
+                )
         );
     }
 

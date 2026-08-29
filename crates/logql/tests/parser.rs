@@ -2238,6 +2238,31 @@ fn parses_count_over_time_metric_query() {
 }
 
 #[test]
+fn parses_and_formats_recursive_logql_expressions() {
+    let expression = krabka_logql::parse_logql_expr(
+        r#"label_replace((count_over_time({app="api"}[30s]) + on(app) group_left(env) count_over_time({app="worker"}[30s])) * 2, "service", "$1", "app", "(.*)")"#,
+    )
+    .unwrap();
+
+    check!(
+        expression.to_string()
+            == r#"label_replace((count_over_time({app="api"}[30s]) + on(app) group_left(env) count_over_time({app="worker"}[30s])) * 2, "service", "$1", "app", "(.*)")"#
+    );
+}
+
+#[test]
+fn logql_expression_parser_obeys_operator_precedence() {
+    let expression = krabka_logql::parse_logql_expr("vector(1) + 2 * 3 ^ 4 ^ 5").unwrap();
+    check!(expression.to_string() == "vector(1) + 2 * 3 ^ 4 ^ 5");
+
+    let left_associative = krabka_logql::parse_logql_expr("vector(1) - 2 - 3").unwrap();
+    check!(left_associative.to_string() == "vector(1) - 2 - 3");
+
+    let grouped = krabka_logql::parse_logql_expr("(vector(1) + 2) * 3").unwrap();
+    check!(grouped.to_string() == "(vector(1) + 2) * 3");
+}
+
+#[test]
 fn parses_metric_range_selector_before_pipeline() {
     let query = parse_metric_query(
         r#"count_over_time({app="api"}[30s] |= "error" | logfmt | status >= 500)"#,

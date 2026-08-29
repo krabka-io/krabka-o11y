@@ -35,14 +35,14 @@ pub use stream::{
     RegexpParser, StreamQuery,
 };
 pub use syntax::{
-    MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricBinarySetOp,
+    LogqlExpr, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricBinarySetOp,
     MetricLabelJoin, MetricLabelReplace, MetricQuery, MetricScalarArithmetic,
     MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
     MetricVectorMatching, Quantile, RangeAggregation, VectorAggregation, VectorAggregationOp,
-    VectorGrouping, parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
-    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
-    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
-    parse_query,
+    VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
+    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
+    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
+    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
 };
 pub use template::LineFormat;
 pub use types::{
