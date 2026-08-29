@@ -570,9 +570,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let shutdown = CancellationToken::new();
         let shutdown_task = shutdown.clone();
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                shutdown_task.cancel();
-            }
+            krabka_observability::shutdown_signal().await;
+            shutdown_task.cancel();
         });
 
         let role = async {

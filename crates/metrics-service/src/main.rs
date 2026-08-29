@@ -334,7 +334,7 @@ async fn run_query_frontend(
     }
     let router = prometheus_router(Arc::new(state));
     let shutdown = Shutdown::new();
-    spawn_ctrl_c_listener(shutdown.clone());
+    spawn_shutdown_signal_listener(shutdown.clone());
     let (bound, server) =
         serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
     tracing::info!(%bound, "metrics-service query-frontend listening");
@@ -425,7 +425,7 @@ async fn run_ruler(
     let poll_timeout = cli.wal_poll_timeout;
 
     let shutdown = Shutdown::new();
-    spawn_ctrl_c_listener(shutdown.clone());
+    spawn_shutdown_signal_listener(shutdown.clone());
 
     // The ruler state consumer and evaluation loop are critical: both feed
     // ruler correctness. Their stop predicate observes the shared shutdown, and
@@ -495,7 +495,7 @@ async fn run_querier(
     let store: Arc<dyn ObjectStore> = Arc::from(store);
     let head = WalHead::with_retention(cli.wal_head_retention);
     let shutdown = Shutdown::new();
-    spawn_ctrl_c_listener(shutdown.clone());
+    spawn_shutdown_signal_listener(shutdown.clone());
     if let Some(bootstrap) = cli.wal_bootstrap.clone() {
         let wal_head = head.clone();
         let wal_topic = cli.wal_topic.clone();
@@ -631,15 +631,12 @@ impl Shutdown {
     }
 }
 
-/// Spawn a task that sets the shared shutdown on the first SIGINT, that is
-/// Ctrl-C.
+/// Spawn a task that sets the shared shutdown on the first shutdown signal.
 ///
 /// One signal stops the server and all background tasks together.
-fn spawn_ctrl_c_listener(shutdown: Shutdown) {
+fn spawn_shutdown_signal_listener(shutdown: Shutdown) {
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_err() {
-            tracing::error!("failed to listen for ctrl-c; triggering shutdown");
-        }
+        krabka_observability::shutdown_signal().await;
         shutdown.trigger();
     });
 }

@@ -60,7 +60,7 @@ pub async fn run(debuginfod_urls: Vec<String>) -> Result<(), crate::ProfilesErro
 ///
 /// # Errors
 ///
-/// Returns an error when resolver setup or signal handling fails.
+/// Returns an error when resolver setup fails.
 pub async fn run_with_config(
     debuginfod_urls: Vec<String>,
     config: DebuginfodConfig,
@@ -70,9 +70,7 @@ pub async fn run_with_config(
         debuginfod_urls = ?debuginfod_urls,
         "profiles symbolizer ready; DWARF/debuginfod resolver integration is loaded"
     );
-    tokio::signal::ctrl_c()
-        .await
-        .map_err(|err| crate::ProfilesError::Block(format!("symbolizer signal failed: {err}")))?;
+    krabka_observability::shutdown_signal().await;
     Ok(())
 }
 

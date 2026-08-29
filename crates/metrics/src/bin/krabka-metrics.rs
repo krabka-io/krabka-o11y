@@ -285,7 +285,7 @@ async fn run_querier(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%bound, "metrics querier listening");
     axum::serve(listener, querier_router())
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            krabka_observability::shutdown_signal().await;
         })
         .await?;
     Ok(())
@@ -297,7 +297,7 @@ async fn run_query_frontend(cli: Cli) -> Result<(), Box<dyn std::error::Error>> 
     tracing::info!(%bound, "metrics query-frontend listening");
     axum::serve(listener, query_frontend_router())
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            krabka_observability::shutdown_signal().await;
         })
         .await?;
     Ok(())
@@ -309,7 +309,7 @@ async fn run_ruler(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%bound, "metrics ruler listening");
     axum::serve(listener, ruler_router())
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            krabka_observability::shutdown_signal().await;
         })
         .await?;
     Ok(())
@@ -467,7 +467,7 @@ async fn run_distributor(
     tracing::info!(%bound, "metrics distributor listening");
     let server = std::future::IntoFuture::into_future(
         axum::serve(listener, distributor_router(state)).with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            krabka_observability::shutdown_signal().await;
         }),
     );
     tokio::pin!(server);
@@ -515,7 +515,7 @@ async fn run_compactor(
     }
     let signal = Arc::clone(&stopping);
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        krabka_observability::shutdown_signal().await;
         signal.store(true, Ordering::SeqCst);
     });
     let result = run_compactor_consumer_loop(

@@ -6856,6 +6856,38 @@ pub async fn serve_service(
     serve_service_listener(listener, config, dependencies, object_store).await
 }
 
+/// Waits for an operating-system signal requesting graceful shutdown.
+///
+/// On Unix, either `SIGINT` (usually sent by Ctrl+C) or `SIGTERM` resolves the
+/// future. On other platforms, only the platform's Ctrl+C notification is
+/// available.
+///
+/// # Panics
+/// Panics when the operating-system signal handler cannot be installed.
+pub async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {},
+        () = terminate => {},
+    }
+}
+
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
 /// # Panics
@@ -6874,20 +6906,7 @@ pub async fn serve_service_listener(
     let token = CancellationToken::new();
     let token_sig = token.clone();
     tokio::spawn(async move {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{SignalKind, signal};
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-            tokio::select! {
-                _ = sigterm.recv() => {}
-                _ = tokio::signal::ctrl_c() => {}
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = tokio::signal::ctrl_c().await;
-        }
+        shutdown_signal().await;
         token_sig.cancel();
     });
     let token_srv = token.clone();
