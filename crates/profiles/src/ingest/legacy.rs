@@ -2,9 +2,9 @@
 
 use std::{collections::BTreeMap, io::Cursor};
 
-use crabka_blockstore::Labels;
-use crabka_pprof::PprofProfile;
-use crabka_units::{ByteSize, convert::ByteSizeExt as _};
+use krabka_blockstore::Labels;
+use krabka_pprof::PprofProfile;
+use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 use serde::Deserialize;
 
 use crate::{error::ProfilesError, ingest::RawProfile};
@@ -42,7 +42,7 @@ impl Default for LegacyDecodeLimits {
     fn default() -> Self {
         Self {
             max_nodes: 500_000,
-            max_path_bytes: crabka_units::mebibytes(64),
+            max_path_bytes: krabka_units::mebibytes(64),
             max_trie_depth: 4_096,
         }
     }
@@ -450,7 +450,7 @@ fn apply_sample_type_config(profile: PprofProfile, config: &SampleTypeConfig) ->
         first.r#type = sample_type_name;
         first.unit = sample_unit;
     }
-    profile.period_type = Some(crabka_pprof::proto::ValueType {
+    profile.period_type = Some(krabka_pprof::proto::ValueType {
         r#type: sample_type_name,
         unit: sample_unit,
     });
@@ -1048,16 +1048,16 @@ fn stacks_to_pprof(
             } else {
                 let name_ref = intern_string(&mut strings, &mut string_ids, &frame);
                 let id = i64::try_from(functions.len() + 1).expect("function id fits i64");
-                functions.push(crabka_pprof::proto::Function {
+                functions.push(krabka_pprof::proto::Function {
                     id: u64::try_from(id).expect("positive id fits u64"),
                     name: name_ref,
                     system_name: name_ref,
                     filename: 0,
                     start_line: 0,
                 });
-                locations.push(crabka_pprof::proto::Location {
+                locations.push(krabka_pprof::proto::Location {
                     id: u64::try_from(id).expect("positive id fits u64"),
-                    line: vec![crabka_pprof::proto::Line {
+                    line: vec![krabka_pprof::proto::Line {
                         function_id: u64::try_from(id).expect("positive id fits u64"),
                         line: i64::from(line),
                         column: 0,
@@ -1069,7 +1069,7 @@ fn stacks_to_pprof(
             };
             location_ids.push(u64::try_from(function_id).expect("positive id fits u64"));
         }
-        samples.push(crabka_pprof::proto::Sample {
+        samples.push(krabka_pprof::proto::Sample {
             location_id: location_ids,
             value: vec![value],
             label: Vec::new(),
@@ -1077,13 +1077,13 @@ fn stacks_to_pprof(
     }
 
     let _ = intern_string(&mut strings, &mut string_ids, name);
-    PprofProfile::from(crabka_pprof::proto::Profile {
-        sample_type: vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+    PprofProfile::from(krabka_pprof::proto::Profile {
+        sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
         sample: samples,
         location: locations,
         function: functions,
         string_table: strings,
-        period_type: Some(crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
+        period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
         ..Default::default()
     })
 }
@@ -1157,7 +1157,7 @@ fn urldecode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use crabka_units::mebibytes;
+    use krabka_units::mebibytes;
 
     use super::*;
 
@@ -1430,7 +1430,7 @@ mod tests {
         // copied into each descendant, which is the amplification the budget
         // exists to bound.
         let path = |n| LegacyDecodeLimits {
-            max_path_bytes: crabka_units::bytes(n),
+            max_path_bytes: krabka_units::bytes(n),
             ..LegacyDecodeLimits::default()
         };
         check!(
@@ -1612,7 +1612,7 @@ mod tests {
                 &query,
                 "multipart/form-data; boundary=test-boundary",
                 multipart_body(&[("profile", folded)]),
-                crabka_units::bytes(limit),
+                krabka_units::bytes(limit),
                 LegacyDecodeLimits::default(),
             ))
         };

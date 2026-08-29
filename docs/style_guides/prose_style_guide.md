@@ -1,12 +1,12 @@
 # Prose Style Guide
 
-This guide defines how to write prose in Crabka. It applies to every guide in this directory, and it governs the wording rules that the others leave open.
+This guide defines how to write prose in Krabka. It applies to every guide in this directory, and it governs the wording rules that the others leave open.
 
-Crabka writes prose in **ASD-STE100 Simplified Technical English (STE)**. STE is a controlled-language specification for technical documentation. It gives each word one meaning, keeps sentences short, and puts the actor in front of the verb. The result is easy to read for a reviewer, for a new contributor, and for a reader whose first language is not English.
+Krabka writes prose in **ASD-STE100 Simplified Technical English (STE)**. STE is a controlled-language specification for technical documentation. It gives each word one meaning, keeps sentences short, and puts the actor in front of the verb. The result is easy to read for a reviewer, for a new contributor, and for a reader whose first language is not English.
 
 ## Scope
 
-STE applies to all prose that Crabka writes:
+STE applies to all prose that Krabka writes:
 
 - Rustdoc comments (`///` and `//!`) and ordinary `//` comments
 - Crate `README.md` files, design docs, and coverage reports
@@ -59,7 +59,7 @@ This rule matters more than any other in this guide, because it changes what an 
 
 **Write `must` only when the code enforces the rule.** A rule is enforced when breaking it produces an observable failure from the code you are documenting: an `Err` return, a `panic!`, an `assert!`, an `expect`, or a protocol-level rejection.
 
-**Write `should` for a recommendation.** Advice to a caller, to an operator, to an external client, or to a person reading a debugging note is a recommendation. Crabka cannot make a foreign Kafka client retry, and it cannot make a caller's runtime back off.
+**Write `should` for a recommendation.** Advice to a caller, to an operator, to an external client, or to a person reading a debugging note is a recommendation. Krabka cannot make a foreign Kafka client retry, and it cannot make a caller's runtime back off.
 
 Do not write `shall`. Keep `must not` and `do not` for prohibitions.
 

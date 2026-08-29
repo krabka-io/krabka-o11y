@@ -1,6 +1,6 @@
 //! Pyroscope-shaped per-tenant limits for profiles ingest and query paths.
 
-use crabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, hours, per_sec};
+use krabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, hours, per_sec};
 use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ pub use overrides::{OverridesError, OverridesProvider};
 pub struct Limits {
     /// Pyroscope `ingestion_rate_mb` analog, counted in profiles per second.
     /// Zero means unlimited.
-    #[serde(with = "crabka_units::serde_units::human::frequency")]
+    #[serde(with = "krabka_units::serde_units::human::frequency")]
     pub ingestion_rate: Frequency,
     /// Pyroscope `ingestion_burst_size_mb` analog, counted in profiles.
     pub ingestion_burst_profiles: u64,
@@ -24,11 +24,11 @@ pub struct Limits {
     pub max_series: u64,
     /// Pyroscope `max_label_name_length`, a cap on the UTF-8 bytes of a label
     /// name; zero means unlimited.
-    #[serde(with = "crabka_units::serde_units::human::byte_size")]
+    #[serde(with = "krabka_units::serde_units::human::byte_size")]
     pub max_label_name: ByteSize,
     /// Pyroscope `max_label_value_length`, a cap on the UTF-8 bytes of a label
     /// value; zero means unlimited.
-    #[serde(with = "crabka_units::serde_units::human::byte_size")]
+    #[serde(with = "krabka_units::serde_units::human::byte_size")]
     pub max_label_value: ByteSize,
     /// Pyroscope `max_label_names_per_series`; `0` means unlimited.
     pub max_label_names_per_series: u64,
@@ -38,7 +38,7 @@ pub struct Limits {
     pub max_flamegraph_nodes_max: i64,
     /// Pyroscope `max_query_length`, the `(end-start)` ceiling; zero means
     /// unlimited.
-    #[serde(with = "crabka_units::serde_units::human::time")]
+    #[serde(with = "krabka_units::serde_units::human::time")]
     pub max_query_length: Time,
     /// `__session_id__` modulo-hash bucket cap; `0` means unlimited.
     pub max_session_id_cardinality: u64,
@@ -171,7 +171,7 @@ impl LimitError {
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use crabka_units::secs;
+    use krabka_units::secs;
 
     use super::*;
 

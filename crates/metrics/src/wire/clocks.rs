@@ -26,10 +26,10 @@
 //! Every nanosecond field here stays an `i64`. The block columns are exact
 //! `Int64` nanosecond counts, and an `f64` quantity cannot represent every
 //! value such a column holds, so a round trip through one would mangle a wire
-//! value above 2^53 ns. The conversion to a [`crabka_units::Time`] happens at
+//! value above 2^53 ns. The conversion to a [`krabka_units::Time`] happens at
 //! the projection edge, where the target is a `f64` second count anyway.
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 

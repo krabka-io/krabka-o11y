@@ -1,10 +1,10 @@
 //! OTLP `v1development` profiles -> `Vec<RawProfile>`.
 //!
 //! The generated OTLP types live in this crate, so the edge converts them into
-//! the pprof wire model owned by `crabka-pprof`.
+//! the pprof wire model owned by `krabka-pprof`.
 
-use crabka_blockstore::Labels;
-use crabka_pprof::PprofProfile;
+use krabka_blockstore::Labels;
+use krabka_pprof::PprofProfile;
 
 use crate::{error::ProfilesError, ingest::RawProfile, wire::pb};
 
@@ -60,13 +60,13 @@ fn otlp_profile_to_pprof(
     profile: &pb::otlp_profiles::Profile,
     dict: &pb::otlp_profiles::ProfilesDictionary,
 ) -> Result<PprofProfile, ProfilesError> {
-    let mut pprof = crabka_pprof::proto::Profile {
+    let mut pprof = krabka_pprof::proto::Profile {
         string_table: string_table(dict),
         mapping: dict
             .mapping_table
             .iter()
             .enumerate()
-            .map(|(idx, mapping)| crabka_pprof::proto::Mapping {
+            .map(|(idx, mapping)| krabka_pprof::proto::Mapping {
                 id: u64::try_from(idx + 1).unwrap_or(u64::MAX),
                 memory_start: mapping.memory_start,
                 memory_limit: mapping.memory_limit,
@@ -79,7 +79,7 @@ fn otlp_profile_to_pprof(
             .function_table
             .iter()
             .enumerate()
-            .map(|(idx, function)| crabka_pprof::proto::Function {
+            .map(|(idx, function)| krabka_pprof::proto::Function {
                 id: u64::try_from(idx + 1).unwrap_or(u64::MAX),
                 name: i64::from(function.name_strindex),
                 system_name: i64::from(function.system_name_strindex),
@@ -91,14 +91,14 @@ fn otlp_profile_to_pprof(
             .location_table
             .iter()
             .enumerate()
-            .map(|(idx, location)| crabka_pprof::proto::Location {
+            .map(|(idx, location)| krabka_pprof::proto::Location {
                 id: u64::try_from(idx + 1).unwrap_or(u64::MAX),
                 mapping_id: table_ref(location.mapping_index, dict.mapping_table.len()),
                 address: location.address,
                 line: location
                     .lines
                     .iter()
-                    .map(|line| crabka_pprof::proto::Line {
+                    .map(|line| krabka_pprof::proto::Line {
                         function_id: table_ref(line.function_index, dict.function_table.len()),
                         line: line.line,
                         column: line.column,
@@ -139,7 +139,7 @@ fn otlp_profile_to_pprof(
                 )
             })
             .collect::<Result<Vec<_>, ProfilesError>>()?;
-        pprof.sample.push(crabka_pprof::proto::Sample {
+        pprof.sample.push(krabka_pprof::proto::Sample {
             location_id,
             value: sample.values.clone(),
             label: sample_labels(sample, dict, &mut pprof.string_table)?,
@@ -164,13 +164,13 @@ fn sample_labels(
     sample: &pb::otlp_profiles::Sample,
     dict: &pb::otlp_profiles::ProfilesDictionary,
     strings: &mut Vec<String>,
-) -> Result<Vec<crabka_pprof::proto::Label>, ProfilesError> {
+) -> Result<Vec<krabka_pprof::proto::Label>, ProfilesError> {
     let mut labels = Vec::new();
     for attr_idx in &sample.attribute_indices {
         let (name, value) = attribute_label(*attr_idx, dict)?;
         let key = intern_string(strings, &name);
         let value_idx = intern_string(strings, &value);
-        labels.push(crabka_pprof::proto::Label {
+        labels.push(krabka_pprof::proto::Label {
             key,
             str: value_idx,
             num: 0,
@@ -281,8 +281,8 @@ fn otlp_sample_links(
     Ok((span_ids, trace_ids))
 }
 
-fn value_type(value: pb::otlp_profiles::ValueType) -> crabka_pprof::proto::ValueType {
-    crabka_pprof::proto::ValueType {
+fn value_type(value: pb::otlp_profiles::ValueType) -> krabka_pprof::proto::ValueType {
+    krabka_pprof::proto::ValueType {
         r#type: i64::from(value.type_strindex),
         unit: i64::from(value.unit_strindex),
     }
@@ -516,7 +516,7 @@ mod tests {
         check!(
             inner.mapping
                 == vec![
-                    crabka_pprof::proto::Mapping {
+                    krabka_pprof::proto::Mapping {
                         id: 1,
                         memory_start: 0x10,
                         memory_limit: 0x20,
@@ -524,7 +524,7 @@ mod tests {
                         filename: 9,
                         ..Default::default()
                     },
-                    crabka_pprof::proto::Mapping {
+                    krabka_pprof::proto::Mapping {
                         id: 2,
                         memory_start: 0x40,
                         memory_limit: 0x50,
@@ -537,14 +537,14 @@ mod tests {
         check!(
             inner.function
                 == vec![
-                    crabka_pprof::proto::Function {
+                    krabka_pprof::proto::Function {
                         id: 1,
                         name: 3,
                         system_name: 5,
                         filename: 7,
                         start_line: 11,
                     },
-                    crabka_pprof::proto::Function {
+                    krabka_pprof::proto::Function {
                         id: 2,
                         name: 4,
                         system_name: 6,
@@ -556,22 +556,22 @@ mod tests {
         check!(
             inner.location
                 == vec![
-                    crabka_pprof::proto::Location {
+                    krabka_pprof::proto::Location {
                         id: 1,
                         mapping_id: 1,
                         address: 0x100,
-                        line: vec![crabka_pprof::proto::Line {
+                        line: vec![krabka_pprof::proto::Line {
                             function_id: 1,
                             line: 1,
                             column: 2
                         }],
                         ..Default::default()
                     },
-                    crabka_pprof::proto::Location {
+                    krabka_pprof::proto::Location {
                         id: 2,
                         mapping_id: 2,
                         address: 0x200,
-                        line: vec![crabka_pprof::proto::Line {
+                        line: vec![krabka_pprof::proto::Line {
                             function_id: 2,
                             line: 3,
                             column: 4
@@ -584,7 +584,7 @@ mod tests {
         // Stack order is preserved as written, leaf first.
         check!(
             inner.sample
-                == vec![crabka_pprof::proto::Sample {
+                == vec![krabka_pprof::proto::Sample {
                     location_id: vec![2, 1],
                     value: vec![7],
                     label: vec![],
@@ -595,11 +595,11 @@ mod tests {
         check!(inner.duration_nanos == 5_000);
         check!(inner.period == 99);
         check!(
-            inner.sample_type == vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            inner.sample_type == vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
             "sample type keeps type and unit in order"
         );
         check!(
-            inner.period_type == Some(crabka_pprof::proto::ValueType { r#type: 2, unit: 1 }),
+            inner.period_type == Some(krabka_pprof::proto::ValueType { r#type: 2, unit: 1 }),
             "period type is not the sample type"
         );
     }

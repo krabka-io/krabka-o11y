@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use assert2::assert;
-use crabka_traceql::{
+use krabka_traceql::{
     AttrValue, EngineOpts, InMemorySpanStore, InputSpan, SearchResponse, TraceqlEngine,
 };
-use crabka_units::{Time, convert::TimeExt as _};
+use krabka_units::{Time, convert::TimeExt as _};
 
 fn span(
     trace: u8,

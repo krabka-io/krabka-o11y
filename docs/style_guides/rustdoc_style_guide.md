@@ -1,6 +1,6 @@
 # Rustdoc Style Guide
 
-This guide defines conventions for rustdoc comments across Crabka crates. It follows the patterns that `crabka-protocol`, `crabka-raft`, `crabka-broker`, and `crabka-metadata` already use. It complements the general [code style guide](code_style_guide.md).
+This guide defines conventions for rustdoc comments across Krabka crates. It follows the patterns that `krabka-protocol`, `krabka-raft`, `krabka-broker`, and `krabka-metadata` already use. It complements the general [code style guide](code_style_guide.md).
 
 This guide defines **structure**. The [prose style guide](prose_style_guide.md) defines **wording**, and it applies to every doc comment: Simplified Technical English, one short summary sentence on the first line, and `must` only where the code enforces the rule.
 
@@ -8,19 +8,19 @@ This guide defines **structure**. The [prose style guide](prose_style_guide.md) 
 
 Every library crate must have a crate-level doc comment at the top of `lib.rs`. Binary crates (`main.rs`) do not need one.
 
-Crabka uses `//!` line comments for crate-level docs, not `/*! … */` blocks. This matches the existing crates. It also avoids a limit of `/* */` blocks: they cannot contain a `*/` sequence. That limit matters here, because doc text often mentions glob patterns, regexes, and byte sequences.
+Krabka uses `//!` line comments for crate-level docs, not `/*! … */` blocks. This matches the existing crates. It also avoids a limit of `/* */` blocks: they cannot contain a `*/` sequence. That limit matters here, because doc text often mentions glob patterns, regexes, and byte sequences.
 
 The crate-level doc should include:
 
 1. **One-line summary** — what the crate does.
-2. **Overview paragraph** — context, the relationship to other Crabka crates, and the Kafka standards and KIPs it implements.
+2. **Overview paragraph** — context, the relationship to other Krabka crates, and the Kafka standards and KIPs it implements.
 3. **Key modules or types** — a short list with links to the main entry points.
 4. **Feature flags** — if the crate has any, with a description of each and which ones are on by default.
 
 ```rust
 //! Kafka wire-protocol codec.
 //!
-//! `crabka-protocol` encodes and decodes every Apache Kafka request and
+//! `krabka-protocol` encodes and decodes every Apache Kafka request and
 //! response message, byte-equivalent to the upstream JVM implementation. It
 //! performs no I/O and makes no async assumptions; it is consumed by the
 //! broker, client, and tooling crates in the workspace.
@@ -36,7 +36,7 @@ The crate-level doc should include:
 //! - `snappy`, `zstd`, `gzip`, `lz4` — record-batch compression codecs (all on by default).
 ```
 
-If Crabka publishes a crate to docs.rs, set `#![doc(html_root_url = "https://docs.rs/<crate>/<version>")]` as the existing crates do.
+If Krabka publishes a crate to docs.rs, set `#![doc(html_root_url = "https://docs.rs/<crate>/<version>")]` as the existing crates do.
 
 ## Public Item Documentation
 
@@ -46,7 +46,7 @@ Every public item that is part of the crate's published API should have a doc co
 - `pub(crate)` items — visible within the crate but not to consumers.
 - `pub` items inside private modules (`mod foo`, not `pub mod foo`).
 
-Use `//` comments on these if the logic needs an explanation. Before you add rustdoc, confirm that a public module path exposes the public type. Crabka does not force the `missing_docs` lint, so this is a review expectation and not a compiler error. Enforce it at review.
+Use `//` comments on these if the logic needs an explanation. Before you add rustdoc, confirm that a public module path exposes the public type. Krabka does not force the `missing_docs` lint, so this is a review expectation and not a compiler error. Enforce it at review.
 
 ### One-Liner Items
 
@@ -82,7 +82,7 @@ For types or functions with non-trivial behaviour, use structured sections:
 /// # Examples
 ///
 /// ```no_run
-/// # async fn f(pool: crabka_broker::TaskPool) {
+/// # async fn f(pool: krabka_broker::TaskPool) {
 /// pool.spawn(async { /* ... */ });
 /// pool.join().await;
 /// # }
@@ -103,7 +103,7 @@ Use only these standard sections, in this order:
 | `# Panics` | When the function can panic in normal use |
 | `# Errors` | When the function returns `Result` and the error conditions are worth a note |
 
-There is no `# Safety` section: Crabka forbids `unsafe` (`unsafe_code = "forbid"`), so there are no `unsafe fn` to document.
+There is no `# Safety` section: Krabka forbids `unsafe` (`unsafe_code = "forbid"`), so there are no `unsafe fn` to document.
 
 The workspace lints relax `missing_errors_doc` and `missing_panics_doc`, so the lints do **not** force a `# Errors` or `# Panics` section. Add them where they genuinely help the caller. Omit them when the error or panic condition is already obvious from the signature. Do not add sections that only repeat the summary.
 
@@ -144,7 +144,7 @@ Use rustdoc syntax to link to other types and modules:
 Use full paths when you reference an item in another crate:
 
 ```rust
-/// Uses [`crabka_protocol::records`] for record-batch decoding.
+/// Uses [`krabka_protocol::records`] for record-batch decoding.
 ```
 
 ## Configuration Structs
@@ -197,7 +197,7 @@ impl Encode for RecordBatch {
 - `impl` blocks for derived traits (`Debug`, `Clone`, etc.).
 - Trait impl methods, unless the behaviour is surprising. Use `//` comments instead.
 - Test modules and test helper functions.
-- Items behind `#[doc(hidden)]` and generated code. Crabka generates the protocol codec. Document the generator's output shape at the module level, not for each generated field.
+- Items behind `#[doc(hidden)]` and generated code. Krabka generates the protocol codec. Document the generator's output shape at the module level, not for each generated field.
 
 ## Checking Documentation
 

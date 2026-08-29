@@ -9,7 +9,7 @@ pub mod scalar_math;
 
 use std::{any::Any, sync::Arc, time::Duration};
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 use promql_parser::{
     parser::{
@@ -64,7 +64,7 @@ pub fn parse_promql(query: &str) -> Result<Expr> {
 ///
 /// The parser crate stores selector ranges, subquery resolutions, and offsets as
 /// concrete [`Duration`] values. Prometheus 3.x accepts scalar expressions in
-/// those positions, so Crabka normalizes them before it sends the query to the
+/// those positions, so Krabka normalizes them before it sends the query to the
 /// parser.
 ///
 /// # Errors

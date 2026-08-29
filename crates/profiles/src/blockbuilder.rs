@@ -8,13 +8,13 @@ use std::{
 };
 
 use arrow::record_batch::RecordBatch;
-use crabka_blockstore::{
+use krabka_blockstore::{
     BlockIndex, BlockMeta, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels, ProfileIndex,
     ProfileSampleRow, encode_profile_samples,
 };
-use crabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
-use crabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};
-use crabka_units::{
+use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
+use krabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};
+use krabka_units::{
     ByteSize, Time, convert::StdDurationExt as _, kibibytes, mebibytes, millis, secs,
 };
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
@@ -55,8 +55,8 @@ pub struct BuiltSample {
 
 #[derive(Clone)]
 pub struct BlockBuilderConfig {
-    pub client_dispatch_queue_capacity: crabka_client_core::ConnectionDispatchQueueCapacity,
-    pub client_frame_max: crabka_client_core::ClientFrameMax,
+    pub client_dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
+    pub client_frame_max: krabka_client_core::ClientFrameMax,
     pub bootstrap: String,
     pub wal_topic: String,
     pub group_id: String,
@@ -72,7 +72,7 @@ pub struct BlockBuilderConfig {
     pub index_snapshot_max: ByteSize,
     pub index_snapshot_retain: IndexSnapshotRetain,
     /// Optional self-instrumentation metrics. When set, the block-builder adds
-    /// to `crabka_profiles_blocks_built_total` the number of blocks that each
+    /// to `krabka_profiles_blocks_built_total` the number of blocks that each
     /// flush wrote. `None`, the default, turns metric emission off. The
     /// block-builder then still works without a metrics registry, as in tests
     /// and in `run()`.
@@ -84,11 +84,11 @@ impl BlockBuilderConfig {
     pub fn new(bootstrap: String, store: Arc<dyn ObjectStore>) -> Self {
         Self {
             client_dispatch_queue_capacity:
-                crabka_client_core::ConnectionDispatchQueueCapacity::default(),
-            client_frame_max: crabka_client_core::ClientFrameMax::default(),
+                krabka_client_core::ConnectionDispatchQueueCapacity::default(),
+            client_frame_max: krabka_client_core::ClientFrameMax::default(),
             bootstrap,
             wal_topic: PROFILES_WAL_TOPIC.to_owned(),
-            group_id: "crabka-profiles-block-builder".to_string(),
+            group_id: "krabka-profiles-block-builder".to_string(),
             store,
             index_key: "index/profiles.json".to_string(),
             wal_fetch_max: DEFAULT_WAL_FETCH_MAX,
@@ -103,7 +103,7 @@ impl BlockBuilderConfig {
     }
 
     /// Attach a [`ServiceMetrics`] bundle so the block-builder emits
-    /// `crabka_profiles_blocks_built_total`.
+    /// `krabka_profiles_blocks_built_total`.
     #[must_use]
     pub fn with_metrics(mut self, metrics: ServiceMetrics) -> Self {
         self.metrics = Some(metrics);
@@ -346,13 +346,13 @@ pub async fn run_with_config(config: BlockBuilderConfig) -> Result<(), ProfilesE
         let build_span = tracing::info_span!(
             "profiles_block_build",
             otel.kind = "consumer",
-            crabka.wal.records = records.len(),
+            krabka.wal.records = records.len(),
         );
         if let Some(rec) = records
             .iter()
             .find(|rec| rec.headers.iter().any(|h| h.key == "traceparent"))
         {
-            crabka_telemetry::propagation::set_remote_parent(
+            krabka_telemetry::propagation::set_remote_parent(
                 &build_span,
                 rec.headers
                     .iter()
@@ -558,9 +558,9 @@ mod tests {
 
     use assert2::{assert, check};
     use bytes::Bytes;
-    use crabka_client_consumer::ConsumerRecord;
-    use crabka_pprof::SymbolDb;
-    use crabka_units::{convert::TimeExt as _, minutes};
+    use krabka_client_consumer::ConsumerRecord;
+    use krabka_pprof::SymbolDb;
+    use krabka_units::{convert::TimeExt as _, minutes};
     use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory};
 
     use super::*;
@@ -662,11 +662,11 @@ mod tests {
 
         assert_eq!(
             config.index_snapshot_max,
-            crabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
+            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
         );
         assert_eq!(
             config.index_snapshot_retain.into_value(),
-            crabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
+            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
         );
     }
 
@@ -708,7 +708,7 @@ mod tests {
         }])
         .unwrap();
 
-        assert!(batch.schema() == crabka_blockstore::profile_samples_schema());
+        assert!(batch.schema() == krabka_blockstore::profile_samples_schema());
         assert!(batch.num_rows() == 1);
     }
 

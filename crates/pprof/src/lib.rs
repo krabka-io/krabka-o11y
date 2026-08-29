@@ -1,4 +1,4 @@
-//! Language-less continuous-profiling engine for Crabka.
+//! Language-less continuous-profiling engine for Krabka.
 //!
 //! This slice adds the pprof codec, the shared symbol model, the profile type
 //! parser, the query seam, and the flamegraph merge engine.

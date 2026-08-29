@@ -6,14 +6,14 @@
 //! The shard grain matches what the querier in `querier/http` honors. A search
 //! job restricts to one block and a row-group range, through `block`,
 //! `rowGroupStart` and `rowGroupEnd`, which is the querier's
-//! [`crabka_traceql::ScanJob`]. The live hot tier is the unrestricted scan. A
+//! [`krabka_traceql::ScanJob`]. The live hot tier is the unrestricted scan. A
 //! block larger than `target_per_job` fans into several row-group-range jobs.
 
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use crabka_blockstore::{BlockStore, Result as BlockStoreResult, TraceIndex};
-use crabka_units::{ByteSize, convert::ByteSizeExt};
+use krabka_blockstore::{BlockStore, Result as BlockStoreResult, TraceIndex};
+use krabka_units::{ByteSize, convert::ByteSizeExt};
 
 /// One candidate row-group of a backend block.
 #[derive(Clone, Debug, PartialEq)]
@@ -120,7 +120,7 @@ impl BlockCatalog for MockCatalog {
 
 /// The production block catalog.
 ///
-/// A pre-resolved per-tenant [`crabka_blockstore::TraceIndex`] backs it. It is
+/// A pre-resolved per-tenant [`krabka_blockstore::TraceIndex`] backs it. It is
 /// built once at startup from the index. It ports
 /// `backend_blocks_from_trace_index` from the legacy query-frontend.
 pub struct TraceIndexCatalog {
@@ -289,7 +289,7 @@ pub fn plan_search_jobs(
 
 #[cfg(test)]
 mod tests {
-    use crabka_units::bytes;
+    use krabka_units::bytes;
 
     use super::*;
 

@@ -13,12 +13,12 @@ use std::{
 
 use arrow::array::{FixedSizeBinaryArray, Int32Array};
 use assert2::check;
-use crabka_blockstore::{
+use krabka_blockstore::{
     AttrValue, BlockWriter, ShardedTraceBloom, SpanAttr, SpanKind, SpanNode, SpanRow, StatusCode,
     SummaryColumns, TraceBlockStats, TraceIndex, assign_nested_set, encode_span_rows, read_block,
     span_block_decl, span_block_schema,
 };
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
 
 fn sid(n: u8) -> [u8; 8] {

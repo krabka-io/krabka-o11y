@@ -1,10 +1,5 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use crabka_blockstore::{
-    BlockKey, LogBlockTableProvider, LogRow, TimeRange, labels, register_log_blocks,
-    register_log_blocks_from_object_store, series_fingerprint, write_log_block,
-    write_log_block_to_object_store,
-};
 use datafusion::{
     arrow::{
         array::{Int64Array, StringArray},
@@ -12,6 +7,11 @@ use datafusion::{
     },
     datasource::{TableProvider, provider::TableProviderFilterPushDown},
     prelude::{SessionContext, col, lit},
+};
+use krabka_blockstore::{
+    BlockKey, LogBlockTableProvider, LogRow, TimeRange, labels, register_log_blocks,
+    register_log_blocks_from_object_store, series_fingerprint, write_log_block,
+    write_log_block_to_object_store,
 };
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 

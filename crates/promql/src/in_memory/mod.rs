@@ -2,9 +2,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
-use crabka_metrics::NativeHistogram;
-use crabka_units::prelude::*;
+use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_metrics::NativeHistogram;
+use krabka_units::prelude::*;
 
 use crate::{
     error::Result,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use assert2::{assert, check};
-use crabka_pprof::{
+use krabka_pprof::{
     EngineOpts, FlameEngine, FlameGraph, FunctionRec, InMemoryProfileStore, Level, LineRec,
     LocationRec, ProfileType,
 };
@@ -38,7 +38,7 @@ fn fixture() -> Fixture {
     }
 }
 
-fn intern_location(db: &mut crabka_pprof::SymbolDb, file: &str, function_names: &[&str]) -> u32 {
+fn intern_location(db: &mut krabka_pprof::SymbolDb, file: &str, function_names: &[&str]) -> u32 {
     let lines = function_names
         .iter()
         .enumerate()

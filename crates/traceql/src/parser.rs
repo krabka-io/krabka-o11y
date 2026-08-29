@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn scopeless_intrinsics_resolve_to_intrinsic_scope() {
-        // Tempo treats these reserved names as intrinsics when scopeless. Crabka
+        // Tempo treats these reserved names as intrinsics when scopeless. Krabka
         // previously parsed them as `Scope::Both` attributes, so they silently
         // matched nothing (`attr.duration`, `attr.nestedSetParent`, …) and broke
         // every Grafana Tempo/Traces-Drilldown query, which writes them bare.
@@ -1401,7 +1401,7 @@ mod tests {
     #[test]
     fn sample_query_hint_parses() {
         // Grafana's Traces Drilldown appends `with(sample=true)` to its metrics
-        // queries; Crabka must accept it (it computes exact metrics regardless).
+        // queries; Krabka must accept it (it computes exact metrics regardless).
         let q = parse("{ nestedSetParent < 0 } | histogram_over_time(duration) with(sample=true)")
             .unwrap();
         assert!(q.hints.sample == Some(true));

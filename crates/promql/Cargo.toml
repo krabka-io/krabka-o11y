@@ -1,17 +1,17 @@
 [package]
-name = "crabka-promql"
+name = "krabka-promql"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "PromQL engine for Crabka's Prometheus/Mimir-equivalent metrics backend"
+description = "PromQL engine for Krabka's Prometheus/Mimir-equivalent metrics backend"
 repository = "https://github.com/robot-head/crabka"
 homepage = "https://github.com/robot-head/crabka"
-documentation = "https://docs.rs/crabka-promql"
+documentation = "https://docs.rs/krabka-promql"
 readme = "README.md"
-keywords = ["observability", "prometheus", "promql", "datafusion", "crabka"]
+keywords = ["observability", "prometheus", "promql", "datafusion", "krabka"]
 categories = ["database-implementations"]
 
 [lints]
@@ -23,10 +23,10 @@ experimental-functions = []
 
 [dependencies]
 assert2 = { workspace = true }
-crabka-blockstore = { path = "../blockstore", version = "0.4.0" }
-crabka-ids = { version = "0.4.0" }
-crabka-metrics = { path = "../metrics", version = "0.4.0" }
-crabka-units = { workspace = true }
+krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
+krabka-ids = { version = "0.4.0" }
+krabka-metrics = { path = "../metrics", version = "0.4.0" }
+krabka-units = { workspace = true }
 arrow = { workspace = true }
 datafusion = { workspace = true }
 promql-parser = { workspace = true }

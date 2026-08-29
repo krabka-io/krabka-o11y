@@ -12,7 +12,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use crabka_blockstore::{
+use futures_util::stream::BoxStream;
+use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogBlockStoreError, LogRow, TimeRange,
     labels, list_tenant_log_index_shard_ranges_from_object_store, log_block_object_path,
     read_log_block, read_log_block_from_object_store, read_log_index_manifest,
@@ -21,8 +22,8 @@ use crabka_blockstore::{
     series_fingerprint, write_log_block, write_log_block_to_object_store, write_log_index_manifest,
     write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shards_to_object_store,
 };
-use crabka_client_consumer::ConsumerError;
-use crabka_observability::{
+use krabka_client_consumer::ConsumerError;
+use krabka_observability::{
     CompactionFrontier, CompactionOffsetCommitter, KafkaWalHeader, KafkaWalRecord, LogWalConsumer,
     Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig, ServiceDependencies,
     SharedCompactionFrontier, WalConsumerError, WalLogRecord, WalPosition, build_kafka_wal_record,
@@ -32,8 +33,7 @@ use crabka_observability::{
     run_compactor_once, run_compactor_until_idle, run_compactor_until_shutdown, serve_service,
     serve_service_listener, write_compaction_frontier_to_object_store,
 };
-use crabka_units::{Time, bytes, millis};
-use futures_util::stream::BoxStream;
+use krabka_units::{Time, bytes, millis};
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, local::LocalFileSystem,
@@ -333,12 +333,12 @@ async fn compactor_decodes_native_kafka_log_records_from_headers() {
             offset: Offset(44),
             timestamp_ms: Some(1),
             headers: vec![
-                kafka_header("crabka-wal-record-type", "log-line"),
-                kafka_header("crabka-tenant", "tenant-a"),
-                kafka_header("crabka-log-timestamp-ns", "1900000"),
-                kafka_header("crabka-log-label-app", "api"),
-                kafka_header("crabka-log-label-env", "prod"),
-                kafka_header("crabka-log-metadata-trace_id", "abc"),
+                kafka_header("krabka-wal-record-type", "log-line"),
+                kafka_header("krabka-tenant", "tenant-a"),
+                kafka_header("krabka-log-timestamp-ns", "1900000"),
+                kafka_header("krabka-log-label-app", "api"),
+                kafka_header("krabka-log-label-env", "prod"),
+                kafka_header("krabka-log-metadata-trace_id", "abc"),
             ],
         }],
     )
@@ -1042,9 +1042,9 @@ async fn compactor_runtime_writes_shard_indexes_without_index_metadata_rewrites(
 
     let prefix = ObjectPath::from("observability/logs");
     let manifest_path =
-        crabka_blockstore::log_tenant_index_manifest_object_path(&prefix, "tenant-a").to_string();
+        krabka_blockstore::log_tenant_index_manifest_object_path(&prefix, "tenant-a").to_string();
     let shard_catalog_path =
-        crabka_blockstore::log_tenant_index_shard_catalog_object_path(&prefix, "tenant-a")
+        krabka_blockstore::log_tenant_index_shard_catalog_object_path(&prefix, "tenant-a")
             .to_string();
     let manifest_puts = store
         .put_paths()
@@ -1153,7 +1153,7 @@ async fn compactor_runtime_appends_batches_without_loading_tenant_manifest() {
         .await
         .unwrap();
 
-    let manifest_path = crabka_blockstore::log_tenant_index_manifest_object_path(
+    let manifest_path = krabka_blockstore::log_tenant_index_manifest_object_path(
         &ObjectPath::from("observability/logs"),
         "tenant-a",
     )
@@ -1181,7 +1181,7 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
     let mut old_labels = LabelIndex::default();
     let old_fingerprint = old_labels.insert_series(tenant, labels([("app", "api")]));
     let mut old_blocks = BlockIndex::default();
-    old_blocks.insert(crabka_blockstore::BlockDescriptor::new_with_size(
+    old_blocks.insert(krabka_blockstore::BlockDescriptor::new_with_size(
         old_key,
         BTreeSet::from([old_fingerprint]),
         bytes(1),
@@ -1214,7 +1214,7 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
         .unwrap();
 
     let old_shard_manifest =
-        crabka_blockstore::log_tenant_index_shard_manifest_object_path(&prefix, tenant, old_range)
+        krabka_blockstore::log_tenant_index_shard_manifest_object_path(&prefix, tenant, old_range)
             .to_string();
     assert!(descriptors.len() == 1);
     assert!(
@@ -1484,7 +1484,7 @@ async fn compactor_runtime_advances_shared_compaction_frontier_after_commit() {
     assert!(descriptors.len() == 1);
     assert!(
         frontier.snapshot()
-            == crabka_observability::CompactionFrontier::new(i64::MIN)
+            == krabka_observability::CompactionFrontier::new(i64::MIN)
                 .with_partition_offset(PartitionIndex(8), Offset(43))
     );
 }
@@ -1941,7 +1941,7 @@ impl CompactionOffsetCommitter for RecordingCommitter {
     fn commit_compacted(
         &mut self,
         position: WalPosition,
-    ) -> Result<(), crabka_observability::CompactionCommitError> {
+    ) -> Result<(), krabka_observability::CompactionCommitError> {
         self.committed.push(position);
         Ok(())
     }
@@ -2042,7 +2042,7 @@ fn wal_record_for_tenant(tenant: &str, timestamp_ns: i64, line: &str) -> WalLogR
 
 fn kafka_wal_record(record: &WalLogRecord, partition: i32, offset: i64) -> KafkaWalRecord {
     let producer_record =
-        build_kafka_wal_record("__crabka_observability_logs_wal", record).expect("producer record");
+        build_kafka_wal_record("__krabka_observability_logs_wal", record).expect("producer record");
     KafkaWalRecord {
         value: producer_record.value.expect("producer value").to_vec(),
         partition: PartitionIndex(partition),
@@ -2072,8 +2072,8 @@ fn compactor_config(index_prefix: &str) -> ServiceConfig {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,

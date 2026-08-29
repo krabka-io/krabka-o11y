@@ -22,7 +22,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use crabka_units::convert::TimeExt as _;
+use krabka_units::convert::TimeExt as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::frontend::{
@@ -347,10 +347,10 @@ struct ScopeTagsJson {
 }
 
 impl TagsBody {
-    fn scoped_tags(&self) -> Vec<crabka_traceql::ScopedTag> {
+    fn scoped_tags(&self) -> Vec<krabka_traceql::ScopedTag> {
         self.scopes
             .iter()
-            .map(|s| crabka_traceql::ScopedTag {
+            .map(|s| krabka_traceql::ScopedTag {
                 scope: parse_scope(&s.name),
                 tags: s.tags.clone(),
             })
@@ -377,10 +377,10 @@ struct TypedValueJson {
 }
 
 impl TagValuesBody {
-    fn into_typed_values(self) -> Vec<crabka_traceql::TypedValue> {
+    fn into_typed_values(self) -> Vec<krabka_traceql::TypedValue> {
         self.tag_values
             .into_iter()
-            .map(|v| crabka_traceql::TypedValue {
+            .map(|v| krabka_traceql::TypedValue {
                 type_: v.type_,
                 value: v.value,
             })
@@ -388,25 +388,25 @@ impl TagValuesBody {
     }
 }
 
-fn scope_param(scope: crabka_traceql::TagScope) -> &'static str {
+fn scope_param(scope: krabka_traceql::TagScope) -> &'static str {
     match scope {
-        crabka_traceql::TagScope::Resource => "resource",
-        crabka_traceql::TagScope::Span => "span",
-        crabka_traceql::TagScope::Intrinsic => "intrinsic",
-        crabka_traceql::TagScope::Event => "event",
-        crabka_traceql::TagScope::Link => "link",
-        crabka_traceql::TagScope::Instrumentation => "instrumentation",
+        krabka_traceql::TagScope::Resource => "resource",
+        krabka_traceql::TagScope::Span => "span",
+        krabka_traceql::TagScope::Intrinsic => "intrinsic",
+        krabka_traceql::TagScope::Event => "event",
+        krabka_traceql::TagScope::Link => "link",
+        krabka_traceql::TagScope::Instrumentation => "instrumentation",
     }
 }
 
-fn parse_scope(name: &str) -> crabka_traceql::TagScope {
+fn parse_scope(name: &str) -> krabka_traceql::TagScope {
     match name {
-        "resource" => crabka_traceql::TagScope::Resource,
-        "intrinsic" => crabka_traceql::TagScope::Intrinsic,
-        "event" => crabka_traceql::TagScope::Event,
-        "link" => crabka_traceql::TagScope::Link,
-        "instrumentation" => crabka_traceql::TagScope::Instrumentation,
-        _ => crabka_traceql::TagScope::Span,
+        "resource" => krabka_traceql::TagScope::Resource,
+        "intrinsic" => krabka_traceql::TagScope::Intrinsic,
+        "event" => krabka_traceql::TagScope::Event,
+        "link" => krabka_traceql::TagScope::Link,
+        "instrumentation" => krabka_traceql::TagScope::Instrumentation,
+        _ => krabka_traceql::TagScope::Span,
     }
 }
 
@@ -449,7 +449,7 @@ mod tests {
     /// borrowed from a neighbouring arm cannot pass unnoticed.
     #[test]
     fn every_tag_scope_has_its_own_query_parameter_name() {
-        use crabka_traceql::TagScope;
+        use krabka_traceql::TagScope;
         let name = super::scope_param;
 
         check!(name(TagScope::Resource) == "resource");
@@ -478,7 +478,7 @@ mod tests {
     /// to that default instead of being recognised.
     #[test]
     fn a_scope_name_defaults_to_span_only_when_unrecognised() {
-        use crabka_traceql::TagScope;
+        use krabka_traceql::TagScope;
         let scope = super::parse_scope;
 
         check!(scope("resource") == TagScope::Resource);

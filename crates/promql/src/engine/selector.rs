@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, time::SystemTime};
 
-use crabka_blockstore::{LabelMatcher, Labels, MatchOp};
-use crabka_units::prelude::*;
+use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
+use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 use promql_parser::{
     label as prom_label,

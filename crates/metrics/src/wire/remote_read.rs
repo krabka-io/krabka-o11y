@@ -3,8 +3,8 @@
 //! This module implements the SAMPLES response path for the v1 read format.
 //! It deliberately does not advertise or encode `STREAMED_XOR_CHUNKS`.
 
-use crabka_blockstore::{LabelMatcher, Labels, MatchOp};
-use crabka_units::prelude::*;
+use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
+use krabka_units::prelude::*;
 use prost::Message;
 use thiserror::Error;
 
@@ -123,7 +123,7 @@ pub fn series_to_timeseries(series: Vec<(Labels, Vec<(i64, f64)>)>) -> v1::Query
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use crabka_blockstore::{Labels, MatchOp};
+    use krabka_blockstore::{Labels, MatchOp};
     use prost::Message;
 
     use super::*;

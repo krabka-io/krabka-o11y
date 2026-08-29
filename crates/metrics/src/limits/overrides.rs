@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crabka_units::{prelude::*, serde_units};
+use krabka_units::{prelude::*, serde_units};
 use serde::Deserialize;
 use thiserror::Error;
 

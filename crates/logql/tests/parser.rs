@@ -4,7 +4,7 @@ use std::{
 };
 
 use assert2::check;
-use crabka_logql::{
+use krabka_logql::{
     ComparisonOp, DestinationLabel, DurationNanos, FieldFilter, FieldValue, JsonExpressionPath,
     JsonExtraction, JsonParserConfig, LabelFormat, LabelFormatAssignment, LabelMatcher,
     LabelSelection, LabelSelectionSet, LineFilter, LineFilterOp, LineFormat, LogfmtExtraction,
@@ -1704,7 +1704,7 @@ fn query_evaluator_accepts_decimal_unwrap_samples() {
         .evaluate_with_fields(&labels, "cost=1.5", &BTreeMap::new())
         .unwrap();
 
-    check!(evaluation.fields.get("__crabka_unwrap_sample_value__") == Some(&"1.5".to_string()));
+    check!(evaluation.fields.get("__krabka_unwrap_sample_value__") == Some(&"1.5".to_string()));
     check!(!evaluation.fields.contains_key("__error__"));
     check!(!evaluation.fields.contains_key("__error_details__"));
 }
@@ -1721,10 +1721,10 @@ fn query_evaluator_accepts_signed_decimal_unwrap_samples() {
         .evaluate_with_fields(&labels, "cost=-1.5", &BTreeMap::new())
         .unwrap();
 
-    check!(positive.fields.get("__crabka_unwrap_sample_value__") == Some(&"1.5".to_string()));
+    check!(positive.fields.get("__krabka_unwrap_sample_value__") == Some(&"1.5".to_string()));
     check!(!positive.fields.contains_key("__error__"));
     check!(!positive.fields.contains_key("__error_details__"));
-    check!(evaluation.fields.get("__crabka_unwrap_sample_value__") == Some(&"-1.5".to_string()));
+    check!(evaluation.fields.get("__krabka_unwrap_sample_value__") == Some(&"-1.5".to_string()));
     check!(!evaluation.fields.contains_key("__error__"));
     check!(!evaluation.fields.contains_key("__error_details__"));
 }
@@ -1746,7 +1746,7 @@ fn query_evaluator_rejects_repeated_sample_signs() {
     check!(
         !evaluation
             .fields
-            .contains_key("__crabka_unwrap_sample_value__")
+            .contains_key("__krabka_unwrap_sample_value__")
     );
 }
 
@@ -1759,7 +1759,7 @@ fn query_evaluator_accepts_scientific_unwrap_samples() {
         .evaluate_with_fields(&labels, "cost=-2.5e-1", &BTreeMap::new())
         .unwrap();
 
-    check!(evaluation.fields.get("__crabka_unwrap_sample_value__") == Some(&"-0.25".to_string()));
+    check!(evaluation.fields.get("__krabka_unwrap_sample_value__") == Some(&"-0.25".to_string()));
     check!(!evaluation.fields.contains_key("__error__"));
     check!(!evaluation.fields.contains_key("__error_details__"));
 }
@@ -2322,7 +2322,7 @@ fn parses_metric_scalar_arithmetic_query() {
     )
     .unwrap();
 
-    check!(query.op == crabka_logql::MetricScalarArithmeticOp::Multiply);
+    check!(query.op == krabka_logql::MetricScalarArithmeticOp::Multiply);
     check!(query.scalar == "2.5");
     check!(query.query.aggregation == RangeAggregation::CountOverTime);
     check!(query.query.range_ns == DurationNanos(30_000_000_000));
@@ -2335,7 +2335,7 @@ fn parses_scalar_metric_arithmetic_query() {
     )
     .unwrap();
 
-    check!(query.op == crabka_logql::MetricScalarArithmeticOp::Subtract);
+    check!(query.op == krabka_logql::MetricScalarArithmeticOp::Subtract);
     check!(query.scalar == "2");
     check!(query.scalar_on_left);
     check!(query.query.aggregation == RangeAggregation::CountOverTime);
@@ -2346,7 +2346,7 @@ fn parses_scalar_metric_arithmetic_query() {
 fn parses_parenthesized_metric_expression_operands() {
     let metric_scalar =
         parse_metric_scalar_arithmetic_query(r#"(count_over_time({app="api"}[30s])) * 2"#).unwrap();
-    check!(metric_scalar.op == crabka_logql::MetricScalarArithmeticOp::Multiply);
+    check!(metric_scalar.op == krabka_logql::MetricScalarArithmeticOp::Multiply);
     check!(metric_scalar.query.aggregation == RangeAggregation::CountOverTime);
 
     let scalar_metric =
@@ -2366,7 +2366,7 @@ fn parses_parenthesized_metric_expression_operands() {
         r#"(count_over_time({app="api"}[30s])) or (count_over_time({app="worker"}[15s]))"#,
     )
     .unwrap();
-    check!(set.op == crabka_logql::MetricBinarySetOp::Or);
+    check!(set.op == krabka_logql::MetricBinarySetOp::Or);
     check!(set.left.range_ns == DurationNanos(30_000_000_000));
     check!(set.right.range_ns == DurationNanos(15_000_000_000));
 
@@ -2459,7 +2459,7 @@ fn parses_metric_binary_arithmetic_query() {
     )
     .unwrap();
 
-    check!(query.op == crabka_logql::MetricScalarArithmeticOp::Divide);
+    check!(query.op == krabka_logql::MetricScalarArithmeticOp::Divide);
     check!(query.left.aggregation == RangeAggregation::CountOverTime);
     check!(query.left.range_ns == DurationNanos(30_000_000_000));
     check!(query.right.aggregation == RangeAggregation::CountOverTime);
@@ -2472,13 +2472,13 @@ fn parses_metric_arithmetic_modulo_and_power_ops() {
         r#"count_over_time({app="api"} |= "error" [30s]) % 2"#,
     )
     .unwrap();
-    check!(modulo.op == crabka_logql::MetricScalarArithmeticOp::Modulo);
+    check!(modulo.op == krabka_logql::MetricScalarArithmeticOp::Modulo);
 
     let power = parse_metric_scalar_arithmetic_query(
         r#"count_over_time({app="api"} |= "error" [30s]) ^ 2"#,
     )
     .unwrap();
-    check!(power.op == crabka_logql::MetricScalarArithmeticOp::Power);
+    check!(power.op == krabka_logql::MetricScalarArithmeticOp::Power);
 }
 
 #[test]
@@ -2490,12 +2490,12 @@ fn parses_metric_binary_arithmetic_matching_modifier() {
 
     check!(
         query.matching
-            == Some(crabka_logql::MetricVectorMatching::Ignoring {
+            == Some(krabka_logql::MetricVectorMatching::Ignoring {
                 labels: vec!["app".to_string()],
                 group: None,
             })
     );
-    check!(query.op == crabka_logql::MetricScalarArithmeticOp::Divide);
+    check!(query.op == krabka_logql::MetricScalarArithmeticOp::Divide);
     check!(query.left.aggregation == RangeAggregation::CountOverTime);
     check!(query.right.aggregation == RangeAggregation::CountOverTime);
 }
@@ -2513,14 +2513,14 @@ fn parses_metric_binary_arguments_with_nested_operator_characters() {
         r#"count_over_time({app="api"} |= "+" [30s]) + count_over_time({app="worker"}[15s])"#,
     )
     .unwrap();
-    check!(arithmetic.op == crabka_logql::MetricScalarArithmeticOp::Add);
+    check!(arithmetic.op == krabka_logql::MetricScalarArithmeticOp::Add);
     check!(arithmetic.right.range_ns == DurationNanos(15_000_000_000));
 
     let set = parse_metric_binary_set_query(
         r#"count_over_time({app="origin"} |= "or" [30s]) or count_over_time({app="worker"}[15s])"#,
     )
     .unwrap();
-    check!(set.op == crabka_logql::MetricBinarySetOp::Or);
+    check!(set.op == krabka_logql::MetricBinarySetOp::Or);
     check!(set.left.range_ns == DurationNanos(30_000_000_000));
 }
 
@@ -2537,14 +2537,14 @@ fn parses_metric_binary_arguments_with_quoted_parentheses_and_nested_keywords() 
         r#"count_over_time({app="api"} |= ")" [30s] offset -5m) + count_over_time({app="worker"}[15s])"#,
     )
     .unwrap();
-    check!(arithmetic.op == crabka_logql::MetricScalarArithmeticOp::Add);
+    check!(arithmetic.op == krabka_logql::MetricScalarArithmeticOp::Add);
     check!(arithmetic.left.offset_ns == OffsetNanos(-300_000_000_000));
 
     let set = parse_metric_binary_set_query(
         r#"sum by (or) (count_over_time({app="api"} |= ")" [30s])) and count_over_time({app="worker"}[15s])"#,
     )
     .unwrap();
-    check!(set.op == crabka_logql::MetricBinarySetOp::And);
+    check!(set.op == krabka_logql::MetricBinarySetOp::And);
     check!(
         set.left.vector_aggregation
             == Some(VectorAggregation {
@@ -2563,14 +2563,14 @@ fn parses_metric_binary_arithmetic_group_modifier() {
 
     check!(
         query.matching
-            == Some(crabka_logql::MetricVectorMatching::On {
+            == Some(krabka_logql::MetricVectorMatching::On {
                 labels: vec!["env".to_string()],
-                group: Some(crabka_logql::MetricVectorGroupModifier::Left(vec![
+                group: Some(krabka_logql::MetricVectorGroupModifier::Left(vec![
                     "status".to_string()
                 ])),
             })
     );
-    check!(query.op == crabka_logql::MetricScalarArithmeticOp::Divide);
+    check!(query.op == krabka_logql::MetricScalarArithmeticOp::Divide);
     check!(query.left.vector_aggregation.is_some());
     check!(query.right.vector_aggregation.is_some());
 }
@@ -2597,7 +2597,7 @@ fn parses_metric_binary_set_query() {
     )
     .unwrap();
 
-    check!(query.op == crabka_logql::MetricBinarySetOp::And);
+    check!(query.op == krabka_logql::MetricBinarySetOp::And);
     check!(query.left.aggregation == RangeAggregation::CountOverTime);
     check!(query.left.range_ns == DurationNanos(30_000_000_000));
     check!(query.right.aggregation == RangeAggregation::CountOverTime);

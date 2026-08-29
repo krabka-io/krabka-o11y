@@ -5,10 +5,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crabka_blockstore::LabelMatcher;
-use crabka_client_consumer::{AutoOffsetReset, Consumer};
-use crabka_pprof::{InMemoryProfileStore, ProfileError, ProfileScan, ProfileStats, ProfileStore};
-use crabka_units::{Time, convert::TimeExt as _, hours};
+use krabka_blockstore::LabelMatcher;
+use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_pprof::{InMemoryProfileStore, ProfileError, ProfileScan, ProfileStats, ProfileStore};
+use krabka_units::{Time, convert::TimeExt as _, hours};
 
 use crate::{
     blockbuilder::{intern_record, profile_timestamp_ms},
@@ -304,8 +304,8 @@ pub async fn run_wal_tail(
     bootstrap: String,
     group_id: String,
     poll_timeout: Time,
-    client_dispatch_queue_capacity: crabka_client_core::ConnectionDispatchQueueCapacity,
-    client_frame_max: crabka_client_core::ClientFrameMax,
+    client_dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
+    client_frame_max: krabka_client_core::ClientFrameMax,
 ) -> Result<(), ProfilesError> {
     run_wal_tail_with_topic(
         store,
@@ -329,8 +329,8 @@ pub async fn run_wal_tail_with_topic(
     group_id: String,
     wal_topic: String,
     poll_timeout: Time,
-    client_dispatch_queue_capacity: crabka_client_core::ConnectionDispatchQueueCapacity,
-    client_frame_max: crabka_client_core::ClientFrameMax,
+    client_dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
+    client_frame_max: krabka_client_core::ClientFrameMax,
 ) -> Result<(), ProfilesError> {
     let mut consumer = Consumer::builder()
         .bootstrap(bootstrap)
@@ -366,9 +366,9 @@ mod tests {
 
     use arrow::array::{Array, BinaryArray};
     use assert2::{assert, check};
-    use crabka_blockstore::{LabelMatcher, MatchOp};
-    use crabka_pprof::{EngineOpts, FlameEngine, PCOL_TRACE_ID, ProfileStore, SeriesAgg};
-    use crabka_units::{Time, convert::TimeExt as _, secs};
+    use krabka_blockstore::{LabelMatcher, MatchOp};
+    use krabka_pprof::{EngineOpts, FlameEngine, PCOL_TRACE_ID, ProfileStore, SeriesAgg};
+    use krabka_units::{Time, convert::TimeExt as _, secs};
 
     use crate::wal::{ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet};
 
@@ -455,7 +455,7 @@ mod tests {
     /// from the wrong tenant returns something visibly different.
     #[tokio::test]
     async fn metadata_queries_respect_tenant_and_time_window() {
-        use crabka_pprof::ProfileStore as _;
+        use krabka_pprof::ProfileStore as _;
 
         let store = super::WalTailProfileStore::new();
 

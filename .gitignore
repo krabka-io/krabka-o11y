@@ -25,8 +25,8 @@ MODULE.bazel.lock
 melange.rsa
 melange.rsa.pub
 packages/
-crabka-operator.tar
-crabka-demo.tar
+krabka-operator.tar
+krabka-demo.tar
 sbom-*.spdx.json
 .tmp-*.log
 .worktree
@@ -45,8 +45,8 @@ sbom-*.spdx.json
 
 # Generated WASM playground bundle (built by website/build-playground.sh).
 # The hand-written front-end (app.js, playground.css) stays tracked.
-/website/static/playground/crabka_playground.js
-/website/static/playground/crabka_playground_bg.wasm
+/website/static/playground/krabka_playground.js
+/website/static/playground/krabka_playground_bg.wasm
 
 
 # Cargo mutant output

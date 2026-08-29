@@ -15,183 +15,183 @@ use std::{
 };
 
 use clap::{Parser, ValueEnum};
-use crabka_client_consumer::{AutoOffsetReset, Consumer};
-use crabka_client_core::{
+use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
-use crabka_client_producer::Producer;
-use crabka_metrics::{OverridesProvider, WAL_TOPIC};
-use crabka_metrics_service::{
+use krabka_client_producer::Producer;
+use krabka_metrics::{OverridesProvider, WAL_TOPIC};
+use krabka_metrics_service::{
     KafkaRecordingRuleWalSink, KafkaRulerStateSink, PrometheusRulerStateSink, RULER_STATE_TOPIC,
     RulerAlertmanagerSink, RulerStateFanoutSink, WalHeadConsumerCommit, WalHeadConsumerPoll,
     install_bundled_rule_groups, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
     run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
-use crabka_promql::{
+use krabka_promql::{
     EngineOpts, PrometheusApiState, QueryFrontendOptions, RulerShard, WalHead, prometheus_router,
 };
-use crabka_telemetry::OtlpConfig;
-use crabka_units::{parse, prelude::*};
+use krabka_telemetry::OtlpConfig;
+use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
 
 #[derive(Debug, Parser)]
 struct Cli {
     #[command(flatten)]
-    profiling: crabka_telemetry::profiling::ProfilingConfig,
-    #[arg(long, env = "CRABKA_METRICS_SERVICE_TARGET")]
+    profiling: krabka_telemetry::profiling::ProfilingConfig,
+    #[arg(long, env = "KRABKA_METRICS_SERVICE_TARGET")]
     target: Target,
     #[arg(
         long,
-        env = "CRABKA_METRICS_SERVICE_LISTEN",
+        env = "KRABKA_METRICS_SERVICE_LISTEN",
         default_value = "127.0.0.1:4041"
     )]
     listen: SocketAddr,
     #[arg(
         long,
-        env = "CRABKA_METRICS_SERVICE_CLIENT_DISPATCH_QUEUE_CAPACITY",
+        env = "KRABKA_METRICS_SERVICE_CLIENT_DISPATCH_QUEUE_CAPACITY",
         default_value_t = DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
         value_parser = parse_client_dispatch_queue_capacity
     )]
     client_dispatch_queue_capacity: usize,
     #[arg(
         long,
-        env = "CRABKA_METRICS_SERVICE_CLIENT_FRAME_MAX",
+        env = "KRABKA_METRICS_SERVICE_CLIENT_FRAME_MAX",
         default_value = "100MiB",
         value_parser = parse_client_frame_max
     )]
     client_frame_max: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_METRICS_OBJECT_STORE_URL",
-        default_value = "file://./.crabka-metrics-blocks"
+        env = "KRABKA_METRICS_OBJECT_STORE_URL",
+        default_value = "file://./.krabka-metrics-blocks"
     )]
     object_store_url: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_MANIFEST_PREFIX",
+        env = "KRABKA_METRICS_MANIFEST_PREFIX",
         default_value = "metrics"
     )]
     manifest_prefix: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_COLD_CACHE_TTL",
+        env = "KRABKA_METRICS_COLD_CACHE_TTL",
         default_value = "30s",
         value_parser = parse::positive_time
     )]
     cold_cache_ttl: Time,
     #[arg(
         long,
-        env = "CRABKA_METRICS_UNBOUNDED_COMPATIBILITY_LOOKBACK",
+        env = "KRABKA_METRICS_UNBOUNDED_COMPATIBILITY_LOOKBACK",
         default_value = "1h",
         value_parser = parse::positive_time
     )]
     unbounded_compatibility_lookback: Time,
-    #[arg(long, env = "CRABKA_METRICS_RUNTIME_OVERRIDES")]
+    #[arg(long, env = "KRABKA_METRICS_RUNTIME_OVERRIDES")]
     runtime_overrides: Option<PathBuf>,
     #[arg(
         long,
-        env = "CRABKA_METRICS_QUERY_FRONTEND_SPLIT",
+        env = "KRABKA_METRICS_QUERY_FRONTEND_SPLIT",
         default_value = "60s",
         value_parser = parse::positive_time
     )]
     query_frontend_split: Time,
     #[arg(
         long,
-        env = "CRABKA_METRICS_QUERY_FRONTEND_SHARDS",
+        env = "KRABKA_METRICS_QUERY_FRONTEND_SHARDS",
         default_value_t = 1
     )]
     query_frontend_shards: usize,
     #[arg(
         long,
-        env = "CRABKA_METRICS_MAX_CONCURRENT_QUERIES",
+        env = "KRABKA_METRICS_MAX_CONCURRENT_QUERIES",
         default_value_t = 2
     )]
     max_concurrent_queries: usize,
     #[arg(
         long = "query-lookback-delta",
-        env = "CRABKA_METRICS_QUERY_LOOKBACK_DELTA",
+        env = "KRABKA_METRICS_QUERY_LOOKBACK_DELTA",
         default_value = "5m",
         value_parser = parse::positive_time
     )]
     query_lookback_delta: Time,
     #[arg(
         long = "query-eval-interval",
-        env = "CRABKA_METRICS_QUERY_EVAL_INTERVAL",
+        env = "KRABKA_METRICS_QUERY_EVAL_INTERVAL",
         default_value = "1m",
         value_parser = parse::positive_time
     )]
     query_eval_interval: Time,
     #[arg(
         long = "query-max-samples",
-        env = "CRABKA_METRICS_QUERY_MAX_SAMPLES",
+        env = "KRABKA_METRICS_QUERY_MAX_SAMPLES",
         default_value_t = 50_000_000,
         value_parser = parse_positive_usize
     )]
     query_max_samples: usize,
     #[arg(
         long = "remote-read-max-body",
-        env = "CRABKA_METRICS_REMOTE_READ_MAX_BODY",
+        env = "KRABKA_METRICS_REMOTE_READ_MAX_BODY",
         default_value = "64MiB",
         value_parser = parse_remote_read_max_body
     )]
     remote_read_max_body: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_METRICS_QUERY_FRONTEND_CACHE_PREFIX",
+        env = "KRABKA_METRICS_QUERY_FRONTEND_CACHE_PREFIX",
         default_value = "metrics-query-cache"
     )]
     query_frontend_cache_prefix: String,
-    #[arg(long, env = "CRABKA_METRICS_RULER_TENANT", default_value = "anonymous")]
+    #[arg(long, env = "KRABKA_METRICS_RULER_TENANT", default_value = "anonymous")]
     ruler_tenant: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_RULER_EVAL_INTERVAL",
+        env = "KRABKA_METRICS_RULER_EVAL_INTERVAL",
         default_value = "60s",
         value_parser = parse::positive_time
     )]
     ruler_eval_interval: Time,
-    #[arg(long, env = "CRABKA_METRICS_RULER_SHARD_INDEX", default_value_t = 1)]
+    #[arg(long, env = "KRABKA_METRICS_RULER_SHARD_INDEX", default_value_t = 1)]
     ruler_shard_index: usize,
-    #[arg(long, env = "CRABKA_METRICS_RULER_SHARD_TOTAL", default_value_t = 1)]
+    #[arg(long, env = "KRABKA_METRICS_RULER_SHARD_TOTAL", default_value_t = 1)]
     ruler_shard_total: usize,
-    #[arg(long, env = "CRABKA_METRICS_RULER_ALERTMANAGER_URL")]
+    #[arg(long, env = "KRABKA_METRICS_RULER_ALERTMANAGER_URL")]
     ruler_alertmanager_url: Option<String>,
     /// A Prometheus rule file the ruler installs at startup.
     ///
     /// The ruler posts each group of the file to its own ruler-config API, so a
     /// bundled group and a group an operator posts behave the same way. The
     /// start stops when the ruler cannot read, parse, or install the file.
-    #[arg(long, env = "CRABKA_METRICS_RULER_BUNDLED_RULES")]
+    #[arg(long, env = "KRABKA_METRICS_RULER_BUNDLED_RULES")]
     ruler_bundled_rules: Option<PathBuf>,
     #[arg(
         long,
-        env = "CRABKA_METRICS_RULER_STATE_TOPIC",
+        env = "KRABKA_METRICS_RULER_STATE_TOPIC",
         default_value = RULER_STATE_TOPIC
     )]
     ruler_state_topic: String,
-    #[arg(long, env = "CRABKA_METRICS_WAL_BOOTSTRAP")]
+    #[arg(long, env = "KRABKA_METRICS_WAL_BOOTSTRAP")]
     wal_bootstrap: Option<String>,
     #[arg(
         long,
-        env = "CRABKA_METRICS_WAL_GROUP_ID",
-        default_value = "crabka-metrics-querier"
+        env = "KRABKA_METRICS_WAL_GROUP_ID",
+        default_value = "krabka-metrics-querier"
     )]
     wal_group_id: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_WAL_CLIENT_ID",
-        default_value = "crabka-metrics-querier"
+        env = "KRABKA_METRICS_WAL_CLIENT_ID",
+        default_value = "krabka-metrics-querier"
     )]
     wal_client_id: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_WAL_TOPIC",
+        env = "KRABKA_METRICS_WAL_TOPIC",
         default_value = WAL_TOPIC
     )]
     wal_topic: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_WAL_POLL_TIMEOUT",
+        env = "KRABKA_METRICS_WAL_POLL_TIMEOUT",
         default_value = "500ms",
         value_parser = parse::positive_time
     )]
@@ -199,7 +199,7 @@ struct Cli {
     /// How far back the in-memory WAL head keeps samples.
     #[arg(
         long,
-        env = "CRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION",
+        env = "KRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION",
         default_value = "5m",
         value_parser = parse::positive_time
     )]
@@ -254,22 +254,22 @@ enum Target {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let telemetry = crabka_telemetry::init(
+    let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
             "metrics-service",
             env!("CARGO_PKG_VERSION"),
-            "crabka-metrics-service",
+            "krabka-metrics-service",
         )?,
-        "crabka_metrics_service=info,info",
+        "krabka_metrics_service=info,info",
         "info",
-        "crabka-metrics-service",
+        "krabka-metrics-service",
     )?;
     let result = async {
-        let metrics = crabka_promql::metrics::ServiceMetrics::new();
-        let admin = crabka_telemetry::profiling::spawn_admin_from_env_with_config(
+        let metrics = krabka_promql::metrics::ServiceMetrics::new();
+        let admin = krabka_telemetry::profiling::spawn_admin_from_env_with_config(
             "0.0.0.0:9404",
-            crabka_promql::metrics::metrics_router(metrics.registry.clone()),
+            krabka_promql::metrics::metrics_router(metrics.registry.clone()),
             cli.profiling.clone(),
         )
         .await?;
@@ -284,7 +284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         tokio::select! {
             result = role => result?,
-            result = crabka_telemetry::profiling::await_admin_exit(admin) => result?,
+            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
         }
         Ok(())
     }
@@ -302,12 +302,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 )]
 async fn run_query_frontend(
     cli: Cli,
-    metrics: crabka_promql::metrics::ServiceMetrics,
+    metrics: krabka_promql::metrics::ServiceMetrics,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> = Arc::from(store);
-    let metric_store = crabka_metrics_service::RefreshingMetricBlockStore::new(
+    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
         Arc::clone(&store),
         object_store_url.clone(),
         &cli.manifest_prefix,
@@ -324,7 +324,7 @@ async fn run_query_frontend(
                 split_interval: cli.query_frontend_split,
                 shard_count: cli.query_frontend_shards,
             },
-            Arc::new(crabka_promql::ObjectStoreQueryFrontendCache::new(
+            Arc::new(krabka_promql::ObjectStoreQueryFrontendCache::new(
                 store,
                 cli.query_frontend_cache_prefix.clone(),
             )),
@@ -353,12 +353,12 @@ async fn run_query_frontend(
 )]
 async fn run_ruler(
     cli: Cli,
-    metrics: crabka_promql::metrics::ServiceMetrics,
+    metrics: krabka_promql::metrics::ServiceMetrics,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> = Arc::from(store);
-    let metric_store = crabka_metrics_service::RefreshingMetricBlockStore::new(
+    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
         store,
         object_store_url.clone(),
         &cli.manifest_prefix,
@@ -488,7 +488,7 @@ async fn run_ruler(
 )]
 async fn run_querier(
     cli: Cli,
-    metrics: crabka_promql::metrics::ServiceMetrics,
+    metrics: krabka_promql::metrics::ServiceMetrics,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
@@ -523,7 +523,7 @@ async fn run_querier(
             shutdown.clone(),
         );
     }
-    let metric_store = crabka_metrics_service::RefreshingMetricBlockStore::new(
+    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
         store,
         object_store_url.clone(),
         &cli.manifest_prefix,
@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn parses_querier_target() {
-        let cli = Cli::try_parse_from(["crabka-metrics-service", "--target", "querier"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
 
         assert2::assert!(matches!(cli.target, Target::Querier));
     }
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn parses_query_frontend_target_and_options() {
         let cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "query-frontend",
             "--query-frontend-split",
@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn parses_ruler_target_and_options() {
         let cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "ruler",
             "--ruler-tenant",
@@ -711,7 +711,7 @@ mod tests {
             "--ruler-state-topic",
             "__tenant_a_ruler_state",
             "--ruler-bundled-rules",
-            "/etc/crabka/rules/krabka-clock.yaml",
+            "/etc/krabka/rules/krabka-clock.yaml",
         ])
         .unwrap();
 
@@ -727,13 +727,13 @@ mod tests {
         assert2::assert!(cli.ruler_state_topic.as_str() == "__tenant_a_ruler_state");
         assert2::assert!(
             cli.ruler_bundled_rules.as_deref()
-                == Some(Path::new("/etc/crabka/rules/krabka-clock.yaml"))
+                == Some(Path::new("/etc/krabka/rules/krabka-clock.yaml"))
         );
     }
 
     #[test]
     fn ruler_bundled_rules_are_absent_by_default() {
-        let cli = Cli::try_parse_from(["crabka-metrics-service", "--target", "ruler"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-metrics-service", "--target", "ruler"]).unwrap();
 
         assert2::assert!(cli.ruler_bundled_rules.is_none());
     }
@@ -741,7 +741,7 @@ mod tests {
     #[test]
     fn parses_listen_address() {
         let cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--listen",
@@ -755,32 +755,32 @@ mod tests {
     #[test]
     fn parses_blockstore_querier_options() {
         let cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--object-store-url",
-            "file:///tmp/crabka-metrics",
+            "file:///tmp/krabka-metrics",
             "--manifest-prefix",
             "metrics/tenant-a",
         ])
         .unwrap();
 
-        assert2::assert!(&cli.object_store_url == &"file:///tmp/crabka-metrics".to_string());
+        assert2::assert!(&cli.object_store_url == &"file:///tmp/krabka-metrics".to_string());
         assert2::assert!(&cli.manifest_prefix == &"metrics/tenant-a".to_string());
     }
 
     #[test]
     fn cold_store_policy_parses_defaults_overrides_and_boundaries() {
         let defaults =
-            Cli::try_parse_from(["crabka-metrics-service", "--target", "querier"]).unwrap();
-        assert2::assert!(defaults.cold_cache_ttl == crabka_metrics_service::DEFAULT_COLD_CACHE_TTL);
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
+        assert2::assert!(defaults.cold_cache_ttl == krabka_metrics_service::DEFAULT_COLD_CACHE_TTL);
         assert2::assert!(
             defaults.unbounded_compatibility_lookback
-                == crabka_metrics_service::DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK
+                == krabka_metrics_service::DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK
         );
 
         let configured = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--cold-cache-ttl",
@@ -800,7 +800,7 @@ mod tests {
         ] {
             assert2::assert!(
                 Cli::try_parse_from([
-                    "crabka-metrics-service",
+                    "krabka-metrics-service",
                     "--target",
                     "querier",
                     args[0],
@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn cold_store_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_METRICS_SERVICE_COLD_STORE_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_METRICS_SERVICE_COLD_STORE_POLICY_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -823,8 +823,8 @@ mod tests {
                         "tests::cold_store_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_METRICS_COLD_CACHE_TTL", "5s")
-                    .env("CRABKA_METRICS_UNBOUNDED_COMPATIBILITY_LOOKBACK", "10m")
+                    .env("KRABKA_METRICS_COLD_CACHE_TTL", "5s")
+                    .env("KRABKA_METRICS_UNBOUNDED_COMPATIBILITY_LOOKBACK", "10m")
                     .status()
                     .expect("child test");
             assert2::assert!(status.success());
@@ -832,12 +832,12 @@ mod tests {
         }
 
         let from_env =
-            Cli::try_parse_from(["crabka-metrics-service", "--target", "querier"]).unwrap();
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
         assert2::assert!(from_env.cold_cache_ttl == secs(5));
         assert2::assert!(from_env.unbounded_compatibility_lookback == minutes(10));
 
         let from_cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--cold-cache-ttl",
@@ -853,14 +853,14 @@ mod tests {
     #[test]
     fn query_policy_parses_defaults_overrides_and_boundaries() {
         let defaults =
-            Cli::try_parse_from(["crabka-metrics-service", "--target", "querier"]).unwrap();
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
         assert2::assert!(defaults.query_lookback_delta == minutes(5));
         assert2::assert!(defaults.query_eval_interval == minutes(1));
         assert2::assert!(defaults.query_max_samples == 50_000_000);
         assert2::assert!(defaults.remote_read_max_body == mebibytes(64));
 
         let configured = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--query-lookback-delta=7m",
@@ -882,7 +882,7 @@ mod tests {
             "--remote-read-max-body=1.5B",
         ] {
             assert2::assert!(
-                Cli::try_parse_from(["crabka-metrics-service", "--target", "querier", flag,])
+                Cli::try_parse_from(["krabka-metrics-service", "--target", "querier", flag,])
                     .is_err(),
                 "accepted {flag}"
             );
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn query_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_METRICS_QUERY_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_METRICS_QUERY_POLICY_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -900,10 +900,10 @@ mod tests {
                         "tests::query_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_METRICS_QUERY_LOOKBACK_DELTA", "7m")
-                    .env("CRABKA_METRICS_QUERY_EVAL_INTERVAL", "11s")
-                    .env("CRABKA_METRICS_QUERY_MAX_SAMPLES", "13")
-                    .env("CRABKA_METRICS_REMOTE_READ_MAX_BODY", "17MiB")
+                    .env("KRABKA_METRICS_QUERY_LOOKBACK_DELTA", "7m")
+                    .env("KRABKA_METRICS_QUERY_EVAL_INTERVAL", "11s")
+                    .env("KRABKA_METRICS_QUERY_MAX_SAMPLES", "13")
+                    .env("KRABKA_METRICS_REMOTE_READ_MAX_BODY", "17MiB")
                     .status()
                     .expect("child test");
             assert2::assert!(status.success());
@@ -911,14 +911,14 @@ mod tests {
         }
 
         let from_env =
-            Cli::try_parse_from(["crabka-metrics-service", "--target", "querier"]).unwrap();
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
         assert2::assert!(query_engine_opts(&from_env).lookback_delta == minutes(7));
         assert2::assert!(query_engine_opts(&from_env).eval_interval == secs(11));
         assert2::assert!(query_engine_opts(&from_env).max_samples == 13);
         assert2::assert!(from_env.remote_read_max_body == mebibytes(17));
 
         let from_cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--query-lookback-delta=19m",
@@ -936,12 +936,12 @@ mod tests {
     #[test]
     fn client_resource_policy_parses_defaults_and_overrides() {
         let defaults =
-            Cli::try_parse_from(["crabka-metrics-service", "--target", "querier"]).unwrap();
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
         assert2::assert!(defaults.client_dispatch_queue_capacity == 64);
         assert2::assert!(defaults.client_frame_max == mebibytes(100));
 
         let custom = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--client-dispatch-queue-capacity",
@@ -955,14 +955,14 @@ mod tests {
 
         for args in [
             vec![
-                "crabka-metrics-service",
+                "krabka-metrics-service",
                 "--target",
                 "querier",
                 "--client-dispatch-queue-capacity",
                 "0",
             ],
             vec![
-                "crabka-metrics-service",
+                "krabka-metrics-service",
                 "--target",
                 "querier",
                 "--client-frame-max",
@@ -975,7 +975,7 @@ mod tests {
 
     #[test]
     fn client_resource_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_METRICS_SERVICE_CLIENT_RESOURCE_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_METRICS_SERVICE_CLIENT_RESOURCE_POLICY_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -985,8 +985,8 @@ mod tests {
                         "tests::client_resource_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_METRICS_SERVICE_CLIENT_DISPATCH_QUEUE_CAPACITY", "7")
-                    .env("CRABKA_METRICS_SERVICE_CLIENT_FRAME_MAX", "32KiB")
+                    .env("KRABKA_METRICS_SERVICE_CLIENT_DISPATCH_QUEUE_CAPACITY", "7")
+                    .env("KRABKA_METRICS_SERVICE_CLIENT_FRAME_MAX", "32KiB")
                     .status()
                     .expect("child test");
             assert2::assert!(status.success());
@@ -994,12 +994,12 @@ mod tests {
         }
 
         let from_env =
-            Cli::try_parse_from(["crabka-metrics-service", "--target", "querier"]).unwrap();
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
         assert2::assert!(from_env.client_dispatch_queue_capacity == 7);
         assert2::assert!(from_env.client_frame_max == kibibytes(32));
 
         let from_cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--client-dispatch-queue-capacity",
@@ -1015,23 +1015,23 @@ mod tests {
     #[test]
     fn parses_runtime_overrides_path() {
         let cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "query-frontend",
             "--runtime-overrides",
-            "/etc/crabka/runtime.yaml",
+            "/etc/krabka/runtime.yaml",
         ])
         .unwrap();
 
         assert2::assert!(
-            cli.runtime_overrides == Some(std::path::PathBuf::from("/etc/crabka/runtime.yaml"))
+            cli.runtime_overrides == Some(std::path::PathBuf::from("/etc/krabka/runtime.yaml"))
         );
     }
 
     #[test]
     fn parses_querier_wal_head_options() {
         let cli = Cli::try_parse_from([
-            "crabka-metrics-service",
+            "krabka-metrics-service",
             "--target",
             "querier",
             "--wal-bootstrap",
@@ -1041,7 +1041,7 @@ mod tests {
             "--wal-client-id",
             "querier-a",
             "--wal-topic",
-            "__crabka_metrics_wal",
+            "__krabka_metrics_wal",
             "--wal-head-retention",
             "10m",
         ])
@@ -1050,7 +1050,7 @@ mod tests {
         assert2::assert!(cli.wal_bootstrap.as_deref() == Some("127.0.0.1:9092"));
         assert2::assert!(cli.wal_group_id.as_str() == "metrics-querier");
         assert2::assert!(cli.wal_client_id.as_str() == "querier-a");
-        assert2::assert!(cli.wal_topic.as_str() == "__crabka_metrics_wal");
+        assert2::assert!(cli.wal_topic.as_str() == "__krabka_metrics_wal");
         assert2::assert!(cli.wal_head_retention == minutes(10));
     }
 
@@ -1061,13 +1061,13 @@ mod tests {
 
         temp_env::with_vars(
             [
-                ("CRABKA_METRICS_SERVICE_TARGET", Some("querier")),
-                ("CRABKA_METRICS_WAL_POLL_TIMEOUT", Some("250ms")),
-                ("CRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION", Some("10m")),
+                ("KRABKA_METRICS_SERVICE_TARGET", Some("querier")),
+                ("KRABKA_METRICS_WAL_POLL_TIMEOUT", Some("250ms")),
+                ("KRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION", Some("10m")),
             ],
             || {
                 let cli =
-                    Cli::try_parse_from(["crabka-metrics-service"]).expect("parse environment");
+                    Cli::try_parse_from(["krabka-metrics-service"]).expect("parse environment");
                 assert2::assert!(matches!(cli.target, Target::Querier));
                 assert2::assert!(
                     (cli.wal_poll_timeout, cli.wal_head_retention) == (millis(250), minutes(10))
@@ -1079,7 +1079,7 @@ mod tests {
     #[test]
     fn rejects_unknown_target() {
         assert2::assert!(
-            Cli::try_parse_from(["crabka-metrics-service", "--target", "bogus"]).is_err()
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "bogus"]).is_err()
         );
     }
 
@@ -1128,8 +1128,8 @@ mod tests {
                 let _ = rx.await;
                 Ok(PendingWalHeadConsumer)
             },
-            crabka_promql::WalHead::new(),
-            "__crabka_metrics_wal".to_string(),
+            krabka_promql::WalHead::new(),
+            "__krabka_metrics_wal".to_string(),
             millis(1),
             shutdown.clone(),
         );
@@ -1143,23 +1143,23 @@ mod tests {
     struct PendingWalHeadConsumer;
 
     #[async_trait::async_trait]
-    impl crabka_metrics_service::WalHeadConsumerPoll for PendingWalHeadConsumer {
+    impl krabka_metrics_service::WalHeadConsumerPoll for PendingWalHeadConsumer {
         async fn poll(
             &mut self,
             _timeout: Time,
         ) -> Result<
-            Vec<crabka_client_consumer::ConsumerRecord>,
-            crabka_metrics_service::WalHeadConsumerError,
+            Vec<krabka_client_consumer::ConsumerRecord>,
+            krabka_metrics_service::WalHeadConsumerError,
         > {
             std::future::pending().await
         }
     }
 
     #[async_trait::async_trait]
-    impl crabka_metrics_service::WalHeadConsumerCommit for PendingWalHeadConsumer {
+    impl krabka_metrics_service::WalHeadConsumerCommit for PendingWalHeadConsumer {
         async fn commit_sync(
             &mut self,
-        ) -> Result<(), crabka_metrics_service::WalHeadConsumerError> {
+        ) -> Result<(), krabka_metrics_service::WalHeadConsumerError> {
             Ok(())
         }
     }

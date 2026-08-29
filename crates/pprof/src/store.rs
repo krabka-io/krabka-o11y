@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use crabka_blockstore::LabelMatcher;
 use datafusion::prelude::SessionContext;
+use krabka_blockstore::LabelMatcher;
 
 use crate::{error::ProfileError, frame::SymbolSource};
 
@@ -79,8 +79,8 @@ mod tests {
     use std::sync::Arc;
 
     use assert2::assert;
-    use crabka_blockstore::LabelMatcher;
     use datafusion::prelude::SessionContext;
+    use krabka_blockstore::LabelMatcher;
 
     use super::*;
     use crate::SymbolDb;

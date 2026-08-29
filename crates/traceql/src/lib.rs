@@ -1,4 +1,4 @@
-//! `TraceQL` engine for Crabka's Grafana-Tempo-equivalent traces backend.
+//! `TraceQL` engine for Krabka's Grafana-Tempo-equivalent traces backend.
 //!
 //! The crate holds a hand-written lexer, a recursive-descent parser, and an
 //! AST-to-`DataFusion` planner. It lowers the `TraceQL` structural operators to

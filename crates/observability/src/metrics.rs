@@ -1,7 +1,7 @@
 //! Logs-service Prometheus metrics.
 //!
 //! This metric spec is the same across the LGTM observability services. It is
-//! a `prometheus-client` [`Registry`] with prefix `crabka_logs`, wrapped in
+//! a `prometheus-client` [`Registry`] with prefix `krabka_logs`, wrapped in
 //! `Arc<Mutex<…>>` so the `/metrics` exporter can lock it. The cheaply
 //! cloneable [`ServiceMetrics`] hands out counter and histogram handles, and
 //! the ingest (distributor) and query (querier) handlers increment those
@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use crabka_units::{
+use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt as _},
 };
@@ -75,7 +75,7 @@ pub struct ServiceMetrics {
     // COMPACT (compactor role).
     /// Log blocks that the compactor durably wrote to object storage. There
     /// is one increment per persisted
-    /// [`crabka_blockstore::BlockDescriptor`].
+    /// [`krabka_blockstore::BlockDescriptor`].
     pub blocks_written: Counter,
     // QUERY (querier role).
     pub query_requests: Family<RouteStatusLabel, Counter>,
@@ -87,7 +87,7 @@ impl ServiceMetrics {
     /// bundle.
     #[must_use]
     pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("crabka_logs");
+        let mut registry = Registry::with_prefix("krabka_logs");
 
         let ingest_requests = Family::<StatusLabel, Counter>::default();
         let ingest_bytes = Counter::default();
@@ -280,7 +280,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use crabka_units::{bytes, millis};
+    use krabka_units::{bytes, millis};
     use tower::ServiceExt as _;
 
     use super::*;
@@ -301,15 +301,15 @@ mod tests {
         prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
 
         for needle in [
-            "crabka_logs_ingest_requests_total",
-            "crabka_logs_ingest_bytes_total",
-            "crabka_logs_ingest_items_total",
-            "crabka_logs_ingest_duration_seconds",
-            "crabka_logs_wal_append_failures_total",
-            "crabka_logs_ingest_lines_total",
-            "crabka_logs_blocks_written_total",
-            "crabka_logs_query_requests_total",
-            "crabka_logs_query_duration_seconds",
+            "krabka_logs_ingest_requests_total",
+            "krabka_logs_ingest_bytes_total",
+            "krabka_logs_ingest_items_total",
+            "krabka_logs_ingest_duration_seconds",
+            "krabka_logs_wal_append_failures_total",
+            "krabka_logs_ingest_lines_total",
+            "krabka_logs_blocks_written_total",
+            "krabka_logs_query_requests_total",
+            "krabka_logs_query_duration_seconds",
             "status=\"ok\"",
             "status=\"error\"",
             "route=\"query\"",
@@ -397,7 +397,7 @@ mod tests {
             .await
             .unwrap();
         let s = std::str::from_utf8(&body).unwrap();
-        assert!(s.contains("crabka_logs_ingest_requests_total"), "{s}");
+        assert!(s.contains("krabka_logs_ingest_requests_total"), "{s}");
         assert!(s.contains("# EOF"), "{s}");
     }
 }

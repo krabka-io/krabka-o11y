@@ -21,11 +21,13 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use bytes::Bytes;
-use crabka_blockstore::{BlockStore, LabelMatcher, Labels};
-use crabka_client_consumer::{Consumer, ConsumerRecord};
-use crabka_client_producer::{Producer, ProducerRecord};
-use crabka_metrics::{CompactionIndexManifest, WalRecord, partition_key};
-use crabka_promql::{
+use futures::TryStreamExt;
+pub use ids::{Offset, PartitionIndex};
+use krabka_blockstore::{BlockStore, LabelMatcher, Labels};
+use krabka_client_consumer::{Consumer, ConsumerRecord};
+use krabka_client_producer::{Producer, ProducerRecord};
+use krabka_metrics::{CompactionIndexManifest, WalRecord, partition_key};
+use krabka_promql::{
     AlertmanagerSink, EngineOpts, ExemplarRecord, InMemoryMetricStore, LabelNameCardinality,
     LabelValueCardinality, MergedMetricStore, MetadataRecord, MetricBlockStore, MetricStore,
     PrometheusApiState, QueryFrontendOptions, RecordingRuleWalSink, RulerAlertState,
@@ -33,15 +35,13 @@ use crabka_promql::{
     RulerShard, RulerStateSink, RulerWalError, ScanResult, TsdbBlock, WalHead,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval, prometheus_router,
 };
-use crabka_units::prelude::*;
-use futures::TryStreamExt;
-pub use ids::{Offset, PartitionIndex};
+use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tower::ServiceExt as _;
 use url::Url;
 
-pub const RULER_STATE_TOPIC: &str = "__crabka_metrics_ruler_state";
+pub const RULER_STATE_TOPIC: &str = "__krabka_metrics_ruler_state";
 
 #[derive(Debug, thiserror::Error)]
 pub enum MetricsServiceError {
@@ -346,7 +346,7 @@ pub fn replay_wal_head_records(
             newest_timestamp_ms =
                 Some(newest_timestamp_ms.map_or(timestamp_ms, |current| current.max(timestamp_ms)));
         }
-        // partition/offset are now the shared crabka_ids types promql also uses,
+        // partition/offset are now the shared krabka_ids types promql also uses,
         // so they pass straight through with no conversion at the seam.
         head.apply_wal_record_at(&wal_record, record.partition, record.offset);
         replayed_records += 1;
@@ -588,7 +588,7 @@ pub fn query_frontend_prometheus_router_for_store_with_cache<S, C>(
 ) -> Router
 where
     S: MetricStore + 'static,
-    C: crabka_promql::RangeQueryCache + 'static,
+    C: krabka_promql::RangeQueryCache + 'static,
 {
     prometheus_router(Arc::new(
         PrometheusApiState::new(Arc::new(store), EngineOpts::default())
@@ -753,7 +753,7 @@ pub struct NoopAlertmanagerSink;
 impl AlertmanagerSink for NoopAlertmanagerSink {
     async fn dispatch_alerts(
         &self,
-        alerts: Vec<crabka_promql::AlertmanagerAlert>,
+        alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), RulerWalError> {
         if !alerts.is_empty() {
             tracing::warn!(
@@ -784,7 +784,7 @@ impl AlertmanagerHttpSink {
 impl AlertmanagerSink for AlertmanagerHttpSink {
     async fn dispatch_alerts(
         &self,
-        alerts: Vec<crabka_promql::AlertmanagerAlert>,
+        alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), RulerWalError> {
         if alerts.is_empty() {
             return Ok(());
@@ -824,7 +824,7 @@ impl RulerAlertmanagerSink {
 impl AlertmanagerSink for RulerAlertmanagerSink {
     async fn dispatch_alerts(
         &self,
-        alerts: Vec<crabka_promql::AlertmanagerAlert>,
+        alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), RulerWalError> {
         match self {
             Self::Http(sink) => sink.dispatch_alerts(alerts).await,
@@ -833,7 +833,7 @@ impl AlertmanagerSink for RulerAlertmanagerSink {
     }
 }
 
-fn alertmanager_payload(alerts: Vec<crabka_promql::AlertmanagerAlert>) -> serde_json::Value {
+fn alertmanager_payload(alerts: Vec<krabka_promql::AlertmanagerAlert>) -> serde_json::Value {
     serde_json::Value::Array(
         alerts
             .into_iter()
@@ -880,7 +880,7 @@ pub async fn evaluate_ruler_once<S, W, A, R>(
     tenant: &str,
     shard: RulerShard,
     eval_time_ms: i64,
-) -> Result<RulerGroupEvaluation, crabka_promql::PromqlError>
+) -> Result<RulerGroupEvaluation, krabka_promql::PromqlError>
 where
     S: MetricStore,
     W: RecordingRuleWalSink,
@@ -912,7 +912,7 @@ pub async fn run_ruler_evaluation_loop<S, W, A, R, Stop>(
     shard: RulerShard,
     interval: Time,
     mut should_stop: Stop,
-) -> Result<(), crabka_promql::PromqlError>
+) -> Result<(), krabka_promql::PromqlError>
 where
     S: MetricStore,
     W: RecordingRuleWalSink,
@@ -1286,7 +1286,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<ScanResult, crabka_promql::PromqlError> {
+    ) -> Result<ScanResult, krabka_promql::PromqlError> {
         self.current_store(start_ms, end_ms)
             .await?
             .scan(tenant, matchers, start_ms, end_ms)
@@ -1306,7 +1306,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<String>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<String>, krabka_promql::PromqlError> {
         self.current_store(start_ms, end_ms)
             .await?
             .label_names(tenant, matchers, start_ms, end_ms)
@@ -1327,7 +1327,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<String>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<String>, krabka_promql::PromqlError> {
         self.current_store(start_ms, end_ms)
             .await?
             .label_values(tenant, name, matchers, start_ms, end_ms)
@@ -1347,7 +1347,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<Labels>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<Labels>, krabka_promql::PromqlError> {
         self.current_store(start_ms, end_ms)
             .await?
             .series(tenant, matchers, start_ms, end_ms)
@@ -1367,7 +1367,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<ExemplarRecord>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<ExemplarRecord>, krabka_promql::PromqlError> {
         self.current_store(start_ms, end_ms)
             .await?
             .exemplars(tenant, matchers, start_ms, end_ms)
@@ -1385,7 +1385,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         &self,
         tenant: &str,
         metric: Option<&str>,
-    ) -> Result<Vec<MetadataRecord>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<MetadataRecord>, krabka_promql::PromqlError> {
         self.current_store(i64::MIN, i64::MAX)
             .await?
             .metadata(tenant, metric)
@@ -1402,7 +1402,7 @@ impl MetricStore for RefreshingMetricBlockStore {
     async fn cardinality_label_names(
         &self,
         tenant: &str,
-    ) -> Result<Vec<LabelNameCardinality>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<LabelNameCardinality>, krabka_promql::PromqlError> {
         self.current_store(i64::MIN, i64::MAX)
             .await?
             .cardinality_label_names(tenant)
@@ -1419,7 +1419,7 @@ impl MetricStore for RefreshingMetricBlockStore {
     async fn cardinality_label_values(
         &self,
         tenant: &str,
-    ) -> Result<Vec<LabelValueCardinality>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<LabelValueCardinality>, krabka_promql::PromqlError> {
         self.current_store(i64::MIN, i64::MAX)
             .await?
             .cardinality_label_values(tenant)
@@ -1436,7 +1436,7 @@ impl MetricStore for RefreshingMetricBlockStore {
     async fn cardinality_active_series(
         &self,
         tenant: &str,
-    ) -> Result<Vec<Labels>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<Labels>, krabka_promql::PromqlError> {
         self.current_store(i64::MIN, i64::MAX)
             .await?
             .cardinality_active_series(tenant)
@@ -1453,7 +1453,7 @@ impl MetricStore for RefreshingMetricBlockStore {
     async fn tsdb_stats(
         &self,
         tenant: &str,
-    ) -> Result<crabka_promql::TsdbStats, crabka_promql::PromqlError> {
+    ) -> Result<krabka_promql::TsdbStats, krabka_promql::PromqlError> {
         self.current_store(i64::MIN, i64::MAX)
             .await?
             .tsdb_stats(tenant)
@@ -1470,7 +1470,7 @@ impl MetricStore for RefreshingMetricBlockStore {
     async fn tsdb_blocks(
         &self,
         tenant: &str,
-    ) -> Result<Vec<TsdbBlock>, crabka_promql::PromqlError> {
+    ) -> Result<Vec<TsdbBlock>, krabka_promql::PromqlError> {
         self.current_store(i64::MIN, i64::MAX)
             .await?
             .tsdb_blocks(tenant)
@@ -1641,13 +1641,13 @@ impl From<object_store::Error> for MetricsServiceError {
     }
 }
 
-impl From<crabka_metrics::CompactionIndexError> for MetricsServiceError {
-    fn from(error: crabka_metrics::CompactionIndexError) -> Self {
+impl From<krabka_metrics::CompactionIndexError> for MetricsServiceError {
+    fn from(error: krabka_metrics::CompactionIndexError) -> Self {
         Self::Manifest(error.to_string())
     }
 }
 
-impl From<MetricsServiceError> for crabka_promql::PromqlError {
+impl From<MetricsServiceError> for krabka_promql::PromqlError {
     fn from(error: MetricsServiceError) -> Self {
         Self::Store(error.to_string())
     }
@@ -1670,7 +1670,7 @@ mod tests {
     /// cache rather than be served from it forever.
     #[tokio::test]
     async fn manifest_listing_covers_its_boundaries() {
-        use crabka_metrics::{CompactionIndexManifest, MetricBlockKind};
+        use krabka_metrics::{CompactionIndexManifest, MetricBlockKind};
         use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 
         fn manifest(index_key: &str, min_ts: i64, max_ts: i64) -> CompactionIndexManifest {
@@ -1862,7 +1862,7 @@ mod tests {
     fn the_noop_alertmanager_sink_warns_only_when_it_drops_something() {
         use std::sync::{Arc, Mutex};
 
-        use crabka_promql::AlertmanagerSink as _;
+        use krabka_promql::AlertmanagerSink as _;
         use tracing::subscriber::with_default;
         use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt as _, registry};
 
@@ -1885,7 +1885,7 @@ mod tests {
             }
         }
 
-        fn dispatch(alerts: Vec<crabka_promql::AlertmanagerAlert>) -> String {
+        fn dispatch(alerts: Vec<krabka_promql::AlertmanagerAlert>) -> String {
             let captured = Captured::default();
             let subscriber = registry().with(
                 tracing_subscriber::fmt::layer()
@@ -1911,7 +1911,7 @@ mod tests {
             String::from_utf8(captured.0.lock().unwrap().clone()).unwrap()
         }
 
-        let alert = crabka_promql::AlertmanagerAlert {
+        let alert = krabka_promql::AlertmanagerAlert {
             labels: std::collections::BTreeMap::from([("alertname".into(), "Down".into())]),
             annotations: std::collections::BTreeMap::new(),
             starts_at_ms: 1,
@@ -1952,10 +1952,10 @@ mod tests {
         http::{Request, StatusCode},
     };
     use bytes::Bytes;
-    use crabka_client_consumer::ConsumerRecord;
-    use crabka_promql::{AlertmanagerSink, MetricStore};
-    use crabka_units::prelude::*;
     use futures::{StreamExt, stream::BoxStream};
+    use krabka_client_consumer::ConsumerRecord;
+    use krabka_promql::{AlertmanagerSink, MetricStore};
+    use krabka_units::prelude::*;
     use object_store::{
         CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
         PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
@@ -2146,8 +2146,8 @@ mod tests {
 
     #[tokio::test]
     async fn router_for_store_serves_samples_from_supplied_store() {
-        let mut store = crabka_promql::InMemoryMetricStore::new();
-        let mut labels = crabka_blockstore::Labels::new();
+        let mut store = krabka_promql::InMemoryMetricStore::new();
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         store.push_float("tenant-a", labels, 10_000, 1.0);
@@ -2179,9 +2179,9 @@ mod tests {
     /// asserted against what was seeded.
     #[tokio::test]
     async fn refreshing_store_readers_forward_to_the_covering_store() {
-        use crabka_metrics::{SamplePayload, WalRecord};
+        use krabka_metrics::{SamplePayload, WalRecord};
 
-        let head = crabka_promql::WalHead::new();
+        let head = krabka_promql::WalHead::new();
         head.apply_wal_record(&WalRecord {
             tenant: "acme".into(),
             labels: vec![
@@ -2239,7 +2239,7 @@ mod tests {
             Arc::clone(&object_store),
             url::Url::parse("memory:///").unwrap(),
             "metrics",
-            crabka_promql::WalHead::new(),
+            krabka_promql::WalHead::new(),
         );
         check!(defaults.cold_cache_ttl == super::DEFAULT_COLD_CACHE_TTL);
         check!(
@@ -2251,7 +2251,7 @@ mod tests {
             object_store,
             url::Url::parse("memory:///").unwrap(),
             "metrics",
-            crabka_promql::WalHead::new(),
+            krabka_promql::WalHead::new(),
         )
         .with_cold_cache_ttl(secs(5))
         .with_unbounded_compatibility_lookback(minutes(10));
@@ -2281,7 +2281,7 @@ mod tests {
     #[test]
     fn configured_cold_cache_ttl_controls_freshness() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let cold = crabka_promql::MetricBlockStore::new(crabka_blockstore::BlockStore::new(
+        let cold = krabka_promql::MetricBlockStore::new(krabka_blockstore::BlockStore::new(
             object_store,
             url::Url::parse("memory:///").unwrap(),
         ));
@@ -2299,8 +2299,8 @@ mod tests {
 
     #[tokio::test]
     async fn query_frontend_router_serves_split_range_query() {
-        let mut store = crabka_promql::InMemoryMetricStore::new();
-        let mut labels = crabka_blockstore::Labels::new();
+        let mut store = krabka_promql::InMemoryMetricStore::new();
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         for (ts_ms, value) in [(0, 1.0), (60_000, 2.0), (120_000, 3.0)] {
@@ -2309,7 +2309,7 @@ mod tests {
 
         let response = super::query_frontend_prometheus_router_for_store(
             store,
-            crabka_promql::QueryFrontendOptions {
+            krabka_promql::QueryFrontendOptions {
                 split_interval: minutes(1),
                 shard_count: 1,
             },
@@ -2340,11 +2340,11 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingRulerWalSink {
-        records: std::sync::Mutex<Vec<crabka_metrics::WalRecord>>,
+        records: std::sync::Mutex<Vec<krabka_metrics::WalRecord>>,
     }
 
     impl RecordingRulerWalSink {
-        fn records(&self) -> Vec<crabka_metrics::WalRecord> {
+        fn records(&self) -> Vec<krabka_metrics::WalRecord> {
             self.records
                 .lock()
                 .expect("recording ruler sink poisoned")
@@ -2353,11 +2353,11 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl crabka_promql::RecordingRuleWalSink for RecordingRulerWalSink {
+    impl krabka_promql::RecordingRuleWalSink for RecordingRulerWalSink {
         async fn append_recording_rule_record(
             &self,
-            record: crabka_metrics::WalRecord,
-        ) -> Result<(), crabka_promql::RulerWalError> {
+            record: krabka_metrics::WalRecord,
+        ) -> Result<(), krabka_promql::RulerWalError> {
             self.records
                 .lock()
                 .expect("recording ruler sink poisoned")
@@ -2371,24 +2371,24 @@ mod tests {
     /// the recorder itself rather than for `Arc<_>`.
     #[derive(Clone, Default)]
     struct RecordingRulerStateSink {
-        groups: std::sync::Arc<std::sync::Mutex<Vec<crabka_promql::RulerGroupStateRecord>>>,
-        alerts: std::sync::Arc<std::sync::Mutex<Vec<crabka_promql::RulerAlertStateRecord>>>,
+        groups: std::sync::Arc<std::sync::Mutex<Vec<krabka_promql::RulerGroupStateRecord>>>,
+        alerts: std::sync::Arc<std::sync::Mutex<Vec<krabka_promql::RulerAlertStateRecord>>>,
     }
 
     #[async_trait::async_trait]
-    impl crabka_promql::RulerStateSink for RecordingRulerStateSink {
+    impl krabka_promql::RulerStateSink for RecordingRulerStateSink {
         async fn persist_ruler_group_state(
             &self,
-            record: crabka_promql::RulerGroupStateRecord,
-        ) -> Result<(), crabka_promql::RulerWalError> {
+            record: krabka_promql::RulerGroupStateRecord,
+        ) -> Result<(), krabka_promql::RulerWalError> {
             self.groups.lock().expect("poisoned").push(record);
             Ok(())
         }
 
         async fn persist_ruler_alert_state(
             &self,
-            record: crabka_promql::RulerAlertStateRecord,
-        ) -> Result<(), crabka_promql::RulerWalError> {
+            record: krabka_promql::RulerAlertStateRecord,
+        ) -> Result<(), krabka_promql::RulerWalError> {
             self.alerts.lock().expect("poisoned").push(record);
             Ok(())
         }
@@ -2400,19 +2400,19 @@ mod tests {
     /// what losing ruler state looks like from the caller's side.
     #[tokio::test]
     async fn ruler_state_fanout_reaches_both_sinks() {
-        use crabka_promql::RulerStateSink as _;
+        use krabka_promql::RulerStateSink as _;
 
         let first = RecordingRulerStateSink::default();
         let second = RecordingRulerStateSink::default();
         let fanout = super::RulerStateFanoutSink::new(first.clone(), second.clone());
 
-        let group = crabka_promql::RulerGroupStateRecord {
+        let group = krabka_promql::RulerGroupStateRecord {
             tenant: "acme".into(),
             namespace: "ns".into(),
             group: "g".into(),
             last_eval_ms: 1_234,
         };
-        let alert = crabka_promql::RulerAlertStateRecord {
+        let alert = krabka_promql::RulerAlertStateRecord {
             tenant: "acme".into(),
             rule_id: "r1".into(),
             labels: std::collections::BTreeMap::new(),
@@ -2438,24 +2438,24 @@ mod tests {
     struct RecordingAlertmanagerSink;
 
     #[async_trait::async_trait]
-    impl crabka_promql::AlertmanagerSink for RecordingAlertmanagerSink {
+    impl krabka_promql::AlertmanagerSink for RecordingAlertmanagerSink {
         async fn dispatch_alerts(
             &self,
-            _alerts: Vec<crabka_promql::AlertmanagerAlert>,
-        ) -> Result<(), crabka_promql::RulerWalError> {
+            _alerts: Vec<krabka_promql::AlertmanagerAlert>,
+        ) -> Result<(), krabka_promql::RulerWalError> {
             Ok(())
         }
     }
 
     #[tokio::test]
     async fn ruler_evaluation_reads_api_rules_and_appends_recording_wal_records() {
-        let mut store = crabka_promql::InMemoryMetricStore::new();
-        let mut labels = crabka_blockstore::Labels::new();
+        let mut store = krabka_promql::InMemoryMetricStore::new();
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         store.push_float("tenant-a", labels, 10_000, 1.0);
         let state = super::prometheus_api_state_for_store(store);
-        let router = crabka_promql::prometheus_router(std::sync::Arc::clone(&state));
+        let router = krabka_promql::prometheus_router(std::sync::Arc::clone(&state));
 
         let response = router
             .oneshot(
@@ -2482,15 +2482,15 @@ rules:
         let wal_sink = RecordingRulerWalSink::default();
         let alert_sink = RecordingAlertmanagerSink;
         let state_sink = super::PrometheusRulerStateSink::new(std::sync::Arc::clone(&state));
-        let mut alert_state = crabka_promql::RulerAlertState::default();
-        let mut group_state = crabka_promql::RulerGroupState::default();
+        let mut alert_state = krabka_promql::RulerAlertState::default();
+        let mut group_state = krabka_promql::RulerGroupState::default();
         let evaluation = super::evaluate_ruler_once(
             &state,
             (&wal_sink, &alert_sink, &state_sink),
             &mut alert_state,
             &mut group_state,
             "tenant-a",
-            crabka_promql::RulerShard::new(1, 1).unwrap(),
+            krabka_promql::RulerShard::new(1, 1).unwrap(),
             10_000,
         )
         .await
@@ -2505,33 +2505,33 @@ rules:
         assert2::assert!(record_labels.get("job") == Some("api"));
         assert2::assert!(matches!(
             records[0].payload,
-            crabka_metrics::SamplePayload::Float { value, .. } if (value - 1.0).abs() < f64::EPSILON
+            krabka_metrics::SamplePayload::Float { value, .. } if (value - 1.0).abs() < f64::EPSILON
         ));
     }
 
     #[tokio::test]
     async fn ruler_evaluation_applies_runtime_max_samples_per_query() {
-        let mut store = crabka_promql::InMemoryMetricStore::new();
-        let mut api_labels = crabka_blockstore::Labels::new();
+        let mut store = krabka_promql::InMemoryMetricStore::new();
+        let mut api_labels = krabka_blockstore::Labels::new();
         api_labels.insert("__name__", "up");
         api_labels.insert("job", "api");
         store.push_float("tenant-a", api_labels, 10_000, 1.0);
-        let mut web_labels = crabka_blockstore::Labels::new();
+        let mut web_labels = krabka_blockstore::Labels::new();
         web_labels.insert("__name__", "up");
         web_labels.insert("job", "web");
         store.push_float("tenant-a", web_labels, 10_000, 1.0);
-        let limits = crabka_metrics::Limits {
+        let limits = krabka_metrics::Limits {
             max_samples_per_query: 1,
-            ..crabka_metrics::Limits::default()
+            ..krabka_metrics::Limits::default()
         };
         let state = std::sync::Arc::new(
-            crabka_promql::PrometheusApiState::new(
+            krabka_promql::PrometheusApiState::new(
                 std::sync::Arc::new(store),
-                crabka_promql::EngineOpts::default(),
+                krabka_promql::EngineOpts::default(),
             )
-            .with_query_limits(crabka_metrics::OverridesProvider::new(limits)),
+            .with_query_limits(krabka_metrics::OverridesProvider::new(limits)),
         );
-        let router = crabka_promql::prometheus_router(std::sync::Arc::clone(&state));
+        let router = krabka_promql::prometheus_router(std::sync::Arc::clone(&state));
 
         let response = router
             .oneshot(
@@ -2558,15 +2558,15 @@ rules:
         let wal_sink = RecordingRulerWalSink::default();
         let alert_sink = RecordingAlertmanagerSink;
         let state_sink = super::PrometheusRulerStateSink::new(std::sync::Arc::clone(&state));
-        let mut alert_state = crabka_promql::RulerAlertState::default();
-        let mut group_state = crabka_promql::RulerGroupState::default();
+        let mut alert_state = krabka_promql::RulerAlertState::default();
+        let mut group_state = krabka_promql::RulerGroupState::default();
         let error = super::evaluate_ruler_once(
             &state,
             (&wal_sink, &alert_sink, &state_sink),
             &mut alert_state,
             &mut group_state,
             "tenant-a",
-            crabka_promql::RulerShard::new(1, 1).unwrap(),
+            krabka_promql::RulerShard::new(1, 1).unwrap(),
             10_000,
         )
         .await
@@ -2600,7 +2600,7 @@ rules:
         .unwrap();
 
         let sink = super::AlertmanagerHttpSink::new(format!("http://{bound}/api/v2/alerts"));
-        sink.dispatch_alerts(vec![crabka_promql::AlertmanagerAlert {
+        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
             labels: std::collections::BTreeMap::from([
                 ("alertname".to_string(), "InstanceDown".to_string()),
                 ("severity".to_string(), "page".to_string()),
@@ -2611,7 +2611,7 @@ rules:
             )]),
             starts_at_ms: 60_000,
             ends_at_ms: None,
-            generator_url: "http://crabka.example/graph".to_string(),
+            generator_url: "http://krabka.example/graph".to_string(),
         }])
         .await
         .unwrap();
@@ -2629,14 +2629,14 @@ rules:
             },
             "startsAt": "1970-01-01T00:01:00Z",
             "endsAt": null,
-            "generatorURL": "http://crabka.example/graph",
+            "generatorURL": "http://krabka.example/graph",
         }]);
         assert2::assert!(body == expected);
     }
 
     #[test]
     fn ruler_state_records_round_trip_with_compacted_keys() {
-        let group = crabka_promql::RulerGroupStateRecord {
+        let group = krabka_promql::RulerGroupStateRecord {
             tenant: "tenant-a".to_string(),
             namespace: "team-a".to_string(),
             group: "recording".to_string(),
@@ -2652,7 +2652,7 @@ rules:
                 == bytes::Bytes::from_static(b"group\0tenant-a\0team-a\0recording")
         );
 
-        let alert = crabka_promql::RulerAlertStateRecord {
+        let alert = krabka_promql::RulerAlertStateRecord {
             tenant: "tenant-a".to_string(),
             rule_id: "InstanceDown\nup == 0".to_string(),
             labels: std::collections::BTreeMap::from([
@@ -2678,8 +2678,8 @@ rules:
     #[tokio::test]
     async fn replay_ruler_state_records_applies_state_and_reports_commit_offsets() {
         let state =
-            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
-        let router = crabka_promql::prometheus_router(std::sync::Arc::clone(&state));
+            super::prometheus_api_state_for_store(krabka_promql::InMemoryMetricStore::new());
+        let router = krabka_promql::prometheus_router(std::sync::Arc::clone(&state));
         let response = router
             .clone()
             .oneshot(
@@ -2703,14 +2703,14 @@ rules:
         assert2::assert!(response.status() == StatusCode::ACCEPTED);
 
         let group_record =
-            super::RulerStateWalRecord::Group(crabka_promql::RulerGroupStateRecord {
+            super::RulerStateWalRecord::Group(krabka_promql::RulerGroupStateRecord {
                 tenant: "tenant-a".to_string(),
                 namespace: "team-a".to_string(),
                 group: "recording".to_string(),
                 last_eval_ms: 60_000,
             });
         let alert_record =
-            super::RulerStateWalRecord::Alert(crabka_promql::RulerAlertStateRecord {
+            super::RulerStateWalRecord::Alert(krabka_promql::RulerAlertStateRecord {
                 tenant: "tenant-a".to_string(),
                 rule_id: "InstanceDown\nup == 0".to_string(),
                 labels: std::collections::BTreeMap::from([(
@@ -2777,9 +2777,9 @@ rules:
     #[tokio::test]
     async fn the_consumer_loop_accumulates_every_polls_result() {
         let state =
-            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+            super::prometheus_api_state_for_store(krabka_promql::InMemoryMetricStore::new());
         let record = |group: &str| {
-            super::RulerStateWalRecord::Group(crabka_promql::RulerGroupStateRecord {
+            super::RulerStateWalRecord::Group(krabka_promql::RulerGroupStateRecord {
                 tenant: "tenant-a".to_string(),
                 namespace: "team-a".to_string(),
                 group: group.to_string(),
@@ -2853,7 +2853,7 @@ rules:
     #[tokio::test]
     async fn the_consumer_loop_stops_after_the_poll_that_satisfies_it() {
         let state =
-            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+            super::prometheus_api_state_for_store(krabka_promql::InMemoryMetricStore::new());
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![vec![], vec![]],
             commit_calls: 0,
@@ -2882,7 +2882,7 @@ rules:
     #[tokio::test]
     async fn poll_ruler_state_consumer_once_does_not_commit_without_progress() {
         let state =
-            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+            super::prometheus_api_state_for_store(krabka_promql::InMemoryMetricStore::new());
 
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![vec![]],
@@ -2911,7 +2911,7 @@ rules:
         // seen and applied to nothing. Committing here would advance this
         // group's offsets on the strength of someone else's records.
         let state_record =
-            super::RulerStateWalRecord::Group(crabka_promql::RulerGroupStateRecord {
+            super::RulerStateWalRecord::Group(krabka_promql::RulerGroupStateRecord {
                 tenant: "tenant-a".to_string(),
                 namespace: "team-a".to_string(),
                 group: "recording".to_string(),
@@ -2949,7 +2949,7 @@ rules:
     #[tokio::test]
     async fn a_valueless_ruler_state_record_stops_the_replay_where_it_sits() {
         let state =
-            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+            super::prometheus_api_state_for_store(krabka_promql::InMemoryMetricStore::new());
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![vec![consumer_record(super::RULER_STATE_TOPIC, 3, 11, None)]],
             commit_calls: 0,
@@ -2973,9 +2973,9 @@ rules:
     #[tokio::test]
     async fn poll_ruler_state_consumer_once_replays_records_and_commits_on_progress() {
         let state =
-            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+            super::prometheus_api_state_for_store(krabka_promql::InMemoryMetricStore::new());
         let state_record =
-            super::RulerStateWalRecord::Group(crabka_promql::RulerGroupStateRecord {
+            super::RulerStateWalRecord::Group(krabka_promql::RulerGroupStateRecord {
                 tenant: "tenant-a".to_string(),
                 namespace: "team-a".to_string(),
                 group: "recording".to_string(),
@@ -3016,40 +3016,40 @@ rules:
     async fn blockstore_router_loads_compaction_manifests_from_object_store() {
         let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = crabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let mut labels = crabka_blockstore::Labels::new();
+        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         let fp = labels.fingerprint();
-        let batch = crabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
                 "tenant-a",
                 "metrics/tenant-a/float/0001.parquet",
-                crabka_metrics::float_sample_schema(),
+                krabka_metrics::float_sample_schema(),
                 &[batch],
             )
             .await
             .unwrap();
-        let plan = crabka_metrics::CompactionObjectPlan {
+        let plan = krabka_metrics::CompactionObjectPlan {
             block_key: block_meta.object_key.clone(),
             index_key: "metrics/tenant-a/float/0001.index".to_string(),
             first_offset: 0,
             last_offset: 0,
             row_count: block_meta.row_count,
         };
-        let manifest = crabka_metrics::CompactionIndexManifest::from_block_meta(
-            crabka_metrics::MetricBlockKind::Float,
+        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+            krabka_metrics::MetricBlockKind::Float,
             &plan,
             &block_meta,
-            vec![crabka_metrics::CompactionSeriesLabels {
+            vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
                 labels,
             }],
         );
-        crabka_metrics::CompactionIndexSink::write_manifest(
-            &crabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
+        krabka_metrics::CompactionIndexSink::write_manifest(
+            &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
             &manifest,
         )
         .await
@@ -3086,40 +3086,40 @@ rules:
             "metrics/tenant-a",
         );
 
-        let writer_store = crabka_blockstore::BlockStore::new(object_store.clone(), base);
-        let mut labels = crabka_blockstore::Labels::new();
+        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base);
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         let fp = labels.fingerprint();
-        let batch = crabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
                 "tenant-a",
                 "metrics/tenant-a/float/0002.parquet",
-                crabka_metrics::float_sample_schema(),
+                krabka_metrics::float_sample_schema(),
                 &[batch],
             )
             .await
             .unwrap();
-        let plan = crabka_metrics::CompactionObjectPlan {
+        let plan = krabka_metrics::CompactionObjectPlan {
             block_key: block_meta.object_key.clone(),
             index_key: "metrics/tenant-a/float/0002.index".to_string(),
             first_offset: 1,
             last_offset: 1,
             row_count: block_meta.row_count,
         };
-        let manifest = crabka_metrics::CompactionIndexManifest::from_block_meta(
-            crabka_metrics::MetricBlockKind::Float,
+        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+            krabka_metrics::MetricBlockKind::Float,
             &plan,
             &block_meta,
-            vec![crabka_metrics::CompactionSeriesLabels {
+            vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
                 labels,
             }],
         );
-        crabka_metrics::CompactionIndexSink::write_manifest(
-            &crabka_metrics::ObjectStoreCompactionIndexSink::new(object_store),
+        krabka_metrics::CompactionIndexSink::write_manifest(
+            &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store),
             &manifest,
         )
         .await
@@ -3150,40 +3150,40 @@ rules:
             CountingObjectStore::new(Arc::clone(&list_calls), millis(25)),
         );
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = crabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let mut labels = crabka_blockstore::Labels::new();
+        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         let fp = labels.fingerprint();
-        let batch = crabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
                 "tenant-a",
                 "metrics/tenant-a/float/0005.parquet",
-                crabka_metrics::float_sample_schema(),
+                krabka_metrics::float_sample_schema(),
                 &[batch],
             )
             .await
             .unwrap();
-        let plan = crabka_metrics::CompactionObjectPlan {
+        let plan = krabka_metrics::CompactionObjectPlan {
             block_key: block_meta.object_key.clone(),
             index_key: "metrics/tenant-a/float/0005.index".to_string(),
             first_offset: 4,
             last_offset: 4,
             row_count: block_meta.row_count,
         };
-        let manifest = crabka_metrics::CompactionIndexManifest::from_block_meta(
-            crabka_metrics::MetricBlockKind::Float,
+        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+            krabka_metrics::MetricBlockKind::Float,
             &plan,
             &block_meta,
-            vec![crabka_metrics::CompactionSeriesLabels {
+            vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
                 labels,
             }],
         );
-        crabka_metrics::CompactionIndexSink::write_manifest(
-            &crabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
+        krabka_metrics::CompactionIndexSink::write_manifest(
+            &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
             &manifest,
         )
         .await
@@ -3193,9 +3193,9 @@ rules:
             object_store,
             base,
             "metrics/tenant-a",
-            crabka_promql::WalHead::new(),
+            krabka_promql::WalHead::new(),
         );
-        let matchers = Vec::<crabka_blockstore::LabelMatcher>::new();
+        let matchers = Vec::<krabka_blockstore::LabelMatcher>::new();
 
         let (a, b, c, d) = tokio::join!(
             metric_store.series("tenant-a", &matchers, 0, 20_000),
@@ -3215,76 +3215,76 @@ rules:
     async fn refreshing_blockstore_bounds_cold_manifests_to_query_time() {
         let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = crabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let sink = crabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
+        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
+        let sink = krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
 
-        let mut old_labels = crabka_blockstore::Labels::new();
+        let mut old_labels = krabka_blockstore::Labels::new();
         old_labels.insert("__name__", "up");
         old_labels.insert("job", "old");
         let old_fp = old_labels.fingerprint();
-        let old_batch = crabka_metrics::encode_float_samples(&[(old_fp, 10_000, 1.0)]).unwrap();
+        let old_batch = krabka_metrics::encode_float_samples(&[(old_fp, 10_000, 1.0)]).unwrap();
         let old_block = writer_store
             .writer()
             .write_block(
                 "tenant-a",
                 "metrics/tenant-a/float/old.parquet",
-                crabka_metrics::float_sample_schema(),
+                krabka_metrics::float_sample_schema(),
                 &[old_batch],
             )
             .await
             .unwrap();
-        let old_plan = crabka_metrics::CompactionObjectPlan {
+        let old_plan = krabka_metrics::CompactionObjectPlan {
             block_key: old_block.object_key.clone(),
             index_key: "metrics/tenant-a/float/old.index".to_string(),
             first_offset: 1,
             last_offset: 1,
             row_count: old_block.row_count,
         };
-        let old_manifest = crabka_metrics::CompactionIndexManifest::from_block_meta(
-            crabka_metrics::MetricBlockKind::Float,
+        let old_manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+            krabka_metrics::MetricBlockKind::Float,
             &old_plan,
             &old_block,
-            vec![crabka_metrics::CompactionSeriesLabels {
+            vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: old_fp,
                 labels: old_labels,
             }],
         );
-        crabka_metrics::CompactionIndexSink::write_manifest(&sink, &old_manifest)
+        krabka_metrics::CompactionIndexSink::write_manifest(&sink, &old_manifest)
             .await
             .unwrap();
 
-        let mut new_labels = crabka_blockstore::Labels::new();
+        let mut new_labels = krabka_blockstore::Labels::new();
         new_labels.insert("__name__", "up");
         new_labels.insert("job", "new");
         let new_fp = new_labels.fingerprint();
-        let new_batch = crabka_metrics::encode_float_samples(&[(new_fp, 1_000_000, 1.0)]).unwrap();
+        let new_batch = krabka_metrics::encode_float_samples(&[(new_fp, 1_000_000, 1.0)]).unwrap();
         let new_block = writer_store
             .writer()
             .write_block(
                 "tenant-a",
                 "metrics/tenant-a/float/new.parquet",
-                crabka_metrics::float_sample_schema(),
+                krabka_metrics::float_sample_schema(),
                 &[new_batch],
             )
             .await
             .unwrap();
-        let new_plan = crabka_metrics::CompactionObjectPlan {
+        let new_plan = krabka_metrics::CompactionObjectPlan {
             block_key: new_block.object_key.clone(),
             index_key: "metrics/tenant-a/float/new.index".to_string(),
             first_offset: 2,
             last_offset: 2,
             row_count: new_block.row_count,
         };
-        let new_manifest = crabka_metrics::CompactionIndexManifest::from_block_meta(
-            crabka_metrics::MetricBlockKind::Float,
+        let new_manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+            krabka_metrics::MetricBlockKind::Float,
             &new_plan,
             &new_block,
-            vec![crabka_metrics::CompactionSeriesLabels {
+            vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: new_fp,
                 labels: new_labels,
             }],
         );
-        crabka_metrics::CompactionIndexSink::write_manifest(&sink, &new_manifest)
+        krabka_metrics::CompactionIndexSink::write_manifest(&sink, &new_manifest)
             .await
             .unwrap();
 
@@ -3292,11 +3292,11 @@ rules:
             object_store,
             base,
             "metrics/tenant-a",
-            crabka_promql::WalHead::new(),
+            krabka_promql::WalHead::new(),
         );
-        let matchers = [crabka_blockstore::LabelMatcher::new(
+        let matchers = [krabka_blockstore::LabelMatcher::new(
             "__name__",
-            crabka_blockstore::MatchOp::Eq,
+            krabka_blockstore::MatchOp::Eq,
             "up",
         )];
 
@@ -3325,8 +3325,8 @@ rules:
         let get_calls = Arc::clone(&object_store.get_calls);
         let object_store: std::sync::Arc<dyn ObjectStore> = object_store;
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = crabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let sink = crabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
+        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
+        let sink = krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
 
         write_float_manifest(
             &writer_store,
@@ -3353,11 +3353,11 @@ rules:
             object_store,
             base,
             "metrics/tenant-a",
-            crabka_promql::WalHead::new(),
+            krabka_promql::WalHead::new(),
         );
-        let matchers = [crabka_blockstore::LabelMatcher::new(
+        let matchers = [krabka_blockstore::LabelMatcher::new(
             "__name__",
-            crabka_blockstore::MatchOp::Eq,
+            krabka_blockstore::MatchOp::Eq,
             "up",
         )];
 
@@ -3388,8 +3388,8 @@ rules:
     async fn refreshing_blockstore_tsdb_stats_ignores_stale_compacted_blocks() {
         let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = crabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let sink = crabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
+        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
+        let sink = krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
         let now_ms = super::duration_ms(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -3421,7 +3421,7 @@ rules:
             object_store,
             base,
             "metrics/tenant-a",
-            crabka_promql::WalHead::new(),
+            krabka_promql::WalHead::new(),
         );
 
         let stats = metric_store.tsdb_stats("tenant-a").await.unwrap();
@@ -3443,52 +3443,52 @@ rules:
     async fn refreshing_router_merges_hot_head_with_compacted_blocks() {
         let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = crabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let mut labels = crabka_blockstore::Labels::new();
+        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         let fp = labels.fingerprint();
-        let batch = crabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
                 "tenant-a",
                 "metrics/tenant-a/float/0003.parquet",
-                crabka_metrics::float_sample_schema(),
+                krabka_metrics::float_sample_schema(),
                 &[batch],
             )
             .await
             .unwrap();
-        let plan = crabka_metrics::CompactionObjectPlan {
+        let plan = krabka_metrics::CompactionObjectPlan {
             block_key: block_meta.object_key.clone(),
             index_key: "metrics/tenant-a/float/0003.index".to_string(),
             first_offset: 2,
             last_offset: 2,
             row_count: block_meta.row_count,
         };
-        let manifest = crabka_metrics::CompactionIndexManifest::from_block_meta(
-            crabka_metrics::MetricBlockKind::Float,
+        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+            krabka_metrics::MetricBlockKind::Float,
             &plan,
             &block_meta,
-            vec![crabka_metrics::CompactionSeriesLabels {
+            vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
                 labels: labels.clone(),
             }],
         );
-        crabka_metrics::CompactionIndexSink::write_manifest(
-            &crabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
+        krabka_metrics::CompactionIndexSink::write_manifest(
+            &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
             &manifest,
         )
         .await
         .unwrap();
-        let hot_store = crabka_promql::WalHead::new();
-        hot_store.apply_wal_record(&crabka_metrics::WalRecord {
+        let hot_store = krabka_promql::WalHead::new();
+        hot_store.apply_wal_record(&krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
             labels: labels
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect(),
-            payload: crabka_metrics::SamplePayload::Float {
+            payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 20_000,
                 value: 2.0,
                 start_timestamp_ms: None,
@@ -3521,57 +3521,57 @@ rules:
     }
 
     async fn write_float_manifest(
-        writer_store: &crabka_blockstore::BlockStore,
-        sink: &crabka_metrics::ObjectStoreCompactionIndexSink,
+        writer_store: &krabka_blockstore::BlockStore,
+        sink: &krabka_metrics::ObjectStoreCompactionIndexSink,
         tenant: &str,
         job: &str,
         ts_ms: i64,
         object_key: &str,
         offset: i64,
     ) {
-        let mut labels = crabka_blockstore::Labels::new();
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
         labels.insert("job", job);
         let fp = labels.fingerprint();
-        let batch = crabka_metrics::encode_float_samples(&[(fp, ts_ms, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, ts_ms, 1.0)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
                 tenant,
                 object_key,
-                crabka_metrics::float_sample_schema(),
+                krabka_metrics::float_sample_schema(),
                 &[batch],
             )
             .await
             .unwrap();
-        let plan = crabka_metrics::CompactionObjectPlan {
+        let plan = krabka_metrics::CompactionObjectPlan {
             block_key: block_meta.object_key.clone(),
             index_key: format!("{object_key}.index"),
             first_offset: offset,
             last_offset: offset,
             row_count: block_meta.row_count,
         };
-        let manifest = crabka_metrics::CompactionIndexManifest::from_block_meta(
-            crabka_metrics::MetricBlockKind::Float,
+        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+            krabka_metrics::MetricBlockKind::Float,
             &plan,
             &block_meta,
-            vec![crabka_metrics::CompactionSeriesLabels {
+            vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
                 labels,
             }],
         );
-        crabka_metrics::CompactionIndexSink::write_manifest(sink, &manifest)
+        krabka_metrics::CompactionIndexSink::write_manifest(sink, &manifest)
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn replay_wal_head_records_decodes_applies_and_reports_commit_offsets() {
-        let head = crabka_promql::WalHead::new();
-        let record = crabka_metrics::WalRecord {
+        let head = krabka_promql::WalHead::new();
+        let record = krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
             labels: vec![("__name__".to_string(), "up".to_string())],
-            payload: crabka_metrics::SamplePayload::Float {
+            payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,
                 start_timestamp_ms: None,
@@ -3582,7 +3582,7 @@ rules:
 
         let result = super::replay_wal_head_records(
             &head,
-            crabka_metrics::WAL_TOPIC,
+            krabka_metrics::WAL_TOPIC,
             &[
                 super::WalHeadConsumerRecord {
                     topic: "other".to_string(),
@@ -3591,7 +3591,7 @@ rules:
                     value: Some(encoded.clone()),
                 },
                 super::WalHeadConsumerRecord {
-                    topic: crabka_metrics::WAL_TOPIC.to_string(),
+                    topic: krabka_metrics::WAL_TOPIC.to_string(),
                     partition: super::PartitionIndex(2),
                     offset: super::Offset(41),
                     value: Some(encoded),
@@ -3618,14 +3618,14 @@ rules:
 
     #[tokio::test]
     async fn replay_wal_head_records_prunes_outside_head_retention() {
-        let head = crabka_promql::WalHead::with_retention(secs(1));
-        let record = |job: &str, timestamp_ms: i64| crabka_metrics::WalRecord {
+        let head = krabka_promql::WalHead::with_retention(secs(1));
+        let record = |job: &str, timestamp_ms: i64| krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
             labels: vec![
                 ("__name__".to_string(), "up".to_string()),
                 ("job".to_string(), job.to_string()),
             ],
-            payload: crabka_metrics::SamplePayload::Float {
+            payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms,
                 value: 1.0,
                 start_timestamp_ms: None,
@@ -3635,16 +3635,16 @@ rules:
 
         super::replay_wal_head_records(
             &head,
-            crabka_metrics::WAL_TOPIC,
+            krabka_metrics::WAL_TOPIC,
             &[
                 super::WalHeadConsumerRecord {
-                    topic: crabka_metrics::WAL_TOPIC.to_string(),
+                    topic: krabka_metrics::WAL_TOPIC.to_string(),
                     partition: super::PartitionIndex(0),
                     offset: super::Offset(1),
                     value: Some(record("old", 1_000).encode().unwrap()),
                 },
                 super::WalHeadConsumerRecord {
-                    topic: crabka_metrics::WAL_TOPIC.to_string(),
+                    topic: krabka_metrics::WAL_TOPIC.to_string(),
                     partition: super::PartitionIndex(0),
                     offset: super::Offset(2),
                     value: Some(record("new", 10_000).encode().unwrap()),
@@ -3653,9 +3653,9 @@ rules:
         )
         .unwrap();
 
-        let matchers = [crabka_blockstore::LabelMatcher::new(
+        let matchers = [krabka_blockstore::LabelMatcher::new(
             "__name__",
-            crabka_blockstore::MatchOp::Eq,
+            krabka_blockstore::MatchOp::Eq,
             "up",
         )];
         let jobs = head
@@ -3668,12 +3668,12 @@ rules:
 
     #[test]
     fn replay_wal_head_records_rejects_missing_wal_values() {
-        let head = crabka_promql::WalHead::new();
+        let head = krabka_promql::WalHead::new();
         let error = super::replay_wal_head_records(
             &head,
-            crabka_metrics::WAL_TOPIC,
+            krabka_metrics::WAL_TOPIC,
             &[super::WalHeadConsumerRecord {
-                topic: crabka_metrics::WAL_TOPIC.to_string(),
+                topic: krabka_metrics::WAL_TOPIC.to_string(),
                 partition: super::PartitionIndex(1),
                 offset: super::Offset(9),
                 value: None,
@@ -3692,11 +3692,11 @@ rules:
 
     #[tokio::test]
     async fn poll_wal_head_consumer_once_replays_records_and_commits_on_progress() {
-        let head = crabka_promql::WalHead::new();
-        let record = crabka_metrics::WalRecord {
+        let head = krabka_promql::WalHead::new();
+        let record = krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
             labels: vec![("__name__".to_string(), "up".to_string())],
-            payload: crabka_metrics::SamplePayload::Float {
+            payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,
                 start_timestamp_ms: None,
@@ -3705,7 +3705,7 @@ rules:
         };
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![vec![consumer_record(
-                crabka_metrics::WAL_TOPIC,
+                krabka_metrics::WAL_TOPIC,
                 0,
                 4,
                 Some(record.encode().unwrap()),
@@ -3716,7 +3716,7 @@ rules:
         let result = super::poll_wal_head_consumer_once(
             &mut consumer,
             &head,
-            crabka_metrics::WAL_TOPIC,
+            krabka_metrics::WAL_TOPIC,
             millis(1),
         )
         .await
@@ -3736,7 +3736,7 @@ rules:
 
     #[tokio::test]
     async fn poll_wal_head_consumer_once_skips_commit_when_no_wal_records_replayed() {
-        let head = crabka_promql::WalHead::new();
+        let head = krabka_promql::WalHead::new();
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![vec![consumer_record("other", 0, 4, Some(vec![1, 2, 3]))]],
             commit_calls: 0,
@@ -3745,7 +3745,7 @@ rules:
         let result = super::poll_wal_head_consumer_once(
             &mut consumer,
             &head,
-            crabka_metrics::WAL_TOPIC,
+            krabka_metrics::WAL_TOPIC,
             millis(1),
         )
         .await
@@ -3757,11 +3757,11 @@ rules:
 
     #[tokio::test]
     async fn run_wal_head_consumer_loop_accumulates_until_stop_predicate() {
-        let head = crabka_promql::WalHead::new();
-        let record = crabka_metrics::WalRecord {
+        let head = krabka_promql::WalHead::new();
+        let record = krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
             labels: vec![("__name__".to_string(), "up".to_string())],
-            payload: crabka_metrics::SamplePayload::Float {
+            payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,
                 start_timestamp_ms: None,
@@ -3772,13 +3772,13 @@ rules:
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![
                 vec![consumer_record(
-                    crabka_metrics::WAL_TOPIC,
+                    krabka_metrics::WAL_TOPIC,
                     0,
                     4,
                     Some(encoded.clone()),
                 )],
                 vec![consumer_record(
-                    crabka_metrics::WAL_TOPIC,
+                    krabka_metrics::WAL_TOPIC,
                     0,
                     5,
                     Some(encoded),
@@ -3790,7 +3790,7 @@ rules:
         let summary = super::run_wal_head_consumer_loop(
             &mut consumer,
             &head,
-            crabka_metrics::WAL_TOPIC,
+            krabka_metrics::WAL_TOPIC,
             millis(1),
             |summary| summary.polls == 2,
         )

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crabka_blockstore::Labels;
+use krabka_blockstore::Labels;
 use num_traits::ToPrimitive;
 use opentelemetry_proto::tonic::{
     common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value},
@@ -1245,7 +1245,7 @@ fn downscaled_spans(
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use crabka_blockstore::Labels;
+    use krabka_blockstore::Labels;
     use opentelemetry_proto::tonic::{
         common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value},
         metrics::v1::{
@@ -1883,7 +1883,7 @@ mod tests {
     /// so a fold that replaces instead of adding is visible.
     #[test]
     fn delta_histograms_fold_until_the_series_restarts() {
-        use crabka_blockstore::Labels;
+        use krabka_blockstore::Labels;
 
         use crate::{ResetHint, histogram::NativeHistogram};
 
@@ -1966,7 +1966,7 @@ mod tests {
     /// by one of its neighbours already being false.
     #[test]
     fn delta_sums_accumulate_until_the_series_restarts() {
-        use crabka_blockstore::Labels;
+        use krabka_blockstore::Labels;
 
         let mut labels = Labels::default();
         labels.insert("__name__", "requests");

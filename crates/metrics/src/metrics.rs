@@ -3,13 +3,13 @@
 //! This module mirrors the broker's `metrics` pattern. It holds a shared
 //! `Registry` wrapped in `Arc<Mutex<…>>`, and a cheaply-`Clone` bundle of
 //! metric handles that the ingest handlers clone and increment directly. The
-//! registry prefix is `crabka_metrics`. `prometheus-client` appends `_total` to
+//! registry prefix is `krabka_metrics`. `prometheus-client` appends `_total` to
 //! counters at encode time, so this module registers counter names without the
 //! suffix.
 
 use std::sync::Arc;
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use prometheus_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family, histogram::Histogram},
@@ -58,7 +58,7 @@ impl ServiceMetrics {
     /// bundle.
     #[must_use]
     pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("crabka_metrics");
+        let mut registry = Registry::with_prefix("krabka_metrics");
 
         let ingest_requests: Family<StatusLabel, Counter> = Family::default();
         let ingest_bytes = Counter::default();
@@ -254,13 +254,13 @@ mod tests {
         let r = m.registry.lock().await;
         prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
         for needle in [
-            "crabka_metrics_ingest_requests_total",
-            "crabka_metrics_ingest_bytes_total",
-            "crabka_metrics_ingest_items_total",
-            "crabka_metrics_ingest_duration_seconds",
-            "crabka_metrics_wal_append_failures_total",
-            "crabka_metrics_ingest_series_total",
-            "crabka_metrics_blocks_compacted_total",
+            "krabka_metrics_ingest_requests_total",
+            "krabka_metrics_ingest_bytes_total",
+            "krabka_metrics_ingest_items_total",
+            "krabka_metrics_ingest_duration_seconds",
+            "krabka_metrics_wal_append_failures_total",
+            "krabka_metrics_ingest_series_total",
+            "krabka_metrics_blocks_compacted_total",
             "status=\"ok\"",
             "status=\"error\"",
             "tenant=\"tenant-a\"",
@@ -290,8 +290,8 @@ mod tests {
         let r = m.registry.lock().await;
         prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
         for needle in [
-            "crabka_metrics_ingest_bytes_total 2097152",
-            "crabka_metrics_ingest_duration_seconds_sum 0.25",
+            "krabka_metrics_ingest_bytes_total 2097152",
+            "krabka_metrics_ingest_duration_seconds_sum 0.25",
         ] {
             assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
         }
@@ -316,7 +316,7 @@ mod tests {
             .await
             .unwrap();
         let s = std::str::from_utf8(&body).unwrap();
-        assert!(s.contains("crabka_metrics_ingest_bytes_total"), "{s}");
+        assert!(s.contains("krabka_metrics_ingest_bytes_total"), "{s}");
         assert!(s.contains("# EOF"), "{s}");
     }
 }

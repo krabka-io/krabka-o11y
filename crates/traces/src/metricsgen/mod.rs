@@ -16,7 +16,7 @@ pub mod spanmetrics;
 
 /// Single point of truth for types consumed from sibling traces/metrics slices.
 pub mod contract {
-    pub use crabka_units::ByteSize;
+    pub use krabka_units::ByteSize;
 
     pub use crate::{
         span::{SpanKind, StatusCode},

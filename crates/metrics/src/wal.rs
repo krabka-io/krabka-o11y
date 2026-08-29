@@ -1,8 +1,8 @@
 //! Metrics WAL topic record shared by ingest, compaction, and query.
 
 use bytes::Bytes;
-use crabka_blockstore::Labels;
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_units::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// The metrics WAL topic name.
-pub const WAL_TOPIC: &str = "__crabka_metrics_wal";
+pub const WAL_TOPIC: &str = "__krabka_metrics_wal";
 
 /// WAL codec errors.
 #[derive(Debug, thiserror::Error)]

@@ -7,8 +7,8 @@ use arrow::{
     array::AsArray,
     datatypes::{Float64Type, Int64Type, UInt64Type},
 };
-use crabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
-use crabka_metrics::{NativeHistogram, decode_native_histograms};
+use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_metrics::{NativeHistogram, decode_native_histograms};
 
 use crate::{PromqlError, ScanResult, error::Result};
 

@@ -5,8 +5,8 @@ mod selector;
 use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
-use crabka_units::ByteSize;
 use datafusion::{catalog::MemTable, logical_expr::LogicalPlan, prelude::SessionContext};
+use krabka_units::ByteSize;
 
 use crate::{
     ast::{
@@ -846,8 +846,8 @@ fn structural_is_union(op: StructuralOp) -> bool {
 mod tests {
     use arrow::{array::Array, record_batch::RecordBatch};
     use assert2::{assert, check};
-    use crabka_units::{Time, convert::TimeExt as _, nanos};
     use datafusion::arrow::array::AsArray;
+    use krabka_units::{Time, convert::TimeExt as _, nanos};
 
     use super::*;
     use crate::{

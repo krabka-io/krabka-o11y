@@ -5,7 +5,7 @@
 //! offsets are adjacent, and a transposition of them inverts the range. The head
 //! also records a `(PartitionIndex, Offset)` pair at
 //! [`apply_wal_record_at`](crate::WalHead::apply_wal_record_at). Both are the
-//! canonical cross-crate [`crabka_ids`] types, so the caller,
-//! `crabka-metrics-service`, passes the same `Offset` in without a conversion.
+//! canonical cross-crate [`krabka_ids`] types, so the caller,
+//! `krabka-metrics-service`, passes the same `Offset` in without a conversion.
 
-pub use crabka_ids::{Offset, PartitionIndex};
+pub use krabka_ids::{Offset, PartitionIndex};

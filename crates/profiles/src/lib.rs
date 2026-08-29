@@ -1,4 +1,4 @@
-//! Crabka profiles ingest service.
+//! Krabka profiles ingest service.
 //!
 //! The distributor serves the push.v1, `/ingest`, and OTLP `v1development`
 //! profiles doors and writes to a WAL partitioned by

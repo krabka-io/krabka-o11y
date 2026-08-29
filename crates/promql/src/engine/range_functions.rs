@@ -1,6 +1,6 @@
-use crabka_blockstore::Labels;
-use crabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
+use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 
 use super::{

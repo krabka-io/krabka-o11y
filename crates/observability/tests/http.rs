@@ -13,23 +13,6 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use crabka_blockstore::{
-    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels,
-    series_fingerprint, write_log_block, write_log_block_to_object_store, write_log_index_manifest,
-    write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shard_to_object_store,
-    write_tenant_log_index_shards_to_object_store,
-};
-use crabka_observability::{
-    CompactionFrontier, InMemoryWalSink, IngestLimitError, KafkaWalHeader, KafkaWalRecord,
-    LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink, Offset, PartitionIndex,
-    QuerierIndexSource, QuerierState, QueryAuthorizationError, Role, ServiceConfig,
-    ServiceDependencies, SharedCompactionFrontier, SharedLogDeleteRequests, WalConsumerError,
-    WalLogRecord, WalPosition, WalSinkError, build_kafka_wal_record, build_querier_state,
-    build_service_router, decode_kafka_wal_record, decode_kafka_wal_record_envelope,
-    distributor_router, loki_router, otlp_grpc_logs_service, otlp_grpc_logs_service_with_limiter,
-    serve_service_listener, write_compaction_frontier_to_object_store,
-};
-use crabka_units::{Time, bytes, convert::ByteSizeExt as _, millis, nanos};
 use datafusion::arrow::{
     array::{Float64Array, MapArray, StringArray, TimestampNanosecondArray},
     datatypes::{DataType, TimeUnit},
@@ -39,6 +22,23 @@ use flate2::{
     write::{DeflateEncoder, GzEncoder},
 };
 use futures_util::StreamExt as _;
+use krabka_blockstore::{
+    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels,
+    series_fingerprint, write_log_block, write_log_block_to_object_store, write_log_index_manifest,
+    write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shard_to_object_store,
+    write_tenant_log_index_shards_to_object_store,
+};
+use krabka_observability::{
+    CompactionFrontier, InMemoryWalSink, IngestLimitError, KafkaWalHeader, KafkaWalRecord,
+    LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink, Offset, PartitionIndex,
+    QuerierIndexSource, QuerierState, QueryAuthorizationError, Role, ServiceConfig,
+    ServiceDependencies, SharedCompactionFrontier, SharedLogDeleteRequests, WalConsumerError,
+    WalLogRecord, WalPosition, WalSinkError, build_kafka_wal_record, build_querier_state,
+    build_service_router, decode_kafka_wal_record, decode_kafka_wal_record_envelope,
+    distributor_router, loki_router, otlp_grpc_logs_service, otlp_grpc_logs_service_with_limiter,
+    serve_service_listener, write_compaction_frontier_to_object_store,
+};
+use krabka_units::{Time, bytes, convert::ByteSizeExt as _, millis, nanos};
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 use opentelemetry_proto::tonic::{
     collector::logs::v1::{
@@ -1220,10 +1220,10 @@ fn kafka_wal_record_encodes_tenant_series_key_headers_and_json_payload() {
         }),
     };
 
-    let producer_record = build_kafka_wal_record("__crabka_observability_logs_wal", &record)
+    let producer_record = build_kafka_wal_record("__krabka_observability_logs_wal", &record)
         .expect("producer record");
 
-    check!(producer_record.topic == "__crabka_observability_logs_wal");
+    check!(producer_record.topic == "__krabka_observability_logs_wal");
     check!(
         producer_record.key.as_deref()
             == Some(format!("tenant-a:{}", series_fingerprint(&labels)).as_bytes())
@@ -1233,14 +1233,14 @@ fn kafka_wal_record_encodes_tenant_series_key_headers_and_json_payload() {
         producer_record
             .headers
             .iter()
-            .any(|header| header.key == "crabka-wal-record-type"
+            .any(|header| header.key == "krabka-wal-record-type"
                 && header.value.as_deref() == Some(b"log".as_slice()))
     );
     check!(
         producer_record
             .headers
             .iter()
-            .any(|header| header.key == "crabka-tenant"
+            .any(|header| header.key == "krabka-tenant"
                 && header.value.as_deref() == Some(b"tenant-a".as_slice()))
     );
 
@@ -1271,7 +1271,7 @@ fn kafka_wal_record_decodes_payload_with_consumed_position() {
         position: None,
     };
 
-    let producer_record = build_kafka_wal_record("__crabka_observability_logs_wal", &record)
+    let producer_record = build_kafka_wal_record("__krabka_observability_logs_wal", &record)
         .expect("producer record");
     let decoded = decode_kafka_wal_record(
         producer_record.value.as_deref().unwrap(),
@@ -1312,15 +1312,15 @@ fn native_kafka_log_record_rejects_invalid_label_header_name() {
         timestamp_ms: Some(1),
         headers: vec![
             KafkaWalHeader {
-                key: "crabka-wal-record-type".to_string(),
+                key: "krabka-wal-record-type".to_string(),
                 value: Some(b"log-line".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-tenant".to_string(),
+                key: "krabka-tenant".to_string(),
                 value: Some(b"tenant-a".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-label-9bad".to_string(),
+                key: "krabka-log-label-9bad".to_string(),
                 value: Some(b"api".to_vec()),
             },
         ],
@@ -1339,19 +1339,19 @@ fn native_kafka_log_record_rejects_invalid_metadata_header_name() {
         timestamp_ms: Some(1),
         headers: vec![
             KafkaWalHeader {
-                key: "crabka-wal-record-type".to_string(),
+                key: "krabka-wal-record-type".to_string(),
                 value: Some(b"log-line".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-tenant".to_string(),
+                key: "krabka-tenant".to_string(),
                 value: Some(b"tenant-a".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-label-app".to_string(),
+                key: "krabka-log-label-app".to_string(),
                 value: Some(b"api".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-metadata-9bad".to_string(),
+                key: "krabka-log-metadata-9bad".to_string(),
                 value: Some(b"metadata".to_vec()),
             },
         ],
@@ -1370,19 +1370,19 @@ fn native_kafka_log_record_rejects_duplicate_label_header_name() {
         timestamp_ms: Some(1),
         headers: vec![
             KafkaWalHeader {
-                key: "crabka-wal-record-type".to_string(),
+                key: "krabka-wal-record-type".to_string(),
                 value: Some(b"log-line".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-tenant".to_string(),
+                key: "krabka-tenant".to_string(),
                 value: Some(b"tenant-a".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-label-app".to_string(),
+                key: "krabka-log-label-app".to_string(),
                 value: Some(b"api".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-label-app".to_string(),
+                key: "krabka-log-label-app".to_string(),
                 value: Some(b"worker".to_vec()),
             },
         ],
@@ -1401,23 +1401,23 @@ fn native_kafka_log_record_rejects_duplicate_metadata_header_name() {
         timestamp_ms: Some(1),
         headers: vec![
             KafkaWalHeader {
-                key: "crabka-wal-record-type".to_string(),
+                key: "krabka-wal-record-type".to_string(),
                 value: Some(b"log-line".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-tenant".to_string(),
+                key: "krabka-tenant".to_string(),
                 value: Some(b"tenant-a".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-label-app".to_string(),
+                key: "krabka-log-label-app".to_string(),
                 value: Some(b"api".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-metadata-trace_id".to_string(),
+                key: "krabka-log-metadata-trace_id".to_string(),
                 value: Some(b"abc".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-metadata-trace_id".to_string(),
+                key: "krabka-log-metadata-trace_id".to_string(),
                 value: Some(b"def".to_vec()),
             },
         ],
@@ -1440,19 +1440,19 @@ fn native_kafka_log_record_rejects_negative_timestamp_header() {
         timestamp_ms: Some(1),
         headers: vec![
             KafkaWalHeader {
-                key: "crabka-wal-record-type".to_string(),
+                key: "krabka-wal-record-type".to_string(),
                 value: Some(b"log-line".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-tenant".to_string(),
+                key: "krabka-tenant".to_string(),
                 value: Some(b"tenant-a".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-timestamp-ns".to_string(),
+                key: "krabka-log-timestamp-ns".to_string(),
                 value: Some(b"-1".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-label-app".to_string(),
+                key: "krabka-log-label-app".to_string(),
                 value: Some(b"api".to_vec()),
             },
         ],
@@ -1471,15 +1471,15 @@ fn native_kafka_log_record_rejects_negative_broker_timestamp() {
         timestamp_ms: Some(-1),
         headers: vec![
             KafkaWalHeader {
-                key: "crabka-wal-record-type".to_string(),
+                key: "krabka-wal-record-type".to_string(),
                 value: Some(b"log-line".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-tenant".to_string(),
+                key: "krabka-tenant".to_string(),
                 value: Some(b"tenant-a".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-label-app".to_string(),
+                key: "krabka-log-label-app".to_string(),
                 value: Some(b"api".to_vec()),
             },
         ],
@@ -1498,15 +1498,15 @@ fn native_kafka_log_record_rejects_broker_timestamp_overflow() {
         timestamp_ms: Some(i64::MAX),
         headers: vec![
             KafkaWalHeader {
-                key: "crabka-wal-record-type".to_string(),
+                key: "krabka-wal-record-type".to_string(),
                 value: Some(b"log-line".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-tenant".to_string(),
+                key: "krabka-tenant".to_string(),
                 value: Some(b"tenant-a".to_vec()),
             },
             KafkaWalHeader {
-                key: "crabka-log-label-app".to_string(),
+                key: "krabka-log-label-app".to_string(),
                 value: Some(b"api".to_vec()),
             },
         ],
@@ -1522,8 +1522,8 @@ fn minimal_service_config(target: Role) -> ServiceConfig {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -1725,7 +1725,7 @@ async fn role_operations_routes_match_existing_behavior() {
         assert!(
             text_body(response).await
                 == format!(
-                    "{{\"version\":\"{}\",\"revision\":\"unknown\",\"branch\":\"unknown\",\"buildDate\":\"\",\"buildUser\":\"crabka\",\"goVersion\":\"not-go\"}}",
+                    "{{\"version\":\"{}\",\"revision\":\"unknown\",\"branch\":\"unknown\",\"buildDate\":\"\",\"buildUser\":\"krabka\",\"goVersion\":\"not-go\"}}",
                     env!("CARGO_PKG_VERSION")
                 ),
             "{name} buildinfo body"
@@ -1772,13 +1772,13 @@ async fn role_ring_alias_routes_remain_available() {
     .unwrap();
 
     for (app, uri, expected) in [
-        (distributor.clone(), "/ring", "crabka-distributor"),
-        (distributor, "/distributor/ring", "crabka-distributor"),
-        (querier.clone(), "/ring", "crabka-querier"),
-        (querier.clone(), "/scheduler/ring", "crabka-scheduler"),
+        (distributor.clone(), "/ring", "krabka-distributor"),
+        (distributor, "/distributor/ring", "krabka-distributor"),
+        (querier.clone(), "/ring", "krabka-querier"),
+        (querier.clone(), "/scheduler/ring", "krabka-scheduler"),
         (querier, "/ruler/ring", "Cortex Ruler Status"),
-        (compactor.clone(), "/ring", "crabka-compactor"),
-        (compactor, "/compactor/ring", "crabka-compactor"),
+        (compactor.clone(), "/ring", "krabka-compactor"),
+        (compactor, "/compactor/ring", "krabka-compactor"),
     ] {
         let response = get_response(app, uri).await;
         assert!(response.status() == StatusCode::OK, "{uri} status");
@@ -1795,8 +1795,8 @@ async fn service_router_builds_distributor_role() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -1861,8 +1861,8 @@ async fn service_router_rejects_stale_loki_push_timestamp_without_wal_append() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -1925,8 +1925,8 @@ async fn service_router_rejects_missing_protobuf_timestamp_like_loki_without_wal
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -1993,8 +1993,8 @@ async fn service_router_rejects_future_loki_push_timestamp_without_wal_append() 
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -2058,8 +2058,8 @@ async fn service_router_rejects_future_otlp_timestamp_without_wal_append() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -2134,8 +2134,8 @@ async fn service_router_rejects_loki_push_over_configured_ingest_body_limit_with
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -2197,8 +2197,8 @@ async fn service_router_rejects_loki_push_over_ingest_quota_without_wal_append()
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -2266,8 +2266,8 @@ async fn service_router_times_out_loki_push_when_wal_append_stalls() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -2333,8 +2333,8 @@ async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -2407,8 +2407,8 @@ async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -3255,8 +3255,8 @@ async fn loki_push_endpoint_rejects_negative_protobuf_timestamp_like_loki_withou
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -4963,7 +4963,7 @@ async fn status_metrics_endpoint_returns_prometheus_text_for_loki_router() {
     for needle in [
         "loki_build_info",
         "loki_boltdb_shipper_compactor_running",
-        "crabka_observability_service_up",
+        "krabka_observability_service_up",
         r#"component="querier""#,
     ] {
         check!(body.contains(needle));
@@ -4991,7 +4991,7 @@ async fn status_metrics_endpoint_returns_prometheus_text_for_distributor_router(
     for needle in [
         "loki_build_info",
         "loki_boltdb_shipper_compactor_running",
-        "crabka_observability_service_up",
+        "krabka_observability_service_up",
         r#"component="distributor""#,
     ] {
         check!(body.contains(needle));
@@ -5005,8 +5005,8 @@ async fn compactor_router_exposes_loki_status_and_ring_endpoints() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5066,7 +5066,7 @@ async fn compactor_router_exposes_loki_status_and_ring_endpoints() {
         .unwrap();
     assert!(metrics_response.status() == StatusCode::OK);
     let metrics = text_body(metrics_response).await;
-    assert!(metrics.contains("crabka_observability_service_up"));
+    assert!(metrics.contains("krabka_observability_service_up"));
     assert!(metrics.contains(r#"component="compactor""#));
 
     let config_response = app
@@ -5113,8 +5113,8 @@ async fn compactor_delete_endpoint_tracks_and_cancels_delete_requests() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5216,8 +5216,8 @@ async fn compactor_delete_endpoint_accepts_form_post_query_with_raw_ampersand() 
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5278,8 +5278,8 @@ async fn compactor_delete_endpoint_rejects_invalid_requests() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5364,8 +5364,8 @@ async fn compactor_delete_requests_filter_querier_stream_results() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5429,8 +5429,8 @@ async fn compactor_delete_requests_filter_querier_stream_results() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5516,8 +5516,8 @@ async fn compactor_delete_requests_persist_for_configured_querier() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: dir.clone(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5554,8 +5554,8 @@ async fn compactor_delete_requests_persist_for_configured_querier() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5613,8 +5613,8 @@ async fn compactor_delete_requests_filter_querier_metric_results() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5678,8 +5678,8 @@ async fn compactor_delete_requests_filter_querier_metric_results() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -5764,8 +5764,8 @@ async fn format_query_endpoint_is_available_on_distributor_and_compactor_routers
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -11830,8 +11830,8 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -11901,8 +11901,8 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -14271,8 +14271,8 @@ async fn service_router_applies_query_authorizer_dependency_to_querier_role() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -14342,8 +14342,8 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -14397,8 +14397,8 @@ async fn service_router_applies_configured_query_range_limit() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -14443,8 +14443,8 @@ async fn service_router_applies_configured_query_length_limit() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -14490,8 +14490,8 @@ async fn service_router_applies_configured_query_series_limit() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -14544,8 +14544,8 @@ async fn service_router_applies_configured_query_bytes_limit() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -14600,8 +14600,8 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -14773,8 +14773,8 @@ async fn configured_object_store_query_returns_partial_warning_for_missing_block
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: Some("tenant-a".to_string()),
@@ -14875,8 +14875,8 @@ async fn configured_object_store_backward_limited_query_stops_after_newest_block
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: Some("tenant-a".to_string()),
@@ -14980,8 +14980,8 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-object-hot-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-object-hot-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: Some("tenant-a".to_string()),
@@ -15084,8 +15084,8 @@ async fn configured_object_store_metric_query_returns_partial_warning_for_missin
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: Some("tenant-a".to_string()),
@@ -17984,7 +17984,7 @@ async fn patterns_endpoint_groups_matching_logs_by_detected_pattern() {
 
 #[tokio::test]
 async fn patterns_endpoint_collapses_json_logs_differing_only_by_timestamp() {
-    // Crabka services emit compact JSON logs whose only per-line-varying field is
+    // Krabka services emit compact JSON logs whose only per-line-varying field is
     // the timestamp. The Patterns tab must mine these five lines into a single
     // `<_>`-templated pattern rather than one row per line (the bug this guards).
     let dir = tempfile::tempdir().unwrap().keep();
@@ -17994,7 +17994,7 @@ async fn patterns_endpoint_collapses_json_logs_differing_only_by_timestamp() {
         .map(|i| {
             let ts = 100_000_000 + i * 100_000_000;
             let line = format!(
-                r#"{{"timestamp":"2026-07-01T04:19:2{i}.1238077Z","severity":"INFO","target":"crabka_broker::network::dispatch","message":"connection opened"}}"#
+                r#"{{"timestamp":"2026-07-01T04:19:2{i}.1238077Z","severity":"INFO","target":"krabka_broker::network::dispatch","message":"connection opened"}}"#
             );
             LogRow::new(broker, ts, line, BTreeMap::new())
         })
@@ -18034,7 +18034,7 @@ async fn patterns_endpoint_collapses_json_logs_differing_only_by_timestamp() {
                 "status": "success",
                 "data": [
                     {
-                        "pattern": r#"{"timestamp":"<_>","severity":"INFO","target":"crabka_broker::network::dispatch","message":"connection opened"}"#,
+                        "pattern": r#"{"timestamp":"<_>","severity":"INFO","target":"krabka_broker::network::dispatch","message":"connection opened"}"#,
                         "samples": [
                             [0, 5]
                         ]
@@ -19204,8 +19204,8 @@ async fn configured_object_store_index_stats_endpoint_counts_entries_from_object
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: Some("tenant-a".to_string()),
@@ -19286,8 +19286,8 @@ async fn configured_object_store_index_stats_endpoint_loads_request_tenant_manif
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: None,
@@ -19368,8 +19368,8 @@ async fn configured_object_store_index_volume_endpoint_loads_request_tenant_mani
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: None,
@@ -19473,8 +19473,8 @@ async fn configured_object_store_patterns_endpoint_loads_request_tenant_manifest
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: None,
@@ -19560,8 +19560,8 @@ async fn configured_object_store_detected_fields_endpoint_loads_request_tenant_m
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: None,
@@ -19683,8 +19683,8 @@ async fn configured_object_store_querier_loads_manifest_for_request_tenant_heade
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: None,
@@ -19763,8 +19763,8 @@ async fn configured_object_store_labels_endpoint_loads_manifest_for_request_tena
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
         tenant: None,
@@ -19838,8 +19838,8 @@ async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
         tenant: None,
@@ -19935,8 +19935,8 @@ async fn configured_object_store_shard_catalog_labels_endpoint_loads_request_ten
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: Some(format!("file://{}", object_dir.display())),
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root,
         querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
         tenant: None,
@@ -20283,8 +20283,8 @@ async fn tenant_object_store_shard_catalog_service_fixture()
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-compactor".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-compactor".to_string(),
         data_root: dir.clone(),
         querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
         tenant: Some("tenant-a".to_string()),
@@ -20402,7 +20402,7 @@ impl LogWalConsumer for RecordingWalConsumer {
 
 fn kafka_wal_record(record: &WalLogRecord, partition: i32, offset: i64) -> KafkaWalRecord {
     let producer_record =
-        build_kafka_wal_record("__crabka_observability_logs_wal", record).expect("producer record");
+        build_kafka_wal_record("__krabka_observability_logs_wal", record).expect("producer record");
     KafkaWalRecord {
         value: producer_record.value.expect("producer value").to_vec(),
         partition: PartitionIndex(partition),
@@ -20455,8 +20455,8 @@ fn test_service_config(target: Role, data_root: impl Into<std::path::PathBuf>) -
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-test".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-test".to_string(),
         data_root: data_root.into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,

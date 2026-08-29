@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crabka_units::convert::ByteSizeExt as _;
+use krabka_units::convert::ByteSizeExt as _;
 use num_traits::ToPrimitive;
 use regex::Regex;
 

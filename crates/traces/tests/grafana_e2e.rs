@@ -15,7 +15,7 @@
 //! images: `mirror.gcr.io/grafana/grafana` and `mirror.gcr.io/prom/prometheus`.
 //! Run it explicitly with:
 //!
-//! `cargo test -p crabka-traces --test grafana_e2e -- --ignored --nocapture`
+//! `cargo test -p krabka-traces --test grafana_e2e -- --ignored --nocapture`
 //!
 //! ## Door coverage (stated honestly)
 //!
@@ -62,10 +62,11 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base64::Engine as _;
-use crabka_traceql::{
+use http_body_util::BodyExt as _;
+use krabka_traceql::{
     AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
 };
-use crabka_traces::{
+use krabka_traces::{
     AttrValue, Span, SpanRecord, TracesError,
     distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, WalSink},
     metricsgen::{
@@ -76,11 +77,10 @@ use crabka_traces::{
     querier::http::{HttpConfig, router_with_config},
     wire::jaeger_grpc::api_v2::collector_service_server::CollectorService,
 };
-use crabka_units::{
+use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt as _},
 };
-use http_body_util::BodyExt as _;
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{ExportTraceServiceRequest, trace_service_server::TraceService},
     common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
@@ -128,8 +128,8 @@ const PROM_HTTP_PORT: u16 = 9090;
 /// Grafana admin username AND password. `GF_SECURITY_ADMIN_PASSWORD` sets it,
 /// and every Grafana API call uses it as basic-auth.
 const GRAFANA_ADMIN: &str = "admin";
-const GRAFANA_TEMPO_DATASOURCE_UID: &str = "crabka-traces";
-const GRAFANA_PROM_DATASOURCE_UID: &str = "crabka-service-graph";
+const GRAFANA_TEMPO_DATASOURCE_UID: &str = "krabka-traces";
+const GRAFANA_PROM_DATASOURCE_UID: &str = "krabka-service-graph";
 /// `< 5` spans in the "big" trace -> forces a PARTIAL trace-by-id response.
 const MAX_TRACE_SPANS: usize = 4;
 
@@ -185,7 +185,7 @@ fn now_minus_60s_ns() -> u64 {
 fn trace_a_otlp_bytes() -> Vec<u8> {
     let base = now_minus_60s_ns();
     let scope = InstrumentationScope {
-        name: "crabka-e2e".into(),
+        name: "krabka-e2e".into(),
         version: "1.0.0".into(),
         ..InstrumentationScope::default()
     };
@@ -624,13 +624,13 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
 
     // D6 — Jaeger gRPC, in-process via the production service struct.
     let jaeger_grpc = JaegerGrpcService::new(state.clone());
-    let mut req = GrpcRequest::new(crabka_traces::wire::jaeger_grpc::api_v2::PostSpansRequest {
-        batch: Some(crabka_traces::wire::jaeger_grpc::api_v2::Batch {
-            process: Some(crabka_traces::wire::jaeger_grpc::api_v2::Process {
+    let mut req = GrpcRequest::new(krabka_traces::wire::jaeger_grpc::api_v2::PostSpansRequest {
+        batch: Some(krabka_traces::wire::jaeger_grpc::api_v2::Batch {
+            process: Some(krabka_traces::wire::jaeger_grpc::api_v2::Process {
                 service_name: "jaeger-grpc-svc".into(),
                 tags: Vec::new(),
             }),
-            spans: vec![crabka_traces::wire::jaeger_grpc::api_v2::Span {
+            spans: vec![krabka_traces::wire::jaeger_grpc::api_v2::Span {
                 trace_id: vec![0x66; 16],
                 span_id: vec![0x61; 8],
                 operation_name: "jaeger grpc op".into(),
@@ -643,15 +643,15 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
                     nanos: 5_000_000,
                 }),
                 tags: vec![
-                    crabka_traces::wire::jaeger_grpc::api_v2::KeyValue {
+                    krabka_traces::wire::jaeger_grpc::api_v2::KeyValue {
                         key: "span.kind".into(),
-                        v_type: crabka_traces::wire::jaeger_grpc::api_v2::ValueType::String.into(),
+                        v_type: krabka_traces::wire::jaeger_grpc::api_v2::ValueType::String.into(),
                         v_str: "server".into(),
                         ..Default::default()
                     },
-                    crabka_traces::wire::jaeger_grpc::api_v2::KeyValue {
+                    krabka_traces::wire::jaeger_grpc::api_v2::KeyValue {
                         key: "error".into(),
-                        v_type: crabka_traces::wire::jaeger_grpc::api_v2::ValueType::Bool.into(),
+                        v_type: krabka_traces::wire::jaeger_grpc::api_v2::ValueType::Bool.into(),
                         v_bool: true,
                         ..Default::default()
                     },
@@ -871,10 +871,10 @@ fn metrics_span(
 }
 
 // ---------------------------------------------------------------------------
-// Crabka querier pair (bound on 0.0.0.0, reachable from containers).
+// Krabka querier pair (bound on 0.0.0.0, reachable from containers).
 // ---------------------------------------------------------------------------
 
-struct CrabkaPair {
+struct KrabkaPair {
     /// Reachable from containers such as Grafana, through the host-gateway
     /// alias.
     container_base_url: String,
@@ -884,13 +884,13 @@ struct CrabkaPair {
     shutdown: tokio::sync::oneshot::Sender<()>,
 }
 
-impl CrabkaPair {
+impl KrabkaPair {
     fn shutdown(self) {
         let _ = self.shutdown.send(());
     }
 }
 
-async fn start_crabka_querier(records: &[SpanRecord]) -> TestResult<CrabkaPair> {
+async fn start_krabka_querier(records: &[SpanRecord]) -> TestResult<KrabkaPair> {
     let engine = Arc::new(TraceqlEngine::new(
         Arc::new(span_store_from_records(records)),
         EngineOpts::default(),
@@ -915,7 +915,7 @@ async fn start_crabka_querier(records: &[SpanRecord]) -> TestResult<CrabkaPair> 
 
     // Grafana reaches the querier through the proxy (container_base_url); the
     // test process can also hit it directly on loopback (local_base_url).
-    Ok(CrabkaPair {
+    Ok(KrabkaPair {
         container_base_url: format!("http://{DOCKER_HOST_ALIAS}:{port}"),
         local_base_url: format!("http://127.0.0.1:{port}"),
         shutdown: tx,
@@ -927,7 +927,7 @@ async fn start_crabka_querier(records: &[SpanRecord]) -> TestResult<CrabkaPair> 
 // ---------------------------------------------------------------------------
 
 async fn start_grafana() -> TestResult<ContainerAsync<GenericImage>> {
-    let tag = std::env::var("CRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| "11.5.2".into());
+    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| "11.5.2".into());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
@@ -941,7 +941,7 @@ async fn start_grafana() -> TestResult<ContainerAsync<GenericImage>> {
 }
 
 async fn start_prometheus() -> TestResult<ContainerAsync<GenericImage>> {
-    let tag = std::env::var("CRABKA_PROM_IMAGE_TAG").unwrap_or_else(|_| "v3.1.0".into());
+    let tag = std::env::var("KRABKA_PROM_IMAGE_TAG").unwrap_or_else(|_| "v3.1.0".into());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/prom/prometheus".to_string(), tag)
@@ -1122,7 +1122,7 @@ async fn grafana_e2e_full_surface() -> TestResult {
     // ----- §2/§3: drive every ingest door, then stand up the querier. -----
     let records = ingest_all_doors().await?;
     assert_all_doors_present(&records);
-    let crabka = start_crabka_querier(&records).await?;
+    let krabka = start_krabka_querier(&records).await?;
 
     // Wide query window covering the (now - 60s) fixture timestamps.
     let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -1136,11 +1136,11 @@ async fn grafana_e2e_full_surface() -> TestResult {
     wait_for_http_ok(&client, &grafana_base, &["/api/health"]).await?;
 
     let tempo_ds = json!({
-        "name": "Crabka Traces",
+        "name": "Krabka Traces",
         "uid": GRAFANA_TEMPO_DATASOURCE_UID,
         "type": "tempo",
         "access": "proxy",
-        "url": crabka.container_base_url,
+        "url": krabka.container_base_url,
         "isDefault": true,
         "jsonData": { "httpMethod": "GET", "httpHeaderName1": "X-Scope-OrgID" },
         "secureJsonData": { "httpHeaderValue1": TENANT },
@@ -1158,7 +1158,7 @@ async fn grafana_e2e_full_surface() -> TestResult {
     )
     .await?;
     assert2::assert!(fetched["type"].as_str() == Some("tempo"));
-    assert2::assert!(fetched["url"].as_str() == Some(crabka.container_base_url.as_str()));
+    assert2::assert!(fetched["url"].as_str() == Some(krabka.container_base_url.as_str()));
 
     let proxy = |path: &str| {
         format!("{grafana_base}/api/datasources/proxy/uid/{GRAFANA_TEMPO_DATASOURCE_UID}/{path}")
@@ -1240,7 +1240,7 @@ async fn grafana_e2e_full_surface() -> TestResult {
     let pb = client
         .get(format!(
             "{}/api/v2/traces/{TRACE_A_HEX}?{range}",
-            crabka.local_base_url
+            krabka.local_base_url
         ))
         .header("accept", "application/protobuf")
         .header("x-scope-orgid", TENANT)
@@ -1283,7 +1283,7 @@ async fn grafana_e2e_full_surface() -> TestResult {
 
     grafana_e2e_search(
         client,
-        crabka,
+        krabka,
         grafana,
         grafana_base,
         QueryWindow {
@@ -1298,7 +1298,7 @@ async fn grafana_e2e_full_surface() -> TestResult {
 
 async fn grafana_e2e_search(
     client: reqwest::Client,
-    crabka: CrabkaPair,
+    krabka: KrabkaPair,
     grafana: ContainerAsync<GenericImage>,
     grafana_base: String,
     window: QueryWindow,
@@ -1391,7 +1391,7 @@ async fn grafana_e2e_search(
 
     grafana_e2e_tags(
         client,
-        crabka,
+        krabka,
         grafana,
         grafana_base,
         QueryWindow {
@@ -1406,7 +1406,7 @@ async fn grafana_e2e_search(
 
 async fn grafana_e2e_tags(
     client: reqwest::Client,
-    crabka: CrabkaPair,
+    krabka: KrabkaPair,
     grafana: ContainerAsync<GenericImage>,
     grafana_base: String,
     window: QueryWindow,
@@ -1529,7 +1529,7 @@ async fn grafana_e2e_tags(
 
     grafana_e2e_metrics(
         client,
-        crabka,
+        krabka,
         grafana,
         grafana_base,
         QueryWindow {
@@ -1544,7 +1544,7 @@ async fn grafana_e2e_tags(
 
 async fn grafana_e2e_metrics(
     client: reqwest::Client,
-    crabka: CrabkaPair,
+    krabka: KrabkaPair,
     grafana: ContainerAsync<GenericImage>,
     grafana_base: String,
     window: QueryWindow,
@@ -1684,10 +1684,10 @@ async fn grafana_e2e_metrics(
     assert2::assert!(metric_points_total(&metrics) > 0.0);
 
     // E27-E28 — Grafana's Tempo datasource normalizes some malformed metric
-    // requests before proxying them, so validate these Crabka API contracts
+    // requests before proxying them, so validate these Krabka API contracts
     // directly.
     let direct_metrics_url =
-        |params: &str| format!("{}/api/metrics/query_range?{params}", crabka.local_base_url);
+        |params: &str| format!("{}/api/metrics/query_range?{params}", krabka.local_base_url);
 
     // E27 — metrics query_range rejects a non-positive `step` -> 400.
     let (status, body) = get_text(
@@ -1711,12 +1711,12 @@ async fn grafana_e2e_metrics(
     assert2::assert!(status == ReqwestStatusCode::BAD_REQUEST);
     assert2::assert!(body.contains("end must be >= start"));
 
-    grafana_e2e_service_graph(client, crabka, grafana, grafana_base).await
+    grafana_e2e_service_graph(client, krabka, grafana, grafana_base).await
 }
 
 async fn grafana_e2e_service_graph(
     client: reqwest::Client,
-    crabka: CrabkaPair,
+    krabka: KrabkaPair,
     grafana: ContainerAsync<GenericImage>,
     grafana_base: String,
 ) -> TestResult {
@@ -1761,7 +1761,7 @@ async fn grafana_e2e_service_graph(
 
     // Provision the Grafana Prometheus datasource (the Service-Graph backend).
     let prom_ds = json!({
-        "name": "Crabka Service Graph",
+        "name": "Krabka Service Graph",
         "uid": GRAFANA_PROM_DATASOURCE_UID,
         "type": "prometheus",
         "access": "proxy",
@@ -1817,7 +1817,7 @@ async fn grafana_e2e_service_graph(
     .await?;
     assert2::assert!(result["data"]["result"][0]["value"][1].as_str() == Some("1"));
 
-    crabka.shutdown();
+    krabka.shutdown();
     // Keep `grafana` and `prom` bindings alive until here; they stop on drop.
     drop(grafana);
     drop(prom);

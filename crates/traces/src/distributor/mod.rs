@@ -10,13 +10,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use crabka_client_producer::{Header, Producer, ProducerRecord};
-use crabka_units::{
+use flate2::read::GzDecoder;
+use krabka_client_producer::{Header, Producer, ProducerRecord};
+use krabka_units::{
     ByteSize, Frequency,
     convert::{ByteSizeExt as _, FrequencyExt, StdDurationExt as _},
     kibibytes, mebibytes,
 };
-use flate2::read::GzDecoder;
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{
         ExportTraceServiceRequest, ExportTraceServiceResponse,
@@ -119,7 +119,7 @@ impl WalSink for KafkaSink {
         // Inject the current ingest span's W3C trace context onto the WAL record
         // so the block-builder (WAL consumer) can continue the same distributed
         // trace. Empty when there is no active/sampled span, so this is additive.
-        let headers = crabka_telemetry::propagation::current_trace_headers()
+        let headers = krabka_telemetry::propagation::current_trace_headers()
             .into_iter()
             .map(|(key, value)| Header {
                 key,
@@ -371,10 +371,10 @@ async fn otlp_push(
         otel.kind = "server",
         messaging.system = "kafka",
         messaging.destination.name = TRACES_WAL_TOPIC,
-        crabka.tenant = %tenant(&headers),
-        crabka.ingest.spans = tracing::field::Empty,
+        krabka.tenant = %tenant(&headers),
+        krabka.ingest.spans = tracing::field::Empty,
         // A span field is a raw-number seam: emit the byte count itself.
-        crabka.ingest.bytes = body_size.bytes_u64(),
+        krabka.ingest.bytes = body_size.bytes_u64(),
     );
     async move {
         if let Err(err) = require_content_type(
@@ -392,7 +392,7 @@ async fn otlp_push(
         {
             Ok(spans) => {
                 let items = spans.len() as u64;
-                tracing::Span::current().record("crabka.ingest.spans", items);
+                tracing::Span::current().record("krabka.ingest.spans", items);
                 let resp =
                     append_decoded_response(&state, &headers, spans, otlp_success_response()).await;
                 record_ingest_response(&state, resp, body_size, items, start)
@@ -824,9 +824,9 @@ mod tests {
 
     use assert2::check;
     use axum::{body::Body, http::Request};
-    use crabka_units::{bytes, per_sec};
     use flate2::{Compression, write::GzEncoder};
     use http_body_util::BodyExt as _;
+    use krabka_units::{bytes, per_sec};
     use opentelemetry_proto::tonic::{
         collector::trace::v1::ExportTraceServiceRequest,
         trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan, TracesData},

@@ -4,16 +4,16 @@
 //! The frontend parses per-job partials, merges them under `limit` and `spss`,
 //! accumulates the `metrics{}` job-accounting block, and re-emits this exact
 //! shape. The trace values it carries, `TraceResult`, `SpanSet` and `SpanRef`,
-//! are the pinned `crabka-traceql` result types from Slice 2. This module is
+//! are the pinned `krabka-traceql` result types from Slice 2. This module is
 //! their HTTP projection.
 //!
-//! Note: the `crabka-traceql` result types do **not** derive serde. The search
+//! Note: the `krabka-traceql` result types do **not** derive serde. The search
 //! edge model is therefore a standalone serde mirror with lossless `From` and
 //! reverse-`From` projections. The by-id edge model is a minimal typed
 //! OTLP-JSON mirror, `TraceByIdResponseJson`, shaped to the querier's v2 body.
 
-use crabka_traceql::{AttrValue, SpanRef, SpanSet, TraceResult};
-use crabka_units::{
+use krabka_traceql::{AttrValue, SpanRef, SpanSet, TraceResult};
+use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt, TimeExt as _},
 };
@@ -53,7 +53,7 @@ pub struct TraceJson {
     #[serde(
         rename = "durationMs",
         default,
-        with = "crabka_units::serde_units::numeric::millis_i64_trunc"
+        with = "krabka_units::serde_units::numeric::millis_i64_trunc"
     )]
     pub duration: Time,
     #[serde(default)]
@@ -425,7 +425,7 @@ impl TraceByIdResponseJson {
 
 #[cfg(test)]
 mod tests {
-    use crabka_units::{millis, nanos};
+    use krabka_units::{millis, nanos};
 
     use super::*;
 
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn trace_result_round_trips_through_json_projection() {
-        use crabka_traceql::{AttrValue, SpanRef, SpanSet, TraceResult};
+        use krabka_traceql::{AttrValue, SpanRef, SpanSet, TraceResult};
 
         let span = SpanRef {
             span_id: [7; 8],

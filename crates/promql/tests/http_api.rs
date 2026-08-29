@@ -6,13 +6,13 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use crabka_blockstore::Labels;
-use crabka_metrics::{BucketSpan, Limits, NativeHistogram, OverridesProvider, ResetHint, wire::pb};
-use crabka_promql::{
+use krabka_blockstore::Labels;
+use krabka_metrics::{BucketSpan, Limits, NativeHistogram, OverridesProvider, ResetHint, wire::pb};
+use krabka_promql::{
     EngineOpts, InMemoryMetricStore, PrometheusApiState, QueryFrontendOptions,
     RulerAlertStateRecord, RulerGroupStateRecord, prometheus_router,
 };
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use prost::Message;
 use serde_json::Value;
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder};

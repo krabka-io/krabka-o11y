@@ -11,10 +11,10 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use crabka_metrics_service::{
+use krabka_metrics_service::{
     BundledRulesError, install_bundled_rule_groups, prometheus_api_state_for_store,
 };
-use crabka_promql::{InMemoryMetricStore, PrometheusApiState, prometheus_router};
+use krabka_promql::{InMemoryMetricStore, PrometheusApiState, prometheus_router};
 use tempfile::TempDir;
 use tower::ServiceExt as _;
 

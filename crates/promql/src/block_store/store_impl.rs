@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use arrow::array::{Array, Float64Array, Int64Array, MapArray, StringArray, UInt64Array};
-use crabka_blockstore::{LabelMatcher, Labels, ScanTableRequest, SeriesFingerprint};
-use crabka_metrics::{
+use datafusion::prelude::SessionContext;
+use krabka_blockstore::{LabelMatcher, Labels, ScanTableRequest, SeriesFingerprint};
+use krabka_metrics::{
     exemplar_schema, float_sample_schema, metadata_schema, native_histogram_schema,
 };
-use datafusion::prelude::SessionContext;
 
 use super::MetricBlockStore;
 use crate::{
@@ -219,7 +219,7 @@ impl MetricStore for MetricBlockStore {
         let matchers = metric.map_or_else(Vec::new, |metric| {
             vec![LabelMatcher {
                 name: "__name__".to_string(),
-                op: crabka_blockstore::MatchOp::Eq,
+                op: krabka_blockstore::MatchOp::Eq,
                 value: metric.to_string(),
             }]
         });
@@ -407,7 +407,7 @@ impl MetricStore for MetricBlockStore {
     }
 }
 
-fn blockstore_error(error: crabka_blockstore::BlockStoreError) -> PromqlError {
+fn blockstore_error(error: krabka_blockstore::BlockStoreError) -> PromqlError {
     let message = error.to_string();
     drop(error);
     PromqlError::Store(message)

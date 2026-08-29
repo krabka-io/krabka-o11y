@@ -1,16 +1,16 @@
 # Test Coverage Report Style Guide
 
-This guide defines the style and content expectations for per-crate `test_coverage_report.md` documents in Crabka. The [prose style guide](prose_style_guide.md) defines the wording rules that apply to everything you write here.
+This guide defines the style and content expectations for per-crate `test_coverage_report.md` documents in Krabka. The [prose style guide](prose_style_guide.md) defines the wording rules that apply to everything you write here.
 
 ## Purpose
 
-Coverage reports capture the **current state of test verification** against Crabka's compatibility contract. They answer: "what is tested, how, and what remains?" They are for reviewers who assess Kafka compatibility and for engineers who plan test work.
+Coverage reports capture the **current state of test verification** against Krabka's compatibility contract. They answer: "what is tested, how, and what remains?" They are for reviewers who assess Kafka compatibility and for engineers who plan test work.
 
 Coverage reports are **living documents**. Update a report when you add tests. A coverage report is not a frozen snapshot. The date in the header shows the last update.
 
-## Crabka's Verification Model
+## Krabka's Verification Model
 
-Crabka has no formal requirements database. Its "requirements" are the **Kafka compatibility contract**: wire-protocol byte exactness and KIP semantics. Verification traces to two authoritative artifacts:
+Krabka has no formal requirements database. Its "requirements" are the **Kafka compatibility contract**: wire-protocol byte exactness and KIP semantics. Verification traces to two authoritative artifacts:
 
 - The **feature-compatibility matrix** in the root [`README.md`](../../README.md#feature-compatibility) — differential-tested and authoritative.
 - The [**KIP matrix**](../KIP_MATRIX.md) — per-KIP implementation status.
@@ -41,7 +41,7 @@ Every coverage report should follow this structure. You may omit a section that 
 
 | Document Info | Details |
 | :--- | :--- |
-| **Crate** | `crabka-<name>` |
+| **Crate** | `krabka-<name>` |
 | **Kafka surface** | <wire APIs / KIPs this crate owns> |
 | **Date** | <YYYY-MM-DD of last update> |
 ```
@@ -63,7 +63,7 @@ Include a table that maps each KIP or wire behaviour the crate owns to its verif
 - **Result values**: `Pass` (test exists and passes), `Fail` (test exists and fails), `N/A` (not applicable to this crate), `Not tested` (no test exists).
 - **Test column**: cite specific test function names (`file::function`), not just file paths. For differential coverage, name the differential suite or scenario.
 - **Matrix Ref column**: link to the row in the [KIP matrix](../KIP_MATRIX.md) or the README compatibility matrix that this row traces to.
-- **Cross-crate or differential coverage**: when tests elsewhere verify the behaviour, say `Pass (differential)` or `Pass (crabka-broker)` and cite the specific test.
+- **Cross-crate or differential coverage**: when tests elsewhere verify the behaviour, say `Pass (differential)` or `Pass (krabka-broker)` and cite the specific test.
 
 ### Section 2: Test Inventory
 
@@ -91,7 +91,7 @@ Include a table that cross-references the crate's intended scope, from its desig
 
 ### Section 4: Line Coverage
 
-Crabka measures line coverage with `cargo llvm-cov` over the `nextest` runner:
+Krabka measures line coverage with `cargo llvm-cov` over the `nextest` runner:
 
 ```bash
 cargo llvm-cov nextest --package <crate> --profile ci --lib --bins --lcov --output-path lcov.info
@@ -114,7 +114,7 @@ If you have not yet measured line coverage, include the command block so the rea
 
 ### Section 5: Mutation Coverage
 
-Crabka gates on **mutation testing** (`cargo mutants`). Mutation testing is a stronger signal than line coverage. A surviving mutant means that the line runs but that no test asserts on its behaviour.
+Krabka gates on **mutation testing** (`cargo mutants`). Mutation testing is a stronger signal than line coverage. A surviving mutant means that the line runs but that no test asserts on its behaviour.
 
 ```bash
 git diff origin/main...HEAD | tee git.diff
@@ -188,7 +188,7 @@ The project-level report at `docs/test_coverage_report.md` summarises all crates
 
 ## Requirements Traceability
 
-Crabka's verification chain runs from the Kafka compatibility contract to individual test results:
+Krabka's verification chain runs from the Kafka compatibility contract to individual test results:
 
 ```
 Kafka compatibility contract

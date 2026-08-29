@@ -1,12 +1,12 @@
 # Design Document Style Guide
 
-This guide defines the style and content expectations for design documents in Crabka. The [prose style guide](prose_style_guide.md) defines the wording rules that apply to everything you write here.
+This guide defines the style and content expectations for design documents in Krabka. The [prose style guide](prose_style_guide.md) defines the wording rules that apply to everything you write here.
 
 ## Purpose
 
 Design documents capture **architectural decisions and rationale**, the "why" behind the code. They are for engineers who need to understand a subsystem conceptually before they read the implementation details.
 
-Crabka's design specs live under [`docs/superpowers/specs/`](../superpowers/specs/), named `YYYY-MM-DD-<topic>-design.md`. A subsystem may also carry a `docs/design.md` inside its crate when it needs a durable, per-crate design reference. Link that file from the crate README.
+Krabka's design specs live under [`docs/superpowers/specs/`](../superpowers/specs/), named `YYYY-MM-DD-<topic>-design.md`. A subsystem may also carry a `docs/design.md` inside its crate when it needs a durable, per-crate design reference. Link that file from the crate README.
 
 ## What Belongs in Design Docs
 
@@ -53,14 +53,14 @@ What was decided, why, and what alternatives were rejected.
 
 ## Integration
 
-How does this subsystem interact with other Crabka components
+How does this subsystem interact with other Krabka components
 (broker, KRaft controller, log storage, clients)? What are the
 contracts / interfaces?
 
 ## Kafka / KIP Compliance
 
 Which KIPs or Kafka wire behaviours does this implement?
-Any notable interpretation decisions, or places Crabka deliberately
+Any notable interpretation decisions, or places Krabka deliberately
 diverges (and why)?
 
 ## Testing

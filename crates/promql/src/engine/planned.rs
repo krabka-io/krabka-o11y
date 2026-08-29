@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use crabka_blockstore::{Labels, SeriesFingerprint};
 use datafusion::{logical_expr::LogicalPlan, prelude::SessionContext};
+use krabka_blockstore::{Labels, SeriesFingerprint};
 
 use crate::result::{InstantSample, RangeSeries};
 

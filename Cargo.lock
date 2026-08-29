@@ -46,13 +46,13 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aes"
-version = "0.9.2"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8eb277bec05f56a0e0591f155a484cbd0f4f07ff2905051a48c72f004f7ed58"
+checksum = "35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32"
 dependencies = [
  "cipher",
  "cpubits",
- "cpufeatures 0.3.0",
+ "cpufeatures 0.3.1",
 ]
 
 [[package]]
@@ -65,6 +65,7 @@ dependencies = [
  "const-random",
  "getrandom 0.3.4",
  "once_cell",
+ "serde",
  "version_check",
  "zerocopy",
 ]
@@ -172,6 +173,44 @@ name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
+name = "apache-avro"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36fa98bc79671c7981272d91a8753a928ff6a1cd8e4f20a44c45bd5d313840bf"
+dependencies = [
+ "apache-avro-derive",
+ "bigdecimal",
+ "bon",
+ "digest 0.10.7",
+ "log",
+ "miniz_oxide 0.8.9",
+ "num-bigint 0.4.8",
+ "quad-rand",
+ "rand 0.9.5",
+ "regex-lite",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "strum 0.27.2",
+ "strum_macros 0.27.2",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "apache-avro-derive"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a5f1d2499ae9ad7eda0d283bac50140ec75b4d07784124b36dfa21d0b3649cf"
+dependencies = [
+ "darling 0.21.3",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "ar_archive_writer"
@@ -352,7 +391,7 @@ dependencies = [
  "arrow-select",
  "chrono",
  "half",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itoa",
  "lexical-core",
  "memchr",
@@ -582,7 +621,7 @@ checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -694,7 +733,7 @@ dependencies = [
  "addr2line 0.25.1",
  "cfg-if",
  "libc",
- "miniz_oxide",
+ "miniz_oxide 0.8.9",
  "object 0.37.3",
  "rustc-demangle",
  "windows-link",
@@ -741,6 +780,7 @@ dependencies = [
  "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -819,7 +859,7 @@ dependencies = [
  "cc",
  "cfg-if",
  "constant_time_eq",
- "cpufeatures 0.3.0",
+ "cpufeatures 0.3.1",
 ]
 
 [[package]]
@@ -924,28 +964,32 @@ dependencies = [
 
 [[package]]
 name = "bon"
-version = "3.9.3"
+version = "3.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a602c73c7b0148ec6d12af6fd5cc7a46e2eacc8878271a999abac56eed12f561"
+checksum = "9e3fac94a66da67200398458a25412bcc3f9b6443b5119a6cad9cf3ccfcd8cc6"
 dependencies = [
  "bon-macros",
- "rustversion",
 ]
 
 [[package]]
 name = "bon-macros"
-version = "3.9.3"
+version = "3.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
+checksum = "d4654961ad0494e4774c5c60b4cb4cd0ae9b9d92d039d901638b1dba97ebebf5"
 dependencies = [
- "darling",
+ "darling 0.24.1",
  "ident_case",
- "prettyplease",
+ "prettyplease 0.3.0",
  "proc-macro2",
  "quote",
- "rustversion",
- "syn 2.0.119",
+ "syn 3.0.4",
 ]
+
+[[package]]
+name = "borrow-or-share"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "brotli"
@@ -982,6 +1026,12 @@ name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+
+[[package]]
+name = "bytecount"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
 
 [[package]]
 name = "bytemuck"
@@ -1061,7 +1111,7 @@ version = "0.13.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fe45e18904af7af10e4312df7c97251e98af98c70f42f1f2587aecfcbee56bf"
 dependencies = [
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "lazy_static",
  "num-traits",
  "regex",
@@ -1071,12 +1121,12 @@ dependencies = [
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.3.0",
+ "cpufeatures 0.3.1",
  "rand_core 0.10.1",
 ]
 
@@ -1145,7 +1195,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -1177,9 +1227,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "combine"
-version = "4.6.7"
+version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
+checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
 dependencies = [
  "bytes",
  "memchr",
@@ -1357,923 +1407,11 @@ dependencies = [
 
 [[package]]
 name = "cpufeatures"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
+checksum = "5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "crabka-audit"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "arc-swap",
- "async-trait",
- "bytes",
- "clap",
- "crabka-ids",
- "crabka-protocol",
- "crabka-units",
- "derive_more",
- "qubit-clock",
- "ring",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "crabka-authz"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "crabka-metadata",
- "crabka-security",
- "tracing",
-]
-
-[[package]]
-name = "crabka-blockstore"
-version = "0.4.0"
-dependencies = [
- "arrow",
- "assert2",
- "async-trait",
- "bytes",
- "crabka-object-store",
- "crabka-units",
- "datafusion",
- "futures",
- "num-traits",
- "object_store",
- "parquet",
- "proptest",
- "refined_type",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "url",
- "xxhash-rust",
-]
-
-[[package]]
-name = "crabka-broker"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "arc-swap",
- "async-trait",
- "axum",
- "base64 0.23.1",
- "bytes",
- "clap",
- "crabka-audit",
- "crabka-authz",
- "crabka-client-core",
- "crabka-compression",
- "crabka-ids",
- "crabka-kraft-core",
- "crabka-log",
- "crabka-metadata",
- "crabka-object-store",
- "crabka-protocol",
- "crabka-raft",
- "crabka-records-legacy",
- "crabka-remote-storage",
- "crabka-remote-storage-topic",
- "crabka-security",
- "crabka-telemetry",
- "crabka-throttle",
- "crabka-units",
- "crabka-verified",
- "crabka-voters",
- "crc32c",
- "dashmap",
- "exponential-backoff",
- "futures-util",
- "hex",
- "java_regex",
- "jsonpath-rust",
- "ktls",
- "lru",
- "nix 0.31.3",
- "num-traits",
- "object_store",
- "opentelemetry-proto",
- "prometheus-client",
- "prost 0.14.4",
- "qubit-clock",
- "rcgen",
- "refined_type",
- "regex",
- "reqwest 0.13.4",
- "rustix",
- "rustls",
- "schemars 1.2.2",
- "serde",
- "serde-wincode",
- "serde_json",
- "socket2",
- "thiserror 2.0.20",
- "tokio",
- "tokio-metrics",
- "tokio-rustls",
- "tokio-util",
- "toml",
- "tonic",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "wincode",
- "zerocopy",
-]
-
-[[package]]
-name = "crabka-client-admin"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=55cfeba1148963e195fde3a959871c582d390a89#55cfeba1148963e195fde3a959871c582d390a89"
-dependencies = [
- "assert2",
- "async-trait",
- "bytes",
- "crabka-client-core",
- "crabka-ids",
- "crabka-metadata",
- "crabka-protocol",
- "crabka-security",
- "crabka-units",
- "ring",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "crabka-client-consumer"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=55cfeba1148963e195fde3a959871c582d390a89#55cfeba1148963e195fde3a959871c582d390a89"
-dependencies = [
- "assert2",
- "bon",
- "bytes",
- "crabka-client-core",
- "crabka-ids",
- "crabka-protocol",
- "crabka-units",
- "futures-util",
- "refined_type",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "crabka-client-core"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=55cfeba1148963e195fde3a959871c582d390a89#55cfeba1148963e195fde3a959871c582d390a89"
-dependencies = [
- "async-trait",
- "bon",
- "bytes",
- "crabka-ids",
- "crabka-protocol",
- "crabka-security",
- "crabka-units",
- "dashmap",
- "futures-util",
- "refined_type",
- "rustls",
- "rustls-pki-types",
- "thiserror 2.0.20",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "crabka-client-producer"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=55cfeba1148963e195fde3a959871c582d390a89#55cfeba1148963e195fde3a959871c582d390a89"
-dependencies = [
- "assert2",
- "async-trait",
- "bon",
- "bytes",
- "crabka-client-consumer",
- "crabka-client-core",
- "crabka-compression",
- "crabka-protocol",
- "crabka-units",
- "dashmap",
- "futures",
- "refined_type",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "crabka-compression"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=fe164a8d816f6e7b0447bfe44085874aa9f5f3b5#fe164a8d816f6e7b0447bfe44085874aa9f5f3b5"
-dependencies = [
- "assert2",
- "bytes",
- "crabka-units",
- "flate2",
- "lz4_flex",
- "refined_type",
- "snap",
- "thiserror 2.0.20",
- "zstd",
-]
-
-[[package]]
-name = "crabka-ids"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=fe164a8d816f6e7b0447bfe44085874aa9f5f3b5#fe164a8d816f6e7b0447bfe44085874aa9f5f3b5"
-dependencies = [
- "assert2",
- "derive_more",
- "serde",
-]
-
-[[package]]
-name = "crabka-kraft-core"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "bytes",
- "crabka-units",
- "crabka-verified",
- "crabka-voters",
- "refined_type",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "crabka-log"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "bytes",
- "crabka-compression",
- "crabka-ids",
- "crabka-protocol",
- "crabka-units",
- "crabka-verified",
- "crc32c",
- "thiserror 2.0.20",
- "tracing",
- "zerocopy",
-]
-
-[[package]]
-name = "crabka-logfmt"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "serde_json",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "crabka-logql"
-version = "0.4.0"
-dependencies = [
- "assert2",
- "base64 0.23.1",
- "chrono",
- "chrono-tz",
- "crabka-blockstore",
- "crabka-units",
- "derive_more",
- "num-traits",
- "regex",
- "serde_json",
- "thiserror 2.0.20",
- "time",
- "tracing",
-]
-
-[[package]]
-name = "crabka-metadata"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=fe164a8d816f6e7b0447bfe44085874aa9f5f3b5#fe164a8d816f6e7b0447bfe44085874aa9f5f3b5"
-dependencies = [
- "assert2",
- "bytes",
- "crabka-ids",
- "crabka-protocol",
- "crabka-security",
- "crabka-units",
- "crabka-voters",
- "serde",
- "serde-wincode",
- "thiserror 2.0.20",
- "tracing",
- "uuid",
- "wincode",
-]
-
-[[package]]
-name = "crabka-metrics"
-version = "0.4.0"
-dependencies = [
- "arrow",
- "assert2",
- "async-trait",
- "axum",
- "bytes",
- "clap",
- "crabka-blockstore",
- "crabka-broker",
- "crabka-client-admin",
- "crabka-client-consumer",
- "crabka-client-core",
- "crabka-client-producer",
- "crabka-ids",
- "crabka-telemetry",
- "crabka-throttle",
- "crabka-units",
- "dashmap",
- "futures",
- "mutants",
- "num-traits",
- "object_store",
- "opentelemetry-proto",
- "prometheus-client",
- "proptest",
- "prost 0.14.4",
- "prost-build 0.14.4",
- "protoc-bin-vendored",
- "refined_type",
- "reqwest 0.13.4",
- "serde",
- "serde-wincode",
- "serde_json",
- "serde_yaml",
- "snap",
- "temp-env",
- "tempfile",
- "thiserror 2.0.20",
- "tikv-jemallocator",
- "tokio",
- "tonic",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
- "wincode",
-]
-
-[[package]]
-name = "crabka-metrics-service"
-version = "0.4.0"
-dependencies = [
- "assert2",
- "async-trait",
- "axum",
- "bytes",
- "clap",
- "crabka-blockstore",
- "crabka-client-consumer",
- "crabka-client-core",
- "crabka-client-producer",
- "crabka-ids",
- "crabka-metrics",
- "crabka-promql",
- "crabka-telemetry",
- "crabka-units",
- "futures",
- "object_store",
- "prost 0.14.4",
- "refined_type",
- "reqwest 0.13.4",
- "serde",
- "serde_json",
- "serde_yaml",
- "snap",
- "temp-env",
- "tempfile",
- "testcontainers",
- "thiserror 2.0.20",
- "tikv-jemallocator",
- "time",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "crabka-object-store"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "async-trait",
- "bytes",
- "futures",
- "object_store",
- "thiserror 2.0.20",
- "tokio",
-]
-
-[[package]]
-name = "crabka-observability"
-version = "0.4.0"
-dependencies = [
- "assert2",
- "async-trait",
- "axum",
- "base64 0.23.1",
- "clap",
- "crabka-blockstore",
- "crabka-client-admin",
- "crabka-client-consumer",
- "crabka-client-core",
- "crabka-client-producer",
- "crabka-ids",
- "crabka-logql",
- "crabka-telemetry",
- "crabka-units",
- "datafusion",
- "flate2",
- "futures-util",
- "mutants",
- "num-traits",
- "object_store",
- "opentelemetry",
- "opentelemetry-proto",
- "opentelemetry_sdk",
- "parquet",
- "prometheus-client",
- "prost 0.14.4",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "snap",
- "temp-env",
- "tempfile",
- "thiserror 2.0.20",
- "tikv-jemallocator",
- "time",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "tonic",
- "tower",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "crabka-pprof"
-version = "0.4.0"
-dependencies = [
- "addr2line 0.27.1",
- "arrow",
- "assert2",
- "async-trait",
- "crabka-blockstore",
- "crabka-units",
- "datafusion",
- "mutants",
- "object 0.40.0",
- "proptest",
- "prost 0.14.4",
- "prost-build 0.14.4",
- "protox",
- "refined_type",
- "regex",
- "reqwest 0.13.4",
- "serde",
- "serde-wincode",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "wincode",
-]
-
-[[package]]
-name = "crabka-profiles"
-version = "0.4.0"
-dependencies = [
- "arrow",
- "assert2",
- "async-trait",
- "axum",
- "base64 0.23.1",
- "bytes",
- "clap",
- "connectrpc-axum",
- "connectrpc-axum-build",
- "crabka-blockstore",
- "crabka-client-admin",
- "crabka-client-consumer",
- "crabka-client-core",
- "crabka-client-producer",
- "crabka-pprof",
- "crabka-telemetry",
- "crabka-throttle",
- "crabka-units",
- "datafusion",
- "derive_more",
- "flate2",
- "futures",
- "jfrs",
- "multer",
- "num-traits",
- "object_store",
- "parquet",
- "pbjson",
- "prometheus-client",
- "proptest",
- "prost 0.14.4",
- "protoc-bin-vendored",
- "refined_type",
- "regex",
- "reqwest 0.13.4",
- "serde",
- "serde-wincode",
- "serde_json",
- "serde_yaml",
- "temp-env",
- "tempfile",
- "testcontainers",
- "thiserror 2.0.20",
- "tikv-jemallocator",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
- "wincode",
-]
-
-[[package]]
-name = "crabka-promql"
-version = "0.4.0"
-dependencies = [
- "arrow",
- "assert2",
- "async-trait",
- "axum",
- "crabka-blockstore",
- "crabka-ids",
- "crabka-metrics",
- "crabka-units",
- "datafusion",
- "datatest-stable",
- "futures",
- "num-traits",
- "object_store",
- "prometheus-client",
- "promql-parser",
- "proptest",
- "prost 0.14.4",
- "regex",
- "reqwest 0.13.4",
- "serde",
- "serde_json",
- "serde_yaml",
- "snap",
- "tempfile",
- "thiserror 2.0.20",
- "time",
- "tokio",
- "tower",
- "tracing",
- "url",
- "xxhash-rust",
-]
-
-[[package]]
-name = "crabka-protocol"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=fe164a8d816f6e7b0447bfe44085874aa9f5f3b5#fe164a8d816f6e7b0447bfe44085874aa9f5f3b5"
-dependencies = [
- "arbitrary",
- "assert2",
- "bytes",
- "crabka-compression",
- "crabka-units",
- "crc32c",
- "serde_json",
- "strum",
- "thiserror 2.0.20",
- "zerocopy",
-]
-
-[[package]]
-name = "crabka-raft"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "async-trait",
- "base64 0.23.1",
- "bytes",
- "crabka-client-core",
- "crabka-ids",
- "crabka-kraft-core",
- "crabka-log",
- "crabka-metadata",
- "crabka-protocol",
- "crabka-security",
- "crabka-units",
- "crabka-verified",
- "dashmap",
- "futures-util",
- "refined_type",
- "serde",
- "serde-wincode",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "wincode",
-]
-
-[[package]]
-name = "crabka-records-legacy"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "bytes",
- "crabka-compression",
- "crabka-ids",
- "crabka-protocol",
- "crabka-units",
- "crc32fast",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "crabka-remote-storage"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "base64 0.23.1",
- "bytes",
- "crabka-ids",
- "crabka-object-store",
- "crabka-units",
- "object_store",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "crabka-remote-storage-topic"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "async-trait",
- "bytes",
- "crabka-client-admin",
- "crabka-client-core",
- "crabka-client-producer",
- "crabka-ids",
- "crabka-protocol",
- "crabka-remote-storage",
- "crabka-units",
- "futures-util",
- "refined_type",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "crabka-security"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=fe164a8d816f6e7b0447bfe44085874aa9f5f3b5#fe164a8d816f6e7b0447bfe44085874aa9f5f3b5"
-dependencies = [
- "arc-swap",
- "assert2",
- "async-trait",
- "base64 0.23.1",
- "bytes",
- "crabka-units",
- "hmac",
- "jsonpath-rust",
- "pbkdf2",
- "rcgen",
- "refined_type",
- "regex",
- "ring",
- "rustls",
- "rustls-pki-types",
- "rustls-webpki",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sspi",
- "strum",
- "subtle",
- "thiserror 2.0.20",
- "time",
- "tokio",
- "tracing",
- "x509-parser",
-]
-
-[[package]]
-name = "crabka-telemetry"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "axum",
- "clap",
- "crabka-logfmt",
- "crabka-trace-context",
- "crabka-units",
- "flate2",
- "jemalloc_pprof",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "pprof",
- "refined_type",
- "serde",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "crabka-throttle"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "crabka-units",
- "creusot-std",
- "derive_more",
- "qubit-clock",
-]
-
-[[package]]
-name = "crabka-trace-context"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=fe164a8d816f6e7b0447bfe44085874aa9f5f3b5#fe164a8d816f6e7b0447bfe44085874aa9f5f3b5"
-dependencies = [
- "opentelemetry",
- "serde",
- "thiserror 2.0.20",
- "tracing",
- "tracing-opentelemetry",
-]
-
-[[package]]
-name = "crabka-traceql"
-version = "0.4.0"
-dependencies = [
- "arrow",
- "assert2",
- "async-trait",
- "crabka-blockstore",
- "crabka-units",
- "datafusion",
- "datatest-stable",
- "derive_more",
- "futures",
- "num-traits",
- "proptest",
- "regex",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "crabka-traces"
-version = "0.4.0"
-dependencies = [
- "arc-swap",
- "arrow",
- "assert2",
- "async-trait",
- "axum",
- "base64 0.23.1",
- "bytes",
- "clap",
- "crabka-blockstore",
- "crabka-broker",
- "crabka-client-consumer",
- "crabka-client-core",
- "crabka-client-producer",
- "crabka-protocol",
- "crabka-telemetry",
- "crabka-traceql",
- "crabka-units",
- "dashmap",
- "datafusion",
- "datatest-stable",
- "derive_more",
- "flate2",
- "futures",
- "hex",
- "http-body-util",
- "num-traits",
- "object_store",
- "opentelemetry",
- "opentelemetry-proto",
- "opentelemetry_sdk",
- "parquet",
- "prometheus-client",
- "prost 0.14.4",
- "prost-types 0.14.4",
- "protox",
- "refined_type",
- "regex",
- "reqwest 0.13.4",
- "serde",
- "serde-wincode",
- "serde_json",
- "serde_yaml",
- "snap",
- "tempfile",
- "testcontainers",
- "thiserror 2.0.20",
- "tikv-jemallocator",
- "tokio",
- "tokio-util",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "tower",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "url",
- "wincode",
-]
-
-[[package]]
-name = "crabka-units"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=fe164a8d816f6e7b0447bfe44085874aa9f5f3b5#fe164a8d816f6e7b0447bfe44085874aa9f5f3b5"
-dependencies = [
- "num-traits",
- "serde",
- "thiserror 2.0.20",
- "uom",
-]
-
-[[package]]
-name = "crabka-verified"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=745b6104a45f162c274305d86ffdb07b879eb179#745b6104a45f162c274305d86ffdb07b879eb179"
-dependencies = [
- "assert2",
- "creusot-std",
-]
-
-[[package]]
-name = "crabka-voters"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=fe164a8d816f6e7b0447bfe44085874aa9f5f3b5#fe164a8d816f6e7b0447bfe44085874aa9f5f3b5"
-dependencies = [
- "assert2",
- "crabka-ids",
- "serde",
- "uuid",
 ]
 
 [[package]]
@@ -2424,7 +1562,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c906a87e53a36ff795d72e06e8162a83c5436e3ea89e942a9cb9fc083f0a384f"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.3.0",
+ "cpufeatures 0.3.1",
  "curve25519-dalek-derive",
  "digest 0.11.3",
  "fiat-crypto",
@@ -2446,12 +1584,45 @@ dependencies = [
 
 [[package]]
 name = "darling"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
+dependencies = [
+ "darling_core 0.21.3",
+ "darling_macro 0.21.3",
+]
+
+[[package]]
+name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
 dependencies = [
- "darling_core",
- "darling_macro",
+ "darling_core 0.23.0",
+ "darling_macro 0.23.0",
+]
+
+[[package]]
+name = "darling"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed17f5901b6630b993ca003def43f2f8ef4014fc13b047b57aad617ff32bc2ec"
+dependencies = [
+ "darling_core 0.24.1",
+ "darling_macro 0.24.1",
+]
+
+[[package]]
+name = "darling_core"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -2468,14 +1639,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "darling_core"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6837e2cf7485aaae18f86181d2f0e9a7ed297a025e220aeabf63fdebd3a2ddff"
+dependencies = [
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 3.0.4",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
+dependencies = [
+ "darling_core 0.21.3",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "darling_macro"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac3984ec7bd6cfa798e62b4a642426a5be0e68f9401cfc2a01e3fa9ea2fcdb8d"
 dependencies = [
- "darling_core",
+ "darling_core 0.23.0",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ac7135c3ef02b2f7833bbeb1be5ba7f966dcde8a87c6b87f65a778d71a02785"
+dependencies = [
+ "darling_core 0.24.1",
+ "quote",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -2535,7 +1741,7 @@ dependencies = [
  "datafusion-sql",
  "flate2",
  "futures",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itertools 0.15.0",
  "liblzma",
  "log",
@@ -2609,7 +1815,7 @@ dependencies = [
  "foldhash 0.2.0",
  "half",
  "hashbrown 0.17.1",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itertools 0.15.0",
  "libc",
  "log",
@@ -2811,7 +2017,7 @@ dependencies = [
  "datafusion-functions-aggregate-common",
  "datafusion-functions-window-common",
  "datafusion-physical-expr-common",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itertools 0.15.0",
  "recursive",
  "serde_json",
@@ -2825,7 +2031,7 @@ source = "git+https://github.com/apache/datafusion?rev=0062b4b409a1c556c84746b84
 dependencies = [
  "arrow",
  "datafusion-common",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itertools 0.15.0",
 ]
 
@@ -2962,7 +2168,7 @@ source = "git+https://github.com/apache/datafusion?rev=0062b4b409a1c556c84746b84
 dependencies = [
  "datafusion-doc",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -2976,7 +2182,7 @@ dependencies = [
  "datafusion-expr",
  "datafusion-expr-common",
  "datafusion-physical-expr",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itertools 0.15.0",
  "log",
  "recursive",
@@ -2997,7 +2203,7 @@ dependencies = [
  "datafusion-physical-expr-common",
  "half",
  "hashbrown 0.17.1",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itertools 0.15.0",
  "parking_lot",
  "petgraph 0.8.3",
@@ -3029,7 +2235,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr-common",
  "hashbrown 0.17.1",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itertools 0.15.0",
  "parking_lot",
  "pin-project",
@@ -3078,7 +2284,7 @@ dependencies = [
  "futures",
  "half",
  "hashbrown 0.17.1",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itertools 0.15.0",
  "log",
  "num-traits",
@@ -3128,7 +2334,7 @@ dependencies = [
  "datafusion-common",
  "datafusion-expr",
  "datafusion-functions-nested",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "log",
  "recursive",
  "regex",
@@ -3143,7 +2349,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a867d7322eb69cf3a68a5426387a25b45cb3b9c5ee41023ee6cea92e2afadd82"
 dependencies = [
  "camino",
- "fancy-regex",
+ "fancy-regex 0.14.0",
  "libtest-mimic",
  "walkdir",
 ]
@@ -3302,7 +2508,7 @@ checksum = "c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -3401,6 +2607,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "email_address"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e079f19b08ca6239f47f8ba8509c11cf3ea30095831f7fed61441475edd8c449"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3481,6 +2696,17 @@ name = "fancy-regex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "476de73bddf2ef8490aa4ee8f1cf40b430bf1d56c48c22080e5186952cd580e6"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -3572,13 +2798,24 @@ dependencies = [
 
 [[package]]
 name = "flate2"
-version = "1.1.9"
+version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
+checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
 dependencies = [
  "crc32fast",
- "miniz_oxide",
+ "miniz_oxide 0.9.1",
  "zlib-rs",
+]
+
+[[package]]
+name = "fluent-uri"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc74ac4d8359ae70623506d512209619e5cf8f347124910440dbc221714b328e"
+dependencies = [
+ "borrow-or-share",
+ "ref-cast",
+ "serde",
 ]
 
 [[package]]
@@ -3606,6 +2843,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fraction"
+version = "0.15.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
+dependencies = [
+ "lazy_static",
+ "num",
 ]
 
 [[package]]
@@ -3676,7 +2923,7 @@ checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -3802,9 +3049,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.18"
+version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "839c0e8a181239723652be9062bb56ca5bf5f64011f73b623f6f4fc59086a228"
+checksum = "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3812,7 +3059,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "slab",
  "tokio",
  "tokio-util",
@@ -3976,9 +3223,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.11.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d22053281f852e11534f5198498373cbb59295120a20771d90f7ed1897490a72"
+checksum = "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -4224,9 +3471,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.14.0"
+version = "2.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
+checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
@@ -4453,15 +3700,67 @@ dependencies = [
 
 [[package]]
 name = "jsonpath-rust"
-version = "1.0.8"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e07021eefc09f897611b067ba7897b5e9266edfc902768418968772e5bb06a7"
+checksum = "8edb06feabbd4c3fe17e2572f391510e08a011b92f53a7b76236eeb18191cfbe"
 dependencies = [
  "pest",
  "pest_derive",
  "regex",
  "serde_json",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "jsonschema"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ec8a241beed129f06114aa68007e905ca350e7baeb6e17a7631bb7978d91b2"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "data-encoding",
+ "email_address",
+ "fancy-regex 0.19.0",
+ "fraction",
+ "getrandom 0.3.4",
+ "idna",
+ "itoa",
+ "jsonschema-regex",
+ "jsonschema-value",
+ "num-cmp",
+ "num-traits",
+ "percent-encoding",
+ "referencing",
+ "regex",
+ "serde",
+ "serde_json",
+ "strum 0.28.0",
+ "unicode-general-category",
+ "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema-regex"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91994f45017ed5e66aa8e59b8415f4cb033a6380d7200387b7cf117595fbdf85"
+dependencies = [
+ "regex-syntax",
+]
+
+[[package]]
+name = "jsonschema-value"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ec7637f83e510868ae6ed625f7ebfbbde4554ee8ce49854caa5126a8b9b9ecb"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "fraction",
+ "num-cmp",
+ "num-traits",
+ "serde_json",
 ]
 
 [[package]]
@@ -4477,7 +3776,954 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8f198d1db720e4940b5a493201d199d9f24f568f8f746bd13706243a2f71598"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.3.0",
+ "cpufeatures 0.3.1",
+]
+
+[[package]]
+name = "krabka-audit"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "bytes",
+ "clap",
+ "derive_more",
+ "krabka-ids",
+ "krabka-protocol",
+ "krabka-units",
+ "qubit-clock",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "krabka-authz"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "krabka-metadata",
+ "krabka-security",
+ "tracing",
+]
+
+[[package]]
+name = "krabka-blockstore"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "assert2",
+ "async-trait",
+ "bytes",
+ "datafusion",
+ "futures",
+ "krabka-object-store",
+ "krabka-units",
+ "num-traits",
+ "object_store",
+ "parquet",
+ "proptest",
+ "refined_type",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "url",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "krabka-broker"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bytes",
+ "clap",
+ "crc32c",
+ "dashmap",
+ "exponential-backoff",
+ "futures-util",
+ "hex",
+ "java_regex",
+ "jsonpath-rust",
+ "krabka-audit",
+ "krabka-authz",
+ "krabka-client-core",
+ "krabka-compression",
+ "krabka-ids",
+ "krabka-kraft-core",
+ "krabka-log",
+ "krabka-metadata",
+ "krabka-object-store",
+ "krabka-protocol",
+ "krabka-raft",
+ "krabka-records-legacy",
+ "krabka-remote-storage",
+ "krabka-remote-storage-topic",
+ "krabka-schema-serde",
+ "krabka-security",
+ "krabka-telemetry",
+ "krabka-throttle",
+ "krabka-units",
+ "krabka-verified",
+ "krabka-voters",
+ "ktls",
+ "lru",
+ "nix 0.31.3",
+ "num-traits",
+ "object_store",
+ "opentelemetry-proto",
+ "prometheus-client",
+ "prost 0.14.4",
+ "qubit-clock",
+ "rcgen",
+ "refined_type",
+ "regex",
+ "reqwest 0.13.4",
+ "rustix",
+ "rustls",
+ "schemars 1.2.2",
+ "serde",
+ "serde-wincode",
+ "serde_json",
+ "socket2",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-metrics",
+ "tokio-rustls",
+ "tokio-util",
+ "toml",
+ "tonic",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wincode",
+ "zerocopy",
+]
+
+[[package]]
+name = "krabka-client-admin"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=f0c86c1ccdecd1776e32349764d7d2efe5dae347#f0c86c1ccdecd1776e32349764d7d2efe5dae347"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "bytes",
+ "krabka-client-core",
+ "krabka-ids",
+ "krabka-metadata",
+ "krabka-protocol",
+ "krabka-security",
+ "krabka-units",
+ "ring",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "krabka-client-consumer"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=f0c86c1ccdecd1776e32349764d7d2efe5dae347#f0c86c1ccdecd1776e32349764d7d2efe5dae347"
+dependencies = [
+ "assert2",
+ "bon",
+ "bytes",
+ "futures-util",
+ "krabka-client-core",
+ "krabka-ids",
+ "krabka-protocol",
+ "krabka-units",
+ "refined_type",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "krabka-client-core"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=f0c86c1ccdecd1776e32349764d7d2efe5dae347#f0c86c1ccdecd1776e32349764d7d2efe5dae347"
+dependencies = [
+ "async-trait",
+ "bon",
+ "bytes",
+ "dashmap",
+ "futures-util",
+ "krabka-ids",
+ "krabka-protocol",
+ "krabka-security",
+ "krabka-units",
+ "refined_type",
+ "rustls",
+ "rustls-pki-types",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "krabka-client-producer"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=f0c86c1ccdecd1776e32349764d7d2efe5dae347#f0c86c1ccdecd1776e32349764d7d2efe5dae347"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "bon",
+ "bytes",
+ "dashmap",
+ "futures",
+ "krabka-client-consumer",
+ "krabka-client-core",
+ "krabka-compression",
+ "krabka-protocol",
+ "krabka-units",
+ "refined_type",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "krabka-compression"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=9b63d2e96e72ca336809bf414b42cfc1f1bed017#9b63d2e96e72ca336809bf414b42cfc1f1bed017"
+dependencies = [
+ "assert2",
+ "bytes",
+ "flate2",
+ "krabka-units",
+ "lz4_flex",
+ "refined_type",
+ "snap",
+ "thiserror 2.0.20",
+ "zstd",
+]
+
+[[package]]
+name = "krabka-ids"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=9b63d2e96e72ca336809bf414b42cfc1f1bed017#9b63d2e96e72ca336809bf414b42cfc1f1bed017"
+dependencies = [
+ "assert2",
+ "derive_more",
+ "serde",
+]
+
+[[package]]
+name = "krabka-kraft-core"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "bytes",
+ "krabka-units",
+ "krabka-verified",
+ "krabka-voters",
+ "refined_type",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "krabka-log"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "bytes",
+ "crc32c",
+ "krabka-compression",
+ "krabka-ids",
+ "krabka-protocol",
+ "krabka-units",
+ "krabka-verified",
+ "thiserror 2.0.20",
+ "tracing",
+ "zerocopy",
+]
+
+[[package]]
+name = "krabka-logfmt"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "krabka-logql"
+version = "0.4.0"
+dependencies = [
+ "assert2",
+ "base64 0.23.1",
+ "chrono",
+ "chrono-tz",
+ "derive_more",
+ "krabka-blockstore",
+ "krabka-units",
+ "num-traits",
+ "regex",
+ "serde_json",
+ "thiserror 2.0.20",
+ "time",
+ "tracing",
+]
+
+[[package]]
+name = "krabka-metadata"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=9b63d2e96e72ca336809bf414b42cfc1f1bed017#9b63d2e96e72ca336809bf414b42cfc1f1bed017"
+dependencies = [
+ "assert2",
+ "bytes",
+ "krabka-ids",
+ "krabka-protocol",
+ "krabka-security",
+ "krabka-units",
+ "krabka-voters",
+ "serde",
+ "serde-wincode",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+ "wincode",
+]
+
+[[package]]
+name = "krabka-metrics"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "assert2",
+ "async-trait",
+ "axum",
+ "bytes",
+ "clap",
+ "dashmap",
+ "futures",
+ "krabka-blockstore",
+ "krabka-broker",
+ "krabka-client-admin",
+ "krabka-client-consumer",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-ids",
+ "krabka-telemetry",
+ "krabka-throttle",
+ "krabka-units",
+ "mutants",
+ "num-traits",
+ "object_store",
+ "opentelemetry-proto",
+ "prometheus-client",
+ "proptest",
+ "prost 0.14.4",
+ "prost-build 0.14.4",
+ "protoc-bin-vendored",
+ "refined_type",
+ "reqwest 0.13.4",
+ "serde",
+ "serde-wincode",
+ "serde_json",
+ "serde_yaml",
+ "snap",
+ "temp-env",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tikv-jemallocator",
+ "tokio",
+ "tonic",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wincode",
+]
+
+[[package]]
+name = "krabka-metrics-service"
+version = "0.4.0"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "axum",
+ "bytes",
+ "clap",
+ "futures",
+ "krabka-blockstore",
+ "krabka-client-consumer",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-ids",
+ "krabka-metrics",
+ "krabka-promql",
+ "krabka-telemetry",
+ "krabka-units",
+ "object_store",
+ "prost 0.14.4",
+ "refined_type",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "snap",
+ "temp-env",
+ "tempfile",
+ "testcontainers",
+ "thiserror 2.0.20",
+ "tikv-jemallocator",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "krabka-object-store"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "object_store",
+ "sha2 0.11.0",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "krabka-observability"
+version = "0.4.0"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "clap",
+ "datafusion",
+ "flate2",
+ "futures-util",
+ "krabka-blockstore",
+ "krabka-client-admin",
+ "krabka-client-consumer",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-ids",
+ "krabka-logql",
+ "krabka-telemetry",
+ "krabka-units",
+ "mutants",
+ "num-traits",
+ "object_store",
+ "opentelemetry",
+ "opentelemetry-proto",
+ "opentelemetry_sdk",
+ "parquet",
+ "prometheus-client",
+ "prost 0.14.4",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "snap",
+ "temp-env",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tikv-jemallocator",
+ "time",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "tonic",
+ "tower",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "krabka-pprof"
+version = "0.4.0"
+dependencies = [
+ "addr2line 0.27.1",
+ "arrow",
+ "assert2",
+ "async-trait",
+ "datafusion",
+ "krabka-blockstore",
+ "krabka-units",
+ "mutants",
+ "object 0.40.0",
+ "proptest",
+ "prost 0.14.4",
+ "prost-build 0.14.4",
+ "protox",
+ "refined_type",
+ "regex",
+ "reqwest 0.13.4",
+ "serde",
+ "serde-wincode",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "wincode",
+]
+
+[[package]]
+name = "krabka-profiles"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "assert2",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bytes",
+ "clap",
+ "connectrpc-axum",
+ "connectrpc-axum-build",
+ "datafusion",
+ "derive_more",
+ "flate2",
+ "futures",
+ "jfrs",
+ "krabka-blockstore",
+ "krabka-client-admin",
+ "krabka-client-consumer",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-pprof",
+ "krabka-telemetry",
+ "krabka-throttle",
+ "krabka-units",
+ "multer",
+ "num-traits",
+ "object_store",
+ "parquet",
+ "pbjson",
+ "prometheus-client",
+ "proptest",
+ "prost 0.14.4",
+ "protoc-bin-vendored",
+ "refined_type",
+ "regex",
+ "reqwest 0.13.4",
+ "serde",
+ "serde-wincode",
+ "serde_json",
+ "serde_yaml",
+ "temp-env",
+ "tempfile",
+ "testcontainers",
+ "thiserror 2.0.20",
+ "tikv-jemallocator",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wincode",
+]
+
+[[package]]
+name = "krabka-promql"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "assert2",
+ "async-trait",
+ "axum",
+ "datafusion",
+ "datatest-stable",
+ "futures",
+ "krabka-blockstore",
+ "krabka-ids",
+ "krabka-metrics",
+ "krabka-units",
+ "num-traits",
+ "object_store",
+ "prometheus-client",
+ "promql-parser",
+ "proptest",
+ "prost 0.14.4",
+ "regex",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "snap",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "url",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "krabka-protocol"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=9b63d2e96e72ca336809bf414b42cfc1f1bed017#9b63d2e96e72ca336809bf414b42cfc1f1bed017"
+dependencies = [
+ "arbitrary",
+ "assert2",
+ "bytes",
+ "crc32c",
+ "krabka-compression",
+ "krabka-units",
+ "serde_json",
+ "strum 0.28.0",
+ "thiserror 2.0.20",
+ "zerocopy",
+]
+
+[[package]]
+name = "krabka-raft"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "dashmap",
+ "futures-util",
+ "krabka-client-core",
+ "krabka-ids",
+ "krabka-kraft-core",
+ "krabka-log",
+ "krabka-metadata",
+ "krabka-protocol",
+ "krabka-security",
+ "krabka-units",
+ "krabka-verified",
+ "refined_type",
+ "serde",
+ "serde-wincode",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wincode",
+]
+
+[[package]]
+name = "krabka-records-legacy"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "bytes",
+ "crc32fast",
+ "krabka-compression",
+ "krabka-ids",
+ "krabka-protocol",
+ "krabka-units",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "krabka-remote-storage"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "clap",
+ "derive_more",
+ "futures-util",
+ "hex",
+ "krabka-audit",
+ "krabka-ids",
+ "krabka-object-store",
+ "krabka-protocol",
+ "krabka-units",
+ "object_store",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "zerocopy",
+]
+
+[[package]]
+name = "krabka-remote-storage-topic"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "krabka-client-admin",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-ids",
+ "krabka-protocol",
+ "krabka-remote-storage",
+ "krabka-units",
+ "refined_type",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "krabka-schema-serde"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-schema-registry?rev=ee9c3933fb1d71735846e7e5e33ea6ab3a694dc5#ee9c3933fb1d71735846e7e5e33ea6ab3a694dc5"
+dependencies = [
+ "apache-avro",
+ "assert2",
+ "bytes",
+ "jsonschema",
+ "krabka-units",
+ "prost 0.14.4",
+ "prost-reflect",
+ "protox-parse",
+ "reqwest 0.13.4",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "krabka-security"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=9b63d2e96e72ca336809bf414b42cfc1f1bed017#9b63d2e96e72ca336809bf414b42cfc1f1bed017"
+dependencies = [
+ "arc-swap",
+ "assert2",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "hmac",
+ "jsonpath-rust",
+ "krabka-units",
+ "pbkdf2",
+ "rcgen",
+ "refined_type",
+ "regex",
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sspi",
+ "strum 0.28.0",
+ "subtle",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "tracing",
+ "x509-parser",
+]
+
+[[package]]
+name = "krabka-telemetry"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "axum",
+ "clap",
+ "flate2",
+ "jemalloc_pprof",
+ "krabka-logfmt",
+ "krabka-trace-context",
+ "krabka-units",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "pprof",
+ "refined_type",
+ "serde",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "krabka-throttle"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "creusot-std",
+ "derive_more",
+ "krabka-units",
+ "qubit-clock",
+]
+
+[[package]]
+name = "krabka-trace-context"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=9b63d2e96e72ca336809bf414b42cfc1f1bed017#9b63d2e96e72ca336809bf414b42cfc1f1bed017"
+dependencies = [
+ "opentelemetry",
+ "serde",
+ "thiserror 2.0.20",
+ "tracing",
+ "tracing-opentelemetry",
+]
+
+[[package]]
+name = "krabka-traceql"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "assert2",
+ "async-trait",
+ "datafusion",
+ "datatest-stable",
+ "derive_more",
+ "futures",
+ "krabka-blockstore",
+ "krabka-units",
+ "num-traits",
+ "proptest",
+ "regex",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "krabka-traces"
+version = "0.4.0"
+dependencies = [
+ "arc-swap",
+ "arrow",
+ "assert2",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bytes",
+ "clap",
+ "dashmap",
+ "datafusion",
+ "datatest-stable",
+ "derive_more",
+ "flate2",
+ "futures",
+ "hex",
+ "http-body-util",
+ "krabka-blockstore",
+ "krabka-broker",
+ "krabka-client-consumer",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-protocol",
+ "krabka-telemetry",
+ "krabka-traceql",
+ "krabka-units",
+ "num-traits",
+ "object_store",
+ "opentelemetry",
+ "opentelemetry-proto",
+ "opentelemetry_sdk",
+ "parquet",
+ "prometheus-client",
+ "prost 0.14.4",
+ "prost-types 0.14.4",
+ "protox",
+ "refined_type",
+ "regex",
+ "reqwest 0.13.4",
+ "serde",
+ "serde-wincode",
+ "serde_json",
+ "serde_yaml",
+ "snap",
+ "tempfile",
+ "testcontainers",
+ "thiserror 2.0.20",
+ "tikv-jemallocator",
+ "tokio",
+ "tokio-util",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
+ "wincode",
+]
+
+[[package]]
+name = "krabka-units"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=9b63d2e96e72ca336809bf414b42cfc1f1bed017#9b63d2e96e72ca336809bf414b42cfc1f1bed017"
+dependencies = [
+ "num-traits",
+ "serde",
+ "thiserror 2.0.20",
+ "uom",
+]
+
+[[package]]
+name = "krabka-verified"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=a4c9fe3086c51f7fb09f728b35166643441292be#a4c9fe3086c51f7fb09f728b35166643441292be"
+dependencies = [
+ "assert2",
+ "creusot-std",
+]
+
+[[package]]
+name = "krabka-voters"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=9b63d2e96e72ca336809bf414b42cfc1f1bed017#9b63d2e96e72ca336809bf414b42cfc1f1bed017"
+dependencies = [
+ "assert2",
+ "krabka-ids",
+ "serde",
+ "uuid",
 ]
 
 [[package]]
@@ -4741,7 +4987,7 @@ dependencies = [
  "cactus",
  "cfgrammar",
  "filetime",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "lazy_static",
  "lrtable",
  "num-traits",
@@ -4769,9 +5015,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d2f2f9b4ba7e6b24d95e7e899329d35be83bcded72c8540cdd5368932d1d90a"
+checksum = "0d317b4b9eb398e6acce275758ec6125535505e7a146fb1a9b8bda2451b0ff4c"
 dependencies = [
  "hashbrown 0.17.1",
 ]
@@ -4873,6 +5119,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "micromap"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a86d3146ed3995b5913c414f6664344b9617457320782e64f0bb44afd49d74"
+
+[[package]]
 name = "miette"
 version = "7.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4911,6 +5163,15 @@ name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
+dependencies = [
+ "adler2",
+]
+
+[[package]]
+name = "miniz_oxide"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
 dependencies = [
  "adler2",
  "simd-adler32",
@@ -5056,6 +5317,12 @@ dependencies = [
  "num-integer",
  "num-traits",
 ]
+
+[[package]]
+name = "num-cmp"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63335b2e2c34fae2fb0aa2cecfd9f0832a1e24b3b32ecec612c3426d46dc8aaa"
 
 [[package]]
 name = "num-complex"
@@ -5347,6 +5614,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "outref"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
+
+[[package]]
 name = "p256"
 version = "0.14.0-rc.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5553,11 +5826,11 @@ dependencies = [
 
 [[package]]
 name = "pem"
-version = "3.0.6"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+checksum = "d354a98a3d1251555de99e8fdd8afda05573c31b82f59063a7b0a29b5527f120"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde_core",
 ]
 
@@ -5625,7 +5898,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
 dependencies = [
  "fixedbitset 0.4.2",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
 ]
 
 [[package]]
@@ -5636,7 +5909,7 @@ checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
 dependencies = [
  "fixedbitset 0.5.7",
  "hashbrown 0.15.5",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "serde",
 ]
 
@@ -5844,7 +6117,7 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be97d76faf1bfab666e1375477b23fde79eccf0276e9b63b92a39d676a889ba9"
 dependencies = [
- "rand 0.8.7",
+ "rand 0.8.8",
 ]
 
 [[package]]
@@ -5917,6 +6190,16 @@ checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "prettyplease"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -6054,7 +6337,7 @@ dependencies = [
  "multimap",
  "once_cell",
  "petgraph 0.6.5",
- "prettyplease",
+ "prettyplease 0.2.37",
  "prost 0.12.6",
  "prost-types 0.12.6",
  "regex",
@@ -6073,7 +6356,7 @@ dependencies = [
  "log",
  "multimap",
  "petgraph 0.8.3",
- "prettyplease",
+ "prettyplease 0.2.37",
  "prost 0.14.4",
  "prost-types 0.14.4",
  "pulldown-cmark",
@@ -6261,6 +6544,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "quad-rand"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a651516ddc9168ebd67b24afd085a718be02f8858fe406591b013d101ce2f40"
+
+[[package]]
 name = "qubit-clock"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6374,9 +6663,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.8.7"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
+checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -6468,9 +6757,9 @@ dependencies = [
 
 [[package]]
 name = "rcgen"
-version = "0.14.9"
+version = "0.14.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "091e7a8e7d86e6feb87a27ce8e2cba29d49eff9507afeebefab7eeb2ca667fb4"
+checksum = "8774e05a7d0de114588e6a28fe7e71694b82614ed569d86d8b389dfbc98b8ad8"
 dependencies = [
  "pem",
  "ring",
@@ -6526,7 +6815,24 @@ checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
+]
+
+[[package]]
+name = "referencing"
+version = "0.49.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6efa2154ea6f5ce0fdecdd2a8d18f2fa1a39a8fbba91564f555a592e4dce8278"
+dependencies = [
+ "ahash",
+ "fluent-uri",
+ "getrandom 0.3.4",
+ "hashbrown 0.17.1",
+ "itoa",
+ "micromap",
+ "parking_lot",
+ "percent-encoding",
+ "serde_json",
 ]
 
 [[package]]
@@ -6562,6 +6868,12 @@ dependencies = [
  "memchr",
  "regex-syntax",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"
@@ -6943,7 +7255,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -7049,7 +7361,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -7060,7 +7372,7 @@ checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -7069,7 +7381,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itoa",
  "memchr",
  "serde",
@@ -7108,7 +7420,7 @@ checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -7143,7 +7455,7 @@ dependencies = [
  "chrono",
  "hex",
  "indexmap 1.9.3",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "jiff",
  "schemars 0.9.0",
  "schemars 1.2.2",
@@ -7159,7 +7471,7 @@ version = "3.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8705578779c2b6bd90d84d66eb2e206b708b1a4d7b9f17641b293545bf1c7e46"
 dependencies = [
- "darling",
+ "darling 0.23.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -7171,7 +7483,7 @@ version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
 dependencies = [
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "itoa",
  "ryu",
  "serde",
@@ -7206,7 +7518,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.3.0",
+ "cpufeatures 0.3.1",
  "digest 0.11.3",
 ]
 
@@ -7228,7 +7540,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.3.0",
+ "cpufeatures 0.3.1",
  "digest 0.11.3",
 ]
 
@@ -7513,11 +7825,29 @@ dependencies = [
 
 [[package]]
 name = "strum"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+
+[[package]]
+name = "strum"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.28.0",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -7584,9 +7914,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.3"
+version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
+checksum = "e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7719,7 +8049,7 @@ checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -7853,14 +8183,14 @@ checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]
 name = "tokio-metrics"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eb550d0339653b52b1a4b03b96d0e6a97ee0641ed88b3c0cd098c7fabb275f3"
+checksum = "01f967a7d11cf59ebeb361546fcc207763de7a885db18176e7042dfc28665f1c"
 dependencies = [
  "futures-util",
  "pin-project-lite",
@@ -7934,7 +8264,7 @@ version = "1.1.4+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3aace63f4bbcdfc2c965b059de67119c89c4017a70d633be6c104910f67056f5"
 dependencies = [
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "serde_core",
  "serde_spanned",
  "toml_datetime",
@@ -7958,7 +8288,7 @@ version = "0.25.13+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6975367e4d2ef766d86af01ffad14b622fecc8d4357a998fbc4deb6e9bacaf9b"
 dependencies = [
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "toml_datetime",
  "toml_parser",
  "winnow",
@@ -8014,7 +8344,7 @@ version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c68f61875ac5293cf72e6c8cf0158086428c82c37229e98c840878f1706b0322"
 dependencies = [
- "prettyplease",
+ "prettyplease 0.2.37",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -8037,7 +8367,7 @@ version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "654e5643eff75d7f8c99197ce1440ed19a3474eada74c12bbac488b2cafdae27"
 dependencies = [
- "prettyplease",
+ "prettyplease 0.2.37",
  "proc-macro2",
  "prost-build 0.14.4",
  "prost-types 0.14.4",
@@ -8067,7 +8397,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "hdrhistogram",
- "indexmap 2.14.0",
+ "indexmap 2.14.1",
  "pin-project-lite",
  "slab",
  "sync_wrapper",
@@ -8255,9 +8585,9 @@ dependencies = [
 
 [[package]]
 name = "twox-hash"
-version = "2.1.3"
+version = "2.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8464ec13c3691491391d9fce00f6416c9a48e46972f72d7865688be2080192c9"
+checksum = "5283634e518fe9e82c7b20520bb4bc209009fd16c82077c802f8111ecbb0117a"
 
 [[package]]
 name = "typed-arena"
@@ -8396,14 +8726,24 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.25.0"
+version = "1.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f053576934f05a761a402421fbbe3d425d9366f75f978806a037b3ca481abecc"
+checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "uuid-simd"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b082222b4f6619906941c17eb2297fff4c2fb96cb60164170522942a200bd8"
+dependencies = [
+ "outref",
+ "vsimd",
 ]
 
 [[package]]
@@ -8448,6 +8788,12 @@ dependencies = [
  "num-traits",
  "serde",
 ]
+
+[[package]]
+name = "vsimd"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
 name = "wait-timeout"
@@ -9046,7 +9392,7 @@ checksum = "34df6fc39dbd26ddc9c10e6a2984476e13acce22e64e4487636ef494369225da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.3",
+ "syn 3.0.4",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 //! Tempo-shaped `TraceQL` result model.
 
-use crabka_units::{ByteSize, Time};
+use krabka_units::{ByteSize, Time};
 
 /// A typed attribute value.
 #[derive(Clone, Debug, PartialEq)]
@@ -143,7 +143,7 @@ pub struct TraceMetricsResponse {
 #[cfg(test)]
 mod tests {
     use assert2::assert;
-    use crabka_units::{bytes, millis, nanos};
+    use krabka_units::{bytes, millis, nanos};
 
     use super::*;
 

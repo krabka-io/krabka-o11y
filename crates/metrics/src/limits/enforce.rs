@@ -3,10 +3,10 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use crabka_blockstore::Labels;
-use crabka_throttle::TokenBucket;
-use crabka_units::prelude::*;
 use dashmap::DashMap;
+use krabka_blockstore::Labels;
+use krabka_throttle::TokenBucket;
+use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 
 use super::{LimitError, Limits};
@@ -350,7 +350,7 @@ mod tests {
         );
     }
     use assert2::{assert, check};
-    use crabka_blockstore::Labels;
+    use krabka_blockstore::Labels;
 
     use super::*;
     use crate::limits::Limits;
@@ -393,8 +393,8 @@ mod tests {
     #[test]
     fn label_length_caps_admit_exactly_their_limit() {
         let limits = Limits {
-            max_label_name_length: crabka_units::bytes(4),
-            max_label_value_length: crabka_units::bytes(5),
+            max_label_name_length: krabka_units::bytes(4),
+            max_label_value_length: krabka_units::bytes(5),
             ..Limits::default()
         };
         let label = |name: &str, value: &str| {
@@ -445,8 +445,8 @@ mod tests {
     #[test]
     fn query_range_caps_admit_exactly_their_limit() {
         let limits = |length_secs, lookback_secs| Limits {
-            max_query_length: crabka_units::secs(length_secs),
-            max_query_lookback: crabka_units::secs(lookback_secs),
+            max_query_length: krabka_units::secs(length_secs),
+            max_query_lookback: krabka_units::secs(lookback_secs),
             ..Limits::default()
         };
         let now = 1_000_000_i64;
@@ -492,17 +492,17 @@ mod tests {
     /// second is reported as the next second rather than the one it passed.
     #[test]
     fn reported_seconds_round_up() {
-        check!(secs_ceil(crabka_units::millis(0)) == 0);
+        check!(secs_ceil(krabka_units::millis(0)) == 0);
         check!(
-            secs_ceil(crabka_units::millis(1)) == 1,
+            secs_ceil(krabka_units::millis(1)) == 1,
             "any remainder rounds up"
         );
         check!(
-            secs_ceil(crabka_units::millis(1_000)) == 1,
+            secs_ceil(krabka_units::millis(1_000)) == 1,
             "a whole second stays whole"
         );
-        check!(secs_ceil(crabka_units::millis(1_001)) == 2);
-        check!(secs_ceil(crabka_units::secs(90)) == 90);
+        check!(secs_ceil(krabka_units::millis(1_001)) == 2);
+        check!(secs_ceil(krabka_units::secs(90)) == 90);
     }
 
     fn limits_with(series: u64, name_len: ByteSize, val_len: ByteSize) -> Limits {

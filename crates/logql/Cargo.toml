@@ -1,17 +1,17 @@
 [package]
-name = "crabka-logql"
+name = "krabka-logql"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Small LogQL parser and planner front-end for Crabka observability"
+description = "Small LogQL parser and planner front-end for Krabka observability"
 repository = "https://github.com/robot-head/crabka"
 homepage = "https://github.com/robot-head/crabka"
-documentation = "https://docs.rs/crabka-logql"
+documentation = "https://docs.rs/krabka-logql"
 readme = "../../README.md"
-keywords = ["logql", "loki", "observability", "crabka"]
+keywords = ["logql", "loki", "observability", "krabka"]
 categories = ["parser-implementations"]
 
 [lints]
@@ -21,8 +21,8 @@ workspace = true
 base64 = { workspace = true }
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 chrono-tz = { version = "0.10.4", default-features = false }
-crabka-blockstore = { version = "0.4.0", path = "../blockstore" }
-crabka-units = { workspace = true }
+krabka-blockstore = { version = "0.4.0", path = "../blockstore" }
+krabka-units = { workspace = true }
 derive_more = { workspace = true }
 regex = { workspace = true }
 num-traits = { workspace = true }

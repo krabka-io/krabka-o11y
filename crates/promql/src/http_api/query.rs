@@ -6,8 +6,8 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use crabka_metrics::QueryEnforcer;
-use crabka_units::prelude::*;
+use krabka_metrics::QueryEnforcer;
+use krabka_units::prelude::*;
 use serde::Deserialize;
 use url::form_urlencoded;
 

@@ -1,4 +1,4 @@
-//! Shared columnar block-store primitives for Crabka observability signals.
+//! Shared columnar block-store primitives for Krabka observability signals.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -9,7 +9,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use crabka_units::prelude::*;
 use datafusion::{
     arrow::{
         array::{
@@ -36,6 +35,7 @@ use datafusion::{
     prelude::SessionContext,
 };
 use futures::StreamExt as _;
+use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, path::Path as ObjectPath};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -336,7 +336,7 @@ pub struct BlockDescriptor {
     /// type.
     #[serde(
         rename = "size_bytes",
-        with = "crabka_units::serde_units::numeric::bytes_u64"
+        with = "krabka_units::serde_units::numeric::bytes_u64"
     )]
     pub size: ByteSize,
 }
@@ -1578,8 +1578,8 @@ mod tests {
     /// empty `PathBuf` in its place points every caller at the store root.
     #[test]
     fn log_index_manifest_path_joins_the_relative_path() {
-        let path = super::log_index_manifest_path("/var/lib/crabka");
-        assert2::check!(path == std::path::Path::new("/var/lib/crabka/index/logs/manifest.json"));
+        let path = super::log_index_manifest_path("/var/lib/krabka");
+        assert2::check!(path == std::path::Path::new("/var/lib/krabka/index/logs/manifest.json"));
     }
     use assert2::check;
     use datafusion::prelude::{col, lit};

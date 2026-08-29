@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use arrow::record_batch::RecordBatch;
-use crabka_units::{ByteSize, convert::ByteSizeExt};
 use datafusion::{catalog::MemTable, prelude::SessionContext};
+use krabka_units::{ByteSize, convert::ByteSizeExt};
 
 use crate::{
     ast::{ComparisonOp, Field, FieldExpr, Intrinsic, Scope, Value},

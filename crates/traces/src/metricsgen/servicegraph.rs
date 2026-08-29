@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use bytes::{Buf, BufMut, BytesMut};
-use crabka_units::{Time, convert::TimeExt as _};
+use krabka_units::{Time, convert::TimeExt as _};
 use num_traits::ToPrimitive as _;
 
 use crate::metricsgen::{
@@ -922,7 +922,7 @@ mod tests {
         );
     }
     use assert2::check;
-    use crabka_units::{ByteSize, convert::ByteSizeExt as _, secs};
+    use krabka_units::{ByteSize, convert::ByteSizeExt as _, secs};
 
     use super::*;
     use crate::metricsgen::{

@@ -12,11 +12,11 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use crabka_blockstore::{BlockWriter, TraceIndex};
-use crabka_client_consumer::{AutoOffsetReset, Consumer};
-use crabka_client_producer::Producer;
-use crabka_protocol::owned::create_topics_request::{CreatableTopic, CreateTopicsRequest};
-use crabka_traces::{
+use krabka_blockstore::{BlockWriter, TraceIndex};
+use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_client_producer::Producer;
+use krabka_protocol::owned::create_topics_request::{CreatableTopic, CreateTopicsRequest};
+use krabka_traces::{
     SpanRecord, TRACES_WAL_TOPIC, blockbuilder,
     distributor::{DistributorState, KafkaSink, router},
 };
@@ -36,7 +36,7 @@ async fn otlp_lands_as_span_block() {
 
     let producer = Producer::builder()
         .bootstrap(proc.bootstrap.clone())
-        .client_id("crabka-traces-roundtrip-producer")
+        .client_id("krabka-traces-roundtrip-producer")
         .build()
         .await
         .unwrap();
@@ -60,8 +60,8 @@ async fn otlp_lands_as_span_block() {
 
     let mut consumer = Consumer::builder()
         .bootstrap(proc.bootstrap.clone())
-        .client_id("crabka-traces-roundtrip-consumer")
-        .group_id("crabka-traces-roundtrip")
+        .client_id("krabka-traces-roundtrip-consumer")
+        .group_id("krabka-traces-roundtrip")
         .subscribe(vec![TRACES_WAL_TOPIC.to_string()])
         .auto_offset_reset(AutoOffsetReset::Earliest)
         .build()
@@ -122,7 +122,7 @@ async fn otlp_lands_as_span_block() {
     );
 }
 
-async fn create_topic(client: &crabka_client_core::Client, name: &str, partitions: i32) {
+async fn create_topic(client: &krabka_client_core::Client, name: &str, partitions: i32) {
     let resp = client
         .send(CreateTopicsRequest {
             topics: vec![CreatableTopic {
@@ -142,11 +142,11 @@ async fn create_topic(client: &crabka_client_core::Client, name: &str, partition
 async fn poll_until_records(
     consumer: &mut Consumer,
     expected: usize,
-) -> Vec<crabka_client_consumer::ConsumerRecord> {
+) -> Vec<krabka_client_consumer::ConsumerRecord> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut out = Vec::new();
     while Instant::now() < deadline {
-        out.extend(consumer.poll(crabka_units::millis(250)).await.unwrap());
+        out.extend(consumer.poll(krabka_units::millis(250)).await.unwrap());
         if out.len() >= expected {
             return out;
         }

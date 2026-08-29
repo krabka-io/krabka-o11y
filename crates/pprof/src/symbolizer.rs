@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use crabka_units::{
+use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt as _},
     mebibytes, secs,
@@ -535,7 +535,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use assert2::{assert, check};
-    use crabka_units::millis;
+    use krabka_units::millis;
     // Only used by the ELF/DWARF self-symbolization tests below, which run on Linux.
     #[cfg(target_os = "linux")]
     use object::{Object, ObjectSymbol};

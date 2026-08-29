@@ -15,8 +15,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use crabka_blockstore::validate_against;
-use crabka_metrics::{
+use krabka_blockstore::validate_against;
+use krabka_metrics::{
     ClockReadingPayload, MetricBlockKind, SamplePayload, WalRecord, clock_reading_decl,
     compact_wal_records, compaction_object_key,
     distributor::{
@@ -34,7 +34,7 @@ use crabka_metrics::{
         NtpReading, PtpReading, UnixNanos, decode_clock_readings, pb,
     },
 };
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use prost::Message as _;
 use tower::ServiceExt as _;
 

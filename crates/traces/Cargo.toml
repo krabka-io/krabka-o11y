@@ -1,5 +1,5 @@
 [package]
-name = "crabka-traces"
+name = "krabka-traces"
 # Not published: depends on a git pin of datafusion, which crates.io disallows.
 publish = false
 version.workspace = true
@@ -7,12 +7,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Tempo-compatible traces service for Crabka"
+description = "Tempo-compatible traces service for Krabka"
 repository = "https://github.com/robot-head/crabka"
 homepage = "https://github.com/robot-head/crabka"
-documentation = "https://docs.rs/crabka-traces"
+documentation = "https://docs.rs/krabka-traces"
 readme = "README.md"
-keywords = ["observability", "tempo", "traceql", "traces", "crabka"]
+keywords = ["observability", "tempo", "traceql", "traces", "krabka"]
 categories = ["database-implementations"]
 build = "build.rs"
 
@@ -20,18 +20,18 @@ build = "build.rs"
 workspace = true
 
 [features]
-heap-profiling = ["crabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
+heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
 assert2 = { workspace = true }
 arc-swap = { workspace = true }
-crabka-blockstore = { path = "../blockstore", version = "0.4.0" }
-crabka-telemetry = { version = "0.4.0" }
-crabka-client-consumer = { version = "0.4.0" }
-crabka-client-producer = { version = "0.4.0" }
-crabka-client-core = { version = "0.4.0" }
-crabka-traceql = { path = "../traceql", version = "0.4.0" }
-crabka-units = { workspace = true }
+krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
+krabka-telemetry = { version = "0.4.0" }
+krabka-client-consumer = { version = "0.4.0" }
+krabka-client-producer = { version = "0.4.0" }
+krabka-client-core = { version = "0.4.0" }
+krabka-traceql = { path = "../traceql", version = "0.4.0" }
+krabka-units = { workspace = true }
 arrow = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true, features = ["json"] }
@@ -71,12 +71,12 @@ wincode = { workspace = true }
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
-crabka-broker = { version = "0.4.0" }
-crabka-protocol = { version = "0.4.0" }
+krabka-broker = { version = "0.4.0" }
+krabka-protocol = { version = "0.4.0" }
 datatest-stable = { workspace = true }
 http-body-util = "0.1"
 # OTel stack for the `set_remote_parent_from_records` re-parenting test — mirrors
-# the export-less tracer subscriber used in `crabka-telemetry`'s propagation
+# the export-less tracer subscriber used in `krabka-telemetry`'s propagation
 # tests. Test-only, hence dev-dependencies.
 opentelemetry = { workspace = true, features = ["trace"] }
 opentelemetry_sdk = { workspace = true, features = ["trace"] }

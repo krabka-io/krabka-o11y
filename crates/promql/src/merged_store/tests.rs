@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crabka_blockstore::Labels;
+use krabka_blockstore::Labels;
 
 use crate::{
     EngineOpts, ExemplarRecord, InMemoryMetricStore, InstantSample, MergedMetricStore, MetricStore,

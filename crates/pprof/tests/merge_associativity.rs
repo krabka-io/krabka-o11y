@@ -1,4 +1,4 @@
-use crabka_pprof::{Frame, Tree};
+use krabka_pprof::{Frame, Tree};
 use proptest::prelude::*;
 
 proptest! {

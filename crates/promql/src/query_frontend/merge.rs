@@ -3,8 +3,8 @@ use std::{
     fmt::Write as _,
 };
 
-use crabka_blockstore::{Labels, SeriesFingerprint};
-use crabka_metrics::NativeHistogram;
+use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_metrics::NativeHistogram;
 use promql_parser::parser::LabelModifier;
 
 use super::{MomentReduction, QueryShardReducer, RankReduction};

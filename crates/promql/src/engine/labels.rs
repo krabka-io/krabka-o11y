@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crabka_blockstore::{LabelMatcher, Labels, MatchOp};
+use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
 use promql_parser::parser::{Expr, LabelModifier, VectorSelector};
 
 use super::selector::label_matcher_sets;

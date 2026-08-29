@@ -15,7 +15,7 @@
 //! sample, for example fewer than two points or a zero-width sampled interval.
 //! The UDF layer renders that `None` as a NULL cell.
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 
 /// The reset-correcting, windowed range functions evaluated over a full

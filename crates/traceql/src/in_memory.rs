@@ -13,11 +13,11 @@ use arrow::{
     datatypes::DataType,
     record_batch::RecordBatch,
 };
-use crabka_units::{
+use datafusion::{catalog::MemTable, prelude::SessionContext};
+use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt as _},
 };
-use datafusion::{catalog::MemTable, prelude::SessionContext};
 
 use crate::{
     error::{Result, TraceqlError},
@@ -1411,8 +1411,8 @@ fn child_count_for(nested_sets: &[NestedSet], idx: usize) -> i32 {
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use crabka_units::nanos;
     use datafusion::arrow::array::AsArray;
+    use krabka_units::nanos;
 
     use super::*;
     use crate::{

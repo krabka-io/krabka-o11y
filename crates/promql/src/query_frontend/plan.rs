@@ -1,5 +1,5 @@
-use crabka_blockstore::QUERY_SHARD_LABEL;
-use crabka_units::prelude::*;
+use krabka_blockstore::QUERY_SHARD_LABEL;
+use krabka_units::prelude::*;
 use promql_parser::{
     label as prom_label,
     parser::{

@@ -6,9 +6,9 @@ use std::{
 };
 
 use arrow::record_batch::RecordBatch;
-use crabka_client_consumer::Consumer;
-use crabka_units::{Time, convert::TimeExt as _};
 use datafusion::catalog::MemTable;
+use krabka_client_consumer::Consumer;
+use krabka_units::{Time, convert::TimeExt as _};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -96,7 +96,7 @@ impl LiveStore {
     /// # Errors
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
     pub fn mem_table(&self, tenant: &str) -> Result<MemTable, TracesError> {
-        let schema = crabka_blockstore::span_block_schema();
+        let schema = krabka_blockstore::span_block_schema();
         let mut batches = Vec::new();
         if let Some(traces) = self.by_tenant.get(tenant) {
             for spans in traces.values() {
@@ -150,7 +150,7 @@ pub async fn run(
 ) -> Result<(), TracesError> {
     while !shutdown.is_cancelled() {
         let records = consumer
-            .poll(crabka_units::millis(500))
+            .poll(krabka_units::millis(500))
             .await
             .map_err(|err| TracesError::Wal(err.to_string()))?;
         if records.is_empty() {
@@ -197,7 +197,7 @@ impl LiveSource for LiveStore {
                     // skew them. `spans` is the complete per-trace span set.
                     batches.push(
                         span_batch_for_window(&in_range, spans, &[])
-                            .map_err(|err| crabka_traceql::TraceqlError::Store(err.to_string()))?,
+                            .map_err(|err| krabka_traceql::TraceqlError::Store(err.to_string()))?,
                     );
                 }
             }
@@ -209,7 +209,7 @@ impl LiveSource for LiveStore {
         &self,
         tenant: &str,
         trace_id: &[u8; 16],
-    ) -> LiveResult<Option<crabka_traceql::TraceSpans>> {
+    ) -> LiveResult<Option<krabka_traceql::TraceSpans>> {
         let spans = self.trace_by_id(tenant, trace_id);
         Ok((!spans.is_empty()).then(|| trace_spans(trace_id, &spans)))
     }
@@ -217,10 +217,10 @@ impl LiveSource for LiveStore {
     async fn tag_names(
         &self,
         tenant: &str,
-        scope: Option<crabka_traceql::TagScope>,
+        scope: Option<krabka_traceql::TagScope>,
         start_ns: i64,
         end_ns: i64,
-    ) -> LiveResult<Vec<crabka_traceql::ScopedTag>> {
+    ) -> LiveResult<Vec<krabka_traceql::ScopedTag>> {
         let mut resource = BTreeSet::new();
         let mut span = BTreeSet::new();
         let mut event = BTreeSet::new();
@@ -254,34 +254,34 @@ impl LiveSource for LiveStore {
         }
 
         let mut out = Vec::new();
-        if matches!(scope, None | Some(crabka_traceql::TagScope::Resource)) && !resource.is_empty()
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Resource)) && !resource.is_empty()
         {
-            out.push(crabka_traceql::ScopedTag {
-                scope: crabka_traceql::TagScope::Resource,
+            out.push(krabka_traceql::ScopedTag {
+                scope: krabka_traceql::TagScope::Resource,
                 tags: resource.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(crabka_traceql::TagScope::Span)) && !span.is_empty() {
-            out.push(crabka_traceql::ScopedTag {
-                scope: crabka_traceql::TagScope::Span,
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Span)) && !span.is_empty() {
+            out.push(krabka_traceql::ScopedTag {
+                scope: krabka_traceql::TagScope::Span,
                 tags: span.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(crabka_traceql::TagScope::Event)) && !event.is_empty() {
-            out.push(crabka_traceql::ScopedTag {
-                scope: crabka_traceql::TagScope::Event,
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Event)) && !event.is_empty() {
+            out.push(krabka_traceql::ScopedTag {
+                scope: krabka_traceql::TagScope::Event,
                 tags: event.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(crabka_traceql::TagScope::Link)) && !link.is_empty() {
-            out.push(crabka_traceql::ScopedTag {
-                scope: crabka_traceql::TagScope::Link,
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Link)) && !link.is_empty() {
+            out.push(krabka_traceql::ScopedTag {
+                scope: krabka_traceql::TagScope::Link,
                 tags: link.into_iter().collect(),
             });
         }
-        if matches!(scope, None | Some(crabka_traceql::TagScope::Intrinsic)) && has_spans {
-            out.push(crabka_traceql::ScopedTag {
-                scope: crabka_traceql::TagScope::Intrinsic,
+        if matches!(scope, None | Some(krabka_traceql::TagScope::Intrinsic)) && has_spans {
+            out.push(krabka_traceql::ScopedTag {
+                scope: krabka_traceql::TagScope::Intrinsic,
                 tags: INTRINSIC_TAGS
                     .iter()
                     .map(|tag| (*tag).to_string())
@@ -290,11 +290,11 @@ impl LiveSource for LiveStore {
         }
         if matches!(
             scope,
-            None | Some(crabka_traceql::TagScope::Instrumentation)
+            None | Some(krabka_traceql::TagScope::Instrumentation)
         ) && !instrumentation.is_empty()
         {
-            out.push(crabka_traceql::ScopedTag {
-                scope: crabka_traceql::TagScope::Instrumentation,
+            out.push(krabka_traceql::ScopedTag {
+                scope: krabka_traceql::TagScope::Instrumentation,
                 tags: instrumentation.into_iter().collect(),
             });
         }
@@ -307,7 +307,7 @@ impl LiveSource for LiveStore {
         tag: &str,
         start_ns: i64,
         end_ns: i64,
-    ) -> LiveResult<Vec<crabka_traceql::TypedValue>> {
+    ) -> LiveResult<Vec<krabka_traceql::TypedValue>> {
         let tag = tag.strip_prefix('.').unwrap_or(tag);
         let (attr_tag, attr_scope) = scoped_attribute_tag(tag);
         let mut values = BTreeSet::new();
@@ -324,7 +324,7 @@ impl LiveSource for LiveStore {
                 .flatten()
                 .filter(|item| in_time_range(item, UnixNano(start_ns), UnixNano(end_ns)))
             {
-                if matches!(attr_scope, None | Some(crabka_traceql::TagScope::Resource)) {
+                if matches!(attr_scope, None | Some(krabka_traceql::TagScope::Resource)) {
                     values.extend(
                         span.resource_attrs
                             .iter()
@@ -332,7 +332,7 @@ impl LiveSource for LiveStore {
                             .map(|attr| typed_value_parts(&attr.value)),
                     );
                 }
-                if matches!(attr_scope, None | Some(crabka_traceql::TagScope::Span)) {
+                if matches!(attr_scope, None | Some(krabka_traceql::TagScope::Span)) {
                     values.extend(
                         span.span_attrs
                             .iter()
@@ -353,7 +353,7 @@ impl LiveSource for LiveStore {
         }
         Ok(values
             .into_iter()
-            .map(|(type_, value)| crabka_traceql::TypedValue { type_, value })
+            .map(|(type_, value)| krabka_traceql::TypedValue { type_, value })
             .collect())
     }
 
@@ -366,11 +366,11 @@ impl LiveSource for LiveStore {
     }
 }
 
-fn scoped_attribute_tag(tag: &str) -> (&str, Option<crabka_traceql::TagScope>) {
+fn scoped_attribute_tag(tag: &str) -> (&str, Option<krabka_traceql::TagScope>) {
     if let Some(tag) = tag.strip_prefix("resource.") {
-        (tag, Some(crabka_traceql::TagScope::Resource))
+        (tag, Some(krabka_traceql::TagScope::Resource))
     } else if let Some(tag) = tag.strip_prefix("span.") {
-        (tag, Some(crabka_traceql::TagScope::Span))
+        (tag, Some(krabka_traceql::TagScope::Span))
     } else {
         (tag, None)
     }
@@ -384,12 +384,12 @@ fn in_time_range(span: &Span, start_ns: UnixNano, end_ns: UnixNano) -> bool {
     start_ns.0 <= span.start_ns && span.start_ns <= end_ns.0
 }
 
-fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> crabka_traceql::TraceSpans {
+fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> krabka_traceql::TraceSpans {
     let root = spans
         .iter()
         .find(|span| span.is_root())
         .or_else(|| spans.iter().min_by_key(|span| span.start_ns));
-    crabka_traceql::TraceSpans {
+    krabka_traceql::TraceSpans {
         trace_id: *trace_id,
         root_service_name: root
             .and_then(|span| attr_string(&span.resource_attrs, "service.name"))
@@ -411,8 +411,8 @@ fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> crabka_traceql::TraceSpan
     }
 }
 
-fn span_ref(span: &Span, nested: nested_set::NestedSet) -> crabka_traceql::SpanRef {
-    crabka_traceql::SpanRef {
+fn span_ref(span: &Span, nested: nested_set::NestedSet) -> krabka_traceql::SpanRef {
+    krabka_traceql::SpanRef {
         span_id: span.span_id,
         parent_span_id: span.parent_span_id,
         name: span.name.clone(),
@@ -445,8 +445,8 @@ fn span_ref(span: &Span, nested: nested_set::NestedSet) -> crabka_traceql::SpanR
     }
 }
 
-fn event_ref(span: &Span, event: &EventRecord) -> crabka_traceql::EventRef {
-    crabka_traceql::EventRef {
+fn event_ref(span: &Span, event: &EventRecord) -> krabka_traceql::EventRef {
+    krabka_traceql::EventRef {
         time_since_start: Time::from_nanos(event.time_unix_nano.saturating_sub(span.start_ns)),
         name: event.name.clone(),
         attributes: event
@@ -457,8 +457,8 @@ fn event_ref(span: &Span, event: &EventRecord) -> crabka_traceql::EventRef {
     }
 }
 
-fn link_ref(link: &LinkRecord) -> crabka_traceql::LinkRef {
-    crabka_traceql::LinkRef {
+fn link_ref(link: &LinkRecord) -> krabka_traceql::LinkRef {
+    krabka_traceql::LinkRef {
         trace_id: link.trace_id,
         span_id: link.span_id,
         attributes: link
@@ -478,12 +478,12 @@ fn attr_string(attrs: &[KeyValue], key: &str) -> Option<String> {
     })
 }
 
-fn traceql_attr(attr: &KeyValue) -> Option<crabka_traceql::AttrValue> {
+fn traceql_attr(attr: &KeyValue) -> Option<krabka_traceql::AttrValue> {
     Some(match &attr.value {
-        AttrValue::Str(value) => crabka_traceql::AttrValue::Str(value.clone()),
-        AttrValue::Int(value) => crabka_traceql::AttrValue::Int(*value),
-        AttrValue::Double(value) => crabka_traceql::AttrValue::Float(*value),
-        AttrValue::Bool(value) => crabka_traceql::AttrValue::Bool(*value),
+        AttrValue::Str(value) => krabka_traceql::AttrValue::Str(value.clone()),
+        AttrValue::Int(value) => krabka_traceql::AttrValue::Int(*value),
+        AttrValue::Double(value) => krabka_traceql::AttrValue::Float(*value),
+        AttrValue::Bool(value) => krabka_traceql::AttrValue::Bool(*value),
         AttrValue::Bytes(_) => return None,
     })
 }
@@ -640,7 +640,7 @@ fn non_negative_u64(value: i64) -> u64 {
 #[cfg(test)]
 mod tests {
     use assert2::check;
-    use crabka_traceql::TagScope;
+    use krabka_traceql::TagScope;
 
     use super::{LiveSource as _, LiveStore};
     use crate::{

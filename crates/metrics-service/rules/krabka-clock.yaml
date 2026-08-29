@@ -21,7 +21,7 @@ groups:
       # because the larger bound is the weaker promise, and an alert has to
       # measure the fleet against the weakest promise it currently makes.
       - record: krabka_clock:declared_bound_seconds
-        expr: max(crabka_broker_delivery_clock_uncertainty_seconds)
+        expr: max(krabka_broker_delivery_clock_uncertainty_seconds)
 
       # The widest uncertainty any clock in the fleet reports.
       - record: krabka_clock:uncertainty_seconds:max

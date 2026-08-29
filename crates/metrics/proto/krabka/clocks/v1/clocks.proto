@@ -1,4 +1,4 @@
-// Crabka clock confidence signal, version 1.
+// Krabka clock confidence signal, version 1.
 // One reading is one clock, on one host, at one moment. The host reports the
 // clock reading and the half-width of the interval around it. A query can then
 // state how far the host's time can be from true time.

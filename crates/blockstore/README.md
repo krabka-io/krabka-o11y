@@ -1,3 +1,3 @@
-# crabka-blockstore
+# krabka-blockstore
 
-Signal-agnostic columnar block store for Crabka observability.
+Signal-agnostic columnar block store for Krabka observability.

@@ -2,9 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
-use crabka_metrics::{float_sample_schema, native_histogram_schema};
 use datafusion::prelude::SessionContext;
+use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_metrics::{float_sample_schema, native_histogram_schema};
 
 use self::{
     scan::{FLOAT_TABLE, HISTOGRAM_TABLE, merge_scan_table},

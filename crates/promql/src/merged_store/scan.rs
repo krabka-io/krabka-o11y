@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use crabka_metrics::{COL_FINGERPRINT, COL_TIMESTAMP};
 use datafusion::{catalog::MemTable, prelude::SessionContext};
+use krabka_metrics::{COL_FINGERPRINT, COL_TIMESTAMP};
 
 use crate::PromqlError;
 

@@ -11,12 +11,12 @@ use arrow::{
     datatypes::{Int32Type, Int64Type, UInt64Type},
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{
+use krabka_blockstore::{
     BlockMeta, COL_FINGERPRINT, COL_TIMESTAMP, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
     PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, ProfileIndex,
     ProfileSampleRow, encode_profile_samples,
 };
-use crabka_pprof::SymbolDb;
+use krabka_pprof::SymbolDb;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use parquet::arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder};
 
@@ -535,8 +535,8 @@ mod tests {
     use std::sync::Arc;
 
     use assert2::{assert, check};
-    use crabka_blockstore::{BlockIndex, Labels};
-    use crabka_pprof::{EngineOpts, FlameEngine};
+    use krabka_blockstore::{BlockIndex, Labels};
+    use krabka_pprof::{EngineOpts, FlameEngine};
     use object_store::{ObjectStore, memory::InMemory};
 
     /// The compactor hashes a *list* of keys, not a blob, so it folds a 0xff

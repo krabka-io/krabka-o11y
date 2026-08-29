@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crabka_units::{
+use krabka_units::{
     ByteSize, Frequency, Time,
     convert::{ByteSizeExt as _, FrequencyExt, TimeExt as _},
 };
@@ -183,7 +183,7 @@ impl PartialLimits {
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use crabka_units::{bytes, per_sec, secs};
+    use krabka_units::{bytes, per_sec, secs};
 
     use super::*;
 

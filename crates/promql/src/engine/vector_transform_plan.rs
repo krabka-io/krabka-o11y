@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use crabka_blockstore::SeriesFingerprint;
-use crabka_units::prelude::*;
 use futures::{FutureExt, future::BoxFuture};
+use krabka_blockstore::SeriesFingerprint;
+use krabka_units::prelude::*;
 use promql_parser::parser::{Call, Expr, VectorSelector};
 
 use super::{

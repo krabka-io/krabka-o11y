@@ -1,7 +1,7 @@
 //! Query-frontend planning helpers for sharded profile queries.
 
-use crabka_pprof::ProfileError;
-use crabka_units::{Time, convert::TimeExt, minutes};
+use krabka_pprof::ProfileError;
+use krabka_units::{Time, convert::TimeExt, minutes};
 
 /// Not `Eq`: [`Time`] stores `f64`. Nothing keys a map on this config.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,7 +57,7 @@ pub fn split_inclusive_range(
 #[cfg(test)]
 mod tests {
     use assert2::assert;
-    use crabka_units::millis;
+    use krabka_units::millis;
 
     use super::*;
 

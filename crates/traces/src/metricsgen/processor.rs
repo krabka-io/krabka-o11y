@@ -103,7 +103,7 @@ impl MetricsGenerator {
 mod tests {
     use std::sync::Arc;
 
-    use crabka_units::{ByteSize, convert::ByteSizeExt as _};
+    use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
     use super::*;
     use crate::metricsgen::{

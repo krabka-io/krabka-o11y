@@ -8,7 +8,7 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use crabka_units::fmt::Human as _;
+use krabka_units::fmt::Human as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use url::form_urlencoded;

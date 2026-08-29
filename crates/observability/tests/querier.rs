@@ -5,12 +5,12 @@ use std::{
 
 use assert2::assert;
 use async_trait::async_trait;
-use crabka_blockstore::{
+use krabka_blockstore::{
     BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels,
     write_log_block, write_log_block_to_object_store,
 };
-use crabka_logql::{parse_metric_query, parse_query, plan_stream_query};
-use crabka_observability::{
+use krabka_logql::{parse_metric_query, parse_query, plan_stream_query};
+use krabka_observability::{
     BufferedLogHotTail, CompactionFrontier, KafkaWalHeader, KafkaWalRecord, LogWalConsumer, Offset,
     PartitionIndex, WalConsumerError, WalLogRecord, WalPosition, build_kafka_wal_record,
     execute_metric_query, execute_metric_query_from_object_store, execute_metric_query_range,
@@ -20,7 +20,7 @@ use crabka_observability::{
     execute_tail_query_with_frontier, metric_plan_scan_sql, poll_log_hot_tail_once,
     stream_plan_scan_sql,
 };
-use crabka_units::{Time, millis};
+use krabka_units::{Time, millis};
 use object_store::{ObjectStore, local::LocalFileSystem, path::Path as ObjectPath};
 use serde_json::json;
 
@@ -408,7 +408,7 @@ async fn hot_tail_buffer_polls_and_decodes_kafka_wal_records() {
         structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
         position: None,
     };
-    let produced = build_kafka_wal_record("__crabka_observability_logs_wal", &record).unwrap();
+    let produced = build_kafka_wal_record("__krabka_observability_logs_wal", &record).unwrap();
     let mut consumer = RecordingWalConsumer::new(vec![vec![
         KafkaWalRecord {
             value: produced.value.unwrap().to_vec(),
@@ -430,9 +430,9 @@ async fn hot_tail_buffer_polls_and_decodes_kafka_wal_records() {
             offset: Offset(7),
             timestamp_ms: Some(2),
             headers: vec![
-                kafka_header("crabka-wal-record-type", "log-line"),
-                kafka_header("crabka-tenant", "tenant-a"),
-                kafka_header("crabka-log-label-app", "worker"),
+                kafka_header("krabka-wal-record-type", "log-line"),
+                kafka_header("krabka-tenant", "tenant-a"),
+                kafka_header("krabka-log-label-app", "worker"),
             ],
         },
     ]]);

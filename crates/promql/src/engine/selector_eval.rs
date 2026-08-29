@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use crabka_blockstore::SeriesFingerprint;
-use crabka_units::prelude::*;
+use krabka_blockstore::SeriesFingerprint;
+use krabka_units::prelude::*;
 use promql_parser::parser::{Expr, MatrixSelector, SubqueryExpr, VectorSelector};
 
 use super::{

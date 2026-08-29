@@ -1,6 +1,6 @@
 //! Generates prost message types from the crate's protos.
 //!
-//! The set holds the vendored `remote_write` v1 and v2 surfaces and the Crabka
+//! The set holds the vendored `remote_write` v1 and v2 surfaces and the Krabka
 //! clock confidence signal.
 //!
 //! This script drives codegen through a vendored `protoc` binary,

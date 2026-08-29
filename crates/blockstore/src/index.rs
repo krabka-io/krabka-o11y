@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -513,29 +513,36 @@ impl Index {
         max_bytes: ByteSize,
     ) -> Result<Self> {
         let path = Path::from(object_key);
-        let bytes = match crabka_object_store::read_capped(store, &path, max_bytes.bytes_u64())
+        let bytes = match krabka_object_store::read_capped(store, &path, max_bytes.bytes_u64())
             .await
         {
             Ok(bytes) => bytes,
             Err(error) => {
                 return Err(match error {
-                    crabka_object_store::ObjectStoreError::TooLarge {
+                    krabka_object_store::ObjectStoreError::TooLarge {
                         size, max_bytes, ..
                     } => BlockStoreError::InvalidBlock(format!(
                         "index snapshot `{object_key}` is {size} bytes, exceeds cap of {max_bytes} bytes"
                     )),
-                    crabka_object_store::ObjectStoreError::Backend(message)
-                    | crabka_object_store::ObjectStoreError::InvalidConfig(message) => {
+                    krabka_object_store::ObjectStoreError::Backend(message)
+                    | krabka_object_store::ObjectStoreError::InvalidConfig(message) => {
                         BlockStoreError::ObjectStore(message)
                     }
-                    crabka_object_store::ObjectStoreError::Io(error) => {
+                    krabka_object_store::ObjectStoreError::Io(error) => {
                         BlockStoreError::ObjectStore(error.to_string())
                     }
-                    not_found @ crabka_object_store::ObjectStoreError::NotFound(_) => {
+                    not_found @ krabka_object_store::ObjectStoreError::NotFound(_) => {
                         match store.head(&path).await {
                             Ok(_) => BlockStoreError::ObjectStore(not_found.to_string()),
                             Err(missing) => BlockStoreError::ObjectStore(missing.to_string()),
                         }
+                    }
+                    // Write-side variants: `read_capped` cannot raise them, but
+                    // they are part of the enum, so surface them like any other
+                    // backend failure rather than widening the read path.
+                    conflict @ (krabka_object_store::ObjectStoreError::AlreadyExists(_)
+                    | krabka_object_store::ObjectStoreError::Precondition { .. }) => {
+                        BlockStoreError::ObjectStore(conflict.to_string())
                     }
                 });
             }

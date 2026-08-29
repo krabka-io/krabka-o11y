@@ -7,7 +7,7 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use crabka_blockstore::Labels;
+use krabka_blockstore::Labels;
 
 use super::{
     ApiError, CardinalityParams, PrometheusApiState, active_series_response, apply_limit,

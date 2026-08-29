@@ -1,13 +1,13 @@
-//! Standalone Crabka traces querier, preloaded with a multi-service demo
+//! Standalone Krabka traces querier, preloaded with a multi-service demo
 //! fixture.
 //!
-//! Use it to point a real Grafana Tempo datasource at Crabka and run complex
+//! Use it to point a real Grafana Tempo datasource at Krabka and run complex
 //! `TraceQL` queries by hand, or through a headless browser.
 //!
-//! It serves the Tempo query API on `0.0.0.0:3201`. `CRABKA_DEMO_ADDR`
+//! It serves the Tempo query API on `0.0.0.0:3201`. `KRABKA_DEMO_ADDR`
 //! overrides that address.
 //!
-//! Run: `cargo run -p crabka-traces --example grafana_demo`
+//! Run: `cargo run -p krabka-traces --example grafana_demo`
 //!
 //! The fixture is timestamped at "a few minutes ago", so it falls inside
 //! Grafana's default "last 1 hour" window. These queries are all valid against
@@ -29,9 +29,9 @@ use axum::{
     middleware::{self, Next},
     response::Response as AxumResponse,
 };
-use crabka_traceql::{AttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine};
-use crabka_traces::querier::http::router;
-use crabka_units::{Time, convert::TimeExt as _};
+use krabka_traceql::{AttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine};
+use krabka_traces::querier::http::router;
+use krabka_units::{Time, convert::TimeExt as _};
 
 const TENANT: &str = "anonymous";
 // OTLP span kinds.
@@ -71,7 +71,7 @@ fn span(
         duration: Time::from_millis(duration_ms),
         status_code: status,
         status_message: status_message.to_string(),
-        instrumentation_name: "crabka-demo".to_string(),
+        instrumentation_name: "krabka-demo".to_string(),
         instrumentation_version: "1.0.0".to_string(),
         attrs: attrs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
         events: Vec::new(),
@@ -286,7 +286,7 @@ fn demo_store() -> InMemorySpanStore {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let addr = std::env::var("CRABKA_DEMO_ADDR").unwrap_or_else(|_| "0.0.0.0:3201".to_string());
+    let addr = std::env::var("KRABKA_DEMO_ADDR").unwrap_or_else(|_| "0.0.0.0:3201".to_string());
     let engine = Arc::new(TraceqlEngine::new(
         Arc::new(demo_store()),
         EngineOpts::default(),
@@ -294,7 +294,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = router(engine).layer(middleware::from_fn(log_req));
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("crabka traces demo querier listening on http://{addr}");
+    println!("krabka traces demo querier listening on http://{addr}");
     println!("tenant: {TENANT} (no X-Scope-OrgID header required)");
     println!(
         "trace ids: 11..(checkout+error)  22..(browse)  33..(fast checkout)  44..(slow report)  55..(failed login)"

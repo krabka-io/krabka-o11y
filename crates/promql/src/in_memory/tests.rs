@@ -1,7 +1,7 @@
 use arrow::{array::AsArray, datatypes::Int64Type};
 use assert2::check;
-use crabka_blockstore::{LabelMatcher, Labels, MatchOp};
-use crabka_metrics::{
+use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
+use krabka_metrics::{
     BucketSpan, NativeHistogram, ResetHint, SamplePayload, WalExemplar, WalRecord,
 };
 

@@ -3,17 +3,17 @@
 //! This module mirrors the `metrics` pattern of the broker: a shared `Registry`
 //! in an `Arc<Mutex<…>>`, and a bundle of metric handles that is cheap to
 //! `Clone`. The query handlers clone the bundle and increment the handles
-//! directly. The registry prefix is `crabka_metrics`. `prometheus-client`
+//! directly. The registry prefix is `krabka_metrics`. `prometheus-client`
 //! appends `_total` to counters at encode time, so this module registers counter
 //! names without the suffix.
 //!
 //! This bundle has the same shape as the bundle of the ingest crate
-//! (`crabka_metrics::metrics`). Both processes export under the same
-//! `crabka_metrics` prefix, but they run in separate binaries.
+//! (`krabka_metrics::metrics`). Both processes export under the same
+//! `krabka_metrics` prefix, but they run in separate binaries.
 
 use std::sync::Arc;
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use prometheus_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family, gauge::Gauge, histogram::Histogram},
@@ -91,7 +91,7 @@ impl ServiceMetrics {
     /// Builds a new registry, registers every metric, and returns the bundle.
     #[must_use]
     pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("crabka_metrics");
+        let mut registry = Registry::with_prefix("krabka_metrics");
 
         let ingest_requests: Family<StatusLabel, Counter> = Family::default();
         let ingest_bytes = Counter::default();
@@ -324,16 +324,16 @@ mod tests {
         let r = m.registry.lock().await;
         prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
         for needle in [
-            "crabka_metrics_ingest_requests_total",
-            "crabka_metrics_ingest_bytes_total",
-            "crabka_metrics_ingest_items_total",
-            "crabka_metrics_ingest_duration_seconds",
-            "crabka_metrics_wal_append_failures_total",
-            "crabka_metrics_query_requests_total",
-            "crabka_metrics_query_duration_seconds",
-            "crabka_metrics_query_eval_duration_seconds",
-            "crabka_metrics_query_errors_total",
-            "crabka_metrics_active_queries",
+            "krabka_metrics_ingest_requests_total",
+            "krabka_metrics_ingest_bytes_total",
+            "krabka_metrics_ingest_items_total",
+            "krabka_metrics_ingest_duration_seconds",
+            "krabka_metrics_wal_append_failures_total",
+            "krabka_metrics_query_requests_total",
+            "krabka_metrics_query_duration_seconds",
+            "krabka_metrics_query_eval_duration_seconds",
+            "krabka_metrics_query_errors_total",
+            "krabka_metrics_active_queries",
             "route=\"query\"",
             "route=\"query_range\"",
             "status=\"error\"",
@@ -341,7 +341,7 @@ mod tests {
             "type=\"instant\"",
             "type=\"range\"",
             // One `query_started` is still outstanding (2 inc, 1 dec) → gauge == 1.
-            "crabka_metrics_active_queries 1",
+            "krabka_metrics_active_queries 1",
         ] {
             assert2::assert!(buf.contains(needle));
         }
@@ -366,7 +366,7 @@ mod tests {
             .await
             .unwrap();
         let s = std::str::from_utf8(&body).unwrap();
-        check!(s.contains("crabka_metrics_query_requests_total"), "{s}");
+        check!(s.contains("krabka_metrics_query_requests_total"), "{s}");
         check!(s.contains("# EOF"), "{s}");
     }
 }

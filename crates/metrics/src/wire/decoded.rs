@@ -1,8 +1,8 @@
 //! Shared decode target, content negotiation, snappy-block decode, and
 //! `remote_write` status mapping.
 
-use crabka_blockstore::Labels;
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_units::prelude::*;
 
 use crate::NativeHistogram;
 

@@ -14,7 +14,7 @@ test_tool = "nextest"
 #
 # Sweep that crate with the feature on:
 #
-#     cargo mutants -p crabka-promql --features experimental-functions ...
+#     cargo mutants -p krabka-promql --features experimental-functions ...
 #
 # It is deliberately not set here. This file is shared with every other crate
 # and with the Bazel targets, and `--all-features` would also switch on

@@ -4,7 +4,7 @@ use arrow::{
     array::{Array, Float64Array, Int64Array, StringArray},
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::{Labels, SeriesFingerprint};
 
 use super::labels::labels_without_metric_name;
 use crate::{

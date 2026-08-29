@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crabka_promql::testkit::run_test_path;
+use krabka_promql::testkit::run_test_path;
 
 fn corpus_pattern() -> &'static str {
     if cfg!(feature = "experimental-functions") {

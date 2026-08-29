@@ -186,7 +186,7 @@ pub fn to_otlp(traces: &[SeedTrace]) -> OtlpTracesPayload {
                 }),
                 scope_spans: vec![ScopeSpans {
                     scope: Some(InstrumentationScope {
-                        name: "crabka-diff-corpus".into(),
+                        name: "krabka-diff-corpus".into(),
                         version: "1.0.0".into(),
                         ..InstrumentationScope::default()
                     }),

@@ -29,7 +29,7 @@ use arrow::{
     datatypes::{Field, Int64Type},
     error::ArrowError,
 };
-use crabka_metrics::{
+use krabka_metrics::{
     COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS, COL_NH_NEG_SPANS,
     COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT, COL_NH_SCHEMA, COL_NH_START_TS,
     COL_NH_SUM, COL_NH_ZERO_COUNT, COL_NH_ZERO_THRESHOLD,
@@ -405,7 +405,7 @@ impl RangeArray {
     /// Returns the native-histogram cell `index`.
     ///
     /// Returns `None` if `index` is out of bounds or the backing array does not
-    /// match the native histogram `StructArray` layout of `crabka-metrics`.
+    /// match the native histogram `StructArray` layout of `krabka-metrics`.
     #[must_use]
     pub fn histogram_cell(&self, index: usize) -> Option<HistogramView<'_>> {
         let &(offset, len) = self.ranges.get(index)?;

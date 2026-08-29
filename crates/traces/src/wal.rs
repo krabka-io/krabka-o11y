@@ -1,13 +1,13 @@
 //! Traces WAL topic record shared by distributor, block-builder, and live-store.
 
 use bytes::Bytes;
-use crabka_blockstore::fnv1_32;
+use krabka_blockstore::fnv1_32;
 use serde::{Deserialize, Serialize};
 
 use crate::{error::TracesError, span::Span};
 
 /// The traces WAL topic name.
-pub const TRACES_WAL_TOPIC: &str = "__crabka_traces_wal";
+pub const TRACES_WAL_TOPIC: &str = "__krabka_traces_wal";
 
 /// One span's WAL record: tenant plus the OTLP-derived internal span.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -17,7 +17,7 @@ pub struct SpanRecord {
 }
 
 impl SpanRecord {
-    /// Encode with `serde-wincode`, which matches Crabka's serde-derived wire
+    /// Encode with `serde-wincode`, which matches Krabka's serde-derived wire
     /// records.
     ///
     /// # Errors
@@ -97,13 +97,13 @@ mod tests {
     fn partition_key_is_trace_id_hash() {
         let trace_id = [9; 16];
         let key = partition_key(&trace_id);
-        let expected = crabka_blockstore::fnv1_32(&trace_id).to_be_bytes();
+        let expected = krabka_blockstore::fnv1_32(&trace_id).to_be_bytes();
 
         assert2::assert!(key.as_ref() == expected);
     }
 
     #[test]
     fn wal_topic_matches_spec() {
-        assert2::assert!(TRACES_WAL_TOPIC == "__crabka_traces_wal");
+        assert2::assert!(TRACES_WAL_TOPIC == "__krabka_traces_wal");
     }
 }

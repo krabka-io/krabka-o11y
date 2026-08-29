@@ -1,4 +1,4 @@
-//! Role-selectable service skeleton for Crabka observability.
+//! Role-selectable service skeleton for Krabka observability.
 
 pub mod ids;
 pub mod metrics;
@@ -37,47 +37,6 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use clap::{Parser, ValueEnum};
-use crabka_blockstore::{
-    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex,
-    LogBlockStoreError as BlockStoreError, LogLabels as Labels, LogRow,
-    LogSeriesFingerprint as SeriesFingerprint, TimeRange, read_log_block,
-    read_log_block_from_object_store, read_log_index_manifest,
-    read_tenant_log_index_manifest_from_object_store,
-    read_tenant_log_index_shard_from_object_store,
-    read_tenant_log_index_shard_ranges_from_object_store,
-    read_tenant_log_index_shards_from_object_store, register_log_blocks,
-    register_log_blocks_from_object_store, series_fingerprint, write_log_block,
-    write_log_block_to_object_store, write_log_index_manifest,
-    write_tenant_log_index_manifest_to_object_store,
-    write_tenant_log_index_shard_catalog_to_object_store,
-    write_tenant_log_index_shard_to_object_store,
-};
-use crabka_client_admin::{
-    AclEntry, AclEntryFilter, AclOperation, AdminClient, AdminError, PatternType, PermissionType,
-    ResourceType,
-};
-use crabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError};
-use crabka_client_producer::{
-    Acks, Header as ProducerHeader, Producer, ProducerError, ProducerRecord,
-};
-use crabka_logql::{
-    ComparisonOp, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, FieldValue,
-    LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilterOp, LogfmtParserConfig,
-    MatchOp, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricBinarySetOp,
-    MetricLabelJoin, MetricQuery, MetricScalarArithmetic, MetricScalarArithmeticOp,
-    MetricScalarComparison, MetricVectorGroupModifier, MetricVectorMatching, ParseError,
-    ParserStage, PipelineStage, PlanError, Quantile, RangeAggregation, StreamPlan, StreamQuery,
-    UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion, VectorAggregation, VectorAggregationOp,
-    VectorGrouping, parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
-    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
-    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
-    parse_query, plan_stream_query,
-};
-use crabka_units::{
-    ByteRate, ByteSize, Time,
-    convert::{ByteRateExt as _, ByteSizeExt, StdDurationExt as _, TimeExt},
-    days, hours, millis, minutes, secs,
-};
 use datafusion::{
     arrow::{
         array::{
@@ -94,6 +53,47 @@ use datafusion::{
 use flate2::read::{DeflateDecoder, GzDecoder};
 use futures_util::{StreamExt as _, TryStreamExt as _};
 pub use ids::{Offset, PartitionIndex};
+use krabka_blockstore::{
+    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex,
+    LogBlockStoreError as BlockStoreError, LogLabels as Labels, LogRow,
+    LogSeriesFingerprint as SeriesFingerprint, TimeRange, read_log_block,
+    read_log_block_from_object_store, read_log_index_manifest,
+    read_tenant_log_index_manifest_from_object_store,
+    read_tenant_log_index_shard_from_object_store,
+    read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shards_from_object_store, register_log_blocks,
+    register_log_blocks_from_object_store, series_fingerprint, write_log_block,
+    write_log_block_to_object_store, write_log_index_manifest,
+    write_tenant_log_index_manifest_to_object_store,
+    write_tenant_log_index_shard_catalog_to_object_store,
+    write_tenant_log_index_shard_to_object_store,
+};
+use krabka_client_admin::{
+    AclEntry, AclEntryFilter, AclOperation, AdminClient, AdminError, PatternType, PermissionType,
+    ResourceType,
+};
+use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError};
+use krabka_client_producer::{
+    Acks, Header as ProducerHeader, Producer, ProducerError, ProducerRecord,
+};
+use krabka_logql::{
+    ComparisonOp, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, FieldValue,
+    LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilterOp, LogfmtParserConfig,
+    MatchOp, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricBinarySetOp,
+    MetricLabelJoin, MetricQuery, MetricScalarArithmetic, MetricScalarArithmeticOp,
+    MetricScalarComparison, MetricVectorGroupModifier, MetricVectorMatching, ParseError,
+    ParserStage, PipelineStage, PlanError, Quantile, RangeAggregation, StreamPlan, StreamQuery,
+    UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion, VectorAggregation, VectorAggregationOp,
+    VectorGrouping, parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
+    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
+    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
+    parse_query, plan_stream_query,
+};
+use krabka_units::{
+    ByteRate, ByteSize, Time,
+    convert::{ByteRateExt as _, ByteSizeExt, StdDurationExt as _, TimeExt},
+    days, hours, millis, minutes, secs,
+};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use object_store::{
     ObjectStore, ObjectStoreExt, local::LocalFileSystem, parse_url_opts, path::Path as ObjectPath,
@@ -150,182 +150,182 @@ pub enum QuerierIndexSource {
 /// It is not `Eq`. The quantity-typed limits store `f64`, and nothing in the
 /// workspace compares two configs for total equality.
 #[derive(Clone, Debug, Parser, PartialEq)]
-#[command(name = "crabka-observability")]
+#[command(name = "krabka-observability")]
 pub struct ServiceConfig {
-    #[arg(long, env = "CRABKA_OBSERVABILITY_TARGET", value_enum)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_TARGET", value_enum)]
     pub target: Role,
 
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_LISTEN_ADDR",
+        env = "KRABKA_OBSERVABILITY_LISTEN_ADDR",
         default_value = "127.0.0.1:3100"
     )]
     pub listen_addr: SocketAddr,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_OBJECT_STORE_URL")]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_OBJECT_STORE_URL")]
     pub object_store_url: Option<String>,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_WAL_BOOTSTRAP_SERVER")]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_WAL_BOOTSTRAP_SERVER")]
     pub wal_bootstrap_server: Option<String>,
 
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_WAL_TOPIC",
-        default_value = "__crabka_observability_logs_wal"
+        env = "KRABKA_OBSERVABILITY_WAL_TOPIC",
+        default_value = "__krabka_observability_logs_wal"
     )]
     pub wal_topic: String,
 
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_WAL_GROUP_ID",
-        default_value = "crabka-observability-compactor"
+        env = "KRABKA_OBSERVABILITY_WAL_GROUP_ID",
+        default_value = "krabka-observability-compactor"
     )]
     pub wal_group_id: String,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_DATA_ROOT", default_value = ".")]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_DATA_ROOT", default_value = ".")]
     pub data_root: PathBuf,
 
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_QUERIER_INDEX_SOURCE",
+        env = "KRABKA_OBSERVABILITY_QUERIER_INDEX_SOURCE",
         value_enum,
         default_value = "local-manifest"
     )]
     pub querier_index_source: QuerierIndexSource,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_TENANT")]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_TENANT")]
     pub tenant: Option<String>,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_INDEX_PREFIX")]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_INDEX_PREFIX")]
     pub index_prefix: Option<String>,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_QUERY_START_NS")]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERY_START_NS")]
     pub query_start_ns: Option<i64>,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_QUERY_END_NS")]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERY_END_NS")]
     pub query_end_ns: Option<i64>,
 
     /// Widest `[start, end]` window a query may span, as `1h` / `30s`.
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_MAX_QUERY_RANGE",
-        value_parser = crabka_units::parse::non_negative_time
+        env = "KRABKA_OBSERVABILITY_MAX_QUERY_RANGE",
+        value_parser = krabka_units::parse::non_negative_time
     )]
     pub max_query_range: Option<Time>,
 
     /// Ceiling on the number of series a query may match. A count, not a volume.
-    #[arg(long, env = "CRABKA_OBSERVABILITY_MAX_QUERY_SERIES")]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_MAX_QUERY_SERIES")]
     pub max_query_series: Option<usize>,
 
     /// Ceiling on the summed size of the blocks a query plans to read, as
     /// `512MiB`.
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_MAX_QUERY_READ",
-        value_parser = crabka_units::parse::non_negative_byte_size
+        env = "KRABKA_OBSERVABILITY_MAX_QUERY_READ",
+        value_parser = krabka_units::parse::non_negative_byte_size
     )]
     pub max_query_read: Option<ByteSize>,
 
     /// Ceiling on the length of the `LogQL` query string, as `4KiB`.
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_MAX_QUERY_LENGTH",
-        value_parser = crabka_units::parse::non_negative_byte_size
+        env = "KRABKA_OBSERVABILITY_MAX_QUERY_LENGTH",
+        value_parser = krabka_units::parse::non_negative_byte_size
     )]
     pub max_query_length: Option<ByteSize>,
 
     /// Largest accepted ingest request body, as `4MiB`.
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_MAX_INGEST_BODY",
-        value_parser = crabka_units::parse::non_negative_byte_size
+        env = "KRABKA_OBSERVABILITY_MAX_INGEST_BODY",
+        value_parser = krabka_units::parse::non_negative_byte_size
     )]
     pub max_ingest_body: Option<ByteSize>,
 
     /// How long a WAL append may take before the push is failed, as `250ms`.
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_WAL_APPEND_TIMEOUT",
-        value_parser = crabka_units::parse::non_negative_time
+        env = "KRABKA_OBSERVABILITY_WAL_APPEND_TIMEOUT",
+        value_parser = krabka_units::parse::non_negative_time
     )]
     pub wal_append_timeout: Option<Time>,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_REJECT_OLD_SAMPLES_MAX_AGE", default_value = "7d", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_REJECT_OLD_SAMPLES_MAX_AGE", default_value = "7d", value_parser = krabka_units::parse::positive_time)]
     pub reject_old_samples_max_age: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_CREATION_GRACE_PERIOD", default_value = "10m", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_CREATION_GRACE_PERIOD", default_value = "10m", value_parser = krabka_units::parse::positive_time)]
     pub creation_grace_period: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_INGEST_QUOTA_BURST_WINDOW", default_value = "1s", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_INGEST_QUOTA_BURST_WINDOW", default_value = "1s", value_parser = krabka_units::parse::positive_time)]
     pub ingest_quota_burst_window: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_WAL_CONNECT_STARTUP_DEADLINE", default_value = "2m", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_WAL_CONNECT_STARTUP_DEADLINE", default_value = "2m", value_parser = krabka_units::parse::positive_time)]
     pub wal_connect_startup_deadline: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_WAL_CONNECT_ATTEMPT_TIMEOUT", default_value = "15s", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_WAL_CONNECT_ATTEMPT_TIMEOUT", default_value = "15s", value_parser = krabka_units::parse::positive_time)]
     pub wal_connect_attempt_timeout: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_WAL_CONNECT_INITIAL_BACKOFF", default_value = "200ms", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_WAL_CONNECT_INITIAL_BACKOFF", default_value = "200ms", value_parser = krabka_units::parse::positive_time)]
     pub wal_connect_initial_backoff: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_WAL_CONNECT_MAX_BACKOFF", default_value = "2s", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_WAL_CONNECT_MAX_BACKOFF", default_value = "2s", value_parser = krabka_units::parse::positive_time)]
     pub wal_connect_max_backoff: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_COMPACTOR_WAL_POLL_TIMEOUT", default_value = "500ms", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_WAL_POLL_TIMEOUT", default_value = "500ms", value_parser = krabka_units::parse::positive_time)]
     pub compactor_wal_poll_timeout: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_WINDOW", default_value = "2s", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_WINDOW", default_value = "2s", value_parser = krabka_units::parse::positive_time)]
     pub compactor_accumulation_window: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_POLL_TIMEOUT", default_value = "250ms", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_POLL_TIMEOUT", default_value = "250ms", value_parser = krabka_units::parse::positive_time)]
     pub compactor_accumulation_poll_timeout: Time,
 
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_COMPACTOR_MAX_RECORDS_PER_BATCH",
+        env = "KRABKA_OBSERVABILITY_COMPACTOR_MAX_RECORDS_PER_BATCH",
         default_value = "4096"
     )]
     pub compactor_max_records_per_batch: NonZeroUsize,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", default_value = "10ms", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", default_value = "10ms", value_parser = krabka_units::parse::positive_time)]
     pub compactor_idle_interval: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_INITIAL_BACKOFF", default_value = "10ms", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_INITIAL_BACKOFF", default_value = "10ms", value_parser = krabka_units::parse::positive_time)]
     pub compactor_object_store_initial_backoff: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_MAX_BACKOFF", default_value = "500ms", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_MAX_BACKOFF", default_value = "500ms", value_parser = krabka_units::parse::positive_time)]
     pub compactor_object_store_max_backoff: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_QUERIER_FRONTIER_REFRESH_INTERVAL", default_value = "5s", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_FRONTIER_REFRESH_INTERVAL", default_value = "5s", value_parser = krabka_units::parse::positive_time)]
     pub querier_frontier_refresh_interval: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_QUERIER_DYNAMIC_INDEX_CACHE_TTL", default_value = "5s", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_DYNAMIC_INDEX_CACHE_TTL", default_value = "5s", value_parser = krabka_units::parse::positive_time)]
     pub querier_dynamic_index_cache_ttl: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_QUERIER_SHARD_INDEX_CACHE_TTL", default_value = "5m", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_SHARD_INDEX_CACHE_TTL", default_value = "5m", value_parser = krabka_units::parse::positive_time)]
     pub querier_shard_index_cache_ttl: Time,
 
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_QUERIER_SHARD_FETCH_CONCURRENCY",
+        env = "KRABKA_OBSERVABILITY_QUERIER_SHARD_FETCH_CONCURRENCY",
         default_value = "32"
     )]
     pub querier_shard_fetch_concurrency: NonZeroUsize,
 
     #[arg(
         long,
-        env = "CRABKA_OBSERVABILITY_QUERIER_COLD_BLOCK_FETCH_CONCURRENCY",
+        env = "KRABKA_OBSERVABILITY_QUERIER_COLD_BLOCK_FETCH_CONCURRENCY",
         default_value = "8"
     )]
     pub querier_cold_block_fetch_concurrency: NonZeroUsize,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_BUCKET_WIDTH", default_value = "1m", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_BUCKET_WIDTH", default_value = "1m", value_parser = krabka_units::parse::positive_time)]
     pub querier_hot_tail_bucket_width: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_INTERVAL", default_value = "50ms", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_INTERVAL", default_value = "50ms", value_parser = krabka_units::parse::positive_time)]
     pub querier_hot_tail_interval: Time,
 
-    #[arg(long, env = "CRABKA_OBSERVABILITY_QUERIER_DEPENDENCY_RECONNECT_INTERVAL", default_value = "500ms", value_parser = crabka_units::parse::positive_time)]
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_DEPENDENCY_RECONNECT_INTERVAL", default_value = "500ms", value_parser = krabka_units::parse::positive_time)]
     pub querier_dependency_reconnect_interval: Time,
 }
 
@@ -338,8 +338,8 @@ impl Default for ServiceConfig {
                 .expect("default observability listen address is valid"),
             object_store_url: None,
             wal_bootstrap_server: None,
-            wal_topic: "__crabka_observability_logs_wal".to_string(),
-            wal_group_id: "crabka-observability-compactor".to_string(),
+            wal_topic: "__krabka_observability_logs_wal".to_string(),
+            wal_group_id: "krabka-observability-compactor".to_string(),
             data_root: PathBuf::from("."),
             querier_index_source: QuerierIndexSource::LocalManifest,
             tenant: None,
@@ -488,8 +488,8 @@ struct DeferredWalConsumerConnect {
 /// Validated Kafka connection resource limits shared by this process.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ClientResourcePolicy {
-    pub dispatch_queue_capacity: crabka_client_core::ConnectionDispatchQueueCapacity,
-    pub frame_max: crabka_client_core::ClientFrameMax,
+    pub dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
+    pub frame_max: krabka_client_core::ClientFrameMax,
 }
 
 #[derive(Clone, Default)]
@@ -1372,7 +1372,7 @@ fn set_remote_parent_from_wal_records(span: &tracing::Span, records: &[KafkaWalR
     else {
         return;
     };
-    crabka_telemetry::propagation::set_remote_parent(
+    krabka_telemetry::propagation::set_remote_parent(
         span,
         parent
             .headers
@@ -1399,7 +1399,7 @@ async fn compact_polled_kafka_wal_records_to_object_store_from_existing_manifest
     let span = tracing::info_span!(
         "logs_compaction",
         otel.kind = "consumer",
-        crabka.wal.records = records.len(),
+        krabka.wal.records = records.len(),
     );
     set_remote_parent_from_wal_records(&span, &records);
 
@@ -2712,11 +2712,11 @@ impl BrokerBackedIngestLimiter {
 
 fn admin_connection_options(
     client_resource_policy: ClientResourcePolicy,
-) -> crabka_client_core::ConnectionOptions {
-    crabka_client_core::ConnectionOptions {
+) -> krabka_client_core::ConnectionOptions {
+    krabka_client_core::ConnectionOptions {
         dispatch_queue_capacity: client_resource_policy.dispatch_queue_capacity,
         frame_max: client_resource_policy.frame_max,
-        ..crabka_client_core::ConnectionOptions::default()
+        ..krabka_client_core::ConnectionOptions::default()
     }
 }
 
@@ -3175,7 +3175,7 @@ impl KafkaLogWalSink {
     ) -> Result<Self, ProducerError> {
         let producer = Producer::builder()
             .bootstrap(bootstrap)
-            .client_id("crabka-observability-distributor")
+            .client_id("krabka-observability-distributor")
             .dispatch_queue_capacity(client_resource_policy.dispatch_queue_capacity.get())
             .frame_max(client_resource_policy.frame_max.size())
             .acks(Acks::All)
@@ -3235,7 +3235,7 @@ impl KafkaLogWalConsumer {
         let topic = topic.into();
         let consumer = Consumer::builder()
             .bootstrap(bootstrap)
-            .client_id("crabka-observability-compactor")
+            .client_id("krabka-observability-compactor")
             .dispatch_queue_capacity(client_resource_policy.dispatch_queue_capacity.get())
             .frame_max(client_resource_policy.frame_max.size())
             .group_id(group_id)
@@ -3303,11 +3303,11 @@ pub fn build_kafka_wal_record(
     let fingerprint = series_fingerprint(&record.labels);
     let mut headers = vec![
         ProducerHeader {
-            key: "crabka-wal-record-type".to_string(),
+            key: "krabka-wal-record-type".to_string(),
             value: Some(Bytes::from_static(b"log")),
         },
         ProducerHeader {
-            key: "crabka-tenant".to_string(),
+            key: "krabka-tenant".to_string(),
             value: Some(Bytes::from(record.tenant.clone())),
         },
     ];
@@ -3315,7 +3315,7 @@ pub fn build_kafka_wal_record(
     // so the compactor can stitch its consume/compaction span onto the ingest
     // trace. Additive: the record body is unchanged, and this is a no-op when
     // there is no active/sampled span.
-    for (key, value) in crabka_telemetry::propagation::current_trace_headers() {
+    for (key, value) in krabka_telemetry::propagation::current_trace_headers() {
         headers.push(ProducerHeader {
             key,
             value: Some(Bytes::from(value.into_bytes())),
@@ -3548,9 +3548,9 @@ fn spawn_query_authorizer_connect(
 
 fn has_native_kafka_log_headers(headers: &[KafkaWalHeader]) -> bool {
     headers.iter().any(|header| {
-        header.key == "crabka-log-timestamp-ns"
-            || header.key.starts_with("crabka-log-label-")
-            || (header.key == "crabka-wal-record-type"
+        header.key == "krabka-log-timestamp-ns"
+            || header.key.starts_with("krabka-log-label-")
+            || (header.key == "krabka-wal-record-type"
                 && header
                     .value
                     .as_deref()
@@ -3561,9 +3561,9 @@ fn has_native_kafka_log_headers(headers: &[KafkaWalHeader]) -> bool {
 fn decode_native_kafka_log_record(
     record: KafkaWalRecord,
 ) -> Result<WalLogRecord, WalRecordDecodeError> {
-    let tenant = required_kafka_header_utf8(&record.headers, "crabka-tenant")?;
+    let tenant = required_kafka_header_utf8(&record.headers, "krabka-tenant")?;
     let timestamp_ns = if let Some(value) =
-        optional_kafka_header_utf8(&record.headers, "crabka-log-timestamp-ns")?
+        optional_kafka_header_utf8(&record.headers, "krabka-log-timestamp-ns")?
     {
         let timestamp_ns =
             value
@@ -3578,11 +3578,11 @@ fn decode_native_kafka_log_record(
             record
                 .timestamp_ms
                 .ok_or_else(|| WalRecordDecodeError::MissingNativeHeader {
-                    name: "crabka-log-timestamp-ns".to_string(),
+                    name: "krabka-log-timestamp-ns".to_string(),
                 })?;
         native_timestamp_ms_to_ns(timestamp_ms)?
     };
-    let labels = kafka_headers_with_prefix(&record.headers, "crabka-log-label-", |name| {
+    let labels = kafka_headers_with_prefix(&record.headers, "krabka-log-label-", |name| {
         WalRecordDecodeError::DuplicateNativeLabelName { name }
     })?;
     if labels.is_empty() {
@@ -3592,7 +3592,7 @@ fn decode_native_kafka_log_record(
         return Err(WalRecordDecodeError::InvalidNativeLabelName { name: name.clone() });
     }
     let structured_metadata =
-        kafka_headers_with_prefix(&record.headers, "crabka-log-metadata-", |name| {
+        kafka_headers_with_prefix(&record.headers, "krabka-log-metadata-", |name| {
             WalRecordDecodeError::DuplicateNativeMetadataName { name }
         })?;
     if let Some(name) = structured_metadata
@@ -3766,7 +3766,7 @@ pub enum WalRecordDecodeError {
     InvalidNativeTimestampValue { value: String },
     #[error("native Kafka log record value is not UTF-8")]
     InvalidNativeLogLineUtf8,
-    #[error("native Kafka log record did not include any crabka-log-label-* headers")]
+    #[error("native Kafka log record did not include any krabka-log-label-* headers")]
     MissingNativeLabels,
     #[error("invalid native Kafka label name {name}")]
     InvalidNativeLabelName { name: String },
@@ -3838,19 +3838,19 @@ impl ServiceReadiness {
 
 const DISTRIBUTOR_OPS: RoleOps = RoleOps {
     target: "distributor",
-    ring_component: "crabka-distributor",
+    ring_component: "krabka-distributor",
     role_ring_path: Some("/distributor/ring"),
 };
 
 const QUERIER_OPS: RoleOps = RoleOps {
     target: "querier",
-    ring_component: "crabka-querier",
+    ring_component: "krabka-querier",
     role_ring_path: None,
 };
 
 const COMPACTOR_OPS: RoleOps = RoleOps {
     target: "compactor",
-    ring_component: "crabka-compactor",
+    ring_component: "krabka-compactor",
     role_ring_path: Some("/compactor/ring"),
 };
 
@@ -4148,16 +4148,16 @@ async fn push_logs(
     let tenant = ingest_tenant(&headers);
     // ONE server span per push request (not per log line): wraps the whole
     // ingest body so the produce-side WAL append (which injects `traceparent`)
-    // and downstream compaction stitch onto this trace. `crabka.ingest.lines`
+    // and downstream compaction stitch onto this trace. `krabka.ingest.lines`
     // is unknown until normalization, so it is recorded on the span below.
     let span = tracing::info_span!(
         "logs_ingest",
         otel.kind = "server",
         messaging.system = "kafka",
-        messaging.destination.name = "__crabka_observability_logs_wal",
-        crabka.tenant = %tenant,
-        crabka.ingest.lines = tracing::field::Empty,
-        crabka.ingest.bytes = body_size.bytes_u64(),
+        messaging.destination.name = "__krabka_observability_logs_wal",
+        krabka.tenant = %tenant,
+        krabka.ingest.lines = tracing::field::Empty,
+        krabka.ingest.bytes = body_size.bytes_u64(),
     );
     async move {
         let start = Instant::now();
@@ -4172,7 +4172,7 @@ async fn push_logs(
         ) {
             Ok(records) => {
                 let items = records.len() as u64;
-                tracing::Span::current().record("crabka.ingest.lines", items);
+                tracing::Span::current().record("krabka.ingest.lines", items);
                 state.metrics.record_ingest_lines(&tenant, items);
                 let resp = match append_distributor_wal_records(&state, records).await {
                     Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -4202,10 +4202,10 @@ async fn push_otlp_logs(
         "logs_ingest",
         otel.kind = "server",
         messaging.system = "kafka",
-        messaging.destination.name = "__crabka_observability_logs_wal",
-        crabka.tenant = %tenant,
-        crabka.ingest.lines = tracing::field::Empty,
-        crabka.ingest.bytes = body_size.bytes_u64(),
+        messaging.destination.name = "__krabka_observability_logs_wal",
+        krabka.tenant = %tenant,
+        krabka.ingest.lines = tracing::field::Empty,
+        krabka.ingest.bytes = body_size.bytes_u64(),
     );
     async move {
         let start = Instant::now();
@@ -4220,7 +4220,7 @@ async fn push_otlp_logs(
         ) {
             Ok(records) => {
                 let items = records.len() as u64;
-                tracing::Span::current().record("crabka.ingest.lines", items);
+                tracing::Span::current().record("krabka.ingest.lines", items);
                 state.metrics.record_ingest_lines(&tenant, items);
                 let resp = match append_distributor_wal_records(&state, records).await {
                     Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -6333,7 +6333,7 @@ impl QuerierState {
         query_range: TimeRange,
     ) -> Result<Vec<TimeRange>, BlockStoreError> {
         let required_from_ns =
-            crabka_blockstore::log_tenant_index_shard_list_offset_start_ns(query_range);
+            krabka_blockstore::log_tenant_index_shard_list_offset_start_ns(query_range);
         let cache_key = DynamicShardRangesCacheKey {
             tenant: tenant.to_string(),
         };
@@ -6345,7 +6345,7 @@ impl QuerierState {
         }
 
         let mut shard_ranges =
-            crabka_blockstore::list_tenant_log_index_shard_ranges_overlapping_query_from_object_store(
+            krabka_blockstore::list_tenant_log_index_shard_ranges_overlapping_query_from_object_store(
                 store,
                 prefix,
                 tenant,
@@ -7192,11 +7192,11 @@ fn parse_log_level_param(raw_query: Option<&str>) -> Result<String, HttpQueryErr
 
 /// The `target` that `/config` reports, for every role.
 ///
-/// `Loki` reports the components its process runs. Crabka serves the full `Loki`
+/// `Loki` reports the components its process runs. Krabka serves the full `Loki`
 /// surface from each role, so its ops endpoints answer as single-binary `Loki`
 /// does: [`status_services`] lists every component whichever role serves it,
 /// and `/config` reports the target that goes with that list.
-/// `real_loki_and_crabka_return_same_stable_config_status_lines` compares this
+/// `real_loki_and_krabka_return_same_stable_config_status_lines` compares this
 /// against a real `Loki` container, which reports `all`.
 ///
 /// The per-role name stays in [`RoleOps::target`] for `/metrics`, where `Loki`
@@ -7288,7 +7288,7 @@ async fn role_metrics(Extension(ops): Extension<RoleOps>) -> Response {
 }
 
 async fn scheduler_ring() -> Response {
-    ring_status_page("crabka-scheduler")
+    ring_status_page("krabka-scheduler")
 }
 
 async fn ruler_ring() -> Response {
@@ -8868,9 +8868,9 @@ fn status_metrics(component: &'static str) -> Response {
              # HELP loki_boltdb_shipper_compactor_running Value will be 1 if compactor is currently running on this instance\n\
              # TYPE loki_boltdb_shipper_compactor_running gauge\n\
              loki_boltdb_shipper_compactor_running {compactor_running}\n\
-             # HELP crabka_observability_service_up Whether the observability service is running.\n\
-             # TYPE crabka_observability_service_up gauge\n\
-             crabka_observability_service_up{{component=\"{component}\"}} 1\n",
+             # HELP krabka_observability_service_up Whether the observability service is running.\n\
+             # TYPE krabka_observability_service_up gauge\n\
+             krabka_observability_service_up{{component=\"{component}\"}} 1\n",
             env!("CARGO_PKG_VERSION")
         ),
     )
@@ -8883,7 +8883,7 @@ async fn build_info() -> Response {
         "revision": "unknown",
         "branch": "unknown",
         "buildDate": "",
-        "buildUser": "crabka",
+        "buildUser": "krabka",
         "goVersion": "not-go",
     });
     json_response(StatusCode::OK, &value)
@@ -13586,7 +13586,7 @@ async fn execute_patterns_query(
 }
 
 fn log_line_pattern(line: &str) -> String {
-    // Crabka services (and every JSON-emitting collector) log compact objects
+    // Krabka services (and every JSON-emitting collector) log compact objects
     // like `{"timestamp":"…","severity":"INFO","message":"connection opened"}`.
     // Whitespace tokenization mangles those — the quoted values contain spaces
     // and the `:` separator is invisible to the logfmt `key=value` splitter — so
@@ -15778,7 +15778,7 @@ fn format_stream_query(query: &StreamQuery) -> String {
     formatted
 }
 
-fn format_label_matcher(matcher: &crabka_logql::LabelMatcher) -> String {
+fn format_label_matcher(matcher: &krabka_logql::LabelMatcher) -> String {
     format!(
         "{}{}{}",
         matcher.name,
@@ -16401,7 +16401,7 @@ fn metadata_visible_labels(labels: &Labels) -> Labels {
 
 fn metadata_labels_match_selectors(
     labels: &Labels,
-    selectors: &[crabka_logql::StreamQuery],
+    selectors: &[krabka_logql::StreamQuery],
 ) -> bool {
     if selectors.is_empty() {
         return true;
@@ -16417,7 +16417,7 @@ fn metadata_labels_match_selectors(
 
 fn metadata_selectors(
     params: &SeriesParams,
-) -> Result<Vec<crabka_logql::StreamQuery>, HttpQueryError> {
+) -> Result<Vec<krabka_logql::StreamQuery>, HttpQueryError> {
     params
         .matchers
         .iter()
@@ -21035,7 +21035,7 @@ impl IntoResponse for HttpQueryError {
 #[cfg(test)]
 mod tests {
     use assert2::check;
-    use crabka_units::{bytes, bytes_per_sec};
+    use krabka_units::{bytes, bytes_per_sec};
 
     use super::*;
 
@@ -21321,7 +21321,7 @@ mod tests {
             );
             check!(
                 body.contains(&format!(
-                    "crabka_observability_service_up{{component=\"{component}\"}} 1"
+                    "krabka_observability_service_up{{component=\"{component}\"}} 1"
                 )),
                 "{component}"
             );
@@ -21334,7 +21334,7 @@ mod tests {
     /// refuse it against.
     #[test]
     fn an_empty_json_value_is_refused_only_when_a_stale_window_is_set() {
-        use crabka_units::hours;
+        use krabka_units::hours;
 
         let labels = Labels::default();
         check!(validate_loki_empty_json_value_timestamp_window(&labels, None).is_ok());
@@ -21485,7 +21485,7 @@ mod tests {
     /// takes `now` rather than reading it.
     #[test]
     fn the_loki_ingestion_window_accepts_its_own_boundaries() {
-        use crabka_units::{hours, nanos};
+        use krabka_units::{hours, nanos};
 
         let now = 1_000_000_000_000_i64;
         let labels = Labels::default();
@@ -21714,8 +21714,8 @@ mod tests {
     #[test]
     fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
         let fresh = super::DynamicIndexCache {
-            cache_ttl: crabka_units::hours(1),
-            shard_cache_ttl: crabka_units::hours(1),
+            cache_ttl: krabka_units::hours(1),
+            shard_cache_ttl: krabka_units::hours(1),
             ..super::DynamicIndexCache::default()
         };
         let stale = super::DynamicIndexCache {
@@ -21811,7 +21811,7 @@ mod tests {
         // does not, then the reverse.
         let short_manifest = super::DynamicIndexCache {
             cache_ttl: Time::ZERO,
-            shard_cache_ttl: crabka_units::hours(1),
+            shard_cache_ttl: krabka_units::hours(1),
             ..super::DynamicIndexCache::default()
         };
         short_manifest.insert(key(), LabelIndex::default(), BlockIndex::default());
@@ -21830,7 +21830,7 @@ mod tests {
         );
 
         let short_shard = super::DynamicIndexCache {
-            cache_ttl: crabka_units::hours(1),
+            cache_ttl: krabka_units::hours(1),
             shard_cache_ttl: Time::ZERO,
             ..super::DynamicIndexCache::default()
         };
@@ -21930,7 +21930,7 @@ mod tests {
     fn a_scalar_comparison_answers_every_operator_from_both_sides() {
         use std::cmp::Ordering;
 
-        use crabka_logql::ComparisonOp;
+        use krabka_logql::ComparisonOp;
 
         let one = MetricValue::new(1, 1);
         let two = MetricValue::new(2, 1);
@@ -22088,14 +22088,14 @@ mod tests {
     /// response without it matches nothing at all.
     #[test]
     fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
-        use crabka_logql::StreamPlan;
+        use krabka_logql::StreamPlan;
 
         let mut labels = Labels::default();
         labels.insert("app".to_string(), "api".to_string());
         let plan = StreamPlan {
             tenant: "tenant".to_string(),
-            time_range: crabka_blockstore::TimeRange::new(0, 100).expect("a valid range"),
-            query: crabka_logql::parse_query("{app=\"api\"}").expect("the query parses"),
+            time_range: krabka_blockstore::TimeRange::new(0, 100).expect("a valid range"),
+            query: krabka_logql::parse_query("{app=\"api\"}").expect("the query parses"),
             fingerprints: BTreeSet::new(),
             blocks: Vec::new(),
         };
@@ -22150,7 +22150,7 @@ mod tests {
         // the start-of-range clause untested.
         check!(counted(&response(&[(200, "a")]), &[record("tenant", 200, "a")]) == 0);
         let later_plan = StreamPlan {
-            time_range: crabka_blockstore::TimeRange::new(50, 100).expect("a valid range"),
+            time_range: krabka_blockstore::TimeRange::new(50, 100).expect("a valid range"),
             ..plan.clone()
         };
         check!(
@@ -22189,7 +22189,7 @@ mod tests {
     /// it means the index disagrees with the plan.
     #[test]
     fn a_log_row_is_appended_only_when_the_plan_asked_for_it() {
-        use crabka_logql::StreamPlan;
+        use krabka_logql::StreamPlan;
 
         let mut label_index = LabelIndex::default();
         let mut labels = Labels::default();
@@ -22201,8 +22201,8 @@ mod tests {
 
         let plan = StreamPlan {
             tenant: "tenant".to_string(),
-            time_range: crabka_blockstore::TimeRange::new(10, 90).expect("a valid range"),
-            query: crabka_logql::parse_query("{app=\"api\"}").expect("the query parses"),
+            time_range: krabka_blockstore::TimeRange::new(10, 90).expect("a valid range"),
+            query: krabka_logql::parse_query("{app=\"api\"}").expect("the query parses"),
             fingerprints: [known].into_iter().collect(),
             blocks: Vec::new(),
         };
@@ -22282,7 +22282,7 @@ mod tests {
     /// accepts.
     #[tokio::test]
     async fn a_hot_metric_record_lands_in_every_window_that_contains_it() {
-        use crabka_logql::parse_metric_query;
+        use krabka_logql::parse_metric_query;
 
         let query = parse_metric_query("count_over_time({app=\"api\"}[10s])")
             .expect("the metric query parses");
@@ -22298,9 +22298,9 @@ mod tests {
                 position: None,
             }
         };
-        let plan = crabka_logql::StreamPlan {
+        let plan = krabka_logql::StreamPlan {
             tenant: "tenant".to_string(),
-            time_range: crabka_blockstore::TimeRange::new(0, 1_000_000_000_000)
+            time_range: krabka_blockstore::TimeRange::new(0, 1_000_000_000_000)
                 .expect("a valid range"),
             query: query.stream.clone(),
             fingerprints: BTreeSet::new(),
@@ -22452,11 +22452,11 @@ mod tests {
         let Some(Expression::Arithmetic { op, .. }) = parse(&format!("{replace} - up")) else {
             panic!("an arithmetic expression");
         };
-        check!(op == crabka_logql::MetricScalarArithmeticOp::Subtract);
+        check!(op == krabka_logql::MetricScalarArithmeticOp::Subtract);
         let Some(Expression::Comparison { op, .. }) = parse(&format!("{replace} < up")) else {
             panic!("a comparison expression");
         };
-        check!(op == crabka_logql::ComparisonOp::Less);
+        check!(op == krabka_logql::ComparisonOp::Less);
 
         // A binary expression with no label_replace on either side is not this
         // shape, and is parsed elsewhere.
@@ -22524,7 +22524,7 @@ mod tests {
     /// outside of, and still getting its series back.
     #[tokio::test]
     async fn missing_metadata_blocks_fall_back_to_their_indexed_fingerprints() {
-        use crabka_blockstore::{BlockKey, LogRow, TimeRange, write_log_block};
+        use krabka_blockstore::{BlockKey, LogRow, TimeRange, write_log_block};
 
         let dir = tempfile::tempdir().expect("a temp dir");
         let range = |start_ns, end_ns| TimeRange::new(start_ns, end_ns).expect("a valid range");
@@ -22542,7 +22542,7 @@ mod tests {
 
         // One block the index knows about whose file was never written.
         let missing_key = BlockKey::new("tenant", 0, 1, 1, range(0, 100));
-        let missing = crabka_blockstore::BlockDescriptor::new(
+        let missing = krabka_blockstore::BlockDescriptor::new(
             missing_key,
             [7_u64, 8_u64].into_iter().collect(),
         );
@@ -22601,8 +22601,8 @@ mod tests {
     /// deliberate, and each is pinned at its own boundary.
     #[tokio::test]
     async fn counting_index_stats_reads_only_the_rows_a_plan_would() {
-        use crabka_blockstore::{BlockKey, LogRow, TimeRange, write_log_block};
-        use crabka_logql::{StreamPlan, StreamQuery};
+        use krabka_blockstore::{BlockKey, LogRow, TimeRange, write_log_block};
+        use krabka_logql::{StreamPlan, StreamQuery};
 
         let dir = tempfile::tempdir().expect("a temp dir");
         let key = BlockKey::new(
@@ -22716,8 +22716,8 @@ mod tests {
     /// carrying different values.
     #[test]
     fn every_per_query_limit_admits_exactly_its_boundary() {
-        use crabka_blockstore::{BlockDescriptor, BlockKey, TimeRange};
-        use crabka_logql::{StreamPlan, StreamQuery};
+        use krabka_blockstore::{BlockDescriptor, BlockKey, TimeRange};
+        use krabka_logql::{StreamPlan, StreamQuery};
 
         let plan = |fingerprints: usize, block_bytes: &[u32]| StreamPlan {
             tenant: "tenant".to_string(),
@@ -22740,7 +22740,7 @@ mod tests {
                             TimeRange::new(0, 10).expect("a valid range"),
                         ),
                         BTreeSet::new(),
-                        crabka_units::bytes(*size),
+                        krabka_units::bytes(*size),
                     )
                 })
                 .collect(),
@@ -22772,7 +22772,7 @@ mod tests {
         );
         check!(
             super::validate_query_bytes_limit(
-                &base().with_max_query_read(crabka_units::bytes(100)),
+                &base().with_max_query_read(krabka_units::bytes(100)),
                 &two_blocks,
             )
             .is_ok(),
@@ -22780,7 +22780,7 @@ mod tests {
         );
         check!(
             super::validate_query_bytes_limit(
-                &base().with_max_query_read(crabka_units::bytes(99)),
+                &base().with_max_query_read(krabka_units::bytes(99)),
                 &two_blocks,
             )
             .is_err(),
@@ -22795,7 +22795,7 @@ mod tests {
         );
         check!(
             super::validate_query_length_limit(
-                &base().with_max_query_length(crabka_units::bytes(
+                &base().with_max_query_length(krabka_units::bytes(
                     u32::try_from(query.len()).expect("a short query")
                 )),
                 query,
@@ -22805,7 +22805,7 @@ mod tests {
         );
         check!(
             super::validate_query_length_limit(
-                &base().with_max_query_length(crabka_units::bytes(
+                &base().with_max_query_length(krabka_units::bytes(
                     u32::try_from(query.len()).expect("a short query") - 1
                 )),
                 query,
@@ -22821,14 +22821,14 @@ mod tests {
         ));
         check!(matches!(
             super::validate_query_bytes_limit(
-                &base().with_max_query_read(crabka_units::bytes(99)),
+                &base().with_max_query_read(krabka_units::bytes(99)),
                 &two_blocks,
             ),
             Err(HttpQueryError::QueryBytesTooLarge { .. })
         ));
         check!(matches!(
             super::validate_query_length_limit(
-                &base().with_max_query_length(crabka_units::bytes(1)),
+                &base().with_max_query_length(krabka_units::bytes(1)),
                 query,
             ),
             Err(HttpQueryError::QueryLengthTooLarge { .. })
@@ -22845,7 +22845,7 @@ mod tests {
     /// otherwise report a query "shorter" than the limit and let it through.
     #[test]
     fn a_volume_query_range_is_capped_at_its_limit_exactly() {
-        use crabka_blockstore::TimeRange;
+        use krabka_blockstore::TimeRange;
 
         let max_ns = super::LOKI_VOLUME_MAX_QUERY_RANGE.nanos_i64();
         let range = |start_ns, end_ns| {
@@ -23098,7 +23098,7 @@ mod tests {
     /// and giving up on a transient one loses data.
     #[test]
     fn only_an_object_store_failure_is_classified_as_retryable() {
-        use crabka_blockstore::LogBlockStoreError as BlockStoreError;
+        use krabka_blockstore::LogBlockStoreError as BlockStoreError;
 
         let is_object_store = super::compaction_error_is_object_store;
         let object_store_error = || {
@@ -23231,7 +23231,7 @@ mod tests {
     /// show that, so both nestings are exercised.
     #[test]
     fn a_rule_matches_only_when_every_active_filter_accepts_it() {
-        use crabka_logql::{LabelMatcher, MatchOp, StreamQuery};
+        use krabka_logql::{LabelMatcher, MatchOp, StreamQuery};
 
         let rule = serde_json::json!({"type": "alerting", "name": "HighErrors"});
         let source: serde_yaml::Value =
@@ -23413,7 +23413,7 @@ mod tests {
     /// otherwise leave a trailing space in every query without options.
     #[test]
     fn logfmt_parser_flags_carry_their_own_leading_space() {
-        use crabka_logql::{LogfmtExtraction, LogfmtParserConfig};
+        use krabka_logql::{LogfmtExtraction, LogfmtParserConfig};
 
         // The flags are only accepted alongside an extraction, so every
         // config here names one.
@@ -23521,7 +23521,7 @@ mod tests {
     /// would write a manifest whose blocks reference series nothing can name.
     #[test]
     fn copying_descriptor_labels_refuses_a_series_the_source_cannot_name() {
-        use crabka_blockstore::{BlockDescriptor, BlockKey, LabelIndex, TimeRange};
+        use krabka_blockstore::{BlockDescriptor, BlockKey, LabelIndex, TimeRange};
 
         let mut source = LabelIndex::default();
         let mut labels = Labels::default();
@@ -23841,7 +23841,7 @@ mod tests {
     /// rejections are checked as well as both acceptances.
     #[test]
     fn a_vector_comparison_records_which_side_the_literal_was_on() {
-        use crabka_logql::ComparisonOp;
+        use krabka_logql::ComparisonOp;
 
         let parse = super::parse_metric_vector_comparison_expression;
 
@@ -24374,7 +24374,7 @@ mod tests {
     /// non-commutative AND the result differs from the operand.
     #[test]
     fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_it() {
-        use crabka_logql::MetricScalarArithmeticOp;
+        use krabka_logql::MetricScalarArithmeticOp;
 
         let series = |samples: &[(i64, &str)]| {
             serde_json::json!({
@@ -24463,7 +24463,7 @@ mod tests {
             let mut stats = serde_json::json!({});
             super::populate_loki_query_scan_stats(
                 &mut stats,
-                crabka_units::bytes(4_096),
+                krabka_units::bytes(4_096),
                 store_lines,
                 ingester_lines,
                 chunks,
@@ -25252,7 +25252,7 @@ mod tests {
     /// the names alone are not enough to pin them.
     #[test]
     fn a_vector_aggregation_renders_only_the_groupings_its_operator_allows() {
-        use crabka_logql::{VectorAggregation, VectorAggregationOp, VectorGrouping};
+        use krabka_logql::{VectorAggregation, VectorAggregationOp, VectorGrouping};
 
         let render = |op, grouping| {
             super::format_vector_aggregation_query(&VectorAggregation { op, grouping }, "up")
@@ -25318,7 +25318,7 @@ mod tests {
     /// index must not advance on either, so the dropped samples are adjacent.
     #[test]
     fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample() {
-        use crabka_logql::MetricScalarArithmeticOp;
+        use krabka_logql::MetricScalarArithmeticOp;
 
         let series = |samples: &[(i64, &str)]| {
             serde_json::json!({
@@ -25438,7 +25438,7 @@ mod tests {
     /// each site: a lone drop cannot show a skipped neighbour.
     #[test]
     fn a_vector_comparison_filters_and_takes_the_left_operand() {
-        use crabka_logql::ComparisonOp;
+        use krabka_logql::ComparisonOp;
 
         let series = |samples: &[(i64, &str)]| {
             serde_json::json!({
@@ -25577,7 +25577,7 @@ mod tests {
     /// slid into the gap, so the dropped samples are adjacent here.
     #[test]
     fn a_binary_set_operator_keeps_the_subset_it_names() {
-        use crabka_logql::MetricBinarySetOp;
+        use krabka_logql::MetricBinarySetOp;
 
         let range = |samples: &[i64]| {
             serde_json::json!({
@@ -27401,7 +27401,7 @@ mod tests {
             .expect("temporary directory should be representable as a file URL")
             .to_string();
         let config = ServiceConfig::parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target",
             "compactor",
             "--object-store-url",
@@ -27761,7 +27761,7 @@ mod tests {
             BlockKey::new(tenant, 0, 20, 29, old_range_b),
             BTreeSet::from([worker]),
         ));
-        crabka_blockstore::write_tenant_log_index_shards_to_object_store(
+        krabka_blockstore::write_tenant_log_index_shards_to_object_store(
             &store,
             &prefix,
             tenant,
@@ -27798,7 +27798,7 @@ mod tests {
         assert_eq!(
             put_paths,
             vec![
-                crabka_blockstore::log_tenant_index_shard_manifest_object_path(
+                krabka_blockstore::log_tenant_index_shard_manifest_object_path(
                     &prefix, tenant, new_range
                 )
                 .to_string()
@@ -27948,14 +27948,14 @@ mod tests {
         let tenant = "tenant-a";
         let query_range = TimeRange::new(0, 100).unwrap();
         let mut labels_index = LabelIndex::default();
-        let api = labels_index.insert_series(tenant, crabka_blockstore::labels([("app", "api")]));
+        let api = labels_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
         let mut block_index = BlockIndex::default();
         let shard_range = TimeRange::new(10, 19).unwrap();
         block_index.insert(BlockDescriptor::new(
             BlockKey::new(tenant, 0, 42, 43, shard_range),
             BTreeSet::from([api]),
         ));
-        crabka_blockstore::write_tenant_log_index_shards_to_object_store(
+        krabka_blockstore::write_tenant_log_index_shards_to_object_store(
             &store,
             &prefix,
             tenant,
@@ -27993,8 +27993,8 @@ mod tests {
         );
 
         let shard_prefix =
-            crabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
-        let shard_manifest = crabka_blockstore::log_tenant_index_shard_manifest_object_path(
+            krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
+        let shard_manifest = krabka_blockstore::log_tenant_index_shard_manifest_object_path(
             &prefix,
             tenant,
             shard_range,
@@ -28029,9 +28029,9 @@ mod tests {
         let shard_range_b = TimeRange::new(80, 89).unwrap();
 
         let mut labels_index = LabelIndex::default();
-        let api = labels_index.insert_series(tenant, crabka_blockstore::labels([("app", "api")]));
+        let api = labels_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
         let worker =
-            labels_index.insert_series(tenant, crabka_blockstore::labels([("app", "worker")]));
+            labels_index.insert_series(tenant, krabka_blockstore::labels([("app", "worker")]));
         let mut block_index = BlockIndex::default();
         block_index.insert(BlockDescriptor::new(
             BlockKey::new(tenant, 0, 42, 43, shard_range_a),
@@ -28041,7 +28041,7 @@ mod tests {
             BlockKey::new(tenant, 0, 44, 45, shard_range_b),
             BTreeSet::from([worker]),
         ));
-        crabka_blockstore::write_tenant_log_index_shards_to_object_store(
+        krabka_blockstore::write_tenant_log_index_shards_to_object_store(
             &store,
             &prefix,
             tenant,
@@ -28075,14 +28075,14 @@ mod tests {
         }
 
         let shard_prefix =
-            crabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
-        let shard_manifest_a = crabka_blockstore::log_tenant_index_shard_manifest_object_path(
+            krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
+        let shard_manifest_a = krabka_blockstore::log_tenant_index_shard_manifest_object_path(
             &prefix,
             tenant,
             shard_range_a,
         )
         .to_string();
-        let shard_manifest_b = crabka_blockstore::log_tenant_index_shard_manifest_object_path(
+        let shard_manifest_b = krabka_blockstore::log_tenant_index_shard_manifest_object_path(
             &prefix,
             tenant,
             shard_range_b,
@@ -28128,7 +28128,7 @@ mod tests {
         let matching_shard_range = TimeRange::new(query_start + 10, query_start + 20).unwrap();
 
         let mut labels_index = LabelIndex::default();
-        let api = labels_index.insert_series(tenant, crabka_blockstore::labels([("app", "api")]));
+        let api = labels_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
         let mut block_index = BlockIndex::default();
         block_index.insert(BlockDescriptor::new(
             BlockKey::new(tenant, 0, 40, 41, old_shard_range),
@@ -28138,7 +28138,7 @@ mod tests {
             BlockKey::new(tenant, 0, 42, 43, matching_shard_range),
             BTreeSet::from([api]),
         ));
-        crabka_blockstore::write_tenant_log_index_shards_to_object_store(
+        krabka_blockstore::write_tenant_log_index_shards_to_object_store(
             &store,
             &prefix,
             tenant,
@@ -28167,7 +28167,7 @@ mod tests {
             BTreeSet::from(["app".to_string()])
         );
         let expected_offset =
-            crabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant)
+            krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant)
                 .join(format!("time={}", query_start - (query_end - query_start)))
                 .to_string();
         assert!(
@@ -28206,7 +28206,7 @@ mod tests {
         let prefix = ObjectPath::from("observability/logs");
         let tenant = "tenant-a";
         let mut label_index = LabelIndex::default();
-        let api = label_index.insert_series(tenant, crabka_blockstore::labels([("app", "api")]));
+        let api = label_index.insert_series(tenant, krabka_blockstore::labels([("app", "api")]));
         let mut block_index = BlockIndex::default();
 
         for block_id in 0_i64..4 {
@@ -28355,7 +28355,7 @@ mod tests {
     #[test]
     fn distributor_policy_uses_defaults_and_cli_overrides() {
         let defaults =
-            ServiceConfig::parse_from(["crabka-observability", "--target", "distributor"]);
+            ServiceConfig::parse_from(["krabka-observability", "--target", "distributor"]);
         check!(defaults.reject_old_samples_max_age == days(7));
         check!(defaults.creation_grace_period == minutes(10));
         check!(defaults.ingest_quota_burst_window == secs(1));
@@ -28365,7 +28365,7 @@ mod tests {
         check!(defaults.wal_connect_max_backoff == secs(2));
 
         let configured = ServiceConfig::try_parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target",
             "distributor",
             "--reject-old-samples-max-age=8d",
@@ -28399,7 +28399,7 @@ mod tests {
         ] {
             check!(
                 ServiceConfig::try_parse_from([
-                    "crabka-observability",
+                    "krabka-observability",
                     "--target",
                     "distributor",
                     argument,
@@ -28410,7 +28410,7 @@ mod tests {
         }
 
         let attempt_above_deadline = ServiceConfig::parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target",
             "distributor",
             "--wal-connect-startup-deadline=1s",
@@ -28419,7 +28419,7 @@ mod tests {
         check!(validate_distributor_policy(&attempt_above_deadline).is_err());
 
         let initial_above_max = ServiceConfig::parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target",
             "distributor",
             "--wal-connect-initial-backoff=2s",
@@ -28441,7 +28441,7 @@ mod tests {
             ),
         ] {
             let at_the_limit = ServiceConfig::parse_from([
-                "crabka-observability",
+                "krabka-observability",
                 "--target",
                 "distributor",
                 deadline,
@@ -28457,7 +28457,7 @@ mod tests {
     #[tokio::test]
     async fn distributor_dependency_startup_rejects_invalid_policy_before_connecting() {
         let config = ServiceConfig::parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target",
             "distributor",
             "--wal-bootstrap-server=127.0.0.1:1",
@@ -28487,7 +28487,7 @@ mod tests {
         check!(defaults.compactor_object_store_max_backoff == millis(500));
 
         let configured = ServiceConfig::try_parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target=compactor",
             "--compactor-wal-poll-timeout=600ms",
             "--compactor-accumulation-window=3s",
@@ -28520,7 +28520,7 @@ mod tests {
         ] {
             check!(
                 ServiceConfig::try_parse_from([
-                    "crabka-observability",
+                    "krabka-observability",
                     "--target=compactor",
                     argument,
                 ])
@@ -28530,7 +28530,7 @@ mod tests {
         }
 
         let poll_above_window = ServiceConfig::parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target=compactor",
             "--compactor-accumulation-window=1s",
             "--compactor-accumulation-poll-timeout=2s",
@@ -28538,7 +28538,7 @@ mod tests {
         check!(validate_compactor_policy(&poll_above_window).is_err());
 
         let initial_above_max = ServiceConfig::parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target=compactor",
             "--compactor-object-store-initial-backoff=2s",
             "--compactor-object-store-max-backoff=1s",
@@ -28557,7 +28557,7 @@ mod tests {
             ),
         ] {
             let at_the_limit = ServiceConfig::parse_from([
-                "crabka-observability",
+                "krabka-observability",
                 "--target=compactor",
                 window,
                 timeout,
@@ -28582,7 +28582,7 @@ mod tests {
         check!(defaults.querier_dependency_reconnect_interval == millis(500));
 
         let configured = ServiceConfig::try_parse_from([
-            "crabka-observability",
+            "krabka-observability",
             "--target=querier",
             "--querier-frontier-refresh-interval=6s",
             "--querier-dynamic-index-cache-ttl=7s",
@@ -28631,7 +28631,7 @@ mod tests {
         ] {
             check!(
                 ServiceConfig::try_parse_from([
-                    "crabka-observability",
+                    "krabka-observability",
                     "--target=querier",
                     argument,
                 ])
@@ -28668,9 +28668,9 @@ mod tests {
         let metrics = ServiceMetrics::new();
         let frontier = SharedCompactionFrontier::default();
         let client_resource_policy = ClientResourcePolicy {
-            dispatch_queue_capacity: crabka_client_core::ConnectionDispatchQueueCapacity::new(7)
+            dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity::new(7)
                 .unwrap(),
-            frame_max: crabka_client_core::ClientFrameMax::try_from(crabka_units::kibibytes(32))
+            frame_max: krabka_client_core::ClientFrameMax::try_from(krabka_units::kibibytes(32))
                 .unwrap(),
         };
         let deps = ServiceDependencies::default()
@@ -28731,7 +28731,7 @@ mod tests {
     fn acl_helpers_require_topic_operation_principal_and_pattern() {
         let allow_write = acl_entry(
             ResourceType::Topic,
-            "__crabka_observability_logs_wal",
+            "__krabka_observability_logs_wal",
             PatternType::Literal,
             "User:tenant-a",
             AclOperation::Write,
@@ -28739,7 +28739,7 @@ mod tests {
         );
         let allow_read = acl_entry(
             ResourceType::Topic,
-            "__crabka_",
+            "__krabka_",
             PatternType::Prefixed,
             "User:*",
             AclOperation::Read,
@@ -28755,8 +28755,8 @@ mod tests {
         );
 
         for (entry, topic, want) in [
-            (&allow_write, "__crabka_observability_logs_wal", true),
-            (&allow_read, "__crabka_observability_logs_wal", true),
+            (&allow_write, "__krabka_observability_logs_wal", true),
+            (&allow_read, "__krabka_observability_logs_wal", true),
             (&allow_read, "other-topic", false),
         ] {
             check!(
@@ -28775,7 +28775,7 @@ mod tests {
         check!(acl_matches_tenant_wal_write(
             &allow_write,
             "User:tenant-a",
-            "__crabka_observability_logs_wal"
+            "__krabka_observability_logs_wal"
         ));
 
         // The wildcard principal grants on the write side too. Only the read
@@ -28783,14 +28783,14 @@ mod tests {
         check!(acl_matches_tenant_wal_write(
             &acl_entry(
                 ResourceType::Topic,
-                "__crabka_observability_logs_wal",
+                "__krabka_observability_logs_wal",
                 PatternType::Literal,
                 "User:*",
                 AclOperation::Write,
                 PermissionType::Allow,
             ),
             "User:tenant-a",
-            "__crabka_observability_logs_wal"
+            "__krabka_observability_logs_wal"
         ));
 
         // And a non-Topic resource is refused reading, as it already is
@@ -28798,19 +28798,19 @@ mod tests {
         check!(!acl_matches_tenant_wal_read(
             &acl_entry(
                 ResourceType::Group,
-                "__crabka_observability_logs_wal",
+                "__krabka_observability_logs_wal",
                 PatternType::Literal,
                 "User:tenant-a",
                 AclOperation::Read,
                 PermissionType::Allow,
             ),
             "User:tenant-a",
-            "__crabka_observability_logs_wal"
+            "__krabka_observability_logs_wal"
         ));
         check!(acl_matches_tenant_wal_read(
             &allow_read,
             "User:tenant-a",
-            "__crabka_observability_logs_wal"
+            "__krabka_observability_logs_wal"
         ));
 
         // A concrete principal grants itself and nobody else. `allow_read`
@@ -28820,7 +28820,7 @@ mod tests {
         let read_as = |principal: &str| {
             acl_entry(
                 ResourceType::Topic,
-                "__crabka_observability_logs_wal",
+                "__krabka_observability_logs_wal",
                 PatternType::Literal,
                 principal,
                 AclOperation::Read,
@@ -28830,39 +28830,39 @@ mod tests {
         check!(acl_matches_tenant_wal_read(
             &read_as("User:tenant-a"),
             "User:tenant-a",
-            "__crabka_observability_logs_wal"
+            "__krabka_observability_logs_wal"
         ));
         check!(!acl_matches_tenant_wal_read(
             &read_as("User:tenant-b"),
             "User:tenant-a",
-            "__crabka_observability_logs_wal"
+            "__krabka_observability_logs_wal"
         ));
         check!(!acl_matches_tenant_wal_write(
             &allow_read,
             "User:tenant-a",
-            "__crabka_observability_logs_wal"
+            "__krabka_observability_logs_wal"
         ));
         check!(!acl_matches_tenant_wal_read(
             &allow_write,
             "User:tenant-a",
-            "__crabka_observability_logs_wal"
+            "__krabka_observability_logs_wal"
         ));
         check!(!acl_matches_tenant_wal_write(
             &acl_entry(
                 ResourceType::Group,
-                "__crabka_observability_logs_wal",
+                "__krabka_observability_logs_wal",
                 PatternType::Literal,
                 "User:tenant-a",
                 AclOperation::Write,
                 PermissionType::Allow,
             ),
             "User:tenant-a",
-            "__crabka_observability_logs_wal",
+            "__krabka_observability_logs_wal",
         ));
         check!(
             check_tenant_wal_write_acl(
                 "tenant-a",
-                "__crabka_observability_logs_wal",
+                "__krabka_observability_logs_wal",
                 std::slice::from_ref(&allow_write)
             )
             .is_ok()
@@ -28870,7 +28870,7 @@ mod tests {
         check!(
             check_tenant_wal_read_acl(
                 "tenant-a",
-                "__crabka_observability_logs_wal",
+                "__krabka_observability_logs_wal",
                 std::slice::from_ref(&allow_read)
             )
             .is_ok()
@@ -28878,7 +28878,7 @@ mod tests {
         check!(
             check_tenant_wal_write_acl(
                 "tenant-a",
-                "__crabka_observability_logs_wal",
+                "__krabka_observability_logs_wal",
                 &[deny_write]
             )
             .is_err()
@@ -28886,7 +28886,7 @@ mod tests {
         check!(
             check_tenant_wal_read_acl(
                 "tenant-a",
-                "__crabka_observability_logs_wal",
+                "__krabka_observability_logs_wal",
                 &[allow_write]
             )
             .is_err()
@@ -29121,10 +29121,10 @@ mod tests {
     #[test]
     fn native_header_detection_requires_native_log_shape() {
         for (key, value, want) in [
-            ("crabka-wal-record-type", Some(&b"log-line"[..]), true),
-            ("crabka-log-timestamp-ns", Some(&b"1"[..]), true),
-            ("crabka-log-label-app", Some(&b"api"[..]), true),
-            ("crabka-wal-record-type", Some(&b"log"[..]), false),
+            ("krabka-wal-record-type", Some(&b"log-line"[..]), true),
+            ("krabka-log-timestamp-ns", Some(&b"1"[..]), true),
+            ("krabka-log-label-app", Some(&b"api"[..]), true),
+            ("krabka-wal-record-type", Some(&b"log"[..]), false),
             ("other", None, false),
         ] {
             let header = KafkaWalHeader {
@@ -29635,7 +29635,7 @@ mod tests {
     /// edges and the `||` joining them to the fingerprint test were all free.
     #[tokio::test]
     async fn a_patterns_scan_keeps_the_window_half_open() {
-        use crabka_blockstore::{BlockKey, LogRow, TimeRange, series_fingerprint, write_log_block};
+        use krabka_blockstore::{BlockKey, LogRow, TimeRange, series_fingerprint, write_log_block};
 
         let dir = tempfile::tempdir().expect("a temp dir");
         let mut labels = Labels::new();
@@ -29728,14 +29728,14 @@ mod tests {
 
     #[test]
     fn json_log_lines_collapse_to_a_single_templated_pattern() {
-        // Two Crabka-shaped JSON log lines differing only by timestamp must mine
+        // Two Krabka-shaped JSON log lines differing only by timestamp must mine
         // to one pattern with the timestamp templatized and every constant kept.
-        let first = r#"{"timestamp":"2026-07-01T04:19:26.1238077Z","severity":"INFO","target":"crabka_broker::network::dispatch","message":"connection opened"}"#;
-        let second = r#"{"timestamp":"2026-07-01T04:19:27.9981001Z","severity":"INFO","target":"crabka_broker::network::dispatch","message":"connection opened"}"#;
+        let first = r#"{"timestamp":"2026-07-01T04:19:26.1238077Z","severity":"INFO","target":"krabka_broker::network::dispatch","message":"connection opened"}"#;
+        let second = r#"{"timestamp":"2026-07-01T04:19:27.9981001Z","severity":"INFO","target":"krabka_broker::network::dispatch","message":"connection opened"}"#;
         assert_eq!(log_line_pattern(first), log_line_pattern(second));
         assert_eq!(
             log_line_pattern(first),
-            r#"{"timestamp":"<_>","severity":"INFO","target":"crabka_broker::network::dispatch","message":"connection opened"}"#
+            r#"{"timestamp":"<_>","severity":"INFO","target":"krabka_broker::network::dispatch","message":"connection opened"}"#
         );
     }
 
@@ -29797,7 +29797,7 @@ mod tests {
         // Constant: levels, module paths, file:line callers, short words.
         assert!(!pattern_value_is_variable("INFO"));
         assert!(!pattern_value_is_variable(
-            "crabka_broker::network::dispatch"
+            "krabka_broker::network::dispatch"
         ));
         assert!(!pattern_value_is_variable("grpc_logging.go:66"));
         assert!(!pattern_value_is_variable("/cortex.Ingester/Push"));

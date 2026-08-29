@@ -4,8 +4,8 @@
 //! matter are that it never panics and that it never sizes an allocation from a
 //! number an attacker chose.
 
-use crabka_metrics::wire::{ClockSourceKind, GnssFix, decode_clock_readings, pb};
-use crabka_units::prelude::*;
+use krabka_metrics::wire::{ClockSourceKind, GnssFix, decode_clock_readings, pb};
+use krabka_units::prelude::*;
 use proptest::prelude::*;
 use prost::Message as _;
 

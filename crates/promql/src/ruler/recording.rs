@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use crabka_blockstore::Labels;
-use crabka_metrics::{SamplePayload, WalRecord};
+use krabka_blockstore::Labels;
+use krabka_metrics::{SamplePayload, WalRecord};
 
 use super::{
     RecordingRuleWalSink,

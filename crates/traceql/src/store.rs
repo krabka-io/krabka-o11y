@@ -1,7 +1,7 @@
 //! Storage boundary for `TraceQL` planning and execution.
 
-use crabka_units::ByteSize;
 use datafusion::prelude::SessionContext;
+use krabka_units::ByteSize;
 
 use crate::{
     error::Result,
@@ -141,8 +141,8 @@ pub fn filter_trace_spans_by_time(mut trace: TraceSpans, start_ns: i64, end_ns: 
 #[cfg(test)]
 mod tests {
     use assert2::assert;
-    use crabka_units::bytes;
     use datafusion::prelude::SessionContext;
+    use krabka_units::bytes;
 
     use super::*;
 

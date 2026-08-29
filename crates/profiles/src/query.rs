@@ -14,14 +14,14 @@ use axum::{
     routing::get,
 };
 use connectrpc_axum::message::{Code, ConnectError, ConnectRequest, ConnectResponse};
-use crabka_blockstore::{LABEL_PROFILE_TYPE, LabelMatcher, MatchOp};
-use crabka_pprof::{
+use krabka_blockstore::{LABEL_PROFILE_TYPE, LabelMatcher, MatchOp};
+use krabka_pprof::{
     COL_FINGERPRINT, COL_TIMESTAMP, EngineOpts, FlameEngine, FlameGraph, InMemoryProfileStore,
     LabeledHeatmap, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE,
     PCOL_VALUE, ProfileError, ProfileStats, ProfileStore, ProfileType, Series, SeriesAgg,
     bin_heatmap, parse_label_selector, step_bucket_ms, step_from_secs,
 };
-use crabka_units::{
+use krabka_units::{
     Time,
     convert::{StdDurationExt as _, TimeExt},
     days, hours, millis, minutes, secs,
@@ -47,10 +47,10 @@ const DEFAULT_HEATMAP_VALUE_BUCKETS: usize = 32;
 const DEFAULT_HEATMAP_TIME_BUCKETS_MAX: usize = 4096;
 const PROFILE_ID_LABEL: &str = "__profile_id__";
 
-/// Labels that Crabka stores internally for span and exemplar lookups.
+/// Labels that Krabka stores internally for span and exemplar lookups.
 ///
 /// Pyroscope does not expose these labels through the label-enumeration APIs
-/// `LabelNames` and `LabelValues`, or through series counting. Crabka attaches
+/// `LabelNames` and `LabelValues`, or through series counting. Krabka attaches
 /// `__profile_id__` to each profile, so a report of it would leak per-profile
 /// cardinality that real Pyroscope never reports.
 fn is_internal_label(name: &str) -> bool {
@@ -716,7 +716,7 @@ impl<S: ProfileStore> QuerierState<S> {
 }
 
 async fn span_exemplars_from_scan(
-    scan: &crabka_pprof::ProfileScan,
+    scan: &krabka_pprof::ProfileScan,
     step: Time,
     labels: &[(String, String)],
     call_sites: &[String],
@@ -790,7 +790,7 @@ async fn span_exemplars_from_scan(
 }
 
 async fn span_exemplars_from_totals(
-    scan: &crabka_pprof::ProfileScan,
+    scan: &krabka_pprof::ProfileScan,
     step: Time,
     labels: &[(String, String)],
 ) -> Result<BTreeMap<i64, Vec<pb::types::v1::Exemplar>>, ProfileError> {
@@ -839,7 +839,7 @@ async fn span_exemplars_from_totals(
 }
 
 async fn individual_exemplars_from_scan(
-    scan: &crabka_pprof::ProfileScan,
+    scan: &krabka_pprof::ProfileScan,
     step: Time,
     labels: &[(String, String)],
     profile_id: &str,
@@ -904,7 +904,7 @@ async fn individual_exemplars_from_scan(
 }
 
 async fn individual_exemplars_from_totals(
-    scan: &crabka_pprof::ProfileScan,
+    scan: &krabka_pprof::ProfileScan,
     step: Time,
     labels: &[(String, String)],
     profile_id: &str,
@@ -947,7 +947,7 @@ async fn individual_exemplars_from_totals(
     Ok(out)
 }
 
-fn frames_match_call_sites(frames: &[crabka_pprof::Frame], call_sites: &[String]) -> bool {
+fn frames_match_call_sites(frames: &[krabka_pprof::Frame], call_sites: &[String]) -> bool {
     call_sites.iter().all(|site| {
         frames
             .iter()
@@ -956,7 +956,7 @@ fn frames_match_call_sites(frames: &[crabka_pprof::Frame], call_sites: &[String]
 }
 
 async fn heatmap_span_exemplars_from_scan(
-    scan: &crabka_pprof::ProfileScan,
+    scan: &krabka_pprof::ProfileScan,
     start_ms: i64,
     end_ms: i64,
     time_buckets: usize,
@@ -1012,7 +1012,7 @@ async fn heatmap_span_exemplars_from_scan(
 }
 
 async fn heatmap_individual_exemplars_from_scan(
-    scan: &crabka_pprof::ProfileScan,
+    scan: &krabka_pprof::ProfileScan,
     start_ms: i64,
     end_ms: i64,
     time_buckets: usize,
@@ -1063,7 +1063,7 @@ async fn heatmap_individual_exemplars_from_scan(
 }
 
 async fn span_heatmap_points_from_scan(
-    scan: &crabka_pprof::ProfileScan,
+    scan: &krabka_pprof::ProfileScan,
 ) -> Result<Vec<(i64, i64)>, ProfileError> {
     let sql = format!(
         "SELECT {timestamp}, MAX({total}) AS total \
@@ -1167,7 +1167,7 @@ where
     // Pyroscope `settings.v1.SettingsService`. The Grafana Profiles Drilldown
     // app calls `Get` during init; a 404 aborts its init chain so it never
     // issues the per-panel `SelectSeries` queries and the landing grid renders
-    // empty. Crabka doesn't persist UI settings, so `Get` returns an empty set
+    // empty. Krabka doesn't persist UI settings, so `Get` returns an empty set
     // (the app falls back to its defaults) and `Set` echoes the value back.
     let settings = pb::settings::v1::settings_service_connect::SettingsServiceBuilder::<()>::new()
         .get(get_settings_handler)
@@ -1235,7 +1235,7 @@ where
 
 /// Pyroscope `settings.v1.SettingsService/Get`.
 ///
-/// Crabka does not persist UI settings, so this handler reports an empty set.
+/// Krabka does not persist UI settings, so this handler reports an empty set.
 /// The Grafana Profiles Drilldown app then uses its built-in defaults, the same
 /// defaults as for a fresh Pyroscope tenant. Without this endpoint the init of
 /// the app gets a 404 and the landing page renders empty.
@@ -1251,7 +1251,7 @@ async fn get_settings_handler(
 
 /// Pyroscope `settings.v1.SettingsService/Set`.
 ///
-/// Crabka does not persist settings. This handler echoes the value back so the
+/// Krabka does not persist settings. This handler echoes the value back so the
 /// optimistic UI update of the app succeeds for the session.
 async fn set_settings_handler(
     req: ConnectRequest<pb::settings::v1::SetSettingsRequest>,
@@ -2268,7 +2268,7 @@ fn tenant_from_headers(headers: &HeaderMap) -> Result<String, ProfileError> {
 
 fn parse_matchers(
     matchers: &[String],
-) -> Result<Vec<crabka_blockstore::LabelMatcher>, ProfileError> {
+) -> Result<Vec<krabka_blockstore::LabelMatcher>, ProfileError> {
     let mut out = Vec::new();
     for matcher in matchers {
         out.extend(parse_label_selector(matcher)?);
@@ -2443,7 +2443,7 @@ fn normalize_render_unix_time(value: i64) -> i64 {
 
 /// The `now-<offset>` lookback of Pyroscope's `/render` `from`/`until` params.
 ///
-/// The grammar is Pyroscope's, not `crabka-units`': a bare integer followed by
+/// The grammar is Pyroscope's, not `krabka-units`': a bare integer followed by
 /// exactly one of `s`, `m`, `h`, or `d`. The result is an extent, so it is a
 /// [`Time`]. The instant that it resolves against stays epoch milliseconds at
 /// the call site.
@@ -2479,7 +2479,7 @@ fn unix_now_ms() -> i64 {
     i64::try_from(millis).unwrap_or(i64::MAX)
 }
 
-fn flamebearer_json(flamegraph: crabka_pprof::FlameGraph, profile_type: &str) -> serde_json::Value {
+fn flamebearer_json(flamegraph: krabka_pprof::FlameGraph, profile_type: &str) -> serde_json::Value {
     json!({
         "flamebearer": {
             "names": flamegraph.names,
@@ -2492,7 +2492,7 @@ fn flamebearer_json(flamegraph: crabka_pprof::FlameGraph, profile_type: &str) ->
 }
 
 fn flamebearer_diff_json(
-    diff: crabka_pprof::FlameGraphDiff,
+    diff: krabka_pprof::FlameGraphDiff,
     profile_type: &str,
 ) -> serde_json::Value {
     let max_self = diff
@@ -2532,7 +2532,7 @@ fn flamebearer_metadata(format: &str, profile_type: &str) -> serde_json::Value {
     }
 }
 
-fn flamegraph_dot(flamegraph: &crabka_pprof::FlameGraph) -> String {
+fn flamegraph_dot(flamegraph: &krabka_pprof::FlameGraph) -> String {
     #[derive(Clone)]
     struct DotBar {
         id: usize,
@@ -2730,8 +2730,8 @@ fn limit(limit: i64) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-impl From<crabka_pprof::FlameGraph> for pb::querier::v1::FlameGraph {
-    fn from(value: crabka_pprof::FlameGraph) -> Self {
+impl From<krabka_pprof::FlameGraph> for pb::querier::v1::FlameGraph {
+    fn from(value: krabka_pprof::FlameGraph) -> Self {
         Self {
             names: value.names,
             levels: value
@@ -2747,8 +2747,8 @@ impl From<crabka_pprof::FlameGraph> for pb::querier::v1::FlameGraph {
     }
 }
 
-impl From<crabka_pprof::FlameGraphDiff> for pb::querier::v1::FlameGraphDiff {
-    fn from(value: crabka_pprof::FlameGraphDiff) -> Self {
+impl From<krabka_pprof::FlameGraphDiff> for pb::querier::v1::FlameGraphDiff {
+    fn from(value: krabka_pprof::FlameGraphDiff) -> Self {
         let max_self = value
             .levels
             .iter()
@@ -2772,8 +2772,8 @@ impl From<crabka_pprof::FlameGraphDiff> for pb::querier::v1::FlameGraphDiff {
     }
 }
 
-impl From<crabka_pprof::Heatmap> for pb::querier::v1::HeatmapSeries {
-    fn from(value: crabka_pprof::Heatmap) -> Self {
+impl From<krabka_pprof::Heatmap> for pb::querier::v1::HeatmapSeries {
+    fn from(value: krabka_pprof::Heatmap) -> Self {
         let step_ms = if value.time_buckets == 0 {
             0
         } else {
@@ -2806,8 +2806,8 @@ impl From<crabka_pprof::Heatmap> for pb::querier::v1::HeatmapSeries {
     }
 }
 
-impl From<crabka_pprof::LabeledHeatmap> for pb::querier::v1::HeatmapSeries {
-    fn from(value: crabka_pprof::LabeledHeatmap) -> Self {
+impl From<krabka_pprof::LabeledHeatmap> for pb::querier::v1::HeatmapSeries {
+    fn from(value: krabka_pprof::LabeledHeatmap) -> Self {
         let mut series = Self::from(value.heatmap);
         series.labels = label_pairs(value.labels);
         series
@@ -2844,8 +2844,8 @@ mod tests {
 
     use assert2::{assert, check};
     use base64::Engine;
-    use crabka_pprof::{FunctionRec, LineRec, LocationRec};
-    use crabka_units::secs;
+    use krabka_pprof::{FunctionRec, LineRec, LocationRec};
+    use krabka_units::secs;
 
     /// Converting a heatmap to its wire form derives a step from the time
     /// span and stamps each slot with its own *end*. The span is `end - start`
@@ -2856,7 +2856,7 @@ mod tests {
     /// step is not a field: it only shows through the slot timestamps.
     #[test]
     fn a_heatmap_stamps_each_slot_with_the_end_of_its_own_bucket() {
-        let series = pb::querier::v1::HeatmapSeries::from(crabka_pprof::Heatmap {
+        let series = pb::querier::v1::HeatmapSeries::from(krabka_pprof::Heatmap {
             start_ms: 1_000,
             end_ms: 5_000,
             time_buckets: 4,
@@ -2889,7 +2889,7 @@ mod tests {
         );
 
         // No time buckets means no step to derive and no slots to stamp.
-        let empty = pb::querier::v1::HeatmapSeries::from(crabka_pprof::Heatmap {
+        let empty = pb::querier::v1::HeatmapSeries::from(krabka_pprof::Heatmap {
             start_ms: 1_000,
             end_ms: 5_000,
             time_buckets: 0,
@@ -3145,24 +3145,24 @@ mod tests {
     /// first. One name needs escaping and one index is out of range.
     #[test]
     fn flamegraph_dot_lays_out_bars_and_wires_them_to_their_parents() {
-        let graph = crabka_pprof::FlameGraph {
+        let graph = krabka_pprof::FlameGraph {
             names: vec!["root".to_string(), "a\"quoted".to_string(), "b".to_string()],
             levels: vec![
-                crabka_pprof::Level {
+                krabka_pprof::Level {
                     values: vec![0, 10, 2, 0],
                 },
-                crabka_pprof::Level {
+                krabka_pprof::Level {
                     values: vec![0, 4, 4, 1, 0, 6, 6, 2],
                 },
                 // Offset 4 from a running end of 0 puts this under "b", not "a".
-                crabka_pprof::Level {
+                krabka_pprof::Level {
                     values: vec![4, 6, 6, 9],
                 },
                 // A negative name index cannot convert at all, which is a
                 // different failure from index 9 above: that one converts and
                 // then misses. Both fall back to a placeholder rather than
                 // naming some unrelated frame.
-                crabka_pprof::Level {
+                krabka_pprof::Level {
                     values: vec![0, 6, 6, -1],
                 },
             ],
@@ -5107,7 +5107,7 @@ overrides:
     #[test]
     fn flamebearer_json_includes_profile_metadata() {
         let response = flamebearer_json(
-            crabka_pprof::FlameGraph {
+            krabka_pprof::FlameGraph {
                 names: vec!["total".to_string()],
                 levels: Vec::new(),
                 total: 7,
@@ -5131,20 +5131,20 @@ overrides:
 
     #[test]
     fn flamegraph_dot_projects_levels_to_graphviz() {
-        let dot = flamegraph_dot(&crabka_pprof::FlameGraph {
+        let dot = flamegraph_dot(&krabka_pprof::FlameGraph {
             names: vec![
                 "total".to_string(),
                 "main".to_string(),
                 "main.work".to_string(),
             ],
             levels: vec![
-                crabka_pprof::Level {
+                krabka_pprof::Level {
                     values: vec![0, 7, 0, 0],
                 },
-                crabka_pprof::Level {
+                krabka_pprof::Level {
                     values: vec![0, 7, 0, 1],
                 },
-                crabka_pprof::Level {
+                krabka_pprof::Level {
                     values: vec![0, 7, 7, 2],
                 },
             ],
@@ -5387,7 +5387,7 @@ overrides:
 
     #[test]
     fn heatmap_series_projects_slots() {
-        let series = pb::querier::v1::HeatmapSeries::from(crabka_pprof::Heatmap {
+        let series = pb::querier::v1::HeatmapSeries::from(krabka_pprof::Heatmap {
             start_ms: 0,
             end_ms: 20,
             time_buckets: 2,

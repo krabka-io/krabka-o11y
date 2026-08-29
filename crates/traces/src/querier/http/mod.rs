@@ -8,12 +8,12 @@ use axum::{
     routing::get,
 };
 use base64::Engine;
-use crabka_traceql::{
+use krabka_traceql::{
     AttrValue, ComparisonOp, Field, FieldExpr, Intrinsic, ScanJob, ScanOptions, Scope, ScopedTag,
     SearchOptions, SearchResponse, SpanRef, SpanStore, SpansetExpr, TagScope, TraceMetricsResponse,
     TraceSpans, TraceqlEngine, TraceqlError, TypedValue, Value as TraceqlValue,
 };
-use crabka_units::{
+use krabka_units::{
     Time,
     convert::{ByteSizeExt as _, TimeExt as _},
 };
@@ -195,9 +195,9 @@ async fn buildinfo() -> Response {
         "status": "success",
         "data": {
             "version": "2.6.0",
-            "revision": "crabka",
+            "revision": "krabka",
             "branch": "main",
-            "buildUser": "crabka",
+            "buildUser": "krabka",
             "buildDate": "",
             "goVersion": "",
         },
@@ -1074,7 +1074,7 @@ fn q_filter_limit(
 }
 
 fn exact_tag_value_filter(query: &str, tag: &str) -> Result<Option<TypedValue>, TraceqlError> {
-    let query = crabka_traceql::parse(query)?;
+    let query = krabka_traceql::parse(query)?;
     if !query.pipeline.is_empty() {
         return Ok(None);
     }
@@ -1800,7 +1800,7 @@ fn span_end_unix_nano(span: &SpanRef) -> u64 {
 
 /// An event's absolute instant: the span's start coordinate advanced by the
 /// event's offset into the span.
-fn event_unix_nano(span: &SpanRef, event: &crabka_traceql::EventRef) -> u64 {
+fn event_unix_nano(span: &SpanRef, event: &krabka_traceql::EventRef) -> u64 {
     span.start_time_unix_nano
         .saturating_add(u64::try_from(event.time_since_start.nanos_i64()).unwrap_or(0))
 }
@@ -1953,7 +1953,7 @@ fn trace_metrics_json(resp: &TraceMetricsResponse) -> Value {
     // Tempo `tempopb.QueryRangeResponse` protojson shape, which Grafana's Tempo
     // backend unmarshals: `series[].labels` is an ARRAY of KeyValue, samples use
     // `timestampMs` (milliseconds; int64 rendered as a string to match protojson)
-    // and `value`. Crabka's internal point timestamps are nanoseconds.
+    // and `value`. Krabka's internal point timestamps are nanoseconds.
     json!({
         "series": resp.series.iter().map(|series| {
             json!({
@@ -2237,7 +2237,7 @@ fn otlp_span(trace_id: [u8; 16], span: &SpanRef) -> OtlpSpan {
     }
 }
 
-fn otlp_event(span: &SpanRef, event: &crabka_traceql::EventRef) -> OtlpEvent {
+fn otlp_event(span: &SpanRef, event: &krabka_traceql::EventRef) -> OtlpEvent {
     OtlpEvent {
         time_unix_nano: event_unix_nano(span, event),
         name: event.name.clone(),
@@ -2246,7 +2246,7 @@ fn otlp_event(span: &SpanRef, event: &crabka_traceql::EventRef) -> OtlpEvent {
     }
 }
 
-fn otlp_link(link: &crabka_traceql::LinkRef) -> OtlpLink {
+fn otlp_link(link: &krabka_traceql::LinkRef) -> OtlpLink {
     OtlpLink {
         trace_id: link.trace_id.to_vec(),
         span_id: link.span_id.to_vec(),
@@ -2386,7 +2386,7 @@ fn instrumentation_attributes(span: &SpanRef) -> Vec<(String, AttrValue)> {
     span.attributes
         .iter()
         .filter_map(|(key, value)| {
-            key.strip_prefix(crabka_traceql::INSTRUMENTATION_ATTR_PREFIX)
+            key.strip_prefix(krabka_traceql::INSTRUMENTATION_ATTR_PREFIX)
                 .map(|key| (key.to_string(), value.clone()))
         })
         .collect()
@@ -2395,7 +2395,7 @@ fn instrumentation_attributes(span: &SpanRef) -> Vec<(String, AttrValue)> {
 fn span_attributes(span: &SpanRef) -> Vec<(String, AttrValue)> {
     span.attributes
         .iter()
-        .filter(|(key, _)| !key.starts_with(crabka_traceql::INSTRUMENTATION_ATTR_PREFIX))
+        .filter(|(key, _)| !key.starts_with(krabka_traceql::INSTRUMENTATION_ATTR_PREFIX))
         .cloned()
         .collect()
 }
@@ -2415,7 +2415,7 @@ fn events_json(span: &SpanRef) -> Value {
     )
 }
 
-fn links_json(links: &[crabka_traceql::LinkRef]) -> Value {
+fn links_json(links: &[krabka_traceql::LinkRef]) -> Value {
     Value::Array(
         links
             .iter()
@@ -2682,20 +2682,20 @@ mod tests {
             instrumentation_version: String::new(),
             resource_attributes: Vec::new(),
             attributes: Vec::new(),
-            events: vec![crabka_traceql::EventRef {
+            events: vec![krabka_traceql::EventRef {
                 time_since_start: nanos(50),
                 name: "retry".into(),
                 attributes: vec![(
                     "event.reason".to_string(),
-                    crabka_traceql::AttrValue::Str("throttled".into()),
+                    krabka_traceql::AttrValue::Str("throttled".into()),
                 )],
             }],
-            links: vec![crabka_traceql::LinkRef {
+            links: vec![krabka_traceql::LinkRef {
                 trace_id: [9; 16],
                 span_id: [8; 8],
                 attributes: vec![(
                     "link.kind".to_string(),
-                    crabka_traceql::AttrValue::Str("retry".into()),
+                    krabka_traceql::AttrValue::Str("retry".into()),
                 )],
             }],
         };
@@ -2885,16 +2885,16 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use crabka_blockstore::{
+    use http_body_util::BodyExt;
+    use krabka_blockstore::{
         AttrValue as BlockAttrValue, BlockStore, NestedSet as BlockNestedSet, ShardedTraceBloom,
         SpanAttr, SpanKind as BlockSpanKind, SpanRow, StatusCode as BlockStatusCode,
         TraceBlockStats, TraceIndex, encode_span_rows, span_block_schema,
     };
-    use crabka_traceql::{
+    use krabka_traceql::{
         AttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, LinkRef, TraceqlEngine,
     };
-    use crabka_units::{nanos, secs};
-    use http_body_util::BodyExt;
+    use krabka_units::{nanos, secs};
     use object_store::{buffered::BufWriter, memory::InMemory, path::Path};
     use opentelemetry_proto::tonic::trace::v1::TracesData;
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
@@ -2904,7 +2904,7 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::querier::store::{CrabkaSpanStore, SharedTraceIndex};
+    use crate::querier::store::{KrabkaSpanStore, SharedTraceIndex};
 
     fn shared_index(index: TraceIndex) -> SharedTraceIndex {
         Arc::new(ArcSwap::from_pointee(index))
@@ -3191,7 +3191,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared_index(trace_index), None);
+        let store = KrabkaSpanStore::new(blocks, shared_index(trace_index), None);
         router(Arc::new(TraceqlEngine::new(
             Arc::new(store),
             EngineOpts::default(),
@@ -4185,7 +4185,7 @@ overrides:
             attributes: vec![
                 ("http.method".into(), AttrValue::Str("GET".into())),
                 (
-                    format!("{}library", crabka_traceql::INSTRUMENTATION_ATTR_PREFIX),
+                    format!("{}library", krabka_traceql::INSTRUMENTATION_ATTR_PREFIX),
                     AttrValue::Str("otel".into()),
                 ),
             ],
@@ -4769,7 +4769,7 @@ overrides:
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared_index(trace_index), None);
+        let store = KrabkaSpanStore::new(blocks, shared_index(trace_index), None);
         let app = router(Arc::new(TraceqlEngine::new(
             Arc::new(store),
             EngineOpts::default(),
@@ -5537,10 +5537,10 @@ overrides:
         async fn scan(
             &self,
             _tenant: &str,
-            _matchers: &[crabka_traceql::SpanMatcher],
+            _matchers: &[krabka_traceql::SpanMatcher],
             _start_ns: i64,
             _end_ns: i64,
-        ) -> Result<crabka_traceql::ScanResult, TraceqlError> {
+        ) -> Result<krabka_traceql::ScanResult, TraceqlError> {
             self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             panic!("exact same-tag autocomplete should use indexed tag values");
         }
@@ -5573,7 +5573,7 @@ overrides:
             assert2::assert!(tag == "resource.service.name");
             Ok(vec![TypedValue {
                 type_: "string".into(),
-                value: "crabka-broker".into(),
+                value: "krabka-broker".into(),
             }])
         }
     }
@@ -5590,7 +5590,7 @@ overrides:
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri("/api/v2/search/tag/resource.service.name/values?q=%7B%20resource.service.name%20%3D%20%22crabka-broker%22%20%7D&limit=5000")
+                    .uri("/api/v2/search/tag/resource.service.name/values?q=%7B%20resource.service.name%20%3D%20%22krabka-broker%22%20%7D&limit=5000")
                     .header("x-scope-orgid", "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
@@ -5606,7 +5606,7 @@ overrides:
             body == json!({
                 "tagValues": [{
                     "type": "string",
-                    "value": "crabka-broker"
+                    "value": "krabka-broker"
                 }],
                 "metrics": {
                     "inspectedBytes": "0"

@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use crabka_blockstore::{Labels, MatchOp};
-use crabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
-use crabka_units::prelude::*;
+use krabka_blockstore::{Labels, MatchOp};
+use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
+use krabka_units::prelude::*;
 
 use super::*;
 use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult, RangeSeries, SampleValue};

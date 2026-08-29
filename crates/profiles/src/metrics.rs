@@ -9,12 +9,12 @@
 //!
 //! This module registers counters WITHOUT a `_total` suffix.
 //! `prometheus-client` appends the suffix at encode time. The registry prefix
-//! is `crabka_profiles`, so the `ingest_requests` counter renders on the wire
-//! as `crabka_profiles_ingest_requests_total{status="ok"}`.
+//! is `krabka_profiles`, so the `ingest_requests` counter renders on the wire
+//! as `krabka_profiles_ingest_requests_total{status="ok"}`.
 
 use std::sync::Arc;
 
-use crabka_units::{Time, convert::TimeExt as _};
+use krabka_units::{Time, convert::TimeExt as _};
 use prometheus_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family, histogram::Histogram},
@@ -64,29 +64,29 @@ pub struct TenantLabel {
 pub struct ServiceMetrics {
     pub registry: SharedRegistry,
     /// Ingest requests, labelled by outcome. Renders as
-    /// `crabka_profiles_ingest_requests_total{status}`.
+    /// `krabka_profiles_ingest_requests_total{status}`.
     pub ingest_requests: Family<StatusLabel, Counter>,
     /// Cumulative ingest body bytes accepted. Renders as
-    /// `crabka_profiles_ingest_bytes_total`.
+    /// `krabka_profiles_ingest_bytes_total`.
     pub ingest_bytes: Counter,
     /// Cumulative profile/sample items ingested. Renders as
-    /// `crabka_profiles_ingest_items_total`.
+    /// `krabka_profiles_ingest_items_total`.
     pub ingest_items: Counter,
     /// Ingest handler latency in seconds.
     pub ingest_duration: Histogram,
     /// Cumulative WAL/produce append failures. Renders as
-    /// `crabka_profiles_wal_append_failures_total`.
+    /// `krabka_profiles_wal_append_failures_total`.
     pub wal_append_failures: Counter,
     /// Cumulative profile samples accepted, labelled by tenant. Renders as
-    /// `crabka_profiles_ingest_samples_total{tenant}`. The service adds to it
+    /// `krabka_profiles_ingest_samples_total{tenant}`. The service adds to it
     /// once per ingest request, by the number of WAL samples that the request
     /// produced.
     pub ingest_samples: Family<TenantLabel, Counter>,
     /// Cumulative profile sample blocks flushed to object storage by the
-    /// block-builder. Renders as `crabka_profiles_blocks_built_total`.
+    /// block-builder. Renders as `krabka_profiles_blocks_built_total`.
     pub blocks_built: Counter,
     /// Query requests, labelled by route + outcome. Renders as
-    /// `crabka_profiles_query_requests_total{route,status}`.
+    /// `krabka_profiles_query_requests_total{route,status}`.
     pub query_requests: Family<RouteStatusLabel, Counter>,
     /// Per-route query handler latency in seconds.
     pub query_duration: Family<RouteLabel, Histogram>,
@@ -96,7 +96,7 @@ impl ServiceMetrics {
     /// Build a fresh registry, register every metric, and return the bundle.
     #[must_use]
     pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("crabka_profiles");
+        let mut registry = Registry::with_prefix("krabka_profiles");
 
         let ingest_requests = Family::<StatusLabel, Counter>::default();
         let ingest_bytes = Counter::default();
@@ -293,7 +293,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use crabka_units::millis;
+    use krabka_units::millis;
     use tower::ServiceExt as _;
 
     use super::*;
@@ -313,15 +313,15 @@ mod tests {
         let r = m.registry.lock().await;
         prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
         for needle in [
-            "crabka_profiles_ingest_requests_total",
-            "crabka_profiles_ingest_bytes_total",
-            "crabka_profiles_ingest_items_total",
-            "crabka_profiles_ingest_duration_seconds",
-            "crabka_profiles_wal_append_failures_total",
-            "crabka_profiles_ingest_samples_total",
-            "crabka_profiles_blocks_built_total",
-            "crabka_profiles_query_requests_total",
-            "crabka_profiles_query_duration_seconds",
+            "krabka_profiles_ingest_requests_total",
+            "krabka_profiles_ingest_bytes_total",
+            "krabka_profiles_ingest_items_total",
+            "krabka_profiles_ingest_duration_seconds",
+            "krabka_profiles_wal_append_failures_total",
+            "krabka_profiles_ingest_samples_total",
+            "krabka_profiles_blocks_built_total",
+            "krabka_profiles_query_requests_total",
+            "krabka_profiles_query_duration_seconds",
         ] {
             assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
         }
@@ -361,7 +361,7 @@ mod tests {
             .await
             .unwrap();
         let s = std::str::from_utf8(&body).unwrap();
-        assert!(s.contains("crabka_profiles_ingest_requests_total"), "{s}");
+        assert!(s.contains("krabka_profiles_ingest_requests_total"), "{s}");
         assert!(s.contains("# EOF"), "{s}");
     }
 

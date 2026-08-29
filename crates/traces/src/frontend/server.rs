@@ -566,32 +566,32 @@ fn exemplar_limit(uri: &Uri) -> Option<usize> {
     }
 }
 
-fn scope_param(uri: &Uri) -> Result<Option<crabka_traceql::TagScope>, &'static str> {
+fn scope_param(uri: &Uri) -> Result<Option<krabka_traceql::TagScope>, &'static str> {
     query_param(uri, "scope")
         .map(|s| parse_scope(&s).ok_or("invalid scope"))
         .transpose()
 }
 
-fn parse_scope(name: &str) -> Option<crabka_traceql::TagScope> {
+fn parse_scope(name: &str) -> Option<krabka_traceql::TagScope> {
     Some(match name {
-        "resource" => crabka_traceql::TagScope::Resource,
-        "span" => crabka_traceql::TagScope::Span,
-        "intrinsic" => crabka_traceql::TagScope::Intrinsic,
-        "event" => crabka_traceql::TagScope::Event,
-        "link" => crabka_traceql::TagScope::Link,
-        "instrumentation" => crabka_traceql::TagScope::Instrumentation,
+        "resource" => krabka_traceql::TagScope::Resource,
+        "span" => krabka_traceql::TagScope::Span,
+        "intrinsic" => krabka_traceql::TagScope::Intrinsic,
+        "event" => krabka_traceql::TagScope::Event,
+        "link" => krabka_traceql::TagScope::Link,
+        "instrumentation" => krabka_traceql::TagScope::Instrumentation,
         _ => return None,
     })
 }
 
-fn scope_name(scope: crabka_traceql::TagScope) -> &'static str {
+fn scope_name(scope: krabka_traceql::TagScope) -> &'static str {
     match scope {
-        crabka_traceql::TagScope::Resource => "resource",
-        crabka_traceql::TagScope::Span => "span",
-        crabka_traceql::TagScope::Intrinsic => "intrinsic",
-        crabka_traceql::TagScope::Event => "event",
-        crabka_traceql::TagScope::Link => "link",
-        crabka_traceql::TagScope::Instrumentation => "instrumentation",
+        krabka_traceql::TagScope::Resource => "resource",
+        krabka_traceql::TagScope::Span => "span",
+        krabka_traceql::TagScope::Intrinsic => "intrinsic",
+        krabka_traceql::TagScope::Event => "event",
+        krabka_traceql::TagScope::Link => "link",
+        krabka_traceql::TagScope::Instrumentation => "instrumentation",
     }
 }
 
@@ -637,10 +637,10 @@ mod tests {
 
         // The scope is optional, but an unrecognised name is refused rather
         // than quietly treated as absent.
-        check!(super::scope_param(&uri("scope=span")) == Ok(Some(crabka_traceql::TagScope::Span)));
+        check!(super::scope_param(&uri("scope=span")) == Ok(Some(krabka_traceql::TagScope::Span)));
         check!(
             super::scope_param(&uri("scope=resource"))
-                == Ok(Some(crabka_traceql::TagScope::Resource))
+                == Ok(Some(krabka_traceql::TagScope::Resource))
         );
         check!(super::scope_param(&uri("")) == Ok(None));
         check!(super::scope_param(&uri("scope=nonsense")).is_err());

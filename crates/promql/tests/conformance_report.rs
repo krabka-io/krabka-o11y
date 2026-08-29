@@ -1,6 +1,6 @@
 //! Checked-in `PromQL` corpus gate that also emits the CI artifact.
 
-use crabka_promql::testkit::{corpus_dir, run_corpus_dir};
+use krabka_promql::testkit::{corpus_dir, run_corpus_dir};
 
 #[tokio::test]
 async fn checked_in_corpus_is_green_and_writes_report() {

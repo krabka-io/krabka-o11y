@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use crabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
 
 use super::{
     PromqlEngine,

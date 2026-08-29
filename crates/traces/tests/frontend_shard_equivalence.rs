@@ -8,14 +8,14 @@
 use std::sync::Arc;
 
 use assert2::check;
-use crabka_traces::frontend::{
+use krabka_traces::frontend::{
     QueryFrontend,
     backend::{MockQuerier, SearchPartial},
     config::FrontendConfig,
     job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
     wire::{Metrics, SpanJson, SpanSetJson, TraceJson},
 };
-use crabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
+use krabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
 
 fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
     let row_groups = rgs

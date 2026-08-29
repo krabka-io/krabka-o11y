@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use assert2::check;
-use crabka_traces::metricsgen::{
+use krabka_traces::metricsgen::{
     MetricsGenConfig, MetricsGenService, MockClock, MockRemoteWriteSink, MockSpanSource, SpanKind,
     SpanRecord, StatusCode,
 };
-use crabka_units::{ByteSize, convert::ByteSizeExt as _};
+use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 fn span(
     service: &str,

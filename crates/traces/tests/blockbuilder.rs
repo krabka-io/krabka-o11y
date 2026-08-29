@@ -9,9 +9,10 @@ use arrow::{
 };
 use assert2::check;
 use bytes::Bytes;
-use crabka_blockstore::{BlockWriter, PromotedSpanAttr, TraceIndex, read_block};
-use crabka_client_consumer::ConsumerRecord;
-use crabka_traces::{
+use futures::stream::BoxStream;
+use krabka_blockstore::{BlockWriter, PromotedSpanAttr, TraceIndex, read_block};
+use krabka_client_consumer::ConsumerRecord;
+use krabka_traces::{
     AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode, TracesError,
     blockbuilder::{
         BlockBuilderConfig, WalConsumerCommit, WalConsumerPoll, build_blocks,
@@ -21,8 +22,7 @@ use crabka_traces::{
     ids::{MaxOffset, MinOffset, WindowStartNs},
     metrics::ServiceMetrics,
 };
-use crabka_units::{hours, millis, minutes};
-use futures::stream::BoxStream;
+use krabka_units::{hours, millis, minutes};
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
@@ -72,7 +72,7 @@ fn rec(
 
 fn consumer_record(partition: i32, offset: i64, record: &SpanRecord) -> ConsumerRecord {
     ConsumerRecord {
-        topic: "__crabka_traces_wal".into(),
+        topic: "__krabka_traces_wal".into(),
         partition,
         offset,
         leader_epoch: 0,
@@ -136,7 +136,7 @@ fn decode_consumer_records_groups_by_partition_and_tracks_offsets() {
         consumer_record(1, 12, &rec("tenant-a", [1; 16], 2, Some(1), 200)),
         consumer_record(2, 7, &rec("tenant-b", [2; 16], 1, None, 50)),
         ConsumerRecord {
-            topic: "__crabka_traces_wal".into(),
+            topic: "__krabka_traces_wal".into(),
             partition: 1,
             offset: 13,
             leader_epoch: 0,
@@ -255,15 +255,15 @@ async fn replaying_same_offset_window_is_idempotent_in_trace_index() {
 async fn replaying_saved_partition_window_after_restart_is_idempotent() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
-    let config = crabka_traces::blockbuilder::BlockBuilderConfig {
+    let config = krabka_traces::blockbuilder::BlockBuilderConfig {
         object_key_prefix: String::new(),
         index_key: "index/traces.json".into(),
         window: millis(1),
         empty_poll_backoff: millis(1),
         promoted_attrs: Vec::new(),
-        flush_max_records: crabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_RECORDS,
-        flush_max_age: crabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_AGE,
-        index_snapshot_retain: crabka_blockstore::IndexSnapshotRetain::default(),
+        flush_max_records: krabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_RECORDS,
+        flush_max_age: krabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_AGE,
+        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
     };
     let records = [
         consumer_record(7, 10, &rec("tenant-a", [1; 16], 2, Some(1), 200)),
@@ -312,7 +312,7 @@ async fn configured_index_snapshot_retention_is_applied() {
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
     let mut config = block_builder_config();
-    config.index_snapshot_retain = crabka_blockstore::IndexSnapshotRetain::new(2).unwrap();
+    config.index_snapshot_retain = krabka_blockstore::IndexSnapshotRetain::new(2).unwrap();
 
     for _ in 0..4 {
         flush_partition_windows(&writer, &mut index, store.clone(), &config, BTreeMap::new())
@@ -320,7 +320,7 @@ async fn configured_index_snapshot_retention_is_applied() {
             .unwrap();
     }
 
-    let prefix = object_store::path::Path::from(crabka_blockstore::index_snapshot_prefix_for_key(
+    let prefix = object_store::path::Path::from(krabka_blockstore::index_snapshot_prefix_for_key(
         &config.index_key,
     ));
     let mut snapshots = store.list(Some(&prefix));
@@ -334,7 +334,7 @@ async fn configured_index_snapshot_retention_is_applied() {
 
 #[tokio::test]
 async fn multiple_polls_below_threshold_flush_one_block_per_partition() {
-    use crabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
+    use krabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
     use tokio::time::Instant;
 
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -347,7 +347,7 @@ async fn multiple_polls_below_threshold_flush_one_block_per_partition() {
         promoted_attrs: Vec::new(),
         flush_max_records: 50_000,
         flush_max_age: minutes(1),
-        index_snapshot_retain: crabka_blockstore::IndexSnapshotRetain::default(),
+        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
     };
 
     // Three polls, each well under the flush threshold, all for the same trace
@@ -409,7 +409,7 @@ async fn multiple_polls_below_threshold_flush_one_block_per_partition() {
 
 #[tokio::test]
 async fn accumulator_flushes_on_record_count_threshold() {
-    use crabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
+    use krabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
     use tokio::time::Instant;
 
     let config = BlockBuilderConfig {
@@ -420,7 +420,7 @@ async fn accumulator_flushes_on_record_count_threshold() {
         promoted_attrs: Vec::new(),
         flush_max_records: 2,
         flush_max_age: minutes(1),
-        index_snapshot_retain: crabka_blockstore::IndexSnapshotRetain::default(),
+        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
     };
 
     let mut accumulator = FlushAccumulator::new();
@@ -441,7 +441,7 @@ async fn accumulator_flushes_on_record_count_threshold() {
 
 #[tokio::test]
 async fn accumulator_flushes_on_age_for_low_traffic_stream() {
-    use crabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
+    use krabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
     use tokio::time::Instant;
 
     let config = BlockBuilderConfig {
@@ -452,7 +452,7 @@ async fn accumulator_flushes_on_age_for_low_traffic_stream() {
         promoted_attrs: Vec::new(),
         flush_max_records: 50_000,
         flush_max_age: minutes(1),
-        index_snapshot_retain: crabka_blockstore::IndexSnapshotRetain::default(),
+        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
     };
 
     let mut accumulator = FlushAccumulator::new();
@@ -473,7 +473,7 @@ async fn accumulator_flushes_on_age_for_low_traffic_stream() {
 
 #[tokio::test]
 async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
-    use crabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
+    use krabka_traces::blockbuilder::{BlockBuilderConfig, FlushAccumulator};
     use tokio::time::Instant;
 
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -486,7 +486,7 @@ async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
         promoted_attrs: Vec::new(),
         flush_max_records: 50_000,
         flush_max_age: minutes(1),
-        index_snapshot_retain: crabka_blockstore::IndexSnapshotRetain::default(),
+        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
     };
 
     // Two polls buffered, never reaching the flush threshold (mirrors a pending
@@ -534,7 +534,7 @@ async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
 
 #[tokio::test]
 async fn merged_buffer_offset_range_is_stable_for_idempotent_keying() {
-    use crabka_traces::blockbuilder::FlushAccumulator;
+    use krabka_traces::blockbuilder::FlushAccumulator;
     use tokio::time::Instant;
 
     // Polls arriving out of order still produce a buffer whose offset range spans
@@ -772,7 +772,7 @@ impl ScriptedConsumer {
 impl WalConsumerPoll for ScriptedConsumer {
     async fn poll(
         &mut self,
-        _window: crabka_units::Time,
+        _window: krabka_units::Time,
     ) -> Result<Vec<ConsumerRecord>, TracesError> {
         if let Some(batch) = self.batches.pop_front() {
             Ok(batch)
@@ -808,7 +808,7 @@ fn block_builder_config() -> BlockBuilderConfig {
         // shutdown instead, exercising the drain path the tests target.
         flush_max_records: 50_000,
         flush_max_age: hours(1),
-        index_snapshot_retain: crabka_blockstore::IndexSnapshotRetain::default(),
+        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
     }
 }
 

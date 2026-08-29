@@ -6,11 +6,11 @@ use arrow::{
     ipc::{reader::StreamReader, writer::StreamWriter},
     record_batch::RecordBatch,
 };
-use crabka_traceql::{
+use krabka_traceql::{
     AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagScope, TraceSpans, TraceqlError,
     TypedValue,
 };
-use crabka_units::{Time, convert::TimeExt as _};
+use krabka_units::{Time, convert::TimeExt as _};
 use opentelemetry_proto::tonic::{
     common::v1::{AnyValue, any_value::Value as OtlpValue},
     trace::v1::TracesData,
@@ -21,7 +21,7 @@ use reqwest::Url;
 use super::store::SharedTraceIndex;
 
 pub type Result<T> = std::result::Result<T, TraceqlError>;
-const LIVE_SPAN_BATCHES_PATH: &str = "/api/crabka/live/span-batches";
+const LIVE_SPAN_BATCHES_PATH: &str = "/api/krabka/live/span-batches";
 
 /// OTLP carries nanosecond fields as `uint64`. Saturate rather than wrap when
 /// one exceeds what a `Time` extent can be built from.
@@ -658,7 +658,7 @@ mod tests {
         let source = RemoteLiveSource::new(
             Url::parse(&format!("http://{addr}/")).expect("a valid url"),
             Arc::new(arc_swap::ArcSwap::from_pointee(
-                crabka_blockstore::TraceIndex::new(),
+                krabka_blockstore::TraceIndex::new(),
             )),
         );
 
@@ -779,7 +779,7 @@ mod tests {
         let source = RemoteLiveSource::new(
             Url::parse(&format!("http://{addr}/")).expect("a valid url"),
             Arc::new(arc_swap::ArcSwap::from_pointee(
-                crabka_blockstore::TraceIndex::new(),
+                krabka_blockstore::TraceIndex::new(),
             )),
         );
 
@@ -857,7 +857,7 @@ mod tests {
         use std::collections::{BTreeMap, BTreeSet};
 
         use arc_swap::ArcSwap;
-        use crabka_blockstore::{ShardedTraceBloom, TraceBlockStats, TraceIndex};
+        use krabka_blockstore::{ShardedTraceBloom, TraceBlockStats, TraceIndex};
 
         let block = |key: &str, min_ts, max_ts| TraceBlockStats {
             object_key: key.to_string(),
@@ -1118,8 +1118,8 @@ mod tests {
 
     use arrow::record_batch::RecordBatch;
     use assert2::check;
-    use crabka_traceql::{AttrValue, ScopedTag, SpanRef, TagScope, TraceSpans, TypedValue};
-    use crabka_units::nanos;
+    use krabka_traceql::{AttrValue, ScopedTag, SpanRef, TagScope, TraceSpans, TypedValue};
+    use krabka_units::nanos;
 
     use super::*;
 

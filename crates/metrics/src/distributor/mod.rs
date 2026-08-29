@@ -19,16 +19,16 @@ use axum::{
     routing::post,
 };
 use bytes::Bytes;
-use crabka_blockstore::SeriesFingerprint;
-use crabka_client_consumer::{Consumer, ConsumerRecord};
-use crabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord};
-use crabka_ids::{Offset, PartitionIndex};
-use crabka_telemetry::propagation::current_trace_headers;
-use crabka_units::prelude::*;
 pub use ha::{
     DEFAULT_HA_FAILOVER_TIMEOUT, HA_TRACKER_TOPIC, HaDecision, HaElection, HaElectionRecord,
     HaTracker, ha_decision, ha_election, strip_replica_label,
 };
+use krabka_blockstore::SeriesFingerprint;
+use krabka_client_consumer::{Consumer, ConsumerRecord};
+use krabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord};
+use krabka_ids::{Offset, PartitionIndex};
+use krabka_telemetry::propagation::current_trace_headers;
+use krabka_units::prelude::*;
 use opentelemetry_proto::tonic::{
     collector::metrics::v1::{
         ExportMetricsServiceRequest, ExportMetricsServiceResponse,
@@ -601,7 +601,7 @@ async fn push(
 ) -> Response {
     let started = std::time::Instant::now();
     let body_size = ByteSize::from_bytes(body.len() as u64);
-    // ONE ingest span per request (not per series/sample). `crabka.ingest.series`
+    // ONE ingest span per request (not per series/sample). `krabka.ingest.series`
     // starts empty and is recorded from inside `push_inner` once the body is
     // decoded; the WAL producer injects this span's trace context into the record
     // headers so the compactor's span joins the same distributed trace.
@@ -615,7 +615,7 @@ async fn push(
 }
 
 /// Builds the per-request ingest span. This function declares
-/// `crabka.ingest.series` empty, and `push_inner` records it after it decodes
+/// `krabka.ingest.series` empty, and `push_inner` records it after it decodes
 /// the request body.
 fn ingest_span(headers: &HeaderMap, body_size: ByteSize) -> tracing::Span {
     let tenant = tenant_for_span(headers);
@@ -624,9 +624,9 @@ fn ingest_span(headers: &HeaderMap, body_size: ByteSize) -> tracing::Span {
         otel.kind = "server",
         messaging.system = "kafka",
         messaging.destination.name = WAL_TOPIC,
-        crabka.tenant = %tenant,
-        crabka.ingest.series = tracing::field::Empty,
-        crabka.ingest.bytes = body_size.bytes_u64(),
+        krabka.tenant = %tenant,
+        krabka.ingest.series = tracing::field::Empty,
+        krabka.ingest.bytes = body_size.bytes_u64(),
     )
 }
 
@@ -664,7 +664,7 @@ async fn push_inner(
     };
     let items = series.len() as u64;
     // Backfill the decoded series count onto the enclosing `metrics_ingest` span.
-    tracing::Span::current().record("crabka.ingest.series", items);
+    tracing::Span::current().record("krabka.ingest.series", items);
 
     if !append_decoded_series(state, tenant, &mut series).await? {
         return Ok((
@@ -715,7 +715,7 @@ async fn clocks_push_inner(
 
     let items = readings.len() as u64;
     // Backfill the decoded reading count onto the enclosing span.
-    tracing::Span::current().record("crabka.ingest.series", items);
+    tracing::Span::current().record("krabka.ingest.series", items);
 
     if !append_clock_readings(state, tenant, &readings, ingest_unix_nanos).await? {
         return Ok((PushSuccess::Accepted { counts: None }, items));
@@ -794,7 +794,7 @@ async fn otlp_push_inner(
     };
     let items = series.len() as u64;
     // Backfill the decoded series count onto the enclosing `metrics_ingest` span.
-    tracing::Span::current().record("crabka.ingest.series", items);
+    tracing::Span::current().record("krabka.ingest.series", items);
     if !append_decoded_series(state, tenant, &mut series).await? {
         return Ok((PushSuccess::Accepted { counts: None }, items));
     }
@@ -2045,7 +2045,7 @@ mod tests {
     /// produces a well-formed limit, and only distinct values show it.
     #[test]
     fn tenant_limits_map_field_by_field_onto_the_shared_limits() {
-        use crabka_units::{bytes, per_sec, secs};
+        use krabka_units::{bytes, per_sec, secs};
 
         let tenant = super::TenantLimits {
             max_label_name_len: bytes(11),
@@ -2082,7 +2082,7 @@ mod tests {
     use std::sync::Mutex;
 
     fn decoded_series(labels: &[(&str, &str)], samples: usize) -> crate::wire::DecodedSeries {
-        let mut set = crabka_blockstore::Labels::new();
+        let mut set = krabka_blockstore::Labels::new();
         for (name, value) in labels {
             set.insert(*name, *value);
         }
@@ -2110,8 +2110,8 @@ mod tests {
         let limits = TenantLimits {
             max_series_per_request: 2,
             max_samples_per_series: 3,
-            max_label_name_len: crabka_units::bytes(4),
-            max_label_value_len: crabka_units::bytes(5),
+            max_label_name_len: krabka_units::bytes(4),
+            max_label_value_len: krabka_units::bytes(5),
             ..TenantLimits::default()
         };
 
@@ -2187,7 +2187,7 @@ mod tests {
 
         let mut series = decoded_series(&[("ok", "v")], 2);
         series.exemplars = vec![crate::wire::DecodedExemplar {
-            labels: crabka_blockstore::Labels::new(),
+            labels: krabka_blockstore::Labels::new(),
             value: 1.0,
             timestamp_ms: 1,
         }];
@@ -2197,7 +2197,7 @@ mod tests {
         );
 
         series.exemplars.push(crate::wire::DecodedExemplar {
-            labels: crabka_blockstore::Labels::new(),
+            labels: krabka_blockstore::Labels::new(),
             value: 1.0,
             timestamp_ms: 2,
         });
@@ -2420,7 +2420,7 @@ mod tests {
     #[test]
     fn exemplar_codepoints_are_summed_and_capped_at_the_limit() {
         let exemplar = |pairs: &[(&str, &str)]| {
-            let mut labels = crabka_blockstore::Labels::new();
+            let mut labels = krabka_blockstore::Labels::new();
             for (name, value) in pairs {
                 labels.insert(*name, *value);
             }
@@ -2512,7 +2512,7 @@ mod tests {
 
     use assert2::{assert, check};
     use axum::{body::Body, http::Request};
-    use crabka_blockstore::Labels;
+    use krabka_blockstore::Labels;
     use opentelemetry_proto::tonic::{
         collector::metrics::v1::{
             ExportMetricsServiceRequest, metrics_service_client::MetricsServiceClient,

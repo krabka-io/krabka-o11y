@@ -37,7 +37,7 @@ pub mod pb {
         include!(concat!(env!("OUT_DIR"), "/io.prometheus.write.v2.rs"));
     }
 
-    /// Crabka clock confidence signal (`krabka.clocks.v1.ClockReadingBatch`).
+    /// Krabka clock confidence signal (`krabka.clocks.v1.ClockReadingBatch`).
     pub mod clocks {
         include!(concat!(env!("OUT_DIR"), "/krabka.clocks.v1.rs"));
     }

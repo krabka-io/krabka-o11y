@@ -1,34 +1,34 @@
 //! Docker-backed differential probe against real Grafana Mimir.
 //!
 //! This is the headline equality test for the metrics slice. Mimir is the
-//! system that Crabka replaces, so corpus equality over identical
+//! system that Krabka replaces, so corpus equality over identical
 //! `remote_write` input is the strongest single correctness signal.
 //!
 //! Cargo ignores this test by default, because it pulls and runs
 //! `mirror.gcr.io/grafana/mimir` under Docker.
 //! Run with:
 //!
-//! `cargo test -p crabka-metrics-service --test diff_mimir -- --ignored --nocapture`
+//! `cargo test -p krabka-metrics-service --test diff_mimir -- --ignored --nocapture`
 //!
 //! The structure mirrors `diff_prometheus.rs`. The test writes one
-//! `remote_write` body to both the in-process Crabka write and query path and a
+//! `remote_write` body to both the in-process Krabka write and query path and a
 //! Mimir monolithic container. The test then runs `query_corpus()` against both
 //! sides and compares the results with `assert_query_equal`.
 //!
-//! The shared corpus and differ live in the `crabka-metrics` crate. This file
+//! The shared corpus and differ live in the `krabka-metrics` crate. This file
 //! includes them by path below, exactly as `diff_prometheus.rs` does, so both
 //! differential suites share one corpus definition.
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use crabka_metrics::{
+use diff_corpus::{QueryKind, assert_query_equal, query_corpus, seed_dataset};
+use krabka_metrics::{
     WalRecord,
     distributor::{DistributorState, ProduceError, WalSink},
     wire::pb,
 };
-use crabka_promql::WalHead;
-use diff_corpus::{QueryKind, assert_query_equal, query_corpus, seed_dataset};
+use krabka_promql::WalHead;
 use prost::Message;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -54,7 +54,7 @@ const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
 /// Fixed tenant header used on both sides.
 ///
 /// Mimir needs `X-Scope-OrgID` on every push and query, because multitenancy is
-/// on and this test pins one tenant. Crabka's querier keys storage by the same
+/// on and this test pins one tenant. Krabka's querier keys storage by the same
 /// header.
 const TENANT: &str = "compliance";
 
@@ -66,10 +66,10 @@ const MIMIR_PORT: u16 = 9009;
 
 /// Pinned Mimir image tag, never `:latest`.
 ///
-/// Override it with the `CRABKA_MIMIR_IMAGE_TAG` environment variable.
+/// Override it with the `KRABKA_MIMIR_IMAGE_TAG` environment variable.
 const MIMIR_IMAGE_TAG: &str = "2.16.1";
 
-/// Queries where Mimir legitimately diverges from Crabka and must be skipped.
+/// Queries where Mimir legitimately diverges from Krabka and must be skipped.
 ///
 /// Each entry MUST carry a justification comment. The list is intentionally
 /// empty. `normalize()` already removes Mimir's volatile `warnings`, `infos`,
@@ -131,7 +131,7 @@ limits:
 
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn mimir_compliance_corpus_matches_crabka() -> TestResult {
+async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
     let client = reqwest::Client::new();
 
     // Real Mimir in monolithic mode.
@@ -139,14 +139,14 @@ async fn mimir_compliance_corpus_matches_crabka() -> TestResult {
     let mimir_base = mapped_base_url(&mimir, MIMIR_PORT).await?;
     wait_for_http_ok(&client, &mimir_base, "/ready").await?;
 
-    // In-process Crabka write+query path (identical to diff_prometheus.rs).
-    let crabka = start_crabka_query_server().await?;
+    // In-process Krabka write+query path (identical to diff_prometheus.rs).
+    let krabka = start_krabka_query_server().await?;
 
     // One body, two destinations.
     let remote_write = remote_write_body();
     post_remote_write(
         &client,
-        &crabka.base_url,
+        &krabka.base_url,
         "/api/v1/write",
         TENANT,
         &remote_write,
@@ -156,8 +156,8 @@ async fn mimir_compliance_corpus_matches_crabka() -> TestResult {
     post_remote_write(&client, &mimir_base, "/api/v1/push", TENANT, &remote_write).await?;
 
     // Both read paths expose the Prometheus query API; Mimir prefixes it with
-    // /prometheus, which the Crabka router also serves.
-    wait_for_query_ready(&client, &crabka.base_url, "/api/v1/query", TENANT, "up").await?;
+    // /prometheus, which the Krabka router also serves.
+    wait_for_query_ready(&client, &krabka.base_url, "/api/v1/query", TENANT, "up").await?;
     wait_for_query_ready(
         &client,
         &mimir_base,
@@ -171,9 +171,9 @@ async fn mimir_compliance_corpus_matches_crabka() -> TestResult {
         if MIMIR_KNOWN_DIVERGENCE.contains(&case.name) {
             continue;
         }
-        let crabka_json = query_case(
+        let krabka_json = query_case(
             &client,
-            &crabka.base_url,
+            &krabka.base_url,
             "",
             TENANT,
             case.kind,
@@ -189,16 +189,16 @@ async fn mimir_compliance_corpus_matches_crabka() -> TestResult {
             case.promql,
         )
         .await?;
-        assert_query_equal(case.name, &crabka_json, &mimir_json);
+        assert_query_equal(case.name, &krabka_json, &mimir_json);
     }
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 async fn start_mimir() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
     let tag =
-        std::env::var("CRABKA_MIMIR_IMAGE_TAG").unwrap_or_else(|_| MIMIR_IMAGE_TAG.to_string());
+        std::env::var("KRABKA_MIMIR_IMAGE_TAG").unwrap_or_else(|_| MIMIR_IMAGE_TAG.to_string());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/mimir".to_string(), tag)
@@ -240,12 +240,12 @@ async fn mapped_base_url(
     Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
-struct CrabkaServer {
+struct KrabkaServer {
     base_url: String,
     shutdown: Option<oneshot::Sender<()>>,
 }
 
-impl CrabkaServer {
+impl KrabkaServer {
     fn shutdown(mut self) {
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.send(());
@@ -253,20 +253,20 @@ impl CrabkaServer {
     }
 }
 
-async fn start_crabka_query_server() -> TestResult<CrabkaServer> {
+async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
-    let query_router = crabka_metrics_service::prometheus_router_for_store(head.clone());
+    let query_router = krabka_metrics_service::prometheus_router_for_store(head.clone());
     let sink: Arc<dyn WalSink> = Arc::new(WalHeadSink { head });
     let distributor = Arc::new(DistributorState::new(sink));
-    let router = query_router.merge(crabka_metrics::distributor::router(distributor));
+    let router = query_router.merge(krabka_metrics::distributor::router(distributor));
     let (tx, rx) = oneshot::channel();
     let addr: SocketAddr = "127.0.0.1:0".parse()?;
-    let bound = crabka_metrics_service::serve_prometheus_router(addr, router, async move {
+    let bound = krabka_metrics_service::serve_prometheus_router(addr, router, async move {
         let _ = rx.await;
     })
     .await?;
 
-    Ok(CrabkaServer {
+    Ok(KrabkaServer {
         base_url: format!("http://{bound}"),
         shutdown: Some(tx),
     })

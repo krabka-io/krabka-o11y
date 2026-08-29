@@ -4,18 +4,18 @@
 //! `mirror.gcr.io/prom/prometheus`.
 //! Run with:
 //!
-//! `cargo test -p crabka-metrics-service --test diff_prometheus -- --ignored --nocapture`
+//! `cargo test -p krabka-metrics-service --test diff_prometheus -- --ignored --nocapture`
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use crabka_metrics::{
+use diff_corpus::{QueryKind, assert_query_equal, query_corpus, seed_dataset};
+use krabka_metrics::{
     WalRecord,
     distributor::{DistributorState, ProduceError, WalSink},
     wire::pb,
 };
-use crabka_promql::WalHead;
-use diff_corpus::{QueryKind, assert_query_equal, query_corpus, seed_dataset};
+use krabka_promql::WalHead;
 use prost::Message;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -42,38 +42,38 @@ const TENANT: &str = "compliance";
 const PROMETHEUS_PORT: u16 = 9090;
 
 #[tokio::test]
-async fn crabka_remote_write_endpoint_feeds_query_store() -> TestResult {
+async fn krabka_remote_write_endpoint_feeds_query_store() -> TestResult {
     let client = reqwest::Client::new();
-    let crabka = start_crabka_query_server().await?;
+    let krabka = start_krabka_query_server().await?;
     let remote_write = remote_write_body();
 
     post_remote_write(
         &client,
-        &crabka.base_url,
+        &krabka.base_url,
         "/api/v1/write",
         Some(TENANT),
         &remote_write,
     )
     .await?;
-    wait_for_query_ready(&client, &crabka.base_url, Some(TENANT), "up").await?;
+    wait_for_query_ready(&client, &krabka.base_url, Some(TENANT), "up").await?;
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires Docker"]
-async fn prometheus_compliance_corpus_matches_crabka() -> TestResult {
+async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let prometheus = start_prometheus().await?;
     let prometheus_base = mapped_base_url(&prometheus, PROMETHEUS_PORT).await?;
     wait_for_http_ok(&client, &prometheus_base, "/-/ready").await?;
 
-    let crabka = start_crabka_query_server().await?;
+    let krabka = start_krabka_query_server().await?;
     let remote_write = remote_write_body();
     post_remote_write(
         &client,
-        &crabka.base_url,
+        &krabka.base_url,
         "/api/v1/write",
         Some(TENANT),
         &remote_write,
@@ -87,13 +87,13 @@ async fn prometheus_compliance_corpus_matches_crabka() -> TestResult {
         &remote_write,
     )
     .await?;
-    wait_for_query_ready(&client, &crabka.base_url, Some(TENANT), "up").await?;
+    wait_for_query_ready(&client, &krabka.base_url, Some(TENANT), "up").await?;
     wait_for_query_ready(&client, &prometheus_base, None, "up").await?;
 
     for case in query_corpus() {
-        let crabka_json = query_case(
+        let krabka_json = query_case(
             &client,
-            &crabka.base_url,
+            &krabka.base_url,
             Some(TENANT),
             case.kind,
             case.promql,
@@ -101,15 +101,15 @@ async fn prometheus_compliance_corpus_matches_crabka() -> TestResult {
         .await?;
         let prometheus_json =
             query_case(&client, &prometheus_base, None, case.kind, case.promql).await?;
-        assert_query_equal(case.name, &crabka_json, &prometheus_json);
+        assert_query_equal(case.name, &krabka_json, &prometheus_json);
     }
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 async fn start_prometheus() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    let tag = std::env::var("CRABKA_PROMETHEUS_IMAGE_TAG").unwrap_or_else(|_| "v3.8.0".to_string());
+    let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG").unwrap_or_else(|_| "v3.8.0".to_string());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/prom/prometheus".to_string(), tag)
@@ -136,12 +136,12 @@ async fn mapped_base_url(
     Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
-struct CrabkaServer {
+struct KrabkaServer {
     base_url: String,
     shutdown: Option<oneshot::Sender<()>>,
 }
 
-impl CrabkaServer {
+impl KrabkaServer {
     fn shutdown(mut self) {
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.send(());
@@ -149,20 +149,20 @@ impl CrabkaServer {
     }
 }
 
-async fn start_crabka_query_server() -> TestResult<CrabkaServer> {
+async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
-    let query_router = crabka_metrics_service::prometheus_router_for_store(head.clone());
+    let query_router = krabka_metrics_service::prometheus_router_for_store(head.clone());
     let sink: Arc<dyn WalSink> = Arc::new(WalHeadSink { head });
     let distributor = Arc::new(DistributorState::new(sink));
-    let router = query_router.merge(crabka_metrics::distributor::router(distributor));
+    let router = query_router.merge(krabka_metrics::distributor::router(distributor));
     let (tx, rx) = oneshot::channel();
     let addr: SocketAddr = "127.0.0.1:0".parse()?;
-    let bound = crabka_metrics_service::serve_prometheus_router(addr, router, async move {
+    let bound = krabka_metrics_service::serve_prometheus_router(addr, router, async move {
         let _ = rx.await;
     })
     .await?;
 
-    Ok(CrabkaServer {
+    Ok(KrabkaServer {
         base_url: format!("http://{bound}"),
         shutdown: Some(tx),
     })

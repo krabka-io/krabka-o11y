@@ -63,7 +63,7 @@ pub const AGGREGATE_VALUE_COLUMN: &str = VALUE_COLUMN;
 ///
 /// This module drops the column at assembly, so it never appears in the
 /// projected output.
-const ALL_GROUP_COLUMN: &str = "__crabka_agg_all__";
+const ALL_GROUP_COLUMN: &str = "__krabka_agg_all__";
 
 /// The simple aggregation operators this module lowers.
 ///

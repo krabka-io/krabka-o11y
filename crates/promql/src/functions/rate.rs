@@ -37,7 +37,6 @@ use arrow::{
     array::{Array, ArrayRef, DictionaryArray, Float64Builder, Int64Array},
     datatypes::{DataType, Int64Type},
 };
-use crabka_units::prelude::*;
 use datafusion::{
     common::{DataFusionError, Result as DfResult},
     logical_expr::{
@@ -45,6 +44,7 @@ use datafusion::{
     },
     prelude::SessionContext,
 };
+use krabka_units::prelude::*;
 
 use super::extrapolate::{InstantKind, RangeKind, extrapolated_rate, instant_delta};
 use crate::range_array::RangeArray;

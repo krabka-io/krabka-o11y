@@ -10,13 +10,13 @@ use arrow::{
     datatypes::{Int64Type, UInt64Type},
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{LabelMatcher, ProfileIndex, SeriesFingerprint};
-use crabka_pprof::{
+use datafusion::{catalog::MemTable, prelude::SessionContext};
+use krabka_blockstore::{LabelMatcher, ProfileIndex, SeriesFingerprint};
+use krabka_pprof::{
     ChainedResolver, DebuginfodConfig, DebuginfodResolver, FileSystemResolver, Frame,
     LazySymbolizer, NativeResolver, ProfileError, ProfileScan, ProfileStats, ProfileStore,
     SymbolDb, SymbolSource, profile_samples_schema,
 };
-use datafusion::{catalog::MemTable, prelude::SessionContext};
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
@@ -553,9 +553,9 @@ mod tests {
     use std::sync::Arc;
 
     use assert2::{assert, check};
-    use crabka_blockstore::{BlockIndex, Labels, MatchOp};
-    use crabka_pprof::{DebuginfodConfig, EngineOpts, FlameEngine, SymbolizeRequest};
-    use crabka_units::{mebibytes, millis, secs};
+    use krabka_blockstore::{BlockIndex, Labels, MatchOp};
+    use krabka_pprof::{DebuginfodConfig, EngineOpts, FlameEngine, SymbolizeRequest};
+    use krabka_units::{mebibytes, millis, secs};
     use object_store::{ObjectStore, memory::InMemory};
 
     /// `block_partition_map` gives every block its own 32-bit namespace so
@@ -1083,7 +1083,7 @@ mod tests {
 
     #[test]
     fn filter_and_remap_batch_selects_and_remaps_in_one_pass() {
-        use crabka_blockstore::{ProfileSampleRow, encode_profile_samples};
+        use krabka_blockstore::{ProfileSampleRow, encode_profile_samples};
 
         let fp_keep = 7_u64;
         let fp_drop = 99_u64;

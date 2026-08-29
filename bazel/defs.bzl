@@ -35,7 +35,7 @@ def _aliases(kinds):
     dev dependencies. rules_rust treats every key of `aliases` as a dependency,
     so handing the whole map to a `rust_library` links that crate's dev
     dependencies into the library. Where two crates dev-depend on each other --
-    `crabka-client-consumer` and `crabka-client-producer` do -- that is a
+    `krabka-client-consumer` and `krabka-client-producer` do -- that is a
     dependency cycle Bazel refuses to build, and everywhere else it is dead
     weight. Cargo has no such problem: a lib and its test binaries are separate
     compilations.

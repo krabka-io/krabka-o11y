@@ -7,8 +7,8 @@ use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use crabka_blockstore::{Labels, SeriesFingerprint};
-use crabka_metrics::{BucketSpan, NativeHistogram};
+use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_metrics::{BucketSpan, NativeHistogram};
 use serde_json::{Map, Value, json};
 
 use super::apply_limit;

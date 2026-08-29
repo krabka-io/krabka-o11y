@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crabka_units::{Time, convert::TimeExt as _, millis};
+use krabka_units::{Time, convert::TimeExt as _, millis};
 use tokio_util::sync::CancellationToken;
 
 use crate::metricsgen::{
@@ -294,7 +294,7 @@ mod tests {
     use std::sync::Arc;
 
     use assert2::check;
-    use crabka_units::{ByteSize, convert::ByteSizeExt as _};
+    use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
     use super::*;
     use crate::metricsgen::{

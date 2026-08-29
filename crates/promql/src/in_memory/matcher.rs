@@ -1,4 +1,4 @@
-use crabka_blockstore::{
+use krabka_blockstore::{
     LabelMatcher, Labels, MatchOp, QUERY_SHARD_LABEL, QueryShardSelector, SeriesFingerprint,
     parse_query_shard_selector,
 };

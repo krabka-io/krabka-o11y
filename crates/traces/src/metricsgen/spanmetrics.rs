@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crabka_units::convert::ByteSizeExt as _;
+use krabka_units::convert::ByteSizeExt as _;
 use num_traits::ToPrimitive as _;
 
 use crate::metricsgen::{
@@ -257,7 +257,7 @@ fn duration_as_f64(duration_ns: i64) -> f64 {
 #[cfg(test)]
 mod tests {
     use assert2::check;
-    use crabka_units::ByteSize;
+    use krabka_units::ByteSize;
 
     use super::*;
     use crate::metricsgen::{

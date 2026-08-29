@@ -2,7 +2,7 @@
 
 use std::net::SocketAddr;
 
-use crabka_units::{ByteSize, Time, bytes, mebibytes, secs};
+use krabka_units::{ByteSize, Time, bytes, mebibytes, secs};
 
 /// Static configuration for the `query-frontend` role.
 ///

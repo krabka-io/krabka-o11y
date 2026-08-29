@@ -91,8 +91,8 @@ pub mod pb {
 
 #[cfg(test)]
 pub(crate) mod test_fixtures {
-    use crabka_blockstore::Labels;
-    use crabka_pprof::PprofProfile;
+    use krabka_blockstore::Labels;
+    use krabka_pprof::PprofProfile;
     pub(crate) fn cpu_profile_pprof_bytes() -> Vec<u8> {
         cpu_profile().encode()
     }
@@ -117,12 +117,12 @@ pub(crate) mod test_fixtures {
         labels.insert("service_name", "api");
         crate::ingest::RawProfile {
             labels,
-            profile: PprofProfile::from(crabka_pprof::proto::Profile {
+            profile: PprofProfile::from(krabka_pprof::proto::Profile {
                 sample_type: vec![
-                    crabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
-                    crabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
+                    krabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
+                    krabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
                 ],
-                sample: vec![crabka_pprof::proto::Sample {
+                sample: vec![krabka_pprof::proto::Sample {
                     location_id: vec![1],
                     value: vec![3, 4096],
                     label: Vec::new(),
@@ -136,23 +136,23 @@ pub(crate) mod test_fixtures {
                     "space".to_string(),
                     "main".to_string(),
                 ],
-                location: vec![crabka_pprof::proto::Location {
+                location: vec![krabka_pprof::proto::Location {
                     id: 1,
                     address: 0x40,
-                    line: vec![crabka_pprof::proto::Line {
+                    line: vec![krabka_pprof::proto::Line {
                         function_id: 1,
                         line: 10,
                         column: 0,
                     }],
                     ..Default::default()
                 }],
-                function: vec![crabka_pprof::proto::Function {
+                function: vec![krabka_pprof::proto::Function {
                     id: 1,
                     name: 6,
                     system_name: 6,
                     ..Default::default()
                 }],
-                period_type: Some(crabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
+                period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
                 ..Default::default()
             }),
             delta: false,
@@ -163,9 +163,9 @@ pub(crate) mod test_fixtures {
     }
 
     fn cpu_profile() -> PprofProfile {
-        PprofProfile::from(crabka_pprof::proto::Profile {
-            sample_type: vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
-            sample: vec![crabka_pprof::proto::Sample {
+        PprofProfile::from(krabka_pprof::proto::Profile {
+            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            sample: vec![krabka_pprof::proto::Sample {
                 location_id: vec![1],
                 value: vec![42],
                 label: Vec::new(),
@@ -176,23 +176,23 @@ pub(crate) mod test_fixtures {
                 "nanoseconds".to_string(),
                 "main".to_string(),
             ],
-            location: vec![crabka_pprof::proto::Location {
+            location: vec![krabka_pprof::proto::Location {
                 id: 1,
                 address: 0x40,
-                line: vec![crabka_pprof::proto::Line {
+                line: vec![krabka_pprof::proto::Line {
                     function_id: 1,
                     line: 10,
                     column: 0,
                 }],
                 ..Default::default()
             }],
-            function: vec![crabka_pprof::proto::Function {
+            function: vec![krabka_pprof::proto::Function {
                 id: 1,
                 name: 3,
                 system_name: 3,
                 ..Default::default()
             }],
-            period_type: Some(crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
+            period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
             ..Default::default()
         })
     }

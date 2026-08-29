@@ -13,8 +13,8 @@ use arrow::{
     datatypes::{DataType, Int32Type},
     record_batch::RecordBatch,
 };
-use crabka_units::{ByteSize, Time, convert::TimeExt as _, millis};
 use datafusion::arrow::array::AsArray;
+use krabka_units::{ByteSize, Time, convert::TimeExt as _, millis};
 
 use crate::{
     ast::{
@@ -2679,8 +2679,8 @@ mod tests {
         datatypes::{Field as ArrowField, Int32Type, Schema},
     };
     use assert2::{assert, check};
-    use crabka_units::{convert::ByteSizeExt as _, millis, nanos, secs};
     use datafusion::{catalog::MemTable, prelude::SessionContext};
+    use krabka_units::{convert::ByteSizeExt as _, millis, nanos, secs};
 
     use super::*;
     use crate::{

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use crabka_units::{
+use dashmap::DashMap;
+use krabka_units::{
     Time,
     convert::{ByteSizeExt as _, FrequencyExt as _, TimeExt as _},
 };
-use dashmap::DashMap;
 use num_traits::ToPrimitive as _;
 use rate_bucket::RateBucket;
 
@@ -45,7 +45,7 @@ impl IngestEnforcer {
         // the larger of rate and configured burst so a burst can be absorbed
         // without raising the sustained rate.
         //
-        // NOTE: `crabka_broker::throttle::TokenBucket` couples refill rate and
+        // NOTE: `krabka_broker::throttle::TokenBucket` couples refill rate and
         // capacity in a single `set_rate` (capacity == rate, no separate burst
         // knob) and offers no peek/refund, so it cannot express either a
         // distinct burst capacity (M4) or all-or-nothing consumption. We use a
@@ -222,7 +222,7 @@ mod rate_bucket {
 #[cfg(test)]
 mod tests {
     use assert2::check;
-    use crabka_units::{bytes, hours, per_sec};
+    use krabka_units::{bytes, hours, per_sec};
 
     use super::*;
     use crate::limits::{LimitError, Limits};

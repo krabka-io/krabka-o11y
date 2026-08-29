@@ -10,8 +10,8 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use crabka_blockstore::{LabelMatcher, Labels, MatchOp, SeriesFingerprint};
-use crabka_metrics::{
+use krabka_blockstore::{LabelMatcher, Labels, MatchOp, SeriesFingerprint};
+use krabka_metrics::{
     BucketSpan, NativeHistogram, ResetHint, decode_native_histograms,
     wire::{pb, snappy_block_decode},
 };

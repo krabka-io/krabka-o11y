@@ -1,18 +1,18 @@
 # Crate README Style Guide
 
-This guide defines the style and content expectations for per-crate `README.md` files in Crabka. The [prose style guide](prose_style_guide.md) defines the wording rules that apply to everything you write here.
+This guide defines the style and content expectations for per-crate `README.md` files in Krabka. The [prose style guide](prose_style_guide.md) defines the wording rules that apply to everything you write here.
 
 ## Purpose
 
-Each crate README is the **entry point for someone who sees the crate for the first time**. It answers: "what is this, why does it exist, and how do I use it?" Crabka publishes its crates to crates.io with release-plz, so READMEs serve two audiences:
+Each crate README is the **entry point for someone who sees the crate for the first time**. It answers: "what is this, why does it exist, and how do I use it?" Krabka publishes its crates to crates.io with release-plz, so READMEs serve two audiences:
 
 - **crates.io and docs.rs readers** — people who evaluate whether to use the crate.
-- **Internal developers** — people who need to understand a crate's role in the Crabka workspace.
+- **Internal developers** — people who need to understand a crate's role in the Krabka workspace.
 
 ## What Belongs in READMEs
 
 - **One-line description** — what the crate does.
-- **Role in Crabka** — how it fits into the larger system.
+- **Role in Krabka** — how it fits into the larger system.
 - **Key features and capabilities**, including which Kafka KIPs or wire APIs it covers.
 - **Quick start or usage example** (for binaries and public API crates).
 - **Configuration reference** (for server binaries).
@@ -30,19 +30,19 @@ Each crate README is the **entry point for someone who sees the crate for the fi
 ### Library Crates
 
 ```markdown
-# crabka-<name>
+# krabka-<name>
 
-[![Crates.io](https://img.shields.io/crates/v/crabka-<name>.svg)](https://crates.io/crates/crabka-<name>)
-[![Docs.rs](https://docs.rs/crabka-<name>/badge.svg)](https://docs.rs/crabka-<name>)
+[![Crates.io](https://img.shields.io/crates/v/krabka-<name>.svg)](https://crates.io/crates/krabka-<name>)
+[![Docs.rs](https://docs.rs/krabka-<name>/badge.svg)](https://docs.rs/krabka-<name>)
 
 <One-line description of what this crate does.>
 
-Part of [Crabka](https://github.com/robot-head/crabka), a Rust implementation of Apache Kafka.
+Part of [Krabka](https://github.com/robot-head/crabka), a Rust implementation of Apache Kafka.
 
 ## Overview
 
 <2-3 sentences explaining the crate's role in the system, which Kafka
-standard(s) / KIP(s) it implements, and its relationship to other Crabka crates.>
+standard(s) / KIP(s) it implements, and its relationship to other Krabka crates.>
 
 ## Features
 
@@ -60,7 +60,7 @@ standard(s) / KIP(s) it implements, and its relationship to other Crabka crates.
 
 - [Design](docs/design.md)
 - [Test Coverage](docs/test_coverage_report.md)
-- [API Documentation](https://docs.rs/crabka-<name>)
+- [API Documentation](https://docs.rs/krabka-<name>)
 - [KIP Matrix](../../docs/KIP_MATRIX.md)
 
 ## License
@@ -71,11 +71,11 @@ Apache-2.0. Derivative work of [Apache Kafka](https://kafka.apache.org); see [NO
 ### Server / Binary Crates
 
 ```markdown
-# crabka-<name>
+# krabka-<name>
 
 <One-line description of what this binary does.>
 
-Part of [Crabka](https://github.com/robot-head/crabka), a Rust implementation of Apache Kafka.
+Part of [Krabka](https://github.com/robot-head/crabka), a Rust implementation of Apache Kafka.
 
 ## Quick Start
 
@@ -114,11 +114,11 @@ Apache-2.0. Derivative work of [Apache Kafka](https://kafka.apache.org); see [NO
 For crates under about 200 lines with a single responsibility:
 
 ```markdown
-# crabka-<name>
+# krabka-<name>
 
 <One-line description.>
 
-Part of [Crabka](https://github.com/robot-head/crabka), a Rust implementation of Apache Kafka.
+Part of [Krabka](https://github.com/robot-head/crabka), a Rust implementation of Apache Kafka.
 <1-2 sentences on what it does and which crate(s) use it.>
 
 ## License
@@ -136,11 +136,11 @@ Apache-2.0. Derivative work of [Apache Kafka](https://kafka.apache.org); see [NO
 
 ## Badges
 
-The standard badge set is the one form of image Crabka READMEs use, because the badges carry real information for crates.io readers. The set is the crates.io version badge, the docs.rs badge, and optionally a CI badge. Avoid other, decorative images. Prefer text descriptions.
+The standard badge set is the one form of image Krabka READMEs use, because the badges carry real information for crates.io readers. The set is the crates.io version badge, the docs.rs badge, and optionally a CI badge. Avoid other, decorative images. Prefer text descriptions.
 
 ## Naming Conventions
 
-- **Title**: use the crate name as-is (for example, `# crabka-protocol`, not `# Kafka Protocol Library`).
+- **Title**: use the crate name as-is (for example, `# krabka-protocol`, not `# Kafka Protocol Library`).
 - **Links**: use relative paths within the repo (for example, `../../NOTICE`, `../../docs/KIP_MATRIX.md`), not absolute URLs, except for external sites (crates.io, docs.rs, kafka.apache.org, KIP pages).
 - **License**: American spelling (`## License`), Apache-2.0, and the Kafka derivative-work line that points at `NOTICE`. Every crate is a derivative work of Apache Kafka.
 

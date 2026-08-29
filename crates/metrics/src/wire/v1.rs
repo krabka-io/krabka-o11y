@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use crabka_blockstore::Labels;
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_units::prelude::*;
 use prost::Message;
 
 use super::{

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use arrow::array::{FixedSizeBinaryArray, Int32Array};
 use assert2::check;
-use crabka_blockstore::{BlockWriter, TraceIndex, read_block};
-use crabka_traces::{
+use krabka_blockstore::{BlockWriter, TraceIndex, read_block};
+use krabka_traces::{
     AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode,
     blockbuilder::build_blocks,
     compactor::{compact_block_keys, compacted_object_key},
@@ -166,25 +166,25 @@ async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
     let batches = read_block(store, &output_key).await.unwrap();
     let batch = &batches[0];
     let span_ids = batch
-        .column_by_name(crabka_blockstore::SCOL_SPAN_ID)
+        .column_by_name(krabka_blockstore::SCOL_SPAN_ID)
         .unwrap()
         .as_any()
         .downcast_ref::<FixedSizeBinaryArray>()
         .unwrap();
     let left = batch
-        .column_by_name(crabka_blockstore::SCOL_NESTED_SET_LEFT)
+        .column_by_name(krabka_blockstore::SCOL_NESTED_SET_LEFT)
         .unwrap()
         .as_any()
         .downcast_ref::<Int32Array>()
         .unwrap();
     let right = batch
-        .column_by_name(crabka_blockstore::SCOL_NESTED_SET_RIGHT)
+        .column_by_name(krabka_blockstore::SCOL_NESTED_SET_RIGHT)
         .unwrap()
         .as_any()
         .downcast_ref::<Int32Array>()
         .unwrap();
     let parent_id = batch
-        .column_by_name(crabka_blockstore::SCOL_PARENT_ID)
+        .column_by_name(krabka_blockstore::SCOL_PARENT_ID)
         .unwrap()
         .as_any()
         .downcast_ref::<Int32Array>()

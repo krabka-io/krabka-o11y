@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
-use crabka_blockstore::{BlockSchema, RequiredColumn};
+use krabka_blockstore::{BlockSchema, RequiredColumn};
 
 /// Mandatory blockstore column for the series fingerprint (`UInt64`).
 pub const COL_FINGERPRINT: &str = "series_fingerprint";
@@ -282,7 +282,7 @@ pub fn clock_reading_decl() -> BlockSchema {
 mod tests {
     use arrow::datatypes::DataType;
     use assert2::{assert, check};
-    use crabka_blockstore::validate_against;
+    use krabka_blockstore::validate_against;
 
     use super::*;
 

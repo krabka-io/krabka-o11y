@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use arrow::datatypes::SchemaRef;
-use crabka_units::ByteSize;
 use datafusion::{
     catalog::MemTable,
     prelude::{ParquetReadOptions, SessionContext},
 };
+use krabka_units::ByteSize;
 use object_store::ObjectStore;
 use tracing::instrument;
 use url::Url;
@@ -65,15 +65,15 @@ impl BlockStore {
     }
 
     /// Builds a `BlockStore` whose object store comes from `cfg` through the
-    /// shared `crabka-object-store` substrate. `base` stays the caller's
+    /// shared `krabka-object-store` substrate. `base` stays the caller's
     /// `DataFusion` registration URL, which is a query-engine concern that the
     /// caller owns.
     ///
     /// # Errors
     ///
     /// Returns [`BlockStoreError::ObjectStore`] if the backend builder rejects `cfg`.
-    pub fn from_config(cfg: &crabka_object_store::ObjectStoreConfig, base: Url) -> Result<Self> {
-        let store = crabka_object_store::build_object_store(cfg)
+    pub fn from_config(cfg: &krabka_object_store::ObjectStoreConfig, base: Url) -> Result<Self> {
+        let store = krabka_object_store::build_object_store(cfg)
             .map_err(|e| BlockStoreError::ObjectStore(e.to_string()))?;
         Ok(Self::new(store, base))
     }
@@ -212,8 +212,8 @@ impl BlockStore {
 
         // Compose each block's location with `Url::join` (the same way
         // `register_scan_table` does) — a raw `format!("{base}{key}")` concat
-        // omits the path separator, so a base like `s3://crabka-traces` + key
-        // `traces/…` becomes `s3://crabka-tracestraces/…` (the prefix merges
+        // omits the path separator, so a base like `s3://krabka-traces` + key
+        // `traces/…` becomes `s3://krabka-tracestraces/…` (the prefix merges
         // into the bucket authority) and DataFusion can't resolve the store.
         let paths = keys
             .iter()
@@ -333,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn from_config_inmemory_builds_usable_store() {
-        use crabka_object_store::ObjectStoreConfig;
+        use krabka_object_store::ObjectStoreConfig;
 
         let base = url::Url::parse("memory:///").unwrap();
         let bs = BlockStore::from_config(&ObjectStoreConfig::InMemory, base).unwrap();
@@ -463,7 +463,7 @@ mod tests {
         let capped = BlockStore::new_with_block_read_max(
             bs.object_store(),
             url::Url::parse("memory:///").unwrap(),
-            crabka_units::bytes(1),
+            krabka_units::bytes(1),
         );
 
         assert2::assert!(

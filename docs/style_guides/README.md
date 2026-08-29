@@ -1,10 +1,10 @@
-# Crabka Style Guides
+# Krabka Style Guides
 
-Conventions for writing code and documentation in Crabka. They are adapted from the [Hardy project's style guides](https://github.com/ricktaylor/hardy/tree/main/docs/style_guides). Crabka tailors them to its toolchain and to its domain. The toolchain is pinned stable Rust, edition 2024, `unsafe` forbidden, `clippy::pedantic`, and `[workspace.dependencies]` with `[workspace.lints]`. The domain is Apache Kafka wire compatibility, KRaft consensus, and the KIPs Crabka implements.
+Conventions for writing code and documentation in Krabka. They are adapted from the [Hardy project's style guides](https://github.com/ricktaylor/hardy/tree/main/docs/style_guides). Krabka tailors them to its toolchain and to its domain. The toolchain is pinned stable Rust, edition 2024, `unsafe` forbidden, `clippy::pedantic`, and `[workspace.dependencies]` with `[workspace.lints]`. The domain is Apache Kafka wire compatibility, KRaft consensus, and the KIPs Krabka implements.
 
 The guides describe what reviewers expect. They are **not** a mandate to reformat existing code. See the [code style guide](code_style_guide.md#applying-these-conventions). Bring a file into line only when you are already changing it, and keep the tidy-up proportionate.
 
-Crabka writes all prose in **ASD-STE100 Simplified Technical English**. The [prose style guide](prose_style_guide.md) defines the wording rules that every other guide here leaves open. It governs doc comments, READMEs, design docs, coverage reports, and commit and pull request text.
+Krabka writes all prose in **ASD-STE100 Simplified Technical English**. The [prose style guide](prose_style_guide.md) defines the wording rules that every other guide here leaves open. It governs doc comments, READMEs, design docs, coverage reports, and commit and pull request text.
 
 | Guide | Covers |
 | :--- | :--- |
