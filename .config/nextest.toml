@@ -10,7 +10,7 @@
 # `broker-integration`, `broker-jvm-acceptance`, `workspace-integration-coverage`,
 # `client-core-integration`, `grpc-gateway-integration`, and the conformance
 # lanes) found a maximum of 176.6s, in
-# `crabka-gres-ranges::tso_monotonicity_model`. No test was above 180s, so the
+# `krabka-gres-ranges::tso_monotonicity_model`. No test was above 180s, so the
 # bound has a wide margin over the whole distribution, not only over the mean.
 #
 # The bound catches a hang. It does not police slow tests. A stalled container

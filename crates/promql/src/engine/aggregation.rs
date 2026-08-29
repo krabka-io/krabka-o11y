@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
-use crabka_blockstore::Labels;
-use crabka_metrics::NativeHistogram;
+use krabka_blockstore::Labels;
+use krabka_metrics::NativeHistogram;
 #[cfg(feature = "experimental-functions")]
 use num_traits::ToPrimitive as _;
 #[cfg(test)]
@@ -248,7 +248,7 @@ fn limit_ratio_includes_sample(ratio: f64, labels: &Labels) -> bool {
 
 /// Hashes labels exactly like Prometheus' `labels.Labels.Hash`.
 ///
-/// Crabka's persisted series fingerprint deliberately uses a different,
+/// Krabka's persisted series fingerprint deliberately uses a different,
 /// length-prefixed encoding. `PromQL`'s `limit_ratio`, however, is externally
 /// observable and must use Prometheus' xxHash64 over sorted
 /// `name\xffvalue\xff` pairs.

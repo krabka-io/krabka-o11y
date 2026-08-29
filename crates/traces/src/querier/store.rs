@@ -17,12 +17,13 @@ use arrow::{
     datatypes::{DataType, Field, Int32Type, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{
+use datafusion::{catalog::MemTable, prelude::SessionContext};
+use krabka_blockstore::{
     BlockIndex, BlockStore, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL,
     SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT, SCOL_EVENTS, SCOL_LINKS, TraceIndex,
     span_block_schema,
 };
-use crabka_traceql::{
+use krabka_traceql::{
     ATTR_PREFIX, AttrValue, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,
     COL_EVENT_TIME_SINCE_START, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, COL_KIND,
     COL_LINK_SPAN_ID, COL_LINK_TRACE_ID, COL_NAME, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID,
@@ -32,11 +33,10 @@ use crabka_traceql::{
     MatchValue, ScanJob, ScanOptions, ScanResult, ScopedTag, SpanMatcher, SpanRef, SpanStore,
     TagScope, TraceSpans, TraceqlError, TypedValue, span_schema,
 };
-use crabka_units::{
+use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt},
 };
-use datafusion::{catalog::MemTable, prelude::SessionContext};
 
 use crate::{querier::live::LiveTier, span::batch::RESOURCE_ATTR_PREFIX};
 
@@ -77,17 +77,17 @@ const SCOPE_ORDER: &[TagScope] = &[
 pub type SharedTraceIndex = Arc<ArcSwap<TraceIndex>>;
 
 /// Default and maximum safe memory size for a concatenation of scan batches.
-pub const DEFAULT_SCAN_CONCAT_MAX: ByteSize = crabka_units::bytes(1_500_000_000);
+pub const DEFAULT_SCAN_CONCAT_MAX: ByteSize = krabka_units::bytes(1_500_000_000);
 
 /// Query-side span store that merges sealed blocks with an optional live tier.
-pub struct CrabkaSpanStore {
+pub struct KrabkaSpanStore {
     blocks: Arc<BlockStore>,
     trace_index: SharedTraceIndex,
     live: Option<LiveTier>,
     scan_concat_max: ByteSize,
 }
 
-impl CrabkaSpanStore {
+impl KrabkaSpanStore {
     #[must_use]
     pub fn new(
         blocks: Arc<BlockStore>,
@@ -259,7 +259,7 @@ impl CrabkaSpanStore {
 }
 
 #[async_trait::async_trait]
-impl SpanStore for CrabkaSpanStore {
+impl SpanStore for KrabkaSpanStore {
     async fn scan(
         &self,
         tenant: &str,
@@ -448,7 +448,7 @@ fn unscoped_attribute_tag(tag: &str) -> &str {
         .unwrap_or(tag)
 }
 
-impl CrabkaSpanStore {
+impl KrabkaSpanStore {
     async fn cold_attribute_tag_names(
         &self,
         tenant: &str,
@@ -2639,7 +2639,7 @@ fn tag_scope_key(scope: TagScope) -> &'static str {
     }
 }
 
-fn block_err(err: &crabka_blockstore::BlockStoreError) -> TraceqlError {
+fn block_err(err: &krabka_blockstore::BlockStoreError) -> TraceqlError {
     TraceqlError::Store(err.to_string())
 }
 
@@ -3255,17 +3255,17 @@ mod tests {
         datatypes::{DataType, Field, Int32Type, Int64Type, Schema, SchemaRef},
     };
     use assert2::check;
-    use crabka_blockstore::{
+    use krabka_blockstore::{
         AttrValue as BlockAttrValue, BlockWriter, NestedSet as BlockNestedSet, PromotedSpanAttr,
         SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanAttr, SpanKind as BlockSpanKind,
         SpanRow, StatusCode as BlockStatusCode, SummaryColumns, TraceBlockStats, encode_span_rows,
         span_block_decl, span_block_schema,
     };
-    use crabka_traceql::{
+    use krabka_traceql::{
         COL_CHILD_COUNT, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, EngineOpts,
         EventRef, LinkRef, ScanJob, ScanOptions, TraceqlEngine,
     };
-    use crabka_units::{convert::ByteSizeExt as _, nanos};
+    use krabka_units::{convert::ByteSizeExt as _, nanos};
     use object_store::{buffered::BufWriter, memory::InMemory, path::Path};
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
     use url::Url;
@@ -3421,7 +3421,7 @@ mod tests {
 
     #[test]
     fn scan_concat_max_is_dimensioned() {
-        assert2::assert!(DEFAULT_SCAN_CONCAT_MAX == crabka_units::bytes(1_500_000_000));
+        assert2::assert!(DEFAULT_SCAN_CONCAT_MAX == krabka_units::bytes(1_500_000_000));
     }
 
     #[test]
@@ -3442,7 +3442,7 @@ mod tests {
             Arc::new(InMemory::new()),
             Url::parse("memory:///").unwrap(),
         ));
-        let store = CrabkaSpanStore::new(blocks, shared(TraceIndex::new()), None);
+        let store = KrabkaSpanStore::new(blocks, shared(TraceIndex::new()), None);
 
         assert2::assert!(store.scan_concat_max == DEFAULT_SCAN_CONCAT_MAX);
     }
@@ -4157,7 +4157,7 @@ mod tests {
             Arc::new(InMemory::new()),
             Url::parse("memory:///").unwrap(),
         ));
-        let store = CrabkaSpanStore::new(blocks, shared(TraceIndex::new()), None);
+        let store = KrabkaSpanStore::new(blocks, shared(TraceIndex::new()), None);
         let scan = store.scan("tenant", &[], 0, 10).await.unwrap();
         let rows: usize = scan
             .ctx
@@ -4216,7 +4216,7 @@ mod tests {
             },
         );
 
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
         assert2::assert!(
             store.tag_names("tenant", None, 0, 10_000).await.unwrap()[0]
                 .tags
@@ -4281,7 +4281,7 @@ mod tests {
                 ]),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         let status_values = store
             .tag_values("tenant", "http.status_code", 0, 10_000)
@@ -4346,7 +4346,7 @@ mod tests {
                 ]),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         let event_values = store
             .tag_values("tenant", "exception.type", 0, 10_000)
@@ -4418,7 +4418,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         let event_tags = store
             .tag_names("tenant", Some(TagScope::Event), 0, 10_000)
@@ -4472,7 +4472,7 @@ mod tests {
             },
         );
 
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         let intrinsic = store
             .tag_names("tenant", Some(TagScope::Intrinsic), 0, 10)
@@ -4557,7 +4557,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         let tags = store
             .tag_names("tenant", Some(TagScope::Span), 0, 10)
@@ -4627,10 +4627,10 @@ mod tests {
         let capped_blocks = Arc::new(BlockStore::new_with_block_read_max(
             object_store,
             Url::parse("memory:///").unwrap(),
-            crabka_units::bytes(1),
+            krabka_units::bytes(1),
         ));
-        let capped_store = CrabkaSpanStore::new(capped_blocks, shared(index()), None);
-        let store = CrabkaSpanStore::new(blocks, shared(index()), None);
+        let capped_store = KrabkaSpanStore::new(capped_blocks, shared(index()), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index()), None);
 
         let options = ScanOptions {
             job: Some(ScanJob {
@@ -4649,7 +4649,7 @@ mod tests {
             .iter()
             .flat_map(|batch| {
                 batch
-                    .column_by_name(crabka_traceql::COL_NAME)
+                    .column_by_name(krabka_traceql::COL_NAME)
                     .unwrap()
                     .as_any()
                     .downcast_ref::<StringArray>()
@@ -4705,7 +4705,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         let scan = store
             .scan_with_options(
@@ -4748,7 +4748,7 @@ mod tests {
             frontier_ns: 0,
             ..FakeLiveSource::default()
         }));
-        let store = CrabkaSpanStore::new(blocks, shared(TraceIndex::new()), Some(live));
+        let store = KrabkaSpanStore::new(blocks, shared(TraceIndex::new()), Some(live));
 
         let values = store
             .tag_values("tenant", "event:name", 0, 10)
@@ -4785,7 +4785,7 @@ mod tests {
                 )]),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         let values = store
             .tag_values("tenant", "event:name", 0, 10)
@@ -4851,7 +4851,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
         let (min, max) = (meta.min_ts, meta.max_ts);
         check!(
             min < max,
@@ -5023,7 +5023,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         let trace = store
             .trace_by_id("tenant", &span.trace_id)
@@ -5116,7 +5116,7 @@ mod tests {
             );
         }
 
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
         let trace = store
             .trace_by_id_within("tenant", &early.trace_id, 5_000, 5_000)
             .await
@@ -5180,7 +5180,7 @@ mod tests {
             values: vec![],
             frontier_ns: 1_000,
         }));
-        let store = CrabkaSpanStore::new(blocks, shared(index), Some(live));
+        let store = KrabkaSpanStore::new(blocks, shared(index), Some(live));
 
         let trace = store
             .trace_by_id("tenant", &span.trace_id)
@@ -5249,7 +5249,7 @@ mod tests {
             values: vec![],
             frontier_ns: 1_000,
         }));
-        let store = CrabkaSpanStore::new(blocks, shared(index), Some(live));
+        let store = KrabkaSpanStore::new(blocks, shared(index), Some(live));
 
         let trace = store
             .trace_by_id("tenant", &root.trace_id)
@@ -5319,7 +5319,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
         // Window [4_000, 6_000] covers only the child by span start, yet the
         // block (min_ts..max_ts spans both) is still selected, so the whole
@@ -5386,7 +5386,7 @@ mod tests {
             values: vec![],
             frontier_ns: child.start_ns,
         }));
-        let store = Arc::new(CrabkaSpanStore::new(blocks, shared(index), Some(live)));
+        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), Some(live)));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
 
         let resp = engine
@@ -5418,7 +5418,7 @@ mod tests {
         );
     }
 
-    async fn event_intrinsic_fixture() -> (TraceqlEngine<CrabkaSpanStore>, [[u8; 16]; 4]) {
+    async fn event_intrinsic_fixture() -> (TraceqlEngine<KrabkaSpanStore>, [[u8; 16]; 4]) {
         let object_store = Arc::new(InMemory::new());
         let blocks = Arc::new(BlockStore::new(
             object_store.clone(),
@@ -5495,7 +5495,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = Arc::new(CrabkaSpanStore::new(blocks, shared(index), None));
+        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
         (
             engine,
@@ -5710,7 +5710,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = Arc::new(CrabkaSpanStore::new(blocks, shared(index), None));
+        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
 
         let resp = engine
@@ -5767,7 +5767,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = Arc::new(CrabkaSpanStore::new(blocks, shared(index), None));
+        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
 
         let resource = engine
@@ -5877,7 +5877,7 @@ mod tests {
                 )]),
             },
         );
-        let store = Arc::new(CrabkaSpanStore::new(blocks, shared(index), None));
+        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
 
         let mut series = engine
@@ -5961,7 +5961,7 @@ mod tests {
                 tag_values: BTreeMap::new(),
             },
         );
-        let store = Arc::new(CrabkaSpanStore::new(blocks, shared(index), None));
+        let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
 
         let resp = engine
@@ -6040,7 +6040,7 @@ mod tests {
             Arc::new(InMemory::new()),
             Url::parse("memory:///").unwrap(),
         ));
-        let store = Arc::new(CrabkaSpanStore::new(
+        let store = Arc::new(KrabkaSpanStore::new(
             blocks,
             shared(TraceIndex::new()),
             None,
@@ -6057,7 +6057,7 @@ mod tests {
     ///
     /// `candidate_blocks` returns nothing from the initial empty index. After a
     /// `store()` on the shared handle, the new block is immediately visible,
-    /// both directly and through the `CrabkaSpanStore` that holds the same
+    /// both directly and through the `KrabkaSpanStore` that holds the same
     /// `Arc<ArcSwap<TraceIndex>>`.
     #[tokio::test]
     async fn span_store_observes_swapped_index() {
@@ -6067,7 +6067,7 @@ mod tests {
         ));
         let handle: SharedTraceIndex = shared(TraceIndex::new());
         // Build the store — it holds the same Arc so it observes every swap.
-        let _store = CrabkaSpanStore::new(Arc::clone(&blocks), Arc::clone(&handle), None);
+        let _store = KrabkaSpanStore::new(Arc::clone(&blocks), Arc::clone(&handle), None);
 
         // Before swap: no candidate blocks.
         let before = handle.load().candidate_blocks("tenant", 0, i64::MAX);

@@ -10,8 +10,8 @@ use arrow::{
     datatypes::Int32Type,
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{LabelMatcher, Labels, MatchOp};
 use datafusion::{catalog::MemTable, prelude::SessionContext};
+use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
 use regex::Regex;
 
 use crate::{
@@ -240,7 +240,7 @@ impl ProfileStore for InMemoryProfileStore {
             // An empty `label_names` means "return the full label set" (the
             // Pyroscope `/series` convention). Projecting onto an empty name
             // list yields an empty vec, which surfaces as a spurious `[{}]`
-            // entry — mirror the cold-path fix in `crabka_blockstore`'s index.
+            // entry — mirror the cold-path fix in `krabka_blockstore`'s index.
             let mut projected: Vec<_> = if label_names.is_empty() {
                 row.labels
                     .iter()
@@ -410,11 +410,11 @@ fn label_value<'a>(row: &'a SampleRow, name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use assert2::assert;
-    use crabka_blockstore::{LabelMatcher, MatchOp};
     use datafusion::arrow::{
         array::AsArray,
         datatypes::{Int64Type, UInt64Type},
     };
+    use krabka_blockstore::{LabelMatcher, MatchOp};
 
     use super::*;
     use crate::{FunctionRec, LineRec, LocationRec};
@@ -510,7 +510,7 @@ mod tests {
         assert!(series == vec![vec![("service_name".to_string(), "checkout".to_string())]]);
 
         // Empty `label_names` means "return the full label set" (the Pyroscope
-        // `/series` convention), mirroring `crabka_blockstore`'s index. It must
+        // `/series` convention), mirroring `krabka_blockstore`'s index. It must
         // NOT collapse to a single empty label set (`[{}]`), which breaks
         // Grafana's Pyroscope label autocomplete. All samples here carry the same
         // single label, so the full sets dedup to one series.

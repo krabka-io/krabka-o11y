@@ -1,16 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use assert2::check;
-use crabka_blockstore::{
-    BlockKey, LogRow, TimeRange, labels, log_block_object_path, read_log_block,
-    read_log_block_from_object_store, series_fingerprint, write_log_block,
-    write_log_block_to_object_store,
-};
-use crabka_units::prelude::*;
 use datafusion::{
     arrow::datatypes::{DataType, Fields},
     parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder,
 };
+use krabka_blockstore::{
+    BlockKey, LogRow, TimeRange, labels, log_block_object_path, read_log_block,
+    read_log_block_from_object_store, series_fingerprint, write_log_block,
+    write_log_block_to_object_store,
+};
+use krabka_units::prelude::*;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 
 #[test]

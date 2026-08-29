@@ -1,6 +1,6 @@
-use crabka_blockstore::Labels;
-use crabka_units::prelude::*;
 use futures::{FutureExt, future::BoxFuture};
+use krabka_blockstore::Labels;
+use krabka_units::prelude::*;
 use promql_parser::parser::{
     AggregateExpr, BinaryExpr, Call, Expr, MatrixSelector, UnaryExpr, VectorSelector,
     token::{T_BOTTOMK, T_COUNT_VALUES, T_LIMIT_RATIO, T_LIMITK, T_QUANTILE, T_TOPK},

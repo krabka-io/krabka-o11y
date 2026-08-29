@@ -6,8 +6,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use crabka_client_consumer::{Consumer, ConsumerRecord};
-use crabka_units::{ByteSize, Time, convert::ByteSizeExt as _, millis};
+use krabka_client_consumer::{Consumer, ConsumerRecord};
+use krabka_units::{ByteSize, Time, convert::ByteSizeExt as _, millis};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
@@ -403,7 +403,7 @@ mod tests {
         };
         let encoded = record.encode().unwrap();
         let records = vec![
-            crabka_client_consumer::ConsumerRecord {
+            krabka_client_consumer::ConsumerRecord {
                 topic: crate::TRACES_WAL_TOPIC.into(),
                 partition: 0,
                 offset: 1,
@@ -413,7 +413,7 @@ mod tests {
                 value: Some(bytes::Bytes::from(encoded.clone())),
                 headers: Vec::new(),
             },
-            crabka_client_consumer::ConsumerRecord {
+            krabka_client_consumer::ConsumerRecord {
                 topic: crate::TRACES_WAL_TOPIC.into(),
                 partition: 0,
                 offset: 2,

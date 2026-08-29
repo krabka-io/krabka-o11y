@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crabka_metrics::WalRecord;
+use krabka_metrics::WalRecord;
 
 use crate::PromqlError;
 

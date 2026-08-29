@@ -14,8 +14,8 @@ use arrow::{
     record_batch::RecordBatch,
 };
 #[cfg(test)]
-use crabka_blockstore::read_block;
-use crabka_blockstore::{
+use krabka_blockstore::read_block;
+use krabka_blockstore::{
     BlockIndex, BlockMeta, BlockWriter, DEFAULT_BLOCK_READ_MAX, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,
     SCOL_ATTR_VALUE_BOOL, SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT, SCOL_CHILD_COUNT,
     SCOL_DURATION_NANOS, SCOL_EVENTS, SCOL_INSTRUMENTATION_NAME, SCOL_INSTRUMENTATION_VERSION,
@@ -25,7 +25,7 @@ use crabka_blockstore::{
     ShardedTraceBloom, SummaryColumns, TraceBlockStats, TraceIndex, read_block_with_max_bytes,
     span_block_decl, span_block_schema,
 };
-use crabka_units::ByteSize;
+use krabka_units::ByteSize;
 use object_store::ObjectStore;
 
 use crate::{
@@ -890,7 +890,7 @@ fn insert_tag_value(
 #[cfg(test)]
 mod tests {
     use assert2::check;
-    use crabka_blockstore::BlockIndex;
+    use krabka_blockstore::BlockIndex;
     use object_store::memory::InMemory;
 
     use super::*;
@@ -1127,7 +1127,7 @@ mod tests {
             "tenant",
             &["a.parquet".to_string(), "b.parquet".to_string()],
             "rejected.parquet",
-            crabka_units::bytes(1),
+            krabka_units::bytes(1),
         )
         .await;
         assert2::assert!(rejected.is_err());

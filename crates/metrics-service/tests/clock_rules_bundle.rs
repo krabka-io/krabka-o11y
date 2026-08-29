@@ -17,8 +17,8 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use crabka_blockstore::Labels;
-use crabka_metrics::{
+use krabka_blockstore::Labels;
+use krabka_metrics::{
     SamplePayload, WalRecord,
     distributor::clock_series,
     wire::{
@@ -26,15 +26,15 @@ use crabka_metrics::{
         UnixNanos,
     },
 };
-use crabka_metrics_service::{
+use krabka_metrics_service::{
     evaluate_ruler_once, install_bundled_rule_groups, prometheus_api_state_for_store,
 };
-use crabka_promql::{
+use krabka_promql::{
     AlertmanagerAlert, AlertmanagerSink, InMemoryMetricStore, PrometheusApiState,
     RecordingRuleWalSink, RulerAlertState, RulerAlertStateRecord, RulerGroupState,
     RulerGroupStateRecord, RulerShard, RulerStateSink, RulerWalError, prometheus_router,
 };
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use tower::ServiceExt as _;
 
 const TENANT: &str = "tenant-a";
@@ -233,7 +233,7 @@ fn store_with_fleet(fleet: &[ClockFixture], declared_bound_steps: &[i64]) -> InM
             store.push_float(
                 TENANT,
                 labels(
-                    "crabka_broker_delivery_clock_uncertainty_seconds",
+                    "krabka_broker_delivery_clock_uncertainty_seconds",
                     &[("broker", &index.to_string())],
                 ),
                 timestamp_ms,

@@ -1,7 +1,7 @@
 //! Profiles WAL topic record contract.
 
 use bytes::Bytes;
-use crabka_blockstore::Labels;
+use krabka_blockstore::Labels;
 use serde::{Deserialize, Serialize};
 use serde_wincode::SerdeCompat;
 use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
@@ -9,7 +9,7 @@ use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
 use crate::error::ProfilesError;
 
 /// The profiles WAL topic name.
-pub const PROFILES_WAL_TOPIC: &str = "__crabka_profiles_wal";
+pub const PROFILES_WAL_TOPIC: &str = "__krabka_profiles_wal";
 
 /// One sample's raw payload.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

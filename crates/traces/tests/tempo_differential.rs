@@ -3,7 +3,7 @@
 //! These tests are ignored by default because they pull and run upstream Docker
 //! images. Run explicitly with:
 //!
-//! `cargo test -p crabka-traces --test tempo_differential -- --ignored --nocapture`
+//! `cargo test -p krabka-traces --test tempo_differential -- --ignored --nocapture`
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -16,10 +16,11 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use crabka_traceql::{
+use http_body_util::BodyExt as _;
+use krabka_traceql::{
     AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
 };
-use crabka_traces::{
+use krabka_traces::{
     AttrValue, Span, SpanRecord, TracesError,
     distributor::{self, DistributorState, WalSink},
     metricsgen::{
@@ -28,11 +29,10 @@ use crabka_traces::{
         StatusCode as MetricsStatusCode,
     },
 };
-use crabka_units::{
+use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt as _},
 };
-use http_body_util::BodyExt as _;
 use opentelemetry_proto::tonic::{
     common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
     resource::v1::Resource,
@@ -55,7 +55,7 @@ const ERROR_SPAN_ID_HEX: &str = "0404040404040404";
 /// OTLP `STATUS_CODE_ERROR`.
 const OTLP_STATUS_CODE_ERROR: i32 = 2;
 const DOCKER_HOST_ALIAS: &str = "host.testcontainers.internal";
-const GRAFANA_TEMPO_DATASOURCE_UID: &str = "crabka-traces";
+const GRAFANA_TEMPO_DATASOURCE_UID: &str = "krabka-traces";
 /// Tempo query-frontend HTTP port inside the container. It matches
 /// `http_listen_port` in [`TEMPO_CONFIG`].
 const TEMPO_HTTP_PORT: u16 = 3200;
@@ -138,7 +138,7 @@ fn differential_search_corpus() -> Vec<QueryCase> {
             // `| count() > 0` is a spanset count FILTER, valid in Tempo's search
             // API across versions. (`| by(...)` is a metrics-only stage that
             // real Tempo's /api/search rejects with a parse error, even though
-            // Crabka accepts it as a superset.)
+            // Krabka accepts it as a superset.)
             kind: QueryCaseKind::Pipeline,
             encoded_query: "%7B%20resource.service.name%20%3D%20%22checkout%22%20%7D%20%7C%20count()%20%3E%200",
             expected_span_id: None,
@@ -167,7 +167,7 @@ fn differential_search_corpus_covers_selector_structural_and_pipeline_queries() 
 
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
-async fn real_tempo_and_crabka_match_basic_by_id_and_search() -> TestResult {
+async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
     let client = reqwest::Client::new();
     let tempo = start_tempo().await?;
     let tempo_query = mapped_base_url(&tempo, TEMPO_HTTP_PORT).await?;
@@ -176,7 +176,7 @@ async fn real_tempo_and_crabka_match_basic_by_id_and_search() -> TestResult {
 
     let query_range = "start=0&end=1";
     let otlp_body = sample_otlp_body();
-    let crabka = start_crabka_pair(&otlp_body).await?;
+    let krabka = start_krabka_pair(&otlp_body).await?;
 
     post_otlp(
         &client,
@@ -187,9 +187,9 @@ async fn real_tempo_and_crabka_match_basic_by_id_and_search() -> TestResult {
     .await?;
 
     let tempo_trace = get_trace_by_id_until_found(&client, &tempo_query, None, query_range).await?;
-    let crabka_trace =
-        get_trace_by_id(&client, &crabka.base_url, Some(TENANT), query_range).await?;
-    assert_trace_shape_matches(&tempo_trace, &crabka_trace);
+    let krabka_trace =
+        get_trace_by_id(&client, &krabka.base_url, Some(TENANT), query_range).await?;
+    assert_trace_shape_matches(&tempo_trace, &krabka_trace);
 
     for case in differential_search_corpus() {
         let tempo_search = get_json_until_non_empty_traces(
@@ -201,19 +201,19 @@ async fn real_tempo_and_crabka_match_basic_by_id_and_search() -> TestResult {
             None,
         )
         .await?;
-        let crabka_search = get_json(
+        let krabka_search = get_json(
             &client,
             &format!(
                 "{}/api/search?q={}&{query_range}",
-                crabka.base_url, case.encoded_query
+                krabka.base_url, case.encoded_query
             ),
             Some(TENANT),
         )
         .await?;
-        assert_search_shape_matches(&tempo_search, &crabka_search);
+        assert_search_shape_matches(&tempo_search, &krabka_search);
         if let Some(span_id) = case.expected_span_id {
             assert_search_contains_span_id(&tempo_search, span_id);
-            assert_search_contains_span_id(&crabka_search, span_id);
+            assert_search_contains_span_id(&krabka_search, span_id);
         }
     }
 
@@ -223,13 +223,13 @@ async fn real_tempo_and_crabka_match_basic_by_id_and_search() -> TestResult {
         None,
     )
     .await?;
-    let crabka_tags = get_json(
+    let krabka_tags = get_json(
         &client,
-        &format!("{}/api/v2/search/tags?{query_range}", crabka.base_url),
+        &format!("{}/api/v2/search/tags?{query_range}", krabka.base_url),
         Some(TENANT),
     )
     .await?;
-    assert_required_tag_names_match(&tempo_tags, &crabka_tags);
+    assert_required_tag_names_match(&tempo_tags, &krabka_tags);
 
     let tempo_service_values = get_json(
         &client,
@@ -237,24 +237,24 @@ async fn real_tempo_and_crabka_match_basic_by_id_and_search() -> TestResult {
         None,
     )
     .await?;
-    let crabka_service_values = get_json(
+    let krabka_service_values = get_json(
         &client,
         &format!(
             "{}/api/v2/search/tag/resource.service.name/values?{query_range}",
-            crabka.base_url
+            krabka.base_url
         ),
         Some(TENANT),
     )
     .await?;
-    assert_required_tag_values_match(&tempo_service_values, &crabka_service_values, "checkout");
+    assert_required_tag_values_match(&tempo_service_values, &krabka_service_values, "checkout");
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
-async fn real_tempo_and_crabka_match_traceql_metrics_query_range() -> TestResult {
+async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult {
     let client = reqwest::Client::new();
     let tempo = start_tempo().await?;
     let tempo_query = mapped_base_url(&tempo, TEMPO_HTTP_PORT).await?;
@@ -269,7 +269,7 @@ async fn real_tempo_and_crabka_match_traceql_metrics_query_range() -> TestResult
     let query_end = trace_start_secs + 120;
     let query_range = format!("start={query_start}&end={query_end}");
     let otlp_body = sample_otlp_body_at(trace_start_secs * 1_000_000_000);
-    let crabka = start_crabka_pair(&otlp_body).await?;
+    let krabka = start_krabka_pair(&otlp_body).await?;
 
     post_otlp(
         &client,
@@ -287,27 +287,27 @@ async fn real_tempo_and_crabka_match_traceql_metrics_query_range() -> TestResult
         None,
     )
     .await?;
-    let crabka_metrics = get_json(
+    let krabka_metrics = get_json(
         &client,
         &format!(
             "{}/api/metrics/query_range?q={metrics_query}&{query_range}&step=30s",
-            crabka.base_url
+            krabka.base_url
         ),
         Some(TENANT),
     )
     .await?;
-    assert_metric_totals_match(&tempo_metrics, &crabka_metrics);
+    assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
-async fn real_tempo_and_crabka_accept_query_param_alias() -> TestResult {
+async fn real_tempo_and_krabka_accept_query_param_alias() -> TestResult {
     // The Grafana Tempo datasource — and therefore the Traces Drilldown
     // breakdown — sends the TraceQL metrics query under `query=`, not `q=`.
-    // Real Tempo accepts both spellings; crabka must too, or every breakdown
+    // Real Tempo accepts both spellings; krabka must too, or every breakdown
     // panel 400s with "missing query parameter q" and renders blank. The
     // existing tests all send `q=`, so they could not catch this — this leg
     // mirrors the live datasource exactly.
@@ -325,7 +325,7 @@ async fn real_tempo_and_crabka_accept_query_param_alias() -> TestResult {
     let query_end = trace_start_secs + 120;
     let query_range = format!("start={query_start}&end={query_end}");
     let otlp_body = sample_otlp_body_at(trace_start_secs * 1_000_000_000);
-    let crabka = start_crabka_pair(&otlp_body).await?;
+    let krabka = start_krabka_pair(&otlp_body).await?;
 
     post_otlp(
         &client,
@@ -346,27 +346,27 @@ async fn real_tempo_and_crabka_accept_query_param_alias() -> TestResult {
         None,
     )
     .await?;
-    let crabka_metrics = get_json(
+    let krabka_metrics = get_json(
         &client,
         &format!(
             "{}/api/metrics/query_range?query={metrics_query}&{query_range}&step=30s",
-            crabka.base_url
+            krabka.base_url
         ),
         Some(TENANT),
     )
     .await?;
-    assert_metric_totals_match(&tempo_metrics, &crabka_metrics);
+    assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
-async fn real_tempo_and_crabka_match_traceql_metrics_by_labels() -> TestResult {
+async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
     // Regression for the Grafana Traces Drilldown breakdown: its per-attribute
     // panels key on the FULL scoped attribute (e.g. `resource.service.name`), so
-    // the grouped-series label key must match real Tempo exactly. Crabka
+    // the grouped-series label key must match real Tempo exactly. Krabka
     // previously emitted the scope-stripped key (`service.name`), which left the
     // breakdown blank even though the data and totals were correct.
     let client = reqwest::Client::new();
@@ -383,7 +383,7 @@ async fn real_tempo_and_crabka_match_traceql_metrics_by_labels() -> TestResult {
     let query_end = trace_start_secs + 120;
     let query_range = format!("start={query_start}&end={query_end}");
     let otlp_body = sample_otlp_body_at(trace_start_secs * 1_000_000_000);
-    let crabka = start_crabka_pair(&otlp_body).await?;
+    let krabka = start_krabka_pair(&otlp_body).await?;
 
     post_otlp(
         &client,
@@ -406,40 +406,40 @@ async fn real_tempo_and_crabka_match_traceql_metrics_by_labels() -> TestResult {
             None,
         )
         .await?;
-        let crabka_metrics = get_json(
+        let krabka_metrics = get_json(
             &client,
             &format!(
                 "{}/api/metrics/query_range?q={metrics_query}&{query_range}&step=30s",
-                crabka.base_url
+                krabka.base_url
             ),
             Some(TENANT),
         )
         .await?;
         let tempo_keys = metric_series_label_keys(&tempo_metrics);
-        let crabka_keys = metric_series_label_keys(&crabka_metrics);
+        let krabka_keys = metric_series_label_keys(&krabka_metrics);
         eprintln!(
-            "by({by}): Tempo keys={tempo_keys:?} promLabels={:?}; Crabka keys={crabka_keys:?} promLabels={:?}",
+            "by({by}): Tempo keys={tempo_keys:?} promLabels={:?}; Krabka keys={krabka_keys:?} promLabels={:?}",
             metric_prom_labels_list(&tempo_metrics),
-            metric_prom_labels_list(&crabka_metrics),
+            metric_prom_labels_list(&krabka_metrics),
         );
-        assert2::assert!(crabka_keys == tempo_keys);
+        assert2::assert!(krabka_keys == tempo_keys);
     }
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 #[tokio::test]
-async fn crabka_tenant_b_cannot_see_tenant_a_traces_tags_or_values() -> TestResult {
+async fn krabka_tenant_b_cannot_see_tenant_a_traces_tags_or_values() -> TestResult {
     let client = reqwest::Client::new();
     let query_range = "start=0&end=1";
     let query = "%7B%20resource.service.name%20%3D%20%22checkout%22%20%7D";
-    let crabka = start_crabka_pair(&sample_otlp_body()).await?;
+    let krabka = start_krabka_pair(&sample_otlp_body()).await?;
 
     let tenant_b_trace_status = get_status(
         &client,
         &format!(
             "{}/api/v2/traces/{TRACE_ID_HEX}?{query_range}",
-            crabka.base_url
+            krabka.base_url
         ),
         Some("tenant-b"),
     )
@@ -448,7 +448,7 @@ async fn crabka_tenant_b_cannot_see_tenant_a_traces_tags_or_values() -> TestResu
 
     let tenant_b_search = get_json(
         &client,
-        &format!("{}/api/search?q={query}&{query_range}", crabka.base_url),
+        &format!("{}/api/search?q={query}&{query_range}", krabka.base_url),
         Some("tenant-b"),
     )
     .await?;
@@ -456,7 +456,7 @@ async fn crabka_tenant_b_cannot_see_tenant_a_traces_tags_or_values() -> TestResu
 
     let tenant_b_tags = get_json(
         &client,
-        &format!("{}/api/v2/search/tags?{query_range}", crabka.base_url),
+        &format!("{}/api/v2/search/tags?{query_range}", krabka.base_url),
         Some("tenant-b"),
     )
     .await?;
@@ -466,34 +466,34 @@ async fn crabka_tenant_b_cannot_see_tenant_a_traces_tags_or_values() -> TestResu
         &client,
         &format!(
             "{}/api/v2/search/tag/resource.service.name/values?{query_range}",
-            crabka.base_url
+            krabka.base_url
         ),
         Some("tenant-b"),
     )
     .await?;
     assert_tag_values_do_not_contain(&tenant_b_values, "checkout");
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/grafana image"]
-async fn grafana_accepts_tempo_datasource_pointing_at_crabka() -> TestResult {
+async fn grafana_accepts_tempo_datasource_pointing_at_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let otlp_body = sample_otlp_body();
-    let crabka = start_crabka_pair_reachable_from_container(&otlp_body).await?;
+    let krabka = start_krabka_pair_reachable_from_container(&otlp_body).await?;
 
     let grafana = start_grafana().await?;
     let grafana_base = mapped_base_url(&grafana, GRAFANA_HTTP_PORT).await?;
     wait_for_http_ok(&client, &grafana_base, &["/api/health"]).await?;
 
     let payload = json!({
-        "name": "Crabka Traces",
+        "name": "Krabka Traces",
         "uid": GRAFANA_TEMPO_DATASOURCE_UID,
         "type": "tempo",
         "access": "proxy",
-        "url": crabka.container_base_url,
+        "url": krabka.container_base_url,
         "isDefault": true,
         "jsonData": {
             "httpMethod": "GET",
@@ -525,7 +525,7 @@ async fn grafana_accepts_tempo_datasource_pointing_at_crabka() -> TestResult {
 
     assert2::assert!(fetched.get("type").and_then(JsonValue::as_str) == Some("tempo"));
     assert2::assert!(
-        fetched.get("url").and_then(JsonValue::as_str) == Some(crabka.container_base_url.as_str())
+        fetched.get("url").and_then(JsonValue::as_str) == Some(krabka.container_base_url.as_str())
     );
 
     let echo = client
@@ -574,7 +574,7 @@ async fn grafana_accepts_tempo_datasource_pointing_at_crabka() -> TestResult {
     );
 
     // LEG 4 (error-span TraceQL): drive a status=error selector through the same
-    // Grafana → Tempo-datasource → Crabka proxy and assert it returns the seeded
+    // Grafana → Tempo-datasource → Krabka proxy and assert it returns the seeded
     // error trace. The seed body carries one `STATUS_CODE_ERROR` span (span id
     // 0404…), so `{ span:status = error }` must match its trace.
     let error_query = "%7B%20span%3Astatus%20%3D%20error%20%7D";
@@ -595,7 +595,7 @@ async fn grafana_accepts_tempo_datasource_pointing_at_crabka() -> TestResult {
     }));
     assert_search_contains_span_id(&error_search, ERROR_SPAN_ID_HEX);
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
@@ -612,7 +612,7 @@ async fn grafana_accepts_tempo_datasource_pointing_at_crabka() -> TestResult {
 ///      `prometheus`-type datasource, the Service-Graph backend. That proves
 ///      the datasource half of the loop is configured exactly as the Tempo
 ///      datasource's `serviceMap.datasourceUid` would point at.
-///   2. The **Crabka-side production**. The real in-process metrics-generator
+///   2. The **Krabka-side production**. The real in-process metrics-generator
 ///      `EdgeStore` from Slice 7 pairs the seed's client↔server span pair into
 ///      the exact `traces_service_graph_request_total` series that Grafana's
 ///      Service Graph queries, with the `client`, `server` and
@@ -620,7 +620,7 @@ async fn grafana_accepts_tempo_datasource_pointing_at_crabka() -> TestResult {
 ///
 /// What this test does NOT stand up (a documented gap, not faked on purpose):
 ///   The metrics-generator → Prometheus `remote_write` ingestion path, and a
-///   live Prometheus container. `crabka-traces` has no in-process Prometheus
+///   live Prometheus container. `krabka-traces` has no in-process Prometheus
 ///   `/api/v1/query` endpoint, because the metrics-generator emits through a
 ///   `RemoteWriteSink` rather than a query API. A live `POST /api/ds/query`
 ///   against the Prometheus datasource therefore cannot return real data within
@@ -637,11 +637,11 @@ async fn grafana_service_graph_prometheus_datasource_and_series() -> TestResult 
 
     // (1) Grafana-side wiring: provision the Prometheus datasource that backs the
     // Tempo datasource's Service Graph and assert Grafana round-trips it. In a
-    // full deployment its URL points at Crabka's metrics querier / a Prometheus
-    // scraping Crabka's metrics-generator `remote_write` output.
-    let prom_uid = "crabka-service-graph";
+    // full deployment its URL points at Krabka's metrics querier / a Prometheus
+    // scraping Krabka's metrics-generator `remote_write` output.
+    let prom_uid = "krabka-service-graph";
     let payload = json!({
-        "name": "Crabka Service Graph",
+        "name": "Krabka Service Graph",
         "uid": prom_uid,
         "type": "prometheus",
         "access": "proxy",
@@ -677,7 +677,7 @@ async fn grafana_service_graph_prometheus_datasource_and_series() -> TestResult 
         .await?;
     assert2::assert!(fetched.get("type").and_then(JsonValue::as_str) == Some("prometheus"));
 
-    // (2) Crabka-side production: the real metrics-generator EdgeStore pairs the
+    // (2) Krabka-side production: the real metrics-generator EdgeStore pairs the
     // seed's client↔server pair into the Service-Graph series Grafana queries.
     let series = service_graph_series_for_seed_edge();
     let request_total = series
@@ -764,31 +764,31 @@ fn metrics_span(
     }
 }
 
-struct CrabkaPair {
+struct KrabkaPair {
     base_url: String,
     container_base_url: String,
     shutdown: tokio::sync::oneshot::Sender<()>,
 }
 
-impl CrabkaPair {
+impl KrabkaPair {
     fn shutdown(self) {
         let _ = self.shutdown.send(());
     }
 }
 
-async fn start_crabka_pair(otlp_body: &[u8]) -> TestResult<CrabkaPair> {
-    start_crabka_pair_on(otlp_body, "127.0.0.1", "127.0.0.1").await
+async fn start_krabka_pair(otlp_body: &[u8]) -> TestResult<KrabkaPair> {
+    start_krabka_pair_on(otlp_body, "127.0.0.1", "127.0.0.1").await
 }
 
-async fn start_crabka_pair_reachable_from_container(otlp_body: &[u8]) -> TestResult<CrabkaPair> {
-    start_crabka_pair_on(otlp_body, "0.0.0.0", DOCKER_HOST_ALIAS).await
+async fn start_krabka_pair_reachable_from_container(otlp_body: &[u8]) -> TestResult<KrabkaPair> {
+    start_krabka_pair_on(otlp_body, "0.0.0.0", DOCKER_HOST_ALIAS).await
 }
 
-async fn start_crabka_pair_on(
+async fn start_krabka_pair_on(
     otlp_body: &[u8],
     bind_host: &str,
     container_host: &str,
-) -> TestResult<CrabkaPair> {
+) -> TestResult<KrabkaPair> {
     let sink = CapturingSink::default();
     let distributor_state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
     let resp = distributor::router(distributor_state)
@@ -813,7 +813,7 @@ async fn start_crabka_pair_on(
         Arc::new(span_store_from_records(&records)),
         EngineOpts::default(),
     ));
-    let app = crabka_traces::querier::http::router(store);
+    let app = krabka_traces::querier::http::router(store);
     let listener = tokio::net::TcpListener::bind(format!("{bind_host}:0")).await?;
     let addr = listener.local_addr()?;
     let port = addr.port();
@@ -826,7 +826,7 @@ async fn start_crabka_pair_on(
             .await;
     });
 
-    Ok(CrabkaPair {
+    Ok(KrabkaPair {
         base_url: format!("http://127.0.0.1:{port}"),
         container_base_url: format!("http://{container_host}:{port}"),
         shutdown: tx,
@@ -906,7 +906,7 @@ fn resource_attr<'a>(span: &'a Span, key: &str) -> Option<&'a str> {
 }
 
 async fn start_tempo() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    let tag = std::env::var("CRABKA_TEMPO_IMAGE_TAG").unwrap_or_else(|_| "latest".into());
+    let tag = std::env::var("KRABKA_TEMPO_IMAGE_TAG").unwrap_or_else(|_| "latest".into());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/tempo".to_string(), tag)
@@ -925,7 +925,7 @@ async fn start_tempo() -> TestResult<testcontainers::ContainerAsync<GenericImage
 }
 
 async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    let tag = std::env::var("CRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| "latest".into());
+    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| "latest".into());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
@@ -1068,7 +1068,7 @@ async fn get_json_until_positive_metric_total(
 /// flushes the span out.
 ///
 /// This function polls until the trace materialises, which mirrors how the
-/// search legs poll for non-empty results. Crabka serves its in-process store
+/// search legs poll for non-empty results. Krabka serves its in-process store
 /// synchronously, so only the real-Tempo side needs this.
 async fn get_trace_by_id_until_found(
     client: &reqwest::Client,
@@ -1104,9 +1104,9 @@ async fn get_trace_by_id_until_found(
     Err(format!("timed out waiting for trace by id from {url}: {last}").into())
 }
 
-fn assert_trace_shape_matches(tempo: &JsonValue, crabka: &JsonValue) {
+fn assert_trace_shape_matches(tempo: &JsonValue, krabka: &JsonValue) {
     if !tempo["status"].is_null() {
-        assert2::assert!(tempo["status"] == crabka["status"]);
+        assert2::assert!(tempo["status"] == krabka["status"]);
     }
     assert2::assert!(
         tempo["trace"]["resourceSpans"]
@@ -1114,28 +1114,28 @@ fn assert_trace_shape_matches(tempo: &JsonValue, crabka: &JsonValue) {
             .is_some_and(|spans| !spans.is_empty())
     );
     assert2::assert!(
-        crabka["trace"]["resourceSpans"]
+        krabka["trace"]["resourceSpans"]
             .as_array()
             .is_some_and(|spans| !spans.is_empty())
     );
 }
 
-fn assert_search_shape_matches(tempo: &JsonValue, crabka: &JsonValue) {
+fn assert_search_shape_matches(tempo: &JsonValue, krabka: &JsonValue) {
     check!(
         tempo["traces"]
             .as_array()
             .is_some_and(|traces| !traces.is_empty()),
-        "search shape mismatch; Tempo search response: {tempo}; Crabka search response: {crabka}"
+        "search shape mismatch; Tempo search response: {tempo}; Krabka search response: {krabka}"
     );
     check!(
-        crabka["traces"]
+        krabka["traces"]
             .as_array()
             .is_some_and(|traces| !traces.is_empty()),
-        "search shape mismatch; Tempo search response: {tempo}; Crabka search response: {crabka}"
+        "search shape mismatch; Tempo search response: {tempo}; Krabka search response: {krabka}"
     );
     check!(
-        crabka["traces"][0]["traceID"].as_str() == Some(TRACE_ID_HEX),
-        "search shape mismatch; Tempo search response: {tempo}; Crabka search response: {crabka}"
+        krabka["traces"][0]["traceID"].as_str() == Some(TRACE_ID_HEX),
+        "search shape mismatch; Tempo search response: {tempo}; Krabka search response: {krabka}"
     );
 }
 
@@ -1154,11 +1154,11 @@ fn assert_search_empty(search: &JsonValue) {
     assert2::assert!(search["traces"].as_array().is_some_and(Vec::is_empty));
 }
 
-fn assert_metric_totals_match(tempo: &JsonValue, crabka: &JsonValue) {
+fn assert_metric_totals_match(tempo: &JsonValue, krabka: &JsonValue) {
     let tempo_total = metric_points_total(tempo);
-    let crabka_total = metric_points_total(crabka);
+    let krabka_total = metric_points_total(krabka);
     assert2::assert!(tempo_total > 0.0);
-    assert2::assert!((tempo_total - crabka_total).abs() < f64::EPSILON);
+    assert2::assert!((tempo_total - krabka_total).abs() < f64::EPSILON);
 }
 
 /// The set of `series[].labels[].key` strings across a TraceQL-metrics
@@ -1215,20 +1215,20 @@ fn metric_points_total(value: &JsonValue) -> f64 {
     points_total + samples_total
 }
 
-fn assert_required_tag_names_match(tempo: &JsonValue, crabka: &JsonValue) {
+fn assert_required_tag_names_match(tempo: &JsonValue, krabka: &JsonValue) {
     let tempo_tags = tag_names(tempo);
-    let crabka_tags = tag_names(crabka);
+    let krabka_tags = tag_names(krabka);
     for required in ["service.name", "http.method", "db.system"] {
         assert2::assert!(tempo_tags.contains(required));
-        assert2::assert!(crabka_tags.contains(required));
+        assert2::assert!(krabka_tags.contains(required));
     }
 }
 
-fn assert_required_tag_values_match(tempo: &JsonValue, crabka: &JsonValue, required: &str) {
+fn assert_required_tag_values_match(tempo: &JsonValue, krabka: &JsonValue, required: &str) {
     let tempo_values = tag_values(tempo);
-    let crabka_values = tag_values(crabka);
+    let krabka_values = tag_values(krabka);
     assert2::assert!(tempo_values.contains(required));
-    assert2::assert!(crabka_values.contains(required));
+    assert2::assert!(krabka_values.contains(required));
 }
 
 fn assert_tag_names_do_not_contain(value: &JsonValue, forbidden: &str) {
@@ -1280,7 +1280,7 @@ fn sample_otlp_body_at(start_ns: u64) -> Vec<u8> {
             }),
             scope_spans: vec![ScopeSpans {
                 scope: Some(InstrumentationScope {
-                    name: "crabka-differential".into(),
+                    name: "krabka-differential".into(),
                     version: "1.0.0".into(),
                     ..InstrumentationScope::default()
                 }),
@@ -1306,7 +1306,7 @@ fn sample_otlp_body_at(start_ns: u64) -> Vec<u8> {
                     },
                     // An error-status span so the Grafana TraceQL `{ span:status = error }`
                     // leg (LEG 4) has a real error trace to find. Pushed identically to
-                    // both Tempo and Crabka, so the differential corpus stays equal.
+                    // both Tempo and Krabka, so the differential corpus stays equal.
                     OtlpSpan {
                         trace_id: vec![1; 16],
                         span_id: vec![4; 8],

@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crabka_traces::frontend::{
+use krabka_traces::frontend::{
     QueryFrontend,
     backend::{MockQuerier, TracePartial},
     config::FrontendConfig,
@@ -18,7 +18,7 @@ use crabka_traces::frontend::{
         TraceEnvelopeJson,
     },
 };
-use crabka_units::{ByteSize, convert::ByteSizeExt as _};
+use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 fn block(id: &str, start: i64, end: i64) -> BlockMetaInfo {
     BlockMetaInfo {

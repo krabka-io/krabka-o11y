@@ -1,38 +1,38 @@
 [package]
-name = "crabka-observability"
+name = "krabka-observability"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 # Depends on the git-pinned `datafusion` (no crates.io release), so this crate
-# cannot be published to crates.io; matches crabka-blockstore / crabka-profiles.
+# cannot be published to crates.io; matches krabka-blockstore / krabka-profiles.
 publish = false
-description = "Role-selectable observability service for Crabka's Loki-compatible logs path"
+description = "Role-selectable observability service for Krabka's Loki-compatible logs path"
 repository = "https://github.com/robot-head/crabka"
 homepage = "https://github.com/robot-head/crabka"
-documentation = "https://docs.rs/crabka-observability"
+documentation = "https://docs.rs/krabka-observability"
 readme = "../../README.md"
-keywords = ["observability", "loki", "logs", "crabka"]
+keywords = ["observability", "loki", "logs", "krabka"]
 categories = ["command-line-utilities"]
 
 [features]
-heap-profiling = ["crabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
+heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
 async-trait = { workspace = true }
 axum = { workspace = true, features = ["http2", "json", "query", "ws"] }
 base64 = { workspace = true }
 clap = { workspace = true, features = ["env"] }
-crabka-blockstore = { version = "0.4.0", path = "../blockstore" }
-crabka-client-admin = { version = "0.4.0" }
-crabka-client-core = { version = "0.4.0" }
-crabka-client-consumer = { version = "0.4.0" }
-crabka-client-producer = { version = "0.4.0" }
-crabka-ids = { version = "0.4.0" }
-crabka-logql = { version = "0.4.0", path = "../logql" }
-crabka-telemetry = { version = "0.4.0" }
-crabka-units = { workspace = true }
+krabka-blockstore = { version = "0.4.0", path = "../blockstore" }
+krabka-client-admin = { version = "0.4.0" }
+krabka-client-core = { version = "0.4.0" }
+krabka-client-consumer = { version = "0.4.0" }
+krabka-client-producer = { version = "0.4.0" }
+krabka-ids = { version = "0.4.0" }
+krabka-logql = { version = "0.4.0", path = "../logql" }
+krabka-telemetry = { version = "0.4.0" }
+krabka-units = { workspace = true }
 datafusion.workspace = true
 flate2 = { workspace = true }
 futures-util = { workspace = true }
@@ -63,7 +63,7 @@ assert2 = { workspace = true }
 flate2 = { workspace = true }
 mutants = { workspace = true }
 # OTel stack for the `set_remote_parent_from_wal_records` re-parenting test --
-# mirrors the export-less tracer subscriber `crabka-traces` uses for the same
+# mirrors the export-less tracer subscriber `krabka-traces` uses for the same
 # check. Test-only, hence dev-dependencies.
 opentelemetry = { workspace = true, features = ["trace"] }
 opentelemetry_sdk = { workspace = true, features = ["trace"] }

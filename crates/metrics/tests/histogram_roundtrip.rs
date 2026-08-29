@@ -1,4 +1,4 @@
-use crabka_metrics::{
+use krabka_metrics::{
     BucketSpan, NativeHistogram, ResetHint, decode_native_histograms, encode_native_histograms,
 };
 use proptest::prelude::*;

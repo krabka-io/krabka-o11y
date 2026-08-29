@@ -1,137 +1,137 @@
 use std::num::NonZeroUsize;
 
 use clap::Parser;
-use crabka_observability::{QuerierIndexSource, Role, ServiceConfig};
-use crabka_units::{bytes, days, kibibytes, millis, minutes, nanos, secs};
+use krabka_observability::{QuerierIndexSource, Role, ServiceConfig};
+use krabka_units::{bytes, days, kibibytes, millis, minutes, nanos, secs};
 
 #[test]
 fn service_config_reads_environment() {
     temp_env::with_vars(
         [
-            ("CRABKA_OBSERVABILITY_TARGET", Some("querier")),
-            ("CRABKA_OBSERVABILITY_LISTEN_ADDR", Some("127.0.0.1:3200")),
+            ("KRABKA_OBSERVABILITY_TARGET", Some("querier")),
+            ("KRABKA_OBSERVABILITY_LISTEN_ADDR", Some("127.0.0.1:3200")),
             (
-                "CRABKA_OBSERVABILITY_OBJECT_STORE_URL",
-                Some("s3://crabka-observability"),
+                "KRABKA_OBSERVABILITY_OBJECT_STORE_URL",
+                Some("s3://krabka-observability"),
             ),
             (
-                "CRABKA_OBSERVABILITY_WAL_BOOTSTRAP_SERVER",
+                "KRABKA_OBSERVABILITY_WAL_BOOTSTRAP_SERVER",
                 Some("127.0.0.1:9092"),
             ),
-            ("CRABKA_OBSERVABILITY_WAL_TOPIC", Some("logs-wal")),
-            ("CRABKA_OBSERVABILITY_WAL_GROUP_ID", Some("logs-querier")),
+            ("KRABKA_OBSERVABILITY_WAL_TOPIC", Some("logs-wal")),
+            ("KRABKA_OBSERVABILITY_WAL_GROUP_ID", Some("logs-querier")),
             (
-                "CRABKA_OBSERVABILITY_DATA_ROOT",
-                Some("/var/lib/crabka-observability"),
+                "KRABKA_OBSERVABILITY_DATA_ROOT",
+                Some("/var/lib/krabka-observability"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_INDEX_SOURCE",
+                "KRABKA_OBSERVABILITY_QUERIER_INDEX_SOURCE",
                 Some("tenant-object-store-shards"),
             ),
-            ("CRABKA_OBSERVABILITY_TENANT", Some("tenant-a")),
+            ("KRABKA_OBSERVABILITY_TENANT", Some("tenant-a")),
             (
-                "CRABKA_OBSERVABILITY_INDEX_PREFIX",
+                "KRABKA_OBSERVABILITY_INDEX_PREFIX",
                 Some("observability/logs"),
             ),
-            ("CRABKA_OBSERVABILITY_QUERY_START_NS", Some("10")),
-            ("CRABKA_OBSERVABILITY_QUERY_END_NS", Some("30")),
-            ("CRABKA_OBSERVABILITY_MAX_QUERY_RANGE", Some("20ns")),
-            ("CRABKA_OBSERVABILITY_MAX_QUERY_SERIES", Some("10")),
-            ("CRABKA_OBSERVABILITY_MAX_QUERY_READ", Some("1KiB")),
-            ("CRABKA_OBSERVABILITY_MAX_QUERY_LENGTH", Some("64B")),
-            ("CRABKA_OBSERVABILITY_MAX_INGEST_BODY", Some("2KiB")),
-            ("CRABKA_OBSERVABILITY_WAL_APPEND_TIMEOUT", Some("250ms")),
+            ("KRABKA_OBSERVABILITY_QUERY_START_NS", Some("10")),
+            ("KRABKA_OBSERVABILITY_QUERY_END_NS", Some("30")),
+            ("KRABKA_OBSERVABILITY_MAX_QUERY_RANGE", Some("20ns")),
+            ("KRABKA_OBSERVABILITY_MAX_QUERY_SERIES", Some("10")),
+            ("KRABKA_OBSERVABILITY_MAX_QUERY_READ", Some("1KiB")),
+            ("KRABKA_OBSERVABILITY_MAX_QUERY_LENGTH", Some("64B")),
+            ("KRABKA_OBSERVABILITY_MAX_INGEST_BODY", Some("2KiB")),
+            ("KRABKA_OBSERVABILITY_WAL_APPEND_TIMEOUT", Some("250ms")),
             (
-                "CRABKA_OBSERVABILITY_REJECT_OLD_SAMPLES_MAX_AGE",
+                "KRABKA_OBSERVABILITY_REJECT_OLD_SAMPLES_MAX_AGE",
                 Some("8d"),
             ),
-            ("CRABKA_OBSERVABILITY_CREATION_GRACE_PERIOD", Some("11m")),
-            ("CRABKA_OBSERVABILITY_INGEST_QUOTA_BURST_WINDOW", Some("2s")),
+            ("KRABKA_OBSERVABILITY_CREATION_GRACE_PERIOD", Some("11m")),
+            ("KRABKA_OBSERVABILITY_INGEST_QUOTA_BURST_WINDOW", Some("2s")),
             (
-                "CRABKA_OBSERVABILITY_WAL_CONNECT_STARTUP_DEADLINE",
+                "KRABKA_OBSERVABILITY_WAL_CONNECT_STARTUP_DEADLINE",
                 Some("3m"),
             ),
             (
-                "CRABKA_OBSERVABILITY_WAL_CONNECT_ATTEMPT_TIMEOUT",
+                "KRABKA_OBSERVABILITY_WAL_CONNECT_ATTEMPT_TIMEOUT",
                 Some("16s"),
             ),
             (
-                "CRABKA_OBSERVABILITY_WAL_CONNECT_INITIAL_BACKOFF",
+                "KRABKA_OBSERVABILITY_WAL_CONNECT_INITIAL_BACKOFF",
                 Some("300ms"),
             ),
-            ("CRABKA_OBSERVABILITY_WAL_CONNECT_MAX_BACKOFF", Some("3s")),
+            ("KRABKA_OBSERVABILITY_WAL_CONNECT_MAX_BACKOFF", Some("3s")),
             (
-                "CRABKA_OBSERVABILITY_COMPACTOR_WAL_POLL_TIMEOUT",
+                "KRABKA_OBSERVABILITY_COMPACTOR_WAL_POLL_TIMEOUT",
                 Some("600ms"),
             ),
             (
-                "CRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_WINDOW",
+                "KRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_WINDOW",
                 Some("3s"),
             ),
             (
-                "CRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_POLL_TIMEOUT",
+                "KRABKA_OBSERVABILITY_COMPACTOR_ACCUMULATION_POLL_TIMEOUT",
                 Some("300ms"),
             ),
             (
-                "CRABKA_OBSERVABILITY_COMPACTOR_MAX_RECORDS_PER_BATCH",
+                "KRABKA_OBSERVABILITY_COMPACTOR_MAX_RECORDS_PER_BATCH",
                 Some("5000"),
             ),
-            ("CRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", Some("20ms")),
+            ("KRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", Some("20ms")),
             (
-                "CRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_INITIAL_BACKOFF",
+                "KRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_INITIAL_BACKOFF",
                 Some("20ms"),
             ),
             (
-                "CRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_MAX_BACKOFF",
+                "KRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_MAX_BACKOFF",
                 Some("600ms"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_FRONTIER_REFRESH_INTERVAL",
+                "KRABKA_OBSERVABILITY_QUERIER_FRONTIER_REFRESH_INTERVAL",
                 Some("6s"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_DYNAMIC_INDEX_CACHE_TTL",
+                "KRABKA_OBSERVABILITY_QUERIER_DYNAMIC_INDEX_CACHE_TTL",
                 Some("7s"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_SHARD_INDEX_CACHE_TTL",
+                "KRABKA_OBSERVABILITY_QUERIER_SHARD_INDEX_CACHE_TTL",
                 Some("6m"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_SHARD_FETCH_CONCURRENCY",
+                "KRABKA_OBSERVABILITY_QUERIER_SHARD_FETCH_CONCURRENCY",
                 Some("33"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_COLD_BLOCK_FETCH_CONCURRENCY",
+                "KRABKA_OBSERVABILITY_QUERIER_COLD_BLOCK_FETCH_CONCURRENCY",
                 Some("9"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_BUCKET_WIDTH",
+                "KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_BUCKET_WIDTH",
                 Some("2m"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_INTERVAL",
+                "KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_INTERVAL",
                 Some("60ms"),
             ),
             (
-                "CRABKA_OBSERVABILITY_QUERIER_DEPENDENCY_RECONNECT_INTERVAL",
+                "KRABKA_OBSERVABILITY_QUERIER_DEPENDENCY_RECONNECT_INTERVAL",
                 Some("600ms"),
             ),
         ],
         || {
             let config =
-                ServiceConfig::try_parse_from(["crabka-observability"]).expect("parse environment");
+                ServiceConfig::try_parse_from(["krabka-observability"]).expect("parse environment");
 
             assert_eq!(
                 config,
                 ServiceConfig {
                     target: Role::Querier,
                     listen_addr: "127.0.0.1:3200".parse().unwrap(),
-                    object_store_url: Some("s3://crabka-observability".to_string()),
+                    object_store_url: Some("s3://krabka-observability".to_string()),
                     wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
                     wal_topic: "logs-wal".to_string(),
                     wal_group_id: "logs-querier".to_string(),
-                    data_root: "/var/lib/crabka-observability".into(),
+                    data_root: "/var/lib/krabka-observability".into(),
                     querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
                     tenant: Some("tenant-a".to_string()),
                     index_prefix: Some("observability/logs".to_string()),

@@ -4,7 +4,7 @@
 use std::{sync::Arc, time::Duration};
 
 use assert2::check;
-use crabka_traces::frontend::{
+use krabka_traces::frontend::{
     QueryFrontend,
     backend::{MockQuerier, SearchPartial, TracePartial},
     config::FrontendConfig,
@@ -15,7 +15,7 @@ use crabka_traces::frontend::{
         TraceByIdResponseJson, TraceEnvelopeJson, TraceJson,
     },
 };
-use crabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
+use krabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
 
 fn block(id: &str) -> BlockMetaInfo {
     BlockMetaInfo {
@@ -209,9 +209,9 @@ async fn server_by_id_404_when_missing() {
 async fn server_tags_round_trip() {
     let catalog = MockCatalog::new(vec![block("b1")]);
     let backend = MockQuerier::new();
-    backend.stub_tag_names(crabka_traces::frontend::backend::TagNamesPartial {
-        tags: vec![crabka_traceql::ScopedTag {
-            scope: crabka_traceql::TagScope::Span,
+    backend.stub_tag_names(krabka_traces::frontend::backend::TagNamesPartial {
+        tags: vec![krabka_traceql::ScopedTag {
+            scope: krabka_traceql::TagScope::Span,
             tags: vec!["http.method".to_string()],
         }],
         metrics: Metrics {

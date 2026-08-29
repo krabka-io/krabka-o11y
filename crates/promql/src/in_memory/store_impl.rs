@@ -3,11 +3,11 @@ use std::{
     sync::Arc,
 };
 
-use crabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
-use crabka_metrics::{
+use datafusion::{catalog::MemTable, prelude::SessionContext};
+use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_metrics::{
     encode_float_samples, encode_native_histograms, float_sample_schema, native_histogram_schema,
 };
-use datafusion::{catalog::MemTable, prelude::SessionContext};
 
 use super::{
     InMemoryMetricStore,

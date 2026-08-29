@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crabka_blockstore::Labels;
-use crabka_pprof::ProfileType;
+use krabka_blockstore::Labels;
+use krabka_pprof::ProfileType;
 
 use crate::{
     error::ProfilesError,
@@ -126,8 +126,8 @@ pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, Profi
 
 fn labels_with_sample_labels(
     base: &Labels,
-    profile: &crabka_pprof::PprofProfile,
-    sample: &crabka_pprof::proto::Sample,
+    profile: &krabka_pprof::PprofProfile,
+    sample: &krabka_pprof::proto::Sample,
 ) -> Labels {
     let mut labels = base.clone();
     for label in &sample.label {
@@ -157,25 +157,25 @@ fn labels_key(labels: &Labels) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use crabka_blockstore::Labels;
-    use crabka_pprof::PprofProfile;
+    use krabka_blockstore::Labels;
+    use krabka_pprof::PprofProfile;
 
     use super::*;
     use crate::ingest::RawProfile;
 
     fn two_type_profile() -> PprofProfile {
-        let profile = crabka_pprof::proto::Profile {
+        let profile = krabka_pprof::proto::Profile {
             sample_type: vec![
-                crabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
-                crabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
+                krabka_pprof::proto::ValueType { r#type: 1, unit: 2 },
+                krabka_pprof::proto::ValueType { r#type: 3, unit: 4 },
             ],
-            sample: vec![crabka_pprof::proto::Sample {
+            sample: vec![krabka_pprof::proto::Sample {
                 location_id: vec![7],
                 value: vec![3, 4096],
                 label: Vec::new(),
             }],
             location: (1..=7)
-                .map(|id| crabka_pprof::proto::Location {
+                .map(|id| krabka_pprof::proto::Location {
                     id,
                     ..Default::default()
                 })
@@ -188,7 +188,7 @@ mod tests {
                 "bytes".to_string(),
                 "space".to_string(),
             ],
-            period_type: Some(crabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
+            period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
             time_nanos: 123_000_000,
             ..Default::default()
         };
@@ -254,19 +254,19 @@ mod tests {
 
     #[test]
     fn split_normalizes_pprof_location_ids_to_symbol_indices() {
-        let profile = crabka_pprof::proto::Profile {
-            sample_type: vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
-            sample: vec![crabka_pprof::proto::Sample {
+        let profile = krabka_pprof::proto::Profile {
+            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            sample: vec![krabka_pprof::proto::Sample {
                 location_id: vec![2],
                 value: vec![5],
                 label: Vec::new(),
             }],
             location: vec![
-                crabka_pprof::proto::Location {
+                krabka_pprof::proto::Location {
                     id: 1,
                     ..Default::default()
                 },
-                crabka_pprof::proto::Location {
+                krabka_pprof::proto::Location {
                     id: 2,
                     ..Default::default()
                 },
@@ -277,7 +277,7 @@ mod tests {
                 "count".to_string(),
                 "sample".to_string(),
             ],
-            period_type: Some(crabka_pprof::proto::ValueType { r#type: 3, unit: 2 }),
+            period_type: Some(krabka_pprof::proto::ValueType { r#type: 3, unit: 2 }),
             ..Default::default()
         };
         let mut labels = Labels::new();
@@ -299,23 +299,23 @@ mod tests {
 
     #[test]
     fn split_promotes_pprof_string_sample_labels_to_series_labels() {
-        let profile = crabka_pprof::proto::Profile {
-            sample_type: vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+        let profile = krabka_pprof::proto::Profile {
+            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
             sample: vec![
-                crabka_pprof::proto::Sample {
+                krabka_pprof::proto::Sample {
                     location_id: vec![1],
                     value: vec![5],
-                    label: vec![crabka_pprof::proto::Label {
+                    label: vec![krabka_pprof::proto::Label {
                         key: 4,
                         str: 5,
                         num: 0,
                         num_unit: 0,
                     }],
                 },
-                crabka_pprof::proto::Sample {
+                krabka_pprof::proto::Sample {
                     location_id: vec![1],
                     value: vec![7],
-                    label: vec![crabka_pprof::proto::Label {
+                    label: vec![krabka_pprof::proto::Label {
                         key: 4,
                         str: 6,
                         num: 0,
@@ -323,7 +323,7 @@ mod tests {
                     }],
                 },
             ],
-            location: vec![crabka_pprof::proto::Location {
+            location: vec![krabka_pprof::proto::Location {
                 id: 1,
                 ..Default::default()
             }],
@@ -336,7 +336,7 @@ mod tests {
                 "all".to_string(),
                 "self".to_string(),
             ],
-            period_type: Some(crabka_pprof::proto::ValueType { r#type: 3, unit: 2 }),
+            period_type: Some(krabka_pprof::proto::ValueType { r#type: 3, unit: 2 }),
             ..Default::default()
         };
         let mut labels = Labels::new();

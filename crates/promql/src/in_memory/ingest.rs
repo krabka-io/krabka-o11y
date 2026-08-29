@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crabka_blockstore::{Labels, SeriesFingerprint};
-use crabka_metrics::{NativeHistogram, SamplePayload, WalRecord};
-use crabka_units::prelude::*;
+use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_metrics::{NativeHistogram, SamplePayload, WalRecord};
+use krabka_units::prelude::*;
 
 use super::{ExemplarRow, FloatRow, HistRow, InMemoryMetricStore, PartitionWatermark, PruneStats};
 use crate::{

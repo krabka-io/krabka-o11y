@@ -1,5 +1,5 @@
 #[cfg(feature = "experimental-functions")]
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 use time::OffsetDateTime;
 

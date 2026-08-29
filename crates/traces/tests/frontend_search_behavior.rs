@@ -26,18 +26,18 @@ use axum::{
     http::{HeaderMap, StatusCode, Uri},
     routing::get,
 };
-use crabka_traces::frontend::{
+use http_body_util::BodyExt as _;
+use krabka_traces::frontend::{
     QueryFrontend,
     config::FrontendConfig,
     http_backend::HttpQuerier,
     job::{BlockMetaInfo, RowGroupInfo, TraceIndexCatalog},
     server::router_with_backend,
 };
-use crabka_units::{
+use krabka_units::{
     ByteSize,
     convert::{ByteSizeExt as _, TimeExt as _},
 };
-use http_body_util::BodyExt as _;
 use serde_json::{Value, json};
 use tokio::{sync::Barrier, time::timeout};
 use tower::ServiceExt as _;
@@ -111,7 +111,7 @@ fn is_backend_shard(query: &str) -> bool {
 /// A complete matched span in the querier's `search_json` shape.
 ///
 /// The frontend parses spans into the typed
-/// [`crabka_traces::frontend::wire::SpanJson`], which needs
+/// [`krabka_traces::frontend::wire::SpanJson`], which needs
 /// `startTimeUnixNano` and `durationNanos`. Stub spans must therefore carry
 /// both.
 fn span(span_id: &str) -> Value {

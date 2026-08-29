@@ -19,13 +19,13 @@ use arrow::{
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{Labels, SeriesFingerprint};
-use crabka_units::prelude::*;
 use datafusion::{
     catalog::MemTable,
     logical_expr::{Extension, LogicalPlan},
     prelude::SessionContext,
 };
+use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_units::prelude::*;
 
 use crate::{
     PromqlError,

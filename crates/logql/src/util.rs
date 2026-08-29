@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crabka_units::{ByteSize, convert::ByteSizeExt};
+use krabka_units::{ByteSize, convert::ByteSizeExt};
 
 pub(crate) fn is_ident_start(ch: char) -> bool {
     ch == '_' || ch == ':' || ch == '.' || ch.is_ascii_alphabetic()
@@ -117,7 +117,7 @@ pub(crate) fn parse_bytes_literal(value: &str) -> Option<ByteSize> {
 
 /// The size units that the `LogQL` grammar itself admits.
 ///
-/// The table is here and not in `crabka_units::parse::byte_size` because Loki
+/// The table is here and not in `krabka_units::parse::byte_size` because Loki
 /// matches these units case-sensitively. Loki accepts `KiB`, `kB`, `KB`, and
 /// `MB`, and it rejects `kib` and `mb`. The shared parser is case-insensitive,
 /// and its use would widen the query language that this crate is a compatible
@@ -145,7 +145,7 @@ impl fmt::Display for QuotedChar {
 
 #[cfg(test)]
 mod tests {
-    use crabka_units::{ByteSize, convert::ByteSizeExt};
+    use krabka_units::{ByteSize, convert::ByteSizeExt};
 
     use super::{
         QuotedChar, duration_unit, format_decimal_ratio, is_ident_start, parse_bytes_literal,

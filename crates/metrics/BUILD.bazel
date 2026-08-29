@@ -17,10 +17,10 @@ crate_library(
     build_script_data = glob(["proto/**"]),
 )
 
-# `bazel run //crates/metrics:crabka-metrics -- --help`.
+# `bazel run //crates/metrics:krabka-metrics -- --help`.
 crate_binary(
-    name = "crabka-metrics",
-    crate_root = "src/bin/crabka-metrics.rs",
+    name = "krabka-metrics",
+    crate_root = "src/bin/krabka-metrics.rs",
     lib = ":metrics",
 )
 

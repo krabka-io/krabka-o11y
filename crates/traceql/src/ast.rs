@@ -14,8 +14,8 @@ pub struct QueryHints {
     /// `with(sample=...)`: Tempo's probabilistic metrics-sampling hint.
     ///
     /// Grafana's Traces Drilldown sends `sample=true`. The parser accepts the
-    /// hint and records it here, but Crabka computes exact metrics. Sampling is
-    /// a performance hint, so Crabka stays correct when it ignores the hint.
+    /// hint and records it here, but Krabka computes exact metrics. Sampling is
+    /// a performance hint, so Krabka stays correct when it ignores the hint.
     pub sample: Option<bool>,
 }
 

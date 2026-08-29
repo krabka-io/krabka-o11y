@@ -1,8 +1,8 @@
-# crabka-metrics
+# krabka-metrics
 
-Prometheus/Grafana-Mimir-equivalent metrics backend for Crabka.
+Prometheus/Grafana-Mimir-equivalent metrics backend for Krabka.
 
 This crate starts with the metrics data layer: Arrow block schemas, native
 histogram encoding, float samples, exemplars, and the remote_write v2 symbol
 table. It also owns the distributor ingest path, WAL append wiring, and
-compactor block/index writes. Query execution lives in `crabka-promql`.
+compactor block/index writes. Query execution lives in `krabka-promql`.

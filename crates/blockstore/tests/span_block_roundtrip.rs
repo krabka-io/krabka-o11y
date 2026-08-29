@@ -8,12 +8,12 @@ use arrow::{
     datatypes::Int32Type,
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{
+use krabka_blockstore::{
     AttrValue, BlockWriter, NestedSet, PromotedSpanAttr, SpanAttr, SpanKind, SpanRow, StatusCode,
     SummaryColumns, encode_span_rows, encode_span_rows_with_promoted_attrs, read_block,
     span_block_decl, span_block_schema, span_block_schema_with_promoted_attrs, validate_against,
 };
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
 
 fn row(trace: u8, span: u8, left: i32) -> SpanRow {

@@ -10,8 +10,8 @@ use arrow::{
     datatypes::UInt64Type,
     record_batch::RecordBatch,
 };
-use crabka_blockstore::LabelMatcher;
 use datafusion::{catalog::MemTable, prelude::SessionContext};
+use krabka_blockstore::LabelMatcher;
 
 use crate::{
     Frame, PCOL_STACKTRACE_PARTITION, ProfileError, ProfileScan, ProfileStats, ProfileStore,

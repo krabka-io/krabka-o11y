@@ -1,4 +1,4 @@
-use crabka_units::{prelude::*, serde_units};
+use krabka_units::{prelude::*, serde_units};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -312,9 +312,9 @@ mod tests {
             parse("0s").unwrap() == Time::default(),
             "zero turns the cap off"
         );
-        check!(parse("1h").unwrap() == crabka_units::hours(1));
+        check!(parse("1h").unwrap() == krabka_units::hours(1));
         check!(
-            parse("1ms").unwrap() == crabka_units::millis(1),
+            parse("1ms").unwrap() == krabka_units::millis(1),
             "the smallest positive cap"
         );
 
@@ -349,8 +349,8 @@ mod tests {
             parse("{\"cap\":\"0s\"}").unwrap() == Some(Time::default()),
             "a zero cap is off"
         );
-        check!(parse("{\"cap\":\"1h\"}").unwrap() == Some(crabka_units::hours(1)));
-        check!(parse("{\"cap\":\"1ms\"}").unwrap() == Some(crabka_units::millis(1)));
+        check!(parse("{\"cap\":\"1h\"}").unwrap() == Some(krabka_units::hours(1)));
+        check!(parse("{\"cap\":\"1ms\"}").unwrap() == Some(krabka_units::millis(1)));
 
         // Negatives are refused here too, with the same message.
         for rejected in ["-1s", "-1ms", "-1h"] {

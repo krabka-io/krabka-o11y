@@ -11,9 +11,9 @@ pub mod split;
 
 use std::collections::BTreeMap;
 
-use crabka_blockstore::Labels;
-use crabka_pprof::PprofProfile;
-use crabka_units::{ByteSize, bytes, convert::ByteSizeExt as _};
+use krabka_blockstore::Labels;
+use krabka_pprof::PprofProfile;
+use krabka_units::{ByteSize, bytes, convert::ByteSizeExt as _};
 pub use legacy::{
     IngestFormat, IngestQuery, LegacyDecodeLimits, decode_ingest_body,
     decode_ingest_body_with_limits, decode_ingest_multipart, decode_ingest_multipart_with_limits,
@@ -77,7 +77,7 @@ const fn default_max_label_name() -> ByteSize {
 }
 
 mod label_byte_limit {
-    use crabka_units::{ByteSize, convert::ByteSizeExt as _};
+    use krabka_units::{ByteSize, convert::ByteSizeExt as _};
     use serde::{Deserializer, Serializer, de::Error as _};
 
     #[cfg(target_pointer_width = "64")]
@@ -87,11 +87,11 @@ mod label_byte_limit {
 
     #[allow(clippy::trivially_copy_pass_by_ref)] // Required by serde's `with` adapter contract.
     pub fn serialize<S: Serializer>(value: &ByteSize, serializer: S) -> Result<S::Ok, S::Error> {
-        crabka_units::serde_units::human::byte_size::serialize(value, serializer)
+        krabka_units::serde_units::human::byte_size::serialize(value, serializer)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ByteSize, D::Error> {
-        let value = crabka_units::serde_units::human::byte_size::deserialize(deserializer)?;
+        let value = krabka_units::serde_units::human::byte_size::deserialize(deserializer)?;
         let bytes = value.bytes_f64();
         if bytes >= 0.0 && bytes.fract() == 0.0 && bytes < USIZE_UPPER_EXCLUSIVE {
             Ok(value)
@@ -406,7 +406,7 @@ mod tests {
         check!(set.get("app") == Some("web"));
     }
     use assert2::{assert, check};
-    use crabka_blockstore::Labels;
+    use krabka_blockstore::Labels;
 
     use super::*;
 
@@ -528,9 +528,9 @@ mod tests {
     #[test]
     fn ingest_limits_admit_exactly_their_boundary() {
         let limits = TenantLimits {
-            max_label_name: crabka_units::bytes(3),
+            max_label_name: krabka_units::bytes(3),
             max_label_names_per_series: 2,
-            max_label_value: crabka_units::bytes(4),
+            max_label_value: krabka_units::bytes(4),
             session_id_buckets: 1,
         };
 
@@ -568,12 +568,12 @@ mod tests {
         };
 
         assert!(
-            parse("0B").unwrap() == crabka_units::bytes(0),
+            parse("0B").unwrap() == krabka_units::bytes(0),
             "zero is a limit"
         );
-        assert!(parse("3B").unwrap() == crabka_units::bytes(3));
+        assert!(parse("3B").unwrap() == krabka_units::bytes(3));
         assert!(
-            parse("1KiB").unwrap() == crabka_units::bytes(1024),
+            parse("1KiB").unwrap() == krabka_units::bytes(1024),
             "units are honoured"
         );
 

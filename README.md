@@ -18,16 +18,16 @@ per signal above them.
 
 | Crate | What it is |
 | --- | --- |
-| `crabka-blockstore` | The columnar block store every signal is written through, over object storage |
-| `crabka-logql` | LogQL: Grafana Loki's log query language |
-| `crabka-promql` | PromQL: Prometheus' metric query language, with a conformance corpus |
-| `crabka-traceql` | TraceQL: Grafana Tempo's trace query language |
-| `crabka-pprof` | The pprof profile format, read and written |
-| `crabka-metrics` | Prometheus remote-write ingest |
-| `crabka-metrics-service` | The PromQL query API, answering what Grafana and Prometheus ask |
-| `crabka-traces` | OTLP trace ingest and TraceQL serving |
-| `crabka-profiles` | Continuous-profiling ingest and pprof serving |
-| `crabka-observability` | The log path, and the surface that ties the four together |
+| `krabka-blockstore` | The columnar block store every signal is written through, over object storage |
+| `krabka-logql` | LogQL: Grafana Loki's log query language |
+| `krabka-promql` | PromQL: Prometheus' metric query language, with a conformance corpus |
+| `krabka-traceql` | TraceQL: Grafana Tempo's trace query language |
+| `krabka-pprof` | The pprof profile format, read and written |
+| `krabka-metrics` | Prometheus remote-write ingest |
+| `krabka-metrics-service` | The PromQL query API, answering what Grafana and Prometheus ask |
+| `krabka-traces` | OTLP trace ingest and TraceQL serving |
+| `krabka-profiles` | Continuous-profiling ingest and pprof serving |
+| `krabka-observability` | The log path, and the surface that ties the four together |
 
 ## Build
 
@@ -72,7 +72,7 @@ reports a difference nobody made.
 
 ## protoc
 
-`crabka-metrics` and `crabka-profiles` generate prost types from vendored
+`krabka-metrics` and `krabka-profiles` generate prost types from vendored
 protos. Their `build.rs` uses `$PROTOC` when the build system supplies one and
 falls back to the `protoc-bin-vendored` crate otherwise, which is what a plain
 `cargo build` does.
@@ -95,5 +95,5 @@ quoting once the totals line adds up — `caught + missed + unviable == total`.
 ## Publishing
 
 These crates are not published from here. `robot-head/crabka` still owns every
-`crabka-*` name on crates.io; this repository is where the observability stack
+`krabka-*` name on crates.io; this repository is where the observability stack
 is developed.

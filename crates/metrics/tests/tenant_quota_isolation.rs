@@ -14,7 +14,7 @@ use std::{
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use crabka_metrics::{
+use krabka_metrics::{
     OverridesProvider, WalRecord,
     distributor::{DistributorState, ProduceError, WalSink, serve},
     wire::pb,

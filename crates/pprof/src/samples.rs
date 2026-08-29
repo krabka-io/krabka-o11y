@@ -1,6 +1,6 @@
 //! Column contract for the profile samples table.
 
-pub use crabka_blockstore::{
+pub use krabka_blockstore::{
     COL_FINGERPRINT, COL_TIMESTAMP, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
     PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, profile_samples_schema,
 };

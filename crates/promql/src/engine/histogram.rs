@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crabka_blockstore::Labels;
-use crabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
+use krabka_blockstore::Labels;
+use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 
 use super::{
     annotations::warn_mixed_histograms,

@@ -28,13 +28,13 @@ use arrow::{
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
-use crabka_blockstore::Labels;
 use datafusion::{
     catalog::MemTable,
     execution::FunctionRegistry,
     logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, col, lit},
     prelude::SessionContext,
 };
+use krabka_blockstore::Labels;
 
 use crate::{
     PromqlError, error::Result, extension::planner::prom_session_context, functions::ScalarMathOp,

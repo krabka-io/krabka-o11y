@@ -1,9 +1,9 @@
 use assert2::assert;
 use clap::Parser;
-use crabka_observability::{
+use krabka_observability::{
     QuerierIndexSource, Role, ServiceConfig, build_service_dependencies, run,
 };
-use crabka_units::{bytes, kibibytes, millis, nanos};
+use krabka_units::{bytes, kibibytes, millis, nanos};
 
 #[test]
 fn parses_explicit_service_targets() {
@@ -13,7 +13,7 @@ fn parses_explicit_service_targets() {
         ("querier", Role::Querier),
     ] {
         let config =
-            ServiceConfig::try_parse_from(["crabka-observability", "--target", target]).unwrap();
+            ServiceConfig::try_parse_from(["krabka-observability", "--target", target]).unwrap();
 
         assert!(config.target == expected);
         assert!(run(config).unwrap().role == expected);
@@ -23,7 +23,7 @@ fn parses_explicit_service_targets() {
 #[test]
 fn parses_unit_bearing_query_length() {
     let config = ServiceConfig::try_parse_from([
-        "crabka-observability",
+        "krabka-observability",
         "--target",
         "querier",
         "--max-query-length",
@@ -46,7 +46,7 @@ fn rejects_negative_quantity_limits() {
         let argument = format!("{flag}={value}");
         assert!(
             ServiceConfig::try_parse_from([
-                "crabka-observability",
+                "krabka-observability",
                 "--target",
                 "querier",
                 &argument,
@@ -60,15 +60,15 @@ fn rejects_negative_quantity_limits() {
 #[test]
 fn parses_querier_object_store_shard_catalog_config() {
     let config = ServiceConfig::try_parse_from([
-        "crabka-observability",
+        "krabka-observability",
         "--target",
         "querier",
         "--listen-addr",
         "127.0.0.1:3200",
         "--object-store-url",
-        "s3://crabka-observability",
+        "s3://krabka-observability",
         "--data-root",
-        "/var/lib/crabka-observability",
+        "/var/lib/krabka-observability",
         "--querier-index-source",
         "tenant-object-store-shards",
         "--tenant",
@@ -95,11 +95,11 @@ fn parses_querier_object_store_shard_catalog_config() {
             == ServiceConfig {
                 target: Role::Querier,
                 listen_addr: "127.0.0.1:3200".parse().unwrap(),
-                object_store_url: Some("s3://crabka-observability".to_string()),
+                object_store_url: Some("s3://krabka-observability".to_string()),
                 wal_bootstrap_server: None,
-                wal_topic: "__crabka_observability_logs_wal".to_string(),
-                wal_group_id: "crabka-observability-compactor".to_string(),
-                data_root: "/var/lib/crabka-observability".into(),
+                wal_topic: "__krabka_observability_logs_wal".to_string(),
+                wal_group_id: "krabka-observability-compactor".to_string(),
+                data_root: "/var/lib/krabka-observability".into(),
                 querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
                 tenant: Some("tenant-a".to_string()),
                 index_prefix: Some("observability/logs".to_string()),
@@ -119,13 +119,13 @@ fn parses_querier_object_store_shard_catalog_config() {
 #[test]
 fn parses_distributor_wal_config() {
     let config = ServiceConfig::try_parse_from([
-        "crabka-observability",
+        "krabka-observability",
         "--target",
         "distributor",
         "--wal-bootstrap-server",
         "127.0.0.1:9092",
         "--wal-topic",
-        "__crabka_observability_logs_wal",
+        "__krabka_observability_logs_wal",
         "--max-ingest-body",
         "2KiB",
         "--wal-append-timeout",
@@ -140,8 +140,8 @@ fn parses_distributor_wal_config() {
                 listen_addr: "127.0.0.1:3100".parse().unwrap(),
                 object_store_url: None,
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
-                wal_topic: "__crabka_observability_logs_wal".to_string(),
-                wal_group_id: "crabka-observability-compactor".to_string(),
+                wal_topic: "__krabka_observability_logs_wal".to_string(),
+                wal_group_id: "krabka-observability-compactor".to_string(),
                 data_root: ".".into(),
                 querier_index_source: QuerierIndexSource::LocalManifest,
                 tenant: None,
@@ -162,17 +162,17 @@ fn parses_distributor_wal_config() {
 #[test]
 fn parses_compactor_wal_consumer_config() {
     let config = ServiceConfig::try_parse_from([
-        "crabka-observability",
+        "krabka-observability",
         "--target",
         "compactor",
         "--wal-bootstrap-server",
         "127.0.0.1:9092",
         "--wal-topic",
-        "__crabka_observability_logs_wal",
+        "__krabka_observability_logs_wal",
         "--wal-group-id",
-        "crabka-observability-compactor",
+        "krabka-observability-compactor",
         "--object-store-url",
-        "file:///tmp/crabka-observability",
+        "file:///tmp/krabka-observability",
         "--index-prefix",
         "observability/logs",
     ])
@@ -183,10 +183,10 @@ fn parses_compactor_wal_consumer_config() {
             == ServiceConfig {
                 target: Role::Compactor,
                 listen_addr: "127.0.0.1:3100".parse().unwrap(),
-                object_store_url: Some("file:///tmp/crabka-observability".to_string()),
+                object_store_url: Some("file:///tmp/krabka-observability".to_string()),
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
-                wal_topic: "__crabka_observability_logs_wal".to_string(),
-                wal_group_id: "crabka-observability-compactor".to_string(),
+                wal_topic: "__krabka_observability_logs_wal".to_string(),
+                wal_group_id: "krabka-observability-compactor".to_string(),
                 data_root: ".".into(),
                 querier_index_source: QuerierIndexSource::LocalManifest,
                 tenant: None,
@@ -207,15 +207,15 @@ fn parses_compactor_wal_consumer_config() {
 #[test]
 fn parses_querier_wal_tail_config() {
     let config = ServiceConfig::try_parse_from([
-        "crabka-observability",
+        "krabka-observability",
         "--target",
         "querier",
         "--wal-bootstrap-server",
         "127.0.0.1:9092",
         "--wal-topic",
-        "__crabka_observability_logs_wal",
+        "__krabka_observability_logs_wal",
         "--wal-group-id",
-        "crabka-observability-querier-tail",
+        "krabka-observability-querier-tail",
     ])
     .unwrap();
 
@@ -226,8 +226,8 @@ fn parses_querier_wal_tail_config() {
                 listen_addr: "127.0.0.1:3100".parse().unwrap(),
                 object_store_url: None,
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
-                wal_topic: "__crabka_observability_logs_wal".to_string(),
-                wal_group_id: "crabka-observability-querier-tail".to_string(),
+                wal_topic: "__krabka_observability_logs_wal".to_string(),
+                wal_group_id: "krabka-observability-querier-tail".to_string(),
                 data_root: ".".into(),
                 querier_index_source: QuerierIndexSource::LocalManifest,
                 tenant: None,
@@ -252,8 +252,8 @@ async fn querier_dependencies_require_wal_bootstrap_server() {
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
-        wal_topic: "__crabka_observability_logs_wal".to_string(),
-        wal_group_id: "crabka-observability-querier-tail".to_string(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -279,14 +279,14 @@ async fn querier_dependencies_require_wal_bootstrap_server() {
 
 #[test]
 fn rejects_missing_target() {
-    let error = ServiceConfig::try_parse_from(["crabka-observability"]).unwrap_err();
+    let error = ServiceConfig::try_parse_from(["krabka-observability"]).unwrap_err();
 
     assert!(error.to_string().contains("--target"));
 }
 
 #[test]
 fn rejects_unknown_target() {
-    let error = ServiceConfig::try_parse_from(["crabka-observability", "--target", "ingester"])
+    let error = ServiceConfig::try_parse_from(["krabka-observability", "--target", "ingester"])
         .unwrap_err();
 
     assert!(error.to_string().contains("invalid value"));

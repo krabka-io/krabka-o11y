@@ -47,8 +47,8 @@ impl ProfilesError {
     }
 }
 
-impl From<crabka_pprof::ProfileError> for ProfilesError {
-    fn from(err: crabka_pprof::ProfileError) -> Self {
+impl From<krabka_pprof::ProfileError> for ProfilesError {
+    fn from(err: krabka_pprof::ProfileError) -> Self {
         Self::Pprof(err.to_string())
     }
 }

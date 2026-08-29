@@ -6,17 +6,17 @@ use std::{net::SocketAddr, process::ExitCode, sync::Arc};
 
 use arc_swap::ArcSwap;
 use clap::{ArgAction, Args, Parser, ValueEnum};
-use crabka_blockstore::{
+use krabka_blockstore::{
     BlockStore, BlockWriter, IndexSnapshotRetain, PromotedSpanAttr, TraceIndex,
 };
-use crabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerFetchMaxBytes};
-use crabka_client_core::{
+use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerFetchMaxBytes};
+use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
-use crabka_client_producer::Producer;
-use crabka_telemetry::OtlpConfig;
-use crabka_traceql::{EngineOpts, TraceqlEngine};
-use crabka_traces::{
+use krabka_client_producer::Producer;
+use krabka_telemetry::OtlpConfig;
+use krabka_traceql::{EngineOpts, TraceqlEngine};
+use krabka_traces::{
     LiveStore, TRACES_WAL_TOPIC, blockbuilder,
     compactor::compact_index_window_with_max_bytes,
     distributor::{self, DistributorState, KafkaSink},
@@ -32,11 +32,11 @@ use crabka_traces::{
         self as trace_querier,
         http::HttpConfig,
         live::{LiveSource, LiveTier, RemoteLiveSource},
-        store::{CrabkaSpanStore, DEFAULT_SCAN_CONCAT_MAX, SharedTraceIndex},
+        store::{DEFAULT_SCAN_CONCAT_MAX, KrabkaSpanStore, SharedTraceIndex},
     },
     span::batch::RESOURCE_ATTR_PREFIX,
 };
-use crabka_units::{
+use krabka_units::{
     ByteSize, Frequency, Time,
     convert::{ByteSizeExt as _, FrequencyExt, TimeExt as _},
     kibibytes, parse,
@@ -166,83 +166,83 @@ fn parse_unix_nano(value: &str) -> Result<UnixNano, String> {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "crabka-traces")]
-#[command(about = "Tempo-compatible traces service for Crabka")]
+#[command(name = "krabka-traces")]
+#[command(about = "Tempo-compatible traces service for Krabka")]
 struct Cli {
     #[command(flatten)]
-    profiling: crabka_telemetry::profiling::ProfilingConfig,
-    #[arg(long, env = "CRABKA_TRACES_TARGET")]
+    profiling: krabka_telemetry::profiling::ProfilingConfig,
+    #[arg(long, env = "KRABKA_TRACES_TARGET")]
     target: Target,
-    #[arg(long, env = "CRABKA_TRACES_LISTEN", default_value = "127.0.0.1:3200")]
+    #[arg(long, env = "KRABKA_TRACES_LISTEN", default_value = "127.0.0.1:3200")]
     listen: String,
-    #[arg(long, env = "CRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
+    #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     admin_listen_addr: SocketAddr,
     #[arg(
         long,
-        env = "CRABKA_TRACES_GRPC_LISTEN",
+        env = "KRABKA_TRACES_GRPC_LISTEN",
         default_value = "127.0.0.1:4317"
     )]
     grpc_listen: String,
     #[arg(
         long,
-        env = "CRABKA_TRACES_OTLP_HTTP_LISTEN",
+        env = "KRABKA_TRACES_OTLP_HTTP_LISTEN",
         default_value = "127.0.0.1:4318"
     )]
     otlp_http_listen: String,
     #[arg(
         long,
-        env = "CRABKA_TRACES_JAEGER_GRPC_LISTEN",
+        env = "KRABKA_TRACES_JAEGER_GRPC_LISTEN",
         default_value = "127.0.0.1:14250"
     )]
     jaeger_grpc_listen: String,
     #[arg(
         long,
-        env = "CRABKA_TRACES_JAEGER_COMPACT_LISTEN",
+        env = "KRABKA_TRACES_JAEGER_COMPACT_LISTEN",
         default_value = "127.0.0.1:6831"
     )]
     jaeger_compact_listen: String,
     #[arg(
         long,
-        env = "CRABKA_TRACES_JAEGER_HTTP_LISTEN",
+        env = "KRABKA_TRACES_JAEGER_HTTP_LISTEN",
         default_value = "127.0.0.1:14268"
     )]
     jaeger_http_listen: String,
     #[arg(
         long,
-        env = "CRABKA_TRACES_ZIPKIN_LISTEN",
+        env = "KRABKA_TRACES_ZIPKIN_LISTEN",
         default_value = "127.0.0.1:9411"
     )]
     zipkin_listen: String,
     #[arg(
         long,
-        env = "CRABKA_TRACES_BOOTSTRAP",
+        env = "KRABKA_TRACES_BOOTSTRAP",
         default_value = "127.0.0.1:9092"
     )]
     bootstrap: String,
     #[arg(
         long,
-        env = "CRABKA_TRACES_CLIENT_DISPATCH_QUEUE_CAPACITY",
+        env = "KRABKA_TRACES_CLIENT_DISPATCH_QUEUE_CAPACITY",
         default_value_t = DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
         value_parser = parse_client_dispatch_queue_capacity
     )]
     client_dispatch_queue_capacity: usize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_CLIENT_FRAME_MAX",
+        env = "KRABKA_TRACES_CLIENT_FRAME_MAX",
         default_value = "100MiB",
         value_parser = parse_client_frame_max
     )]
     client_frame_max: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_WAL_FETCH_MAX",
+        env = "KRABKA_TRACES_WAL_FETCH_MAX",
         default_value = "2MiB",
         value_parser = parse_consumer_fetch_size
     )]
     wal_fetch_max: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_WAL_FETCH_PARTITION_MAX",
+        env = "KRABKA_TRACES_WAL_FETCH_PARTITION_MAX",
         default_value = "256KiB",
         value_parser = parse_consumer_fetch_size
     )]
@@ -250,7 +250,7 @@ struct Cli {
     #[arg(
         long = "retention",
         visible_alias = "retention-ns",
-        env = "CRABKA_TRACES_RETENTION",
+        env = "KRABKA_TRACES_RETENTION",
         default_value = "30m",
         value_parser = parse_positive_time_or_nanos
     )]
@@ -258,100 +258,100 @@ struct Cli {
     #[arg(
         long = "block-builder-window",
         visible_alias = "block-builder-window-secs",
-        env = "CRABKA_TRACES_BLOCK_BUILDER_WINDOW",
+        env = "KRABKA_TRACES_BLOCK_BUILDER_WINDOW",
         default_value = "5s",
         value_parser = parse_positive_time_or_secs
     )]
     block_builder_window: Time,
     #[arg(
         long,
-        env = "CRABKA_TRACES_BLOCK_BUILDER_EMPTY_POLL_BACKOFF",
+        env = "KRABKA_TRACES_BLOCK_BUILDER_EMPTY_POLL_BACKOFF",
         default_value = "100ms",
         value_parser = parse::positive_time
     )]
     block_builder_empty_poll_backoff: Time,
     #[arg(
         long,
-        env = "CRABKA_TRACES_BLOCK_BUILDER_FLUSH_MAX_RECORDS",
-        default_value_t = crabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_RECORDS,
+        env = "KRABKA_TRACES_BLOCK_BUILDER_FLUSH_MAX_RECORDS",
+        default_value_t = krabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_RECORDS,
         value_parser = parse_positive_usize
     )]
     block_builder_flush_max_records: usize,
     #[arg(
         long = "block-builder-flush-max-age",
         visible_alias = "block-builder-flush-max-age-ms",
-        env = "CRABKA_TRACES_BLOCK_BUILDER_FLUSH_MAX_AGE",
+        env = "KRABKA_TRACES_BLOCK_BUILDER_FLUSH_MAX_AGE",
         default_value = "10s",
         value_parser = parse_positive_time_or_millis
     )]
     block_builder_flush_max_age: Time,
-    #[arg(long, env = "CRABKA_TRACES_QUERIER_LIVE_STORE", action = ArgAction::SetTrue)]
+    #[arg(long, env = "KRABKA_TRACES_QUERIER_LIVE_STORE", action = ArgAction::SetTrue)]
     querier_live_store: bool,
-    #[arg(long, env = "CRABKA_TRACES_QUERIER_LIVE_STORE_URL")]
+    #[arg(long, env = "KRABKA_TRACES_QUERIER_LIVE_STORE_URL")]
     querier_live_store_url: Option<String>,
     #[arg(
         long,
-        env = "CRABKA_TRACES_TRACE_INDEX_KEY",
+        env = "KRABKA_TRACES_TRACE_INDEX_KEY",
         default_value = "index/traces.json"
     )]
     trace_index_key: String,
     #[arg(
         long,
-        env = "CRABKA_TRACES_INDEX_SNAPSHOT_MAX",
+        env = "KRABKA_TRACES_INDEX_SNAPSHOT_MAX",
         default_value = "256MiB",
         value_parser = parse_positive_whole_byte_size
     )]
     index_snapshot_max: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_INDEX_SNAPSHOT_RETAIN",
+        env = "KRABKA_TRACES_INDEX_SNAPSHOT_RETAIN",
         default_value_t = IndexSnapshotRetain::default()
     )]
     index_snapshot_retain: IndexSnapshotRetain,
     #[arg(
         long,
-        env = "CRABKA_TRACES_BLOCK_READ_MAX",
+        env = "KRABKA_TRACES_BLOCK_READ_MAX",
         default_value = "1GiB",
         value_parser = parse_positive_whole_byte_size
     )]
     block_read_max: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_SCAN_CONCAT_MAX",
+        env = "KRABKA_TRACES_SCAN_CONCAT_MAX",
         default_value = "1.5GB",
         value_parser = parse_scan_concat_max
     )]
     scan_concat_max: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_OBJECT_STORE_URL",
+        env = "KRABKA_TRACES_OBJECT_STORE_URL",
         default_value = "memory:///"
     )]
     object_store_url: String,
-    #[arg(long, env = "CRABKA_TRACES_REMOTE_WRITE_URL")]
+    #[arg(long, env = "KRABKA_TRACES_REMOTE_WRITE_URL")]
     remote_write_url: Option<String>,
     #[arg(
         long = "collection-interval",
         visible_alias = "collection-interval-secs",
-        env = "CRABKA_TRACES_COLLECTION_INTERVAL",
+        env = "KRABKA_TRACES_COLLECTION_INTERVAL",
         value_parser = parse_positive_time_or_secs
     )]
     collection_interval: Option<Time>,
-    #[arg(long, env = "CRABKA_TRACES_MAX_EXEMPLARS_PER_SERIES")]
+    #[arg(long, env = "KRABKA_TRACES_MAX_EXEMPLARS_PER_SERIES")]
     max_exemplars_per_series: Option<usize>,
     #[arg(
         long = "edge-ttl",
         visible_alias = "edge-ttl-secs",
-        env = "CRABKA_TRACES_EDGE_TTL",
+        env = "KRABKA_TRACES_EDGE_TTL",
         value_parser = parse_non_negative_time_or_secs
     )]
     edge_ttl: Option<Time>,
-    #[arg(long, env = "CRABKA_TRACES_EDGE_STORE_MAX_ITEMS")]
+    #[arg(long, env = "KRABKA_TRACES_EDGE_STORE_MAX_ITEMS")]
     edge_store_max_items: Option<usize>,
     #[arg(
         long = "histogram-buckets",
         visible_alias = "histogram-buckets-ns",
-        env = "CRABKA_TRACES_HISTOGRAM_BUCKETS",
+        env = "KRABKA_TRACES_HISTOGRAM_BUCKETS",
         value_delimiter = ',',
         value_parser = parse_positive_time_or_nanos_f64
     )]
@@ -361,7 +361,7 @@ struct Cli {
     #[arg(
         long = "compaction-start",
         visible_alias = "compaction-start-ns",
-        env = "CRABKA_TRACES_COMPACTION_START",
+        env = "KRABKA_TRACES_COMPACTION_START",
         default_value = "0ns",
         value_parser = parse_unix_nano
     )]
@@ -369,75 +369,75 @@ struct Cli {
     #[arg(
         long = "compaction-end",
         visible_alias = "compaction-end-ns",
-        env = "CRABKA_TRACES_COMPACTION_END",
+        env = "KRABKA_TRACES_COMPACTION_END",
         default_value = "max",
         value_parser = parse_unix_nano
     )]
     compaction_end: UnixNano,
     #[arg(
         long,
-        env = "CRABKA_TRACES_QUERIER_URL",
+        env = "KRABKA_TRACES_QUERIER_URL",
         default_value = "http://127.0.0.1:3200"
     )]
     querier_url: String,
     #[arg(
         long = "live-frontier",
         visible_alias = "live-frontier-ns",
-        env = "CRABKA_TRACES_LIVE_FRONTIER",
+        env = "KRABKA_TRACES_LIVE_FRONTIER",
         value_parser = parse_unix_nano
     )]
     live_frontier: Option<UnixNano>,
-    #[arg(long, env = "CRABKA_TRACES_QUERY_QUEUE_DEPTH", default_value_t = 128)]
+    #[arg(long, env = "KRABKA_TRACES_QUERY_QUEUE_DEPTH", default_value_t = 128)]
     query_queue_depth: usize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_TARGET_BYTES_PER_JOB",
+        env = "KRABKA_TRACES_TARGET_BYTES_PER_JOB",
         default_value = "0B",
         value_parser = parse_non_negative_whole_byte_size_or_bytes
     )]
     target_bytes_per_job: ByteSize,
-    #[arg(long, env = "CRABKA_TRACES_MAX_TRACE_SPANS", default_value_t = usize::MAX)]
+    #[arg(long, env = "KRABKA_TRACES_MAX_TRACE_SPANS", default_value_t = usize::MAX)]
     max_trace_spans: usize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_TAG_QUERY_FILTER_AUTOCOMPLETE_LIMIT",
+        env = "KRABKA_TRACES_TAG_QUERY_FILTER_AUTOCOMPLETE_LIMIT",
         default_value_t = 25,
         value_parser = parse_positive_usize
     )]
     tag_query_filter_autocomplete_limit: usize,
     #[arg(
         long = "traceql-default-limit",
-        env = "CRABKA_TRACES_TRACEQL_DEFAULT_LIMIT",
+        env = "KRABKA_TRACES_TRACEQL_DEFAULT_LIMIT",
         default_value_t = 20,
         value_parser = parse_positive_usize
     )]
     traceql_default_limit: usize,
     #[arg(
         long = "traceql-default-spans-per-span-set",
-        env = "CRABKA_TRACES_TRACEQL_DEFAULT_SPANS_PER_SPAN_SET",
+        env = "KRABKA_TRACES_TRACEQL_DEFAULT_SPANS_PER_SPAN_SET",
         default_value_t = 3,
         value_parser = parse_positive_usize
     )]
     traceql_default_spss: usize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_TRACEQL_MAX_TRACES",
+        env = "KRABKA_TRACES_TRACEQL_MAX_TRACES",
         default_value_t = 1000,
         value_parser = parse_positive_usize
     )]
     max_search_traces: usize,
-    #[arg(long, env = "CRABKA_TRACES_TRACEQL_MAX_EXEMPLARS", default_value_t = 0)]
+    #[arg(long, env = "KRABKA_TRACES_TRACEQL_MAX_EXEMPLARS", default_value_t = 0)]
     max_metric_exemplars: usize,
     #[arg(
         long = "traceql-compare-max-values-per-attr",
-        env = "CRABKA_TRACES_TRACEQL_COMPARE_MAX_VALUES_PER_ATTR",
+        env = "KRABKA_TRACES_TRACEQL_COMPARE_MAX_VALUES_PER_ATTR",
         default_value_t = 256,
         value_parser = parse_positive_usize
     )]
     traceql_compare_max_values_per_attr: usize,
     #[arg(
         long = "traceql-histogram-buckets",
-        env = "CRABKA_TRACES_TRACEQL_HISTOGRAM_BUCKETS",
+        env = "KRABKA_TRACES_TRACEQL_HISTOGRAM_BUCKETS",
         default_value = "2ms,4ms,8ms,16ms,32ms,64ms,128ms,256ms,512ms,1024ms,2048ms,4096ms,8192ms,16384ms",
         value_delimiter = ',',
         value_parser = parse::positive_time
@@ -445,67 +445,67 @@ struct Cli {
     traceql_histogram_buckets: Vec<Time>,
     #[arg(
         long,
-        env = "CRABKA_TRACES_MAX_SPANS_PER_REQUEST",
+        env = "KRABKA_TRACES_MAX_SPANS_PER_REQUEST",
         default_value_t = 10_000
     )]
     max_spans_per_request: usize,
-    #[arg(long, env = "CRABKA_TRACES_MAX_SPANS_PER_TRACE", default_value_t = usize::MAX)]
+    #[arg(long, env = "KRABKA_TRACES_MAX_SPANS_PER_TRACE", default_value_t = usize::MAX)]
     max_spans_per_trace: usize,
-    #[arg(long, env = "CRABKA_TRACES_MAX_INGEST_SPANS_PER_SECOND", default_value_t = usize::MAX)]
+    #[arg(long, env = "KRABKA_TRACES_MAX_INGEST_SPANS_PER_SECOND", default_value_t = usize::MAX)]
     max_ingest_spans_per_second: usize,
-    #[arg(long, env = "CRABKA_TRACES_INGEST_RATE_BURST", default_value_t = usize::MAX)]
+    #[arg(long, env = "KRABKA_TRACES_INGEST_RATE_BURST", default_value_t = usize::MAX)]
     ingest_rate_burst: usize,
     #[arg(
         long = "promote-span-attr",
-        env = "CRABKA_TRACES_PROMOTE_SPAN_ATTR",
+        env = "KRABKA_TRACES_PROMOTE_SPAN_ATTR",
         value_delimiter = ','
     )]
     promote_span_attrs: Vec<String>,
     #[arg(
         long = "promote-resource-attr",
-        env = "CRABKA_TRACES_PROMOTE_RESOURCE_ATTR",
+        env = "KRABKA_TRACES_PROMOTE_RESOURCE_ATTR",
         value_delimiter = ','
     )]
     promote_resource_attrs: Vec<String>,
     #[arg(
         long,
-        env = "CRABKA_TRACES_MAX_ATTR_VALUE_LEN",
+        env = "KRABKA_TRACES_MAX_ATTR_VALUE_LEN",
         default_value = "64KiB",
         value_parser = parse_non_negative_whole_byte_size_or_bytes
     )]
     max_attr_value_len: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_MAX_DECOMPRESSED_BYTES",
+        env = "KRABKA_TRACES_MAX_DECOMPRESSED_BYTES",
         default_value = "10MiB",
         value_parser = parse_non_negative_whole_byte_size_or_bytes
     )]
     max_decompressed_bytes: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_METRICS_GENERATOR_POLL_BATCH_SIZE",
+        env = "KRABKA_TRACES_METRICS_GENERATOR_POLL_BATCH_SIZE",
         default_value_t = 1_000,
         value_parser = parse_positive_usize
     )]
     metrics_generator_poll_batch_size: usize,
     #[arg(
         long,
-        env = "CRABKA_TRACES_METRICS_GENERATOR_POLL_ERROR_BACKOFF",
+        env = "KRABKA_TRACES_METRICS_GENERATOR_POLL_ERROR_BACKOFF",
         default_value = "200ms",
         value_parser = parse::positive_time
     )]
     metrics_generator_poll_error_backoff: Time,
-    #[arg(long, env = "CRABKA_TRACES_CONFIG")]
+    #[arg(long, env = "KRABKA_TRACES_CONFIG")]
     config: Option<String>,
 }
 
 #[derive(Debug, Args)]
 struct MetricsFlags {
-    #[arg(long, env = "CRABKA_TRACES_ENABLE_TARGET_INFO")]
+    #[arg(long, env = "KRABKA_TRACES_ENABLE_TARGET_INFO")]
     enable_target_info: bool,
-    #[arg(long, env = "CRABKA_TRACES_ENABLE_STATUS_MESSAGE")]
+    #[arg(long, env = "KRABKA_TRACES_ENABLE_STATUS_MESSAGE")]
     enable_status_message: bool,
-    #[arg(long, env = "CRABKA_TRACES_ENABLE_MESSAGING_SYSTEM_LATENCY")]
+    #[arg(long, env = "KRABKA_TRACES_ENABLE_MESSAGING_SYSTEM_LATENCY")]
     enable_messaging_system_latency: bool,
 }
 
@@ -547,22 +547,22 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let telemetry = crabka_telemetry::init(
+    let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
-            "crabka-traces",
+            "krabka-traces",
             env!("CARGO_PKG_VERSION"),
-            "crabka-traces",
+            "krabka-traces",
         )?,
-        "crabka_traces=info,info",
+        "krabka_traces=info,info",
         "info",
-        "crabka-traces",
+        "krabka-traces",
     )?;
     let result = async {
         let metrics = ServiceMetrics::new();
-        let admin = crabka_telemetry::profiling::spawn_admin_with_config(
+        let admin = krabka_telemetry::profiling::spawn_admin_with_config(
             cli.admin_listen_addr,
-            crabka_traces::metrics::metrics_router(metrics.registry.clone()),
+            krabka_traces::metrics::metrics_router(metrics.registry.clone()),
             cli.profiling.clone(),
         )
         .await?;
@@ -589,7 +589,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
         tokio::select! {
             result = role => result?,
-            result = crabka_telemetry::profiling::await_admin_exit(admin) => result?,
+            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
         }
         Ok(())
     }
@@ -685,8 +685,8 @@ async fn run_block_builder(
     let promoted_attrs = promoted_attrs_from_cli(&cli)?;
     let consumer = wal_consumer(
         cli.bootstrap.clone(),
-        "crabka-traces-block-builder",
-        Some("crabka-traces-block-builder"),
+        "krabka-traces-block-builder",
+        Some("krabka-traces-block-builder"),
         cli.wal_fetch_max,
         cli.wal_fetch_partition_max,
         cli.client_dispatch_queue_capacity,
@@ -733,7 +733,7 @@ async fn run_live_store(
     let addr: SocketAddr = cli.listen.parse()?;
     let consumer = wal_consumer(
         cli.bootstrap.clone(),
-        "crabka-traces-live-store",
+        "krabka-traces-live-store",
         None,
         cli.wal_fetch_max,
         cli.wal_fetch_partition_max,
@@ -777,7 +777,7 @@ async fn run_querier(
     if let Some(live_store) = live_store {
         let consumer = wal_consumer(
             cli.bootstrap.clone(),
-            "crabka-traces-querier-live-store",
+            "krabka-traces-querier-live-store",
             None,
             cli.wal_fetch_max,
             cli.wal_fetch_partition_max,
@@ -876,7 +876,7 @@ async fn build_querier_router_with_live(
     } else {
         None
     };
-    let store = Arc::new(CrabkaSpanStore::new_with_scan_concat_max(
+    let store = Arc::new(KrabkaSpanStore::new_with_scan_concat_max(
         blocks,
         Arc::clone(&trace_index),
         live,
@@ -908,7 +908,7 @@ fn build_live_store_router(
         Arc::clone(&live_store),
         Arc::clone(&trace_index),
     )));
-    let store = Arc::new(CrabkaSpanStore::new_with_scan_concat_max(
+    let store = Arc::new(KrabkaSpanStore::new_with_scan_concat_max(
         blocks,
         trace_index,
         Some(live),
@@ -925,7 +925,7 @@ fn build_live_store_router(
     );
     let internal_router = axum::Router::new()
         .route(
-            "/api/crabka/live/span-batches",
+            "/api/krabka/live/span-batches",
             axum::routing::get(live_span_batches),
         )
         .with_state(live_store);
@@ -1034,7 +1034,7 @@ impl LiveSource for IndexedLiveSource {
         tenant: &str,
         start_ns: i64,
         end_ns: i64,
-    ) -> crabka_traces::querier::live::Result<Vec<arrow::record_batch::RecordBatch>> {
+    ) -> krabka_traces::querier::live::Result<Vec<arrow::record_batch::RecordBatch>> {
         let guard = self.store.read().await;
         guard.span_batches(tenant, start_ns, end_ns).await
     }
@@ -1043,7 +1043,7 @@ impl LiveSource for IndexedLiveSource {
         &self,
         tenant: &str,
         trace_id: &[u8; 16],
-    ) -> crabka_traces::querier::live::Result<Option<crabka_traceql::TraceSpans>> {
+    ) -> krabka_traces::querier::live::Result<Option<krabka_traceql::TraceSpans>> {
         let guard = self.store.read().await;
         guard.trace_spans(tenant, trace_id).await
     }
@@ -1051,10 +1051,10 @@ impl LiveSource for IndexedLiveSource {
     async fn tag_names(
         &self,
         tenant: &str,
-        scope: Option<crabka_traceql::TagScope>,
+        scope: Option<krabka_traceql::TagScope>,
         start_ns: i64,
         end_ns: i64,
-    ) -> crabka_traces::querier::live::Result<Vec<crabka_traceql::ScopedTag>> {
+    ) -> krabka_traces::querier::live::Result<Vec<krabka_traceql::ScopedTag>> {
         let guard = self.store.read().await;
         guard.tag_names(tenant, scope, start_ns, end_ns).await
     }
@@ -1065,7 +1065,7 @@ impl LiveSource for IndexedLiveSource {
         tag: &str,
         start_ns: i64,
         end_ns: i64,
-    ) -> crabka_traces::querier::live::Result<Vec<crabka_traceql::TypedValue>> {
+    ) -> krabka_traces::querier::live::Result<Vec<krabka_traceql::TypedValue>> {
         let guard = self.store.read().await;
         guard.tag_values(tenant, tag, start_ns, end_ns).await
     }
@@ -1169,7 +1169,7 @@ fn parse_querier_addrs(
 async fn build_query_frontend_router(
     cli: &Cli,
 ) -> Result<axum::Router, Box<dyn std::error::Error + Send + Sync>> {
-    use crabka_traces::frontend::{HttpQuerier, QueryFrontend};
+    use krabka_traces::frontend::{HttpQuerier, QueryFrontend};
 
     let addr: SocketAddr = cli.listen.parse()?;
     let cfg = frontend_config_from_cli(cli, addr)?;
@@ -1274,7 +1274,7 @@ async fn run_metrics_generator(
 
     let consumer = wal_consumer(
         cli.bootstrap,
-        "crabka-traces-metrics-generator",
+        "krabka-traces-metrics-generator",
         None,
         cli.wal_fetch_max,
         cli.wal_fetch_partition_max,
@@ -1347,7 +1347,7 @@ async fn wal_consumer(
     fetch_partition_max: ByteSize,
     client_dispatch_queue_capacity: usize,
     client_frame_max: ByteSize,
-) -> Result<Consumer, crabka_client_consumer::ConsumerError> {
+) -> Result<Consumer, krabka_client_consumer::ConsumerError> {
     // Boxed: consumer startup (bootstrap resolve, double `JoinGroup`,
     // `SyncGroup`, offset priming) builds a ~13 KB future. Every role that
     // reads the WAL awaits this, so leaving it inline pushes each role future
@@ -1377,8 +1377,8 @@ mod tests {
         http::{Request, StatusCode as HttpStatusCode},
     };
     use clap::{CommandFactory as _, Parser};
-    use crabka_units::{minutes, secs};
     use http_body_util::BodyExt;
+    use krabka_units::{minutes, secs};
     use tower::ServiceExt;
 
     use super::*;
@@ -1387,58 +1387,58 @@ mod tests {
     fn non_dimensioned_cli_arguments_have_environment_backing() {
         let command = Cli::command();
         for (id, env) in [
-            ("target", "CRABKA_TRACES_TARGET"),
-            ("listen", "CRABKA_TRACES_LISTEN"),
-            ("grpc_listen", "CRABKA_TRACES_GRPC_LISTEN"),
-            ("otlp_http_listen", "CRABKA_TRACES_OTLP_HTTP_LISTEN"),
-            ("jaeger_grpc_listen", "CRABKA_TRACES_JAEGER_GRPC_LISTEN"),
+            ("target", "KRABKA_TRACES_TARGET"),
+            ("listen", "KRABKA_TRACES_LISTEN"),
+            ("grpc_listen", "KRABKA_TRACES_GRPC_LISTEN"),
+            ("otlp_http_listen", "KRABKA_TRACES_OTLP_HTTP_LISTEN"),
+            ("jaeger_grpc_listen", "KRABKA_TRACES_JAEGER_GRPC_LISTEN"),
             (
                 "jaeger_compact_listen",
-                "CRABKA_TRACES_JAEGER_COMPACT_LISTEN",
+                "KRABKA_TRACES_JAEGER_COMPACT_LISTEN",
             ),
-            ("jaeger_http_listen", "CRABKA_TRACES_JAEGER_HTTP_LISTEN"),
-            ("zipkin_listen", "CRABKA_TRACES_ZIPKIN_LISTEN"),
-            ("bootstrap", "CRABKA_TRACES_BOOTSTRAP"),
-            ("querier_live_store", "CRABKA_TRACES_QUERIER_LIVE_STORE"),
+            ("jaeger_http_listen", "KRABKA_TRACES_JAEGER_HTTP_LISTEN"),
+            ("zipkin_listen", "KRABKA_TRACES_ZIPKIN_LISTEN"),
+            ("bootstrap", "KRABKA_TRACES_BOOTSTRAP"),
+            ("querier_live_store", "KRABKA_TRACES_QUERIER_LIVE_STORE"),
             (
                 "querier_live_store_url",
-                "CRABKA_TRACES_QUERIER_LIVE_STORE_URL",
+                "KRABKA_TRACES_QUERIER_LIVE_STORE_URL",
             ),
-            ("trace_index_key", "CRABKA_TRACES_TRACE_INDEX_KEY"),
-            ("object_store_url", "CRABKA_TRACES_OBJECT_STORE_URL"),
-            ("remote_write_url", "CRABKA_TRACES_REMOTE_WRITE_URL"),
+            ("trace_index_key", "KRABKA_TRACES_TRACE_INDEX_KEY"),
+            ("object_store_url", "KRABKA_TRACES_OBJECT_STORE_URL"),
+            ("remote_write_url", "KRABKA_TRACES_REMOTE_WRITE_URL"),
             (
                 "max_exemplars_per_series",
-                "CRABKA_TRACES_MAX_EXEMPLARS_PER_SERIES",
+                "KRABKA_TRACES_MAX_EXEMPLARS_PER_SERIES",
             ),
-            ("edge_store_max_items", "CRABKA_TRACES_EDGE_STORE_MAX_ITEMS"),
-            ("querier_url", "CRABKA_TRACES_QUERIER_URL"),
-            ("query_queue_depth", "CRABKA_TRACES_QUERY_QUEUE_DEPTH"),
-            ("max_trace_spans", "CRABKA_TRACES_MAX_TRACE_SPANS"),
+            ("edge_store_max_items", "KRABKA_TRACES_EDGE_STORE_MAX_ITEMS"),
+            ("querier_url", "KRABKA_TRACES_QUERIER_URL"),
+            ("query_queue_depth", "KRABKA_TRACES_QUERY_QUEUE_DEPTH"),
+            ("max_trace_spans", "KRABKA_TRACES_MAX_TRACE_SPANS"),
             (
                 "max_spans_per_request",
-                "CRABKA_TRACES_MAX_SPANS_PER_REQUEST",
+                "KRABKA_TRACES_MAX_SPANS_PER_REQUEST",
             ),
-            ("max_spans_per_trace", "CRABKA_TRACES_MAX_SPANS_PER_TRACE"),
+            ("max_spans_per_trace", "KRABKA_TRACES_MAX_SPANS_PER_TRACE"),
             (
                 "max_ingest_spans_per_second",
-                "CRABKA_TRACES_MAX_INGEST_SPANS_PER_SECOND",
+                "KRABKA_TRACES_MAX_INGEST_SPANS_PER_SECOND",
             ),
-            ("ingest_rate_burst", "CRABKA_TRACES_INGEST_RATE_BURST"),
-            ("promote_span_attrs", "CRABKA_TRACES_PROMOTE_SPAN_ATTR"),
+            ("ingest_rate_burst", "KRABKA_TRACES_INGEST_RATE_BURST"),
+            ("promote_span_attrs", "KRABKA_TRACES_PROMOTE_SPAN_ATTR"),
             (
                 "promote_resource_attrs",
-                "CRABKA_TRACES_PROMOTE_RESOURCE_ATTR",
+                "KRABKA_TRACES_PROMOTE_RESOURCE_ATTR",
             ),
-            ("config", "CRABKA_TRACES_CONFIG"),
-            ("enable_target_info", "CRABKA_TRACES_ENABLE_TARGET_INFO"),
+            ("config", "KRABKA_TRACES_CONFIG"),
+            ("enable_target_info", "KRABKA_TRACES_ENABLE_TARGET_INFO"),
             (
                 "enable_status_message",
-                "CRABKA_TRACES_ENABLE_STATUS_MESSAGE",
+                "KRABKA_TRACES_ENABLE_STATUS_MESSAGE",
             ),
             (
                 "enable_messaging_system_latency",
-                "CRABKA_TRACES_ENABLE_MESSAGING_SYSTEM_LATENCY",
+                "KRABKA_TRACES_ENABLE_MESSAGING_SYSTEM_LATENCY",
             ),
         ] {
             let configured = command
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[test]
     fn process_environment_supplies_cli_and_explicit_flags_win() {
-        const CHILD: &str = "CRABKA_TRACES_PROCESS_ENVIRONMENT_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_PROCESS_ENVIRONMENT_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -1475,21 +1475,21 @@ mod tests {
                         "tests::process_environment_supplies_cli_and_explicit_flags_win",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_TARGET", "querier")
-                    .env("CRABKA_TRACES_LISTEN", "127.0.0.1:3210")
-                    .env("CRABKA_TRACES_ENABLE_TARGET_INFO", "true")
+                    .env("KRABKA_TRACES_TARGET", "querier")
+                    .env("KRABKA_TRACES_LISTEN", "127.0.0.1:3210")
+                    .env("KRABKA_TRACES_ENABLE_TARGET_INFO", "true")
                     .env(
-                        "CRABKA_TRACES_PROMOTE_SPAN_ATTR",
+                        "KRABKA_TRACES_PROMOTE_SPAN_ATTR",
                         "http.method:string,http.status:int",
                     )
-                    .env("CRABKA_TRACES_QUERY_QUEUE_DEPTH", "7")
+                    .env("KRABKA_TRACES_QUERY_QUEUE_DEPTH", "7")
                     .status()
                     .expect("child test");
             check!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces"]).unwrap();
         check!(
             (
                 from_env.target,
@@ -1510,7 +1510,7 @@ mod tests {
         );
 
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=query-frontend",
             "--listen=127.0.0.1:3220",
             "--query-queue-depth=11",
@@ -1527,12 +1527,12 @@ mod tests {
 
     #[test]
     fn client_resource_policy_parses_defaults_and_overrides() {
-        let defaults = Cli::try_parse_from(["crabka-traces", "--target", "querier"]).unwrap();
+        let defaults = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
         assert2::assert!(defaults.client_dispatch_queue_capacity == 64);
-        assert2::assert!(defaults.client_frame_max == crabka_units::mebibytes(100));
+        assert2::assert!(defaults.client_frame_max == krabka_units::mebibytes(100));
 
         let custom = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--client-dispatch-queue-capacity",
@@ -1546,14 +1546,14 @@ mod tests {
 
         for args in [
             vec![
-                "crabka-traces",
+                "krabka-traces",
                 "--target",
                 "querier",
                 "--client-dispatch-queue-capacity",
                 "0",
             ],
             vec![
-                "crabka-traces",
+                "krabka-traces",
                 "--target",
                 "querier",
                 "--client-frame-max",
@@ -1566,7 +1566,7 @@ mod tests {
 
     #[test]
     fn client_resource_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_CLIENT_RESOURCE_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_CLIENT_RESOURCE_POLICY_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -1576,20 +1576,20 @@ mod tests {
                         "tests::client_resource_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_CLIENT_DISPATCH_QUEUE_CAPACITY", "7")
-                    .env("CRABKA_TRACES_CLIENT_FRAME_MAX", "32KiB")
+                    .env("KRABKA_TRACES_CLIENT_DISPATCH_QUEUE_CAPACITY", "7")
+                    .env("KRABKA_TRACES_CLIENT_FRAME_MAX", "32KiB")
                     .status()
                     .expect("child test");
             assert2::assert!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target", "querier"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
         assert2::assert!(from_env.client_dispatch_queue_capacity == 7);
         assert2::assert!(from_env.client_frame_max == kibibytes(32));
 
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--client-dispatch-queue-capacity",
@@ -1604,14 +1604,14 @@ mod tests {
 
     #[test]
     fn parses_distributor_target() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "distributor"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "distributor"]).unwrap();
         assert2::assert!(matches!(cli.target, Target::Distributor));
     }
 
     #[test]
     fn parses_distributor_grpc_listener() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "distributor",
             "--grpc-listen",
@@ -1626,7 +1626,7 @@ mod tests {
     #[test]
     fn parses_distributor_jaeger_compact_listener() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "distributor",
             "--jaeger-compact-listen",
@@ -1641,7 +1641,7 @@ mod tests {
     #[test]
     fn parses_distributor_jaeger_grpc_listener() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "distributor",
             "--jaeger-grpc-listen",
@@ -1655,7 +1655,7 @@ mod tests {
 
     #[test]
     fn distributor_defaults_include_tempo_push_ports() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "distributor"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "distributor"]).unwrap();
 
         assert2::assert!(cli.otlp_http_listen.as_str() == "127.0.0.1:4318");
         assert2::assert!(cli.jaeger_grpc_listen.as_str() == "127.0.0.1:14250");
@@ -1666,7 +1666,7 @@ mod tests {
     #[test]
     fn parses_distributor_ingest_limits() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "distributor",
             "--max-spans-per-request",
@@ -1685,14 +1685,14 @@ mod tests {
 
     #[test]
     fn parses_block_builder_target() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "block-builder"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
         assert2::assert!(matches!(cli.target, Target::BlockBuilder));
     }
 
     #[test]
     fn parses_block_builder_flush_window() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "block-builder",
             "--block-builder-window-secs",
@@ -1706,21 +1706,21 @@ mod tests {
 
     #[test]
     fn block_builder_flush_knobs_default() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "block-builder"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
 
-        check!(cli.block_builder_empty_poll_backoff == crabka_units::millis(100));
+        check!(cli.block_builder_empty_poll_backoff == krabka_units::millis(100));
         assert2::assert!(
             cli.block_builder_flush_max_records
-                == crabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_RECORDS
+                == krabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_RECORDS
         );
         assert2::assert!(
-            cli.block_builder_flush_max_age == crabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_AGE
+            cli.block_builder_flush_max_age == krabka_traces::blockbuilder::DEFAULT_FLUSH_MAX_AGE
         );
     }
 
     #[test]
     fn block_builder_empty_poll_backoff_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_BLOCK_BUILDER_EMPTY_POLL_BACKOFF_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_BLOCK_BUILDER_EMPTY_POLL_BACKOFF_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -1729,23 +1729,23 @@ mod tests {
                         "tests::block_builder_empty_poll_backoff_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_BLOCK_BUILDER_EMPTY_POLL_BACKOFF", "7ms")
-                    .env("CRABKA_TRACES_BLOCK_BUILDER_FLUSH_MAX_RECORDS", "17")
+                    .env("KRABKA_TRACES_BLOCK_BUILDER_EMPTY_POLL_BACKOFF", "7ms")
+                    .env("KRABKA_TRACES_BLOCK_BUILDER_FLUSH_MAX_RECORDS", "17")
                     .status()
                     .expect("child test");
             check!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target=block-builder"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target=block-builder"]).unwrap();
         check!(
             (
                 from_env.block_builder_empty_poll_backoff,
                 from_env.block_builder_flush_max_records,
-            ) == (crabka_units::millis(7), 17)
+            ) == (krabka_units::millis(7), 17)
         );
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=block-builder",
             "--block-builder-empty-poll-backoff=11ms",
             "--block-builder-flush-max-records=19",
@@ -1755,11 +1755,11 @@ mod tests {
             (
                 from_cli.block_builder_empty_poll_backoff,
                 from_cli.block_builder_flush_max_records,
-            ) == (crabka_units::millis(11), 19)
+            ) == (krabka_units::millis(11), 19)
         );
         check!(
             Cli::try_parse_from([
-                "crabka-traces",
+                "krabka-traces",
                 "--target=block-builder",
                 "--block-builder-empty-poll-backoff=0ms",
             ])
@@ -1767,7 +1767,7 @@ mod tests {
         );
         check!(
             Cli::try_parse_from([
-                "crabka-traces",
+                "krabka-traces",
                 "--target=block-builder",
                 "--block-builder-flush-max-records=0",
             ])
@@ -1777,21 +1777,21 @@ mod tests {
 
     #[test]
     fn index_snapshot_policy_defaults_and_rejects_invalid_values() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "block-builder"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
         assert_eq!(
             cli.index_snapshot_max,
-            crabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
+            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
         );
         assert_eq!(
             cli.index_snapshot_retain.into_value(),
-            crabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
+            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
         );
 
         for flag in ["--index-snapshot-max", "--index-snapshot-retain"] {
             for invalid in ["0", "not-a-number", "-1", "18446744073709551616"] {
                 assert!(
                     Cli::try_parse_from([
-                        "crabka-traces",
+                        "krabka-traces",
                         "--target",
                         "block-builder",
                         flag,
@@ -1805,7 +1805,7 @@ mod tests {
         for invalid in ["1.5B", "18446744073709551616B"] {
             assert!(
                 Cli::try_parse_from([
-                    "crabka-traces",
+                    "krabka-traces",
                     "--target",
                     "block-builder",
                     "--index-snapshot-max",
@@ -1818,7 +1818,7 @@ mod tests {
 
     #[test]
     fn index_snapshot_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_INDEX_SNAPSHOT_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_INDEX_SNAPSHOT_POLICY_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -1828,20 +1828,20 @@ mod tests {
                         "tests::index_snapshot_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_INDEX_SNAPSHOT_MAX", "1KiB")
-                    .env("CRABKA_TRACES_INDEX_SNAPSHOT_RETAIN", "3")
+                    .env("KRABKA_TRACES_INDEX_SNAPSHOT_MAX", "1KiB")
+                    .env("KRABKA_TRACES_INDEX_SNAPSHOT_RETAIN", "3")
                     .status()
                     .expect("child test");
             assert!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target", "block-builder"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
         assert_eq!(from_env.index_snapshot_max.bytes_u64(), 1024);
         assert_eq!(from_env.index_snapshot_retain.into_value(), 3);
 
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "block-builder",
             "--index-snapshot-max",
@@ -1856,16 +1856,16 @@ mod tests {
 
     #[test]
     fn block_read_max_defaults_and_rejects_invalid_values() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "querier"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
         assert_eq!(
             cli.block_read_max,
-            crabka_blockstore::DEFAULT_BLOCK_READ_MAX
+            krabka_blockstore::DEFAULT_BLOCK_READ_MAX
         );
 
         for invalid in ["0", "not-a-number", "-1", "18446744073709551616"] {
             assert!(
                 Cli::try_parse_from([
-                    "crabka-traces",
+                    "krabka-traces",
                     "--target",
                     "querier",
                     "--block-read-max",
@@ -1878,7 +1878,7 @@ mod tests {
         for invalid in ["1.5B", "18446744073709551616B"] {
             assert!(
                 Cli::try_parse_from([
-                    "crabka-traces",
+                    "krabka-traces",
                     "--target",
                     "querier",
                     "--block-read-max",
@@ -1891,7 +1891,7 @@ mod tests {
 
     #[test]
     fn block_read_max_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_BLOCK_READ_MAX_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_BLOCK_READ_MAX_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -1901,18 +1901,18 @@ mod tests {
                         "tests::block_read_max_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_BLOCK_READ_MAX", "1KiB")
+                    .env("KRABKA_TRACES_BLOCK_READ_MAX", "1KiB")
                     .status()
                     .expect("child test");
             assert!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target", "querier"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
         assert_eq!(from_env.block_read_max.bytes_u64(), 1024);
 
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--block-read-max",
@@ -1924,7 +1924,7 @@ mod tests {
 
     #[test]
     fn scan_concat_max_preserves_default_and_rejects_invalid_values() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "querier"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
         assert_eq!(cli.scan_concat_max.bytes_u64(), 1_500_000_000);
 
         for invalid in [
@@ -1936,7 +1936,7 @@ mod tests {
         ] {
             assert!(
                 Cli::try_parse_from([
-                    "crabka-traces",
+                    "krabka-traces",
                     "--target",
                     "querier",
                     "--scan-concat-max",
@@ -1950,7 +1950,7 @@ mod tests {
 
     #[test]
     fn scan_concat_max_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_SCAN_CONCAT_MAX_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_SCAN_CONCAT_MAX_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -1960,18 +1960,18 @@ mod tests {
                         "tests::scan_concat_max_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_SCAN_CONCAT_MAX", "1KiB")
+                    .env("KRABKA_TRACES_SCAN_CONCAT_MAX", "1KiB")
                     .status()
                     .expect("child test");
             assert!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target", "querier"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
         assert_eq!(from_env.scan_concat_max.bytes_u64(), 1024);
 
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--scan-concat-max",
@@ -1983,7 +1983,7 @@ mod tests {
 
     #[test]
     fn wal_fetch_limits_preserve_defaults_and_reject_invalid_values() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "block-builder"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
         assert_eq!(cli.wal_fetch_max.bytes_i32(), 2_097_152);
         assert_eq!(cli.wal_fetch_partition_max.bytes_i32(), 262_144);
 
@@ -2000,7 +2000,7 @@ mod tests {
             ("--wal-fetch-partition-max", "2147483648B"),
         ] {
             assert!(
-                Cli::try_parse_from(["crabka-traces", "--target", "block-builder", flag, invalid,])
+                Cli::try_parse_from(["krabka-traces", "--target", "block-builder", flag, invalid,])
                     .is_err(),
                 "{flag} should reject {invalid:?}"
             );
@@ -2009,7 +2009,7 @@ mod tests {
 
     #[test]
     fn wal_fetch_limits_read_environment_and_prefer_cli() {
-        const CHILD: &str = "CRABKA_TRACES_WAL_FETCH_LIMITS_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_WAL_FETCH_LIMITS_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -2019,20 +2019,20 @@ mod tests {
                         "tests::wal_fetch_limits_read_environment_and_prefer_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_WAL_FETCH_MAX", "1KiB")
-                    .env("CRABKA_TRACES_WAL_FETCH_PARTITION_MAX", "256B")
+                    .env("KRABKA_TRACES_WAL_FETCH_MAX", "1KiB")
+                    .env("KRABKA_TRACES_WAL_FETCH_PARTITION_MAX", "256B")
                     .status()
                     .expect("child test");
             assert!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target", "block-builder"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
         assert_eq!(from_env.wal_fetch_max.bytes_i32(), 1024);
         assert_eq!(from_env.wal_fetch_partition_max.bytes_i32(), 256);
 
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "block-builder",
             "--wal-fetch-max",
@@ -2048,7 +2048,7 @@ mod tests {
     #[test]
     fn parses_block_builder_flush_knobs() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "block-builder",
             "--block-builder-flush-max-records",
@@ -2070,7 +2070,7 @@ mod tests {
     #[test]
     fn parses_block_builder_promoted_attrs() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "block-builder",
             "--promote-resource-attr",
@@ -2086,9 +2086,9 @@ mod tests {
         check!(
             promoted
                 == vec![
-                    crabka_blockstore::PromotedSpanAttr::string("__resource.service.name"),
-                    crabka_blockstore::PromotedSpanAttr::int("http.status_code"),
-                    crabka_blockstore::PromotedSpanAttr::string("http.method"),
+                    krabka_blockstore::PromotedSpanAttr::string("__resource.service.name"),
+                    krabka_blockstore::PromotedSpanAttr::int("http.status_code"),
+                    krabka_blockstore::PromotedSpanAttr::string("http.method"),
                 ]
         );
     }
@@ -2096,7 +2096,7 @@ mod tests {
     #[test]
     fn rejects_unknown_promoted_attr_type() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "block-builder",
             "--promote-span-attr",
@@ -2109,13 +2109,13 @@ mod tests {
 
     #[test]
     fn rejects_unknown_target() {
-        assert2::assert!(Cli::try_parse_from(["crabka-traces", "--target", "bogus"]).is_err());
+        assert2::assert!(Cli::try_parse_from(["krabka-traces", "--target", "bogus"]).is_err());
     }
 
     #[test]
     fn parses_live_store_retention() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "live-store",
             "--retention-ns",
@@ -2129,7 +2129,7 @@ mod tests {
     #[test]
     fn parses_querier_live_store_option() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--querier-live-store",
@@ -2146,7 +2146,7 @@ mod tests {
     #[test]
     fn parses_querier_remote_live_store_url() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--querier-live-store-url",
@@ -2161,11 +2161,11 @@ mod tests {
     #[tokio::test]
     async fn live_store_router_serves_recent_trace_by_id() {
         let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(crabka_traces::SpanRecord {
+        store.write().await.ingest(krabka_traces::SpanRecord {
             tenant: "tenant-a".into(),
             span: test_span([7; 16], [3; 8]),
         });
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "live-store"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
         let router = build_live_store_router(&cli, store).unwrap();
 
         let response = router
@@ -2194,11 +2194,11 @@ mod tests {
     #[tokio::test]
     async fn remote_live_source_reads_batches_from_live_store_router() {
         let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(crabka_traces::SpanRecord {
+        store.write().await.ingest(krabka_traces::SpanRecord {
             tenant: "tenant-a".into(),
             span: test_span([8; 16], [4; 8]),
         });
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "live-store"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
         let router = build_live_store_router(&cli, store).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -2208,11 +2208,11 @@ mod tests {
         let mut index = TraceIndex::new();
         index.add_trace_block(
             "tenant-a",
-            crabka_blockstore::TraceBlockStats {
+            krabka_blockstore::TraceBlockStats {
                 object_key: "blocks/cold.parquet".into(),
                 min_ts: 0,
                 max_ts: 999,
-                bloom: crabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
+                bloom: krabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
                 tag_names: std::collections::BTreeSet::default(),
                 tag_values: std::collections::BTreeMap::default(),
             },
@@ -2238,11 +2238,11 @@ mod tests {
     #[tokio::test]
     async fn remote_live_source_reads_trace_by_id_from_live_store_router() {
         let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(crabka_traces::SpanRecord {
+        store.write().await.ingest(krabka_traces::SpanRecord {
             tenant: "tenant-a".into(),
             span: test_span([9; 16], [5; 8]),
         });
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "live-store"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
         let router = build_live_store_router(&cli, store).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -2270,11 +2270,11 @@ mod tests {
     #[tokio::test]
     async fn remote_live_source_reads_tags_and_values_from_live_store_router() {
         let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(crabka_traces::SpanRecord {
+        store.write().await.ingest(krabka_traces::SpanRecord {
             tenant: "tenant-a".into(),
             span: test_span([11; 16], [7; 8]),
         });
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "live-store"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
         let router = build_live_store_router(&cli, store).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -2289,7 +2289,7 @@ mod tests {
         let tags = source
             .tag_names(
                 "tenant-a",
-                Some(crabka_traceql::TagScope::Resource),
+                Some(krabka_traceql::TagScope::Resource),
                 0,
                 2_000,
             )
@@ -2311,11 +2311,11 @@ mod tests {
     #[tokio::test]
     async fn querier_router_federates_remote_live_store_by_id() {
         let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(crabka_traces::SpanRecord {
+        store.write().await.ingest(krabka_traces::SpanRecord {
             tenant: "tenant-a".into(),
             span: test_span([10; 16], [6; 8]),
         });
-        let live_cli = Cli::try_parse_from(["crabka-traces", "--target", "live-store"]).unwrap();
+        let live_cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
         let live_router = build_live_store_router(&live_cli, store).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -2323,7 +2323,7 @@ mod tests {
             axum::serve(listener, live_router).await.unwrap();
         });
         let querier_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--querier-live-store-url",
@@ -2358,22 +2358,22 @@ mod tests {
         let mut index = TraceIndex::new();
         index.add_trace_block(
             "tenant-a",
-            crabka_blockstore::TraceBlockStats {
+            krabka_blockstore::TraceBlockStats {
                 object_key: "blocks/a.parquet".into(),
                 min_ts: 100,
                 max_ts: 499,
-                bloom: crabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
+                bloom: krabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
                 tag_names: std::collections::BTreeSet::default(),
                 tag_values: std::collections::BTreeMap::default(),
             },
         );
         index.add_trace_block(
             "tenant-a",
-            crabka_blockstore::TraceBlockStats {
+            krabka_blockstore::TraceBlockStats {
                 object_key: "blocks/b.parquet".into(),
                 min_ts: 500,
                 max_ts: 750,
-                bloom: crabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
+                bloom: krabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
                 tag_names: std::collections::BTreeSet::default(),
                 tag_values: std::collections::BTreeMap::default(),
             },
@@ -2387,20 +2387,20 @@ mod tests {
         assert2::assert!(source.block_builder_frontier_ns("tenant-b") == 0);
     }
 
-    fn test_span(trace_id: [u8; 16], span_id: [u8; 8]) -> crabka_traces::Span {
-        crabka_traces::Span {
+    fn test_span(trace_id: [u8; 16], span_id: [u8; 8]) -> krabka_traces::Span {
+        krabka_traces::Span {
             trace_id,
             span_id,
             parent_span_id: None,
             name: "GET /live".into(),
-            kind: crabka_traces::SpanKind::Server,
+            kind: krabka_traces::SpanKind::Server,
             start_ns: 1_000,
             duration_ns: 500,
-            status: crabka_traces::StatusCode::Ok,
+            status: krabka_traces::StatusCode::Ok,
             status_message: String::new(),
-            resource_attrs: vec![crabka_traces::KeyValue {
+            resource_attrs: vec![krabka_traces::KeyValue {
                 key: "service.name".into(),
-                value: crabka_traces::AttrValue::Str("live-api".into()),
+                value: krabka_traces::AttrValue::Str("live-api".into()),
             }],
             span_attrs: Vec::new(),
             events: Vec::new(),
@@ -2413,7 +2413,7 @@ mod tests {
     #[test]
     fn parses_metrics_generator_options() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "metrics-generator",
             "--remote-write-url",
@@ -2462,7 +2462,7 @@ mod tests {
 
     #[test]
     fn duration_policy_reads_uom_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_DURATION_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_DURATION_POLICY_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -2471,12 +2471,12 @@ mod tests {
                         "tests::duration_policy_reads_uom_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_RETENTION", "42s")
-                    .env("CRABKA_TRACES_BLOCK_BUILDER_WINDOW", "7s")
-                    .env("CRABKA_TRACES_BLOCK_BUILDER_FLUSH_MAX_AGE", "8s")
-                    .env("CRABKA_TRACES_COLLECTION_INTERVAL", "9s")
-                    .env("CRABKA_TRACES_EDGE_TTL", "10s")
-                    .env("CRABKA_TRACES_HISTOGRAM_BUCKETS", "1ms,2ms")
+                    .env("KRABKA_TRACES_RETENTION", "42s")
+                    .env("KRABKA_TRACES_BLOCK_BUILDER_WINDOW", "7s")
+                    .env("KRABKA_TRACES_BLOCK_BUILDER_FLUSH_MAX_AGE", "8s")
+                    .env("KRABKA_TRACES_COLLECTION_INTERVAL", "9s")
+                    .env("KRABKA_TRACES_EDGE_TTL", "10s")
+                    .env("KRABKA_TRACES_HISTOGRAM_BUCKETS", "1ms,2ms")
                     .status()
                     .expect("child test");
             check!(status.success());
@@ -2484,7 +2484,7 @@ mod tests {
         }
 
         let from_env =
-            Cli::try_parse_from(["crabka-traces", "--target=metrics-generator"]).unwrap();
+            Cli::try_parse_from(["krabka-traces", "--target=metrics-generator"]).unwrap();
         check!(
             (
                 from_env.retention,
@@ -2499,12 +2499,12 @@ mod tests {
                 secs(8),
                 Some(secs(9)),
                 Some(secs(10)),
-                Some(vec![crabka_units::millis(1), crabka_units::millis(2)]),
+                Some(vec![krabka_units::millis(1), krabka_units::millis(2)]),
             )
         );
 
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=metrics-generator",
             "--retention=11s",
             "--block-builder-window=12s",
@@ -2528,12 +2528,12 @@ mod tests {
                 secs(13),
                 Some(secs(14)),
                 Some(secs(15)),
-                Some(vec![crabka_units::millis(3), crabka_units::millis(4)]),
+                Some(vec![krabka_units::millis(3), krabka_units::millis(4)]),
             )
         );
         check!(
             Cli::try_parse_from([
-                "crabka-traces",
+                "krabka-traces",
                 "--target=metrics-generator",
                 "--collection-interval=0s",
             ])
@@ -2543,7 +2543,7 @@ mod tests {
 
     #[test]
     fn byte_policy_reads_uom_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_BYTE_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_BYTE_POLICY_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -2552,16 +2552,16 @@ mod tests {
                         "tests::byte_policy_reads_uom_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_TARGET_BYTES_PER_JOB", "1KiB")
-                    .env("CRABKA_TRACES_MAX_ATTR_VALUE_LEN", "2KiB")
-                    .env("CRABKA_TRACES_MAX_DECOMPRESSED_BYTES", "3KiB")
+                    .env("KRABKA_TRACES_TARGET_BYTES_PER_JOB", "1KiB")
+                    .env("KRABKA_TRACES_MAX_ATTR_VALUE_LEN", "2KiB")
+                    .env("KRABKA_TRACES_MAX_DECOMPRESSED_BYTES", "3KiB")
                     .status()
                     .expect("child test");
             check!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target=query-frontend"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target=query-frontend"]).unwrap();
         check!(
             (
                 from_env.target_bytes_per_job,
@@ -2570,7 +2570,7 @@ mod tests {
             ) == (kibibytes(1), kibibytes(2), kibibytes(3))
         );
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=query-frontend",
             "--target-bytes-per-job=4KiB",
             "--max-attr-value-len=5KiB",
@@ -2589,7 +2589,7 @@ mod tests {
     #[test]
     fn parses_metrics_generator_optional_spanmetrics_switches() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "metrics-generator",
             "--enable-target-info",
@@ -2609,7 +2609,7 @@ mod tests {
 
     #[test]
     fn metrics_generator_poll_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_METRICS_GENERATOR_POLL_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_METRICS_GENERATOR_POLL_POLICY_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -2618,8 +2618,8 @@ mod tests {
                         "tests::metrics_generator_poll_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_METRICS_GENERATOR_POLL_BATCH_SIZE", "7")
-                    .env("CRABKA_TRACES_METRICS_GENERATOR_POLL_ERROR_BACKOFF", "11ms")
+                    .env("KRABKA_TRACES_METRICS_GENERATOR_POLL_BATCH_SIZE", "7")
+                    .env("KRABKA_TRACES_METRICS_GENERATOR_POLL_ERROR_BACKOFF", "11ms")
                     .status()
                     .expect("child test");
             check!(status.success());
@@ -2627,15 +2627,15 @@ mod tests {
         }
 
         let from_env =
-            Cli::try_parse_from(["crabka-traces", "--target=metrics-generator"]).unwrap();
+            Cli::try_parse_from(["krabka-traces", "--target=metrics-generator"]).unwrap();
         check!(
             (
                 from_env.metrics_generator_poll_batch_size,
                 from_env.metrics_generator_poll_error_backoff
-            ) == (7, crabka_units::millis(11))
+            ) == (7, krabka_units::millis(11))
         );
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=metrics-generator",
             "--metrics-generator-poll-batch-size=13",
             "--metrics-generator-poll-error-backoff=17ms",
@@ -2645,21 +2645,21 @@ mod tests {
             (
                 from_cli.metrics_generator_poll_batch_size,
                 from_cli.metrics_generator_poll_error_backoff
-            ) == (13, crabka_units::millis(17))
+            ) == (13, krabka_units::millis(17))
         );
         for flag in [
             "--metrics-generator-poll-batch-size=0",
             "--metrics-generator-poll-error-backoff=0ms",
         ] {
             check!(
-                Cli::try_parse_from(["crabka-traces", "--target=metrics-generator", flag]).is_err()
+                Cli::try_parse_from(["krabka-traces", "--target=metrics-generator", flag]).is_err()
             );
         }
     }
 
     #[test]
     fn metrics_generator_config_preserves_file_values_without_cli_overrides() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "metrics-generator"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "metrics-generator"]).unwrap();
         let mut cfg = MetricsGenConfig {
             collection_interval: secs(30),
             max_exemplars_per_series: 5,
@@ -2691,7 +2691,7 @@ mod tests {
         );
 
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "metrics-generator",
             "--collection-interval-secs",
@@ -2732,7 +2732,7 @@ mod tests {
 
     #[tokio::test]
     async fn builds_querier_router_from_defaults() {
-        let cli = Cli::try_parse_from(["crabka-traces", "--target", "querier"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
 
         assert2::assert!(build_querier_router(&cli).await.is_ok());
     }
@@ -2740,7 +2740,7 @@ mod tests {
     #[tokio::test]
     async fn parses_querier_trace_span_limit() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--max-trace-spans",
@@ -2755,7 +2755,7 @@ mod tests {
 
     #[test]
     fn tag_query_filter_autocomplete_limit_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_TAG_QUERY_FILTER_AUTOCOMPLETE_LIMIT_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_TAG_QUERY_FILTER_AUTOCOMPLETE_LIMIT_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status = std::process::Command::new(
                 std::env::current_exe().expect("test executable"),
@@ -2765,17 +2765,17 @@ mod tests {
                 "tests::tag_query_filter_autocomplete_limit_reads_environment_and_prefers_cli",
             ])
             .env(CHILD, "1")
-            .env("CRABKA_TRACES_TAG_QUERY_FILTER_AUTOCOMPLETE_LIMIT", "7")
+            .env("KRABKA_TRACES_TAG_QUERY_FILTER_AUTOCOMPLETE_LIMIT", "7")
             .status()
             .expect("child test");
             check!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target=querier"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target=querier"]).unwrap();
         check!(from_env.tag_query_filter_autocomplete_limit == 7);
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=querier",
             "--tag-query-filter-autocomplete-limit=11",
         ])
@@ -2783,7 +2783,7 @@ mod tests {
         check!(from_cli.tag_query_filter_autocomplete_limit == 11);
         check!(
             Cli::try_parse_from([
-                "crabka-traces",
+                "krabka-traces",
                 "--target=querier",
                 "--tag-query-filter-autocomplete-limit=0",
             ])
@@ -2794,7 +2794,7 @@ mod tests {
     #[tokio::test]
     async fn parses_querier_search_trace_limit() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--max-search-traces",
@@ -2810,7 +2810,7 @@ mod tests {
     #[test]
     fn parses_querier_traceql_metric_exemplar_limit() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--max-metric-exemplars",
@@ -2825,11 +2825,11 @@ mod tests {
 
     #[test]
     fn traceql_policy_parses_defaults_overrides_and_boundaries() {
-        let defaults = Cli::try_parse_from(["crabka-traces", "--target", "querier"]).unwrap();
+        let defaults = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
         check!(engine_opts_from_cli(&defaults).unwrap() == EngineOpts::default());
 
         let configured = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=querier",
             "--traceql-default-limit=5",
             "--traceql-default-spans-per-span-set=7",
@@ -2847,7 +2847,7 @@ mod tests {
                     max_traces: 11,
                     max_exemplars: 13,
                     compare_max_values_per_attr: 17,
-                    histogram_buckets: vec![crabka_units::millis(19), crabka_units::millis(23)],
+                    histogram_buckets: vec![krabka_units::millis(19), krabka_units::millis(23)],
                 }
         );
 
@@ -2859,12 +2859,12 @@ mod tests {
             "--traceql-histogram-buckets=0ms",
         ] {
             check!(
-                Cli::try_parse_from(["crabka-traces", "--target=querier", flag]).is_err(),
+                Cli::try_parse_from(["krabka-traces", "--target=querier", flag]).is_err(),
                 "accepted {flag}"
             );
         }
         let unordered = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=querier",
             "--traceql-histogram-buckets=23ms,19ms",
         ])
@@ -2874,7 +2874,7 @@ mod tests {
 
     #[test]
     fn traceql_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_TRACEQL_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_TRACEQL_POLICY_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -2883,27 +2883,27 @@ mod tests {
                         "tests::traceql_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_TRACEQL_DEFAULT_LIMIT", "5")
-                    .env("CRABKA_TRACES_TRACEQL_DEFAULT_SPANS_PER_SPAN_SET", "7")
-                    .env("CRABKA_TRACES_TRACEQL_MAX_TRACES", "11")
-                    .env("CRABKA_TRACES_TRACEQL_MAX_EXEMPLARS", "13")
-                    .env("CRABKA_TRACES_TRACEQL_COMPARE_MAX_VALUES_PER_ATTR", "17")
-                    .env("CRABKA_TRACES_TRACEQL_HISTOGRAM_BUCKETS", "19ms,23ms")
+                    .env("KRABKA_TRACES_TRACEQL_DEFAULT_LIMIT", "5")
+                    .env("KRABKA_TRACES_TRACEQL_DEFAULT_SPANS_PER_SPAN_SET", "7")
+                    .env("KRABKA_TRACES_TRACEQL_MAX_TRACES", "11")
+                    .env("KRABKA_TRACES_TRACEQL_MAX_EXEMPLARS", "13")
+                    .env("KRABKA_TRACES_TRACEQL_COMPARE_MAX_VALUES_PER_ATTR", "17")
+                    .env("KRABKA_TRACES_TRACEQL_HISTOGRAM_BUCKETS", "19ms,23ms")
                     .status()
                     .expect("child test");
             check!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target=querier"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target=querier"]).unwrap();
         check!(engine_opts_from_cli(&from_env).unwrap().default_limit == 5);
         check!(
             engine_opts_from_cli(&from_env).unwrap().histogram_buckets
-                == vec![crabka_units::millis(19), crabka_units::millis(23)]
+                == vec![krabka_units::millis(19), krabka_units::millis(23)]
         );
 
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=querier",
             "--traceql-default-limit=29",
             "--traceql-histogram-buckets=31ms,37ms",
@@ -2912,14 +2912,14 @@ mod tests {
         check!(engine_opts_from_cli(&from_cli).unwrap().default_limit == 29);
         check!(
             engine_opts_from_cli(&from_cli).unwrap().histogram_buckets
-                == vec![crabka_units::millis(31), crabka_units::millis(37)]
+                == vec![krabka_units::millis(31), krabka_units::millis(37)]
         );
     }
 
     #[test]
     fn parses_distributor_trace_span_limit() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "distributor",
             "--max-spans-per-trace",
@@ -2934,7 +2934,7 @@ mod tests {
     #[test]
     fn parses_distributor_ingest_rate_limit() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "distributor",
             "--max-ingest-spans-per-second",
@@ -2952,7 +2952,7 @@ mod tests {
     #[test]
     fn parses_compactor_window() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "compactor",
             "--compaction-start-ns",
@@ -2969,7 +2969,7 @@ mod tests {
 
     #[test]
     fn unix_time_policy_reads_uom_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_TRACES_UNIX_TIME_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_TRACES_UNIX_TIME_POLICY_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let status =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -2978,16 +2978,16 @@ mod tests {
                         "tests::unix_time_policy_reads_uom_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_TRACES_COMPACTION_START", "1s")
-                    .env("CRABKA_TRACES_COMPACTION_END", "2s")
-                    .env("CRABKA_TRACES_LIVE_FRONTIER", "3s")
+                    .env("KRABKA_TRACES_COMPACTION_START", "1s")
+                    .env("KRABKA_TRACES_COMPACTION_END", "2s")
+                    .env("KRABKA_TRACES_LIVE_FRONTIER", "3s")
                     .status()
                     .expect("child test");
             check!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-traces", "--target=compactor"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-traces", "--target=compactor"]).unwrap();
         check!(
             (
                 from_env.compaction_start,
@@ -3000,7 +3000,7 @@ mod tests {
             )
         );
         let from_cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target=compactor",
             "--compaction-start=4s",
             "--compaction-end=5s",
@@ -3023,7 +3023,7 @@ mod tests {
     #[test]
     fn parses_object_store_url_and_builds_store() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "querier",
             "--object-store-url",
@@ -3048,7 +3048,7 @@ mod tests {
     #[tokio::test]
     async fn parses_query_frontend_options_and_builds_router() {
         let cli = Cli::try_parse_from([
-            "crabka-traces",
+            "krabka-traces",
             "--target",
             "query-frontend",
             "--querier-url",

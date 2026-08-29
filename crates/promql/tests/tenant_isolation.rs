@@ -11,8 +11,8 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
-use crabka_blockstore::Labels;
-use crabka_promql::{EngineOpts, InMemoryMetricStore, PrometheusApiState, prometheus_router};
+use krabka_blockstore::Labels;
+use krabka_promql::{EngineOpts, InMemoryMetricStore, PrometheusApiState, prometheus_router};
 use serde_json::Value;
 
 const ORG_A: &str = "org-a";

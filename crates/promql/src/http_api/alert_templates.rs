@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crabka_blockstore::Labels;
+use krabka_blockstore::Labels;
 use serde_json::{Map, Value};
 
 use super::format_sample_value;

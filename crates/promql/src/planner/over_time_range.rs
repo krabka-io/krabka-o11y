@@ -31,14 +31,14 @@ use arrow::{
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{Labels, SeriesFingerprint};
-use crabka_units::prelude::*;
 use datafusion::{
     catalog::MemTable,
     execution::FunctionRegistry,
     logical_expr::{Expr, Extension, LogicalPlan, LogicalPlanBuilder, col, lit},
     prelude::SessionContext,
 };
+use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_units::prelude::*;
 
 use crate::{
     PromqlError,

@@ -1,7 +1,7 @@
 //! Prometheus-shaped query result model.
 
-use crabka_blockstore::Labels;
-use crabka_metrics::NativeHistogram;
+use krabka_blockstore::Labels;
+use krabka_metrics::NativeHistogram;
 
 /// A single sample value: a float or a native histogram.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -53,7 +53,7 @@ impl QueryResult {
 /// `PromQLWarning`-class messages go into [`Annotations::warnings`], and
 /// `PromQLInfo`-class messages go into [`Annotations::infos`]. The engine
 /// removes duplicate messages and keeps the exact Prometheus annotation text.
-/// The text has no trailing position suffix, because Crabka does not track that
+/// The text has no trailing position suffix, because Krabka does not track that
 /// suffix through evaluation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct Annotations {
@@ -106,7 +106,7 @@ impl Annotations {
 #[cfg(test)]
 mod tests {
 
-    use crabka_blockstore::Labels;
+    use krabka_blockstore::Labels;
 
     use super::*;
 

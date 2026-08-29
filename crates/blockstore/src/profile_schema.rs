@@ -1,6 +1,6 @@
 //! Flattened profile-samples block schema.
 //!
-//! Crabka stores one row per profile sample. The raw
+//! Krabka stores one row per profile sample. The raw
 //! `(stacktrace_partition, stacktrace_id)` slot is resolved through the block's
 //! symbol DB at query time, after merge-before-symbolize has reduced the sample
 //! set.

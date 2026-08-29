@@ -21,7 +21,7 @@ use arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use crabka_blockstore::{
+use krabka_blockstore::{
     BlockKey, BlockStore, COL_FINGERPRINT, COL_TIMESTAMP, LabelMatcher, Labels, LogRow, MatchOp,
     TimeRange, read_log_block, write_log_block,
 };

@@ -10,9 +10,9 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use crabka_blockstore::{LabelMatcher, Labels};
-use crabka_metrics::{Limits, OverridesProvider};
-use crabka_units::prelude::*;
+use krabka_blockstore::{LabelMatcher, Labels};
+use krabka_metrics::{Limits, OverridesProvider};
+use krabka_units::prelude::*;
 use tower::ServiceExt;
 
 use super::*;
@@ -370,7 +370,7 @@ async fn rejects_tenant_id_with_unsupported_character() {
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(
-        body["error"].as_str() == // The reason comes from the shared `crabka_metrics::validate_tenant`.
+        body["error"].as_str() == // The reason comes from the shared `krabka_metrics::validate_tenant`.
         Some("tenant ID contains unsupported character `/`")
     );
 }

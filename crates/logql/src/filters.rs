@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, net::IpAddr};
 
-use crabka_units::ByteSize;
+use krabka_units::ByteSize;
 use regex::Regex;
 
 use crate::{

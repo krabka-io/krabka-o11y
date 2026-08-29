@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crabka_pprof::{
+use krabka_pprof::{
     ChainedResolver, DebuginfodConfig, DebuginfodResolver, FileSystemResolver, NativeResolver,
     NativeSymbol, SymbolizeRequest,
 };
@@ -87,8 +87,8 @@ fn build_label(request: &SymbolizeRequest) -> String {
 #[cfg(test)]
 mod tests {
     use assert2::assert;
-    use crabka_pprof::DebuginfodConfig;
-    use crabka_units::{mebibytes, millis, secs};
+    use krabka_pprof::DebuginfodConfig;
+    use krabka_units::{mebibytes, millis, secs};
 
     use super::*;
 

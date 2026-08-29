@@ -11,10 +11,10 @@ crate_library(
     build_script_data = glob(["proto/**"]),
 )
 
-# `bazel run //crates/traces:crabka-traces -- --help`.
+# `bazel run //crates/traces:krabka-traces -- --help`.
 crate_binary(
-    name = "crabka-traces",
-    crate_root = "src/bin/crabka-traces.rs",
+    name = "krabka-traces",
+    crate_root = "src/bin/krabka-traces.rs",
     lib = ":traces",
 )
 

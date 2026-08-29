@@ -1,8 +1,8 @@
-# Crabka — project-specific guidance
+# Krabka — project-specific guidance
 
 ## Compatibility
 
-**Crabka is greenfield and undeployed.** There are no production users, no persisted state to migrate, and no clients pinned to a specific build. Do not write backwards-compatibility shims:
+**Krabka is greenfield and undeployed.** There are no production users, no persisted state to migrate, and no clients pinned to a specific build. Do not write backwards-compatibility shims:
 
 - No `#[serde(default)]` on metadata fields "to keep old raft logs readable"
 - No `V2` enum variants that stay alongside `V1` to support replay
@@ -22,7 +22,7 @@ When in doubt, match Kafka. If Kafka's behavior is undocumented or version-depen
 
 ## Code & Documentation Style
 
-Follow the style guides in [`docs/style_guides/`](docs/style_guides/README.md): [code](docs/style_guides/code_style_guide.md), [rustdoc](docs/style_guides/rustdoc_style_guide.md), [README](docs/style_guides/readme_style_guide.md), [design docs](docs/style_guides/design_doc_style_guide.md), and [coverage reports](docs/style_guides/coverage_report_style_guide.md). The guides record Crabka's conventions. Examples are the pinned stable toolchain, `cargo +nightly fmt`, forbidden `unsafe`, and `clippy::pedantic`. The guides also cover workspace lints and dependencies, `crabka-<name>` crates, thiserror error enums, tokio, and `assert2`/`nextest`/mutation testing.
+Follow the style guides in [`docs/style_guides/`](docs/style_guides/README.md): [code](docs/style_guides/code_style_guide.md), [rustdoc](docs/style_guides/rustdoc_style_guide.md), [README](docs/style_guides/readme_style_guide.md), [design docs](docs/style_guides/design_doc_style_guide.md), and [coverage reports](docs/style_guides/coverage_report_style_guide.md). The guides record Krabka's conventions. Examples are the pinned stable toolchain, `cargo +nightly fmt`, forbidden `unsafe`, and `clippy::pedantic`. The guides also cover workspace lints and dependencies, `krabka-<name>` crates, thiserror error enums, tokio, and `assert2`/`nextest`/mutation testing.
 
 Do not make style-only sweeps across untouched files. Bring a file into line with the guides only when you already edit it. Keep the tidy-up proportionate to the change.
 
@@ -47,7 +47,7 @@ When you check generated protocol records or other structured values in tests, c
 
 ## Release Process
 
-Crabka uses **release-plz** for automated semantic versioning. Conventional commits drive the version bumps:
+Krabka uses **release-plz** for automated semantic versioning. Conventional commits drive the version bumps:
 
 - `feat:` gives a minor version bump
 - `fix:` gives a patch version bump

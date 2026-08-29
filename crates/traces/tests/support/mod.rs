@@ -2,8 +2,8 @@
 
 #![allow(dead_code)]
 
-use crabka_broker::{Broker, BrokerConfig, BrokerHandle};
-use crabka_client_core::Client;
+use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
+use krabka_client_core::Client;
 use tempfile::TempDir;
 
 pub struct InProcess {
@@ -21,7 +21,7 @@ pub async fn start() -> InProcess {
     let bootstrap = broker.listen_addr().to_string();
     let client = Client::builder()
         .bootstrap(&bootstrap)
-        .client_id("crabka-traces-test")
+        .client_id("krabka-traces-test")
         .build()
         .await
         .expect("client build");

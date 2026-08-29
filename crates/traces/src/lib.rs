@@ -1,4 +1,4 @@
-//! Tempo-compatible traces service for Crabka.
+//! Tempo-compatible traces service for Krabka.
 
 #![forbid(unsafe_code)]
 

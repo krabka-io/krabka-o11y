@@ -3,9 +3,9 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crabka_blockstore::{LabelMatcher, Labels};
-use crabka_metrics::WalRecord;
-use crabka_units::prelude::*;
+use krabka_blockstore::{LabelMatcher, Labels};
+use krabka_metrics::WalRecord;
+use krabka_units::prelude::*;
 
 use super::{InMemoryMetricStore, PartitionWatermark, PruneStats};
 use crate::{

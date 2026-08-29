@@ -8,7 +8,7 @@ name: sync-siblings
 # Cargo.toml without touching Cargo.lock -- worse than doing nothing, because
 # rules_rs resolves from the lockfile and would keep building the old revision
 # while the manifest claimed the new one. //renovate.json disables the
-# `crabka-*` crates for that reason and leaves them to this workflow.
+# `krabka-*` crates for that reason and leaves them to this workflow.
 #
 # The bumps open a pull request rather than merging. These repositories are
 # tightly coupled by design, and adopting a new wire protocol or client is a

@@ -22,7 +22,7 @@
 
 use std::cmp::Ordering;
 
-use crabka_blockstore::Labels;
+use krabka_blockstore::Labels;
 use regex::Regex;
 
 use crate::{
@@ -105,7 +105,7 @@ pub fn apply_label_replace(
 ) -> Result<Vec<InstantSample>> {
     // Prometheus FULLY anchors `label_replace`'s regex (`^(?:<regex>)$`), so it
     // must match the *entire* source-label value — `regexp.MatchString` on a
-    // `^(?:...)$`-wrapped pattern, the same anchoring `crabka-blockstore`'s
+    // `^(?:...)$`-wrapped pattern, the same anchoring `krabka-blockstore`'s
     // `anchored_regex` applies to label matchers. A raw unanchored `Regex` would
     // wrongly match a substring (e.g. `foo` inside `xfooy`).
     let regex = Regex::new(&format!("^(?:{regex})$"))

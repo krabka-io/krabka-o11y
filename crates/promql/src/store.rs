@@ -1,7 +1,7 @@
 //! Metric data access abstraction.
 
-use crabka_blockstore::{LabelMatcher, Labels};
 use datafusion::prelude::SessionContext;
+use krabka_blockstore::{LabelMatcher, Labels};
 
 use crate::PromqlError;
 
@@ -166,8 +166,8 @@ pub trait MetricStore: Send + Sync {
 mod tests {
     use std::sync::Arc;
 
-    use crabka_blockstore::Labels;
     use datafusion::prelude::SessionContext;
+    use krabka_blockstore::Labels;
 
     use super::*;
 
@@ -178,7 +178,7 @@ mod tests {
         async fn scan(
             &self,
             _tenant: &str,
-            _matchers: &[crabka_blockstore::LabelMatcher],
+            _matchers: &[krabka_blockstore::LabelMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<ScanResult, PromqlError> {
@@ -192,7 +192,7 @@ mod tests {
         async fn label_names(
             &self,
             _tenant: &str,
-            _matchers: &[crabka_blockstore::LabelMatcher],
+            _matchers: &[krabka_blockstore::LabelMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<Vec<String>, PromqlError> {
@@ -203,7 +203,7 @@ mod tests {
             &self,
             _tenant: &str,
             _name: &str,
-            _matchers: &[crabka_blockstore::LabelMatcher],
+            _matchers: &[krabka_blockstore::LabelMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<Vec<String>, PromqlError> {
@@ -213,7 +213,7 @@ mod tests {
         async fn series(
             &self,
             _tenant: &str,
-            _matchers: &[crabka_blockstore::LabelMatcher],
+            _matchers: &[krabka_blockstore::LabelMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<Vec<Labels>, PromqlError> {
@@ -223,7 +223,7 @@ mod tests {
         async fn exemplars(
             &self,
             _tenant: &str,
-            _matchers: &[crabka_blockstore::LabelMatcher],
+            _matchers: &[krabka_blockstore::LabelMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<Vec<ExemplarRecord>, PromqlError> {

@@ -63,15 +63,15 @@ alias(
 # The metrics query service. `bazel run //:metrics_bin -- --help`.
 alias(
     name = "metrics_bin",
-    actual = "//crates/metrics:crabka-metrics",
+    actual = "//crates/metrics:krabka-metrics",
 )
 
 alias(
     name = "traces_bin",
-    actual = "//crates/traces:crabka-traces",
+    actual = "//crates/traces:krabka-traces",
 )
 
 alias(
     name = "profiles_bin",
-    actual = "//crates/profiles:crabka-profiles",
+    actual = "//crates/profiles:krabka-profiles",
 )

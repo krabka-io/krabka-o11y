@@ -1,17 +1,17 @@
 [package]
-name = "crabka-metrics"
+name = "krabka-metrics"
 publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Prometheus/Grafana-Mimir-equivalent metrics backend for Crabka (data layer)"
+description = "Prometheus/Grafana-Mimir-equivalent metrics backend for Krabka (data layer)"
 repository = "https://github.com/robot-head/crabka"
 homepage = "https://github.com/robot-head/crabka"
-documentation = "https://docs.rs/crabka-metrics"
+documentation = "https://docs.rs/krabka-metrics"
 readme = "README.md"
-keywords = ["observability", "prometheus", "mimir", "metrics", "crabka"]
+keywords = ["observability", "prometheus", "mimir", "metrics", "krabka"]
 categories = ["database-implementations"]
 
 [lints]
@@ -20,7 +20,7 @@ workspace = true
 [features]
 default = ["vendored-protoc"]
 vendored-protoc = ["dep:protoc-bin-vendored"]
-heap-profiling = ["crabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
+heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
 num-traits = { workspace = true }
@@ -29,14 +29,14 @@ arrow = { workspace = true }
 axum = { workspace = true, features = ["json"] }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["env"] }
-crabka-blockstore = { path = "../blockstore", version = "0.4.0" }
-crabka-client-consumer = { version = "0.4.0" }
-crabka-client-core = { version = "0.4.0" }
-crabka-client-producer = { version = "0.4.0" }
-crabka-ids = { version = "0.4.0" }
-crabka-telemetry = { version = "0.4.0" }
-crabka-throttle = { version = "0.4.0" }
-crabka-units = { workspace = true }
+krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
+krabka-client-consumer = { version = "0.4.0" }
+krabka-client-core = { version = "0.4.0" }
+krabka-client-producer = { version = "0.4.0" }
+krabka-ids = { version = "0.4.0" }
+krabka-telemetry = { version = "0.4.0" }
+krabka-throttle = { version = "0.4.0" }
+krabka-units = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
@@ -66,8 +66,8 @@ protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
 assert2 = { workspace = true }
-crabka-broker = { version = "0.4.0" }
-crabka-client-admin = { version = "0.4.0" }
+krabka-broker = { version = "0.4.0" }
+krabka-client-admin = { version = "0.4.0" }
 mutants = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true }

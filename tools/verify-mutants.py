@@ -12,7 +12,7 @@ Usage:
 where cases.json is:
     {"file": "crates/x/src/y.rs",
      "function": "fn parse_thing(",
-     "package": "crabka-x",
+     "package": "krabka-x",
      "cases": [{"old": "...", "new": "...", "test": "...", "label": "..."}]}
 
 `old` is matched inside `function`'s body only, and must appear exactly once

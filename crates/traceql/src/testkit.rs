@@ -2,7 +2,7 @@
 
 use std::{fmt::Write as _, fs, path::Path, sync::Arc};
 
-use crabka_units::{Time, convert::TimeExt as _};
+use krabka_units::{Time, convert::TimeExt as _};
 
 use crate::{AttrValue, EngineOpts, InMemorySpanStore, InputSpan, SearchResponse, TraceqlEngine};
 
@@ -482,7 +482,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use assert2::assert;
-    use crabka_units::nanos;
+    use krabka_units::nanos;
 
     use super::*;
 
@@ -674,7 +674,7 @@ query: { .svc = "x" }
     /// something, and a query over more data inspects at least as much.
     #[tokio::test]
     async fn a_search_reports_the_span_data_it_scanned() {
-        use crabka_units::convert::ByteSizeExt;
+        use krabka_units::convert::ByteSizeExt;
 
         let engine = super::engine();
         let inspected = |query: &'static str| async move {
@@ -687,7 +687,7 @@ query: { .svc = "x" }
 
         let matched = inspected(r#"{ .http.method = "GET" }"#).await;
         assert!(
-            matched > <crabka_units::ByteSize as ByteSizeExt>::ZERO,
+            matched > <krabka_units::ByteSize as ByteSizeExt>::ZERO,
             "a search that scans spans reports the bytes it read, got {matched:?}"
         );
 
@@ -695,7 +695,7 @@ query: { .svc = "x" }
         // out, so the figure reflects scanning rather than results.
         let unmatched = inspected(r#"{ .http.method = "NOPE" }"#).await;
         assert!(
-            unmatched > <crabka_units::ByteSize as ByteSizeExt>::ZERO,
+            unmatched > <krabka_units::ByteSize as ByteSizeExt>::ZERO,
             "a search that matches nothing still scans, got {unmatched:?}"
         );
 
@@ -718,7 +718,7 @@ query: { .svc = "x" }
     /// what the response reports as Tempo's `metrics.inspectedBytes`.
     #[tokio::test]
     async fn a_disjunct_selector_sums_what_each_scan_inspected() {
-        use crabka_units::{ByteSize, Time, convert::ByteSizeExt};
+        use krabka_units::{ByteSize, Time, convert::ByteSizeExt};
 
         use crate::{in_memory::InMemorySpanStore, result::EventRef};
 
@@ -867,7 +867,7 @@ query: { .svc = "x" }
     /// gathered across span sets whose order is not meaningful.
     #[test]
     fn trace_ids_keep_engine_order_and_span_ids_are_sorted() {
-        use crabka_units::{bytes, millis};
+        use krabka_units::{bytes, millis};
 
         use crate::result::{SearchResponse, SpanRef, SpanSet, TraceResult};
 

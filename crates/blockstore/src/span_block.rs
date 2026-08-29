@@ -10,7 +10,7 @@ use arrow::{
     datatypes::{DataType, Field, Fields, Int32Type},
     record_batch::RecordBatch,
 };
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 
 use crate::{
     error::{BlockStoreError, Result},

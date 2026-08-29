@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crabka_blockstore::SeriesFingerprint;
+use krabka_blockstore::SeriesFingerprint;
 
 use crate::{LabelNameCardinality, LabelValueCardinality, NamedTsdbStat};
 

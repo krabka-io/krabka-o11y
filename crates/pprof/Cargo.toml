@@ -1,17 +1,17 @@
 [package]
-name = "crabka-pprof"
+name = "krabka-pprof"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Language-less continuous-profiling engine (Grafana-Pyroscope-equivalent) for Crabka"
+description = "Language-less continuous-profiling engine (Grafana-Pyroscope-equivalent) for Krabka"
 repository = "https://github.com/robot-head/crabka"
 homepage = "https://github.com/robot-head/crabka"
-documentation = "https://docs.rs/crabka-pprof"
+documentation = "https://docs.rs/krabka-pprof"
 readme = "README.md"
-keywords = ["observability", "pyroscope", "profiling", "flamegraph", "crabka"]
+keywords = ["observability", "pyroscope", "profiling", "flamegraph", "krabka"]
 categories = ["database-implementations"]
 
 [lints]
@@ -21,8 +21,8 @@ workspace = true
 addr2line = { workspace = true }
 arrow = { workspace = true }
 async-trait = { workspace = true }
-crabka-blockstore = { path = "../blockstore", version = "0.4.0" }
-crabka-units = { workspace = true }
+krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
+krabka-units = { workspace = true }
 datafusion = { workspace = true }
 object = { workspace = true }
 prost = { workspace = true }

@@ -6,12 +6,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 
 use crate::wire::DecodedSeries;
 
 /// The compacted HA-tracker topic: `(tenant, cluster) -> elected __replica__`.
-pub const HA_TRACKER_TOPIC: &str = "__crabka_metrics_ha";
+pub const HA_TRACKER_TOPIC: &str = "__krabka_metrics_ha";
 /// Default elected-replica lease timeout before another replica may take over.
 pub const DEFAULT_HA_FAILOVER_TIMEOUT: Time = secs(30);
 
@@ -323,7 +323,7 @@ pub fn strip_replica_label(series: &mut [DecodedSeries]) {
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use crabka_blockstore::Labels;
+    use krabka_blockstore::Labels;
 
     use super::*;
     use crate::wire::DecodedSample;

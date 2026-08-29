@@ -2,7 +2,7 @@
 //!
 //! These nodes carry window widths: a step, a lookback delta, a range, and a
 //! grid interval. The widths are extents, but they stay raw `i64` milliseconds
-//! here instead of [`Time`](crabka_units::Time) quantities.
+//! here instead of [`Time`](krabka_units::Time) quantities.
 //! `UserDefinedLogicalNodeCore` needs `Eq` and `Hash` so that the `DataFusion`
 //! planner can key on nodes and deduplicate them, and a quantity stores `f64`,
 //! so a quantity can be neither. The paired `*Exec` nodes hold the same raw

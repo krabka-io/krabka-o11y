@@ -4,7 +4,7 @@ syntax = "proto3";
 // (`grafana-pyroscope-app`) calls `Get` during initialisation to load per-tenant
 // UI settings (flame-graph max nodes, collapsed flame graphs, etc.). A 404 here
 // aborts the app's init chain, so it never issues the per-panel `SelectSeries`
-// queries and the landing grid renders empty. Crabka does not persist user
+// queries and the landing grid renders empty. Krabka does not persist user
 // settings, so `Get` returns an empty set — the app then falls back to its
 // built-in defaults, exactly as it does against a fresh Pyroscope tenant — and
 // `Set` echoes the value back so an optimistic UI update succeeds.

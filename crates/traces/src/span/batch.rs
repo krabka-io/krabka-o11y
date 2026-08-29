@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 
 use arrow::record_batch::RecordBatch;
-use crabka_blockstore::{
+use krabka_blockstore::{
     AttrValue as BlockAttrValue, NestedSet as BlockNestedSet, PromotedSpanAttr, SpanAttr,
     SpanEvent, SpanKind, SpanLink, SpanRow, StatusCode, encode_span_rows_with_promoted_attrs,
 };
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 
 use super::{AttrValue, KeyValue, Span, nested_set::assign_nested_set};
 use crate::error::TracesError;
@@ -284,7 +284,7 @@ mod tests {
         Array, BooleanArray, FixedSizeBinaryArray, Int32Array, ListArray, StringArray,
     };
     use assert2::check;
-    use crabka_blockstore::{
+    use krabka_blockstore::{
         SCOL_ATTR_IS_ARRAY, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_NESTED_SET_LEFT,
         SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_ROOT_SERVICE_NAME, SCOL_SPAN_ID, SCOL_TRACE_ID,
         span_block_schema,
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn child_counts_match_tree_shape() {
-        use crabka_blockstore::SCOL_CHILD_COUNT;
+        use krabka_blockstore::SCOL_CHILD_COUNT;
 
         // span 1 is root with two children (2, 3); span 2 has one child (4).
         let spans = vec![
@@ -541,14 +541,14 @@ mod tests {
         assert2::assert!(batch.num_rows() == 1);
         assert2::assert!(
             batch
-                .column_by_name(crabka_blockstore::SCOL_EVENTS)
+                .column_by_name(krabka_blockstore::SCOL_EVENTS)
                 .unwrap()
                 .len()
                 == 1
         );
         assert2::assert!(
             batch
-                .column_by_name(crabka_blockstore::SCOL_LINKS)
+                .column_by_name(krabka_blockstore::SCOL_LINKS)
                 .unwrap()
                 .len()
                 == 1

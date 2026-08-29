@@ -126,7 +126,7 @@ pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
                     .map(|mut attribute| {
                         attribute.key = format!(
                             "{}{}",
-                            crabka_traceql::INSTRUMENTATION_ATTR_PREFIX,
+                            krabka_traceql::INSTRUMENTATION_ATTR_PREFIX,
                             attribute.key
                         );
                         attribute

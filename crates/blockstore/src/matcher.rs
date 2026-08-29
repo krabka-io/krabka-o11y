@@ -6,7 +6,7 @@ use crate::labels::SeriesFingerprint;
 
 /// Synthetic label that names the active query shard (`N_of_M`).
 ///
-/// Crabka's sharding is an internal scheme over the FNV
+/// Krabka's sharding is an internal scheme over the FNV
 /// [`SeriesFingerprint`]. See [`QueryShardSelector::matches`]. It is
 /// self-consistent but not byte-compatible with Mimir's stable label-hash
 /// sharding, so this label is internal-only and must not cross the
@@ -57,7 +57,7 @@ impl QueryShardSelector {
     ///
     /// This shards on the crate's internal FNV [`SeriesFingerprint`], a
     /// 0-based remap of Mimir's 1-based `N_of_M`. It is self-consistent within
-    /// Crabka, but it is **not** byte-compatible with Mimir's stable
+    /// Krabka, but it is **not** byte-compatible with Mimir's stable
     /// label-hash sharding, which hashes the label set with a different
     /// algorithm, so `__query_shard__` is an internal-only sharding scheme.
     /// It must never be exposed to, nor accepted from, a real Mimir

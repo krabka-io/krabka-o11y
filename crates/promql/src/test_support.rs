@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use crabka_blockstore::Labels;
-use crabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
+use krabka_blockstore::Labels;
+use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 
 use crate::{
     EngineOpts, InMemoryMetricStore, InstantSample, PromqlEngine, QueryResult, SampleValue,

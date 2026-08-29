@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crabka_units::{
+use krabka_units::{
     ByteSize, Frequency, Time,
     convert::{ByteSizeExt as _, FrequencyExt as _, TimeExt},
 };
@@ -103,7 +103,7 @@ fn merge_limits(defaults: &Limits, partial: &PartialLimits) -> Limits {
 
 #[cfg(test)]
 mod tests {
-    use crabka_units::{bytes, per_sec};
+    use krabka_units::{bytes, per_sec};
 
     use super::*;
     use crate::limits::Limits;

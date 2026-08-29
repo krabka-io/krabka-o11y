@@ -8,7 +8,7 @@ exclude = ["tools/mutants"]
 version = "0.4.0"
 edition = "2024"
 license = "Apache-2.0"
-authors = ["The Crabka Authors"]
+authors = ["The Krabka Authors"]
 rust-version = "1.97.1"
 
 [workspace.lints.rust]
@@ -43,7 +43,7 @@ clap = { version = "4", features = ["derive"] }
 connectrpc-axum = "0.2"
 connectrpc-axum-build = "0.2"
 dashmap = "6"
-# Observability block store (crabka-blockstore): DataFusion query engine over
+# Observability block store (krabka-blockstore): DataFusion query engine over
 # Parquet blocks on object storage. Pinned to apache/datafusion `main` because
 # that revision tracks arrow 59 / parquet 59 / object_store 0.13.2, matching the
 # workspace pins. The latest released datafusion line is on an older arrow major.
@@ -68,12 +68,12 @@ mutants = "0.0.4"
 num-traits = "0.2.19"
 object = { version = "0.40", default-features = false, features = ["read_core", "elf", "macho", "pe", "std"] }
 # `object_store` is the Apache-stewarded multi-backend object-store client used
-# across the Rust data ecosystem (DataFusion, Polars, Delta-rs). Crabka's
+# across the Rust data ecosystem (DataFusion, Polars, Delta-rs). Krabka's
 # S3-compatible and native-GCS RemoteStorageManagers (KIP-405) are built on it.
 #
 # Pinned to 0.13 in lock-step with the datafusion git rev and `parquet 59`: both
 # depend on `object_store ^0.13` and pass its `ObjectStore`/`Path` types across
-# the `ParquetObjectReader` / `register_object_store` boundary in crabka-blockstore.
+# the `ParquetObjectReader` / `register_object_store` boundary in krabka-blockstore.
 # Bumping object_store alone to 0.14 splits the dependency graph (blockstore on
 # 0.14, parquet/datafusion on 0.13) and fails to compile — exactly what the
 # auto-merged renovate bump #644 did to main. Move it only together with the
@@ -91,7 +91,7 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 parquet = { version = "59", default-features = false, features = ["arrow", "async", "object_store"] }
 pbjson = "0.9"
 prometheus-client = "0.25"
-# PromQL parser only; Crabka supplies the PromQL-to-DataFusion planner.
+# PromQL parser only; Krabka supplies the PromQL-to-DataFusion planner.
 promql-parser = { version = "0.10", features = ["ser"] }
 proptest = "1"
 prost = "0.14"
@@ -136,7 +136,7 @@ wincode = "=0.6"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
 
 # First-party crates inherited by more than one member.
-crabka-units = "0.4.0"
+krabka-units = "0.4.0"
 
 # Sibling repositories, pinned by revision. These crates are declared
 # against crates.io above and in the member manifests; the patch below is
@@ -147,29 +147,34 @@ crabka-units = "0.4.0"
 # crate reached transitively would otherwise come from the registry while
 # its git twin is also in the graph.
 [patch.crates-io]
-crabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-broker = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-kraft-core = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-log = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-logfmt = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-object-store = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-raft = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-records-legacy = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-remote-storage = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-remote-storage-topic = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-telemetry = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-throttle = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-verified = { git = "https://github.com/krabka-io/krabka-broker", rev = "745b6104a45f162c274305d86ffdb07b879eb179" }
-crabka-client-admin = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "55cfeba1148963e195fde3a959871c582d390a89" }
-crabka-client-consumer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "55cfeba1148963e195fde3a959871c582d390a89" }
-crabka-client-core = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "55cfeba1148963e195fde3a959871c582d390a89" }
-crabka-client-producer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "55cfeba1148963e195fde3a959871c582d390a89" }
-crabka-compression = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
-crabka-ids = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
-crabka-metadata = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
-crabka-protocol = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
-crabka-security = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
-crabka-trace-context = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
-crabka-units = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
-crabka-voters = { git = "https://github.com/krabka-io/krabka-protocol", rev = "fe164a8d816f6e7b0447bfe44085874aa9f5f3b5" }
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-broker = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-kraft-core = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-log = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-logfmt = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-object-store = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-raft = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-records-legacy = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-remote-storage = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-remote-storage-topic = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-telemetry = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-throttle = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-verified = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+# `krabka-broker` depends on `krabka-schema-serde`, so the git dependency
+# above needs it patched here too. Resolved from krabka-schema-registry, the
+# same source the broker itself patches, so the broker gets the copy it was
+# built against.
+krabka-schema-serde = { git = "https://github.com/krabka-io/krabka-schema-registry", rev = "ee9c3933fb1d71735846e7e5e33ea6ab3a694dc5" }
+krabka-client-admin = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-consumer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-core = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-producer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-compression = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-ids = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-metadata = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-protocol = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-security = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-trace-context = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-units = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-voters = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crabka_blockstore::{
+use krabka_blockstore::{
     BlockDescriptor, BlockKey, LabelIndex, LabelPredicate, LogBlockIndex as BlockIndex,
     LogMatchOp as MatchOp, TimeRange, labels, series_fingerprint,
 };

@@ -1,6 +1,6 @@
 //! Select-series result types and step-bucketing helpers.
 
-use crabka_units::{Time, convert::TimeExt as _, millis};
+use krabka_units::{Time, convert::TimeExt as _, millis};
 
 use crate::ProfileError;
 
@@ -92,7 +92,7 @@ fn decimal_usize_to_f64(value: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use assert2::assert;
-    use crabka_units::secs;
+    use krabka_units::secs;
 
     use super::*;
 

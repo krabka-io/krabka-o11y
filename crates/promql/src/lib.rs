@@ -1,4 +1,4 @@
-//! `PromQL` engine for Crabka's Prometheus/Grafana-Mimir-equivalent metrics backend.
+//! `PromQL` engine for Krabka's Prometheus/Grafana-Mimir-equivalent metrics backend.
 //!
 //! Parses `PromQL` with `promql-parser`, lowers the AST onto `DataFusion` plans, and
 //! evaluates instant/range queries over a step grid.

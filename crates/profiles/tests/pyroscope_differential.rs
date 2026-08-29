@@ -3,7 +3,7 @@
 //! These tests are ignored by default because they pull and run upstream Docker
 //! images. Run them explicitly with:
 //!
-//! `cargo test -p crabka-profiles --test pyroscope_differential -- --ignored`
+//! `cargo test -p krabka-profiles --test pyroscope_differential -- --ignored`
 
 use std::{
     collections::BTreeSet,
@@ -13,8 +13,9 @@ use std::{
 };
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use crabka_pprof::{PprofProfile, proto};
-use crabka_profiles::{
+use flate2::{Compression, write::GzEncoder};
+use krabka_pprof::{PprofProfile, proto};
+use krabka_profiles::{
     ProfileRecord, ProfilesError,
     distributor::{self, DistributorState, WalSink},
     hot_store::WalTailProfileStore,
@@ -22,7 +23,6 @@ use crabka_profiles::{
     limits::{Limits, OverridesProvider},
     query::{self, QuerierState},
 };
-use flate2::{Compression, write::GzEncoder};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
@@ -74,7 +74,7 @@ impl WalSink for CapturingSink {
 
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
-async fn real_pyroscope_render_matches_crabka_after_identical_ingest() -> TestResult {
+async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
     let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
@@ -83,12 +83,12 @@ async fn real_pyroscope_render_matches_crabka_after_identical_ingest() -> TestRe
 
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
-    let crabka = start_crabka_pair(sink.clone(), store.clone()).await?;
+    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
 
     post_push_profile(&client, &pyroscope_base, None, &gzipped_pprof).await?;
     post_push_profile(
         &client,
-        &crabka.distributor_base,
+        &krabka.distributor_base,
         Some(TENANT),
         &gzipped_pprof,
     )
@@ -111,9 +111,9 @@ async fn real_pyroscope_render_matches_crabka_after_identical_ingest() -> TestRe
         None,
     )
     .await?;
-    let crabka_render = render_any(
+    let krabka_render = render_any(
         &client,
-        &crabka.querier_base,
+        &krabka.querier_base,
         &[format!("{PROFILE_TYPE}{SELECTOR}")],
         "0",
         "9223372036854775807",
@@ -122,7 +122,7 @@ async fn real_pyroscope_render_matches_crabka_after_identical_ingest() -> TestRe
     )
     .await?;
 
-    let cases = [("pyroscope", &pyroscope_render), ("crabka", &crabka_render)];
+    let cases = [("pyroscope", &pyroscope_render), ("krabka", &krabka_render)];
     for (backend, render) in cases {
         assert!(
             flame_ticks(render).is_some_and(|ticks| ticks > 0),
@@ -133,31 +133,31 @@ async fn real_pyroscope_render_matches_crabka_after_identical_ingest() -> TestRe
             "{backend} render must contain runtime/pprof.profileWriter"
         );
     }
-    assert_flamebearer_equal(&pyroscope_render, &crabka_render)?;
+    assert_flamebearer_equal(&pyroscope_render, &krabka_render)?;
 
-    assert_profile_types_match(&client, &pyroscope_base, &crabka.querier_base).await?;
-    assert_label_names_match(&client, &pyroscope_base, &crabka.querier_base).await?;
-    assert_label_values_match(&client, &pyroscope_base, &crabka.querier_base, "env").await?;
-    assert_select_merge_stacktraces_match(&client, &pyroscope_base, &crabka.querier_base).await?;
-    assert_select_series_match(&client, &pyroscope_base, &crabka.querier_base).await?;
-    assert_diff_match(&client, &pyroscope_base, &crabka.querier_base).await?;
+    assert_profile_types_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    assert_label_names_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    assert_label_values_match(&client, &pyroscope_base, &krabka.querier_base, "env").await?;
+    assert_select_merge_stacktraces_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    assert_select_series_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    assert_diff_match(&client, &pyroscope_base, &krabka.querier_base).await?;
 
-    assert_profile_types_contain(&client, &crabka.querier_base, Some(TENANT)).await?;
-    assert_label_names_contain(&client, &crabka.querier_base, Some(TENANT)).await?;
+    assert_profile_types_contain(&client, &krabka.querier_base, Some(TENANT)).await?;
+    assert_label_names_contain(&client, &krabka.querier_base, Some(TENANT)).await?;
     assert_label_values_contain(
         &client,
-        &crabka.querier_base,
+        &krabka.querier_base,
         Some(TENANT),
         "env",
         PROFILE_ENV,
     )
     .await?;
-    assert_select_merge_stacktraces_has_symbol(&client, &crabka.querier_base, Some(TENANT)).await?;
-    assert_select_series_has_points(&client, &crabka.querier_base, Some(TENANT)).await?;
-    assert_select_heatmap_has_slots(&client, &crabka.querier_base, Some(TENANT)).await?;
-    assert_diff_has_ticks(&client, &crabka.querier_base, Some(TENANT)).await?;
+    assert_select_merge_stacktraces_has_symbol(&client, &krabka.querier_base, Some(TENANT)).await?;
+    assert_select_series_has_points(&client, &krabka.querier_base, Some(TENANT)).await?;
+    assert_select_heatmap_has_slots(&client, &krabka.querier_base, Some(TENANT)).await?;
+    assert_diff_has_ticks(&client, &krabka.querier_base, Some(TENANT)).await?;
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
@@ -175,7 +175,7 @@ async fn real_pyroscope_render_matches_crabka_after_identical_ingest() -> TestRe
 /// most likely cause is a response shape deviation in one of these two RPCs.
 /// Such a deviation makes the response parser of the app stop silently instead
 /// of throw. This test ingests one identical goroutine profile into both real
-/// Pyroscope and crabka, issues the same calls to both, and compares the
+/// Pyroscope and krabka, issues the same calls to both, and compares the
 /// responses field by field. The compared fields are the JSON key casing, the
 /// presence or absence of a spurious empty labelset, the label key NAMES and
 /// ORDER within each set, the SET of `(service_name,__profile_type__)` tuples,
@@ -184,7 +184,7 @@ async fn real_pyroscope_render_matches_crabka_after_identical_ingest() -> TestRe
 /// `--nocapture`, so a deviation is quotable.
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
-async fn real_pyroscope_series_and_stats_match_crabka_after_identical_ingest() -> TestResult {
+async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -> TestResult {
     let client = reqwest::Client::new();
     let pyroscope = start_pyroscope().await?;
     let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
@@ -193,12 +193,12 @@ async fn real_pyroscope_series_and_stats_match_crabka_after_identical_ingest() -
 
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
-    let crabka = start_crabka_pair(sink.clone(), store.clone()).await?;
+    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
 
     post_push_profile(&client, &pyroscope_base, None, &gzipped_pprof).await?;
     post_push_profile(
         &client,
-        &crabka.distributor_base,
+        &krabka.distributor_base,
         Some(TENANT),
         &gzipped_pprof,
     )
@@ -224,9 +224,9 @@ async fn real_pyroscope_series_and_stats_match_crabka_after_identical_ingest() -
         profile_stats_has_data,
     )
     .await?;
-    let crabka_stats = connect_json_until(
+    let krabka_stats = connect_json_until(
         &client,
-        &crabka.querier_base,
+        &krabka.querier_base,
         Some(TENANT),
         "GetProfileStats",
         stats_body.clone(),
@@ -234,17 +234,17 @@ async fn real_pyroscope_series_and_stats_match_crabka_after_identical_ingest() -
     )
     .await?;
     eprintln!("[GetProfileStats] pyroscope = {pyroscope_stats}");
-    eprintln!("[GetProfileStats] crabka    = {crabka_stats}");
-    assert_get_profile_stats_compatible(&pyroscope_stats, &crabka_stats)?;
+    eprintln!("[GetProfileStats] krabka    = {krabka_stats}");
+    assert_get_profile_stats_compatible(&pyroscope_stats, &krabka_stats)?;
 
     // The two backends do NOT ingest identical label sets: real Pyroscope also
-    // self-instruments (a `service_name="pyroscope"` series tree), while crabka
+    // self-instruments (a `service_name="pyroscope"` series tree), while krabka
     // holds only the one `service_name="api"` goroutine profile we pushed. So the
     // FULL set of (service_name,__profile_type__) tuples legitimately differs.
     // The comparison below is therefore scoped to the tuple BOTH backends share —
     // the ingested `(api, goroutines:...)` — plus the shape invariants that gate
     // the drilldown: wire-key casing, absence of a spurious empty label set, and
-    // (the core regression) that crabka returns data for the drilldown's exact
+    // (the core regression) that krabka returns data for the drilldown's exact
     // call shape, which carries NO time range.
     let shared_tuple = vec![
         ("service_name".to_string(), "api".to_string()),
@@ -254,7 +254,7 @@ async fn real_pyroscope_series_and_stats_match_crabka_after_identical_ingest() -
     // (b) Series with the EXACT body the grafana-pyroscope-app drilldown sends:
     // `matchers:[]`, `labelNames:[service_name,__profile_type__]`, and crucially
     // NO `start`/`end` (they default to 0). Real Pyroscope's Series is range-
-    // agnostic and returns the full enumeration regardless; crabka must do the
+    // agnostic and returns the full enumeration regardless; krabka must do the
     // same, or the drilldown sees zero services and never fans out panel queries.
     let drilldown_body = json!({
         "matchers": [],
@@ -269,23 +269,23 @@ async fn real_pyroscope_series_and_stats_match_crabka_after_identical_ingest() -
         |value| series_contains_tuple(value, &shared_tuple),
     )
     .await?;
-    // crabka is fed synchronously above, so a single call suffices; do not poll on
+    // krabka is fed synchronously above, so a single call suffices; do not poll on
     // readiness here — that would mask the very "returns nothing for a no-range
     // request" regression this asserts.
-    let crabka_drilldown = connect_json(
+    let krabka_drilldown = connect_json(
         &client,
-        &crabka.querier_base,
+        &krabka.querier_base,
         Some(TENANT),
         "Series",
         drilldown_body,
     )
     .await?;
     eprintln!("[Series drilldown no-range] pyroscope = {pyroscope_drilldown}");
-    eprintln!("[Series drilldown no-range] crabka    = {crabka_drilldown}");
-    assert_series_drilldown_compatible(&pyroscope_drilldown, &crabka_drilldown, &shared_tuple)?;
+    eprintln!("[Series drilldown no-range] krabka    = {krabka_drilldown}");
+    assert_series_drilldown_compatible(&pyroscope_drilldown, &krabka_drilldown, &shared_tuple)?;
 
     // (c) Series with the same projection but an explicit wide range. Both should
-    // still surface the shared tuple, and crabka must not emit a spurious empty
+    // still surface the shared tuple, and krabka must not emit a spurious empty
     // label set.
     let now_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())
         .unwrap_or(i64::MAX);
@@ -304,22 +304,22 @@ async fn real_pyroscope_series_and_stats_match_crabka_after_identical_ingest() -
         |value| series_contains_tuple(value, &shared_tuple),
     )
     .await?;
-    let crabka_ranged = connect_json(
+    let krabka_ranged = connect_json(
         &client,
-        &crabka.querier_base,
+        &krabka.querier_base,
         Some(TENANT),
         "Series",
         ranged_body,
     )
     .await?;
     eprintln!("[Series projected ranged] pyroscope = {pyroscope_ranged}");
-    eprintln!("[Series projected ranged] crabka    = {crabka_ranged}");
-    assert_series_drilldown_compatible(&pyroscope_ranged, &crabka_ranged, &shared_tuple)?;
+    eprintln!("[Series projected ranged] krabka    = {krabka_ranged}");
+    assert_series_drilldown_compatible(&pyroscope_ranged, &krabka_ranged, &shared_tuple)?;
 
     // (d) Series with empty labelNames (full label sets) over the wide range. The
-    // spurious-empty-labelset bug (`{"labelsSet":[{}]}`) reproduces here: crabka
+    // spurious-empty-labelset bug (`{"labelsSet":[{}]}`) reproduces here: krabka
     // inserts an empty projection when `labelNames` is empty. Assert no empty set
-    // and that crabka returns the full label set for the shared `api` series, the
+    // and that krabka returns the full label set for the shared `api` series, the
     // way Pyroscope does (autocomplete + the drilldown both rely on this).
     let full_body = json!({
         "matchers": [],
@@ -336,19 +336,19 @@ async fn real_pyroscope_series_and_stats_match_crabka_after_identical_ingest() -
         series_has_labelsets,
     )
     .await?;
-    let crabka_full = connect_json(
+    let krabka_full = connect_json(
         &client,
-        &crabka.querier_base,
+        &krabka.querier_base,
         Some(TENANT),
         "Series",
         full_body,
     )
     .await?;
     eprintln!("[Series full labelNames=[]] pyroscope = {pyroscope_full}");
-    eprintln!("[Series full labelNames=[]] crabka    = {crabka_full}");
-    assert_series_full_compatible(&pyroscope_full, &crabka_full)?;
+    eprintln!("[Series full labelNames=[]] krabka    = {krabka_full}");
+    assert_series_full_compatible(&pyroscope_full, &krabka_full)?;
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
@@ -407,7 +407,7 @@ fn series_label_sets(value: &Value) -> Option<Vec<Vec<(String, String)>>> {
 /// True if the `Series` response contains a label set that equals `tuple` as an
 /// unordered `(name,value)` collection.
 ///
-/// The test uses this both as a Pyroscope readiness predicate and as the crabka
+/// The test uses this both as a Pyroscope readiness predicate and as the krabka
 /// assertion target. The comparison ignores order within the set, because
 /// [`assert_series_key_order`] checks key order separately.
 fn series_contains_tuple(value: &Value, tuple: &[(String, String)]) -> bool {
@@ -418,41 +418,41 @@ fn series_contains_tuple(value: &Value, tuple: &[(String, String)]) -> bool {
     })
 }
 
-/// Compares a projected `Series` response between Pyroscope and crabka.
+/// Compares a projected `Series` response between Pyroscope and krabka.
 ///
 /// A projected response comes from the drilldown's
 /// `labelNames=[service_name,__profile_type__]` call. The comparison covers the
 /// axes that gate the drilldown:
 ///   1. the wire key, `labelsSet` or `labels_set` or absent,
-///   2. absence of a spurious empty `{}` label set on the crabka side,
+///   2. absence of a spurious empty `{}` label set on the krabka side,
 ///   3. the shared `(api, goroutines:...)` tuple is present on BOTH. This is
-///      the core regression: crabka must return it even with no time range.
+///      the core regression: krabka must return it even with no time range.
 ///   4. the per-set key ORDER agrees for that shared tuple.
 ///
 /// The comparison deliberately leaves out the FULL set of tuples. Real
 /// Pyroscope also self-instruments, so its enumeration is a strict superset of
-/// crabka's.
+/// krabka's.
 fn assert_series_drilldown_compatible(
     pyroscope: &Value,
-    crabka: &Value,
+    krabka: &Value,
     shared_tuple: &[(String, String)],
 ) -> TestResult {
     let py_key = series_wire_key(pyroscope);
-    let cr_key = series_wire_key(crabka);
+    let cr_key = series_wire_key(krabka);
     if py_key != cr_key {
         return Err(format!(
-            "Series(projected): label-set wire key differs: pyroscope={py_key:?} crabka={cr_key:?}\n  pyroscope={pyroscope}\n  crabka={crabka}"
+            "Series(projected): label-set wire key differs: pyroscope={py_key:?} krabka={cr_key:?}\n  pyroscope={pyroscope}\n  krabka={krabka}"
         )
         .into());
     }
 
-    let cr_sets = series_label_sets(crabka).ok_or_else(|| {
-        format!("Series(projected): crabka response missing label-set array: {crabka}")
+    let cr_sets = series_label_sets(krabka).ok_or_else(|| {
+        format!("Series(projected): krabka response missing label-set array: {krabka}")
     })?;
     let cr_empty = cr_sets.iter().filter(|set| set.is_empty()).count();
     if cr_empty != 0 {
         return Err(format!(
-            "Series(projected): crabka emitted {cr_empty} spurious empty label set(s): {crabka}"
+            "Series(projected): krabka emitted {cr_empty} spurious empty label set(s): {krabka}"
         )
         .into());
     }
@@ -463,27 +463,27 @@ fn assert_series_drilldown_compatible(
         )
         .into());
     }
-    if !series_contains_tuple(crabka, shared_tuple) {
+    if !series_contains_tuple(krabka, shared_tuple) {
         return Err(format!(
-            "Series(projected): crabka missing shared tuple {shared_tuple:?} (drilldown sees no service → \"No data\"): {crabka}"
+            "Series(projected): krabka missing shared tuple {shared_tuple:?} (drilldown sees no service → \"No data\"): {krabka}"
         )
         .into());
     }
 
-    assert_series_key_order("Series(projected)", pyroscope, crabka, shared_tuple)
+    assert_series_key_order("Series(projected)", pyroscope, krabka, shared_tuple)
 }
 
 /// Compares a full-label-set `Series` response between the two backends.
 ///
 /// The full-label-set form is `labelNames=[]`. The check confirms that neither
-/// side has a spurious empty set, and that crabka returns the full label set
+/// side has a spurious empty set, and that krabka returns the full label set
 /// for the shared `api` series and not a projection or an empty set.
-fn assert_series_full_compatible(pyroscope: &Value, crabka: &Value) -> TestResult {
+fn assert_series_full_compatible(pyroscope: &Value, krabka: &Value) -> TestResult {
     let py_key = series_wire_key(pyroscope);
-    let cr_key = series_wire_key(crabka);
+    let cr_key = series_wire_key(krabka);
     if py_key != cr_key {
         return Err(format!(
-            "Series(full): label-set wire key differs: pyroscope={py_key:?} crabka={cr_key:?}\n  pyroscope={pyroscope}\n  crabka={crabka}"
+            "Series(full): label-set wire key differs: pyroscope={py_key:?} krabka={cr_key:?}\n  pyroscope={pyroscope}\n  krabka={krabka}"
         )
         .into());
     }
@@ -491,8 +491,8 @@ fn assert_series_full_compatible(pyroscope: &Value, crabka: &Value) -> TestResul
     let py_sets = series_label_sets(pyroscope).ok_or_else(|| {
         format!("Series(full): pyroscope response missing label-set array: {pyroscope}")
     })?;
-    let cr_sets = series_label_sets(crabka).ok_or_else(|| {
-        format!("Series(full): crabka response missing label-set array: {crabka}")
+    let cr_sets = series_label_sets(krabka).ok_or_else(|| {
+        format!("Series(full): krabka response missing label-set array: {krabka}")
     })?;
 
     let py_empty = py_sets.iter().filter(|set| set.is_empty()).count();
@@ -505,26 +505,26 @@ fn assert_series_full_compatible(pyroscope: &Value, crabka: &Value) -> TestResul
     }
     if cr_empty != 0 {
         return Err(format!(
-            "Series(full): crabka emitted {cr_empty} spurious empty label set(s): {crabka}"
+            "Series(full): krabka emitted {cr_empty} spurious empty label set(s): {krabka}"
         )
         .into());
     }
 
-    // crabka must surface the ingested `api` series with its full label set,
+    // krabka must surface the ingested `api` series with its full label set,
     // including `service_name`, `__name__`, `env`, and `__profile_type__`.
-    let crabka_api = cr_sets
+    let krabka_api = cr_sets
         .iter()
         .find(|set| {
             set.iter()
                 .any(|(name, value)| name == "service_name" && value == "api")
         })
         .ok_or_else(|| {
-            format!("Series(full): crabka missing api series in full label sets: {crabka}")
+            format!("Series(full): krabka missing api series in full label sets: {krabka}")
         })?;
     for required in ["service_name", "__name__", "env", "__profile_type__"] {
-        if !crabka_api.iter().any(|(name, _)| name == required) {
+        if !krabka_api.iter().any(|(name, _)| name == required) {
             return Err(format!(
-                "Series(full): crabka api label set missing `{required}`: {crabka_api:?}"
+                "Series(full): krabka api label set missing `{required}`: {krabka_api:?}"
             )
             .into());
         }
@@ -538,7 +538,7 @@ fn assert_series_full_compatible(pyroscope: &Value, crabka: &Value) -> TestResul
 fn assert_series_key_order(
     label: &str,
     pyroscope: &Value,
-    crabka: &Value,
+    krabka: &Value,
     shared_tuple: &[(String, String)],
 ) -> TestResult {
     let want = shared_tuple.iter().cloned().collect::<BTreeSet<_>>();
@@ -549,10 +549,10 @@ fn assert_series_key_order(
         })
     };
     let py_order = find_keys(pyroscope);
-    let cr_order = find_keys(crabka);
+    let cr_order = find_keys(krabka);
     if py_order != cr_order {
         return Err(format!(
-            "{label}: key order for shared tuple differs: pyroscope={py_order:?} crabka={cr_order:?}\n  pyroscope={pyroscope}\n  crabka={crabka}"
+            "{label}: key order for shared tuple differs: pyroscope={py_order:?} krabka={cr_order:?}\n  pyroscope={pyroscope}\n  krabka={krabka}"
         )
         .into());
     }
@@ -570,7 +570,7 @@ fn series_wire_key(value: &Value) -> Option<&'static str> {
     }
 }
 
-/// Compares `GetProfileStats` between Pyroscope and crabka.
+/// Compares `GetProfileStats` between Pyroscope and krabka.
 ///
 /// The Drilldown gates only on a truthy `dataIngested`. It uses the time window
 /// to seed a default range, not to decide whether to fan out panel queries.
@@ -588,20 +588,20 @@ fn series_wire_key(value: &Value) -> Option<&'static str> {
 /// instant. A `0`-vs-now `oldestProfileTime` does not stop the drilldown from
 /// issuing panel queries, so a hard failure there would be a false positive.
 /// The always-on `eprintln!` of both raw bodies still shows the deviation.
-fn assert_get_profile_stats_compatible(pyroscope: &Value, crabka: &Value) -> TestResult {
+fn assert_get_profile_stats_compatible(pyroscope: &Value, krabka: &Value) -> TestResult {
     let py_obj = pyroscope
         .as_object()
         .ok_or_else(|| format!("GetProfileStats: pyroscope response not an object: {pyroscope}"))?;
-    let cr_obj = crabka
+    let cr_obj = krabka
         .as_object()
-        .ok_or_else(|| format!("GetProfileStats: crabka response not an object: {crabka}"))?;
+        .ok_or_else(|| format!("GetProfileStats: krabka response not an object: {krabka}"))?;
 
     // 1. dataIngested: same wire key (casing), both truthy.
     let py_ingested_key = stats_field_key(py_obj, "dataIngested", "data_ingested");
     let cr_ingested_key = stats_field_key(cr_obj, "dataIngested", "data_ingested");
     if py_ingested_key != cr_ingested_key {
         return Err(format!(
-            "GetProfileStats: dataIngested wire key differs: pyroscope={py_ingested_key:?} crabka={cr_ingested_key:?}\n  pyroscope={pyroscope}\n  crabka={crabka}"
+            "GetProfileStats: dataIngested wire key differs: pyroscope={py_ingested_key:?} krabka={cr_ingested_key:?}\n  pyroscope={pyroscope}\n  krabka={krabka}"
         )
         .into());
     }
@@ -609,7 +609,7 @@ fn assert_get_profile_stats_compatible(pyroscope: &Value, crabka: &Value) -> Tes
     let cr_ingested = stats_truthy(cr_obj, "dataIngested", "data_ingested");
     if py_ingested != cr_ingested {
         return Err(format!(
-            "GetProfileStats: dataIngested truthiness differs: pyroscope={py_ingested} crabka={cr_ingested}\n  pyroscope={pyroscope}\n  crabka={crabka}"
+            "GetProfileStats: dataIngested truthiness differs: pyroscope={py_ingested} krabka={cr_ingested}\n  pyroscope={pyroscope}\n  krabka={krabka}"
         )
         .into());
     }
@@ -629,7 +629,7 @@ fn assert_get_profile_stats_compatible(pyroscope: &Value, crabka: &Value) -> Tes
             && py_repr != cr_repr
         {
             return Err(format!(
-                "GetProfileStats: {camel} JSON representation differs: pyroscope={py_repr:?} crabka={cr_repr:?}\n  pyroscope={pyroscope}\n  crabka={crabka}"
+                "GetProfileStats: {camel} JSON representation differs: pyroscope={py_repr:?} krabka={cr_repr:?}\n  pyroscope={pyroscope}\n  krabka={krabka}"
             )
             .into());
         }
@@ -688,21 +688,21 @@ fn json_number_repr(value: &Value) -> Option<&'static str> {
 
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/grafana image"]
-async fn grafana_accepts_pyroscope_datasource_pointing_at_crabka() -> TestResult {
+async fn grafana_accepts_pyroscope_datasource_pointing_at_krabka() -> TestResult {
     let client = reqwest::Client::new();
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
-    let crabka = start_crabka_pair(sink, store).await?;
+    let krabka = start_krabka_pair(sink, store).await?;
 
     let grafana = start_grafana().await?;
     let grafana_base = mapped_base_url(&grafana, 3000).await?;
     wait_for_http_ok(&client, &grafana_base, &["/api/health"]).await?;
 
     let payload = json!({
-        "name": "Crabka Profiles",
+        "name": "Krabka Profiles",
         "type": "grafana-pyroscope-datasource",
         "access": "proxy",
-        "url": crabka.querier_base,
+        "url": krabka.querier_base,
         "isDefault": true,
         "jsonData": {}
     });
@@ -745,7 +745,7 @@ async fn grafana_accepts_pyroscope_datasource_pointing_at_crabka() -> TestResult
             .json()
             .await?
     } else {
-        let encoded = url::form_urlencoded::byte_serialize(b"Crabka Profiles").collect::<String>();
+        let encoded = url::form_urlencoded::byte_serialize(b"Krabka Profiles").collect::<String>();
         client
             .get(format!("{grafana_base}/api/datasources/name/{encoded}"))
             .basic_auth("admin", Some("admin"))
@@ -762,15 +762,15 @@ async fn grafana_accepts_pyroscope_datasource_pointing_at_crabka() -> TestResult
     );
     assert_eq!(
         fetched.get("url").and_then(Value::as_str),
-        Some(crabka.querier_base.as_str())
+        Some(krabka.querier_base.as_str())
     );
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
 async fn start_pyroscope() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    let tag = std::env::var("CRABKA_PYROSCOPE_IMAGE_TAG").unwrap_or_else(|_| "latest".to_string());
+    let tag = std::env::var("KRABKA_PYROSCOPE_IMAGE_TAG").unwrap_or_else(|_| "latest".to_string());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/pyroscope".to_string(), tag)
@@ -782,14 +782,14 @@ async fn start_pyroscope() -> TestResult<testcontainers::ContainerAsync<GenericI
 }
 
 async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    let tag = std::env::var("CRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| "latest".to_string());
+    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| "latest".to_string());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
             .with_exposed_port(3000.tcp())
             .with_wait_for(WaitFor::seconds(5))
             .with_env_var("GF_SECURITY_ADMIN_PASSWORD", "admin")
-            // Let the container reach the in-process Crabka querier on the host via
+            // Let the container reach the in-process Krabka querier on the host via
             // host.docker.internal (host-gateway mapping; works on Docker Desktop + Linux).
             .with_host("host.docker.internal", Host::HostGateway)
             .start(),
@@ -805,14 +805,14 @@ async fn mapped_base_url(
     Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
-struct CrabkaPair {
+struct KrabkaPair {
     distributor_base: String,
     querier_base: String,
     distributor_shutdown: Option<oneshot::Sender<()>>,
     querier_shutdown: Option<oneshot::Sender<()>>,
 }
 
-impl CrabkaPair {
+impl KrabkaPair {
     fn shutdown(mut self) {
         if let Some(tx) = self.distributor_shutdown.take() {
             let _ = tx.send(());
@@ -823,10 +823,10 @@ impl CrabkaPair {
     }
 }
 
-async fn start_crabka_pair(
+async fn start_krabka_pair(
     sink: CapturingSink,
     store: WalTailProfileStore,
-) -> TestResult<CrabkaPair> {
+) -> TestResult<KrabkaPair> {
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
@@ -835,10 +835,10 @@ async fn start_crabka_pair(
         active_series: Mutex::default(),
         ingestion_buckets: Mutex::default(),
         relabel: Vec::new(),
-        max_decompressed: crabka_units::mebibytes(16),
+        max_decompressed: krabka_units::mebibytes(16),
         max_tracked_tenants: 4096,
-        legacy_decode_limits: crabka_profiles::ingest::LegacyDecodeLimits::default(),
-        metrics: crabka_profiles::metrics::ServiceMetrics::new(),
+        legacy_decode_limits: krabka_profiles::ingest::LegacyDecodeLimits::default(),
+        metrics: krabka_profiles::metrics::ServiceMetrics::new(),
     });
     let distributor_addr =
         distributor::serve("127.0.0.1:0".parse()?, distributor_state, async move {
@@ -851,8 +851,8 @@ async fn start_crabka_pair(
     // range to compare against real Pyroscope, so disable the per-query range cap.
     let querier_state = Arc::new(QuerierState::new_with_limits(
         Arc::new(store),
-        crabka_profiles::limits::Limits {
-            max_query_length: <crabka_units::Time as crabka_units::convert::TimeExt>::ZERO,
+        krabka_profiles::limits::Limits {
+            max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
             ..Default::default()
         },
     ));
@@ -861,7 +861,7 @@ async fn start_crabka_pair(
     })
     .await?;
 
-    Ok(CrabkaPair {
+    Ok(KrabkaPair {
         distributor_base: format!("http://{distributor_addr}"),
         querier_base: format!("http://{querier_addr}"),
         distributor_shutdown: Some(distributor_shutdown),
@@ -895,7 +895,7 @@ async fn post_push_profile(
             ],
             "samples": [{
                 "rawProfile": BASE64.encode(gzipped_pprof),
-                "ID": "crabka-differential-goroutine"
+                "ID": "krabka-differential-goroutine"
             }]
         }]
     });
@@ -1085,7 +1085,7 @@ async fn assert_label_values_contain(
 async fn assert_label_names_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
-    crabka_base: &str,
+    krabka_base: &str,
 ) -> TestResult {
     let body = json!({
         "matchers": [SELECTOR],
@@ -1093,22 +1093,22 @@ async fn assert_label_names_match(
         "end": query_end_ms(),
     });
     let pyroscope = connect_json(client, pyroscope_base, None, "LabelNames", body.clone()).await?;
-    let crabka = connect_json(
+    let krabka = connect_json(
         client,
-        crabka_base,
+        krabka_base,
         Some(TENANT),
         "LabelNames",
         body.clone(),
     )
     .await?;
 
-    assert_label_names_equal(&pyroscope, &crabka)
+    assert_label_names_equal(&pyroscope, &krabka)
 }
 
 async fn assert_profile_types_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
-    crabka_base: &str,
+    krabka_base: &str,
 ) -> TestResult {
     let pyroscope = connect_json_until(
         client,
@@ -1119,9 +1119,9 @@ async fn assert_profile_types_match(
         |value| canonical_profile_type(value, PROFILE_TYPE).is_ok(),
     )
     .await?;
-    let crabka = connect_json_until(
+    let krabka = connect_json_until(
         client,
-        crabka_base,
+        krabka_base,
         Some(TENANT),
         "ProfileTypes",
         json_time_range(),
@@ -1132,14 +1132,14 @@ async fn assert_profile_types_match(
     assert_canonical_json_equal(
         "ProfileTypes",
         canonical_profile_type(&pyroscope, PROFILE_TYPE)?,
-        canonical_profile_type(&crabka, PROFILE_TYPE)?,
+        canonical_profile_type(&krabka, PROFILE_TYPE)?,
     )
 }
 
 async fn assert_label_values_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
-    crabka_base: &str,
+    krabka_base: &str,
     name: &str,
 ) -> TestResult {
     let body = json!({
@@ -1148,9 +1148,9 @@ async fn assert_label_values_match(
         "end": query_end_ms(),
     });
     let pyroscope = connect_json(client, pyroscope_base, None, "LabelValues", body.clone()).await?;
-    let crabka = connect_json(
+    let krabka = connect_json(
         client,
-        crabka_base,
+        krabka_base,
         Some(TENANT),
         "LabelValues",
         body.clone(),
@@ -1160,7 +1160,7 @@ async fn assert_label_values_match(
     assert_canonical_json_equal(
         &format!("LabelValues({name})"),
         canonical_string_list(&pyroscope, "names")?,
-        canonical_string_list(&crabka, "names")?,
+        canonical_string_list(&krabka, "names")?,
     )
 }
 
@@ -1205,7 +1205,7 @@ async fn assert_select_series_has_points(
 async fn assert_select_series_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
-    crabka_base: &str,
+    krabka_base: &str,
 ) -> TestResult {
     let body = select_series_body();
     let pyroscope = connect_json_until(
@@ -1217,9 +1217,9 @@ async fn assert_select_series_match(
         select_series_has_positive_point,
     )
     .await?;
-    let crabka = connect_json_until(
+    let krabka = connect_json_until(
         client,
-        crabka_base,
+        krabka_base,
         Some(TENANT),
         "SelectSeries",
         body,
@@ -1227,7 +1227,7 @@ async fn assert_select_series_match(
     )
     .await?;
 
-    assert_select_series_equal(&pyroscope, &crabka)
+    assert_select_series_equal(&pyroscope, &krabka)
 }
 
 async fn assert_select_heatmap_has_slots(
@@ -1308,7 +1308,7 @@ async fn assert_select_merge_stacktraces_has_symbol(
 async fn assert_select_merge_stacktraces_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
-    crabka_base: &str,
+    krabka_base: &str,
 ) -> TestResult {
     let body = select_merge_stacktraces_body();
     let pyroscope = connect_json_until(
@@ -1324,9 +1324,9 @@ async fn assert_select_merge_stacktraces_match(
         },
     )
     .await?;
-    let crabka = connect_json_until(
+    let krabka = connect_json_until(
         client,
-        crabka_base,
+        krabka_base,
         Some(TENANT),
         "SelectMergeStacktraces",
         body,
@@ -1338,7 +1338,7 @@ async fn assert_select_merge_stacktraces_match(
     )
     .await?;
 
-    assert_connect_flamegraph_equal("SelectMergeStacktraces", &pyroscope, &crabka)
+    assert_connect_flamegraph_equal("SelectMergeStacktraces", &pyroscope, &krabka)
 }
 
 async fn assert_diff_has_ticks(
@@ -1387,7 +1387,7 @@ async fn assert_diff_has_ticks(
 async fn assert_diff_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
-    crabka_base: &str,
+    krabka_base: &str,
 ) -> TestResult {
     let body = diff_body();
     let pyroscope = connect_json_until(
@@ -1399,9 +1399,9 @@ async fn assert_diff_match(
         diff_has_positive_ticks,
     )
     .await?;
-    let crabka = connect_json_until(
+    let krabka = connect_json_until(
         client,
-        crabka_base,
+        krabka_base,
         Some(TENANT),
         "Diff",
         body,
@@ -1409,7 +1409,7 @@ async fn assert_diff_match(
     )
     .await?;
 
-    assert_diff_equal(&pyroscope, &crabka)
+    assert_diff_equal(&pyroscope, &krabka)
 }
 
 fn select_merge_stacktraces_body() -> Value {
@@ -2029,17 +2029,17 @@ fn series_differential_rejects_wire_key_casing_drift() {
 #[test]
 fn series_differential_rejects_spurious_empty_label_set() {
     // The defining symptom of the in-memory `series()` bug: a `{}` entry inserted
-    // when `labelNames` is empty. The crabka (second) argument carries it.
+    // when `labelNames` is empty. The krabka (second) argument carries it.
     let tuple = shared_api_tuple();
     let pyroscope = json!({ "labelsSet": [projected_set("api", PROFILE_TYPE)] });
-    let crabka = json!({
+    let krabka = json!({
         "labelsSet": [
             { "labels": [] },
             projected_set("api", PROFILE_TYPE)
         ]
     });
 
-    let err = assert_series_drilldown_compatible(&pyroscope, &crabka, &tuple).unwrap_err();
+    let err = assert_series_drilldown_compatible(&pyroscope, &krabka, &tuple).unwrap_err();
     assert!(
         err.to_string().contains("spurious empty label set"),
         "{err}"
@@ -2047,31 +2047,31 @@ fn series_differential_rejects_spurious_empty_label_set() {
 }
 
 #[test]
-fn series_differential_rejects_missing_shared_tuple_on_crabka() {
-    // The core drilldown regression: crabka returns label sets, but NOT the
+fn series_differential_rejects_missing_shared_tuple_on_krabka() {
+    // The core drilldown regression: krabka returns label sets, but NOT the
     // ingested `api` series (e.g. it time-scoped a no-range request to [0,0] and
     // dropped everything but some unrelated series), so the shared tuple is
     // absent and the grid shows "No data".
     let tuple = shared_api_tuple();
     let pyroscope = json!({ "labelsSet": [projected_set("api", PROFILE_TYPE)] });
-    let crabka = json!({ "labelsSet": [projected_set("other", PROFILE_TYPE)] });
+    let krabka = json!({ "labelsSet": [projected_set("other", PROFILE_TYPE)] });
 
-    let err = assert_series_drilldown_compatible(&pyroscope, &crabka, &tuple).unwrap_err();
+    let err = assert_series_drilldown_compatible(&pyroscope, &krabka, &tuple).unwrap_err();
     assert!(
-        err.to_string().contains("crabka missing shared tuple"),
+        err.to_string().contains("krabka missing shared tuple"),
         "{err}"
     );
 }
 
 #[test]
-fn series_differential_rejects_empty_crabka_response() {
-    // A literal `{}` from crabka (no `labelsSet` at all) is the exact shape the
+fn series_differential_rejects_empty_krabka_response() {
+    // A literal `{}` from krabka (no `labelsSet` at all) is the exact shape the
     // no-range drilldown call elicits today; it fails the wire-key check.
     let tuple = shared_api_tuple();
     let pyroscope = json!({ "labelsSet": [projected_set("api", PROFILE_TYPE)] });
-    let crabka = json!({});
+    let krabka = json!({});
 
-    let err = assert_series_drilldown_compatible(&pyroscope, &crabka, &tuple).unwrap_err();
+    let err = assert_series_drilldown_compatible(&pyroscope, &krabka, &tuple).unwrap_err();
     assert!(err.to_string().contains("wire key differs"), "{err}");
 }
 
@@ -2082,12 +2082,12 @@ fn series_differential_rejects_intra_set_key_reordering() {
         { "name": "service_name", "value": "api" },
         { "name": "__profile_type__", "value": PROFILE_TYPE }
     ] }] });
-    let crabka = json!({ "labelsSet": [{ "labels": [
+    let krabka = json!({ "labelsSet": [{ "labels": [
         { "name": "__profile_type__", "value": PROFILE_TYPE },
         { "name": "service_name", "value": "api" }
     ] }] });
 
-    let err = assert_series_drilldown_compatible(&pyroscope, &crabka, &tuple).unwrap_err();
+    let err = assert_series_drilldown_compatible(&pyroscope, &krabka, &tuple).unwrap_err();
     assert!(
         err.to_string()
             .contains("key order for shared tuple differs"),
@@ -2105,9 +2105,9 @@ fn series_differential_accepts_pyroscope_superset() {
         projected_set("pyroscope", "process_cpu:cpu:nanoseconds:cpu:nanoseconds"),
         projected_set("api", PROFILE_TYPE)
     ] });
-    let crabka = json!({ "labelsSet": [projected_set("api", PROFILE_TYPE)] });
+    let krabka = json!({ "labelsSet": [projected_set("api", PROFILE_TYPE)] });
 
-    assert_series_drilldown_compatible(&pyroscope, &crabka, &tuple).unwrap();
+    assert_series_drilldown_compatible(&pyroscope, &krabka, &tuple).unwrap();
 }
 
 #[test]
@@ -2118,9 +2118,9 @@ fn series_full_differential_rejects_spurious_empty_label_set() {
         { "name": "env", "value": PROFILE_ENV },
         { "name": "service_name", "value": "api" }
     ] }] });
-    let crabka = json!({ "labelsSet": [{ "labels": [] }] });
+    let krabka = json!({ "labelsSet": [{ "labels": [] }] });
 
-    let err = assert_series_full_compatible(&pyroscope, &crabka).unwrap_err();
+    let err = assert_series_full_compatible(&pyroscope, &krabka).unwrap_err();
     assert!(
         err.to_string().contains("spurious empty label set"),
         "{err}"
@@ -2149,10 +2149,10 @@ fn profile_stats_differential_accepts_divergent_timestamps() {
     // timestamp magnitudes (same string representation) must NOT be a difference.
     let pyroscope =
         json!({ "dataIngested": true, "oldestProfileTime": "111", "newestProfileTime": "222" });
-    let crabka =
+    let krabka =
         json!({ "dataIngested": true, "oldestProfileTime": "999", "newestProfileTime": "1234" });
 
-    assert_get_profile_stats_compatible(&pyroscope, &crabka).unwrap();
+    assert_get_profile_stats_compatible(&pyroscope, &krabka).unwrap();
 }
 
 #[test]
@@ -2197,11 +2197,11 @@ fn connect_diff_differential_rejects_tick_drift() {
 // ---------------------------------------------------------------------------
 // Comprehensive Grafana end-to-end test
 //
-// Unlike `grafana_accepts_pyroscope_datasource_pointing_at_crabka` (which only
+// Unlike `grafana_accepts_pyroscope_datasource_pointing_at_krabka` (which only
 // registers a datasource and reads it back), this test drives the *full* path:
 // ingest a known profile through the real distributor push door, then stand up
-// real Grafana with its built-in Pyroscope datasource pointed at Crabka and
-// prove that Grafana → grafana-pyroscope-datasource → Crabka works for
+// real Grafana with its built-in Pyroscope datasource pointed at Krabka and
+// prove that Grafana → grafana-pyroscope-datasource → Krabka works for
 //   (1) the config-test / health probe (ProfileTypes through the plugin),
 //   (2) a flamegraph query driven *through* Grafana (the real Explore path),
 //   (3) multi-tenant isolation enforced through Grafana's per-datasource
@@ -2209,7 +2209,7 @@ fn connect_diff_differential_rejects_tick_drift() {
 // ---------------------------------------------------------------------------
 
 /// Regression for the Grafana-compat bug that
-/// `grafana_renders_crabka_profiles_end_to_end` found.
+/// `grafana_renders_krabka_profiles_end_to_end` found.
 ///
 /// Grafana's built-in Pyroscope datasource is a connect-go client. It issues
 /// unary requests with `Content-Type: application/proto` and rejects any 200
@@ -2220,7 +2220,7 @@ fn connect_diff_differential_rejects_tick_drift() {
 #[tokio::test]
 async fn querier_echoes_proto_content_type_for_proto_requests() -> TestResult {
     let store = WalTailProfileStore::new();
-    let crabka = start_crabka_public(CapturingSink::default(), store).await?;
+    let krabka = start_krabka_public(CapturingSink::default(), store).await?;
     let client = reqwest::Client::new();
 
     // An all-default ProfileTypesRequest (start=end=0) encodes to zero proto bytes, so an
@@ -2228,7 +2228,7 @@ async fn querier_echoes_proto_content_type_for_proto_requests() -> TestResult {
     let response = client
         .post(format!(
             "http://127.0.0.1:{}/querier.v1.QuerierService/ProfileTypes",
-            crabka.querier_port
+            krabka.querier_port
         ))
         .header(reqwest::header::CONTENT_TYPE, "application/proto")
         .header("x-scope-orgid", TENANT)
@@ -2245,7 +2245,7 @@ async fn querier_echoes_proto_content_type_for_proto_requests() -> TestResult {
         .to_string();
     let body = response.text().await.unwrap_or_default();
 
-    crabka.shutdown();
+    krabka.shutdown();
 
     assert!(
         status.is_success(),
@@ -2260,7 +2260,7 @@ async fn querier_echoes_proto_content_type_for_proto_requests() -> TestResult {
 
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/grafana image"]
-async fn grafana_renders_crabka_profiles_end_to_end() -> TestResult {
+async fn grafana_renders_krabka_profiles_end_to_end() -> TestResult {
     let client = reqwest::Client::new();
 
     let sample_time_ns = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())
@@ -2274,8 +2274,8 @@ async fn grafana_renders_crabka_profiles_end_to_end() -> TestResult {
     let gzipped = synthetic_cpu_pprof(sample_time_ns)?;
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
-    let crabka = start_crabka_public(sink.clone(), store.clone()).await?;
-    post_cpu_profile(&client, &crabka.distributor_base, Some(TENANT), &gzipped).await?;
+    let krabka = start_krabka_public(sink.clone(), store.clone()).await?;
+    post_cpu_profile(&client, &krabka.distributor_base, Some(TENANT), &gzipped).await?;
     for record in sink
         .records
         .lock()
@@ -2287,37 +2287,37 @@ async fn grafana_renders_crabka_profiles_end_to_end() -> TestResult {
 
     // 2. Real Grafana + its built-in Pyroscope datasource, one per tenant. Each datasource
     //    injects its own X-Scope-OrgID via the standard custom-HTTP-header mechanism, so the
-    //    backend plugin tags every outgoing request to Crabka with the tenant.
+    //    backend plugin tags every outgoing request to Krabka with the tenant.
     let grafana = start_grafana().await?;
     let grafana_base = mapped_base_url(&grafana, 3000).await?;
     wait_for_http_ok(&client, &grafana_base, &["/api/health"]).await?;
-    let crabka_url = format!("http://host.docker.internal:{}", crabka.querier_port);
+    let krabka_url = format!("http://host.docker.internal:{}", krabka.querier_port);
     let uid_a = create_pyroscope_datasource(
         &client,
         &grafana_base,
-        "Crabka Profiles A",
-        &crabka_url,
+        "Krabka Profiles A",
+        &krabka_url,
         TENANT,
     )
     .await?;
     let uid_b = create_pyroscope_datasource(
         &client,
         &grafana_base,
-        "Crabka Profiles B",
-        &crabka_url,
+        "Krabka Profiles B",
+        &krabka_url,
         TENANT_B,
     )
     .await?;
 
     // 3. Config-test / health probe: Grafana's datasource health check drives ProfileTypes
-    //    through the plugin to Crabka (the spec's health surface; there is no /ready).
+    //    through the plugin to Krabka (the spec's health surface; there is no /ready).
     let health = datasource_health_until_ok(&client, &grafana_base, &uid_a).await?;
     assert!(
         datasource_health_is_ok(&health),
         "tenant-a datasource health not OK: {health}"
     );
 
-    // 4. Drive a flamegraph query THROUGH Grafana and assert Crabka's symbolized data returns.
+    // 4. Drive a flamegraph query THROUGH Grafana and assert Krabka's symbolized data returns.
     let query_a = GrafanaQuery {
         grafana_base: &grafana_base,
         uid: &uid_a,
@@ -2362,7 +2362,7 @@ async fn grafana_renders_crabka_profiles_end_to_end() -> TestResult {
         "tenant-b saw tenant-a sample values through Grafana"
     );
 
-    crabka.shutdown();
+    krabka.shutdown();
     Ok(())
 }
 
@@ -2468,7 +2468,7 @@ async fn post_cpu_profile(
             ],
             "samples": [{
                 "rawProfile": BASE64.encode(gzipped_pprof),
-                "ID": "crabka-grafana-e2e"
+                "ID": "krabka-grafana-e2e"
             }]
         }]
     });
@@ -2488,14 +2488,14 @@ async fn post_cpu_profile(
     Ok(())
 }
 
-struct CrabkaPublic {
+struct KrabkaPublic {
     distributor_base: String,
     querier_port: u16,
     distributor_shutdown: Option<oneshot::Sender<()>>,
     querier_shutdown: Option<oneshot::Sender<()>>,
 }
 
-impl CrabkaPublic {
+impl KrabkaPublic {
     fn shutdown(mut self) {
         if let Some(tx) = self.distributor_shutdown.take() {
             let _ = tx.send(());
@@ -2506,13 +2506,13 @@ impl CrabkaPublic {
     }
 }
 
-/// Like `start_crabka_pair`, but binds the querier on all interfaces so the
+/// Like `start_krabka_pair`, but binds the querier on all interfaces so the
 /// Grafana container can reach it at `host.docker.internal:<port>`. The
 /// distributor stays host-local, because the test pushes to it directly.
-async fn start_crabka_public(
+async fn start_krabka_public(
     sink: CapturingSink,
     store: WalTailProfileStore,
-) -> TestResult<CrabkaPublic> {
+) -> TestResult<KrabkaPublic> {
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
@@ -2521,10 +2521,10 @@ async fn start_crabka_public(
         active_series: Mutex::default(),
         ingestion_buckets: Mutex::default(),
         relabel: Vec::new(),
-        max_decompressed: crabka_units::mebibytes(16),
+        max_decompressed: krabka_units::mebibytes(16),
         max_tracked_tenants: 4096,
-        legacy_decode_limits: crabka_profiles::ingest::LegacyDecodeLimits::default(),
-        metrics: crabka_profiles::metrics::ServiceMetrics::new(),
+        legacy_decode_limits: krabka_profiles::ingest::LegacyDecodeLimits::default(),
+        metrics: krabka_profiles::metrics::ServiceMetrics::new(),
     });
     let distributor_addr =
         distributor::serve("127.0.0.1:0".parse()?, distributor_state, async move {
@@ -2537,8 +2537,8 @@ async fn start_crabka_public(
     // range to compare against real Pyroscope, so disable the per-query range cap.
     let querier_state = Arc::new(QuerierState::new_with_limits(
         Arc::new(store),
-        crabka_profiles::limits::Limits {
-            max_query_length: <crabka_units::Time as crabka_units::convert::TimeExt>::ZERO,
+        krabka_profiles::limits::Limits {
+            max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
             ..Default::default()
         },
     ));
@@ -2547,7 +2547,7 @@ async fn start_crabka_public(
     })
     .await?;
 
-    Ok(CrabkaPublic {
+    Ok(KrabkaPublic {
         distributor_base: format!("http://{distributor_addr}"),
         querier_port: querier_addr.port(),
         distributor_shutdown: Some(distributor_shutdown),
@@ -2559,14 +2559,14 @@ async fn create_pyroscope_datasource(
     client: &reqwest::Client,
     grafana_base: &str,
     name: &str,
-    crabka_url: &str,
+    krabka_url: &str,
     tenant: &str,
 ) -> TestResult<String> {
     let payload = json!({
         "name": name,
         "type": "grafana-pyroscope-datasource",
         "access": "proxy",
-        "url": crabka_url,
+        "url": krabka_url,
         "jsonData": { "httpHeaderName1": "X-Scope-OrgID" },
         "secureJsonData": { "httpHeaderValue1": tenant }
     });
@@ -2646,7 +2646,7 @@ struct GrafanaQuery<'a> {
 ///
 /// The function tries the real `/api/ds/query` Explore path first, where the
 /// backend plugin applies the X-Scope-OrgID header of the datasource. It then
-/// tries the data-source proxy to the Crabka flamebearer as a best-effort
+/// tries the data-source proxy to the Krabka flamebearer as a best-effort
 /// second source. It returns the union of both.
 async fn grafana_profile_evidence(
     client: &reqwest::Client,
@@ -2758,7 +2758,7 @@ fn evidence_from_ds_query(value: &Value) -> (BTreeSet<String>, bool) {
     (names, positive)
 }
 
-/// Queries Crabka's legacy flamebearer render through Grafana's data-source
+/// Queries Krabka's legacy flamebearer render through Grafana's data-source
 /// proxy on a best-effort basis. Returns `None` if the proxy route is not
 /// available. The `/api/ds/query` path then carries the test.
 async fn proxy_render(client: &reqwest::Client, query: &GrafanaQuery<'_>) -> Option<Value> {

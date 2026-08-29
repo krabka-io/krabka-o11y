@@ -13,12 +13,12 @@ use std::{
 
 use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::get};
 use clap::{Parser, ValueEnum};
-use crabka_client_consumer::{AutoOffsetReset, Consumer};
-use crabka_client_core::{
+use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
-use crabka_client_producer::Producer;
-use crabka_metrics::{
+use krabka_client_producer::Producer;
+use krabka_metrics::{
     DEFAULT_MAX_RATE_BUCKETS, MetricsCompactorConfig,
     distributor::{
         DistributorState, HA_TRACKER_TOPIC, KafkaHaElectionSink, KafkaSink,
@@ -27,8 +27,8 @@ use crabka_metrics::{
     metrics::ServiceMetrics,
     run_compactor_consumer_loop,
 };
-use crabka_telemetry::OtlpConfig;
-use crabka_units::{parse, prelude::*};
+use krabka_telemetry::OtlpConfig;
+use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -36,54 +36,54 @@ use tokio::net::TcpListener;
 #[derive(Debug, Parser)]
 struct Cli {
     #[command(flatten)]
-    profiling: crabka_telemetry::profiling::ProfilingConfig,
-    #[arg(long, env = "CRABKA_METRICS_TARGET")]
+    profiling: krabka_telemetry::profiling::ProfilingConfig,
+    #[arg(long, env = "KRABKA_METRICS_TARGET")]
     target: Target,
-    #[arg(long, env = "CRABKA_METRICS_LISTEN", default_value = "127.0.0.1:4041")]
+    #[arg(long, env = "KRABKA_METRICS_LISTEN", default_value = "127.0.0.1:4041")]
     listen: SocketAddr,
-    #[arg(long, env = "CRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
+    #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     admin_listen_addr: SocketAddr,
     #[arg(
         long,
-        env = "CRABKA_METRICS_BOOTSTRAP",
+        env = "KRABKA_METRICS_BOOTSTRAP",
         default_value = "127.0.0.1:9092"
     )]
     bootstrap: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_CLIENT_DISPATCH_QUEUE_CAPACITY",
+        env = "KRABKA_METRICS_CLIENT_DISPATCH_QUEUE_CAPACITY",
         default_value_t = DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
         value_parser = parse_client_dispatch_queue_capacity
     )]
     client_dispatch_queue_capacity: usize,
     #[arg(
         long,
-        env = "CRABKA_METRICS_CLIENT_FRAME_MAX",
+        env = "KRABKA_METRICS_CLIENT_FRAME_MAX",
         default_value = "100MiB",
         value_parser = parse_client_frame_max
     )]
     client_frame_max: ByteSize,
     #[arg(
         long,
-        env = "CRABKA_METRICS_OBJECT_STORE_URL",
-        default_value = "file://./.crabka-metrics-blocks"
+        env = "KRABKA_METRICS_OBJECT_STORE_URL",
+        default_value = "file://./.krabka-metrics-blocks"
     )]
     object_store_url: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_COMPACTOR_GROUP_ID",
-        default_value = "crabka-metrics-compactor"
+        env = "KRABKA_METRICS_COMPACTOR_GROUP_ID",
+        default_value = "krabka-metrics-compactor"
     )]
     compactor_group_id: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_COMPACTOR_CLIENT_ID",
-        default_value = "crabka-metrics-compactor"
+        env = "KRABKA_METRICS_COMPACTOR_CLIENT_ID",
+        default_value = "krabka-metrics-compactor"
     )]
     compactor_client_id: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_COMPACTOR_POLL_TIMEOUT",
+        env = "KRABKA_METRICS_COMPACTOR_POLL_TIMEOUT",
         default_value = "1s",
         value_parser = parse::positive_time
     )]
@@ -92,15 +92,15 @@ struct Cli {
     /// buffered.
     #[arg(
         long,
-        env = "CRABKA_METRICS_COMPACTOR_FLUSH_MAX_ROWS",
-        default_value_t = crabka_metrics::DEFAULT_FLUSH_MAX_ROWS
+        env = "KRABKA_METRICS_COMPACTOR_FLUSH_MAX_ROWS",
+        default_value_t = krabka_metrics::DEFAULT_FLUSH_MAX_ROWS
     )]
     compactor_flush_max_rows: usize,
     /// Flush the accumulated compaction buffer once its oldest record reaches
     /// this age.
     #[arg(
         long,
-        env = "CRABKA_METRICS_COMPACTOR_FLUSH_MAX_AGE",
+        env = "KRABKA_METRICS_COMPACTOR_FLUSH_MAX_AGE",
         default_value = "1m",
         value_parser = parse::positive_time
     )]
@@ -109,7 +109,7 @@ struct Cli {
     /// retention off.
     #[arg(
         long,
-        env = "CRABKA_METRICS_COMPACTOR_RETENTION",
+        env = "KRABKA_METRICS_COMPACTOR_RETENTION",
         default_value = "0s",
         value_parser = parse::non_negative_time
     )]
@@ -118,39 +118,39 @@ struct Cli {
     /// retention.
     #[arg(
         long,
-        env = "CRABKA_METRICS_COMPACTOR_RETENTION_SWEEP_INTERVAL",
+        env = "KRABKA_METRICS_COMPACTOR_RETENTION_SWEEP_INTERVAL",
         default_value = "1m",
         value_parser = parse::positive_time
     )]
     compactor_retention_sweep_interval: Time,
     #[arg(
         long,
-        env = "CRABKA_METRICS_HA_TRACKER_TOPIC",
+        env = "KRABKA_METRICS_HA_TRACKER_TOPIC",
         default_value = HA_TRACKER_TOPIC
     )]
     ha_tracker_topic: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_HA_TRACKER_GROUP_ID",
-        default_value = "crabka-metrics-ha-tracker"
+        env = "KRABKA_METRICS_HA_TRACKER_GROUP_ID",
+        default_value = "krabka-metrics-ha-tracker"
     )]
     ha_tracker_group_id: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_HA_TRACKER_CLIENT_ID",
-        default_value = "crabka-metrics-ha-tracker"
+        env = "KRABKA_METRICS_HA_TRACKER_CLIENT_ID",
+        default_value = "krabka-metrics-ha-tracker"
     )]
     ha_tracker_client_id: String,
     #[arg(
         long,
-        env = "CRABKA_METRICS_HA_TRACKER_POLL_TIMEOUT",
+        env = "KRABKA_METRICS_HA_TRACKER_POLL_TIMEOUT",
         default_value = "500ms",
         value_parser = parse::positive_time
     )]
     ha_tracker_poll_timeout: Time,
     #[arg(
         long,
-        env = "CRABKA_METRICS_HA_FAILOVER_TIMEOUT",
+        env = "KRABKA_METRICS_HA_FAILOVER_TIMEOUT",
         default_value = "30s",
         value_parser = parse::time,
         allow_hyphen_values = true
@@ -158,14 +158,14 @@ struct Cli {
     ha_failover_timeout: Time,
     #[arg(
         long,
-        env = "CRABKA_METRICS_INGEST_RATE_BUCKET_CAP",
+        env = "KRABKA_METRICS_INGEST_RATE_BUCKET_CAP",
         default_value_t = DEFAULT_MAX_RATE_BUCKETS,
         value_parser = parse_ingest_rate_bucket_cap
     )]
     ingest_rate_bucket_cap: usize,
     #[arg(
         long,
-        env = "CRABKA_METRICS_DISTRIBUTOR_MAX_DECOMPRESSED",
+        env = "KRABKA_METRICS_DISTRIBUTOR_MAX_DECOMPRESSED",
         default_value = "32MiB",
         value_parser = parse_distributor_max_decompressed
     )]
@@ -238,22 +238,22 @@ fn build_object_store(url: &str) -> Result<Arc<dyn ObjectStore>, Box<dyn std::er
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let telemetry = crabka_telemetry::init(
+    let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
-            "crabka-metrics",
+            "krabka-metrics",
             env!("CARGO_PKG_VERSION"),
-            "crabka-metrics",
+            "krabka-metrics",
         )?,
-        "crabka_metrics=info,info",
+        "krabka_metrics=info,info",
         "info",
-        "crabka-metrics",
+        "krabka-metrics",
     )?;
     let result = async {
         let metrics = ServiceMetrics::new();
-        let admin = crabka_telemetry::profiling::spawn_admin_with_config(
+        let admin = krabka_telemetry::profiling::spawn_admin_with_config(
             cli.admin_listen_addr,
-            crabka_metrics::metrics::metrics_router(metrics.registry.clone()),
+            krabka_metrics::metrics::metrics_router(metrics.registry.clone()),
             cli.profiling.clone(),
         )
         .await?;
@@ -270,7 +270,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         tokio::select! {
             result = role => result?,
-            result = crabka_telemetry::profiling::await_admin_exit(admin) => result?,
+            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
         }
         Ok(())
     }
@@ -408,7 +408,7 @@ fn role_build_info(role: &'static str) -> impl IntoResponse {
                 "version": env!("CARGO_PKG_VERSION"),
                 "revision": "unknown",
                 "branch": "unknown",
-                "buildUser": "crabka",
+                "buildUser": "krabka",
                 "buildDate": "unknown",
                 "goVersion": "n/a"
             }
@@ -548,7 +548,7 @@ fn spawn_retention_sweeper(
 ) {
     tokio::spawn(async move {
         loop {
-            match crabka_metrics::enforce_compaction_retention(
+            match krabka_metrics::enforce_compaction_retention(
                 store.clone(),
                 unix_time_ms(),
                 retention,
@@ -605,12 +605,12 @@ mod tests {
 
     #[test]
     fn client_resource_policy_parses_defaults_and_overrides() {
-        let defaults = Cli::try_parse_from(["crabka-metrics", "--target", "distributor"]).unwrap();
+        let defaults = Cli::try_parse_from(["krabka-metrics", "--target", "distributor"]).unwrap();
         assert!(defaults.client_dispatch_queue_capacity == 64);
-        assert!(defaults.client_frame_max == crabka_units::mebibytes(100));
+        assert!(defaults.client_frame_max == krabka_units::mebibytes(100));
 
         let custom = Cli::try_parse_from([
-            "crabka-metrics",
+            "krabka-metrics",
             "--target",
             "distributor",
             "--client-dispatch-queue-capacity",
@@ -620,18 +620,18 @@ mod tests {
         ])
         .unwrap();
         assert!(custom.client_dispatch_queue_capacity == 7);
-        assert!(custom.client_frame_max == crabka_units::kibibytes(32));
+        assert!(custom.client_frame_max == krabka_units::kibibytes(32));
 
         for args in [
             vec![
-                "crabka-metrics",
+                "krabka-metrics",
                 "--target",
                 "distributor",
                 "--client-dispatch-queue-capacity",
                 "0",
             ],
             vec![
-                "crabka-metrics",
+                "krabka-metrics",
                 "--target",
                 "distributor",
                 "--client-frame-max",
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn client_resource_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_METRICS_CLIENT_RESOURCE_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_METRICS_CLIENT_RESOURCE_POLICY_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -654,20 +654,20 @@ mod tests {
                         "tests::client_resource_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_METRICS_CLIENT_DISPATCH_QUEUE_CAPACITY", "7")
-                    .env("CRABKA_METRICS_CLIENT_FRAME_MAX", "32KiB")
+                    .env("KRABKA_METRICS_CLIENT_DISPATCH_QUEUE_CAPACITY", "7")
+                    .env("KRABKA_METRICS_CLIENT_FRAME_MAX", "32KiB")
                     .status()
                     .expect("child test");
             assert!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-metrics", "--target", "distributor"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-metrics", "--target", "distributor"]).unwrap();
         assert!(from_env.client_dispatch_queue_capacity == 7);
-        assert!(from_env.client_frame_max == crabka_units::kibibytes(32));
+        assert!(from_env.client_frame_max == krabka_units::kibibytes(32));
 
         let from_cli = Cli::try_parse_from([
-            "crabka-metrics",
+            "krabka-metrics",
             "--target",
             "distributor",
             "--client-dispatch-queue-capacity",
@@ -677,31 +677,31 @@ mod tests {
         ])
         .unwrap();
         assert!(from_cli.client_dispatch_queue_capacity == 9);
-        assert!(from_cli.client_frame_max == crabka_units::kibibytes(64));
+        assert!(from_cli.client_frame_max == krabka_units::kibibytes(64));
     }
 
     #[test]
     fn parses_distributor_target() {
-        let cli = Cli::try_parse_from(["crabka-metrics", "--target", "distributor"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-metrics", "--target", "distributor"]).unwrap();
 
         assert!(matches!(cli.target, Target::Distributor));
     }
 
     #[test]
     fn distributor_policy_parses_defaults_overrides_and_boundaries() {
-        let defaults = Cli::try_parse_from(["crabka-metrics", "--target", "distributor"]).unwrap();
+        let defaults = Cli::try_parse_from(["krabka-metrics", "--target", "distributor"]).unwrap();
         check!(
             defaults.ha_failover_timeout
-                == crabka_metrics::distributor::DEFAULT_HA_FAILOVER_TIMEOUT
+                == krabka_metrics::distributor::DEFAULT_HA_FAILOVER_TIMEOUT
         );
         check!(defaults.ingest_rate_bucket_cap == DEFAULT_MAX_RATE_BUCKETS);
         check!(
             defaults.distributor_max_decompressed
-                == crabka_metrics::distributor::DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED
+                == krabka_metrics::distributor::DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED
         );
 
         let configured = Cli::try_parse_from([
-            "crabka-metrics",
+            "krabka-metrics",
             "--target",
             "distributor",
             "--ha-failover-timeout",
@@ -722,7 +722,7 @@ mod tests {
             ["--distributor-max-decompressed", "1.5B"],
         ] {
             let input = [
-                "crabka-metrics",
+                "krabka-metrics",
                 "--target",
                 "distributor",
                 args[0],
@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn distributor_policy_reads_environment_and_prefers_cli() {
-        const CHILD: &str = "CRABKA_METRICS_DISTRIBUTOR_POLICY_CHILD";
+        const CHILD: &str = "KRABKA_METRICS_DISTRIBUTOR_POLICY_CHILD";
 
         if std::env::var_os(CHILD).is_none() {
             let status =
@@ -744,22 +744,22 @@ mod tests {
                         "tests::distributor_policy_reads_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("CRABKA_METRICS_HA_FAILOVER_TIMEOUT", "-1s")
-                    .env("CRABKA_METRICS_INGEST_RATE_BUCKET_CAP", "7")
-                    .env("CRABKA_METRICS_DISTRIBUTOR_MAX_DECOMPRESSED", "64KiB")
+                    .env("KRABKA_METRICS_HA_FAILOVER_TIMEOUT", "-1s")
+                    .env("KRABKA_METRICS_INGEST_RATE_BUCKET_CAP", "7")
+                    .env("KRABKA_METRICS_DISTRIBUTOR_MAX_DECOMPRESSED", "64KiB")
                     .status()
                     .expect("child test");
             assert!(status.success());
             return;
         }
 
-        let from_env = Cli::try_parse_from(["crabka-metrics", "--target", "distributor"]).unwrap();
+        let from_env = Cli::try_parse_from(["krabka-metrics", "--target", "distributor"]).unwrap();
         check!(from_env.ha_failover_timeout == Time::from_millis(-1_000));
         check!(from_env.ingest_rate_bucket_cap == 7);
         check!(from_env.distributor_max_decompressed == kibibytes(64));
 
         let from_cli = Cli::try_parse_from([
-            "crabka-metrics",
+            "krabka-metrics",
             "--target",
             "distributor",
             "--ha-failover-timeout",
@@ -778,7 +778,7 @@ mod tests {
     #[test]
     fn parses_distributor_ha_tracker_options() {
         let cli = Cli::try_parse_from([
-            "crabka-metrics",
+            "krabka-metrics",
             "--target",
             "distributor",
             "--ha-tracker-topic",
@@ -800,7 +800,7 @@ mod tests {
 
     #[test]
     fn parses_query_frontend_target() {
-        let cli = Cli::try_parse_from(["crabka-metrics", "--target", "query-frontend"]).unwrap();
+        let cli = Cli::try_parse_from(["krabka-metrics", "--target", "query-frontend"]).unwrap();
 
         assert!(matches!(cli.target, Target::QueryFrontend));
     }
@@ -892,7 +892,7 @@ mod tests {
     #[test]
     fn parses_compactor_runtime_options() {
         let cli = Cli::try_parse_from([
-            "crabka-metrics",
+            "krabka-metrics",
             "--target",
             "compactor",
             "--bootstrap",
@@ -923,17 +923,17 @@ mod tests {
 
         temp_env::with_vars(
             [
-                ("CRABKA_METRICS_TARGET", Some("compactor")),
-                ("CRABKA_METRICS_COMPACTOR_POLL_TIMEOUT", Some("250ms")),
-                ("CRABKA_METRICS_COMPACTOR_FLUSH_MAX_AGE", Some("2m")),
-                ("CRABKA_METRICS_COMPACTOR_RETENTION", Some("1h")),
+                ("KRABKA_METRICS_TARGET", Some("compactor")),
+                ("KRABKA_METRICS_COMPACTOR_POLL_TIMEOUT", Some("250ms")),
+                ("KRABKA_METRICS_COMPACTOR_FLUSH_MAX_AGE", Some("2m")),
+                ("KRABKA_METRICS_COMPACTOR_RETENTION", Some("1h")),
                 (
-                    "CRABKA_METRICS_COMPACTOR_RETENTION_SWEEP_INTERVAL",
+                    "KRABKA_METRICS_COMPACTOR_RETENTION_SWEEP_INTERVAL",
                     Some("30s"),
                 ),
             ],
             || {
-                let cli = Cli::try_parse_from(["crabka-metrics"]).expect("parse environment");
+                let cli = Cli::try_parse_from(["krabka-metrics"]).expect("parse environment");
                 assert!(matches!(cli.target, Target::Compactor));
                 assert!(
                     (
@@ -949,6 +949,6 @@ mod tests {
 
     #[test]
     fn rejects_unknown_target() {
-        assert!(Cli::try_parse_from(["crabka-metrics", "--target", "bogus"]).is_err());
+        assert!(Cli::try_parse_from(["krabka-metrics", "--target", "bogus"]).is_err());
     }
 }

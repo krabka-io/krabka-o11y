@@ -1,4 +1,4 @@
-use crabka_blockstore::Labels;
+use krabka_blockstore::Labels;
 use promql_parser::parser::{Call, Expr};
 
 use super::{

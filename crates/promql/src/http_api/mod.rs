@@ -13,8 +13,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use crabka_metrics::{LimitError, OverridesProvider, wire::WireError};
-use crabka_units::prelude::*;
+use krabka_metrics::{LimitError, OverridesProvider, wire::WireError};
+use krabka_units::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};

@@ -13,7 +13,7 @@ use std::{
 
 use assert2::check;
 use axum::{Router, extract::State, routing::get};
-use crabka_traces::frontend::{
+use krabka_traces::frontend::{
     backend::{QuerierBackend, SearchJobRequest, TagValuesJobRequest, TraceByIdJobRequest},
     http_backend::HttpQuerier,
     job::JobShard,

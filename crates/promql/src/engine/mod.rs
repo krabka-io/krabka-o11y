@@ -52,7 +52,6 @@ pub(crate) use annotations::ANNOTATIONS;
 use annotations::{emit_warning, invalid_quantile_warning, is_valid_quantile};
 #[cfg(test)]
 use binary::{InstantValue, combine_instant_binary};
-use crabka_units::prelude::*;
 pub(crate) use histogram::add_compatible_native_histogram;
 #[cfg(all(test, feature = "experimental-functions"))]
 use histogram::apply_histogram_quantiles;
@@ -63,6 +62,7 @@ use histogram::{
 use histogram::{native_histograms_are_range_compatible, scale_native_histogram_values};
 #[cfg(test)]
 use info::apply_info;
+use krabka_units::prelude::*;
 use planned::{InstantShape, PlannedInstant};
 use planner_support::{LabelOpsKind, string_literal_value};
 #[cfg(test)]

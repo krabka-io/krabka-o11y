@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stale-epoch ISR fencing (broker epoch = registration commit offset) ([#372](https://github.com/robot-head/crabka/pull/372))
 
-- Finish format/update features (crabka format --feature, JVM-validated) ([#370](https://github.com/robot-head/crabka/pull/370))
+- Finish format/update features (krabka format --feature, JVM-validated) ([#370](https://github.com/robot-head/crabka/pull/370))
 
 - Handle disk failure for JBOD (controller-side failover + self-shutdown) ([#374](https://github.com/robot-head/crabka/pull/374))
 
@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Refresh status for recently landed features ([#298](https://github.com/robot-head/crabka/pull/298))
 
-- Graduate Crabka to beta, refresh KIP matrix, bump to 0.2.0 ([#361](https://github.com/robot-head/crabka/pull/361))
+- Graduate Krabka to beta, refresh KIP matrix, bump to 0.2.0 ([#361](https://github.com/robot-head/crabka/pull/361))
 
 - Refresh benchmark results for v0.2.0 ([#363](https://github.com/robot-head/crabka/pull/363))
 

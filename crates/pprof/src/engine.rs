@@ -6,8 +6,8 @@ use arrow::{
     array::AsArray,
     datatypes::{Int64Type, UInt64Type},
 };
-use crabka_blockstore::{LabelMatcher, MatchOp};
-use crabka_units::Time;
+use krabka_blockstore::{LabelMatcher, MatchOp};
+use krabka_units::Time;
 
 use crate::{
     FlameGraph, FlameGraphDiff, Frame, Heatmap, LabeledHeatmap, ProfileError, ProfileStore,
@@ -1060,7 +1060,7 @@ mod tests {
     use std::sync::Arc;
 
     use assert2::{assert, check};
-    use crabka_units::secs;
+    use krabka_units::secs;
 
     use super::*;
     use crate::{FunctionRec, InMemoryProfileStore, LineRec, LocationRec, SeriesAgg};

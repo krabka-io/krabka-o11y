@@ -1,4 +1,4 @@
-//! Signal-agnostic columnar block store for Crabka observability.
+//! Signal-agnostic columnar block store for Krabka observability.
 //!
 //! A *block* is a tenant-scoped, time-bounded Parquet file on object storage
 //! with mandatory identity/time columns (`series_fingerprint`, `timestamp`)

@@ -211,31 +211,32 @@ crate.from_cargo(
 # crate's directory by matching the crate name against the members list, and it
 # skips glob entries, so each member's path is named here instead.
 SIBLING_MEMBERS = {
-    "crabka-audit": "crates/audit",
-    "crabka-authz": "crates/authz",
-    "crabka-broker": "crates/broker",
-    "crabka-client-admin": "crates/client-admin",
-    "crabka-client-consumer": "crates/client-consumer",
-    "crabka-client-core": "crates/client-core",
-    "crabka-client-producer": "crates/client-producer",
-    "crabka-compression": "crates/compression",
-    "crabka-ids": "crates/ids",
-    "crabka-kraft-core": "crates/kraft-core",
-    "crabka-log": "crates/log",
-    "crabka-logfmt": "crates/logfmt",
-    "crabka-metadata": "crates/metadata",
-    "crabka-object-store": "crates/object-store",
-    "crabka-raft": "crates/raft",
-    "crabka-records-legacy": "crates/records-legacy",
-    "crabka-remote-storage": "crates/remote-storage",
-    "crabka-remote-storage-topic": "crates/remote-storage-topic",
-    "crabka-security": "crates/security",
-    "crabka-telemetry": "crates/telemetry",
-    "crabka-throttle": "crates/throttle",
-    "crabka-trace-context": "crates/trace-context",
-    "crabka-units": "crates/units",
-    "crabka-verified": "crates/verified",
-    "crabka-voters": "crates/voters",
+    "krabka-audit": "crates/audit",
+    "krabka-authz": "crates/authz",
+    "krabka-broker": "crates/broker",
+    "krabka-client-admin": "crates/client-admin",
+    "krabka-client-consumer": "crates/client-consumer",
+    "krabka-client-core": "crates/client-core",
+    "krabka-client-producer": "crates/client-producer",
+    "krabka-compression": "crates/compression",
+    "krabka-ids": "crates/ids",
+    "krabka-kraft-core": "crates/kraft-core",
+    "krabka-log": "crates/log",
+    "krabka-logfmt": "crates/logfmt",
+    "krabka-metadata": "crates/metadata",
+    "krabka-object-store": "crates/object-store",
+    "krabka-raft": "crates/raft",
+    "krabka-records-legacy": "crates/records-legacy",
+    "krabka-remote-storage": "crates/remote-storage",
+    "krabka-remote-storage-topic": "crates/remote-storage-topic",
+    "krabka-schema-serde": "crates/schema-serde",
+    "krabka-security": "crates/security",
+    "krabka-telemetry": "crates/telemetry",
+    "krabka-throttle": "crates/throttle",
+    "krabka-trace-context": "crates/trace-context",
+    "krabka-units": "crates/units",
+    "krabka-verified": "crates/verified",
+    "krabka-voters": "crates/voters",
 }
 
 [
@@ -247,7 +248,7 @@ SIBLING_MEMBERS = {
     for crate_name, directory in SIBLING_MEMBERS.items()
 ]
 
-# crabka-protocol carries the same member annotation plus one more. Its build.rs
+# krabka-protocol carries the same member annotation plus one more. Its build.rs
 # only checks that its checked-in `generated/`
 # sources still match the `schemas/` SHAs; it emits no code. It reads its own
 # manifest directory through `env!("CARGO_MANIFEST_DIR")`, which rules_rust
@@ -255,7 +256,7 @@ SIBLING_MEMBERS = {
 # needs the check -- the generated sources are consumed directly -- and the
 # Cargo build in krabka-protocol still runs it.
 crate.annotation(
-    crate = "crabka-protocol",
+    crate = "krabka-protocol",
     gen_build_script = "off",
     strip_prefix = "crates/protocol",
     workspace_cargo_toml = "Cargo.toml",

@@ -27,17 +27,17 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use crabka_traceql::{
+use http_body_util::BodyExt as _;
+use krabka_traceql::{
     AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
 };
-use crabka_traces::{
+use krabka_traces::{
     AttrValue, Limits, Span, SpanRecord, TracesError,
     distributor::{self, DistributorState, WalSink},
     limits::OverridesProvider,
     querier::http::HttpConfig,
 };
-use crabka_units::{Time, convert::TimeExt as _};
-use http_body_util::BodyExt as _;
+use krabka_units::{Time, convert::TimeExt as _};
 use opentelemetry_proto::tonic::{
     common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
     resource::v1::Resource,
@@ -126,7 +126,7 @@ async fn start_querier(
         overrides,
         ..HttpConfig::default()
     };
-    let app = crabka_traces::querier::http::router_with_config(store, cfg);
+    let app = krabka_traces::querier::http::router_with_config(store, cfg);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -232,7 +232,7 @@ fn colliding_trace(service: &str, root_name: &str, extra_attrs: &[(&str, &str)])
             }),
             scope_spans: vec![ScopeSpans {
                 scope: Some(InstrumentationScope {
-                    name: "crabka-isolation".into(),
+                    name: "krabka-isolation".into(),
                     version: "1.0.0".into(),
                     ..InstrumentationScope::default()
                 }),

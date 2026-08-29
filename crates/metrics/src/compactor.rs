@@ -14,12 +14,12 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use async_trait::async_trait;
-use crabka_blockstore::{BlockMeta, BlockStoreError, BlockWriter};
-use crabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
-use crabka_ids::{Offset, PartitionIndex};
-use crabka_telemetry::propagation::{TRACEPARENT, set_remote_parent};
-use crabka_units::prelude::*;
 use futures::TryStreamExt;
+use krabka_blockstore::{BlockMeta, BlockStoreError, BlockWriter};
+use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
+use krabka_ids::{Offset, PartitionIndex};
+use krabka_telemetry::propagation::{TRACEPARENT, set_remote_parent};
+use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};
 use tracing::Instrument as _;
@@ -93,7 +93,7 @@ pub struct MetadataRow {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TenantCompactionRows {
     pub tenant: String,
-    pub series_labels: BTreeMap<u64, crabka_blockstore::Labels>,
+    pub series_labels: BTreeMap<u64, krabka_blockstore::Labels>,
     pub float_rows: Vec<FloatRow>,
     pub histogram_rows: Vec<NativeHistogramRow>,
     pub exemplar_rows: Vec<ExemplarRow>,
@@ -105,7 +105,7 @@ pub struct TenantCompactionRows {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CompactionSeriesLabels {
     pub fingerprint: u64,
-    pub labels: crabka_blockstore::Labels,
+    pub labels: krabka_blockstore::Labels,
 }
 
 /// Arrow batches produced from one tenant's compacted rows.
@@ -237,8 +237,8 @@ const COMPACTION_OBJECT_PREFIX: &str = "metrics";
 /// Configuration for the metrics compactor role.
 #[derive(Clone, Debug)]
 pub struct MetricsCompactorConfig {
-    pub client_dispatch_queue_capacity: crabka_client_core::ConnectionDispatchQueueCapacity,
-    pub client_frame_max: crabka_client_core::ClientFrameMax,
+    pub client_dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
+    pub client_frame_max: krabka_client_core::ClientFrameMax,
     pub bootstrap: String,
     pub group_id: String,
     pub client_id: String,
@@ -533,11 +533,11 @@ impl MetricsCompactorConfig {
     pub fn new(bootstrap: impl Into<String>) -> Self {
         Self {
             client_dispatch_queue_capacity:
-                crabka_client_core::ConnectionDispatchQueueCapacity::default(),
-            client_frame_max: crabka_client_core::ClientFrameMax::default(),
+                krabka_client_core::ConnectionDispatchQueueCapacity::default(),
+            client_frame_max: krabka_client_core::ClientFrameMax::default(),
             bootstrap: bootstrap.into(),
-            group_id: "crabka-metrics-compactor".to_string(),
-            client_id: "crabka-metrics-compactor".to_string(),
+            group_id: "krabka-metrics-compactor".to_string(),
+            client_id: "krabka-metrics-compactor".to_string(),
             wal_topic: crate::WAL_TOPIC.to_string(),
             poll_timeout: secs(1),
             auto_offset_reset: AutoOffsetReset::Earliest,
@@ -1404,7 +1404,7 @@ fn compaction_batch_span(records: &[ConsumerRecord], wal_records: usize) -> trac
     let span = tracing::info_span!(
         "metrics_compaction",
         otel.kind = "consumer",
-        crabka.wal.records = wal_records,
+        krabka.wal.records = wal_records,
     );
     if let Some(record) = records.iter().find(|record| {
         record
@@ -2328,8 +2328,8 @@ mod tests {
             flush_max_age: secs(10),
         };
         let record = |offset: i64| super::CompactionWalRecord {
-            partition: crabka_ids::PartitionIndex(0),
-            offset: crabka_ids::Offset(offset),
+            partition: krabka_ids::PartitionIndex(0),
+            offset: krabka_ids::Offset(offset),
             value: Vec::new(),
         };
         let now = Instant::now();
@@ -2381,8 +2381,8 @@ mod tests {
 
     use assert2::{assert, check};
     use async_trait::async_trait;
-    use crabka_blockstore::Labels;
-    use crabka_units::prelude::*;
+    use krabka_blockstore::Labels;
+    use krabka_units::prelude::*;
     use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory};
 
     use super::{compact_wal_records, encode_tenant_batches};
@@ -2611,7 +2611,7 @@ mod tests {
             row_count: 2,
         };
 
-        let block_meta = crabka_blockstore::BlockMeta {
+        let block_meta = krabka_blockstore::BlockMeta {
             tenant: "tenant-a".to_string(),
             object_key: plan.block_key.clone(),
             min_ts: 1_000,
@@ -2694,7 +2694,7 @@ mod tests {
     #[tokio::test]
     async fn retention_deletes_blocks_and_indexes_older_than_cutoff() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store.clone());
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
         let sink = super::ObjectStoreCompactionIndexSink::new(object_store.clone());
 
         let old_plan = super::compaction_partition_object_plan(
@@ -2854,14 +2854,14 @@ mod tests {
     fn metrics_compactor_config_validates_required_consumer_fields() {
         let cfg = super::MetricsCompactorConfig {
             client_dispatch_queue_capacity:
-                crabka_client_core::ConnectionDispatchQueueCapacity::default(),
-            client_frame_max: crabka_client_core::ClientFrameMax::default(),
+                krabka_client_core::ConnectionDispatchQueueCapacity::default(),
+            client_frame_max: krabka_client_core::ClientFrameMax::default(),
             bootstrap: String::new(),
             group_id: "metrics-compactor".to_string(),
-            client_id: "crabka-metrics-compactor".to_string(),
+            client_id: "krabka-metrics-compactor".to_string(),
             wal_topic: crate::WAL_TOPIC.to_string(),
             poll_timeout: millis(500),
-            auto_offset_reset: crabka_client_consumer::AutoOffsetReset::Earliest,
+            auto_offset_reset: krabka_client_consumer::AutoOffsetReset::Earliest,
             flush_max_rows: super::DEFAULT_FLUSH_MAX_ROWS,
             flush_max_age: super::DEFAULT_FLUSH_MAX_AGE,
         };
@@ -2875,14 +2875,14 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let cfg = super::MetricsCompactorConfig {
             client_dispatch_queue_capacity:
-                crabka_client_core::ConnectionDispatchQueueCapacity::default(),
-            client_frame_max: crabka_client_core::ClientFrameMax::default(),
+                krabka_client_core::ConnectionDispatchQueueCapacity::default(),
+            client_frame_max: krabka_client_core::ClientFrameMax::default(),
             bootstrap: "127.0.0.1:9092".to_string(),
             group_id: "metrics-compactor".to_string(),
-            client_id: "crabka-metrics-compactor".to_string(),
+            client_id: "krabka-metrics-compactor".to_string(),
             wal_topic: crate::WAL_TOPIC.to_string(),
             poll_timeout: millis(250),
-            auto_offset_reset: crabka_client_consumer::AutoOffsetReset::Earliest,
+            auto_offset_reset: krabka_client_consumer::AutoOffsetReset::Earliest,
             flush_max_rows: 12_345,
             flush_max_age: secs(7),
         };
@@ -2946,7 +2946,7 @@ mod tests {
     #[tokio::test]
     async fn write_compacted_tenant_blocks_writes_block_before_index_manifest() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store.clone());
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
         let sink = RecordingIndexSink::default();
         let rows = super::TenantCompactionRows {
             tenant: "tenant-a".to_string(),
@@ -2976,7 +2976,7 @@ mod tests {
         check!(writes.len() == 1);
         check!(writes[0].kind == super::MetricBlockKind::Float);
         check!(writes[0].block_meta.row_count == 2);
-        let persisted = crabka_blockstore::read_block(object_store, &writes[0].manifest.block_key)
+        let persisted = krabka_blockstore::read_block(object_store, &writes[0].manifest.block_key)
             .await
             .expect("read persisted block");
         assert!(persisted.len() == 1);
@@ -2994,7 +2994,7 @@ mod tests {
     #[tokio::test]
     async fn write_compacted_tenant_blocks_persists_metadata_only_rows() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store.clone());
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
         let sink = RecordingIndexSink::default();
         let rows = super::TenantCompactionRows {
             tenant: "tenant-a".to_string(),
@@ -3019,7 +3019,7 @@ mod tests {
         check!(writes.len() == 1);
         check!(writes[0].kind == super::MetricBlockKind::Metadata);
         check!(writes[0].block_meta.row_count == 1);
-        let persisted = crabka_blockstore::read_block(object_store, &writes[0].manifest.block_key)
+        let persisted = krabka_blockstore::read_block(object_store, &writes[0].manifest.block_key)
             .await
             .expect("read persisted metadata block");
         assert!(persisted.len() == 1);
@@ -3056,7 +3056,7 @@ mod tests {
     #[tokio::test]
     async fn process_compaction_partition_window_commits_after_blocks_and_indexes() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let committer = RecordingOffsetCommitter::default();
         let first = float_record("tenant-a", "up", "api", 100);
@@ -3141,7 +3141,7 @@ mod tests {
         // and commits once, so a mid-batch failure must leave NOTHING committed
         // and the next poll re-reads from the last committed offset (at-least-once).
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         // Float-only records => exactly one block (one index manifest) per
         // partition, so `ok_before_failure = 1` lets partition 0 through and fails
         // partition 1.
@@ -3175,7 +3175,7 @@ mod tests {
     #[tokio::test]
     async fn process_compaction_record_batch_groups_partitions_and_uses_distinct_block_keys() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let committer = RecordingOffsetCommitter::default();
         let records = vec![
@@ -3226,7 +3226,7 @@ mod tests {
     fn compaction_wal_records_from_consumer_records_filters_topic_and_requires_values() {
         let wal_record = float_record("tenant-a", "up", "api", 100);
         let records = vec![
-            crabka_client_consumer::ConsumerRecord {
+            krabka_client_consumer::ConsumerRecord {
                 topic: crate::WAL_TOPIC.to_string(),
                 partition: 2,
                 offset: 10,
@@ -3236,7 +3236,7 @@ mod tests {
                 value: Some(bytes::Bytes::from(wal_record.encode().expect("encode wal"))),
                 headers: Vec::new(),
             },
-            crabka_client_consumer::ConsumerRecord {
+            krabka_client_consumer::ConsumerRecord {
                 topic: "unrelated".to_string(),
                 partition: 2,
                 offset: 11,
@@ -3261,7 +3261,7 @@ mod tests {
                 }]
         );
 
-        let missing_value = vec![crabka_client_consumer::ConsumerRecord {
+        let missing_value = vec![krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 3,
             offset: 12,
@@ -3315,7 +3315,7 @@ mod tests {
     }
 
     struct StaticPoller {
-        records: Vec<crabka_client_consumer::ConsumerRecord>,
+        records: Vec<krabka_client_consumer::ConsumerRecord>,
     }
 
     #[async_trait]
@@ -3323,7 +3323,7 @@ mod tests {
         async fn poll(
             &mut self,
             _timeout: Time,
-        ) -> Result<Vec<crabka_client_consumer::ConsumerRecord>, super::CompactionConsumerPollError>
+        ) -> Result<Vec<krabka_client_consumer::ConsumerRecord>, super::CompactionConsumerPollError>
         {
             Ok(std::mem::take(&mut self.records))
         }
@@ -3332,13 +3332,13 @@ mod tests {
     #[tokio::test]
     async fn poll_compactor_once_converts_processes_and_commits_records() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit);
         let wal_record = float_record("tenant-a", "up", "api", 100);
         let mut poller = StaticPoller {
-            records: vec![crabka_client_consumer::ConsumerRecord {
+            records: vec![krabka_client_consumer::ConsumerRecord {
                 topic: crate::WAL_TOPIC.to_string(),
                 partition: 4,
                 offset: 21,
@@ -3376,7 +3376,7 @@ mod tests {
     }
 
     struct QueuePoller {
-        batches: Vec<Vec<crabka_client_consumer::ConsumerRecord>>,
+        batches: Vec<Vec<krabka_client_consumer::ConsumerRecord>>,
     }
 
     #[async_trait]
@@ -3384,7 +3384,7 @@ mod tests {
         async fn poll(
             &mut self,
             _timeout: Time,
-        ) -> Result<Vec<crabka_client_consumer::ConsumerRecord>, super::CompactionConsumerPollError>
+        ) -> Result<Vec<krabka_client_consumer::ConsumerRecord>, super::CompactionConsumerPollError>
         {
             if self.batches.is_empty() {
                 Ok(Vec::new())
@@ -3399,11 +3399,11 @@ mod tests {
         // Two below-threshold polls must accumulate into ONE block (not one per
         // poll) and commit offsets only at the single shutdown flush.
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit);
-        let make_record = |offset, timestamp| crabka_client_consumer::ConsumerRecord {
+        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
             offset,
@@ -3469,11 +3469,11 @@ mod tests {
     async fn run_compactor_loop_flushes_when_row_threshold_reached() {
         // Crossing flush_max_rows must flush mid-loop without waiting for stop.
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit);
-        let make_record = |offset, timestamp| crabka_client_consumer::ConsumerRecord {
+        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
             offset,
@@ -3552,11 +3552,11 @@ mod tests {
     async fn run_compactor_loop_age_flush_uses_injected_clock() {
         // With a finite age, the buffer flushes only after the clock advances past it.
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit);
-        let make_record = |offset, timestamp| crabka_client_consumer::ConsumerRecord {
+        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
             offset,
@@ -3622,9 +3622,9 @@ mod tests {
     #[tokio::test]
     async fn run_compactor_consumer_loop_uses_one_consumer_for_poll_and_commit() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
-        let make_record = |offset, timestamp| crabka_client_consumer::ConsumerRecord {
+        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
             offset,
@@ -3669,9 +3669,9 @@ mod tests {
     async fn run_compactor_consumer_loop_accumulates_multiple_polls_into_one_block() {
         // Two below-threshold polls accumulate into ONE block and commit once.
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
-        let make_record = |offset, timestamp| crabka_client_consumer::ConsumerRecord {
+        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
             offset,
@@ -3782,7 +3782,7 @@ mod tests {
     #[tokio::test]
     async fn run_compactor_loop_commits_offsets_only_after_durable_block_write() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = crabka_blockstore::BlockWriter::new(object_store.clone());
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
         let events = Arc::new(Mutex::new(Vec::<String>::new()));
         let block_key = super::compaction_partition_object_key(
             "tenant-a",
@@ -3800,7 +3800,7 @@ mod tests {
             events: Arc::clone(&events),
             block_key: block_key.clone(),
         };
-        let make_record = |offset, timestamp| crabka_client_consumer::ConsumerRecord {
+        let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
             offset,
@@ -3842,7 +3842,7 @@ mod tests {
     }
 
     struct PollAndCommit {
-        batches: Vec<Vec<crabka_client_consumer::ConsumerRecord>>,
+        batches: Vec<Vec<krabka_client_consumer::ConsumerRecord>>,
         commit_calls: usize,
     }
 
@@ -3851,7 +3851,7 @@ mod tests {
         async fn poll(
             &mut self,
             _timeout: Time,
-        ) -> Result<Vec<crabka_client_consumer::ConsumerRecord>, super::CompactionConsumerPollError>
+        ) -> Result<Vec<krabka_client_consumer::ConsumerRecord>, super::CompactionConsumerPollError>
         {
             if self.batches.is_empty() {
                 Ok(Vec::new())
@@ -3914,12 +3914,12 @@ mod tests {
 
     #[test]
     fn compact_wal_records_does_not_duplicate_series_exemplars_per_sample() {
-        let labels = crabka_blockstore::Labels::from_iter([
+        let labels = krabka_blockstore::Labels::from_iter([
             ("__name__".to_string(), "http_requests_total".to_string()),
             ("job".to_string(), "api".to_string()),
         ]);
         let exemplar_labels =
-            crabka_blockstore::Labels::from_iter([("trace_id".to_string(), "abc".to_string())]);
+            krabka_blockstore::Labels::from_iter([("trace_id".to_string(), "abc".to_string())]);
         let records = wal_records_from_series(
             "tenant-a",
             &[DecodedSeries {

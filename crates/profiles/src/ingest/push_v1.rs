@@ -4,9 +4,9 @@
 
 use std::io::Read;
 
-use crabka_blockstore::Labels;
-use crabka_pprof::PprofProfile;
-use crabka_units::{ByteSize, convert::ByteSizeExt as _};
+use krabka_blockstore::Labels;
+use krabka_pprof::PprofProfile;
+use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 use crate::{error::ProfilesError, ingest::RawProfile, wire::pb};
 
@@ -78,7 +78,7 @@ mod tests {
     use std::io::Write;
 
     use assert2::assert;
-    use crabka_units::{bytes, mebibytes};
+    use krabka_units::{bytes, mebibytes};
 
     use super::*;
     use crate::wire::pb;

@@ -14,10 +14,10 @@ crate_library(
     compile_data = glob(["tests/fixtures/**"]),
 )
 
-# `bazel run //crates/profiles:crabka-profiles -- --help`.
+# `bazel run //crates/profiles:krabka-profiles -- --help`.
 crate_binary(
-    name = "crabka-profiles",
-    crate_root = "src/bin/crabka-profiles.rs",
+    name = "krabka-profiles",
+    crate_root = "src/bin/krabka-profiles.rs",
     lib = ":profiles",
 )
 

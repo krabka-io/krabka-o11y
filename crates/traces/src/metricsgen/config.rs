@@ -1,6 +1,6 @@
 //! Metrics-generator configuration.
 
-use crabka_units::{Time, secs};
+use krabka_units::{Time, secs};
 use serde::{Deserialize, Serialize};
 
 /// Tempo-default latency histogram bucket edges, in nanoseconds.
@@ -27,14 +27,14 @@ pub const DEFAULT_LATENCY_BUCKETS_NS: &[f64] = &[
 pub struct MetricsGenConfig {
     #[serde(
         rename = "collection_interval_secs",
-        with = "crabka_units::serde_units::numeric::secs_i64"
+        with = "krabka_units::serde_units::numeric::secs_i64"
     )]
     pub collection_interval: Time,
     pub histogram_buckets_ns: Vec<f64>,
     pub max_exemplars_per_series: usize,
     #[serde(
         rename = "edge_ttl_secs",
-        with = "crabka_units::serde_units::numeric::secs_i64"
+        with = "krabka_units::serde_units::numeric::secs_i64"
     )]
     pub edge_ttl: Time,
     pub edge_store_max_items: usize,

@@ -19,12 +19,12 @@ use connectrpc_axum::{
     MakeServiceBuilder, MessageLimits,
     message::{Code, ConnectError, ConnectRequest, ConnectResponse},
 };
-use crabka_client_producer::{Header, Producer, ProducerRecord};
-use crabka_pprof::PprofProfile;
-use crabka_throttle::TokenBucket;
+use krabka_client_producer::{Header, Producer, ProducerRecord};
+use krabka_pprof::PprofProfile;
+use krabka_throttle::TokenBucket;
 #[cfg(test)]
-use crabka_units::mebibytes;
-use crabka_units::{
+use krabka_units::mebibytes;
+use krabka_units::{
     ByteSize, Frequency,
     convert::{ByteSizeExt, FrequencyExt as _, StdDurationExt as _},
 };
@@ -81,7 +81,7 @@ impl WalSink for KafkaSink {
         // as Kafka record headers so the block-builder consumer can re-parent
         // its block-build span onto this ingest span, stitching one distributed
         // trace across the WAL. Additive: empty when no active/sampled span.
-        let headers = crabka_telemetry::propagation::current_trace_headers()
+        let headers = krabka_telemetry::propagation::current_trace_headers()
             .into_iter()
             .map(|(k, v)| Header {
                 key: k,
@@ -230,7 +230,7 @@ fn enforce_ingestion_rate(
     Ok(())
 }
 
-/// The `TokenBucket` kernel in `crabka-broker` is Creusot-verified over
+/// The `TokenBucket` kernel in `krabka-broker` is Creusot-verified over
 /// integers. This function therefore converts the configured `Frequency` to
 /// whole tokens per second.
 fn rate_tokens_per_sec(limits: &Limits) -> u64 {
@@ -500,16 +500,16 @@ async fn push_handler(
     // No raw body is exposed by the Connect codec; the decoded message size is a
     // faithful proxy for the request payload bytes.
     let bytes = req.0.encoded_len() as u64;
-    // ONE server span per ingest request (not per sample). `crabka.ingest.samples`
+    // ONE server span per ingest request (not per sample). `krabka.ingest.samples`
     // is filled in after the body runs and the item count is known.
     let ingest_span = tracing::info_span!(
         "profiles_ingest",
         otel.kind = "server",
         messaging.system = "kafka",
         messaging.destination.name = PROFILES_WAL_TOPIC,
-        crabka.tenant = %ingest_span_tenant(&headers),
-        crabka.ingest.samples = tracing::field::Empty,
-        crabka.ingest.bytes = bytes,
+        krabka.tenant = %ingest_span_tenant(&headers),
+        krabka.ingest.samples = tracing::field::Empty,
+        krabka.ingest.bytes = bytes,
     );
     let result = async {
         let tenant = tenant_from_headers(&headers)?;
@@ -521,7 +521,7 @@ async fn push_handler(
     .instrument(ingest_span.clone())
     .await;
     let items = *result.as_ref().unwrap_or(&0);
-    ingest_span.record("crabka.ingest.samples", items);
+    ingest_span.record("krabka.ingest.samples", items);
     if let Ok(tenant) = tenant_from_headers(&headers) {
         state.metrics.record_ingest_samples(&tenant, items);
     }
@@ -544,16 +544,16 @@ async fn export_handler(
     // No raw body is exposed by the Connect codec; the decoded message size is a
     // faithful proxy for the request payload bytes.
     let bytes = req.0.encoded_len() as u64;
-    // ONE server span per ingest request (not per sample). `crabka.ingest.samples`
+    // ONE server span per ingest request (not per sample). `krabka.ingest.samples`
     // is filled in after the body runs and the item count is known.
     let ingest_span = tracing::info_span!(
         "profiles_ingest",
         otel.kind = "server",
         messaging.system = "kafka",
         messaging.destination.name = PROFILES_WAL_TOPIC,
-        crabka.tenant = %ingest_span_tenant(&headers),
-        crabka.ingest.samples = tracing::field::Empty,
-        crabka.ingest.bytes = bytes,
+        krabka.tenant = %ingest_span_tenant(&headers),
+        krabka.ingest.samples = tracing::field::Empty,
+        krabka.ingest.bytes = bytes,
     );
     let result = async {
         let tenant = tenant_from_headers(&headers)?;
@@ -565,7 +565,7 @@ async fn export_handler(
     .instrument(ingest_span.clone())
     .await;
     let items = *result.as_ref().unwrap_or(&0);
-    ingest_span.record("crabka.ingest.samples", items);
+    ingest_span.record("krabka.ingest.samples", items);
     if let Ok(tenant) = tenant_from_headers(&headers) {
         state.metrics.record_ingest_samples(&tenant, items);
     }
@@ -591,16 +591,16 @@ async fn otlp_http_handler(
     let start = std::time::Instant::now();
     let bytes = body.len() as u64;
     let mut items: u64 = 0;
-    // ONE server span per ingest request (not per sample). `crabka.ingest.samples`
+    // ONE server span per ingest request (not per sample). `krabka.ingest.samples`
     // is filled in after the body runs and the item count is known.
     let ingest_span = tracing::info_span!(
         "profiles_ingest",
         otel.kind = "server",
         messaging.system = "kafka",
         messaging.destination.name = PROFILES_WAL_TOPIC,
-        crabka.tenant = %ingest_span_tenant(&headers),
-        crabka.ingest.samples = tracing::field::Empty,
-        crabka.ingest.bytes = bytes,
+        krabka.tenant = %ingest_span_tenant(&headers),
+        krabka.ingest.samples = tracing::field::Empty,
+        krabka.ingest.bytes = bytes,
     );
     let result = async {
         let tenant = tenant_from_headers(&headers)?;
@@ -619,7 +619,7 @@ async fn otlp_http_handler(
     .instrument(ingest_span.clone())
     .await;
 
-    ingest_span.record("crabka.ingest.samples", items);
+    ingest_span.record("krabka.ingest.samples", items);
     if let Ok(tenant) = tenant_from_headers(&headers) {
         state.metrics.record_ingest_samples(&tenant, items);
     }
@@ -649,15 +649,15 @@ async fn ingest_handler(
     let start = std::time::Instant::now();
     let bytes = body.len() as u64;
     // ONE server span per ingest request. The `/ingest` door carries exactly one
-    // profile per request, so `crabka.ingest.samples` is fixed at 1.
+    // profile per request, so `krabka.ingest.samples` is fixed at 1.
     let ingest_span = tracing::info_span!(
         "profiles_ingest",
         otel.kind = "server",
         messaging.system = "kafka",
         messaging.destination.name = PROFILES_WAL_TOPIC,
-        crabka.tenant = %ingest_span_tenant(&headers),
-        crabka.ingest.samples = 1_u64,
-        crabka.ingest.bytes = bytes,
+        krabka.tenant = %ingest_span_tenant(&headers),
+        krabka.ingest.samples = 1_u64,
+        krabka.ingest.bytes = bytes,
     );
     let result = async {
         let tenant = tenant_from_headers(&headers)?;
@@ -912,7 +912,7 @@ mod tests {
     /// number, and only distinct values make that visible.
     #[test]
     fn ingest_limits_fall_back_field_by_field() {
-        use crabka_units::bytes;
+        use krabka_units::bytes;
 
         let base = crate::ingest::TenantLimits {
             max_label_name: bytes(11),
@@ -964,7 +964,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use assert2::{assert, check};
-    use crabka_units::{bytes, per_sec};
+    use krabka_units::{bytes, per_sec};
     use prost::Message;
 
     use super::*;
@@ -1155,7 +1155,7 @@ mod tests {
     #[test]
     fn the_bucket_map_evicts_before_admitting_a_tenant_past_its_cap() {
         let state = state_with_ingestion(1_000_000.0, 0, 2);
-        let rate = crabka_units::Frequency::from_per_sec_u64(10);
+        let rate = krabka_units::Frequency::from_per_sec_u64(10);
         let buckets = |state: &DistributorState| {
             state
                 .ingestion_buckets
@@ -1534,29 +1534,29 @@ mod tests {
     async fn push_normalizes_pprof_symbol_ids_to_wal_indices() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let mut labels = crabka_blockstore::Labels::new();
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "samples");
         labels.insert("service_name", "api");
-        let profile = PprofProfile::from(crabka_pprof::proto::Profile {
-            sample_type: vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
-            sample: vec![crabka_pprof::proto::Sample {
+        let profile = PprofProfile::from(krabka_pprof::proto::Profile {
+            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            sample: vec![krabka_pprof::proto::Sample {
                 location_id: vec![2],
                 value: vec![5],
                 label: Vec::new(),
             }],
             location: vec![
-                crabka_pprof::proto::Location {
+                krabka_pprof::proto::Location {
                     id: 1,
-                    line: vec![crabka_pprof::proto::Line {
+                    line: vec![krabka_pprof::proto::Line {
                         function_id: 1,
                         line: 10,
                         column: 0,
                     }],
                     ..Default::default()
                 },
-                crabka_pprof::proto::Location {
+                krabka_pprof::proto::Location {
                     id: 2,
-                    line: vec![crabka_pprof::proto::Line {
+                    line: vec![krabka_pprof::proto::Line {
                         function_id: 2,
                         line: 20,
                         column: 0,
@@ -1565,14 +1565,14 @@ mod tests {
                 },
             ],
             function: vec![
-                crabka_pprof::proto::Function {
+                krabka_pprof::proto::Function {
                     id: 1,
                     name: 3,
                     system_name: 3,
                     filename: 5,
                     start_line: 1,
                 },
-                crabka_pprof::proto::Function {
+                krabka_pprof::proto::Function {
                     id: 2,
                     name: 4,
                     system_name: 4,
@@ -1588,7 +1588,7 @@ mod tests {
                 "second".to_string(),
                 "main.go".to_string(),
             ],
-            period_type: Some(crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
+            period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
             ..Default::default()
         });
 
@@ -2345,34 +2345,34 @@ overrides:
     async fn mapping_symbolization_flags_are_populated_independently() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
-        let mut labels = crabka_blockstore::Labels::new();
+        let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "samples");
         labels.insert("service_name", "api");
-        let profile = PprofProfile::from(crabka_pprof::proto::Profile {
-            sample_type: vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
-            sample: vec![crabka_pprof::proto::Sample {
+        let profile = PprofProfile::from(krabka_pprof::proto::Profile {
+            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            sample: vec![krabka_pprof::proto::Sample {
                 location_id: vec![1],
                 value: vec![5],
                 label: Vec::new(),
             }],
-            location: vec![crabka_pprof::proto::Location {
+            location: vec![krabka_pprof::proto::Location {
                 id: 1,
                 mapping_id: 1,
-                line: vec![crabka_pprof::proto::Line {
+                line: vec![krabka_pprof::proto::Line {
                     function_id: 1,
                     line: 10,
                     column: 0,
                 }],
                 ..Default::default()
             }],
-            function: vec![crabka_pprof::proto::Function {
+            function: vec![krabka_pprof::proto::Function {
                 id: 1,
                 name: 3,
                 system_name: 3,
                 filename: 4,
                 start_line: 1,
             }],
-            mapping: vec![crabka_pprof::proto::Mapping {
+            mapping: vec![krabka_pprof::proto::Mapping {
                 id: 1,
                 memory_start: 0x1000,
                 memory_limit: 0x2000,
@@ -2382,7 +2382,7 @@ overrides:
                 // Deliberately mixed: functions+line numbers symbolized, but no
                 // filenames and no inline frames. A correct mapping must NOT
                 // collapse these onto `has_functions`.
-                symbolization: crabka_pprof::proto::MappingSymbolization::from_parts((
+                symbolization: krabka_pprof::proto::MappingSymbolization::from_parts((
                     true, false, true, false,
                 )),
             }],
@@ -2394,7 +2394,7 @@ overrides:
                 "main.go".to_string(),
                 "bin".to_string(),
             ],
-            period_type: Some(crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
+            period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
             ..Default::default()
         });
 

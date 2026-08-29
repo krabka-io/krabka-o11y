@@ -13,7 +13,7 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use crabka_traceql::{ScopedTag, TagScope, TypedValue};
+use krabka_traceql::{ScopedTag, TagScope, TypedValue};
 
 use crate::frontend::{
     job::JobShard,
@@ -366,7 +366,7 @@ impl QuerierBackend for MockQuerier {
 
 #[cfg(test)]
 mod tests {
-    use crabka_units::millis;
+    use krabka_units::millis;
 
     use super::*;
     use crate::frontend::{job::JobShard, wire::TraceJson};

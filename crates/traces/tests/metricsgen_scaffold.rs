@@ -1,8 +1,8 @@
 use assert2::check;
-use crabka_traces::metricsgen::{
+use krabka_traces::metricsgen::{
     BucketSpan, NativeHistogram, SpanKind, SpanRecord, StatusCode, TRACES_WAL_TOPIC,
 };
-use crabka_units::{ByteSize, convert::ByteSizeExt as _};
+use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 #[test]
 fn metricsgen_contract_exposes_wal_projection() {
@@ -35,7 +35,7 @@ fn metricsgen_contract_exposes_wal_projection() {
         positive_counts: vec![1.0],
     };
 
-    check!(TRACES_WAL_TOPIC == "__crabka_traces_wal");
+    check!(TRACES_WAL_TOPIC == "__krabka_traces_wal");
     check!(record.service_name == "checkout");
     check!(hist.positive_counts == vec![1.0]);
 }

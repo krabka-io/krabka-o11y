@@ -1,7 +1,7 @@
 //! Traces-service Prometheus metrics.
 //!
 //! The metric spec is uniform across the LGTM observability services. It is a
-//! `prometheus-client` [`Registry`] with the prefix `crabka_traces`, wrapped in
+//! `prometheus-client` [`Registry`] with the prefix `krabka_traces`, wrapped in
 //! `Arc<Mutex<…>>` so the `/metrics` exporter can lock it. The cheaply
 //! cloneable [`ServiceMetrics`] hands out counter and histogram handles, and
 //! the ingest and query handlers increment those directly. Ingest is the
@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use prometheus_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family, histogram::Histogram},
@@ -84,7 +84,7 @@ impl ServiceMetrics {
     /// Build a fresh registry, register every metric, and return the bundle.
     #[must_use]
     pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("crabka_traces");
+        let mut registry = Registry::with_prefix("krabka_traces");
 
         let ingest_requests = Family::<StatusLabel, Counter>::default();
         let ingest_bytes = Counter::default();
@@ -301,15 +301,15 @@ mod tests {
         prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
 
         for needle in [
-            "crabka_traces_ingest_requests_total",
-            "crabka_traces_ingest_bytes_total",
-            "crabka_traces_ingest_items_total",
-            "crabka_traces_ingest_duration_seconds",
-            "crabka_traces_wal_append_failures_total",
-            "crabka_traces_ingest_spans_total",
-            "crabka_traces_blocks_flushed_total",
-            "crabka_traces_query_requests_total",
-            "crabka_traces_query_duration_seconds",
+            "krabka_traces_ingest_requests_total",
+            "krabka_traces_ingest_bytes_total",
+            "krabka_traces_ingest_items_total",
+            "krabka_traces_ingest_duration_seconds",
+            "krabka_traces_wal_append_failures_total",
+            "krabka_traces_ingest_spans_total",
+            "krabka_traces_blocks_flushed_total",
+            "krabka_traces_query_requests_total",
+            "krabka_traces_query_duration_seconds",
             "status=\"ok\"",
             "status=\"error\"",
             "route=\"search\"",
@@ -359,8 +359,8 @@ mod tests {
         let r = m.registry.lock().await;
         prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
         for needle in [
-            "crabka_traces_ingest_bytes_total 2097152",
-            "crabka_traces_ingest_duration_seconds_sum 0.25",
+            "krabka_traces_ingest_bytes_total 2097152",
+            "krabka_traces_ingest_duration_seconds_sum 0.25",
         ] {
             assert2::assert!(buf.contains(needle));
         }
@@ -446,7 +446,7 @@ mod tests {
             .await
             .unwrap();
         let s = std::str::from_utf8(&body).unwrap();
-        assert2::assert!(s.contains("crabka_traces_ingest_requests_total"));
+        assert2::assert!(s.contains("krabka_traces_ingest_requests_total"));
         assert2::assert!(s.contains("# EOF"));
     }
 }

@@ -6,8 +6,8 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use assert2::check;
-use crabka_blockstore::{BlockStore, Labels};
-use crabka_metrics::{
+use krabka_blockstore::{BlockStore, Labels};
+use krabka_metrics::{
     CompactionIndexManifest, CompactionObjectPlan, CompactionSeriesLabels, MetricBlockKind,
     encode_float_samples, exemplar_schema, float_sample_schema, metadata_schema,
 };
@@ -321,9 +321,9 @@ async fn exemplars_reads_compacted_exemplar_sidecar_blocks() {
     let exemplars = store
         .exemplars(
             "tenant-a",
-            &[crabka_blockstore::LabelMatcher {
+            &[krabka_blockstore::LabelMatcher {
                 name: "job".to_string(),
-                op: crabka_blockstore::MatchOp::Eq,
+                op: krabka_blockstore::MatchOp::Eq,
                 value: "api".to_string(),
             }],
             10_000,
@@ -386,9 +386,9 @@ async fn exemplars_include_closed_range_boundaries_and_filter_outside_rows() {
     let exemplars = store
         .exemplars(
             "tenant-a",
-            &[crabka_blockstore::LabelMatcher {
+            &[krabka_blockstore::LabelMatcher {
                 name: "job".to_string(),
-                op: crabka_blockstore::MatchOp::Eq,
+                op: krabka_blockstore::MatchOp::Eq,
                 value: "api".to_string(),
             }],
             10_000,

@@ -4,9 +4,9 @@ use std::{
 };
 
 use assert2::check;
-use crabka_blockstore::Labels;
-use crabka_metrics::{SamplePayload, WalRecord};
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_metrics::{SamplePayload, WalRecord};
+use krabka_units::prelude::*;
 
 use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine};
 

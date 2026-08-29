@@ -1,9 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use assert2::check;
-use crabka_blockstore::Labels;
-use crabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
+use krabka_units::prelude::*;
 
 use super::{MAX_RESOLUTION_POINTS, check_resolution_points, match_rate_range_call};
 use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue};
@@ -214,7 +214,7 @@ fn assert_sparse_aggregate_excludes_no_value(query: &str, via_operators: &[crate
 async fn range_query_scans_store_once_per_matcher_set_not_per_step() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crabka_blockstore::LabelMatcher;
+    use krabka_blockstore::LabelMatcher;
 
     use crate::{
         error::Result,

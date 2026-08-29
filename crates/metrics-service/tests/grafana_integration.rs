@@ -1,22 +1,22 @@
 //! Docker-backed Grafana end-to-end coverage.
 //!
 //! The test runs a real Grafana with a provisioned Prometheus-type datasource
-//! that points at the in-process Crabka query API. The test drives the full
+//! that points at the in-process Krabka query API. The test drives the full
 //! `PromQL` query-shape matrix through Grafana's dashboard query path:
 //! `POST /api/ds/query`, instant and range. The test also drives the metadata,
 //! label, series, exemplar, and build-info surfaces through Grafana's
 //! datasource resource proxy at `/api/datasources/uid/<uid>/resources/...`.
 //! Every assertion exercises the full Grafana -> Prometheus-datasource ->
-//! Crabka path.
+//! Krabka path.
 //!
 //! Cargo ignores this test by default, because it pulls and runs
 //! `mirror.gcr.io/grafana/grafana` under Docker.
 //! Run with:
 //!
-//! `cargo test -p crabka-metrics-service --test grafana_integration -- --ignored --nocapture`
+//! `cargo test -p krabka-metrics-service --test grafana_integration -- --ignored --nocapture`
 //!
 //! Host reachability is platform-specific. Grafana runs in a container and must
-//! reach the Crabka server on the host. The test binds Crabka to `0.0.0.0:0`
+//! reach the Krabka server on the host. The test binds Krabka to `0.0.0.0:0`
 //! and gives the mapped port to Grafana in a provisioned datasource URL of
 //! `http://host.docker.internal:<port>`. The test also adds
 //! `host.docker.internal -> host-gateway` to the container with
@@ -26,13 +26,13 @@
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use crabka_metrics::{
+use diff_corpus::seed_dataset;
+use krabka_metrics::{
     WalRecord,
     distributor::{DistributorState, ProduceError, WalSink},
     wire::pb,
 };
-use crabka_promql::WalHead;
-use diff_corpus::seed_dataset;
+use krabka_promql::WalHead;
 use prost::Message;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -60,7 +60,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 /// the job log then names no test as the cause.
 const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
 
-/// Tenant header that Grafana forwards to Crabka.
+/// Tenant header that Grafana forwards to Krabka.
 ///
 /// The provisioned datasource carries it as a static `X-Scope-OrgID` header.
 const TENANT: &str = "grafana";
@@ -69,11 +69,11 @@ const TENANT: &str = "grafana";
 const GRAFANA_PORT: u16 = 3000;
 
 /// Stable datasource UID that the `/api/ds/query` payload references.
-const DATASOURCE_UID: &str = "crabka-prom";
+const DATASOURCE_UID: &str = "krabka-prom";
 
 /// Pinned Grafana image tag, never `:latest`.
 ///
-/// Override it with the `CRABKA_GRAFANA_IMAGE_TAG` environment variable.
+/// Override it with the `KRABKA_GRAFANA_IMAGE_TAG` environment variable.
 const GRAFANA_IMAGE_TAG: &str = "11.6.1";
 
 /// The seed data spans t=0..45s.
@@ -81,18 +81,18 @@ const GRAFANA_IMAGE_TAG: &str = "11.6.1";
 /// Every instant query evaluates at this instant.
 const EVAL_MS: i64 = 45_000;
 
-/// Provisioned datasource that points Grafana at Crabka through the host
+/// Provisioned datasource that points Grafana at Krabka through the host
 /// gateway.
 ///
-/// The test replaces the `{PORT}` placeholder with the mapped Crabka port at
+/// The test replaces the `{PORT}` placeholder with the mapped Krabka port at
 /// runtime. Grafana sends `X-Scope-OrgID` on every datasource request, both
-/// queries and resource calls, so Crabka keys storage by the test tenant.
+/// queries and resource calls, so Krabka keys storage by the test tenant.
 const DATASOURCE_YAML_TEMPLATE: &str = r"apiVersion: 1
 datasources:
-  - name: Crabka
+  - name: Krabka
     type: prometheus
     access: proxy
-    uid: crabka-prom
+    uid: krabka-prom
     url: http://host.docker.internal:{PORT}
     isDefault: true
     jsonData:
@@ -106,21 +106,21 @@ datasources:
 async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
     let client = reqwest::Client::new();
 
-    // In-process Crabka write+query path, bound to a host-reachable address so the
+    // In-process Krabka write+query path, bound to a host-reachable address so the
     // Grafana container can dial back via host.docker.internal.
-    let crabka = start_crabka_query_server().await?;
+    let krabka = start_krabka_query_server().await?;
     post_remote_write(
         &client,
-        &crabka.base_url,
+        &krabka.base_url,
         "/api/v1/write",
         TENANT,
         &remote_write_body(),
     )
     .await?;
-    wait_for_query_ready(&client, &crabka.base_url, TENANT, "up").await?;
+    wait_for_query_ready(&client, &krabka.base_url, TENANT, "up").await?;
 
     // Real Grafana with the provisioned datasource.
-    let datasource_yaml = DATASOURCE_YAML_TEMPLATE.replace("{PORT}", &crabka.host_port.to_string());
+    let datasource_yaml = DATASOURCE_YAML_TEMPLATE.replace("{PORT}", &krabka.host_port.to_string());
     let grafana = start_grafana(&datasource_yaml).await?;
     let base = mapped_base_url(&grafana, GRAFANA_PORT).await?;
     wait_for_http_ok(&client, &base, "/api/health").await?;
@@ -136,7 +136,7 @@ async fn grafana_e2e_covers_all_api_surfaces_and_query_shapes() -> TestResult {
     check_range_query_shapes(&client, &base, &mut fails).await?;
     check_resource_surfaces(&client, &base, &mut fails).await?;
 
-    crabka.shutdown();
+    krabka.shutdown();
 
     if fails.is_empty() {
         Ok(())
@@ -1337,14 +1337,14 @@ fn string_array(value: &Value) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Container + Crabka harness
+// Container + Krabka harness
 // ---------------------------------------------------------------------------
 
 async fn start_grafana(
     datasource_yaml: &str,
 ) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
     let tag =
-        std::env::var("CRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| GRAFANA_IMAGE_TAG.to_string());
+        std::env::var("KRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| GRAFANA_IMAGE_TAG.to_string());
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
@@ -1355,10 +1355,10 @@ async fn start_grafana(
             .with_wait_for(WaitFor::message_on_stdout("HTTP Server Listen"))
             // Provision the datasource so no UI/API setup is needed.
             .with_copy_to(
-                "/etc/grafana/provisioning/datasources/crabka.yaml",
+                "/etc/grafana/provisioning/datasources/krabka.yaml",
                 datasource_yaml.as_bytes().to_vec(),
             )
-            // host.docker.internal -> host gateway lets the container reach the Crabka
+            // host.docker.internal -> host gateway lets the container reach the Krabka
             // server running on the host.
             .with_host("host.docker.internal", Host::HostGateway)
             // Anonymous admin so the test drives the API without a login.
@@ -1378,14 +1378,14 @@ async fn mapped_base_url(
     Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
-struct CrabkaServer {
+struct KrabkaServer {
     base_url: String,
     /// Host-reachable port that the container dials through host.docker.internal.
     host_port: u16,
     shutdown: Option<oneshot::Sender<()>>,
 }
 
-impl CrabkaServer {
+impl KrabkaServer {
     fn shutdown(mut self) {
         if let Some(tx) = self.shutdown.take() {
             let _ = tx.send(());
@@ -1393,22 +1393,22 @@ impl CrabkaServer {
     }
 }
 
-async fn start_crabka_query_server() -> TestResult<CrabkaServer> {
+async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
-    let query_router = crabka_metrics_service::prometheus_router_for_store(head.clone());
+    let query_router = krabka_metrics_service::prometheus_router_for_store(head.clone());
     let sink: Arc<dyn WalSink> = Arc::new(WalHeadSink { head });
     let distributor = Arc::new(DistributorState::new(sink));
-    let router = query_router.merge(crabka_metrics::distributor::router(distributor));
+    let router = query_router.merge(krabka_metrics::distributor::router(distributor));
     let (tx, rx) = oneshot::channel();
     // Bind 0.0.0.0 so the Grafana container can reach the server through the
     // Docker host gateway; the OS picks the port.
     let addr: SocketAddr = "0.0.0.0:0".parse()?;
-    let bound = crabka_metrics_service::serve_prometheus_router(addr, router, async move {
+    let bound = krabka_metrics_service::serve_prometheus_router(addr, router, async move {
         let _ = rx.await;
     })
     .await?;
 
-    Ok(CrabkaServer {
+    Ok(KrabkaServer {
         // Local queries dial loopback against the bound port.
         base_url: format!("http://127.0.0.1:{}", bound.port()),
         host_port: bound.port(),

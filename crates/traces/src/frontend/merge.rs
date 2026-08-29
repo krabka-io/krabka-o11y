@@ -13,8 +13,8 @@
 
 use std::collections::BTreeSet;
 
-use crabka_traceql::{ScopedTag, TagScope, TypedValue};
-use crabka_units::ByteSize;
+use krabka_traceql::{ScopedTag, TagScope, TypedValue};
+use krabka_units::ByteSize;
 
 use crate::frontend::{
     backend::{SearchPartial, TagNamesPartial, TagValuesPartial, TracePartial},
@@ -358,7 +358,7 @@ pub use crate::frontend::metrics_merge::{
 #[cfg(test)]
 mod tests {
     use assert2::check;
-    use crabka_units::{bytes, millis};
+    use krabka_units::{bytes, millis};
 
     use super::*;
     use crate::frontend::wire::{

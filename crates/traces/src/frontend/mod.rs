@@ -231,10 +231,10 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     pub async fn tag_names(
         &self,
         tenant: &str,
-        scope: Option<crabka_traceql::TagScope>,
+        scope: Option<krabka_traceql::TagScope>,
         start_ns: i64,
         end_ns: i64,
-    ) -> Result<(Vec<crabka_traceql::ScopedTag>, Metrics), BackendError> {
+    ) -> Result<(Vec<krabka_traceql::ScopedTag>, Metrics), BackendError> {
         let blocks = self
             .catalog
             .blocks(tenant, start_ns, end_ns)
@@ -282,7 +282,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         tag: &str,
         start_ns: i64,
         end_ns: i64,
-    ) -> Result<(Vec<crabka_traceql::TypedValue>, Metrics), BackendError> {
+    ) -> Result<(Vec<krabka_traceql::TypedValue>, Metrics), BackendError> {
         let blocks = self
             .catalog
             .blocks(tenant, start_ns, end_ns)
@@ -369,7 +369,7 @@ mod orch_tests {
     use std::sync::Arc;
 
     use assert2::check;
-    use crabka_units::{ByteSize, bytes, convert::ByteSizeExt as _, millis};
+    use krabka_units::{ByteSize, bytes, convert::ByteSizeExt as _, millis};
 
     use super::*;
     use crate::frontend::{

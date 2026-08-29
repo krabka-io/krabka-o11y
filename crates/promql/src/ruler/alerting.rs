@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use crabka_blockstore::Labels;
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_units::prelude::*;
 
 use super::{
     AlertStateKey, AlertmanagerAlert, AlertmanagerSink, NoopRulerStateSink, RulerAlertState,

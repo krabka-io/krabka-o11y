@@ -1,4 +1,4 @@
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use promql_parser::parser::{MatrixSelector, VectorSelector};
 
 use super::{

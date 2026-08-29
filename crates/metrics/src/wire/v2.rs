@@ -1,7 +1,7 @@
 //! `remote_write` v2 (`io.prometheus.write.v2.Request`) request decoder.
 
-use crabka_blockstore::Labels;
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_units::prelude::*;
 use prost::Message;
 
 use super::{

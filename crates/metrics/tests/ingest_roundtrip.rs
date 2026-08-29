@@ -12,20 +12,20 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use crabka_blockstore::read_block;
-use crabka_broker::{Broker, BrokerConfig};
-use crabka_client_admin::{AdminClient, CreateTopicSpec};
-use crabka_client_consumer::{AutoOffsetReset, Consumer};
-use crabka_client_producer::Producer;
-use crabka_ids::{Offset, PartitionIndex};
-use crabka_metrics::{
+use krabka_blockstore::read_block;
+use krabka_broker::{Broker, BrokerConfig};
+use krabka_client_admin::{AdminClient, CreateTopicSpec};
+use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_client_producer::Producer;
+use krabka_ids::{Offset, PartitionIndex};
+use krabka_metrics::{
     CompactionPartitionOffset, MetricBlockKind, MetricsCompactorConfig, SamplePayload, WAL_TOPIC,
     WalRecord, compaction_partition_object_key,
     distributor::{DistributorState, KafkaSink, router},
     run_compactor_consumer_loop,
     wire::pb,
 };
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
 use prost::Message;
 use tower::ServiceExt as _;
@@ -150,7 +150,7 @@ async fn create_metrics_wal_topic(bootstrap: &str) {
                 replicas: 1,
                 configs: BTreeMap::default(),
             }],
-            crabka_units::secs(5),
+            krabka_units::secs(5),
         )
         .await
         .expect("create metrics wal topic");
@@ -169,7 +169,7 @@ async fn inspect_wal_record(bootstrap: &str) -> WalRecord {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         let records = consumer
-            .poll(crabka_units::millis(250))
+            .poll(krabka_units::millis(250))
             .await
             .expect("poll inspect consumer");
         if let Some(record) = records.into_iter().find(|record| record.topic == WAL_TOPIC) {

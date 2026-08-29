@@ -1,14 +1,14 @@
 use arrow::array::{Array, Int64Array, StringArray};
 use assert2::check;
-use crabka_blockstore::{
+use datafusion::catalog::TableProvider;
+use krabka_blockstore::{
     SCOL_ROOT_SPAN_NAME, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, span_block_schema,
 };
-use crabka_traceql::{AttrValue as TraceqlAttrValue, ScopedTag, TagScope, TypedValue};
-use crabka_traces::{
+use krabka_traceql::{AttrValue as TraceqlAttrValue, ScopedTag, TagScope, TypedValue};
+use krabka_traces::{
     AttrValue, EventRecord, KeyValue, LinkRecord, LiveStore, Span, SpanKind, SpanRecord,
     StatusCode, livestore::ingest_wal_payloads, querier::live::LiveSource,
 };
-use datafusion::catalog::TableProvider;
 
 fn span(trace_id: [u8; 16], span_id: u8, start_ns: i64) -> Span {
     Span {

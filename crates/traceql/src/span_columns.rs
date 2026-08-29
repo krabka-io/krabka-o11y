@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use crabka_units::Time;
+use krabka_units::Time;
 
 use crate::result::{AttrValue, EventRef, LinkRef};
 
@@ -210,7 +210,7 @@ pub fn assign_nested_set(spans: &[InputSpan]) -> Vec<NestedSet> {
 mod tests {
     use arrow::datatypes::DataType;
     use assert2::{assert, check};
-    use crabka_units::nanos;
+    use krabka_units::nanos;
 
     use super::*;
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 
 use super::{FrontendRangeQuery, QueryShard};
@@ -15,7 +15,7 @@ use crate::{PromqlError, QueryResult};
 ///
 /// The step stays a raw millisecond integer here. The key is a `BTreeMap` key
 /// and an object-store path component. Both need the `Ord`/`Eq` that a
-/// `f64`-backed [`Time`](crabka_units::Time) cannot supply.
+/// `f64`-backed [`Time`](krabka_units::Time) cannot supply.
 /// [`RangeCacheKey::new`] does the conversion.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct RangeCacheKey {

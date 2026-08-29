@@ -8,8 +8,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crabka_units::{ByteSize, mebibytes};
 use futures::StreamExt as _;
+use krabka_units::{ByteSize, mebibytes};
 use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use refined_type::rule::GreaterUsize;
 use tracing::instrument;
@@ -168,7 +168,7 @@ mod tests {
         assert2::check!(retain.to_string() == "7");
         assert2::check!(IndexSnapshotRetain::default().to_string() != "");
     }
-    use crabka_units::{convert::ByteSizeExt as _, mebibytes};
+    use krabka_units::{convert::ByteSizeExt as _, mebibytes};
 
     use super::{DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain};
 

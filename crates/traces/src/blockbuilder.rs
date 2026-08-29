@@ -6,13 +6,13 @@ use std::{
 };
 
 use arrow::compute::concat_batches;
-use crabka_blockstore::{
+use krabka_blockstore::{
     BlockMeta, BlockWriter, IndexSnapshotRetain, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID,
     ShardedTraceBloom, SummaryColumns, TraceBlockStats, TraceIndex, span_block_decl,
     span_block_schema_with_promoted_attrs,
 };
-use crabka_client_consumer::{Consumer, ConsumerRecord};
-use crabka_units::{
+use krabka_client_consumer::{Consumer, ConsumerRecord};
+use krabka_units::{
     Time,
     convert::{StdDurationExt as _, TimeExt as _},
     secs,
@@ -37,7 +37,7 @@ const TRACEPARENT_HEADER: &str = "traceparent";
 /// Minimal WAL-consumer poll surface the block-builder loop drives.
 ///
 /// `run` takes this trait rather than the concrete
-/// [`crabka_client_consumer::Consumer`], so a scripted fake can drive the
+/// [`krabka_client_consumer::Consumer`], so a scripted fake can drive the
 /// offset-commit invariants in tests. The record type matches what
 /// [`decode_consumer_records`] consumes, so the loop body stays the same.
 #[async_trait::async_trait]
@@ -472,7 +472,7 @@ where
             let span = tracing::info_span!(
                 "traces_block_build",
                 otel.kind = "consumer",
-                crabka.wal.records = records.len(),
+                krabka.wal.records = records.len(),
             );
             set_remote_parent_from_records(&span, &records);
             span
@@ -547,7 +547,7 @@ fn set_remote_parent_from_records(span: &tracing::Span, records: &[ConsumerRecor
     else {
         return;
     };
-    crabka_telemetry::propagation::set_remote_parent(
+    krabka_telemetry::propagation::set_remote_parent(
         span,
         record
             .headers
@@ -768,7 +768,7 @@ mod tests {
             tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
 
         tracing::subscriber::with_default(subscriber, || {
-            fn record(headers: Vec<crabka_client_consumer::Header>) -> ConsumerRecord {
+            fn record(headers: Vec<krabka_client_consumer::Header>) -> ConsumerRecord {
                 ConsumerRecord {
                     topic: "wal".into(),
                     partition: 0,
@@ -786,12 +786,12 @@ mod tests {
                 // A record WITHOUT the traceparent header comes first: with the
                 // `==`→`!=` mutant, `find` would (wrongly) select this one and
                 // extract no valid context, so the trace-id assertion would fail.
-                record(vec![crabka_client_consumer::Header {
+                record(vec![krabka_client_consumer::Header {
                     key: "other".into(),
                     value: Some(bytes::Bytes::from_static(b"x")),
                 }]),
                 // The record actually carrying the producer's W3C trace context.
-                record(vec![crabka_client_consumer::Header {
+                record(vec![krabka_client_consumer::Header {
                     key: TRACEPARENT_HEADER.into(),
                     value: Some(bytes::Bytes::from(traceparent.as_bytes().to_vec())),
                 }]),

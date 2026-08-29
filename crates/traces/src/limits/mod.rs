@@ -1,4 +1,4 @@
-use crabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, per_sec};
+use krabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, per_sec};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -12,7 +12,7 @@ pub use overrides::{OverridesError, OverridesProvider};
 pub struct Limits {
     /// Tempo `ingestion_rate_limit_bytes` analog, counted as spans/sec. Zero is
     /// unlimited.
-    #[serde(with = "crabka_units::serde_units::human::frequency")]
+    #[serde(with = "krabka_units::serde_units::human::frequency")]
     pub ingestion_rate: Frequency,
     /// Tempo `ingestion_burst_size_bytes` analog, counted as spans.
     pub ingestion_burst_spans: u64,
@@ -22,11 +22,11 @@ pub struct Limits {
     /// Tempo `max_bytes_per_trace` analog, counted as spans. `0` is unlimited.
     pub max_spans_per_trace: u64,
     /// Maximum size of any attribute key or string value. Zero is unlimited.
-    #[serde(with = "crabka_units::serde_units::human::byte_size")]
+    #[serde(with = "krabka_units::serde_units::human::byte_size")]
     pub max_attribute: ByteSize,
     /// Tempo `max_search_duration`, the `(end-start)` ceiling. Zero is
     /// unlimited.
-    #[serde(with = "crabka_units::serde_units::human::time")]
+    #[serde(with = "krabka_units::serde_units::human::time")]
     pub max_search_duration: Time,
 }
 

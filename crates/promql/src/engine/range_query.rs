@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::BTreeMap};
 
-use crabka_blockstore::{Labels, SeriesFingerprint};
-use crabka_units::prelude::*;
+use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_units::prelude::*;
 use promql_parser::parser::Expr;
 
 use super::{

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crabka_units::prelude::*;
+use krabka_units::prelude::*;
 
 use super::{
     RulerGroupState,

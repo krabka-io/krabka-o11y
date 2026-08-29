@@ -1,4 +1,4 @@
-//! `LogQL` parser front-end for Crabka's Loki-compatible logs path.
+//! `LogQL` parser front-end for Krabka's Loki-compatible logs path.
 //!
 //! This slice covers stream selectors, line filters, the `json`, `logfmt`,
 //! `pattern`, and `regexp` parser stages, `line_format`, field filters, range
@@ -51,4 +51,4 @@ pub use types::{
 };
 
 pub type Labels = BTreeMap<String, String>;
-pub const UNWRAP_SAMPLE_VALUE_LABEL: &str = "__crabka_unwrap_sample_value__";
+pub const UNWRAP_SAMPLE_VALUE_LABEL: &str = "__krabka_unwrap_sample_value__";

@@ -4,8 +4,8 @@ use std::{ops::Range, sync::Arc};
 
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
-use crabka_units::prelude::*;
 use futures::{FutureExt, TryFutureExt, TryStreamExt, future::BoxFuture};
+use krabka_units::prelude::*;
 use object_store::{GetOptions, GetRange, ObjectStore, ObjectStoreExt, path::Path};
 use parquet::{
     arrow::{

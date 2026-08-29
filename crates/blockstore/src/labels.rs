@@ -63,7 +63,7 @@ impl Labels {
     /// for example `a=b\nc` against `a` with value `b\nc`. Profile labels are
     /// user-controlled, so this collision is reachable, and the length prefix
     /// closes it. `BTreeMap` keeps names sorted, so the hash does not depend
-    /// on insertion order. Crabka is greenfield, so no persisted fingerprint
+    /// on insertion order. Krabka is greenfield, so no persisted fingerprint
     /// depends on the old encoding.
     #[must_use]
     pub fn fingerprint(&self) -> SeriesFingerprint {

@@ -2,9 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use crabka_blockstore::Labels;
-use crabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
-use crabka_units::prelude::*;
+use krabka_blockstore::Labels;
+use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
+use krabka_units::prelude::*;
 
 use crate::{PromqlError, error::Result};
 
@@ -17,8 +17,8 @@ pub mod testkit {
         sync::Arc,
     };
 
-    use crabka_blockstore::Labels;
-    use crabka_units::prelude::*;
+    use krabka_blockstore::Labels;
+    use krabka_units::prelude::*;
 
     use super::Result;
     use crate::{
@@ -795,7 +795,7 @@ pub mod testkit {
     #[cfg(test)]
     mod tests {
         use assert2::check;
-        use crabka_metrics::{NativeHistogram, ResetHint};
+        use krabka_metrics::{NativeHistogram, ResetHint};
 
         use super::*;
 
@@ -804,7 +804,7 @@ pub mod testkit {
         /// is a distinct refusal, so none of them can stand in for another.
         #[test]
         fn a_range_result_is_compared_series_by_series_and_step_by_step() {
-            let step = crabka_units::minutes(1);
+            let step = krabka_units::minutes(1);
             let matrix = |values: &[f64]| {
                 QueryResult::RangeMatrix(vec![crate::RangeSeries {
                     labels: metric_to_labels(r#"up{job="api"}"#),
@@ -869,7 +869,7 @@ pub mod testkit {
         /// with satisfied annotations passes.
         #[test]
         fn a_range_evaluation_routes_its_outcome_by_what_the_test_expected() {
-            let step = crabka_units::minutes(1);
+            let step = krabka_units::minutes(1);
             let expect = vec![ExpectLine {
                 metric: r#"up{job="api"}"#.to_owned(),
                 values: vec![SampleSpec::Value(7.0)],
