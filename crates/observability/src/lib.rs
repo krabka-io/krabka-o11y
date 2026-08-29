@@ -176,7 +176,9 @@ pub use service::{
     ActiveLogDeleteFilterError, ClientResourcePolicy, LogDeleteRequestStoreError,
     LokiRuleStoreError, ServiceDependencies, ServiceStatus, SharedLogDeleteRequests, run,
 };
-pub use service_runtime::{build_service_router, serve_service, serve_service_listener};
+pub use service_runtime::{
+    build_service_router, serve_service, serve_service_listener, shutdown_signal,
+};
 pub use wal::{
     BufferedLogHotTail, HotTailPollError, InMemoryWalSink, IngestLimitError, KafkaLogWalConsumer,
     KafkaLogWalSink, LogHotTail, LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink,
