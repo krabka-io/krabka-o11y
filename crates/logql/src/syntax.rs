@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::{
     ComparisonOp, DestinationLabel, DurationNanos, FieldFilter, FieldFilterExpression,
     FieldFilterLogicOp, FieldValue, IpMatcher, JsonExpressionPath, JsonExtraction,
@@ -12,6 +14,593 @@ use crate::{
         parse_bytes_literal, parse_prometheus_duration_literal,
     },
 };
+
+/// A recursively composable `LogQL` expression.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LogqlExpr {
+    Stream {
+        query: StreamQuery,
+        source: String,
+    },
+    Metric {
+        query: MetricQuery,
+        source: String,
+    },
+    Scalar(String),
+    Vector(Box<LogqlExpr>),
+    LabelReplace {
+        expr: Box<LogqlExpr>,
+        destination_label: String,
+        replacement: String,
+        source_label: String,
+        pattern: String,
+    },
+    LabelJoin {
+        expr: Box<LogqlExpr>,
+        destination_label: String,
+        separator: String,
+        source_labels: Vec<String>,
+    },
+    Sort {
+        expr: Box<LogqlExpr>,
+        descending: bool,
+    },
+    Arithmetic {
+        left: Box<LogqlExpr>,
+        op: MetricScalarArithmeticOp,
+        matching: Option<MetricVectorMatching>,
+        right: Box<LogqlExpr>,
+    },
+    Comparison {
+        left: Box<LogqlExpr>,
+        op: ComparisonOp,
+        bool_modifier: bool,
+        matching: Option<MetricVectorMatching>,
+        right: Box<LogqlExpr>,
+    },
+    Set {
+        left: Box<LogqlExpr>,
+        op: MetricBinarySetOp,
+        matching: Option<MetricVectorMatching>,
+        right: Box<LogqlExpr>,
+    },
+}
+
+/// Parse a complete, recursively nested `LogQL` expression.
+///
+/// # Errors
+///
+/// Returns an error when the expression is malformed or contains an unsupported leaf query.
+pub fn parse_logql_expr(input: &str) -> Result<LogqlExpr, ParseError> {
+    parse_expr(input.trim())
+}
+
+fn syntax_error(message: &str) -> ParseError {
+    ParseError::Syntax {
+        message: message.to_string(),
+        position: 0,
+    }
+}
+
+fn parse_expr(input: &str) -> Result<LogqlExpr, ParseError> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err(syntax_error("expected expression"));
+    }
+    if input.starts_with('{')
+        && let Ok(query) = parse_query(input)
+    {
+        return Ok(LogqlExpr::Stream {
+            query,
+            source: input.to_string(),
+        });
+    }
+    let mut candidate = None;
+    scan_top_level(input, |at| {
+        if let Some((len, kind, precedence)) = operator_at(input, at)
+            && candidate.as_ref().is_none_or(|(_, _, _, old)| {
+                precedence < *old || (precedence == *old && precedence != 6)
+            })
+        {
+            candidate = Some((at, len, kind, precedence));
+        }
+    })?;
+    if let Some((at, len, kind, _precedence)) = candidate {
+        let left = parse_expr(&input[..at])?;
+        let mut parser = Parser::new(&input[at + len..]);
+        let bool_modifier =
+            matches!(kind, ExprOperator::Comparison(_)) && parser.consume_keyword("bool");
+        let matching =
+            parser.parse_metric_vector_matching_modifier(!matches!(kind, ExprOperator::Set(_)))?;
+        let right_text = &parser.input[parser.pos..];
+        let right = parse_expr(right_text)?;
+        return Ok(match kind {
+            ExprOperator::Arithmetic(op) => LogqlExpr::Arithmetic {
+                left: Box::new(left),
+                op,
+                matching,
+                right: Box::new(right),
+            },
+            ExprOperator::Comparison(op) => LogqlExpr::Comparison {
+                left: Box::new(left),
+                op,
+                bool_modifier,
+                matching,
+                right: Box::new(right),
+            },
+            ExprOperator::Set(op) => LogqlExpr::Set {
+                left: Box::new(left),
+                op,
+                matching,
+                right: Box::new(right),
+            },
+        });
+    }
+    parse_expr_primary(input)
+}
+
+#[derive(Clone, Copy)]
+enum ExprOperator {
+    Arithmetic(MetricScalarArithmeticOp),
+    Comparison(ComparisonOp),
+    Set(MetricBinarySetOp),
+}
+
+fn operator_at(input: &str, at: usize) -> Option<(usize, ExprOperator, u8)> {
+    let rest = &input[at..];
+    let boundary = |n: usize| {
+        input[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident_char(c))
+            && input[at + n..]
+                .chars()
+                .next()
+                .is_none_or(|c| !is_ident_char(c))
+    };
+    for (word, op, precedence) in [
+        ("unless", MetricBinarySetOp::Unless, 2),
+        ("and", MetricBinarySetOp::And, 2),
+        ("or", MetricBinarySetOp::Or, 1),
+    ] {
+        if rest.starts_with(word) && boundary(word.len()) {
+            return Some((word.len(), ExprOperator::Set(op), precedence));
+        }
+    }
+    for (text, op) in [
+        (">=", ComparisonOp::GreaterEqual),
+        ("<=", ComparisonOp::LessEqual),
+        ("==", ComparisonOp::Equal),
+        ("!=", ComparisonOp::NotEqual),
+        (">", ComparisonOp::Greater),
+        ("<", ComparisonOp::Less),
+    ] {
+        if rest.starts_with(text) {
+            return Some((text.len(), ExprOperator::Comparison(op), 3));
+        }
+    }
+    let ch = rest.chars().next()?;
+    if matches!(ch, '+' | '-') && sign_is_unary_or_exponent(input, at) {
+        return None;
+    }
+    let (op, p) = match ch {
+        '+' => (MetricScalarArithmeticOp::Add, 4),
+        '-' => (MetricScalarArithmeticOp::Subtract, 4),
+        '*' => (MetricScalarArithmeticOp::Multiply, 5),
+        '/' => (MetricScalarArithmeticOp::Divide, 5),
+        '%' => (MetricScalarArithmeticOp::Modulo, 5),
+        '^' => (MetricScalarArithmeticOp::Power, 6),
+        _ => return None,
+    };
+    Some((1, ExprOperator::Arithmetic(op), p))
+}
+
+fn sign_is_unary_or_exponent(input: &str, at: usize) -> bool {
+    let before_sign = input[..at].trim_end();
+    let Some(last_char) = before_sign.chars().next_back() else {
+        return true;
+    };
+    if matches!(
+        last_char,
+        '+' | '-' | '*' | '/' | '%' | '^' | '>' | '<' | '=' | '!'
+    ) {
+        return true;
+    }
+    if matches!(last_char, 'e' | 'E') {
+        let mantissa = before_sign[..before_sign.len() - last_char.len_utf8()].trim_end();
+        return mantissa
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_digit() || ch == '.');
+    }
+    false
+}
+
+fn scan_top_level(input: &str, mut found: impl FnMut(usize)) -> Result<(), ParseError> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (at, ch) in input.char_indices() {
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' && q == '"' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| syntax_error("unmatched closing delimiter"))?;
+            }
+            _ if depth == 0 => found(at),
+            _ => {}
+        }
+    }
+    if quote.is_some() || depth != 0 {
+        return Err(syntax_error("unterminated expression"));
+    }
+    Ok(())
+}
+
+fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
+    if let Some(inner) = outer_metric_parentheses_inner(input) {
+        return parse_expr(inner);
+    }
+    for (name, descending) in [("sort_desc", true), ("sort", false)] {
+        if let Some(args) = function_args(input, name)? {
+            if args.len() != 1 {
+                return Err(syntax_error("expected one function argument"));
+            }
+            return Ok(LogqlExpr::Sort {
+                expr: Box::new(parse_expr(args[0])?),
+                descending,
+            });
+        }
+    }
+    if let Some(args) = function_args(input, "vector")? {
+        if args.len() != 1 {
+            return Err(syntax_error("expected one function argument"));
+        }
+        let expr = parse_expr(args[0])?;
+        if !expr.is_scalar() {
+            return Err(syntax_error("vector argument must be scalar"));
+        }
+        return Ok(LogqlExpr::Vector(Box::new(expr)));
+    }
+    if let Some(args) = function_args(input, "label_replace")? {
+        if args.len() != 5 {
+            return Err(syntax_error("expected five function arguments"));
+        }
+        return Ok(LogqlExpr::LabelReplace {
+            expr: Box::new(parse_expr(args[0])?),
+            destination_label: parse_string_arg(args[1])?,
+            replacement: parse_string_arg(args[2])?,
+            source_label: parse_string_arg(args[3])?,
+            pattern: parse_string_arg(args[4])?,
+        });
+    }
+    if let Some(args) = function_args(input, "label_join")? {
+        if args.len() < 4 {
+            return Err(syntax_error("expected at least four function arguments"));
+        }
+        return Ok(LogqlExpr::LabelJoin {
+            expr: Box::new(parse_expr(args[0])?),
+            destination_label: parse_string_arg(args[1])?,
+            separator: parse_string_arg(args[2])?,
+            source_labels: args[3..]
+                .iter()
+                .map(|arg| parse_string_arg(arg))
+                .collect::<Result<_, _>>()?,
+        });
+    }
+    if parse_scalar_text(input) {
+        return Ok(LogqlExpr::Scalar(input.to_string()));
+    }
+    Ok(LogqlExpr::Metric {
+        query: parse_metric_query(input)?,
+        source: input.to_string(),
+    })
+}
+
+fn function_args<'a>(input: &'a str, name: &str) -> Result<Option<Vec<&'a str>>, ParseError> {
+    let Some(rest) = input.strip_prefix(name) else {
+        return Ok(None);
+    };
+    let rest = rest.trim_start();
+    if !rest.starts_with('(') || !rest.ends_with(')') {
+        return Ok(None);
+    }
+    let inner = &rest[1..rest.len() - 1];
+    let mut starts = vec![0];
+    let mut commas = Vec::new();
+    scan_top_level(inner, |at| {
+        if inner[at..].starts_with(',') {
+            commas.push(at);
+        }
+    })?;
+    starts.extend(commas.iter().map(|x| x + 1));
+    let mut ends = commas;
+    ends.push(inner.len());
+    Ok(Some(
+        starts
+            .into_iter()
+            .zip(ends)
+            .map(|(a, b)| inner[a..b].trim())
+            .collect(),
+    ))
+}
+
+fn parse_string_arg(input: &str) -> Result<String, ParseError> {
+    let mut p = Parser::new(input);
+    let value = p.parse_quoted()?;
+    p.skip_ws();
+    if p.pos == input.len() {
+        Ok(value)
+    } else {
+        Err(syntax_error("expected string argument"))
+    }
+}
+fn parse_scalar_text(input: &str) -> bool {
+    let mut p = Parser::new(input);
+    p.parse_scalar_literal_text().is_ok() && {
+        p.skip_ws();
+        p.pos == input.len()
+    }
+}
+
+impl LogqlExpr {
+    /// Return the original source for a stream or metric leaf.
+    #[must_use]
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            Self::Stream { source, .. } | Self::Metric { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+    fn is_scalar(&self) -> bool {
+        match self {
+            Self::Scalar(_) => true,
+            Self::Arithmetic {
+                left,
+                matching: None,
+                right,
+                ..
+            }
+            | Self::Comparison {
+                left,
+                bool_modifier: true,
+                matching: None,
+                right,
+                ..
+            } => left.is_scalar() && right.is_scalar(),
+            _ => false,
+        }
+    }
+    fn precedence(&self) -> u8 {
+        match self {
+            Self::Set {
+                op: MetricBinarySetOp::Or,
+                ..
+            } => 1,
+            Self::Set { .. } => 2,
+            Self::Comparison { .. } => 3,
+            Self::Arithmetic { op, .. } => match op {
+                MetricScalarArithmeticOp::Add | MetricScalarArithmeticOp::Subtract => 4,
+                MetricScalarArithmeticOp::Multiply
+                | MetricScalarArithmeticOp::Divide
+                | MetricScalarArithmeticOp::Modulo => 5,
+                MetricScalarArithmeticOp::Power => 6,
+            },
+            _ => 7,
+        }
+    }
+    fn format_at(&self, f: &mut fmt::Formatter<'_>, parent: u8, right: bool) -> fmt::Result {
+        let precedence = self.precedence();
+        let needs_parentheses = precedence < parent
+            || (right
+                && precedence == parent
+                && !matches!(
+                    self,
+                    Self::Arithmetic {
+                        op: MetricScalarArithmeticOp::Power,
+                        ..
+                    }
+                ));
+        if needs_parentheses {
+            write!(f, "(")?;
+        }
+        match self {
+            Self::Stream { source, .. } | Self::Metric { source, .. } | Self::Scalar(source) => {
+                write!(f, "{}", source.trim())?;
+            }
+            Self::Vector(expr) => {
+                write!(f, "vector(")?;
+                expr.format_at(f, 0, false)?;
+                write!(f, ")")?;
+            }
+            Self::Sort { expr, descending } => {
+                write!(f, "{}(", if *descending { "sort_desc" } else { "sort" })?;
+                expr.format_at(f, 0, false)?;
+                write!(f, ")")?;
+            }
+            Self::LabelReplace {
+                expr,
+                destination_label,
+                replacement,
+                source_label,
+                pattern,
+            } => {
+                write!(f, "label_replace(")?;
+                expr.format_at(f, 0, false)?;
+                write!(
+                    f,
+                    ", {}, {}, {}, {})",
+                    Quoted(destination_label),
+                    Quoted(replacement),
+                    Quoted(source_label),
+                    Quoted(pattern)
+                )?;
+            }
+            Self::LabelJoin {
+                expr,
+                destination_label,
+                separator,
+                source_labels,
+            } => {
+                write!(f, "label_join(")?;
+                expr.format_at(f, 0, false)?;
+                write!(f, ", {}, {}", Quoted(destination_label), Quoted(separator))?;
+                for label in source_labels {
+                    write!(f, ", {}", Quoted(label))?;
+                }
+                write!(f, ")")?;
+            }
+            Self::Arithmetic {
+                left,
+                op,
+                matching,
+                right,
+            } => {
+                left.format_at(
+                    f,
+                    if matches!(op, MetricScalarArithmeticOp::Power) {
+                        precedence.saturating_add(1)
+                    } else {
+                        precedence
+                    },
+                    false,
+                )?;
+                write!(f, " {}", arithmetic_text(*op))?;
+                format_matching(f, matching.as_ref())?;
+                write!(f, " ")?;
+                right.format_at(
+                    f,
+                    precedence,
+                    !matches!(op, MetricScalarArithmeticOp::Power),
+                )?;
+            }
+            Self::Comparison {
+                left,
+                op,
+                bool_modifier,
+                matching,
+                right,
+            } => {
+                left.format_at(f, precedence, false)?;
+                write!(f, " {}", comparison_text(*op))?;
+                if *bool_modifier {
+                    write!(f, " bool")?;
+                }
+                format_matching(f, matching.as_ref())?;
+                write!(f, " ")?;
+                right.format_at(f, precedence, true)?;
+            }
+            Self::Set {
+                left,
+                op,
+                matching,
+                right,
+            } => {
+                left.format_at(f, precedence, false)?;
+                write!(f, " {}", set_text(*op))?;
+                format_matching(f, matching.as_ref())?;
+                write!(f, " ")?;
+                right.format_at(f, precedence, true)?;
+            }
+        }
+        if needs_parentheses {
+            write!(f, ")")?;
+        }
+        Ok(())
+    }
+}
+impl fmt::Display for LogqlExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.format_at(f, 0, false)
+    }
+}
+struct Quoted<'a>(&'a str);
+impl fmt::Display for Quoted<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\"")?;
+        for c in self.0.chars() {
+            match c {
+                '\\' => write!(f, "\\\\")?,
+                '"' => write!(f, "\\\"")?,
+                '\n' => write!(f, "\\n")?,
+                '\r' => write!(f, "\\r")?,
+                '\t' => write!(f, "\\t")?,
+                _ => write!(f, "{c}")?,
+            }
+        }
+        write!(f, "\"")
+    }
+}
+fn arithmetic_text(op: MetricScalarArithmeticOp) -> &'static str {
+    match op {
+        MetricScalarArithmeticOp::Add => "+",
+        MetricScalarArithmeticOp::Subtract => "-",
+        MetricScalarArithmeticOp::Multiply => "*",
+        MetricScalarArithmeticOp::Divide => "/",
+        MetricScalarArithmeticOp::Modulo => "%",
+        MetricScalarArithmeticOp::Power => "^",
+    }
+}
+fn comparison_text(op: ComparisonOp) -> &'static str {
+    match op {
+        ComparisonOp::Equal => "==",
+        ComparisonOp::NotEqual => "!=",
+        ComparisonOp::Greater => ">",
+        ComparisonOp::GreaterEqual => ">=",
+        ComparisonOp::Less => "<",
+        ComparisonOp::LessEqual => "<=",
+        ComparisonOp::RegexEqual => "=~",
+        ComparisonOp::RegexNotEqual => "!~",
+    }
+}
+fn set_text(op: MetricBinarySetOp) -> &'static str {
+    match op {
+        MetricBinarySetOp::And => "and",
+        MetricBinarySetOp::Or => "or",
+        MetricBinarySetOp::Unless => "unless",
+    }
+}
+fn format_matching(
+    f: &mut fmt::Formatter<'_>,
+    matching: Option<&MetricVectorMatching>,
+) -> fmt::Result {
+    let Some(m) = matching else { return Ok(()) };
+    let (labels, group, name) = match m {
+        MetricVectorMatching::On { labels, group } => (labels, group, "on"),
+        MetricVectorMatching::Ignoring { labels, group } => (labels, group, "ignoring"),
+    };
+    write!(f, " {name}({})", labels.join(", "))?;
+    if let Some(group) = group {
+        match group {
+            MetricVectorGroupModifier::Left(labels) => {
+                write!(f, " group_left{}", format_labels(labels))?;
+            }
+            MetricVectorGroupModifier::Right(labels) => {
+                write!(f, " group_right{}", format_labels(labels))?;
+            }
+        }
+    }
+    Ok(())
+}
+fn format_labels(labels: &[String]) -> String {
+    if labels.is_empty() {
+        String::new()
+    } else {
+        format!("({})", labels.join(", "))
+    }
+}
 
 #[tracing::instrument(level = "info", skip_all, fields(query = %input), err)]
 /// # Errors
