@@ -32,6 +32,18 @@
     },
     {
       "customType": "regex",
+      "description": "The workspace rust-version in Cargo.toml. Named and sourced exactly as the rust-toolchain manager names rust-toolchain.toml, so the toolchain and MSRV move together.",
+      "managerFilePatterns": [
+        "/(^|/)Cargo\\.toml$/"
+      ],
+      "matchStrings": [
+        "rust-version = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "rust",
+      "datasourceTemplate": "rust-version"
+    },
+    {
+      "customType": "regex",
       "description": "The prebuilt protoc that `toolchains_protoc` downloads, which is a release tag rather than a module version.",
       "managerFilePatterns": [
         "/(^|/)MODULE\\.bazel$/"
@@ -77,7 +89,7 @@
       "automerge": false
     },
     {
-      "description": "MODULE.bazel and rust-toolchain.toml carry one decision in two files. They drifted apart once already -- Bazel building with 1.97.0 while Cargo used 1.97.1 -- which is the exact split the one-dependency-source arrangement exists to prevent. Grouped so they can only move together.",
+      "description": "MODULE.bazel, rust-toolchain.toml, and Cargo.toml carry one decision in three files. They drifted apart once already -- Bazel building with 1.97.0 while Cargo used 1.97.1 -- which is the exact split the one-dependency-source arrangement exists to prevent. Grouped so they can only move together.",
       "matchDepNames": [
         "rust"
       ],
