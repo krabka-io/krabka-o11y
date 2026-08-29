@@ -87,11 +87,19 @@ fn parse_expr(input: &str) -> Result<LogqlExpr, ParseError> {
     if input.is_empty() {
         return Err(syntax_error("expected expression"));
     }
+    if input.starts_with('{')
+        && let Ok(query) = parse_query(input)
+    {
+        return Ok(LogqlExpr::Stream {
+            query,
+            source: input.to_string(),
+        });
+    }
     let mut candidate = None;
     scan_top_level(input, |at| {
         if let Some((len, kind, precedence)) = operator_at(input, at)
             && candidate.as_ref().is_none_or(|(_, _, _, old)| {
-                precedence < *old || (precedence == *old && precedence != 5)
+                precedence < *old || (precedence == *old && precedence != 6)
             })
         {
             candidate = Some((at, len, kind, precedence));
@@ -150,13 +158,13 @@ fn operator_at(input: &str, at: usize) -> Option<(usize, ExprOperator, u8)> {
                 .next()
                 .is_none_or(|c| !is_ident_char(c))
     };
-    for (word, op) in [
-        ("unless", MetricBinarySetOp::Unless),
-        ("and", MetricBinarySetOp::And),
-        ("or", MetricBinarySetOp::Or),
+    for (word, op, precedence) in [
+        ("unless", MetricBinarySetOp::Unless, 2),
+        ("and", MetricBinarySetOp::And, 2),
+        ("or", MetricBinarySetOp::Or, 1),
     ] {
         if rest.starts_with(word) && boundary(word.len()) {
-            return Some((word.len(), ExprOperator::Set(op), 1));
+            return Some((word.len(), ExprOperator::Set(op), precedence));
         }
     }
     for (text, op) in [
@@ -168,29 +176,44 @@ fn operator_at(input: &str, at: usize) -> Option<(usize, ExprOperator, u8)> {
         ("<", ComparisonOp::Less),
     ] {
         if rest.starts_with(text) {
-            return Some((text.len(), ExprOperator::Comparison(op), 2));
+            return Some((text.len(), ExprOperator::Comparison(op), 3));
         }
     }
     let ch = rest.chars().next()?;
-    if matches!(ch, '+' | '-')
-        && (at == 0
-            || input[..at]
-                .chars()
-                .next_back()
-                .is_some_and(|previous| matches!(previous, '+' | '-' | '*' | '/' | '%' | '^')))
-    {
+    if matches!(ch, '+' | '-') && sign_is_unary_or_exponent(input, at) {
         return None;
     }
     let (op, p) = match ch {
-        '+' => (MetricScalarArithmeticOp::Add, 3),
-        '-' => (MetricScalarArithmeticOp::Subtract, 3),
-        '*' => (MetricScalarArithmeticOp::Multiply, 4),
-        '/' => (MetricScalarArithmeticOp::Divide, 4),
-        '%' => (MetricScalarArithmeticOp::Modulo, 4),
-        '^' => (MetricScalarArithmeticOp::Power, 5),
+        '+' => (MetricScalarArithmeticOp::Add, 4),
+        '-' => (MetricScalarArithmeticOp::Subtract, 4),
+        '*' => (MetricScalarArithmeticOp::Multiply, 5),
+        '/' => (MetricScalarArithmeticOp::Divide, 5),
+        '%' => (MetricScalarArithmeticOp::Modulo, 5),
+        '^' => (MetricScalarArithmeticOp::Power, 6),
         _ => return None,
     };
     Some((1, ExprOperator::Arithmetic(op), p))
+}
+
+fn sign_is_unary_or_exponent(input: &str, at: usize) -> bool {
+    let before_sign = input[..at].trim_end();
+    let Some(last_char) = before_sign.chars().next_back() else {
+        return true;
+    };
+    if matches!(
+        last_char,
+        '+' | '-' | '*' | '/' | '%' | '^' | '>' | '<' | '=' | '!'
+    ) {
+        return true;
+    }
+    if matches!(last_char, 'e' | 'E') {
+        let mantissa = before_sign[..before_sign.len() - last_char.len_utf8()].trim_end();
+        return mantissa
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_digit() || ch == '.');
+    }
+    false
 }
 
 fn scan_top_level(input: &str, mut found: impl FnMut(usize)) -> Result<(), ParseError> {
@@ -245,7 +268,11 @@ fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
         if args.len() != 1 {
             return Err(syntax_error("expected one function argument"));
         }
-        return Ok(LogqlExpr::Vector(Box::new(parse_expr(args[0])?)));
+        let expr = parse_expr(args[0])?;
+        if !expr.is_scalar() {
+            return Err(syntax_error("vector argument must be scalar"));
+        }
+        return Ok(LogqlExpr::Vector(Box::new(expr)));
     }
     if let Some(args) = function_args(input, "label_replace")? {
         if args.len() != 5 {
@@ -275,12 +302,6 @@ fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
     }
     if parse_scalar_text(input) {
         return Ok(LogqlExpr::Scalar(input.to_string()));
-    }
-    if input.starts_with('{') {
-        return Ok(LogqlExpr::Stream {
-            query: parse_query(input)?,
-            source: input.to_string(),
-        });
     }
     Ok(LogqlExpr::Metric {
         query: parse_metric_query(input)?,
@@ -343,18 +364,41 @@ impl LogqlExpr {
             _ => None,
         }
     }
+    fn is_scalar(&self) -> bool {
+        match self {
+            Self::Scalar(_) => true,
+            Self::Arithmetic {
+                left,
+                matching: None,
+                right,
+                ..
+            }
+            | Self::Comparison {
+                left,
+                bool_modifier: true,
+                matching: None,
+                right,
+                ..
+            } => left.is_scalar() && right.is_scalar(),
+            _ => false,
+        }
+    }
     fn precedence(&self) -> u8 {
         match self {
-            Self::Set { .. } => 1,
-            Self::Comparison { .. } => 2,
+            Self::Set {
+                op: MetricBinarySetOp::Or,
+                ..
+            } => 1,
+            Self::Set { .. } => 2,
+            Self::Comparison { .. } => 3,
             Self::Arithmetic { op, .. } => match op {
-                MetricScalarArithmeticOp::Add | MetricScalarArithmeticOp::Subtract => 3,
+                MetricScalarArithmeticOp::Add | MetricScalarArithmeticOp::Subtract => 4,
                 MetricScalarArithmeticOp::Multiply
                 | MetricScalarArithmeticOp::Divide
-                | MetricScalarArithmeticOp::Modulo => 4,
-                MetricScalarArithmeticOp::Power => 5,
+                | MetricScalarArithmeticOp::Modulo => 5,
+                MetricScalarArithmeticOp::Power => 6,
             },
-            _ => 6,
+            _ => 7,
         }
     }
     fn format_at(&self, f: &mut fmt::Formatter<'_>, parent: u8, right: bool) -> fmt::Result {

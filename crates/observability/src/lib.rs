@@ -79,16 +79,16 @@ use krabka_client_producer::{
 use krabka_logql::{
     ComparisonOp, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, FieldValue,
     LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilterOp, LogfmtParserConfig,
-    MatchOp, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricBinarySetOp,
-    MetricLabelJoin, MetricQuery, MetricScalarArithmetic, MetricScalarArithmeticOp,
-    MetricScalarComparison, MetricVectorGroupModifier, MetricVectorMatching, ParseError,
-    ParserStage, PipelineStage, PlanError, Quantile, RangeAggregation, StreamPlan, StreamQuery,
-    UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion, VectorAggregation, VectorAggregationOp,
-    VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
-    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
-    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
-    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
-    plan_stream_query,
+    LogqlExpr, MatchOp, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet,
+    MetricBinarySetOp, MetricLabelJoin, MetricQuery, MetricScalarArithmetic,
+    MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
+    MetricVectorMatching, ParseError, ParserStage, PipelineStage, PlanError, Quantile,
+    RangeAggregation, StreamPlan, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion,
+    VectorAggregation, VectorAggregationOp, VectorGrouping, parse_logql_expr,
+    parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
+    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
+    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
+    parse_query, plan_stream_query,
 };
 use krabka_units::{
     ByteRate, ByteSize, Time,
@@ -10603,7 +10603,7 @@ fn could_be_scalar_vector_expression(query: &str) -> bool {
             .sum::<usize>();
         return matches!(
             &trimmed[..ident_len],
-            "vector" | "label_replace" | "label_join"
+            "vector" | "label_replace" | "label_join" | "sort" | "sort_desc"
         );
     }
     false
@@ -14403,6 +14403,12 @@ fn format_logql_query(query: &str) -> Result<String, HttpQueryError> {
             } else if let Ok(metric_query) = parse_metric_query(query) {
                 Ok(format_metric_query(&metric_query).unwrap_or_else(|| query.trim().to_string()))
             } else if let Ok(expression) = parse_logql_expr(query) {
+                if logql_expression_contains_label_join(&expression) {
+                    return Err(HttpQueryError::LokiFormatPlainParse(
+                        "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER"
+                            .to_string(),
+                    ));
+                }
                 // The legacy formatters above preserve Loki's established
                 // canonical spelling for the expression shapes they support.
                 // The central recursive AST is the typed fallback for nested
@@ -14433,6 +14439,26 @@ fn format_logql_query(query: &str) -> Result<String, HttpQueryError> {
                 })
             }
         }
+    }
+}
+
+fn logql_expression_contains_label_join(expression: &LogqlExpr) -> bool {
+    match expression {
+        LogqlExpr::LabelJoin { .. } => true,
+        LogqlExpr::Vector(expression)
+        | LogqlExpr::LabelReplace {
+            expr: expression, ..
+        }
+        | LogqlExpr::Sort {
+            expr: expression, ..
+        } => logql_expression_contains_label_join(expression),
+        LogqlExpr::Arithmetic { left, right, .. }
+        | LogqlExpr::Comparison { left, right, .. }
+        | LogqlExpr::Set { left, right, .. } => {
+            logql_expression_contains_label_join(left)
+                || logql_expression_contains_label_join(right)
+        }
+        LogqlExpr::Stream { .. } | LogqlExpr::Metric { .. } | LogqlExpr::Scalar(_) => false,
     }
 }
 
@@ -26262,6 +26288,19 @@ mod tests {
                     r#""outer", "$1", "inner", "(.*)")"#,
                 )
         );
+    }
+
+    #[test]
+    fn recursive_formatting_preserves_loki_specific_rejections() {
+        let queries = [
+            r#"sort(label_join(vector(1),"joined","/","app"))"#,
+            r#"(label_join(vector(1),"joined","/","app"))"#,
+            "sort(vector(-1))",
+        ];
+
+        for query in queries {
+            check!(super::format_logql_query(query).is_err(), "query: {query}");
+        }
     }
 
     /// The shard-range cache answers only when its entry is both fresh and

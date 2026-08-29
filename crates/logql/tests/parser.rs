@@ -2260,6 +2260,36 @@ fn logql_expression_parser_obeys_operator_precedence() {
 
     let grouped = krabka_logql::parse_logql_expr("(vector(1) + 2) * 3").unwrap();
     check!(grouped.to_string() == "(vector(1) + 2) * 3");
+
+    let set = krabka_logql::parse_logql_expr("vector(1) or vector(2) and vector(3)").unwrap();
+    check!(set.to_string() == "vector(1) or vector(2) and vector(3)");
+    let krabka_logql::LogqlExpr::Set { right, .. } = set else {
+        panic!("the root expression should be a set operation");
+    };
+    check!(matches!(*right, krabka_logql::LogqlExpr::Set { .. }));
+}
+
+#[test]
+fn recursive_logql_parser_handles_stream_filters_and_signed_scalars() {
+    for query in [
+        r#"{app="web"} != "debug""#,
+        r#"{app="web"} | json | status >= 500"#,
+    ] {
+        let expression = krabka_logql::parse_logql_expr(query).unwrap();
+        check!(matches!(expression, krabka_logql::LogqlExpr::Stream { .. }));
+    }
+
+    for query in ["vector(1) * -2", "vector(1) * 1e-3"] {
+        let expression = krabka_logql::parse_logql_expr(query).unwrap();
+        check!(expression.to_string() == query);
+    }
+}
+
+#[test]
+fn recursive_logql_parser_rejects_non_scalar_vector_arguments() {
+    for query in ["vector(vector(1))", r#"vector(rate({app="web"}[5m]))"#] {
+        check!(krabka_logql::parse_logql_expr(query).is_err());
+    }
 }
 
 #[test]
