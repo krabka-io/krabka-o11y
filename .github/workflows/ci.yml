@@ -42,6 +42,8 @@ jobs:
       # and `info` off it -- so this gates here and only reports locally.
       - name: format
         run: aspect format
+      - name: verify sibling members
+        run: cargo run -p verify-sibling-members
       # `aspect lint` narrows to the targets a change touched and annotates the
       # pull request. It reads the `rules_lint_machine` output group, which is
       # why the clippy aspect comes from aspect_rules_lint_rust rather than from

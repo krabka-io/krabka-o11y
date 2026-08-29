@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sibling: [krabka-protocol, krabka-client-rs, krabka-broker]
+        sibling: [krabka-protocol, krabka-client-rs, krabka-broker, krabka-schema-registry]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -80,6 +80,13 @@ jobs:
 
           sed -i "s|${current}|${latest}|g" Cargo.toml
           cargo generate-lockfile
+
+          # Verify that the sibling's member set and directory structure did not
+          # change between revisions. If a crate was added, removed, or renamed,
+          # fail the bump so Cargo.toml and MODULE.bazel are updated explicitly
+          # rather than opening a PR that silently resolves crates from crates.io
+          # or breaks Bazel analysis.
+          cargo run -p verify-sibling-members
 
           {
             echo "changed=true"
