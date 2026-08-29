@@ -1,3 +1,5 @@
+use super::*;
+
 impl IntoResponse for HttpQueryError {
     fn into_response(self) -> Response {
         let status = match &self {
@@ -90,4 +92,3 @@ impl IntoResponse for HttpQueryError {
         loki_error(status, error_type, &self.to_string())
     }
 }
-

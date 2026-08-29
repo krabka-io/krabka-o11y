@@ -1,4 +1,6 @@
-fn loki_parquet_label_array(
+use super::*;
+
+pub(crate) fn loki_parquet_label_array(
     label_sets: &[Vec<(String, String)>],
 ) -> Result<MapArray, HttpQueryError> {
     let mut builder = MapBuilder::new(None, StringBuilder::new(), StringBuilder::new());
@@ -12,7 +14,7 @@ fn loki_parquet_label_array(
     Ok(builder.finish())
 }
 
-fn loki_parquet_batch_response(batch: &RecordBatch) -> Result<Response, HttpQueryError> {
+pub(crate) fn loki_parquet_batch_response(batch: &RecordBatch) -> Result<Response, HttpQueryError> {
     let mut body = Vec::new();
     {
         let mut writer = ArrowWriter::try_new(&mut body, batch.schema(), None)?;
@@ -27,22 +29,22 @@ fn loki_parquet_batch_response(batch: &RecordBatch) -> Result<Response, HttpQuer
         .into_response())
 }
 
-fn loki_success(data: impl serde::Serialize) -> Response {
+pub(crate) fn loki_success(data: impl serde::Serialize) -> Response {
     json_response(StatusCode::OK, &loki_success_value(data))
 }
 
-fn loki_sparse_success() -> Response {
+pub(crate) fn loki_sparse_success() -> Response {
     json_response(StatusCode::OK, &json!({ "status": "success" }))
 }
 
-fn loki_success_value(data: impl serde::Serialize) -> Value {
+pub(crate) fn loki_success_value(data: impl serde::Serialize) -> Value {
     json!({
         "status": "success",
         "data": data,
     })
 }
 
-fn add_loki_query_stats(mut value: Value) -> Value {
+pub(crate) fn add_loki_query_stats(mut value: Value) -> Value {
     if value
         .pointer("/data/stats")
         .and_then(Value::as_object)
@@ -53,7 +55,7 @@ fn add_loki_query_stats(mut value: Value) -> Value {
     value
 }
 
-fn merge_loki_query_response(target: &mut Value, source: &Value) {
+pub(crate) fn merge_loki_query_response(target: &mut Value, source: &Value) {
     if let Some(source_result) = source
         .pointer("/data/result")
         .and_then(Value::as_array)
@@ -81,7 +83,7 @@ fn merge_loki_query_response(target: &mut Value, source: &Value) {
     }
 }
 
-fn merge_loki_query_stats(target: &mut Value, source: &Value) {
+pub(crate) fn merge_loki_query_stats(target: &mut Value, source: &Value) {
     for pointer in [
         "/ingester/compressedBytes",
         "/ingester/decompressedBytes",
@@ -106,7 +108,7 @@ fn merge_loki_query_stats(target: &mut Value, source: &Value) {
     }
 }
 
-fn add_loki_query_stat_field(target: &mut Value, source: &Value, pointer: &str) {
+pub(crate) fn add_loki_query_stat_field(target: &mut Value, source: &Value, pointer: &str) {
     let Some(addend) = source.pointer(pointer).and_then(Value::as_u64) else {
         return;
     };
@@ -117,7 +119,7 @@ fn add_loki_query_stat_field(target: &mut Value, source: &Value, pointer: &str) 
     *current = json!(total);
 }
 
-fn add_loki_query_stats_for_stream_plan(mut value: Value, plan: &StreamPlan) -> Value {
+pub(crate) fn add_loki_query_stats_for_stream_plan(mut value: Value, plan: &StreamPlan) -> Value {
     let bytes = planned_block_bytes(plan);
     let chunks = u64::try_from(plan.blocks.len()).unwrap_or(u64::MAX);
     let lines = count_loki_stream_result_lines(&value);
@@ -128,7 +130,7 @@ fn add_loki_query_stats_for_stream_plan(mut value: Value, plan: &StreamPlan) -> 
     value
 }
 
-fn add_loki_query_stats_for_stream_plan_with_hot_tail(
+pub(crate) fn add_loki_query_stats_for_stream_plan_with_hot_tail(
     value: Value,
     plan: &StreamPlan,
     hot_tail: &[WalLogRecord],
@@ -143,7 +145,7 @@ fn add_loki_query_stats_for_stream_plan_with_hot_tail(
     )
 }
 
-fn add_loki_query_stats_for_stream_blocks_with_hot_tail(
+pub(crate) fn add_loki_query_stats_for_stream_blocks_with_hot_tail(
     mut value: Value,
     blocks: &[BlockDescriptor],
     plan: &StreamPlan,
@@ -161,7 +163,7 @@ fn add_loki_query_stats_for_stream_blocks_with_hot_tail(
     value
 }
 
-fn add_loki_query_stats_for_metric_plan(
+pub(crate) fn add_loki_query_stats_for_metric_plan(
     mut value: Value,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -180,7 +182,7 @@ fn add_loki_query_stats_for_metric_plan(
     value
 }
 
-fn add_loki_query_stats_for_metric_plan_with_hot_tail(
+pub(crate) fn add_loki_query_stats_for_metric_plan_with_hot_tail(
     mut value: Value,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -208,7 +210,7 @@ fn add_loki_query_stats_for_metric_plan_with_hot_tail(
     value
 }
 
-fn populate_loki_query_scan_stats(
+pub(crate) fn populate_loki_query_scan_stats(
     stats: &mut Value,
     scanned: ByteSize,
     store_lines: u64,
@@ -233,15 +235,15 @@ fn populate_loki_query_scan_stats(
     stats["summary"]["totalLinesProcessed"] = json!(store_lines.saturating_add(ingester_lines));
 }
 
-fn planned_block_bytes(plan: &StreamPlan) -> ByteSize {
+pub(crate) fn planned_block_bytes(plan: &StreamPlan) -> ByteSize {
     planned_block_bytes_for_blocks(&plan.blocks)
 }
 
-fn planned_block_bytes_for_blocks(blocks: &[BlockDescriptor]) -> ByteSize {
+pub(crate) fn planned_block_bytes_for_blocks(blocks: &[BlockDescriptor]) -> ByteSize {
     blocks.iter().map(|block| block.size).sum()
 }
 
-fn count_loki_stream_result_lines(value: &Value) -> u64 {
+pub(crate) fn count_loki_stream_result_lines(value: &Value) -> u64 {
     value
         .pointer("/data/result")
         .and_then(Value::as_array)
@@ -254,7 +256,7 @@ fn count_loki_stream_result_lines(value: &Value) -> u64 {
         })
 }
 
-fn count_loki_stream_result_hot_tail_lines(
+pub(crate) fn count_loki_stream_result_hot_tail_lines(
     value: &Value,
     plan: &StreamPlan,
     hot_tail: &[WalLogRecord],
@@ -320,7 +322,7 @@ fn count_loki_stream_result_hot_tail_lines(
     matched
 }
 
-fn json_object_to_labels(value: &Value) -> Option<Labels> {
+pub(crate) fn json_object_to_labels(value: &Value) -> Option<Labels> {
     value.as_object().map(|object| {
         object
             .iter()
@@ -333,7 +335,7 @@ fn json_object_to_labels(value: &Value) -> Option<Labels> {
     })
 }
 
-fn count_loki_metric_result_samples(value: &Value) -> u64 {
+pub(crate) fn count_loki_metric_result_samples(value: &Value) -> u64 {
     let Some(results) = value.pointer("/data/result").and_then(Value::as_array) else {
         return 0;
     };
@@ -349,14 +351,14 @@ fn count_loki_metric_result_samples(value: &Value) -> u64 {
         .fold(0_u64, u64::saturating_add)
 }
 
-fn count_loki_metric_result_scan_lines(value: &Value, query: &MetricQuery) -> u64 {
+pub(crate) fn count_loki_metric_result_scan_lines(value: &Value, query: &MetricQuery) -> u64 {
     if matches!(query.aggregation, RangeAggregation::AbsentOverTime) {
         return 0;
     }
     count_loki_metric_result_samples(value)
 }
 
-fn count_loki_metric_result_hot_tail_samples(
+pub(crate) fn count_loki_metric_result_hot_tail_samples(
     value: &Value,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -425,7 +427,7 @@ fn count_loki_metric_result_hot_tail_samples(
     matched
 }
 
-fn consume_hot_metric_sample(
+pub(crate) fn consume_hot_metric_sample(
     hot_counts: &mut BTreeMap<(Labels, String), u64>,
     labels: &Labels,
     sample: &Value,
@@ -444,10 +446,9 @@ fn consume_hot_metric_sample(
     true
 }
 
-fn loki_metric_sample_timestamp_key(sample: &Value) -> Option<String> {
+pub(crate) fn loki_metric_sample_timestamp_key(sample: &Value) -> Option<String> {
     sample
         .as_array()
         .and_then(|sample| sample.first())
         .map(Value::to_string)
 }
-

@@ -1,3 +1,5 @@
+use super::*;
+
 /// Spawns a background task that retries `KafkaLogWalConsumer::connect` until
 /// it succeeds, then runs the hot-tail poll loop.
 ///
@@ -8,7 +10,7 @@
 /// which sends `LeaveGroup`. That removes the consumer from the broker's group
 /// immediately on graceful shutdown.
 #[cfg_attr(test, mutants::skip)]
-fn spawn_wal_hot_tail_connect_and_poll(
+pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
     deferred: DeferredWalConsumerConnect,
     hot_tail: BufferedLogHotTail,
     frontier: Option<SharedCompactionFrontier>,
@@ -72,7 +74,7 @@ fn spawn_wal_hot_tail_connect_and_poll(
 /// until it succeeds, then swaps the unavailable authorizer for the real
 /// broker-backed authorizer.
 #[cfg_attr(test, mutants::skip)]
-fn spawn_query_authorizer_connect(
+pub(crate) fn spawn_query_authorizer_connect(
     bootstrap: String,
     topic: String,
     slot: Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>>,
@@ -118,7 +120,7 @@ fn spawn_query_authorizer_connect(
     })
 }
 
-fn has_native_kafka_log_headers(headers: &[KafkaWalHeader]) -> bool {
+pub(crate) fn has_native_kafka_log_headers(headers: &[KafkaWalHeader]) -> bool {
     headers.iter().any(|header| {
         header.key == "krabka-log-timestamp-ns"
             || header.key.starts_with("krabka-log-label-")
@@ -130,7 +132,7 @@ fn has_native_kafka_log_headers(headers: &[KafkaWalHeader]) -> bool {
     })
 }
 
-fn decode_native_kafka_log_record(
+pub(crate) fn decode_native_kafka_log_record(
     record: KafkaWalRecord,
 ) -> Result<WalLogRecord, WalRecordDecodeError> {
     let tenant = required_kafka_header_utf8(&record.headers, "krabka-tenant")?;
@@ -189,7 +191,7 @@ fn decode_native_kafka_log_record(
     })
 }
 
-fn required_kafka_header_utf8(
+pub(crate) fn required_kafka_header_utf8(
     headers: &[KafkaWalHeader],
     name: &str,
 ) -> Result<String, WalRecordDecodeError> {
@@ -200,7 +202,7 @@ fn required_kafka_header_utf8(
     })
 }
 
-fn optional_kafka_header_utf8(
+pub(crate) fn optional_kafka_header_utf8(
     headers: &[KafkaWalHeader],
     name: &str,
 ) -> Result<Option<String>, WalRecordDecodeError> {
@@ -221,7 +223,7 @@ fn optional_kafka_header_utf8(
     })
 }
 
-fn native_timestamp_ms_to_ns(timestamp_ms: i64) -> Result<i64, WalRecordDecodeError> {
+pub(crate) fn native_timestamp_ms_to_ns(timestamp_ms: i64) -> Result<i64, WalRecordDecodeError> {
     let converted_ns = timestamp_ms.checked_mul(1_000_000).ok_or_else(|| {
         WalRecordDecodeError::InvalidNativeTimestampValue {
             value: timestamp_ms.to_string(),
@@ -230,7 +232,7 @@ fn native_timestamp_ms_to_ns(timestamp_ms: i64) -> Result<i64, WalRecordDecodeEr
     validate_native_timestamp_ns(converted_ns, timestamp_ms.to_string())
 }
 
-fn validate_native_timestamp_ns(
+pub(crate) fn validate_native_timestamp_ns(
     timestamp_ns: i64,
     value: String,
 ) -> Result<i64, WalRecordDecodeError> {
@@ -241,7 +243,7 @@ fn validate_native_timestamp_ns(
     }
 }
 
-fn kafka_headers_with_prefix(
+pub(crate) fn kafka_headers_with_prefix(
     headers: &[KafkaWalHeader],
     prefix: &str,
     duplicate_error: impl Fn(String) -> WalRecordDecodeError,
@@ -349,4 +351,3 @@ pub enum WalRecordDecodeError {
     #[error("duplicate native Kafka metadata name {name}")]
     DuplicateNativeMetadataName { name: String },
 }
-

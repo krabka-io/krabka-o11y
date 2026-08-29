@@ -1,16 +1,18 @@
+use super::*;
+
 impl MetricValue {
-    fn zero() -> Self {
+    pub(crate) fn zero() -> Self {
         Self {
             numerator: 0,
             denominator: 1,
         }
     }
 
-    fn integer(value: u64) -> Self {
+    pub(crate) fn integer(value: u64) -> Self {
         Self::new(i128::from(value), 1)
     }
 
-    fn new(numerator: i128, denominator: u128) -> Self {
+    pub(crate) fn new(numerator: i128, denominator: u128) -> Self {
         if numerator == 0 || denominator == 0 {
             return Self::zero();
         }
@@ -22,7 +24,7 @@ impl MetricValue {
         }
     }
 
-    fn add(self, other: Self) -> Self {
+    pub(crate) fn add(self, other: Self) -> Self {
         Self::new(
             self.numerator * i128::try_from(other.denominator).expect("denominator fits in i128")
                 + other.numerator
@@ -31,7 +33,7 @@ impl MetricValue {
         )
     }
 
-    fn subtract(self, other: Self) -> Self {
+    pub(crate) fn subtract(self, other: Self) -> Self {
         Self::new(
             self.numerator * i128::try_from(other.denominator).expect("denominator fits in i128")
                 - other.numerator
@@ -40,14 +42,14 @@ impl MetricValue {
         )
     }
 
-    fn multiply(self, other: Self) -> Self {
+    pub(crate) fn multiply(self, other: Self) -> Self {
         Self::new(
             self.numerator * other.numerator,
             self.denominator * other.denominator,
         )
     }
 
-    fn divide(self, other: Self) -> Option<Self> {
+    pub(crate) fn divide(self, other: Self) -> Option<Self> {
         if other.numerator == 0 {
             return None;
         }
@@ -65,18 +67,18 @@ impl MetricValue {
         Some(Self::new(numerator, u128::try_from(denominator).ok()?))
     }
 
-    fn modulo(self, other: Self) -> Option<Self> {
+    pub(crate) fn modulo(self, other: Self) -> Option<Self> {
         if other.numerator == 0 {
             return None;
         }
         Self::from_f64(self.to_f64()? % other.to_f64()?)
     }
 
-    fn power(self, other: Self) -> Option<Self> {
+    pub(crate) fn power(self, other: Self) -> Option<Self> {
         Self::from_f64(self.to_f64()?.powf(other.to_f64()?))
     }
 
-    fn saturating_sub(self, other: Self) -> Self {
+    pub(crate) fn saturating_sub(self, other: Self) -> Self {
         if self.cmp_value(other) == Ordering::Less {
             Self::zero()
         } else {
@@ -90,7 +92,7 @@ impl MetricValue {
         }
     }
 
-    fn divide_by(self, divisor: u64) -> Self {
+    pub(crate) fn divide_by(self, divisor: u64) -> Self {
         if divisor == 0 {
             Self::zero()
         } else {
@@ -98,7 +100,7 @@ impl MetricValue {
         }
     }
 
-    fn sqrt(self) -> Self {
+    pub(crate) fn sqrt(self) -> Self {
         let value = self.to_f64().unwrap_or_default().sqrt();
         if !value.is_finite() || value <= 0.0 {
             return Self::zero();
@@ -111,19 +113,19 @@ impl MetricValue {
         )
     }
 
-    fn cmp_value(self, other: Self) -> Ordering {
+    pub(crate) fn cmp_value(self, other: Self) -> Ordering {
         (self.numerator * i128::try_from(other.denominator).expect("denominator fits in i128")).cmp(
             &(other.numerator
                 * i128::try_from(self.denominator).expect("denominator fits in i128")),
         )
     }
 
-    fn to_f64(self) -> Option<f64> {
+    pub(crate) fn to_f64(self) -> Option<f64> {
         let value = self.numerator.to_f64()? / self.denominator.to_f64()?;
         value.is_finite().then_some(value)
     }
 
-    fn from_f64(value: f64) -> Option<Self> {
+    pub(crate) fn from_f64(value: f64) -> Option<Self> {
         if !value.is_finite() {
             return None;
         }
@@ -140,24 +142,24 @@ impl Default for MetricValue {
 }
 
 #[derive(Clone, Debug, Default)]
-struct MetricSampleState {
-    count: u64,
-    sum: MetricValue,
-    sum_squares: MetricValue,
-    min: Option<MetricValue>,
-    max: Option<MetricValue>,
-    first: Option<(i64, MetricValue)>,
-    last: Option<(i64, MetricValue)>,
-    values: Vec<MetricValue>,
-    values_by_time: BTreeMap<i64, MetricValue>,
+pub(crate) struct MetricSampleState {
+    pub(crate) count: u64,
+    pub(crate) sum: MetricValue,
+    pub(crate) sum_squares: MetricValue,
+    pub(crate) min: Option<MetricValue>,
+    pub(crate) max: Option<MetricValue>,
+    pub(crate) first: Option<(i64, MetricValue)>,
+    pub(crate) last: Option<(i64, MetricValue)>,
+    pub(crate) values: Vec<MetricValue>,
+    pub(crate) values_by_time: BTreeMap<i64, MetricValue>,
 }
 
 impl MetricSampleState {
-    fn has_samples(&self) -> bool {
+    pub(crate) fn has_samples(&self) -> bool {
         self.count > 0
     }
 
-    fn record(&mut self, timestamp_ns: i64, value: MetricValue) {
+    pub(crate) fn record(&mut self, timestamp_ns: i64, value: MetricValue) {
         self.count += 1;
         self.sum = self.sum.add(value);
         self.sum_squares = self.sum_squares.add(value.multiply(value));
@@ -196,7 +198,7 @@ impl MetricSampleState {
             .or_insert(value);
     }
 
-    fn merge(&mut self, other: Self) {
+    pub(crate) fn merge(&mut self, other: Self) {
         self.count = self.count.saturating_add(other.count);
         self.sum = self.sum.add(other.sum);
         self.sum_squares = self.sum_squares.add(other.sum_squares);
@@ -245,11 +247,11 @@ impl MetricSampleState {
         }
     }
 
-    fn average(self) -> MetricValue {
+    pub(crate) fn average(self) -> MetricValue {
         self.sum.divide_by(self.count)
     }
 
-    fn stdvar(self) -> MetricValue {
+    pub(crate) fn stdvar(self) -> MetricValue {
         if self.count == 0 {
             return MetricValue::zero();
         }
@@ -260,11 +262,11 @@ impl MetricSampleState {
             .saturating_sub(mean.multiply(mean))
     }
 
-    fn stddev(self) -> MetricValue {
+    pub(crate) fn stddev(self) -> MetricValue {
         self.stdvar().sqrt()
     }
 
-    fn quantile(mut self, quantile: Quantile) -> MetricValue {
+    pub(crate) fn quantile(mut self, quantile: Quantile) -> MetricValue {
         if self.values.is_empty() {
             return MetricValue::zero();
         }
@@ -294,7 +296,7 @@ impl MetricSampleState {
         )
     }
 
-    fn counter_increase(self) -> MetricValue {
+    pub(crate) fn counter_increase(self) -> MetricValue {
         let mut values = self.values_by_time.into_values();
         let Some(mut previous) = values.next() else {
             return MetricValue::zero();
@@ -313,16 +315,16 @@ impl MetricSampleState {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct VectorAggregationState {
-    count: u64,
-    sum: MetricValue,
-    sum_squares: MetricValue,
-    min: Option<MetricValue>,
-    max: Option<MetricValue>,
+pub(crate) struct VectorAggregationState {
+    pub(crate) count: u64,
+    pub(crate) sum: MetricValue,
+    pub(crate) sum_squares: MetricValue,
+    pub(crate) min: Option<MetricValue>,
+    pub(crate) max: Option<MetricValue>,
 }
 
 impl VectorAggregationState {
-    fn record(&mut self, value: MetricValue) {
+    pub(crate) fn record(&mut self, value: MetricValue) {
         self.count += 1;
         self.sum = self.sum.add(value);
         self.sum_squares = self.sum_squares.add(value.multiply(value));
@@ -342,7 +344,7 @@ impl VectorAggregationState {
         }));
     }
 
-    fn finish(self, op: &VectorAggregationOp) -> MetricValue {
+    pub(crate) fn finish(self, op: &VectorAggregationOp) -> MetricValue {
         match op {
             VectorAggregationOp::Sum => self.sum,
             VectorAggregationOp::Count => MetricValue::integer(self.count),
@@ -362,7 +364,7 @@ impl VectorAggregationState {
         }
     }
 
-    fn stdvar(self) -> MetricValue {
+    pub(crate) fn stdvar(self) -> MetricValue {
         if self.count == 0 {
             return MetricValue::zero();
         }
@@ -374,7 +376,7 @@ impl VectorAggregationState {
     }
 }
 
-fn format_metric_value(value: MetricValue) -> String {
+pub(crate) fn format_metric_value(value: MetricValue) -> String {
     let negative = value.numerator < 0;
     let numerator = value.numerator.unsigned_abs();
     let whole = numerator / value.denominator;
@@ -398,7 +400,7 @@ fn format_metric_value(value: MetricValue) -> String {
     format!("{sign}{whole}.{decimals}")
 }
 
-fn rate_metric_value(value: MetricValue, range_ns: i64) -> MetricValue {
+pub(crate) fn rate_metric_value(value: MetricValue, range_ns: i64) -> MetricValue {
     let denominator = u128::from(range_ns.unsigned_abs());
     if denominator == 0 {
         return MetricValue::zero();
@@ -410,7 +412,7 @@ fn rate_metric_value(value: MetricValue, range_ns: i64) -> MetricValue {
     )
 }
 
-fn eval_times(range: TimeRange, step_ns: i64) -> Vec<i64> {
+pub(crate) fn eval_times(range: TimeRange, step_ns: i64) -> Vec<i64> {
     let mut times = Vec::new();
     let mut time = range.start_ns;
     while time <= range.end_ns {
@@ -426,7 +428,7 @@ fn eval_times(range: TimeRange, step_ns: i64) -> Vec<i64> {
     times
 }
 
-fn append_matching_log_row(
+pub(crate) fn append_matching_log_row(
     streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,
     plan: &StreamPlan,
     label_index: &LabelIndex,
@@ -472,4 +474,3 @@ fn append_matching_log_row(
 
     Ok(())
 }
-

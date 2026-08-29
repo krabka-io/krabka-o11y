@@ -1,4 +1,6 @@
-fn apply_metric_binary_arithmetic_to_series_with_left_operand(
+use super::*;
+
+pub(crate) fn apply_metric_binary_arithmetic_to_series_with_left_operand(
     output_series: &mut Value,
     left_series: &Value,
     op: MetricScalarArithmeticOp,
@@ -42,7 +44,7 @@ fn apply_metric_binary_arithmetic_to_series_with_left_operand(
     apply_metric_binary_arithmetic_to_sample_operands(output_sample, left_sample, &right_sample, op)
 }
 
-fn matching_metric_binary_sample<'a>(
+pub(crate) fn matching_metric_binary_sample<'a>(
     left_sample: &Value,
     right_values: &'a [Value],
 ) -> Option<&'a Value> {
@@ -51,7 +53,10 @@ fn matching_metric_binary_sample<'a>(
         .find(|right_sample| metric_binary_sample_timestamps_match(left_sample, right_sample))
 }
 
-fn metric_binary_sample_timestamps_match(left_sample: &Value, right_sample: &Value) -> bool {
+pub(crate) fn metric_binary_sample_timestamps_match(
+    left_sample: &Value,
+    right_sample: &Value,
+) -> bool {
     match (
         metric_binary_sample_timestamp_ns_candidates(left_sample),
         metric_binary_sample_timestamp_ns_candidates(right_sample),
@@ -67,7 +72,7 @@ fn metric_binary_sample_timestamps_match(left_sample: &Value, right_sample: &Val
     }
 }
 
-fn metric_binary_sample_timestamp_ns_candidates(sample: &Value) -> Option<Vec<i64>> {
+pub(crate) fn metric_binary_sample_timestamp_ns_candidates(sample: &Value) -> Option<Vec<i64>> {
     let timestamp = sample.as_array()?.first()?;
     if let Some(timestamp) = timestamp.as_i64() {
         return Some(metric_binary_integer_timestamp_ns_candidates(timestamp));
@@ -98,7 +103,7 @@ fn metric_binary_sample_timestamp_ns_candidates(sample: &Value) -> Option<Vec<i6
     None
 }
 
-fn metric_binary_integer_timestamp_ns_candidates(timestamp: i64) -> Vec<i64> {
+pub(crate) fn metric_binary_integer_timestamp_ns_candidates(timestamp: i64) -> Vec<i64> {
     let mut candidates = vec![timestamp];
     if let Some(seconds_timestamp) = timestamp.checked_mul(1_000_000_000) {
         candidates.push(seconds_timestamp);
@@ -108,7 +113,7 @@ fn metric_binary_integer_timestamp_ns_candidates(timestamp: i64) -> Vec<i64> {
     candidates
 }
 
-fn apply_metric_binary_arithmetic_to_sample(
+pub(crate) fn apply_metric_binary_arithmetic_to_sample(
     left_sample: &mut Value,
     right_sample: &Value,
     op: MetricScalarArithmeticOp,
@@ -117,7 +122,7 @@ fn apply_metric_binary_arithmetic_to_sample(
     apply_metric_binary_arithmetic_to_sample_operands(left_sample, &original_left, right_sample, op)
 }
 
-fn apply_metric_binary_arithmetic_to_sample_operands(
+pub(crate) fn apply_metric_binary_arithmetic_to_sample_operands(
     output_sample: &mut Value,
     left_sample: &Value,
     right_sample: &Value,
@@ -158,7 +163,7 @@ fn apply_metric_binary_arithmetic_to_sample_operands(
     true
 }
 
-fn apply_metric_binary_comparison_to_loki_result(
+pub(crate) fn apply_metric_binary_comparison_to_loki_result(
     left: &mut Value,
     right: &Value,
     op: ComparisonOp,
@@ -224,7 +229,7 @@ fn apply_metric_binary_comparison_to_loki_result(
     }
 }
 
-fn apply_metric_binary_comparison_group_right_to_results(
+pub(crate) fn apply_metric_binary_comparison_group_right_to_results(
     left_results: &mut Vec<Value>,
     right_results: &[Value],
     op: ComparisonOp,
@@ -257,7 +262,7 @@ fn apply_metric_binary_comparison_group_right_to_results(
     }
 }
 
-fn apply_metric_binary_comparison_to_series(
+pub(crate) fn apply_metric_binary_comparison_to_series(
     left_series: &mut Value,
     right_series: &Value,
     op: ComparisonOp,
@@ -298,7 +303,7 @@ fn apply_metric_binary_comparison_to_series(
     apply_metric_binary_comparison_to_sample(left_sample, right_sample, op, bool_modifier)
 }
 
-fn apply_metric_binary_comparison_to_series_with_left_operand(
+pub(crate) fn apply_metric_binary_comparison_to_series_with_left_operand(
     output_series: &mut Value,
     left_series: &Value,
     op: ComparisonOp,
@@ -350,7 +355,7 @@ fn apply_metric_binary_comparison_to_series_with_left_operand(
     )
 }
 
-fn apply_metric_binary_comparison_to_sample(
+pub(crate) fn apply_metric_binary_comparison_to_sample(
     left_sample: &mut Value,
     right_sample: &Value,
     op: ComparisonOp,
@@ -366,7 +371,7 @@ fn apply_metric_binary_comparison_to_sample(
     )
 }
 
-fn apply_metric_binary_comparison_to_sample_operands(
+pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
     output_sample: &mut Value,
     left_sample: &Value,
     right_sample: &Value,
@@ -414,4 +419,3 @@ fn apply_metric_binary_comparison_to_sample_operands(
         matches
     }
 }
-

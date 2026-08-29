@@ -1,4 +1,6 @@
-fn loki_proto_timestamp_ns(
+use super::*;
+
+pub(crate) fn loki_proto_timestamp_ns(
     timestamp: Option<&LokiProtoTimestamp>,
 ) -> Result<i64, DistributorError> {
     let timestamp = timestamp.ok_or(DistributorError::InvalidTimestamp)?;
@@ -13,7 +15,7 @@ fn loki_proto_timestamp_ns(
         .ok_or(DistributorError::InvalidTimestamp)
 }
 
-fn loki_missing_proto_timestamp_error(
+pub(crate) fn loki_missing_proto_timestamp_error(
     stream_labels: &Labels,
     max_age: Option<Time>,
 ) -> DistributorError {
@@ -26,7 +28,7 @@ fn loki_missing_proto_timestamp_error(
     }
 }
 
-fn loki_proto_label_pairs_to_labels(labels: &[LokiProtoLabelPair]) -> Labels {
+pub(crate) fn loki_proto_label_pairs_to_labels(labels: &[LokiProtoLabelPair]) -> Labels {
     let mut labels_by_name = Labels::new();
     for label in labels {
         labels_by_name.insert(label.name.clone(), label.value.clone());
@@ -34,7 +36,7 @@ fn loki_proto_label_pairs_to_labels(labels: &[LokiProtoLabelPair]) -> Labels {
     labels_by_name
 }
 
-fn normalize_otlp_proto_logs(
+pub(crate) fn normalize_otlp_proto_logs(
     headers: &HeaderMap,
     payload: ProtoExportLogsServiceRequest,
     reject_old_samples_max_age: Option<Time>,
@@ -49,7 +51,7 @@ fn normalize_otlp_proto_logs(
     )
 }
 
-fn normalize_otlp_proto_logs_for_tenant(
+pub(crate) fn normalize_otlp_proto_logs_for_tenant(
     tenant: &str,
     payload: ProtoExportLogsServiceRequest,
     reject_old_samples_max_age: Option<Time>,
@@ -109,7 +111,7 @@ fn normalize_otlp_proto_logs_for_tenant(
     Ok(records)
 }
 
-fn otlp_attributes_to_labels(
+pub(crate) fn otlp_attributes_to_labels(
     attributes: Option<&[OtlpKeyValue]>,
 ) -> Result<Labels, DistributorError> {
     let mut labels = Labels::new();
@@ -128,7 +130,7 @@ fn otlp_attributes_to_labels(
     Ok(labels)
 }
 
-fn proto_attributes_to_labels(
+pub(crate) fn proto_attributes_to_labels(
     attributes: Option<&[ProtoKeyValue]>,
 ) -> Result<Labels, DistributorError> {
     let mut labels = Labels::new();
@@ -149,7 +151,7 @@ fn proto_attributes_to_labels(
     Ok(labels)
 }
 
-fn proto_log_record_structured_metadata(
+pub(crate) fn proto_log_record_structured_metadata(
     log_record: &ProtoLogRecord,
 ) -> Result<Labels, DistributorError> {
     let mut metadata = proto_attributes_to_labels(Some(log_record.attributes.as_slice()))?;
@@ -168,7 +170,7 @@ fn proto_log_record_structured_metadata(
     Ok(metadata)
 }
 
-fn otlp_log_record_structured_metadata(
+pub(crate) fn otlp_log_record_structured_metadata(
     log_record: &OtlpLogRecord,
 ) -> Result<Labels, DistributorError> {
     let mut metadata = otlp_attributes_to_labels(log_record.attributes.as_deref())?;
@@ -193,7 +195,7 @@ fn otlp_log_record_structured_metadata(
     Ok(metadata)
 }
 
-fn insert_metadata_if_absent(
+pub(crate) fn insert_metadata_if_absent(
     metadata: &mut Labels,
     name: &str,
     value: Option<String>,
@@ -207,13 +209,13 @@ fn insert_metadata_if_absent(
     Ok(())
 }
 
-fn insert_proto_trace_context_metadata(metadata: &mut Labels, name: &str, value: &[u8]) {
+pub(crate) fn insert_proto_trace_context_metadata(metadata: &mut Labels, name: &str, value: &[u8]) {
     if !value.is_empty() {
         metadata.insert(name.to_string(), hex_string(value));
     }
 }
 
-fn normalize_otlp_attribute_name(name: &str) -> String {
+pub(crate) fn normalize_otlp_attribute_name(name: &str) -> String {
     let mut normalized = name
         .chars()
         .map(|ch| {
@@ -237,7 +239,7 @@ fn normalize_otlp_attribute_name(name: &str) -> String {
     normalized
 }
 
-fn discover_service_name_label(labels: &mut Labels) {
+pub(crate) fn discover_service_name_label(labels: &mut Labels) {
     if labels.contains_key("service_name") {
         return;
     }
@@ -251,7 +253,7 @@ fn discover_service_name_label(labels: &mut Labels) {
     labels.insert("service_name".to_string(), service_name);
 }
 
-fn discover_detected_level_label(labels: &mut Labels, line: &str) {
+pub(crate) fn discover_detected_level_label(labels: &mut Labels, line: &str) {
     if labels.contains_key("detected_level")
         || labels.contains_key("level")
         || labels.contains_key("severity")
@@ -266,7 +268,7 @@ fn discover_detected_level_label(labels: &mut Labels, line: &str) {
     }
 }
 
-fn detect_log_level(line: &str) -> Option<&'static str> {
+pub(crate) fn detect_log_level(line: &str) -> Option<&'static str> {
     let line = line.to_ascii_lowercase();
     for level in [
         "critical", "crit", "fatal", "error", "warn", "warning", "info", "debug", "trace",
@@ -282,7 +284,7 @@ fn detect_log_level(line: &str) -> Option<&'static str> {
     None
 }
 
-fn contains_log_level_token(line: &str, level: &str) -> bool {
+pub(crate) fn contains_log_level_token(line: &str, level: &str) -> bool {
     line.match_indices(level).any(|(start, _)| {
         let end = start + level.len();
         let before = start
@@ -294,11 +296,11 @@ fn contains_log_level_token(line: &str, level: &str) -> bool {
     })
 }
 
-fn is_log_level_word_byte(byte: u8) -> bool {
+pub(crate) fn is_log_level_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-const SERVICE_NAME_DISCOVERY_LABELS: &[&str] = &[
+pub(crate) const SERVICE_NAME_DISCOVERY_LABELS: &[&str] = &[
     "service",
     "app",
     "application",
@@ -311,7 +313,7 @@ const SERVICE_NAME_DISCOVERY_LABELS: &[&str] = &[
     "job",
 ];
 
-fn proto_timestamp_ns(
+pub(crate) fn proto_timestamp_ns(
     time_unix_nano: u64,
     observed_time_unix_nano: u64,
 ) -> Result<i64, DistributorError> {
@@ -323,7 +325,7 @@ fn proto_timestamp_ns(
     i64::try_from(timestamp).map_err(|_| DistributorError::InvalidTimestamp)
 }
 
-fn otlp_timestamp_ns(timestamp: &Value) -> Result<i64, DistributorError> {
+pub(crate) fn otlp_timestamp_ns(timestamp: &Value) -> Result<i64, DistributorError> {
     let timestamp_ns = match timestamp {
         Value::String(timestamp) => timestamp
             .parse()
@@ -334,7 +336,7 @@ fn otlp_timestamp_ns(timestamp: &Value) -> Result<i64, DistributorError> {
     validate_ingest_timestamp_ns(timestamp_ns)
 }
 
-fn validate_ingest_timestamp_ns(timestamp_ns: i64) -> Result<i64, DistributorError> {
+pub(crate) fn validate_ingest_timestamp_ns(timestamp_ns: i64) -> Result<i64, DistributorError> {
     if timestamp_ns < 0 {
         Err(DistributorError::InvalidTimestamp)
     } else {
@@ -342,7 +344,7 @@ fn validate_ingest_timestamp_ns(timestamp_ns: i64) -> Result<i64, DistributorErr
     }
 }
 
-fn validate_loki_timestamp_window(
+pub(crate) fn validate_loki_timestamp_window(
     timestamp_ns: i64,
     stream_labels: &Labels,
     max_age: Option<Time>,
@@ -363,7 +365,7 @@ fn validate_loki_timestamp_window(
 /// strict comparisons -- a timestamp precisely at the oldest or newest
 /// acceptable value is accepted -- and against a wall clock that boundary is
 /// unreachable: `now` advances between choosing the timestamp and reading it.
-fn validate_loki_timestamp_window_at(
+pub(crate) fn validate_loki_timestamp_window_at(
     timestamp_ns: i64,
     now_ns: i64,
     stream_labels: &Labels,
@@ -393,7 +395,7 @@ fn validate_loki_timestamp_window_at(
     Ok(())
 }
 
-fn loki_stale_sample_label_set(labels: &Labels) -> String {
+pub(crate) fn loki_stale_sample_label_set(labels: &Labels) -> String {
     let values = labels
         .iter()
         .map(|(name, value)| format!("{name}={}", quote_logql_string(value)))
@@ -402,7 +404,7 @@ fn loki_stale_sample_label_set(labels: &Labels) -> String {
     format!("{{{values}}}")
 }
 
-fn rfc3339_seconds(timestamp_ns: i64) -> String {
+pub(crate) fn rfc3339_seconds(timestamp_ns: i64) -> String {
     let seconds = timestamp_ns.div_euclid(1_000_000_000);
     let Ok(timestamp) = OffsetDateTime::from_unix_timestamp(seconds) else {
         return seconds.to_string();
@@ -420,7 +422,7 @@ fn rfc3339_seconds(timestamp_ns: i64) -> String {
     )
 }
 
-fn otlp_severity_number_to_string(value: &Value) -> Result<String, DistributorError> {
+pub(crate) fn otlp_severity_number_to_string(value: &Value) -> Result<String, DistributorError> {
     match value {
         Value::Number(number) => Ok(number.to_string()),
         Value::String(string) => Ok(string.clone()),
@@ -428,7 +430,7 @@ fn otlp_severity_number_to_string(value: &Value) -> Result<String, DistributorEr
     }
 }
 
-fn otlp_value_to_string(value: &OtlpAnyValue) -> String {
+pub(crate) fn otlp_value_to_string(value: &OtlpAnyValue) -> String {
     match value {
         OtlpAnyValue::String(value) | OtlpAnyValue::Bytes(value) => value.clone(),
         OtlpAnyValue::Bool(value) => value.to_string(),
@@ -455,4 +457,3 @@ fn otlp_value_to_string(value: &OtlpAnyValue) -> String {
         .expect("OTLP key-value lists serialize to JSON"),
     }
 }
-

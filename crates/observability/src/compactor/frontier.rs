@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Error)]
 pub enum KafkaWalCompactionError {
     #[error(transparent)]
@@ -75,8 +77,8 @@ pub async fn compact_next_kafka_wal_batch_to_object_store(
 }
 
 #[derive(Default)]
-struct LastCompactedPosition {
-    position: Option<WalPosition>,
+pub(crate) struct LastCompactedPosition {
+    pub(crate) position: Option<WalPosition>,
 }
 
 impl CompactionOffsetCommitter for LastCompactedPosition {
@@ -135,7 +137,7 @@ pub async fn compact_wal_records_to_object_store(
     .ok_or(CompactionError::AllRowsDeleted)
 }
 
-async fn compact_wal_records_to_object_store_with_delete_filters_and_index_output(
+pub(crate) async fn compact_wal_records_to_object_store_with_delete_filters_and_index_output(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     label_index: &mut LabelIndex,
@@ -268,7 +270,7 @@ pub struct KafkaWalHeader {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompactionFrontier {
     pub compacted_through_ns: i64,
-    partition_offsets: BTreeMap<PartitionIndex, Offset>,
+    pub(crate) partition_offsets: BTreeMap<PartitionIndex, Offset>,
 }
 
 impl CompactionFrontier {
@@ -293,7 +295,7 @@ impl CompactionFrontier {
             .or_insert(position.offset);
     }
 
-    fn is_compacted(&self, record: &WalLogRecord) -> bool {
+    pub(crate) fn is_compacted(&self, record: &WalLogRecord) -> bool {
         if let Some(position) = record.position
             && self
                 .partition_offsets
@@ -309,7 +311,7 @@ impl CompactionFrontier {
 
 #[derive(Clone, Debug)]
 pub struct SharedCompactionFrontier {
-    frontier: Arc<Mutex<CompactionFrontier>>,
+    pub(crate) frontier: Arc<Mutex<CompactionFrontier>>,
 }
 
 impl SharedCompactionFrontier {
@@ -352,14 +354,15 @@ impl Default for SharedCompactionFrontier {
     }
 }
 
-const COMPACTION_FRONTIER_MANIFEST_VERSION: u32 = 1;
-const COMPACTION_FRONTIER_MANIFEST_RELATIVE_PATH: &str = "index/logs/compaction-frontier.json";
+pub(crate) const COMPACTION_FRONTIER_MANIFEST_VERSION: u32 = 1;
+pub(crate) const COMPACTION_FRONTIER_MANIFEST_RELATIVE_PATH: &str =
+    "index/logs/compaction-frontier.json";
 
 #[derive(Deserialize, Serialize)]
-struct CompactionFrontierManifest {
-    version: u32,
-    compacted_through_ns: i64,
-    partition_offsets: BTreeMap<PartitionIndex, Offset>,
+pub(crate) struct CompactionFrontierManifest {
+    pub(crate) version: u32,
+    pub(crate) compacted_through_ns: i64,
+    pub(crate) partition_offsets: BTreeMap<PartitionIndex, Offset>,
 }
 
 impl From<&CompactionFrontier> for CompactionFrontierManifest {
@@ -422,20 +425,20 @@ pub async fn read_compaction_frontier_from_object_store(
     manifest.try_into()
 }
 
-fn compaction_frontier_manifest_object_path(prefix: &ObjectPath) -> ObjectPath {
+pub(crate) fn compaction_frontier_manifest_object_path(prefix: &ObjectPath) -> ObjectPath {
     COMPACTION_FRONTIER_MANIFEST_RELATIVE_PATH
         .split('/')
         .fold(prefix.clone(), ObjectPath::join)
 }
 
 #[derive(Clone, Debug)]
-enum CompactionFrontierSource {
+pub(crate) enum CompactionFrontierSource {
     Snapshot(CompactionFrontier),
     Shared(SharedCompactionFrontier),
 }
 
 impl CompactionFrontierSource {
-    fn snapshot(&self) -> CompactionFrontier {
+    pub(crate) fn snapshot(&self) -> CompactionFrontier {
         match self {
             Self::Snapshot(frontier) => frontier.clone(),
             Self::Shared(frontier) => frontier.snapshot(),
@@ -443,10 +446,9 @@ impl CompactionFrontierSource {
     }
 }
 
-struct ConfiguredObjectStore {
-    store: Arc<dyn ObjectStore>,
-    prefix: ObjectPath,
+pub(crate) struct ConfiguredObjectStore {
+    pub(crate) store: Arc<dyn ObjectStore>,
+    pub(crate) prefix: ObjectPath,
 }
 
-type CompactionFrontierRefreshSource = (Arc<dyn ObjectStore>, ObjectPath);
-
+pub(crate) type CompactionFrontierRefreshSource = (Arc<dyn ObjectStore>, ObjectPath);

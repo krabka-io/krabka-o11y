@@ -1,22 +1,24 @@
-fn scalar_vector_query_is_vector(query: &str) -> bool {
+use super::*;
+
+pub(crate) fn scalar_vector_query_is_vector(query: &str) -> bool {
     matches!(
         scalar_vector_expression_result(query),
         Some(ScalarVectorExpressionResult::Vector { .. })
     )
 }
 
-fn reject_signed_vector_function_literal(query: &str) -> Result<(), HttpQueryError> {
+pub(crate) fn reject_signed_vector_function_literal(query: &str) -> Result<(), HttpQueryError> {
     scalar_vector_plain_parse_error(query)
         .map(HttpQueryError::LokiPlainParse)
         .map_or(Ok(()), Err)
 }
 
-fn scalar_vector_plain_parse_error(query: &str) -> Option<String> {
+pub(crate) fn scalar_vector_plain_parse_error(query: &str) -> Option<String> {
     signed_vector_function_literal_error(query)
         .or_else(|| unspaced_vector_set_operator_error(query))
 }
 
-fn signed_vector_function_literal_error(query: &str) -> Option<String> {
+pub(crate) fn signed_vector_function_literal_error(query: &str) -> Option<String> {
     if !could_be_scalar_vector_expression(query) {
         return None;
     }
@@ -65,7 +67,7 @@ fn signed_vector_function_literal_error(query: &str) -> Option<String> {
     None
 }
 
-fn unspaced_vector_set_operator_error(query: &str) -> Option<String> {
+pub(crate) fn unspaced_vector_set_operator_error(query: &str) -> Option<String> {
     if !could_be_scalar_vector_expression(query) {
         return None;
     }
@@ -111,7 +113,7 @@ fn unspaced_vector_set_operator_error(query: &str) -> Option<String> {
     None
 }
 
-fn could_be_scalar_vector_expression(query: &str) -> bool {
+pub(crate) fn could_be_scalar_vector_expression(query: &str) -> bool {
     let trimmed = query.trim_start();
     let Some(first) = trimmed.chars().next() else {
         return false;
@@ -137,7 +139,7 @@ fn could_be_scalar_vector_expression(query: &str) -> bool {
     false
 }
 
-fn apply_label_replace_to_loki_result(
+pub(crate) fn apply_label_replace_to_loki_result(
     value: &mut Value,
     destination_label: &str,
     replacement: &str,
@@ -176,7 +178,7 @@ fn apply_label_replace_to_loki_result(
     Ok(())
 }
 
-fn apply_label_join_to_loki_result(value: &mut Value, label_join: &MetricLabelJoin) {
+pub(crate) fn apply_label_join_to_loki_result(value: &mut Value, label_join: &MetricLabelJoin) {
     let Some(results) = value
         .pointer_mut("/data/result")
         .and_then(Value::as_array_mut)
@@ -198,9 +200,8 @@ fn apply_label_join_to_loki_result(value: &mut Value, label_join: &MetricLabelJo
     }
 }
 
-struct VectorScalarExpressionParser<'a> {
-    input: &'a str,
-    position: usize,
-    vector_terms: usize,
+pub(crate) struct VectorScalarExpressionParser<'a> {
+    pub(crate) input: &'a str,
+    pub(crate) position: usize,
+    pub(crate) vector_terms: usize,
 }
-

@@ -1,8 +1,10 @@
-fn loki_streams_response(streams: BTreeMap<Labels, Vec<[String; 2]>>) -> Value {
+use super::*;
+
+pub(crate) fn loki_streams_response(streams: BTreeMap<Labels, Vec<[String; 2]>>) -> Value {
     loki_streams_response_with_warnings(streams, &[])
 }
 
-fn loki_streams_response_with_warnings(
+pub(crate) fn loki_streams_response_with_warnings(
     streams: BTreeMap<Labels, Vec<[String; 2]>>,
     warnings: &[String],
 ) -> Value {
@@ -26,11 +28,14 @@ fn loki_streams_response_with_warnings(
     value
 }
 
-fn loki_matrix_response(series: FormattedMetricSeries) -> Value {
+pub(crate) fn loki_matrix_response(series: FormattedMetricSeries) -> Value {
     loki_matrix_response_with_warnings(series, &[])
 }
 
-fn loki_matrix_response_with_warnings(series: FormattedMetricSeries, warnings: &[String]) -> Value {
+pub(crate) fn loki_matrix_response_with_warnings(
+    series: FormattedMetricSeries,
+    warnings: &[String],
+) -> Value {
     let result = series
         .into_iter()
         .map(|(metric, values)| {
@@ -54,11 +59,11 @@ fn loki_matrix_response_with_warnings(series: FormattedMetricSeries, warnings: &
     value
 }
 
-fn loki_metric_sample([timestamp_ns, value]: [String; 2]) -> Value {
+pub(crate) fn loki_metric_sample([timestamp_ns, value]: [String; 2]) -> Value {
     json!([unix_ns_string_to_loki_seconds(&timestamp_ns), value])
 }
 
-fn unix_ns_string_to_loki_seconds(timestamp_ns: &str) -> Value {
+pub(crate) fn unix_ns_string_to_loki_seconds(timestamp_ns: &str) -> Value {
     let timestamp_ns = timestamp_ns.parse::<u64>().unwrap_or_default();
     let seconds = timestamp_ns / 1_000_000_000;
     let nanos = timestamp_ns % 1_000_000_000;
@@ -69,7 +74,7 @@ fn unix_ns_string_to_loki_seconds(timestamp_ns: &str) -> Value {
     }
 }
 
-fn loki_vector_response_from_matrix(mut value: Value) -> Value {
+pub(crate) fn loki_vector_response_from_matrix(mut value: Value) -> Value {
     if value.pointer("/data/resultType").and_then(Value::as_str) != Some("matrix") {
         return value;
     }
@@ -93,7 +98,7 @@ fn loki_vector_response_from_matrix(mut value: Value) -> Value {
     value
 }
 
-fn apply_loki_stream_options(
+pub(crate) fn apply_loki_stream_options(
     mut value: Value,
     direction: LokiDirection,
     limit: Option<usize>,
@@ -122,7 +127,7 @@ fn apply_loki_stream_options(
     apply_loki_stream_limit(value, limit)
 }
 
-fn apply_loki_stream_end_bound(value: &mut Value, end_exclusive: Option<i64>) {
+pub(crate) fn apply_loki_stream_end_bound(value: &mut Value, end_exclusive: Option<i64>) {
     let Some(end_exclusive) = end_exclusive else {
         return;
     };
@@ -154,7 +159,7 @@ fn apply_loki_stream_end_bound(value: &mut Value, end_exclusive: Option<i64>) {
     });
 }
 
-fn apply_loki_stream_interval(value: &mut Value, interval: Option<i64>) {
+pub(crate) fn apply_loki_stream_interval(value: &mut Value, interval: Option<i64>) {
     let Some(interval) = interval else {
         return;
     };
@@ -199,7 +204,7 @@ fn apply_loki_stream_interval(value: &mut Value, interval: Option<i64>) {
     });
 }
 
-fn apply_loki_stream_limit(mut value: Value, limit: Option<usize>) -> Value {
+pub(crate) fn apply_loki_stream_limit(mut value: Value, limit: Option<usize>) -> Value {
     let Some(limit) = limit else {
         return value;
     };
@@ -237,16 +242,16 @@ fn apply_loki_stream_limit(mut value: Value, limit: Option<usize>) -> Value {
     value
 }
 
-const LOKI_PARQUET_CONTENT_TYPE: &str = "application/vnd.apache.parquet";
+pub(crate) const LOKI_PARQUET_CONTENT_TYPE: &str = "application/vnd.apache.parquet";
 
-fn wants_loki_parquet(headers: &HeaderMap) -> bool {
+pub(crate) fn wants_loki_parquet(headers: &HeaderMap) -> bool {
     headers
         .get(ACCEPT)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|accept| accept.split(',').any(accept_part_allows_loki_parquet))
 }
 
-fn accept_part_allows_loki_parquet(part: &str) -> bool {
+pub(crate) fn accept_part_allows_loki_parquet(part: &str) -> bool {
     let mut pieces = part.trim().split(';');
     let Some(mime) = pieces.next() else {
         return false;
@@ -258,7 +263,7 @@ fn accept_part_allows_loki_parquet(part: &str) -> bool {
     !pieces.any(accept_parameter_is_zero_quality)
 }
 
-fn accept_parameter_is_zero_quality(parameter: &str) -> bool {
+pub(crate) fn accept_parameter_is_zero_quality(parameter: &str) -> bool {
     let Some((name, value)) = parameter.trim().split_once('=') else {
         return false;
     };
@@ -272,7 +277,7 @@ fn accept_parameter_is_zero_quality(parameter: &str) -> bool {
         .is_ok_and(|quality| quality <= 0.0)
 }
 
-fn loki_parquet_response(value: &Value) -> Result<Response, HttpQueryError> {
+pub(crate) fn loki_parquet_response(value: &Value) -> Result<Response, HttpQueryError> {
     match value.pointer("/data/resultType").and_then(Value::as_str) {
         Some("streams") => loki_streams_parquet_response(value),
         Some("matrix") => loki_metrics_parquet_response(value, LokiMetricParquetKind::Matrix),
@@ -283,7 +288,7 @@ fn loki_parquet_response(value: &Value) -> Result<Response, HttpQueryError> {
     }
 }
 
-fn loki_streams_parquet_response(value: &Value) -> Result<Response, HttpQueryError> {
+pub(crate) fn loki_streams_parquet_response(value: &Value) -> Result<Response, HttpQueryError> {
     let results = value
         .pointer("/data/result")
         .and_then(Value::as_array)
@@ -341,12 +346,12 @@ fn loki_streams_parquet_response(value: &Value) -> Result<Response, HttpQueryErr
 }
 
 #[derive(Clone, Copy)]
-enum LokiMetricParquetKind {
+pub(crate) enum LokiMetricParquetKind {
     Matrix,
     Vector,
 }
 
-fn loki_metrics_parquet_response(
+pub(crate) fn loki_metrics_parquet_response(
     value: &Value,
     kind: LokiMetricParquetKind,
 ) -> Result<Response, HttpQueryError> {
@@ -405,7 +410,7 @@ fn loki_metrics_parquet_response(
     loki_parquet_batch_response(&batch)
 }
 
-fn loki_parquet_metric_sample(
+pub(crate) fn loki_parquet_metric_sample(
     sample: &Value,
     kind: LokiMetricParquetKind,
 ) -> Result<(i64, f64), HttpQueryError> {
@@ -427,7 +432,7 @@ fn loki_parquet_metric_sample(
     Ok((timestamp_ns, value))
 }
 
-fn loki_parquet_metric_timestamp_ns(
+pub(crate) fn loki_parquet_metric_timestamp_ns(
     value: &Value,
     kind: LokiMetricParquetKind,
 ) -> Result<i64, HttpQueryError> {
@@ -453,7 +458,7 @@ fn loki_parquet_metric_timestamp_ns(
     ))
 }
 
-fn loki_parquet_labels(
+pub(crate) fn loki_parquet_labels(
     labels: Option<&Value>,
     field: &'static str,
 ) -> Result<Vec<(String, String)>, HttpQueryError> {
@@ -470,4 +475,3 @@ fn loki_parquet_labels(
         })
         .collect()
 }
-

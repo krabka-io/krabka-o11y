@@ -1,4 +1,6 @@
-fn querier_object_store_inputs<'a>(
+use super::*;
+
+pub(crate) fn querier_object_store_inputs<'a>(
     config: &'a ServiceConfig,
     object_store: Option<&'a dyn ObjectStore>,
     object_store_prefix: Option<&ObjectPath>,
@@ -19,7 +21,7 @@ fn querier_object_store_inputs<'a>(
     Ok((store, tenant, prefix))
 }
 
-fn querier_object_store_prefix(
+pub(crate) fn querier_object_store_prefix(
     config: &ServiceConfig,
     object_store_prefix: Option<&ObjectPath>,
 ) -> Result<Option<ObjectPath>, ServiceConfigError> {
@@ -42,7 +44,10 @@ fn querier_object_store_prefix(
     }
 }
 
-fn effective_object_store_prefix(base: Option<&ObjectPath>, index_prefix: &str) -> ObjectPath {
+pub(crate) fn effective_object_store_prefix(
+    base: Option<&ObjectPath>,
+    index_prefix: &str,
+) -> ObjectPath {
     let index_prefix = index_prefix.trim_matches('/');
     let Some(base) = base else {
         return ObjectPath::from(index_prefix);
@@ -57,7 +62,7 @@ fn effective_object_store_prefix(base: Option<&ObjectPath>, index_prefix: &str) 
     }
 }
 
-async fn build_configured_querier_state(
+pub(crate) async fn build_configured_querier_state(
     config: &ServiceConfig,
     configured_store: &ConfiguredObjectStore,
 ) -> Result<QuerierState, ServiceConfigError> {
@@ -100,4 +105,3 @@ async fn build_configured_querier_state(
     )
     .await
 }
-

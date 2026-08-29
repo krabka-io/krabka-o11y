@@ -1,4 +1,6 @@
-async fn execute_label_names_query(
+use super::*;
+
+pub(crate) async fn execute_label_names_query(
     state: &QuerierState,
     headers: &HeaderMap,
     params: &SeriesParams,
@@ -11,7 +13,7 @@ async fn execute_label_names_query(
     })
 }
 
-async fn execute_api_prom_label_names_query(
+pub(crate) async fn execute_api_prom_label_names_query(
     state: &QuerierState,
     headers: &HeaderMap,
     params: &SeriesParams,
@@ -29,7 +31,7 @@ async fn execute_api_prom_label_names_query(
     })
 }
 
-async fn label_names_data(
+pub(crate) async fn label_names_data(
     state: &QuerierState,
     headers: &HeaderMap,
     params: &SeriesParams,
@@ -46,7 +48,7 @@ async fn label_names_data(
     Ok(names.into_iter().collect::<Vec<_>>())
 }
 
-async fn execute_label_values_query(
+pub(crate) async fn execute_label_values_query(
     state: &QuerierState,
     headers: &HeaderMap,
     name: &str,
@@ -60,7 +62,7 @@ async fn execute_label_values_query(
     })
 }
 
-async fn label_values_data(
+pub(crate) async fn label_values_data(
     state: &QuerierState,
     headers: &HeaderMap,
     name: &str,
@@ -80,7 +82,9 @@ async fn label_values_data(
     Ok(values.into_iter().collect::<Vec<_>>())
 }
 
-fn metadata_time_range(params: &SeriesParams) -> Result<Option<TimeRange>, HttpQueryError> {
+pub(crate) fn metadata_time_range(
+    params: &SeriesParams,
+) -> Result<Option<TimeRange>, HttpQueryError> {
     if params.start.is_none() && params.end.is_none() && params.since.is_none() {
         return Ok(None);
     }
@@ -93,7 +97,7 @@ fn metadata_time_range(params: &SeriesParams) -> Result<Option<TimeRange>, HttpQ
     optional_start_end_range(params.start, params.since, end).map(Some)
 }
 
-fn metadata_index_range(params: &SeriesParams) -> Result<TimeRange, HttpQueryError> {
+pub(crate) fn metadata_index_range(params: &SeriesParams) -> Result<TimeRange, HttpQueryError> {
     let Some(time_range) = metadata_time_range(params)? else {
         let end_ns = current_unix_time_ns();
         return TimeRange::new(
@@ -106,7 +110,7 @@ fn metadata_index_range(params: &SeriesParams) -> Result<TimeRange, HttpQueryErr
     Ok(time_range)
 }
 
-async fn metadata_label_sets(
+pub(crate) async fn metadata_label_sets(
     state: &QuerierState,
     tenant: &str,
     params: &SeriesParams,
@@ -160,7 +164,7 @@ async fn metadata_label_sets(
     Ok(label_sets.into_iter().collect())
 }
 
-async fn metadata_fingerprints_in_time_range(
+pub(crate) async fn metadata_fingerprints_in_time_range(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -192,13 +196,13 @@ async fn metadata_fingerprints_in_time_range(
     Ok(fingerprints)
 }
 
-fn metadata_visible_labels(labels: &Labels) -> Labels {
+pub(crate) fn metadata_visible_labels(labels: &Labels) -> Labels {
     let mut labels = labels.clone();
     labels.remove("detected_level");
     labels
 }
 
-fn metadata_labels_match_selectors(
+pub(crate) fn metadata_labels_match_selectors(
     labels: &Labels,
     selectors: &[krabka_logql::StreamQuery],
 ) -> bool {
@@ -214,7 +218,7 @@ fn metadata_labels_match_selectors(
     })
 }
 
-fn metadata_selectors(
+pub(crate) fn metadata_selectors(
     params: &SeriesParams,
 ) -> Result<Vec<krabka_logql::StreamQuery>, HttpQueryError> {
     params
@@ -229,7 +233,7 @@ fn metadata_selectors(
         .collect()
 }
 
-async fn execute_series_query(
+pub(crate) async fn execute_series_query(
     state: &QuerierState,
     headers: &HeaderMap,
     params: &SeriesParams,
@@ -237,7 +241,7 @@ async fn execute_series_query(
     Ok(loki_success(series_data(state, headers, params).await?))
 }
 
-async fn execute_api_prom_series_query(
+pub(crate) async fn execute_api_prom_series_query(
     state: &QuerierState,
     headers: &HeaderMap,
     params: &SeriesParams,
@@ -245,7 +249,7 @@ async fn execute_api_prom_series_query(
     Ok(loki_success(series_data(state, headers, params).await?))
 }
 
-async fn series_data(
+pub(crate) async fn series_data(
     state: &QuerierState,
     headers: &HeaderMap,
     params: &SeriesParams,
@@ -257,7 +261,7 @@ async fn series_data(
     metadata_label_sets(&state, tenant, params).await
 }
 
-fn parse_series_params(raw_query: Option<&str>) -> Result<SeriesParams, HttpQueryError> {
+pub(crate) fn parse_series_params(raw_query: Option<&str>) -> Result<SeriesParams, HttpQueryError> {
     let mut params = SeriesParams::default();
     let Some(raw_query) = raw_query else {
         return Ok(params);
@@ -288,4 +292,3 @@ fn parse_series_params(raw_query: Option<&str>) -> Result<SeriesParams, HttpQuer
 
     Ok(params)
 }
-

@@ -1,4 +1,6 @@
-async fn execute_index_stats_query(
+use super::*;
+
+pub(crate) async fn execute_index_stats_query(
     state: &QuerierState,
     headers: &HeaderMap,
     raw_query: Option<&str>,
@@ -48,7 +50,7 @@ async fn execute_index_stats_query(
     }))
 }
 
-async fn count_index_stats_entries(
+pub(crate) async fn count_index_stats_entries(
     state: &QuerierState,
     plan: &StreamPlan,
 ) -> Result<u64, HttpQueryError> {
@@ -77,7 +79,7 @@ async fn count_index_stats_entries(
     Ok(entries)
 }
 
-async fn execute_patterns_query(
+pub(crate) async fn execute_patterns_query(
     state: &QuerierState,
     headers: &HeaderMap,
     raw_query: Option<&str>,
@@ -176,7 +178,7 @@ async fn execute_patterns_query(
     Ok(loki_success_value(data))
 }
 
-fn log_line_pattern(line: &str) -> String {
+pub(crate) fn log_line_pattern(line: &str) -> String {
     // Krabka services (and every JSON-emitting collector) log compact objects
     // like `{"timestamp":"…","severity":"INFO","message":"connection opened"}`.
     // Whitespace tokenization mangles those — the quoted values contain spaces
@@ -196,7 +198,7 @@ fn log_line_pattern(line: &str) -> String {
 /// Templatizes a single-object JSON log line. Returns `None` for anything that
 /// is not a JSON object, so the caller falls back to whitespace or logfmt
 /// mining.
-fn json_log_pattern(line: &str) -> Option<String> {
+pub(crate) fn json_log_pattern(line: &str) -> Option<String> {
     // `from_str` already rejects non-objects and non-JSON, so there is no
     // cheap pre-check guard here: a leading-`{` fast path would be a pure
     // performance optimization with no behavior of its own to test.
@@ -213,7 +215,7 @@ fn json_log_pattern(line: &str) -> Option<String> {
 
 /// Replaces variable JSON leaf values with the `<_>` placeholder. It keeps the
 /// object and array structure, and it keeps constant, low-entropy, values.
-fn json_value_pattern(value: &Value) -> Value {
+pub(crate) fn json_value_pattern(value: &Value) -> Value {
     match value {
         // Numbers are always high-cardinality dimensions (offsets, durations,
         // counts), so collapse them; booleans and null are constants worth
@@ -234,7 +236,7 @@ fn json_value_pattern(value: &Value) -> Value {
 /// value, for example an embedded request id or timestamp in a `message`
 /// field. It leaves the constant words intact, so distinct messages stay
 /// distinct patterns.
-fn templatize_text(text: &str) -> String {
+pub(crate) fn templatize_text(text: &str) -> String {
     text.split_whitespace()
         .map(|token| {
             if pattern_value_is_variable(token) {
@@ -247,7 +249,7 @@ fn templatize_text(text: &str) -> String {
         .join(" ")
 }
 
-fn log_pattern_token(token: &str) -> String {
+pub(crate) fn log_pattern_token(token: &str) -> String {
     let Some((key, value)) = token.split_once('=') else {
         return if pattern_value_is_variable(token) {
             "<_>".to_string()
@@ -273,7 +275,7 @@ fn log_pattern_token(token: &str) -> String {
 /// numeric-leading values. Identifiers that begin with a letter, such as
 /// UUIDs, trace and span hashes, and opaque high-entropy tokens, need the
 /// explicit shape checks, so they do not each become their own pattern.
-fn pattern_value_is_variable(value: &str) -> bool {
+pub(crate) fn pattern_value_is_variable(value: &str) -> bool {
     let value = value.trim_matches('"');
     if value.is_empty() {
         return false;
@@ -286,7 +288,7 @@ fn pattern_value_is_variable(value: &str) -> bool {
 }
 
 /// Canonical `8-4-4-4-12` hex UUID, regardless of leading character.
-fn is_uuid(value: &str) -> bool {
+pub(crate) fn is_uuid(value: &str) -> bool {
     let mut groups = value.split('-');
     let shaped = [8usize, 4, 4, 4, 12].into_iter().all(|len| {
         groups
@@ -299,7 +301,7 @@ fn is_uuid(value: &str) -> bool {
 /// A long pure-hex string, such as a trace or span id, a digest, or a dash-less
 /// UUID. The length floor keeps short hex-looking words such as `face` and
 /// `cafe` out of the templatize path.
-fn is_hex_id(value: &str) -> bool {
+pub(crate) fn is_hex_id(value: &str) -> bool {
     value.len() >= 16 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
@@ -308,14 +310,14 @@ fn is_hex_id(value: &str) -> bool {
 /// digit keeps long lowercase or mixed-case words out of the templatize path,
 /// and the punctuation exclusion keeps module paths and file locations
 /// intact.
-fn is_high_entropy_id(value: &str) -> bool {
+pub(crate) fn is_high_entropy_id(value: &str) -> bool {
     value.len() >= 16
         && value.bytes().all(|b| b.is_ascii_alphanumeric())
         && value.bytes().any(|b| b.is_ascii_digit())
         && value.bytes().any(|b| b.is_ascii_alphabetic())
 }
 
-async fn execute_detected_fields_query(
+pub(crate) async fn execute_detected_fields_query(
     state: &QuerierState,
     headers: &HeaderMap,
     raw_query: Option<&str>,
@@ -348,7 +350,7 @@ async fn execute_detected_fields_query(
     }))
 }
 
-async fn execute_detected_labels_query(
+pub(crate) async fn execute_detected_labels_query(
     state: &QuerierState,
     headers: &HeaderMap,
     raw_query: Option<&str>,
@@ -392,7 +394,7 @@ async fn execute_detected_labels_query(
     }))
 }
 
-async fn execute_detected_field_values_query(
+pub(crate) async fn execute_detected_field_values_query(
     state: &QuerierState,
     headers: &HeaderMap,
     name: &str,
@@ -414,4 +416,3 @@ async fn execute_detected_field_values_query(
         "limit": limit,
     }))
 }
-

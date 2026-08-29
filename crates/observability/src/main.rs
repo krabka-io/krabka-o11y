@@ -3,7 +3,7 @@
 
 #[cfg(all(unix, feature = "heap-profiling"))]
 #[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+pub(crate) static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use clap::Parser;
 use krabka_observability::{
@@ -13,41 +13,41 @@ use krabka_observability::{
 use krabka_units::{ByteSize, parse};
 
 #[derive(Debug, Parser)]
-struct Cli {
+pub(crate) struct Cli {
     #[command(flatten)]
-    profiling: krabka_telemetry::profiling::ProfilingConfig,
+    pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
     #[command(flatten)]
-    service: ServiceConfig,
+    pub(crate) service: ServiceConfig,
     #[arg(
         long,
         env = "KRABKA_OBSERVABILITY_CLIENT_DISPATCH_QUEUE_CAPACITY",
         default_value_t = krabka_client_core::DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
         value_parser = parse_dispatch_queue_capacity
     )]
-    client_dispatch_queue_capacity: usize,
+    pub(crate) client_dispatch_queue_capacity: usize,
     #[arg(
         long,
         env = "KRABKA_OBSERVABILITY_CLIENT_FRAME_MAX",
         default_value = "100MiB",
         value_parser = parse_frame_max
     )]
-    client_frame_max: ByteSize,
+    pub(crate) client_frame_max: ByteSize,
 }
 
-fn parse_dispatch_queue_capacity(value: &str) -> Result<usize, String> {
+pub(crate) fn parse_dispatch_queue_capacity(value: &str) -> Result<usize, String> {
     let value = value.parse::<usize>().map_err(|error| error.to_string())?;
     krabka_client_core::ConnectionDispatchQueueCapacity::new(value)
         .map(krabka_client_core::ConnectionDispatchQueueCapacity::get)
 }
 
-fn parse_frame_max(value: &str) -> Result<ByteSize, String> {
+pub(crate) fn parse_frame_max(value: &str) -> Result<ByteSize, String> {
     let value = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
     krabka_client_core::ClientFrameMax::try_from(value)
         .map(krabka_client_core::ClientFrameMax::size)
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let client_resource_policy = ClientResourcePolicy {
         dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity::new(

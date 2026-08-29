@@ -1,4 +1,6 @@
-fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams, HttpQueryError> {
+use super::*;
+
+pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams, HttpQueryError> {
     let mut query = None;
     let mut time = None;
     let mut start = None;
@@ -75,7 +77,7 @@ fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams, HttpQueryE
     })
 }
 
-fn split_query_param_pairs<'a>(raw_query: &'a str, known_keys: &[&str]) -> Vec<&'a str> {
+pub(crate) fn split_query_param_pairs<'a>(raw_query: &'a str, known_keys: &[&str]) -> Vec<&'a str> {
     let mut pairs = Vec::new();
     let mut pair_start = 0;
     for (index, byte) in raw_query.bytes().enumerate() {
@@ -98,7 +100,7 @@ fn split_query_param_pairs<'a>(raw_query: &'a str, known_keys: &[&str]) -> Vec<&
     pairs
 }
 
-fn parse_volume_params(raw_query: Option<&str>) -> Result<VolumeParams, HttpQueryError> {
+pub(crate) fn parse_volume_params(raw_query: Option<&str>) -> Result<VolumeParams, HttpQueryError> {
     let mut query = None;
     let mut start = None;
     let mut end = None;
@@ -172,7 +174,7 @@ fn parse_volume_params(raw_query: Option<&str>) -> Result<VolumeParams, HttpQuer
     })
 }
 
-fn parse_detected_fields_params(
+pub(crate) fn parse_detected_fields_params(
     raw_query: Option<&str>,
 ) -> Result<DetectedFieldsParams, HttpQueryError> {
     let mut query = None;
@@ -246,7 +248,7 @@ fn parse_detected_fields_params(
     })
 }
 
-fn parse_detected_labels_params(
+pub(crate) fn parse_detected_labels_params(
     raw_query: Option<&str>,
 ) -> Result<DetectedLabelsParams, HttpQueryError> {
     let mut query = None;
@@ -310,7 +312,9 @@ fn parse_detected_labels_params(
     })
 }
 
-fn parse_patterns_params(raw_query: Option<&str>) -> Result<PatternsParams, HttpQueryError> {
+pub(crate) fn parse_patterns_params(
+    raw_query: Option<&str>,
+) -> Result<PatternsParams, HttpQueryError> {
     let mut query = None;
     let mut start = None;
     let mut end = None;
@@ -341,7 +345,7 @@ fn parse_patterns_params(raw_query: Option<&str>) -> Result<PatternsParams, Http
     })
 }
 
-fn parse_loki_timestamp_query_param(
+pub(crate) fn parse_loki_timestamp_query_param(
     name: &'static str,
     value: &str,
 ) -> Result<i64, HttpQueryError> {
@@ -362,7 +366,10 @@ fn parse_loki_timestamp_query_param(
         })
 }
 
-fn parse_loki_duration_query_param(name: &'static str, value: &str) -> Result<i64, HttpQueryError> {
+pub(crate) fn parse_loki_duration_query_param(
+    name: &'static str,
+    value: &str,
+) -> Result<i64, HttpQueryError> {
     let duration = if let Ok(seconds) = value.parse::<i64>() {
         seconds.checked_mul(1_000_000_000).ok_or_else(|| {
             HttpQueryError::InvalidDurationQueryParameter {
@@ -394,7 +401,7 @@ fn parse_loki_duration_query_param(name: &'static str, value: &str) -> Result<i6
     Ok(duration)
 }
 
-fn parse_loki_tail_delay_for_query_param(value: &str) -> Result<i64, HttpQueryError> {
+pub(crate) fn parse_loki_tail_delay_for_query_param(value: &str) -> Result<i64, HttpQueryError> {
     if let Ok(seconds) = value.parse::<i64>() {
         seconds
             .checked_mul(1_000_000_000)
@@ -413,7 +420,7 @@ fn parse_loki_tail_delay_for_query_param(value: &str) -> Result<i64, HttpQueryEr
     }
 }
 
-fn validate_loki_tail_delay_for(delay_for: i64) -> Result<(), HttpQueryError> {
+pub(crate) fn validate_loki_tail_delay_for(delay_for: i64) -> Result<(), HttpQueryError> {
     if !(0..=LOKI_MAX_TAIL_DELAY.nanos_i64()).contains(&delay_for) {
         return Err(HttpQueryError::TailDelayForTooLarge);
     }
@@ -421,7 +428,7 @@ fn validate_loki_tail_delay_for(delay_for: i64) -> Result<(), HttpQueryError> {
     Ok(())
 }
 
-fn parse_prometheus_duration(value: &str) -> Option<i64> {
+pub(crate) fn parse_prometheus_duration(value: &str) -> Option<i64> {
     let mut pos = 0;
     let mut parsed_chunk = false;
     let mut previous_unit_order = None;
@@ -462,7 +469,7 @@ fn parse_prometheus_duration(value: &str) -> Option<i64> {
     i64::try_from(total_ns).ok()
 }
 
-fn prometheus_duration_unit(unit: &str) -> Option<(u8, u16, i128)> {
+pub(crate) fn prometheus_duration_unit(unit: &str) -> Option<(u8, u16, i128)> {
     match unit {
         "y" => Some((0, 1 << 0, 31_536_000_000_000_000)),
         "w" => Some((1, 1 << 1, 604_800_000_000_000)),
@@ -476,4 +483,3 @@ fn prometheus_duration_unit(unit: &str) -> Option<(u8, u16, i128)> {
         _ => None,
     }
 }
-

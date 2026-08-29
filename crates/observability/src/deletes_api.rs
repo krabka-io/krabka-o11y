@@ -1,4 +1,6 @@
-async fn create_delete_request(
+use super::*;
+
+pub(crate) async fn create_delete_request(
     State(state): State<CompactorDeleteState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -10,7 +12,7 @@ async fn create_delete_request(
     }
 }
 
-fn execute_create_delete_request(
+pub(crate) fn execute_create_delete_request(
     state: &CompactorDeleteState,
     headers: &HeaderMap,
     raw_query: Option<&str>,
@@ -45,7 +47,7 @@ fn execute_create_delete_request(
     Ok(())
 }
 
-async fn list_delete_requests(
+pub(crate) async fn list_delete_requests(
     State(state): State<CompactorDeleteState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -56,7 +58,7 @@ async fn list_delete_requests(
     }
 }
 
-fn execute_list_delete_requests(
+pub(crate) fn execute_list_delete_requests(
     state: &CompactorDeleteState,
     headers: &HeaderMap,
     raw_query: Option<&str>,
@@ -84,7 +86,7 @@ fn execute_list_delete_requests(
         .collect())
 }
 
-async fn cancel_delete_request(
+pub(crate) async fn cancel_delete_request(
     State(state): State<CompactorDeleteState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -95,7 +97,7 @@ async fn cancel_delete_request(
     }
 }
 
-fn execute_cancel_delete_request(
+pub(crate) fn execute_cancel_delete_request(
     state: &CompactorDeleteState,
     headers: &HeaderMap,
     raw_query: Option<&str>,
@@ -115,7 +117,7 @@ fn execute_cancel_delete_request(
     Ok(())
 }
 
-fn request_query_or_form_body(
+pub(crate) fn request_query_or_form_body(
     raw_query: Option<&str>,
     body: &Bytes,
 ) -> Result<String, HttpQueryError> {
@@ -126,7 +128,7 @@ fn request_query_or_form_body(
     }
 }
 
-fn parse_create_delete_request_params(
+pub(crate) fn parse_create_delete_request_params(
     raw_query: Option<&str>,
 ) -> Result<CreateDeleteRequestParams, HttpQueryError> {
     let mut query = None;
@@ -167,7 +169,7 @@ fn parse_create_delete_request_params(
     })
 }
 
-fn parse_list_delete_requests_params(
+pub(crate) fn parse_list_delete_requests_params(
     raw_query: Option<&str>,
 ) -> Result<ListDeleteRequestsParams, HttpQueryError> {
     let mut start_time = None;
@@ -198,7 +200,9 @@ fn parse_list_delete_requests_params(
     })
 }
 
-fn parse_cancel_delete_request_params(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
+pub(crate) fn parse_cancel_delete_request_params(
+    raw_query: Option<&str>,
+) -> Result<String, HttpQueryError> {
     let mut request_id = None;
     let Some(raw_query) = raw_query else {
         return Err(HttpQueryError::MissingQueryParameter("request_id"));
@@ -224,7 +228,7 @@ fn parse_cancel_delete_request_params(raw_query: Option<&str>) -> Result<String,
     request_id.ok_or(HttpQueryError::MissingQueryParameter("request_id"))
 }
 
-fn parse_loki_delete_timestamp_query_param(
+pub(crate) fn parse_loki_delete_timestamp_query_param(
     name: &'static str,
     value: &str,
 ) -> Result<i64, HttpQueryError> {
@@ -243,7 +247,7 @@ fn parse_loki_delete_timestamp_query_param(
         })
 }
 
-fn delete_request_overlaps_filter(
+pub(crate) fn delete_request_overlaps_filter(
     request: &CompactorDeleteRequest,
     params: &ListDeleteRequestsParams,
 ) -> bool {
@@ -255,7 +259,7 @@ fn delete_request_overlaps_filter(
     }
 }
 
-fn active_log_delete_filters(
+pub(crate) fn active_log_delete_filters(
     state: &QuerierState,
     tenant: &str,
     query_range: TimeRange,
@@ -270,7 +274,7 @@ fn active_log_delete_filters(
     )?)
 }
 
-fn active_log_delete_filters_from_requests(
+pub(crate) fn active_log_delete_filters_from_requests(
     delete_requests: &SharedLogDeleteRequests,
     tenant: &str,
     query_range: TimeRange,
@@ -302,7 +306,7 @@ fn active_log_delete_filters_from_requests(
         .collect()
 }
 
-fn delete_request_time_range(
+pub(crate) fn delete_request_time_range(
     request: &CompactorDeleteRequest,
 ) -> Result<TimeRange, ActiveLogDeleteFilterError> {
     let start_ns =
@@ -324,7 +328,6 @@ fn delete_request_time_range(
     TimeRange::new(start_ns, end_ns).map_err(ActiveLogDeleteFilterError::from)
 }
 
-fn ranges_overlap(left: TimeRange, right: TimeRange) -> bool {
+pub(crate) fn ranges_overlap(left: TimeRange, right: TimeRange) -> bool {
     left.end_ns >= right.start_ns && left.start_ns <= right.end_ns
 }
-

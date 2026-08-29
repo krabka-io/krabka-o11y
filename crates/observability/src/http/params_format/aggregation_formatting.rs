@@ -1,4 +1,9 @@
-fn format_vector_aggregation_query(aggregation: &VectorAggregation, inner: &str) -> Option<String> {
+use super::*;
+
+pub(crate) fn format_vector_aggregation_query(
+    aggregation: &VectorAggregation,
+    inner: &str,
+) -> Option<String> {
     let grouping = aggregation
         .grouping
         .as_ref()
@@ -30,14 +35,14 @@ fn format_vector_aggregation_query(aggregation: &VectorAggregation, inner: &str)
     }
 }
 
-fn format_vector_grouping(grouping: &VectorGrouping) -> String {
+pub(crate) fn format_vector_grouping(grouping: &VectorGrouping) -> String {
     match grouping {
         VectorGrouping::By(labels) => format!("by ({})", labels.join(",")),
         VectorGrouping::Without(labels) => format!("without ({})", labels.join(",")),
     }
 }
 
-fn format_loki_duration_ns(duration_ns: i64) -> Option<String> {
+pub(crate) fn format_loki_duration_ns(duration_ns: i64) -> Option<String> {
     if duration_ns < 0 {
         return None;
     }
@@ -64,7 +69,7 @@ fn format_loki_duration_ns(duration_ns: i64) -> Option<String> {
     Some(formatted)
 }
 
-fn format_loki_offset_duration_ns(duration_ns: i64) -> Option<String> {
+pub(crate) fn format_loki_offset_duration_ns(duration_ns: i64) -> Option<String> {
     const HOUR_NS: i64 = 3_600_000_000_000;
     const MINUTE_NS: i64 = 60_000_000_000;
     const SECOND_NS: i64 = 1_000_000_000;
@@ -113,11 +118,16 @@ fn format_loki_offset_duration_ns(duration_ns: i64) -> Option<String> {
     Some(format!("{remaining}ns"))
 }
 
-fn format_loki_offset_seconds(duration_ns: i64) -> String {
+pub(crate) fn format_loki_offset_seconds(duration_ns: i64) -> String {
     format_loki_decimal_unit(duration_ns, 1_000_000_000, 9, "s")
 }
 
-fn format_loki_decimal_unit(duration_ns: i64, unit_ns: i64, width: usize, suffix: &str) -> String {
+pub(crate) fn format_loki_decimal_unit(
+    duration_ns: i64,
+    unit_ns: i64,
+    width: usize,
+    suffix: &str,
+) -> String {
     let whole = duration_ns / unit_ns;
     let fractional_ns = duration_ns % unit_ns;
     if fractional_ns == 0 {
@@ -131,7 +141,7 @@ fn format_loki_decimal_unit(duration_ns: i64, unit_ns: i64, width: usize, suffix
     format!("{whole}.{fraction}{suffix}")
 }
 
-fn format_quantile(quantile: Quantile) -> String {
+pub(crate) fn format_quantile(quantile: Quantile) -> String {
     ScalarSample::new(
         i128::from(quantile.numerator.0),
         u128::from(quantile.denominator.0),
@@ -139,7 +149,9 @@ fn format_quantile(quantile: Quantile) -> String {
     .format()
 }
 
-fn format_range_aggregation_name(aggregation: &RangeAggregation) -> Option<&'static str> {
+pub(crate) fn format_range_aggregation_name(
+    aggregation: &RangeAggregation,
+) -> Option<&'static str> {
     match aggregation {
         RangeAggregation::CountOverTime => Some("count_over_time"),
         RangeAggregation::Rate => Some("rate"),
@@ -160,7 +172,7 @@ fn format_range_aggregation_name(aggregation: &RangeAggregation) -> Option<&'sta
     }
 }
 
-fn format_vector_function_text(query: &str) -> Option<String> {
+pub(crate) fn format_vector_function_text(query: &str) -> Option<String> {
     let query = query
         .chars()
         .filter(|ch| !ch.is_whitespace())
@@ -169,7 +181,7 @@ fn format_vector_function_text(query: &str) -> Option<String> {
     (end == query.len()).then_some(formatted)
 }
 
-fn format_scalar_vector_expression(query: &str) -> Option<String> {
+pub(crate) fn format_scalar_vector_expression(query: &str) -> Option<String> {
     if let Some(formatted) = format_vector_label_replace_function(query) {
         return Some(formatted);
     }
@@ -204,7 +216,7 @@ fn format_scalar_vector_expression(query: &str) -> Option<String> {
     }
 }
 
-fn format_vector_label_replace_function(query: &str) -> Option<String> {
+pub(crate) fn format_vector_label_replace_function(query: &str) -> Option<String> {
     let arguments = split_logql_function_arguments(query, "label_replace")?;
     if arguments.len() != 5 {
         return None;
@@ -219,7 +231,7 @@ fn format_vector_label_replace_function(query: &str) -> Option<String> {
     ))
 }
 
-fn format_vector_only_expression(query: &str) -> Option<String> {
+pub(crate) fn format_vector_only_expression(query: &str) -> Option<String> {
     if let Some(formatted) = format_vector_function_text(query) {
         return Some(formatted);
     }
@@ -240,7 +252,10 @@ fn format_vector_only_expression(query: &str) -> Option<String> {
     None
 }
 
-fn split_logql_function_arguments<'a>(query: &'a str, name: &str) -> Option<Vec<&'a str>> {
+pub(crate) fn split_logql_function_arguments<'a>(
+    query: &'a str,
+    name: &str,
+) -> Option<Vec<&'a str>> {
     let query = query.trim();
     let rest = query.strip_prefix(name)?.trim_start();
     let rest = rest.strip_prefix('(')?;
@@ -281,7 +296,7 @@ fn split_logql_function_arguments<'a>(query: &'a str, name: &str) -> Option<Vec<
     None
 }
 
-fn parse_logql_string_argument(argument: &str) -> Option<String> {
+pub(crate) fn parse_logql_string_argument(argument: &str) -> Option<String> {
     if let Some(inner) = argument
         .strip_prefix('`')
         .and_then(|argument| argument.strip_suffix('`'))
@@ -311,7 +326,7 @@ fn parse_logql_string_argument(argument: &str) -> Option<String> {
     Some(parsed)
 }
 
-fn format_vector_set_expression(query: &str) -> Option<String> {
+pub(crate) fn format_vector_set_expression(query: &str) -> Option<String> {
     let (left, position) = parse_formatted_vector_function(query, 0)?;
     for operator in ["unless", "and", "or"] {
         if let Some(rest) = query[position..].strip_prefix(operator) {
@@ -339,7 +354,7 @@ fn format_vector_set_expression(query: &str) -> Option<String> {
     None
 }
 
-fn format_vector_comparison_expression(query: &str) -> Option<String> {
+pub(crate) fn format_vector_comparison_expression(query: &str) -> Option<String> {
     let (left, position) = parse_formatted_vector_function(query, 0)?;
     let (operator, mut right_position) = parse_vector_comparison_operator(query, position)?;
     let bool_modifier = query[right_position..].starts_with("bool");
@@ -372,7 +387,10 @@ fn format_vector_comparison_expression(query: &str) -> Option<String> {
     }
 }
 
-fn parse_vector_comparison_operator(query: &str, position: usize) -> Option<(&'static str, usize)> {
+pub(crate) fn parse_vector_comparison_operator(
+    query: &str,
+    position: usize,
+) -> Option<(&'static str, usize)> {
     for operator in [">=", "<=", "==", "!=", ">", "<"] {
         if query[position..].starts_with(operator) {
             return Some((operator, position + operator.len()));
@@ -381,7 +399,7 @@ fn parse_vector_comparison_operator(query: &str, position: usize) -> Option<(&'s
     None
 }
 
-fn format_vector_arithmetic_expression(query: &str) -> Option<String> {
+pub(crate) fn format_vector_arithmetic_expression(query: &str) -> Option<String> {
     let (left, position) = parse_formatted_vector_function(query, 0)?;
     let (operator, mut right_position) = parse_vector_arithmetic_operator(query, position)?;
     let modifiers = if let Some((modifiers, next_position)) =
@@ -406,12 +424,12 @@ fn format_vector_arithmetic_expression(query: &str) -> Option<String> {
     }
 }
 
-struct FormattedVectorBinaryModifiers {
-    text: String,
-    right_separator: &'static str,
+pub(crate) struct FormattedVectorBinaryModifiers {
+    pub(crate) text: String,
+    pub(crate) right_separator: &'static str,
 }
 
-fn parse_vector_binary_modifiers(
+pub(crate) fn parse_vector_binary_modifiers(
     query: &str,
     position: usize,
 ) -> Option<(FormattedVectorBinaryModifiers, usize)> {
@@ -434,7 +452,10 @@ fn parse_vector_binary_modifiers(
     ))
 }
 
-fn parse_vector_matching_modifier(query: &str, position: usize) -> Option<(String, usize)> {
+pub(crate) fn parse_vector_matching_modifier(
+    query: &str,
+    position: usize,
+) -> Option<(String, usize)> {
     for modifier in ["on", "ignoring"] {
         if let Some(rest) = query[position..].strip_prefix(modifier) {
             let labels = rest.strip_prefix('(')?;
@@ -449,7 +470,7 @@ fn parse_vector_matching_modifier(query: &str, position: usize) -> Option<(Strin
     None
 }
 
-fn parse_vector_group_modifier(query: &str, position: usize) -> Option<(String, usize)> {
+pub(crate) fn parse_vector_group_modifier(query: &str, position: usize) -> Option<(String, usize)> {
     for modifier in ["group_left", "group_right"] {
         if let Some(rest) = query[position..].strip_prefix(modifier) {
             let Some(labels) = rest.strip_prefix('(') else {
@@ -468,4 +489,3 @@ fn parse_vector_group_modifier(query: &str, position: usize) -> Option<(String, 
     }
     None
 }
-

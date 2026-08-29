@@ -1,8 +1,13 @@
+use super::*;
+
 pub fn loki_router(state: QuerierState) -> Router {
     loki_router_with_readiness(state, ServiceReadiness::ready())
 }
 
-fn loki_router_with_readiness(state: QuerierState, readiness: ServiceReadiness) -> Router {
+pub(crate) fn loki_router_with_readiness(
+    state: QuerierState,
+    readiness: ServiceReadiness,
+) -> Router {
     with_role_ops_routes(Router::new(), QUERIER_OPS, readiness)
         .route("/loki/api/v1/rules", get(loki_rules))
         .route(
@@ -103,7 +108,9 @@ fn loki_router_with_readiness(state: QuerierState, readiness: ServiceReadiness) 
         .with_state(state)
 }
 
-fn compactor_router_with_delete_requests(delete_requests: SharedLogDeleteRequests) -> Router {
+pub(crate) fn compactor_router_with_delete_requests(
+    delete_requests: SharedLogDeleteRequests,
+) -> Router {
     let delete_state = CompactorDeleteState { delete_requests };
     with_role_ops_routes(Router::new(), COMPACTOR_OPS, ServiceReadiness::ready())
         .route(
@@ -120,7 +127,7 @@ fn compactor_router_with_delete_requests(delete_requests: SharedLogDeleteRequest
         .with_state(delete_state)
 }
 
-async fn ready(Extension(readiness): Extension<ServiceReadiness>) -> Response {
+pub(crate) async fn ready(Extension(readiness): Extension<ServiceReadiness>) -> Response {
     if readiness.is_ready() {
         (StatusCode::OK, "ready\n").into_response()
     } else {
@@ -128,11 +135,11 @@ async fn ready(Extension(readiness): Extension<ServiceReadiness>) -> Response {
     }
 }
 
-async fn flush_ingester_chunks() -> Response {
+pub(crate) async fn flush_ingester_chunks() -> Response {
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn get_prepare_shutdown(State(state): State<DistributorState>) -> Response {
+pub(crate) async fn get_prepare_shutdown(State(state): State<DistributorState>) -> Response {
     let status = if state.prepare_shutdown.load(AtomicOrdering::SeqCst) {
         "set"
     } else {
@@ -141,28 +148,28 @@ async fn get_prepare_shutdown(State(state): State<DistributorState>) -> Response
     text_response(StatusCode::OK, status)
 }
 
-async fn set_prepare_shutdown(State(state): State<DistributorState>) -> Response {
+pub(crate) async fn set_prepare_shutdown(State(state): State<DistributorState>) -> Response {
     state.prepare_shutdown.store(true, AtomicOrdering::SeqCst);
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn unset_prepare_shutdown(State(state): State<DistributorState>) -> Response {
+pub(crate) async fn unset_prepare_shutdown(State(state): State<DistributorState>) -> Response {
     state.prepare_shutdown.store(false, AtomicOrdering::SeqCst);
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn shutdown_ingester() -> Response {
+pub(crate) async fn shutdown_ingester() -> Response {
     StatusCode::NO_CONTENT.into_response()
 }
 
-async fn log_level() -> Response {
+pub(crate) async fn log_level() -> Response {
     json_response(
         StatusCode::OK,
         &json!({ "message": "Current log level is info" }),
     )
 }
 
-async fn log_level_post(RawQuery(raw_query): RawQuery, body: Bytes) -> Response {
+pub(crate) async fn log_level_post(RawQuery(raw_query): RawQuery, body: Bytes) -> Response {
     let body_query = match form_body_query(&body) {
         Ok(body_query) => body_query,
         Err(error) => return error.into_response(),
@@ -197,7 +204,7 @@ async fn log_level_post(RawQuery(raw_query): RawQuery, body: Bytes) -> Response 
     }
 }
 
-fn log_level_failed_response(message: &str) -> Response {
+pub(crate) fn log_level_failed_response(message: &str) -> Response {
     json_response(
         StatusCode::BAD_REQUEST,
         &json!({
@@ -207,7 +214,7 @@ fn log_level_failed_response(message: &str) -> Response {
     )
 }
 
-fn parse_log_level_param(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
+pub(crate) fn parse_log_level_param(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
     let Some(raw_query) = raw_query else {
         return Err(HttpQueryError::MissingQueryParameter("log_level"));
     };
@@ -238,13 +245,13 @@ fn parse_log_level_param(raw_query: Option<&str>) -> Result<String, HttpQueryErr
 ///
 /// The per-role name stays in [`RoleOps::target`] for `/metrics`, where `Loki`
 /// does report the running component.
-const LOKI_CONFIG_TARGET: &str = "all";
+pub(crate) const LOKI_CONFIG_TARGET: &str = "all";
 
-async fn role_config(RawQuery(raw_query): RawQuery) -> Response {
+pub(crate) async fn role_config(RawQuery(raw_query): RawQuery) -> Response {
     status_config(raw_query.as_deref())
 }
 
-fn status_config(raw_query: Option<&str>) -> Response {
+pub(crate) fn status_config(raw_query: Option<&str>) -> Response {
     match query_param_value(raw_query, "mode").as_deref() {
         Some("diff") => {
             return (
@@ -273,7 +280,7 @@ fn status_config(raw_query: Option<&str>) -> Response {
         .into_response()
 }
 
-fn query_param_value(raw_query: Option<&str>, name: &str) -> Option<String> {
+pub(crate) fn query_param_value(raw_query: Option<&str>, name: &str) -> Option<String> {
     let raw_query = raw_query?;
     for pair in raw_query.split('&') {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -284,11 +291,11 @@ fn query_param_value(raw_query: Option<&str>, name: &str) -> Option<String> {
     None
 }
 
-async fn role_services(Extension(ops): Extension<RoleOps>) -> Response {
+pub(crate) async fn role_services(Extension(ops): Extension<RoleOps>) -> Response {
     status_services(ops.target)
 }
 
-fn status_services(_name: &'static str) -> Response {
+pub(crate) fn status_services(_name: &'static str) -> Response {
     text_response(
         StatusCode::OK,
         "query-scheduler => Running\n\
@@ -311,7 +318,7 @@ fn status_services(_name: &'static str) -> Response {
     )
 }
 
-async fn memberlist_status() -> Response {
+pub(crate) async fn memberlist_status() -> Response {
     (
         StatusCode::OK,
         [("content-type", "text/plain")],
@@ -320,19 +327,18 @@ async fn memberlist_status() -> Response {
         .into_response()
 }
 
-async fn role_metrics(Extension(ops): Extension<RoleOps>) -> Response {
+pub(crate) async fn role_metrics(Extension(ops): Extension<RoleOps>) -> Response {
     status_metrics(ops.target)
 }
 
-async fn scheduler_ring() -> Response {
+pub(crate) async fn scheduler_ring() -> Response {
     ring_status_page("krabka-scheduler")
 }
 
-async fn ruler_ring() -> Response {
+pub(crate) async fn ruler_ring() -> Response {
     ruler_status_page()
 }
 
-async fn role_ring(Extension(ops): Extension<RoleOps>) -> Response {
+pub(crate) async fn role_ring(Extension(ops): Extension<RoleOps>) -> Response {
     ring_status_page(ops.ring_component)
 }
-

@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ServiceStatus {
     pub role: Role,
@@ -5,37 +7,37 @@ pub struct ServiceStatus {
 
 #[derive(Clone, Default)]
 pub struct ServiceDependencies {
-    wal_sink: Option<Arc<dyn LogWalSink>>,
-    wal_consumer: Option<Arc<tokio::sync::Mutex<Box<dyn LogWalConsumer>>>>,
-    ingest_limiter: Option<Arc<dyn LogIngestLimiter>>,
-    query_authorizer: Option<Arc<dyn LogQueryAuthorizer>>,
-    hot_tail: Option<HotTailDependency>,
-    compaction_frontier: Option<SharedCompactionFrontier>,
-    delete_requests: Option<SharedLogDeleteRequests>,
+    pub(crate) wal_sink: Option<Arc<dyn LogWalSink>>,
+    pub(crate) wal_consumer: Option<Arc<tokio::sync::Mutex<Box<dyn LogWalConsumer>>>>,
+    pub(crate) ingest_limiter: Option<Arc<dyn LogIngestLimiter>>,
+    pub(crate) query_authorizer: Option<Arc<dyn LogQueryAuthorizer>>,
+    pub(crate) hot_tail: Option<HotTailDependency>,
+    pub(crate) compaction_frontier: Option<SharedCompactionFrontier>,
+    pub(crate) delete_requests: Option<SharedLogDeleteRequests>,
     /// Querier-only: the params for the hot-tail WAL consumer. The connection
     /// happens asynchronously after HTTP serving begins (FIX B2).
-    deferred_wal_consumer_connect: Option<DeferredWalConsumerConnect>,
+    pub(crate) deferred_wal_consumer_connect: Option<DeferredWalConsumerConnect>,
     /// Shared RED-metrics bundle threaded into the per-role state. It is
     /// `None` in tests that do not care about metrics, and each state then
     /// gets a fresh bundle. The binary constructs one bundle and threads it
     /// through here, so the `:9404` exporter and the handlers share the same
     /// registry.
-    metrics: Option<ServiceMetrics>,
+    pub(crate) metrics: Option<ServiceMetrics>,
 }
 
 #[derive(Clone)]
-struct HotTailDependency {
-    source: Arc<dyn LogHotTail>,
-    frontier: CompactionFrontierSource,
+pub(crate) struct HotTailDependency {
+    pub(crate) source: Arc<dyn LogHotTail>,
+    pub(crate) frontier: CompactionFrontierSource,
 }
 
 /// Parameters needed to connect a [`KafkaLogWalConsumer`] in the background.
 #[derive(Clone)]
-struct DeferredWalConsumerConnect {
-    bootstrap: String,
-    group_id: String,
-    topic: String,
-    client_resource_policy: ClientResourcePolicy,
+pub(crate) struct DeferredWalConsumerConnect {
+    pub(crate) bootstrap: String,
+    pub(crate) group_id: String,
+    pub(crate) topic: String,
+    pub(crate) client_resource_policy: ClientResourcePolicy,
 }
 
 /// Validated Kafka connection resource limits shared by this process.
@@ -47,8 +49,8 @@ pub struct ClientResourcePolicy {
 
 #[derive(Clone, Default)]
 pub struct SharedLogDeleteRequests {
-    inner: Arc<Mutex<CompactorDeleteRequests>>,
-    storage_path: Option<Arc<PathBuf>>,
+    pub(crate) inner: Arc<Mutex<CompactorDeleteRequests>>,
+    pub(crate) storage_path: Option<Arc<PathBuf>>,
 }
 
 #[derive(Debug, Error)]
@@ -171,7 +173,7 @@ impl ServiceDependencies {
     }
 
     #[must_use]
-    fn with_deferred_wal_consumer_connect(
+    pub(crate) fn with_deferred_wal_consumer_connect(
         mut self,
         bootstrap: String,
         group_id: String,
@@ -237,4 +239,3 @@ pub fn run(config: ServiceConfig) -> Result<ServiceStatus, Infallible> {
 
     Ok(ServiceStatus { role: target })
 }
-

@@ -1,4 +1,6 @@
-async fn execute_http_query_for_tenant(
+use super::*;
+
+pub(crate) async fn execute_http_query_for_tenant(
     state: &QuerierState,
     tenant: &str,
     params: &QueryParams,
@@ -113,7 +115,7 @@ async fn execute_http_query_for_tenant(
     .await
 }
 
-async fn execute_http_remaining_query(
+pub(crate) async fn execute_http_remaining_query(
     state: &QuerierState,
     tenant: &str,
     params: &QueryParams,
@@ -258,4 +260,3 @@ async fn execute_http_remaining_query(
 
     Ok(add_loki_query_stats(value))
 }
-

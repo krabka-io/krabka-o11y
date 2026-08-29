@@ -1,4 +1,6 @@
-fn build_compactor_configured_object_store(
+use super::*;
+
+pub(crate) fn build_compactor_configured_object_store(
     config: &ServiceConfig,
     object_store: Option<&dyn ObjectStore>,
 ) -> Result<Option<ConfiguredObjectStore>, ServiceConfigError> {
@@ -9,7 +11,7 @@ fn build_compactor_configured_object_store(
     build_configured_object_store(config)
 }
 
-fn compactor_object_store<'a>(
+pub(crate) fn compactor_object_store<'a>(
     object_store: Option<&'a dyn ObjectStore>,
     configured_store: Option<&'a ConfiguredObjectStore>,
 ) -> Result<(&'a dyn ObjectStore, Option<&'a ObjectPath>), ServiceConfigError> {
@@ -25,7 +27,7 @@ fn compactor_object_store<'a>(
 }
 
 #[cfg_attr(test, mutants::skip)]
-async fn connect_with_startup_retry<T, E, F, Fut>(
+pub(crate) async fn connect_with_startup_retry<T, E, F, Fut>(
     what: &str,
     deadline: Time,
     attempt_timeout: Time,
@@ -94,7 +96,9 @@ where
     }
 }
 
-fn validate_distributor_policy(config: &ServiceConfig) -> Result<(), ServiceConfigError> {
+pub(crate) fn validate_distributor_policy(
+    config: &ServiceConfig,
+) -> Result<(), ServiceConfigError> {
     if config.wal_connect_attempt_timeout > config.wal_connect_startup_deadline {
         return Err(ServiceConfigError::WalConnectAttemptExceedsDeadline);
     }
@@ -104,7 +108,7 @@ fn validate_distributor_policy(config: &ServiceConfig) -> Result<(), ServiceConf
     Ok(())
 }
 
-fn validate_compactor_policy(config: &ServiceConfig) -> Result<(), ServiceConfigError> {
+pub(crate) fn validate_compactor_policy(config: &ServiceConfig) -> Result<(), ServiceConfigError> {
     if config.compactor_accumulation_poll_timeout > config.compactor_accumulation_window {
         return Err(ServiceConfigError::CompactorAccumulationPollExceedsWindow);
     }
@@ -332,4 +336,3 @@ pub async fn run_compactor_until_idle(
 
     Ok(descriptors)
 }
-

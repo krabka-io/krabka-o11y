@@ -1,4 +1,6 @@
-fn status_metrics(component: &'static str) -> Response {
+use super::*;
+
+pub(crate) fn status_metrics(component: &'static str) -> Response {
     let compactor_running = usize::from(component == "compactor");
     (
         StatusCode::OK,
@@ -19,7 +21,7 @@ fn status_metrics(component: &'static str) -> Response {
         .into_response()
 }
 
-async fn build_info() -> Response {
+pub(crate) async fn build_info() -> Response {
     let value = json!({
         "version": env!("CARGO_PKG_VERSION"),
         "revision": "unknown",
@@ -32,77 +34,77 @@ async fn build_info() -> Response {
 }
 
 #[derive(Debug)]
-struct QueryParams {
-    query: String,
-    time: Option<i64>,
-    start: Option<i64>,
-    end: Option<i64>,
-    since: Option<i64>,
-    step: Option<i64>,
-    interval: Option<i64>,
-    limit: Option<usize>,
-    direction: Option<String>,
-    delay_for: Option<i64>,
+pub(crate) struct QueryParams {
+    pub(crate) query: String,
+    pub(crate) time: Option<i64>,
+    pub(crate) start: Option<i64>,
+    pub(crate) end: Option<i64>,
+    pub(crate) since: Option<i64>,
+    pub(crate) step: Option<i64>,
+    pub(crate) interval: Option<i64>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) direction: Option<String>,
+    pub(crate) delay_for: Option<i64>,
 }
 
 #[derive(Debug, Default)]
-struct SeriesParams {
-    matchers: Vec<String>,
-    start: Option<i64>,
-    end: Option<i64>,
-    since: Option<i64>,
+pub(crate) struct SeriesParams {
+    pub(crate) matchers: Vec<String>,
+    pub(crate) start: Option<i64>,
+    pub(crate) end: Option<i64>,
+    pub(crate) since: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum VolumeKind {
+pub(crate) enum VolumeKind {
     Instant,
     Range,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum VolumeAggregateBy {
+pub(crate) enum VolumeAggregateBy {
     Series,
     Labels,
 }
 
 #[derive(Debug)]
-struct VolumeParams {
-    query: String,
-    start: i64,
-    end: i64,
-    step: Option<i64>,
-    limit: usize,
-    target_labels: Option<Vec<String>>,
-    aggregate_by: VolumeAggregateBy,
+pub(crate) struct VolumeParams {
+    pub(crate) query: String,
+    pub(crate) start: i64,
+    pub(crate) end: i64,
+    pub(crate) step: Option<i64>,
+    pub(crate) limit: usize,
+    pub(crate) target_labels: Option<Vec<String>>,
+    pub(crate) aggregate_by: VolumeAggregateBy,
 }
 
 #[derive(Debug)]
-struct DetectedFieldsParams {
-    query: String,
-    start: i64,
-    end: i64,
-    limit: usize,
-    line_limit: usize,
+pub(crate) struct DetectedFieldsParams {
+    pub(crate) query: String,
+    pub(crate) start: i64,
+    pub(crate) end: i64,
+    pub(crate) limit: usize,
+    pub(crate) line_limit: usize,
 }
 
 #[derive(Debug)]
-struct DetectedLabelsParams {
-    query: Option<String>,
-    start: i64,
-    end: i64,
-    limit: usize,
+pub(crate) struct DetectedLabelsParams {
+    pub(crate) query: Option<String>,
+    pub(crate) start: i64,
+    pub(crate) end: i64,
+    pub(crate) limit: usize,
 }
 
 #[derive(Debug)]
-struct PatternsParams {
-    query: String,
-    start: i64,
-    end: i64,
-    step: i64,
+pub(crate) struct PatternsParams {
+    pub(crate) query: String,
+    pub(crate) start: i64,
+    pub(crate) end: i64,
+    pub(crate) step: i64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DetectedFieldType {
+pub(crate) enum DetectedFieldType {
     Boolean,
     Int,
     Float,
@@ -112,7 +114,7 @@ enum DetectedFieldType {
 }
 
 impl DetectedFieldType {
-    fn merge(self, other: Self) -> Self {
+    pub(crate) fn merge(self, other: Self) -> Self {
         match (self, other) {
             (Self::String, _) | (_, Self::String) => Self::String,
             (Self::Bytes, Self::Bytes) => Self::Bytes,
@@ -124,7 +126,7 @@ impl DetectedFieldType {
         }
     }
 
-    fn as_loki_str(self) -> &'static str {
+    pub(crate) fn as_loki_str(self) -> &'static str {
         match self {
             Self::Boolean => "boolean",
             Self::Int => "int",
@@ -137,14 +139,14 @@ impl DetectedFieldType {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct DetectedFieldStats {
-    ty: DetectedFieldType,
-    values: BTreeSet<String>,
-    parsers: BTreeSet<&'static str>,
+pub(crate) struct DetectedFieldStats {
+    pub(crate) ty: DetectedFieldType,
+    pub(crate) values: BTreeSet<String>,
+    pub(crate) parsers: BTreeSet<&'static str>,
 }
 
 impl DetectedFieldStats {
-    fn new(ty: DetectedFieldType, value: String, parser: &'static str) -> Self {
+    pub(crate) fn new(ty: DetectedFieldType, value: String, parser: &'static str) -> Self {
         Self {
             ty,
             values: BTreeSet::from([value]),
@@ -152,7 +154,7 @@ impl DetectedFieldStats {
         }
     }
 
-    fn new_generated(ty: DetectedFieldType, value: String) -> Self {
+    pub(crate) fn new_generated(ty: DetectedFieldType, value: String) -> Self {
         Self {
             ty,
             values: BTreeSet::from([value]),
@@ -160,18 +162,18 @@ impl DetectedFieldStats {
         }
     }
 
-    fn add(&mut self, ty: DetectedFieldType, value: String, parser: &'static str) {
+    pub(crate) fn add(&mut self, ty: DetectedFieldType, value: String, parser: &'static str) {
         self.ty = self.ty.merge(ty);
         self.values.insert(value);
         self.parsers.insert(parser);
     }
 
-    fn add_generated(&mut self, ty: DetectedFieldType, value: String) {
+    pub(crate) fn add_generated(&mut self, ty: DetectedFieldType, value: String) {
         self.ty = self.ty.merge(ty);
         self.values.insert(value);
     }
 
-    fn parsers_json(self) -> Value {
+    pub(crate) fn parsers_json(self) -> Value {
         if self.parsers.is_empty() {
             Value::Null
         } else {
@@ -180,7 +182,7 @@ impl DetectedFieldStats {
     }
 }
 
-async fn query(
+pub(crate) async fn query(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -197,7 +199,7 @@ async fn query(
     resp
 }
 
-async fn query_post(
+pub(crate) async fn query_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -217,7 +219,7 @@ async fn query_post(
     resp
 }
 
-async fn api_prom_query(
+pub(crate) async fn api_prom_query(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -225,7 +227,7 @@ async fn api_prom_query(
     handle_api_prom_query(state, headers, raw_query.as_deref()).await
 }
 
-async fn api_prom_query_post(
+pub(crate) async fn api_prom_query_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -238,7 +240,7 @@ async fn api_prom_query_post(
     handle_api_prom_query(state, headers, Some(&raw_query)).await
 }
 
-async fn api_prom_query_range(
+pub(crate) async fn api_prom_query_range(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -246,7 +248,7 @@ async fn api_prom_query_range(
     handle_api_prom_query_range(state, headers, raw_query.as_deref()).await
 }
 
-async fn api_prom_query_range_post(
+pub(crate) async fn api_prom_query_range_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -259,7 +261,7 @@ async fn api_prom_query_range_post(
     handle_api_prom_query_range(state, headers, Some(&raw_query)).await
 }
 
-async fn query_range(
+pub(crate) async fn query_range(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -276,7 +278,7 @@ async fn query_range(
     resp
 }
 
-async fn query_range_post(
+pub(crate) async fn query_range_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -296,14 +298,14 @@ async fn query_range_post(
     resp
 }
 
-async fn format_query(RawQuery(raw_query): RawQuery) -> Response {
+pub(crate) async fn format_query(RawQuery(raw_query): RawQuery) -> Response {
     match execute_format_query(raw_query.as_deref()) {
         Ok(formatted) => loki_success(formatted),
         Err(error) => error.into_response(),
     }
 }
 
-async fn format_query_post(RawQuery(raw_query): RawQuery, body: Bytes) -> Response {
+pub(crate) async fn format_query_post(RawQuery(raw_query): RawQuery, body: Bytes) -> Response {
     let raw_query = match post_query_params_body_first(raw_query.as_deref(), &body) {
         Ok(raw_query) => raw_query,
         Err(error) => return error.into_response(),
@@ -314,7 +316,7 @@ async fn format_query_post(RawQuery(raw_query): RawQuery, body: Bytes) -> Respon
     }
 }
 
-async fn patterns(
+pub(crate) async fn patterns(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -325,7 +327,7 @@ async fn patterns(
     }
 }
 
-async fn patterns_post(
+pub(crate) async fn patterns_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -341,7 +343,7 @@ async fn patterns_post(
     }
 }
 
-async fn detected_fields(
+pub(crate) async fn detected_fields(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -352,7 +354,7 @@ async fn detected_fields(
     }
 }
 
-async fn detected_fields_post(
+pub(crate) async fn detected_fields_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -368,7 +370,7 @@ async fn detected_fields_post(
     }
 }
 
-async fn detected_labels(
+pub(crate) async fn detected_labels(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -379,7 +381,7 @@ async fn detected_labels(
     }
 }
 
-async fn detected_labels_post(
+pub(crate) async fn detected_labels_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -395,7 +397,7 @@ async fn detected_labels_post(
     }
 }
 
-async fn detected_field_values(
+pub(crate) async fn detected_field_values(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     Path(name): Path<String>,
@@ -407,7 +409,7 @@ async fn detected_field_values(
     }
 }
 
-async fn detected_field_values_post(
+pub(crate) async fn detected_field_values_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     Path(name): Path<String>,
@@ -424,7 +426,7 @@ async fn detected_field_values_post(
     }
 }
 
-async fn label_names(
+pub(crate) async fn label_names(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -441,7 +443,7 @@ async fn label_names(
     resp
 }
 
-async fn label_names_post(
+pub(crate) async fn label_names_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -460,4 +462,3 @@ async fn label_names_post(
         Err(error) => error.into_response(),
     }
 }
-

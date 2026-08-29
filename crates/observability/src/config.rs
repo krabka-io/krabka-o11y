@@ -1,6 +1,8 @@
+use super::*;
+
 /// `Loki`'s `reject_old_samples_max_age` default: samples older than this are
 /// refused on ingest.
-const LOKI_REJECT_OLD_SAMPLES_MAX_AGE: Time = days(7);
+pub(crate) const LOKI_REJECT_OLD_SAMPLES_MAX_AGE: Time = days(7);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Role {
     Distributor,
@@ -314,4 +316,3 @@ pub enum ServiceRuntimeError {
     #[error("critical background task `{0}` stopped unexpectedly")]
     CriticalTask(&'static str),
 }
-

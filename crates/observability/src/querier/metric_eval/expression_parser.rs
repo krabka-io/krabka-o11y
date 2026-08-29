@@ -1,5 +1,7 @@
+use super::*;
+
 impl<'a> VectorScalarExpressionParser<'a> {
-    fn new(input: &'a str) -> Self {
+    pub(crate) fn new(input: &'a str) -> Self {
         Self {
             input,
             position: 0,
@@ -7,7 +9,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
     }
 
-    fn parse_result(&mut self) -> Option<ScalarVectorExpressionResult> {
+    pub(crate) fn parse_result(&mut self) -> Option<ScalarVectorExpressionResult> {
         if self.input[self.position..].starts_with("label_replace(") {
             return self.parse_label_replace_result();
         }
@@ -80,7 +82,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         })
     }
 
-    fn parse_label_replace_result(&mut self) -> Option<ScalarVectorExpressionResult> {
+    pub(crate) fn parse_label_replace_result(&mut self) -> Option<ScalarVectorExpressionResult> {
         self.consume_keyword("label_replace");
         self.consume('(').then_some(())?;
         let result = self.parse_result()?;
@@ -108,7 +110,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         Some(ScalarVectorExpressionResult::Vector { sample, metric })
     }
 
-    fn parse_label_join_result(&mut self) -> Option<ScalarVectorExpressionResult> {
+    pub(crate) fn parse_label_join_result(&mut self) -> Option<ScalarVectorExpressionResult> {
         self.consume_keyword("label_join");
         self.consume('(').then_some(())?;
         let result = self.parse_result()?;
@@ -136,7 +138,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         Some(ScalarVectorExpressionResult::Vector { sample, metric })
     }
 
-    fn parse_expression(&mut self) -> Option<ScalarSample> {
+    pub(crate) fn parse_expression(&mut self) -> Option<ScalarSample> {
         let mut sample = self.parse_product()?;
         loop {
             if self.consume('+') {
@@ -167,7 +169,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
     }
 
-    fn parse_product(&mut self) -> Option<ScalarSample> {
+    pub(crate) fn parse_product(&mut self) -> Option<ScalarSample> {
         let mut sample = self.parse_power()?;
         loop {
             if self.consume('*') {
@@ -209,7 +211,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
     }
 
-    fn parse_power(&mut self) -> Option<ScalarSample> {
+    pub(crate) fn parse_power(&mut self) -> Option<ScalarSample> {
         let sample = self.parse_primary()?;
         if self.consume('^') {
             let left_vector_terms = self.vector_terms;
@@ -227,7 +229,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
     }
 
-    fn parse_primary(&mut self) -> Option<ScalarSample> {
+    pub(crate) fn parse_primary(&mut self) -> Option<ScalarSample> {
         if self.consume('(') {
             let sample = self.parse_expression()?;
             return self.consume(')').then_some(sample);
@@ -237,7 +239,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
             .or_else(|| self.parse_scalar_literal())
     }
 
-    fn parse_comparison_operator(&mut self) -> Option<ScalarComparisonOp> {
+    pub(crate) fn parse_comparison_operator(&mut self) -> Option<ScalarComparisonOp> {
         for (operator, op) in [
             (">=", ScalarComparisonOp::GreaterOrEqual),
             ("<=", ScalarComparisonOp::LessOrEqual),
@@ -254,7 +256,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         None
     }
 
-    fn parse_set_operator(&mut self) -> Option<ScalarSetOp> {
+    pub(crate) fn parse_set_operator(&mut self) -> Option<ScalarSetOp> {
         for (operator, op) in [
             ("unless", ScalarSetOp::Unless),
             ("and", ScalarSetOp::And),
@@ -268,7 +270,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         None
     }
 
-    fn consume_vector_matching_modifier(&mut self) -> Option<bool> {
+    pub(crate) fn consume_vector_matching_modifier(&mut self) -> Option<bool> {
         if self.consume_keyword("on") || self.consume_keyword("ignoring") {
             self.consume_label_list()?;
             self.consume_group_modifier()?;
@@ -278,7 +280,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
     }
 
-    fn consume_group_modifier(&mut self) -> Option<()> {
+    pub(crate) fn consume_group_modifier(&mut self) -> Option<()> {
         if !(self.consume_keyword("group_left") || self.consume_keyword("group_right")) {
             return Some(());
         }
@@ -288,7 +290,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         Some(())
     }
 
-    fn consume_label_list(&mut self) -> Option<()> {
+    pub(crate) fn consume_label_list(&mut self) -> Option<()> {
         self.consume('(').then_some(())?;
         if self.consume(')') {
             return Some(());
@@ -303,7 +305,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
     }
 
-    fn consume_label_name(&mut self) -> Option<()> {
+    pub(crate) fn consume_label_name(&mut self) -> Option<()> {
         let bytes = self.input.as_bytes();
         let first = *bytes.get(self.position)?;
         if !matches!(first, b'A'..=b'Z' | b'a'..=b'z' | b'_') {
@@ -325,7 +327,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         Some(())
     }
 
-    fn validate_vector_matching_modifier(
+    pub(crate) fn validate_vector_matching_modifier(
         &self,
         has_matching_modifier: bool,
         left_vector_terms: usize,
@@ -340,7 +342,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         (left_contains_vector && right_contains_vector).then_some(())
     }
 
-    fn parse_vector_scalar(&mut self) -> Option<ScalarSample> {
+    pub(crate) fn parse_vector_scalar(&mut self) -> Option<ScalarSample> {
         let rest = &self.input[self.position..];
         let scalar = rest.strip_prefix("vector(")?;
         let scalar_end = scalar.find(')')?;
@@ -354,7 +356,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         Some(sample)
     }
 
-    fn parse_scalar_literal(&mut self) -> Option<ScalarSample> {
+    pub(crate) fn parse_scalar_literal(&mut self) -> Option<ScalarSample> {
         let rest = &self.input[self.position..];
         let literal_len = scalar_literal_len(rest)?;
         let sample = parse_scalar_sample(&rest[..literal_len])?;
@@ -362,7 +364,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         Some(sample)
     }
 
-    fn parse_string_literal(&mut self) -> Option<String> {
+    pub(crate) fn parse_string_literal(&mut self) -> Option<String> {
         self.consume('"').then_some(())?;
         let mut value = String::new();
         // `<` is a permanent mutation survivor against `<=`: the extra pass it
@@ -391,7 +393,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         None
     }
 
-    fn consume(&mut self, operator: char) -> bool {
+    pub(crate) fn consume(&mut self, operator: char) -> bool {
         if self.input[self.position..].starts_with(operator) {
             self.position += operator.len_utf8();
             true
@@ -400,7 +402,7 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
     }
 
-    fn consume_keyword(&mut self, keyword: &str) -> bool {
+    pub(crate) fn consume_keyword(&mut self, keyword: &str) -> bool {
         if self.input[self.position..].starts_with(keyword) {
             self.position += keyword.len();
             true
@@ -409,19 +411,19 @@ impl<'a> VectorScalarExpressionParser<'a> {
         }
     }
 
-    fn is_finished(&self) -> bool {
+    pub(crate) fn is_finished(&self) -> bool {
         self.position == self.input.len()
     }
 }
 
 #[derive(Clone, Copy)]
-enum ScalarSetOp {
+pub(crate) enum ScalarSetOp {
     And,
     Or,
     Unless,
 }
 
-fn scalar_literal_len(input: &str) -> Option<usize> {
+pub(crate) fn scalar_literal_len(input: &str) -> Option<usize> {
     let bytes = input.as_bytes();
     let mut position = 0;
     if matches!(bytes.get(position), Some(b'+' | b'-')) {
@@ -466,7 +468,7 @@ fn scalar_literal_len(input: &str) -> Option<usize> {
 }
 
 #[derive(Clone, Copy)]
-enum ScalarComparisonOp {
+pub(crate) enum ScalarComparisonOp {
     Equal,
     NotEqual,
     Greater,
@@ -474,4 +476,3 @@ enum ScalarComparisonOp {
     Less,
     LessOrEqual,
 }
-

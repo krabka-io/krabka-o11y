@@ -1,5 +1,7 @@
+use super::*;
+
 impl SharedLokiRules {
-    fn from_data_root(root: impl AsRef<FsPath>) -> Result<Self, LokiRuleStoreError> {
+    pub(crate) fn from_data_root(root: impl AsRef<FsPath>) -> Result<Self, LokiRuleStoreError> {
         let path = loki_ruler_rules_path(root.as_ref());
         Ok(Self {
             tenants: Arc::new(Mutex::new(read_loki_rule_tenants(&path)?)),
@@ -7,7 +9,10 @@ impl SharedLokiRules {
         })
     }
 
-    fn persist_snapshot(&self, tenants: &LokiRuleTenants) -> Result<(), LokiRuleStoreError> {
+    pub(crate) fn persist_snapshot(
+        &self,
+        tenants: &LokiRuleTenants,
+    ) -> Result<(), LokiRuleStoreError> {
         let Some(path) = &self.storage_path else {
             return Ok(());
         };
@@ -15,11 +20,11 @@ impl SharedLokiRules {
     }
 }
 
-fn loki_ruler_rules_path(root: &FsPath) -> PathBuf {
+pub(crate) fn loki_ruler_rules_path(root: &FsPath) -> PathBuf {
     root.join("loki-ruler-rules.json")
 }
 
-fn read_loki_rule_tenants(path: &FsPath) -> Result<LokiRuleTenants, LokiRuleStoreError> {
+pub(crate) fn read_loki_rule_tenants(path: &FsPath) -> Result<LokiRuleTenants, LokiRuleStoreError> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(source) if source.kind() == ErrorKind::NotFound => return Ok(LokiRuleTenants::new()),
@@ -36,7 +41,7 @@ fn read_loki_rule_tenants(path: &FsPath) -> Result<LokiRuleTenants, LokiRuleStor
     })
 }
 
-fn write_loki_rule_tenants(
+pub(crate) fn write_loki_rule_tenants(
     path: &FsPath,
     tenants: &LokiRuleTenants,
 ) -> Result<(), LokiRuleStoreError> {
@@ -61,4 +66,3 @@ fn write_loki_rule_tenants(
         source,
     })
 }
-

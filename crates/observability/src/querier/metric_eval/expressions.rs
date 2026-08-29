@@ -1,18 +1,20 @@
+use super::*;
+
 #[derive(Clone, Debug, PartialEq)]
-struct LabelReplaceExpression {
-    query: String,
-    destination_label: String,
-    replacement: String,
-    source_label: String,
-    pattern: String,
+pub(crate) struct LabelReplaceExpression {
+    pub(crate) query: String,
+    pub(crate) destination_label: String,
+    pub(crate) replacement: String,
+    pub(crate) source_label: String,
+    pub(crate) pattern: String,
 }
 
-struct SortVectorExpression {
-    query: String,
-    descending: bool,
+pub(crate) struct SortVectorExpression {
+    pub(crate) query: String,
+    pub(crate) descending: bool,
 }
 
-enum LabelReplaceMetricBinaryExpression {
+pub(crate) enum LabelReplaceMetricBinaryExpression {
     Arithmetic {
         left: String,
         op: MetricScalarArithmeticOp,
@@ -34,32 +36,32 @@ enum LabelReplaceMetricBinaryExpression {
     },
 }
 
-struct MetricVectorArithmeticExpression {
-    metric_query: String,
-    vector_query: String,
-    vector_on_left: bool,
-    op: MetricScalarArithmeticOp,
-    matching: Option<MetricVectorMatching>,
+pub(crate) struct MetricVectorArithmeticExpression {
+    pub(crate) metric_query: String,
+    pub(crate) vector_query: String,
+    pub(crate) vector_on_left: bool,
+    pub(crate) op: MetricScalarArithmeticOp,
+    pub(crate) matching: Option<MetricVectorMatching>,
 }
 
-struct MetricVectorComparisonExpression {
-    metric_query: String,
-    vector_query: String,
-    vector_on_left: bool,
-    op: ComparisonOp,
-    bool_modifier: bool,
-    matching: Option<MetricVectorMatching>,
+pub(crate) struct MetricVectorComparisonExpression {
+    pub(crate) metric_query: String,
+    pub(crate) vector_query: String,
+    pub(crate) vector_on_left: bool,
+    pub(crate) op: ComparisonOp,
+    pub(crate) bool_modifier: bool,
+    pub(crate) matching: Option<MetricVectorMatching>,
 }
 
-struct MetricVectorSetExpression {
-    metric_query: String,
-    vector_query: String,
-    vector_on_left: bool,
-    op: MetricBinarySetOp,
-    matching: Option<MetricVectorMatching>,
+pub(crate) struct MetricVectorSetExpression {
+    pub(crate) metric_query: String,
+    pub(crate) vector_query: String,
+    pub(crate) vector_on_left: bool,
+    pub(crate) op: MetricBinarySetOp,
+    pub(crate) matching: Option<MetricVectorMatching>,
 }
 
-fn parse_label_replace_expression(query: &str) -> Option<LabelReplaceExpression> {
+pub(crate) fn parse_label_replace_expression(query: &str) -> Option<LabelReplaceExpression> {
     let arguments = split_logql_function_arguments(query, "label_replace")?;
     let [
         inner_query,
@@ -81,7 +83,7 @@ fn parse_label_replace_expression(query: &str) -> Option<LabelReplaceExpression>
     })
 }
 
-fn parse_sort_vector_expression(query: &str) -> Option<SortVectorExpression> {
+pub(crate) fn parse_sort_vector_expression(query: &str) -> Option<SortVectorExpression> {
     for (function_name, descending) in [("sort", false), ("sort_desc", true)] {
         let Some(arguments) = split_logql_function_arguments(query, function_name) else {
             continue;
@@ -98,7 +100,7 @@ fn parse_sort_vector_expression(query: &str) -> Option<SortVectorExpression> {
     None
 }
 
-fn strip_outer_parenthesized_expression(query: &str) -> Option<&str> {
+pub(crate) fn strip_outer_parenthesized_expression(query: &str) -> Option<&str> {
     let trimmed = query.trim();
     if !trimmed.starts_with('(') || !trimmed.ends_with(')') {
         return None;
@@ -139,7 +141,7 @@ fn strip_outer_parenthesized_expression(query: &str) -> Option<&str> {
     }
 }
 
-fn parse_label_replace_metric_binary_expression(
+pub(crate) fn parse_label_replace_metric_binary_expression(
     query: &str,
 ) -> Option<LabelReplaceMetricBinaryExpression> {
     if let Some((left, operator, right)) = split_top_level_arithmetic_query(query) {
@@ -200,7 +202,7 @@ fn parse_label_replace_metric_binary_expression(
     None
 }
 
-fn parse_metric_vector_arithmetic_expression(
+pub(crate) fn parse_metric_vector_arithmetic_expression(
     query: &str,
 ) -> Option<MetricVectorArithmeticExpression> {
     let (left, operator, right) = split_top_level_arithmetic_query(query)?;
@@ -228,7 +230,7 @@ fn parse_metric_vector_arithmetic_expression(
     }
 }
 
-fn parse_metric_vector_comparison_expression(
+pub(crate) fn parse_metric_vector_comparison_expression(
     query: &str,
 ) -> Option<MetricVectorComparisonExpression> {
     let (left, operator, right) = split_top_level_comparison_query(query)?;
@@ -264,7 +266,7 @@ fn parse_metric_vector_comparison_expression(
     }
 }
 
-fn parse_metric_vector_set_expression(query: &str) -> Option<MetricVectorSetExpression> {
+pub(crate) fn parse_metric_vector_set_expression(query: &str) -> Option<MetricVectorSetExpression> {
     let (left, operator, right) = split_top_level_set_query(query)?;
     let (matching, right) = parse_leading_metric_vector_matching_modifier(right, false)?;
     let left = left.trim();
@@ -290,7 +292,7 @@ fn parse_metric_vector_set_expression(query: &str) -> Option<MetricVectorSetExpr
     }
 }
 
-fn parse_leading_metric_vector_matching_modifier(
+pub(crate) fn parse_leading_metric_vector_matching_modifier(
     query: &str,
     allow_group_modifier: bool,
 ) -> Option<(Option<MetricVectorMatching>, &str)> {
@@ -315,7 +317,7 @@ fn parse_leading_metric_vector_matching_modifier(
     Some((None, query))
 }
 
-fn parse_leading_label_list(query: &str) -> Option<(Vec<String>, &str)> {
+pub(crate) fn parse_leading_label_list(query: &str) -> Option<(Vec<String>, &str)> {
     let inner = query.strip_prefix('(')?;
     let labels_end = inner.find(')')?;
     let labels_text = &inner[..labels_end];
@@ -332,7 +334,7 @@ fn parse_leading_label_list(query: &str) -> Option<(Vec<String>, &str)> {
     Some((labels, &inner[labels_end + 1..]))
 }
 
-fn parse_leading_metric_vector_group_modifier(
+pub(crate) fn parse_leading_metric_vector_group_modifier(
     query: &str,
 ) -> Option<(Option<MetricVectorGroupModifier>, &str)> {
     for modifier in ["group_left", "group_right"] {
@@ -356,7 +358,7 @@ fn parse_leading_metric_vector_group_modifier(
     Some((None, query))
 }
 
-fn parse_metric_arithmetic_operator(operator: &str) -> Option<MetricScalarArithmeticOp> {
+pub(crate) fn parse_metric_arithmetic_operator(operator: &str) -> Option<MetricScalarArithmeticOp> {
     match operator {
         "+" => Some(MetricScalarArithmeticOp::Add),
         "-" => Some(MetricScalarArithmeticOp::Subtract),
@@ -368,7 +370,7 @@ fn parse_metric_arithmetic_operator(operator: &str) -> Option<MetricScalarArithm
     }
 }
 
-fn parse_metric_comparison_operator(operator: &str) -> Option<ComparisonOp> {
+pub(crate) fn parse_metric_comparison_operator(operator: &str) -> Option<ComparisonOp> {
     match operator {
         "==" => Some(ComparisonOp::Equal),
         "!=" => Some(ComparisonOp::NotEqual),
@@ -380,7 +382,7 @@ fn parse_metric_comparison_operator(operator: &str) -> Option<ComparisonOp> {
     }
 }
 
-fn parse_metric_set_operator(operator: &str) -> Option<MetricBinarySetOp> {
+pub(crate) fn parse_metric_set_operator(operator: &str) -> Option<MetricBinarySetOp> {
     match operator {
         "and" => Some(MetricBinarySetOp::And),
         "or" => Some(MetricBinarySetOp::Or),
@@ -389,7 +391,7 @@ fn parse_metric_set_operator(operator: &str) -> Option<MetricBinarySetOp> {
     }
 }
 
-fn loki_instant_scalar_or_vector_response(
+pub(crate) fn loki_instant_scalar_or_vector_response(
     timestamp_ns: i64,
     result: ScalarVectorExpressionResult,
 ) -> Value {
@@ -418,7 +420,7 @@ fn loki_instant_scalar_or_vector_response(
     }
 }
 
-fn loki_range_vector_response(
+pub(crate) fn loki_range_vector_response(
     time_range: TimeRange,
     step_ns: i64,
     result: ScalarVectorExpressionResult,
@@ -448,7 +450,7 @@ fn loki_range_vector_response(
 }
 
 #[derive(Clone)]
-enum ScalarVectorExpressionResult {
+pub(crate) enum ScalarVectorExpressionResult {
     Scalar {
         sample: String,
     },
@@ -458,7 +460,7 @@ enum ScalarVectorExpressionResult {
     },
 }
 
-fn scalar_vector_expression_result(query: &str) -> Option<ScalarVectorExpressionResult> {
+pub(crate) fn scalar_vector_expression_result(query: &str) -> Option<ScalarVectorExpressionResult> {
     let query = query
         .chars()
         .filter(|ch| !ch.is_whitespace())
@@ -471,4 +473,3 @@ fn scalar_vector_expression_result(query: &str) -> Option<ScalarVectorExpression
         None
     }
 }
-

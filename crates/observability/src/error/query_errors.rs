@@ -1,4 +1,6 @@
-fn loki_error(status: StatusCode, error_type: &'static str, error: &str) -> Response {
+use super::*;
+
+pub(crate) fn loki_error(status: StatusCode, error_type: &'static str, error: &str) -> Response {
     let value = json!({
         "status": "error",
         "errorType": error_type,
@@ -8,7 +10,7 @@ fn loki_error(status: StatusCode, error_type: &'static str, error: &str) -> Resp
     json_response(status, &value)
 }
 
-fn loki_format_query_invalid_response(status: StatusCode, error: &str) -> Response {
+pub(crate) fn loki_format_query_invalid_response(status: StatusCode, error: &str) -> Response {
     let error = serde_json::to_string(error).expect("string serialization cannot fail");
     (
         status,
@@ -18,11 +20,11 @@ fn loki_format_query_invalid_response(status: StatusCode, error: &str) -> Respon
         .into_response()
 }
 
-fn loki_parse_error(status: StatusCode, query: &str, source: &ParseError) -> Response {
+pub(crate) fn loki_parse_error(status: StatusCode, query: &str, source: &ParseError) -> Response {
     text_response(status, &loki_parse_error_text(query, source))
 }
 
-fn loki_parse_error_text(query: &str, source: &ParseError) -> String {
+pub(crate) fn loki_parse_error_text(query: &str, source: &ParseError) -> String {
     match source {
         ParseError::Syntax { message, position } => {
             let unexpected = unexpected_logql_token(query, *position);
@@ -44,7 +46,7 @@ fn loki_parse_error_text(query: &str, source: &ParseError) -> String {
     }
 }
 
-fn line_number(query: &str, position: usize) -> usize {
+pub(crate) fn line_number(query: &str, position: usize) -> usize {
     query[..position.min(query.len())]
         .bytes()
         .filter(|byte| *byte == b'\n')
@@ -52,7 +54,7 @@ fn line_number(query: &str, position: usize) -> usize {
         + 1
 }
 
-fn column_number(query: &str, position: usize) -> usize {
+pub(crate) fn column_number(query: &str, position: usize) -> usize {
     let prefix = &query[..position.min(query.len())];
     prefix
         .rsplit_once('\n')
@@ -62,7 +64,7 @@ fn column_number(query: &str, position: usize) -> usize {
         + 1
 }
 
-fn unexpected_logql_token(query: &str, position: usize) -> String {
+pub(crate) fn unexpected_logql_token(query: &str, position: usize) -> String {
     let rest = &query[position.min(query.len())..];
     let Some(token) = rest.chars().next() else {
         return "$end".to_string();
@@ -73,11 +75,11 @@ fn unexpected_logql_token(query: &str, position: usize) -> String {
     token.to_string()
 }
 
-fn should_omit_expected_logql_token(message: &str, unexpected: &str) -> bool {
+pub(crate) fn should_omit_expected_logql_token(message: &str, unexpected: &str) -> bool {
     message == "expected '{'" && unexpected == "IDENTIFIER"
 }
 
-fn expected_logql_token(message: &str) -> String {
+pub(crate) fn expected_logql_token(message: &str) -> String {
     match message {
         "expected '\"'" | "expected closing quote" => "STRING".to_string(),
         "expected label matcher operator" => "ASSIGN, EQ, NEQ, RE, NRE".to_string(),
@@ -90,7 +92,7 @@ fn expected_logql_token(message: &str) -> String {
     }
 }
 
-fn text_response(status: StatusCode, value: &str) -> Response {
+pub(crate) fn text_response(status: StatusCode, value: &str) -> Response {
     (
         status,
         [("content-type", "text/plain; charset=utf-8")],
@@ -99,7 +101,7 @@ fn text_response(status: StatusCode, value: &str) -> Response {
         .into_response()
 }
 
-fn json_response(status: StatusCode, value: &Value) -> Response {
+pub(crate) fn json_response(status: StatusCode, value: &Value) -> Response {
     (
         status,
         [("content-type", "application/json")],
@@ -136,7 +138,7 @@ pub enum QueryError {
 }
 
 #[derive(Debug, Error)]
-enum DistributorError {
+pub(crate) enum DistributorError {
     #[error("empty stream labels")]
     EmptyStreamLabels,
     #[error("invalid OTLP attribute")]
@@ -296,7 +298,7 @@ impl IntoResponse for DistributorError {
     }
 }
 
-fn loki_gzip_decode_error_text(source: &std::io::Error) -> String {
+pub(crate) fn loki_gzip_decode_error_text(source: &std::io::Error) -> String {
     let source = source.to_string();
     let message = match source.as_str() {
         "unexpected end of file" => "unexpected EOF",
@@ -305,7 +307,7 @@ fn loki_gzip_decode_error_text(source: &std::io::Error) -> String {
     format!("{message}\n")
 }
 
-fn distributor_error_to_grpc_status(error: &DistributorError) -> tonic::Status {
+pub(crate) fn distributor_error_to_grpc_status(error: &DistributorError) -> tonic::Status {
     let message = error.to_string();
     match error {
         DistributorError::IngestBodyTooLarge { .. }
@@ -347,7 +349,7 @@ fn distributor_error_to_grpc_status(error: &DistributorError) -> tonic::Status {
 }
 
 #[derive(Debug, Error)]
-enum HttpQueryError {
+pub(crate) enum HttpQueryError {
     #[error(transparent)]
     Arrow(#[from] datafusion::arrow::error::ArrowError),
     #[error(transparent)]
@@ -436,4 +438,3 @@ enum HttpQueryError {
     #[error(transparent)]
     DeleteFilter(#[from] ActiveLogDeleteFilterError),
 }
-

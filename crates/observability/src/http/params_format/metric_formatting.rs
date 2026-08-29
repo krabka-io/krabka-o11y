@@ -1,4 +1,6 @@
-fn format_metric_vector_set_expression(query: &str) -> Option<String> {
+use super::*;
+
+pub(crate) fn format_metric_vector_set_expression(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_set_query(query)?;
     let (modifiers, right_text) = split_leading_vector_binary_modifiers(right_text);
     let (left, right) = if let (Some(left), Some(right)) = (
@@ -24,7 +26,7 @@ fn format_metric_vector_set_expression(query: &str) -> Option<String> {
     ))
 }
 
-fn format_metric_scalar_arithmetic_expression(query: &str) -> Option<String> {
+pub(crate) fn format_metric_scalar_arithmetic_expression(query: &str) -> Option<String> {
     let arithmetic = parse_metric_scalar_arithmetic_query(query).ok()?;
     let metric = format_simple_metric_query(&arithmetic.query)?;
     let scalar = format_scalar_text(&arithmetic.scalar)?;
@@ -36,7 +38,7 @@ fn format_metric_scalar_arithmetic_expression(query: &str) -> Option<String> {
     })
 }
 
-fn format_metric_scalar_comparison_expression(query: &str) -> Option<String> {
+pub(crate) fn format_metric_scalar_comparison_expression(query: &str) -> Option<String> {
     let comparison = parse_metric_scalar_comparison_query(query).ok()?;
     let metric = format_simple_metric_query(&comparison.query)?;
     let scalar = format_scalar_text(&comparison.scalar)?;
@@ -53,11 +55,13 @@ fn format_metric_scalar_comparison_expression(query: &str) -> Option<String> {
     })
 }
 
-fn format_scalar_text(scalar: &str) -> Option<String> {
+pub(crate) fn format_scalar_text(scalar: &str) -> Option<String> {
     Some(parse_scalar_sample(scalar)?.format())
 }
 
-fn format_metric_scalar_arithmetic_operator(op: MetricScalarArithmeticOp) -> &'static str {
+pub(crate) fn format_metric_scalar_arithmetic_operator(
+    op: MetricScalarArithmeticOp,
+) -> &'static str {
     match op {
         MetricScalarArithmeticOp::Add => "+",
         MetricScalarArithmeticOp::Subtract => "-",
@@ -68,7 +72,7 @@ fn format_metric_scalar_arithmetic_operator(op: MetricScalarArithmeticOp) -> &'s
     }
 }
 
-fn format_metric_scalar_comparison_operator(op: ComparisonOp) -> Option<&'static str> {
+pub(crate) fn format_metric_scalar_comparison_operator(op: ComparisonOp) -> Option<&'static str> {
     match op {
         ComparisonOp::Equal => Some("=="),
         ComparisonOp::NotEqual => Some("!="),
@@ -80,7 +84,7 @@ fn format_metric_scalar_comparison_operator(op: ComparisonOp) -> Option<&'static
     }
 }
 
-fn format_metric_label_replace_query(query: &str) -> Option<String> {
+pub(crate) fn format_metric_label_replace_query(query: &str) -> Option<String> {
     let label_replace = parse_metric_label_replace_query(query).ok()?;
     let metric = format_metric_query(&label_replace.query)?;
     Some(format!(
@@ -92,7 +96,7 @@ fn format_metric_label_replace_query(query: &str) -> Option<String> {
     ))
 }
 
-fn format_label_replace_metric_scalar_expression(query: &str) -> Option<String> {
+pub(crate) fn format_label_replace_metric_scalar_expression(query: &str) -> Option<String> {
     let arguments = split_logql_function_arguments(query, "label_replace")?;
     if arguments.len() != 5 {
         return None;
@@ -107,7 +111,7 @@ fn format_label_replace_metric_scalar_expression(query: &str) -> Option<String> 
     ))
 }
 
-fn format_metric_scalar_vector_expression(query: &str) -> Option<String> {
+pub(crate) fn format_metric_scalar_vector_expression(query: &str) -> Option<String> {
     if let Some(formatted) = format_metric_scalar_arithmetic_expression(query) {
         return Some(formatted);
     }
@@ -117,7 +121,7 @@ fn format_metric_scalar_vector_expression(query: &str) -> Option<String> {
     None
 }
 
-fn format_label_replace_metric_vector_expression(query: &str) -> Option<String> {
+pub(crate) fn format_label_replace_metric_vector_expression(query: &str) -> Option<String> {
     let arguments = split_logql_function_arguments(query, "label_replace")?;
     if arguments.len() != 5 {
         return None;
@@ -132,7 +136,7 @@ fn format_label_replace_metric_vector_expression(query: &str) -> Option<String> 
     ))
 }
 
-fn format_mixed_metric_vector_expression(query: &str) -> Option<String> {
+pub(crate) fn format_mixed_metric_vector_expression(query: &str) -> Option<String> {
     if let Some(formatted) = format_metric_vector_arithmetic_expression(query) {
         return Some(formatted);
     }
@@ -148,7 +152,7 @@ fn format_mixed_metric_vector_expression(query: &str) -> Option<String> {
     None
 }
 
-fn format_sort_vector_expression(query: &str) -> Option<String> {
+pub(crate) fn format_sort_vector_expression(query: &str) -> Option<String> {
     for function in ["sort", "sort_desc"] {
         let Some(arguments) = split_logql_function_arguments(query, function) else {
             continue;
@@ -168,7 +172,7 @@ fn format_sort_vector_expression(query: &str) -> Option<String> {
     None
 }
 
-fn format_loki_vector_expression(query: &str) -> Option<String> {
+pub(crate) fn format_loki_vector_expression(query: &str) -> Option<String> {
     if let Some(formatted) = format_metric_vector_arithmetic_expression(query) {
         return Some(formatted);
     }
@@ -201,7 +205,7 @@ fn format_loki_vector_expression(query: &str) -> Option<String> {
         .and_then(|query| format_metric_query(&query))
 }
 
-fn indent_logql_lines(value: &str, prefix: &str) -> String {
+pub(crate) fn indent_logql_lines(value: &str, prefix: &str) -> String {
     value
         .lines()
         .map(|line| format!("{prefix}{line}"))
@@ -209,7 +213,7 @@ fn indent_logql_lines(value: &str, prefix: &str) -> String {
         .join("\n")
 }
 
-fn format_logql_quoted_string(value: &str) -> String {
+pub(crate) fn format_logql_quoted_string(value: &str) -> String {
     let mut formatted = String::from("\"");
     for ch in value.chars() {
         match ch {
@@ -225,7 +229,7 @@ fn format_logql_quoted_string(value: &str) -> String {
     formatted
 }
 
-fn split_top_level_set_query(query: &str) -> Option<(&str, &'static str, &str)> {
+pub(crate) fn split_top_level_set_query(query: &str) -> Option<(&str, &'static str, &str)> {
     let mut parens = 0_i32;
     let mut brackets = 0_i32;
     let mut braces = 0_i32;
@@ -269,7 +273,7 @@ fn split_top_level_set_query(query: &str) -> Option<(&str, &'static str, &str)> 
     None
 }
 
-fn has_word_boundary(query: &str, index: usize, len: usize) -> bool {
+pub(crate) fn has_word_boundary(query: &str, index: usize, len: usize) -> bool {
     query[..index]
         .chars()
         .next_back()
@@ -280,7 +284,7 @@ fn has_word_boundary(query: &str, index: usize, len: usize) -> bool {
             .is_none_or(char::is_whitespace)
 }
 
-fn format_metric_vector_comparison_expression(query: &str) -> Option<String> {
+pub(crate) fn format_metric_vector_comparison_expression(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_comparison_query(query)?;
     let right_text = right_text.trim_start();
     let (bool_modifier, right_text) = if let Some(rest) = right_text.strip_prefix("bool") {
@@ -321,7 +325,7 @@ fn format_metric_vector_comparison_expression(query: &str) -> Option<String> {
     }
 }
 
-fn split_top_level_comparison_query(query: &str) -> Option<(&str, &'static str, &str)> {
+pub(crate) fn split_top_level_comparison_query(query: &str) -> Option<(&str, &'static str, &str)> {
     let mut parens = 0_i32;
     let mut brackets = 0_i32;
     let mut braces = 0_i32;
@@ -363,7 +367,7 @@ fn split_top_level_comparison_query(query: &str) -> Option<(&str, &'static str, 
     None
 }
 
-fn split_top_level_arithmetic_query(query: &str) -> Option<(&str, &'static str, &str)> {
+pub(crate) fn split_top_level_arithmetic_query(query: &str) -> Option<(&str, &'static str, &str)> {
     let mut parens = 0_i32;
     let mut brackets = 0_i32;
     let mut braces = 0_i32;
@@ -410,14 +414,14 @@ fn split_top_level_arithmetic_query(query: &str) -> Option<(&str, &'static str, 
     None
 }
 
-fn format_simple_metric_query(query: &MetricQuery) -> Option<String> {
+pub(crate) fn format_simple_metric_query(query: &MetricQuery) -> Option<String> {
     if query.vector_aggregation.is_some() || query.range_grouping.is_some() {
         return None;
     }
     format_metric_range_aggregation_query(query)
 }
 
-fn format_metric_query(query: &MetricQuery) -> Option<String> {
+pub(crate) fn format_metric_query(query: &MetricQuery) -> Option<String> {
     let mut formatted = format_metric_range_aggregation_query(query)?;
     if let Some(grouping) = &query.range_grouping {
         formatted = format!("{formatted} {}", format_vector_grouping(grouping));
@@ -428,7 +432,7 @@ fn format_metric_query(query: &MetricQuery) -> Option<String> {
     Some(formatted)
 }
 
-fn format_metric_range_aggregation_query(query: &MetricQuery) -> Option<String> {
+pub(crate) fn format_metric_range_aggregation_query(query: &MetricQuery) -> Option<String> {
     let range = format_metric_range_selector(query)?;
     if let RangeAggregation::QuantileOverTime(quantile) = query.aggregation {
         return Some(format!(
@@ -442,7 +446,7 @@ fn format_metric_range_aggregation_query(query: &MetricQuery) -> Option<String> 
     ))
 }
 
-fn format_metric_range_selector(query: &MetricQuery) -> Option<String> {
+pub(crate) fn format_metric_range_selector(query: &MetricQuery) -> Option<String> {
     let range = format_loki_duration_ns(query.range_ns.0)?;
     let offset = if query.offset_ns.0 == 0 {
         String::new()
@@ -456,4 +460,3 @@ fn format_metric_range_selector(query: &MetricQuery) -> Option<String> {
         format_stream_query(&query.stream)
     ))
 }
-

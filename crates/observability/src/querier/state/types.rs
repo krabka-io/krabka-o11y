@@ -1,60 +1,62 @@
+use super::*;
+
 #[derive(Clone)]
 pub struct QuerierState {
-    root: PathBuf,
-    label_index: LabelIndex,
-    block_index: BlockIndex,
-    cold_store: Option<ColdObjectStoreState>,
-    dynamic_index: Option<DynamicIndexSource>,
-    dynamic_index_cache: DynamicIndexCache,
-    cold_block_fetch_concurrency: NonZeroUsize,
-    hot_tail: Option<HotTailState>,
-    delete_requests: Option<SharedLogDeleteRequests>,
-    rules: SharedLokiRules,
-    alert_states: SharedPrometheusAlertStates,
-    query_authorizer: Arc<dyn LogQueryAuthorizer>,
-    max_query_range: Option<Time>,
+    pub(crate) root: PathBuf,
+    pub(crate) label_index: LabelIndex,
+    pub(crate) block_index: BlockIndex,
+    pub(crate) cold_store: Option<ColdObjectStoreState>,
+    pub(crate) dynamic_index: Option<DynamicIndexSource>,
+    pub(crate) dynamic_index_cache: DynamicIndexCache,
+    pub(crate) cold_block_fetch_concurrency: NonZeroUsize,
+    pub(crate) hot_tail: Option<HotTailState>,
+    pub(crate) delete_requests: Option<SharedLogDeleteRequests>,
+    pub(crate) rules: SharedLokiRules,
+    pub(crate) alert_states: SharedPrometheusAlertStates,
+    pub(crate) query_authorizer: Arc<dyn LogQueryAuthorizer>,
+    pub(crate) max_query_range: Option<Time>,
     /// A count of series, not a data volume, so it stays a plain integer.
-    max_query_series: Option<usize>,
-    max_query_read: Option<ByteSize>,
-    max_query_length: Option<ByteSize>,
+    pub(crate) max_query_series: Option<usize>,
+    pub(crate) max_query_read: Option<ByteSize>,
+    pub(crate) max_query_length: Option<ByteSize>,
     /// Shared RED-metrics bundle. It is `None` for test routers that do not
     /// wire metrics. The binary threads a shared bundle in with
     /// [`QuerierState::with_metrics`].
-    metrics: Option<ServiceMetrics>,
+    pub(crate) metrics: Option<ServiceMetrics>,
 }
 
-type LokiRuleGroupsByName = BTreeMap<String, serde_yaml::Value>;
-type LokiRuleNamespaces = BTreeMap<String, LokiRuleGroupsByName>;
-type LokiRuleTenants = BTreeMap<String, LokiRuleNamespaces>;
+pub(crate) type LokiRuleGroupsByName = BTreeMap<String, serde_yaml::Value>;
+pub(crate) type LokiRuleNamespaces = BTreeMap<String, LokiRuleGroupsByName>;
+pub(crate) type LokiRuleTenants = BTreeMap<String, LokiRuleNamespaces>;
 
 #[derive(Clone, Default)]
-struct SharedLokiRules {
-    tenants: Arc<Mutex<LokiRuleTenants>>,
-    storage_path: Option<Arc<PathBuf>>,
+pub(crate) struct SharedLokiRules {
+    pub(crate) tenants: Arc<Mutex<LokiRuleTenants>>,
+    pub(crate) storage_path: Option<Arc<PathBuf>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-struct PrometheusAlertKey {
-    tenant: String,
-    alert_name: String,
-    query: String,
-    labels: Labels,
+pub(crate) struct PrometheusAlertKey {
+    pub(crate) tenant: String,
+    pub(crate) alert_name: String,
+    pub(crate) query: String,
+    pub(crate) labels: Labels,
 }
 
 #[derive(Clone, Debug)]
-struct PrometheusAlertRuntimeState {
-    active_at: i64,
-    last_active_at: i64,
-    value: String,
+pub(crate) struct PrometheusAlertRuntimeState {
+    pub(crate) active_at: i64,
+    pub(crate) last_active_at: i64,
+    pub(crate) value: String,
 }
 
 #[derive(Clone, Default)]
-struct SharedPrometheusAlertStates {
-    alerts: Arc<Mutex<BTreeMap<PrometheusAlertKey, PrometheusAlertRuntimeState>>>,
+pub(crate) struct SharedPrometheusAlertStates {
+    pub(crate) alerts: Arc<Mutex<BTreeMap<PrometheusAlertKey, PrometheusAlertRuntimeState>>>,
 }
 
 impl SharedPrometheusAlertStates {
-    fn clear_tenant(&self, tenant: &str) {
+    pub(crate) fn clear_tenant(&self, tenant: &str) {
         self.alerts
             .lock()
             .expect("Prometheus alert state lock poisoned")
@@ -63,13 +65,13 @@ impl SharedPrometheusAlertStates {
 }
 
 #[derive(Clone)]
-struct ColdObjectStoreState {
-    store: Arc<dyn ObjectStore>,
-    prefix: ObjectPath,
+pub(crate) struct ColdObjectStoreState {
+    pub(crate) store: Arc<dyn ObjectStore>,
+    pub(crate) prefix: ObjectPath,
 }
 
 #[derive(Clone)]
-enum DynamicIndexSource {
+pub(crate) enum DynamicIndexSource {
     TenantObjectStoreManifest {
         store: Arc<dyn ObjectStore>,
         prefix: ObjectPath,
@@ -81,17 +83,17 @@ enum DynamicIndexSource {
 }
 
 #[derive(Clone)]
-struct DynamicIndexCache {
-    cache_ttl: Time,
-    shard_cache_ttl: Time,
-    shard_fetch_concurrency: NonZeroUsize,
-    entries: Arc<Mutex<BTreeMap<DynamicIndexCacheKey, CachedDynamicIndex>>>,
-    shard_ranges: Arc<Mutex<BTreeMap<DynamicShardRangesCacheKey, CachedShardRanges>>>,
-    shard_indexes: Arc<Mutex<BTreeMap<DynamicShardIndexCacheKey, CachedDynamicIndex>>>,
+pub(crate) struct DynamicIndexCache {
+    pub(crate) cache_ttl: Time,
+    pub(crate) shard_cache_ttl: Time,
+    pub(crate) shard_fetch_concurrency: NonZeroUsize,
+    pub(crate) entries: Arc<Mutex<BTreeMap<DynamicIndexCacheKey, CachedDynamicIndex>>>,
+    pub(crate) shard_ranges: Arc<Mutex<BTreeMap<DynamicShardRangesCacheKey, CachedShardRanges>>>,
+    pub(crate) shard_indexes: Arc<Mutex<BTreeMap<DynamicShardIndexCacheKey, CachedDynamicIndex>>>,
 }
 
 impl DynamicIndexCache {
-    fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.entries
             .lock()
             .expect("dynamic index cache lock poisoned")
@@ -106,7 +108,7 @@ impl DynamicIndexCache {
             .clear();
     }
 
-    fn get(&self, key: &DynamicIndexCacheKey) -> Option<(LabelIndex, BlockIndex)> {
+    pub(crate) fn get(&self, key: &DynamicIndexCacheKey) -> Option<(LabelIndex, BlockIndex)> {
         let mut entries = self
             .entries
             .lock()
@@ -122,7 +124,12 @@ impl DynamicIndexCache {
         Some((entry.label_index.clone(), entry.block_index.clone()))
     }
 
-    fn insert(&self, key: DynamicIndexCacheKey, label_index: LabelIndex, block_index: BlockIndex) {
+    pub(crate) fn insert(
+        &self,
+        key: DynamicIndexCacheKey,
+        label_index: LabelIndex,
+        block_index: BlockIndex,
+    ) {
         self.entries
             .lock()
             .expect("dynamic index cache lock poisoned")
@@ -136,7 +143,7 @@ impl DynamicIndexCache {
             );
     }
 
-    fn get_shard_ranges(
+    pub(crate) fn get_shard_ranges(
         &self,
         key: &DynamicShardRangesCacheKey,
         required_from_ns: i64,
@@ -157,7 +164,7 @@ impl DynamicIndexCache {
         Some(entry.ranges.clone())
     }
 
-    fn insert_shard_ranges(
+    pub(crate) fn insert_shard_ranges(
         &self,
         key: DynamicShardRangesCacheKey,
         listed_from_ns: i64,
@@ -176,7 +183,10 @@ impl DynamicIndexCache {
             );
     }
 
-    fn get_shard_index(&self, key: &DynamicShardIndexCacheKey) -> Option<(LabelIndex, BlockIndex)> {
+    pub(crate) fn get_shard_index(
+        &self,
+        key: &DynamicShardIndexCacheKey,
+    ) -> Option<(LabelIndex, BlockIndex)> {
         let mut entries = self
             .shard_indexes
             .lock()
@@ -191,7 +201,7 @@ impl DynamicIndexCache {
         Some((entry.label_index.clone(), entry.block_index.clone()))
     }
 
-    fn insert_shard_index(
+    pub(crate) fn insert_shard_index(
         &self,
         key: DynamicShardIndexCacheKey,
         label_index: LabelIndex,
@@ -226,7 +236,7 @@ impl Default for DynamicIndexCache {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum DynamicIndexCacheKey {
+pub(crate) enum DynamicIndexCacheKey {
     TenantManifest {
         tenant: String,
     },
@@ -238,32 +248,32 @@ enum DynamicIndexCacheKey {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct DynamicShardRangesCacheKey {
-    tenant: String,
+pub(crate) struct DynamicShardRangesCacheKey {
+    pub(crate) tenant: String,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct DynamicShardIndexCacheKey {
-    tenant: String,
-    start_ns: i64,
-    end_ns: i64,
+pub(crate) struct DynamicShardIndexCacheKey {
+    pub(crate) tenant: String,
+    pub(crate) start_ns: i64,
+    pub(crate) end_ns: i64,
 }
 
 #[derive(Clone)]
-struct CachedDynamicIndex {
-    loaded_at: Instant,
-    label_index: LabelIndex,
-    block_index: BlockIndex,
+pub(crate) struct CachedDynamicIndex {
+    pub(crate) loaded_at: Instant,
+    pub(crate) label_index: LabelIndex,
+    pub(crate) block_index: BlockIndex,
 }
 
 #[derive(Clone)]
-struct CachedShardRanges {
-    loaded_at: Instant,
-    listed_from_ns: i64,
-    ranges: Vec<TimeRange>,
+pub(crate) struct CachedShardRanges {
+    pub(crate) loaded_at: Instant,
+    pub(crate) listed_from_ns: i64,
+    pub(crate) ranges: Vec<TimeRange>,
 }
 
-fn merge_tenant_shard_indexes(
+pub(crate) fn merge_tenant_shard_indexes(
     tenant: &str,
     indexes: impl IntoIterator<Item = (LabelIndex, BlockIndex)>,
 ) -> (LabelIndex, BlockIndex) {
@@ -290,8 +300,7 @@ fn merge_tenant_shard_indexes(
 }
 
 #[derive(Clone)]
-struct HotTailState {
-    source: Arc<dyn LogHotTail>,
-    frontier: CompactionFrontierSource,
+pub(crate) struct HotTailState {
+    pub(crate) source: Arc<dyn LogHotTail>,
+    pub(crate) frontier: CompactionFrontierSource,
 }
-

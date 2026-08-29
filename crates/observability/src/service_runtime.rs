@@ -1,3 +1,5 @@
+use super::*;
+
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
 pub async fn build_service_router(
@@ -10,7 +12,7 @@ pub async fn build_service_router(
         .map(|(router, _)| router)
 }
 
-async fn build_service_router_with_shutdown(
+pub(crate) async fn build_service_router_with_shutdown(
     config: &ServiceConfig,
     dependencies: ServiceDependencies,
     object_store: Option<&dyn ObjectStore>,
@@ -285,7 +287,7 @@ pub async fn serve_service_listener(
     Ok(())
 }
 
-async fn serve_compactor_service_listener(
+pub(crate) async fn serve_compactor_service_listener(
     listener: TcpListener,
     config: ServiceConfig,
     dependencies: ServiceDependencies,

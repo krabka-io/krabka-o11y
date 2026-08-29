@@ -1,4 +1,6 @@
-fn is_protobuf_content_type(headers: &HeaderMap) -> bool {
+use super::*;
+
+pub(crate) fn is_protobuf_content_type(headers: &HeaderMap) -> bool {
     let content_type = headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -12,7 +14,7 @@ fn is_protobuf_content_type(headers: &HeaderMap) -> bool {
     })
 }
 
-fn is_loki_json_content_type(headers: &HeaderMap) -> Result<bool, DistributorError> {
+pub(crate) fn is_loki_json_content_type(headers: &HeaderMap) -> Result<bool, DistributorError> {
     let Some(content_type) = headers
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -53,7 +55,7 @@ fn is_loki_json_content_type(headers: &HeaderMap) -> Result<bool, DistributorErr
     Ok(media_type.eq_ignore_ascii_case("application/json"))
 }
 
-fn normalize_loki_push(
+pub(crate) fn normalize_loki_push(
     headers: &HeaderMap,
     payload: LokiTypedPushRequest,
     reject_old_samples_max_age: Option<Time>,
@@ -134,7 +136,7 @@ fn normalize_loki_push(
     Ok(records)
 }
 
-fn validate_loki_empty_json_value_timestamp_window(
+pub(crate) fn validate_loki_empty_json_value_timestamp_window(
     stream_labels: &Labels,
     max_age: Option<Time>,
 ) -> Result<(), DistributorError> {
@@ -149,7 +151,7 @@ fn validate_loki_empty_json_value_timestamp_window(
     })
 }
 
-fn normalize_loki_proto_push(
+pub(crate) fn normalize_loki_proto_push(
     headers: &HeaderMap,
     payload: LokiProtoPushRequest,
     reject_old_samples_max_age: Option<Time>,
@@ -197,13 +199,13 @@ fn normalize_loki_proto_push(
     Ok(records)
 }
 
-fn loki_push_entry_labels(stream_labels: &Labels, line: &str) -> Labels {
+pub(crate) fn loki_push_entry_labels(stream_labels: &Labels, line: &str) -> Labels {
     let mut labels = stream_labels.clone();
     discover_detected_level_label(&mut labels, line);
     labels
 }
 
-fn normalize_otlp_logs(
+pub(crate) fn normalize_otlp_logs(
     headers: &HeaderMap,
     payload: OtlpLogsRequest,
     reject_old_samples_max_age: Option<Time>,
@@ -260,7 +262,7 @@ fn normalize_otlp_logs(
     Ok(records)
 }
 
-fn loki_json_timestamp_parse_error(timestamp: &str, line: &str) -> String {
+pub(crate) fn loki_json_timestamp_parse_error(timestamp: &str, line: &str) -> String {
     let found_context = timestamp
         .char_indices()
         .nth(9)
@@ -270,7 +272,7 @@ fn loki_json_timestamp_parse_error(timestamp: &str, line: &str) -> String {
     )
 }
 
-fn loki_json_timestamp_value_parse_error(
+pub(crate) fn loki_json_timestamp_value_parse_error(
     body: &[u8],
     timestamp: &Value,
     line: Option<&Value>,
@@ -303,7 +305,11 @@ fn loki_json_timestamp_value_parse_error(
     )
 }
 
-fn loki_json_line_parse_error(stream_labels: &Labels, timestamp: &str, line: &Value) -> String {
+pub(crate) fn loki_json_line_parse_error(
+    stream_labels: &Labels,
+    timestamp: &str,
+    line: &Value,
+) -> String {
     let line = line.to_string();
     let found_context = format!(
         "{}\",{}]]}}]}}",
@@ -319,7 +325,7 @@ fn loki_json_line_parse_error(stream_labels: &Labels, timestamp: &str, line: &Va
     )
 }
 
-fn validate_loki_stream_labels(labels: &Labels) -> Result<(), DistributorError> {
+pub(crate) fn validate_loki_stream_labels(labels: &Labels) -> Result<(), DistributorError> {
     if let Some(name) = labels.keys().find(|name| !is_loki_label_name(name)) {
         return Err(DistributorError::InvalidPushLabelSyntax(
             loki_push_label_parse_error(labels, name),
@@ -328,7 +334,7 @@ fn validate_loki_stream_labels(labels: &Labels) -> Result<(), DistributorError> 
     Ok(())
 }
 
-fn loki_push_label_parse_error(labels: &Labels, invalid_name: &str) -> String {
+pub(crate) fn loki_push_label_parse_error(labels: &Labels, invalid_name: &str) -> String {
     let rendered = loki_label_set(labels);
     let name_start = rendered.find(invalid_name).unwrap_or(1);
     let invalid_offset = invalid_name
@@ -344,7 +350,7 @@ fn loki_push_label_parse_error(labels: &Labels, invalid_name: &str) -> String {
     )
 }
 
-fn loki_label_set(labels: &Labels) -> String {
+pub(crate) fn loki_label_set(labels: &Labels) -> String {
     let values = labels
         .iter()
         .map(|(name, value)| format!("{name}={}", quote_logql_string(value)))
@@ -353,7 +359,7 @@ fn loki_label_set(labels: &Labels) -> String {
     format!("{{{values}}}")
 }
 
-fn is_loki_label_name(name: &str) -> bool {
+pub(crate) fn is_loki_label_name(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -361,11 +367,11 @@ fn is_loki_label_name(name: &str) -> bool {
     is_loki_label_name_char(first, true) && chars.all(|value| is_loki_label_name_char(value, false))
 }
 
-fn is_loki_label_name_char(value: char, first: bool) -> bool {
+pub(crate) fn is_loki_label_name_char(value: char, first: bool) -> bool {
     value == '_' || value.is_ascii_alphabetic() || (!first && value.is_ascii_digit())
 }
 
-fn parse_loki_proto_labels(labels: &str) -> Result<Labels, DistributorError> {
+pub(crate) fn parse_loki_proto_labels(labels: &str) -> Result<Labels, DistributorError> {
     let labels = labels.trim();
     if labels.is_empty() || labels == "{}" {
         return Ok(Labels::new());
@@ -414,7 +420,7 @@ fn parse_loki_proto_labels(labels: &str) -> Result<Labels, DistributorError> {
     Ok(labels)
 }
 
-fn loki_proto_label_parse_error(labels: &str) -> Option<String> {
+pub(crate) fn loki_proto_label_parse_error(labels: &str) -> Option<String> {
     let labels = labels.trim();
     let mut chars = labels.char_indices();
     if chars.next()? != (0, '{') {
@@ -464,4 +470,3 @@ fn loki_proto_label_parse_error(labels: &str) -> Option<String> {
 
     None
 }
-

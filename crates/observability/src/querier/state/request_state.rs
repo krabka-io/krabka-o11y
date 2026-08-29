@@ -1,3 +1,5 @@
+use super::*;
+
 impl QuerierState {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>, label_index: LabelIndex, block_index: BlockIndex) -> Self {
@@ -35,7 +37,7 @@ impl QuerierState {
     /// Records one querier request outcome, that is the per-route count and
     /// latency, on the shared bundle. It is a no-op when metrics are not
     /// wired, as in test routers.
-    fn record_query(&self, route: &str, ok: bool, start: Instant) {
+    pub(crate) fn record_query(&self, route: &str, ok: bool, start: Instant) {
         if let Some(metrics) = &self.metrics {
             metrics.record_query(route, ok, start.elapsed().as_time());
         }
@@ -71,7 +73,10 @@ impl QuerierState {
         self
     }
 
-    fn with_query_authorizer_source(mut self, authorizer: Arc<dyn LogQueryAuthorizer>) -> Self {
+    pub(crate) fn with_query_authorizer_source(
+        mut self,
+        authorizer: Arc<dyn LogQueryAuthorizer>,
+    ) -> Self {
         self.query_authorizer = authorizer;
         self
     }
@@ -102,7 +107,7 @@ impl QuerierState {
         self.with_hot_tail_source(Arc::new(source), CompactionFrontierSource::Shared(frontier))
     }
 
-    fn with_hot_tail_source(
+    pub(crate) fn with_hot_tail_source(
         mut self,
         source: Arc<dyn LogHotTail>,
         frontier: CompactionFrontierSource,
@@ -111,17 +116,17 @@ impl QuerierState {
         self
     }
 
-    fn with_delete_requests(mut self, requests: SharedLogDeleteRequests) -> Self {
+    pub(crate) fn with_delete_requests(mut self, requests: SharedLogDeleteRequests) -> Self {
         self.delete_requests = Some(requests);
         self
     }
 
-    fn with_rules(mut self, rules: SharedLokiRules) -> Self {
+    pub(crate) fn with_rules(mut self, rules: SharedLokiRules) -> Self {
         self.rules = rules;
         self
     }
 
-    fn with_cold_object_store_source(
+    pub(crate) fn with_cold_object_store_source(
         mut self,
         store: Arc<dyn ObjectStore>,
         prefix: ObjectPath,
@@ -130,7 +135,7 @@ impl QuerierState {
         self
     }
 
-    fn with_runtime_policy(mut self, config: &ServiceConfig) -> Self {
+    pub(crate) fn with_runtime_policy(mut self, config: &ServiceConfig) -> Self {
         self.dynamic_index_cache.cache_ttl = config.querier_dynamic_index_cache_ttl;
         self.dynamic_index_cache.shard_cache_ttl = config.querier_shard_index_cache_ttl;
         self.dynamic_index_cache.shard_fetch_concurrency = config.querier_shard_fetch_concurrency;
@@ -138,7 +143,7 @@ impl QuerierState {
         self
     }
 
-    fn with_dynamic_tenant_object_store_manifest(
+    pub(crate) fn with_dynamic_tenant_object_store_manifest(
         mut self,
         store: Arc<dyn ObjectStore>,
         prefix: ObjectPath,
@@ -148,7 +153,7 @@ impl QuerierState {
         self
     }
 
-    fn with_dynamic_tenant_object_store_shards(
+    pub(crate) fn with_dynamic_tenant_object_store_shards(
         mut self,
         store: Arc<dyn ObjectStore>,
         prefix: ObjectPath,
@@ -158,7 +163,7 @@ impl QuerierState {
         self
     }
 
-    async fn with_request_tenant_index(
+    pub(crate) async fn with_request_tenant_index(
         &self,
         tenant: &str,
         query_range: TimeRange,
@@ -232,7 +237,7 @@ impl QuerierState {
         }
     }
 
-    async fn cached_tenant_shard_ranges(
+    pub(crate) async fn cached_tenant_shard_ranges(
         &self,
         store: &dyn ObjectStore,
         prefix: &ObjectPath,
@@ -280,7 +285,7 @@ impl QuerierState {
         Ok(shard_ranges)
     }
 
-    async fn cached_tenant_shard_indexes(
+    pub(crate) async fn cached_tenant_shard_indexes(
         &self,
         store: &dyn ObjectStore,
         prefix: &ObjectPath,
@@ -405,7 +410,7 @@ pub async fn build_querier_state(
     build_querier_state_with_object_store_prefix(config, object_store, None).await
 }
 
-async fn build_querier_state_with_object_store_prefix(
+pub(crate) async fn build_querier_state_with_object_store_prefix(
     config: &ServiceConfig,
     object_store: Option<&dyn ObjectStore>,
     object_store_prefix: Option<&ObjectPath>,
@@ -464,4 +469,3 @@ async fn build_querier_state_with_object_store_prefix(
         state
     })
 }
-

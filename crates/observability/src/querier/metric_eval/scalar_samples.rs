@@ -1,11 +1,13 @@
+use super::*;
+
 #[derive(Clone, Copy)]
-struct ScalarSample {
-    numerator: i128,
-    denominator: u128,
+pub(crate) struct ScalarSample {
+    pub(crate) numerator: i128,
+    pub(crate) denominator: u128,
 }
 
 impl ScalarSample {
-    fn new(numerator: i128, denominator: u128) -> Self {
+    pub(crate) fn new(numerator: i128, denominator: u128) -> Self {
         if numerator == 0 || denominator == 0 {
             return Self {
                 numerator: 0,
@@ -20,7 +22,7 @@ impl ScalarSample {
         }
     }
 
-    fn add(self, other: Self) -> Option<Self> {
+    pub(crate) fn add(self, other: Self) -> Option<Self> {
         let left = self
             .numerator
             .checked_mul(i128::try_from(other.denominator).ok()?);
@@ -31,7 +33,7 @@ impl ScalarSample {
         Some(Self::new(left?.checked_add(right?)?, denominator))
     }
 
-    fn subtract(self, other: Self) -> Option<Self> {
+    pub(crate) fn subtract(self, other: Self) -> Option<Self> {
         let left = self
             .numerator
             .checked_mul(i128::try_from(other.denominator).ok()?);
@@ -42,14 +44,14 @@ impl ScalarSample {
         Some(Self::new(left?.checked_sub(right?)?, denominator))
     }
 
-    fn multiply(self, other: Self) -> Option<Self> {
+    pub(crate) fn multiply(self, other: Self) -> Option<Self> {
         Some(Self::new(
             self.numerator.checked_mul(other.numerator)?,
             self.denominator.checked_mul(other.denominator)?,
         ))
     }
 
-    fn divide(self, other: Self) -> Option<Self> {
+    pub(crate) fn divide(self, other: Self) -> Option<Self> {
         if other.numerator == 0 {
             return None;
         }
@@ -70,7 +72,7 @@ impl ScalarSample {
         Some(Self::new(numerator, u128::try_from(denominator).ok()?))
     }
 
-    fn modulo(self, other: Self) -> Option<Self> {
+    pub(crate) fn modulo(self, other: Self) -> Option<Self> {
         if other.numerator == 0 {
             return None;
         }
@@ -78,11 +80,11 @@ impl ScalarSample {
         Self::from_f64(self.to_f64()? % other.to_f64()?)
     }
 
-    fn power(self, other: Self) -> Option<Self> {
+    pub(crate) fn power(self, other: Self) -> Option<Self> {
         Self::from_f64(self.to_f64()?.powf(other.to_f64()?))
     }
 
-    fn compare(self, operator: ScalarComparisonOp, other: Self) -> Option<bool> {
+    pub(crate) fn compare(self, operator: ScalarComparisonOp, other: Self) -> Option<bool> {
         let left = self
             .numerator
             .checked_mul(i128::try_from(other.denominator).ok()?)?;
@@ -99,12 +101,12 @@ impl ScalarSample {
         })
     }
 
-    fn to_f64(self) -> Option<f64> {
+    pub(crate) fn to_f64(self) -> Option<f64> {
         let value = self.numerator.to_f64()? / self.denominator.to_f64()?;
         value.is_finite().then_some(value)
     }
 
-    fn from_f64(value: f64) -> Option<Self> {
+    pub(crate) fn from_f64(value: f64) -> Option<Self> {
         if !value.is_finite() {
             return None;
         }
@@ -113,7 +115,7 @@ impl ScalarSample {
         Some(Self::new(i128::from_f64(scaled)?, METRIC_DECIMAL_SCALE))
     }
 
-    fn format(self) -> String {
+    pub(crate) fn format(self) -> String {
         let negative = self.numerator < 0;
         let numerator = self.numerator.unsigned_abs();
         let whole = numerator / self.denominator;
@@ -137,17 +139,17 @@ impl ScalarSample {
         format!("{sign}{whole}.{decimals}")
     }
 
-    fn format_fixed_six(self) -> String {
+    pub(crate) fn format_fixed_six(self) -> String {
         format!("{:.6}", self.to_f64().unwrap_or_default())
     }
 }
 
-fn parse_scalar_sample(value: &str) -> Option<ScalarSample> {
+pub(crate) fn parse_scalar_sample(value: &str) -> Option<ScalarSample> {
     let (numerator, denominator) = parse_decimal_sample_literal(value)?;
     Some(ScalarSample::new(numerator, denominator))
 }
 
-fn gcd_signed(left: i128, right: u128) -> u128 {
+pub(crate) fn gcd_signed(left: i128, right: u128) -> u128 {
     let mut left = left.unsigned_abs();
     let mut right = right;
     while right != 0 {
@@ -158,7 +160,7 @@ fn gcd_signed(left: i128, right: u128) -> u128 {
     left
 }
 
-fn validate_query_range_limit(
+pub(crate) fn validate_query_range_limit(
     state: &QuerierState,
     time_range: TimeRange,
 ) -> Result<(), HttpQueryError> {
@@ -186,7 +188,9 @@ fn validate_query_range_limit(
     Ok(())
 }
 
-fn validate_loki_volume_query_range_limit(time_range: TimeRange) -> Result<(), HttpQueryError> {
+pub(crate) fn validate_loki_volume_query_range_limit(
+    time_range: TimeRange,
+) -> Result<(), HttpQueryError> {
     let query_range = time_range
         .end_ns
         .checked_sub(time_range.start_ns)
@@ -202,7 +206,7 @@ fn validate_loki_volume_query_range_limit(time_range: TimeRange) -> Result<(), H
     Ok(())
 }
 
-fn validate_loki_range_query_range_limit(
+pub(crate) fn validate_loki_range_query_range_limit(
     kind: QueryKind,
     time_range: TimeRange,
 ) -> Result<(), HttpQueryError> {
@@ -216,7 +220,10 @@ fn validate_loki_range_query_range_limit(
 ///
 /// `Loki` refuses a non-positive step outright rather than dividing by it, and
 /// every range-vector response resolves its step through here.
-fn resolved_range_step(step: Option<i64>, time_range: TimeRange) -> Result<i64, HttpQueryError> {
+pub(crate) fn resolved_range_step(
+    step: Option<i64>,
+    time_range: TimeRange,
+) -> Result<i64, HttpQueryError> {
     let step_ns = step.unwrap_or_else(|| default_metric_range_step(time_range));
     if step_ns <= 0 {
         return Err(HttpQueryError::InvalidStep);
@@ -224,7 +231,7 @@ fn resolved_range_step(step: Option<i64>, time_range: TimeRange) -> Result<i64, 
     Ok(step_ns)
 }
 
-fn validate_loki_query_range_resolution(
+pub(crate) fn validate_loki_query_range_resolution(
     params: &QueryParams,
     kind: QueryKind,
     time_range: TimeRange,
@@ -251,7 +258,7 @@ fn validate_loki_query_range_resolution(
 /// The whole seconds come from the nanosecond count by integer division, not
 /// from [`TimeExt::secs_i64`]. That method rounds to nearest and would report a
 /// second more than `Loki` does for the same window.
-fn format_loki_query_length(range: Time) -> String {
+pub(crate) fn format_loki_query_length(range: Time) -> String {
     let total_seconds = range.nanos_i64().max(0) / 1_000_000_000;
     let hours = total_seconds / 3_600;
     let minutes = total_seconds % 3_600 / 60;
@@ -260,7 +267,10 @@ fn format_loki_query_length(range: Time) -> String {
     format!("{hours}h{minutes}m{seconds}s")
 }
 
-fn validate_query_length_limit(state: &QuerierState, query: &str) -> Result<(), HttpQueryError> {
+pub(crate) fn validate_query_length_limit(
+    state: &QuerierState,
+    query: &str,
+) -> Result<(), HttpQueryError> {
     let Some(max_query_length) = state.max_query_length.map(ByteSizeExt::bytes_usize) else {
         return Ok(());
     };
@@ -274,7 +284,7 @@ fn validate_query_length_limit(state: &QuerierState, query: &str) -> Result<(), 
     Ok(())
 }
 
-async fn execute_http_metric_query(
+pub(crate) async fn execute_http_metric_query(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -347,4 +357,3 @@ async fn execute_http_metric_query(
         response, &plan, &query,
     ))
 }
-

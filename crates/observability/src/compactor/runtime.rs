@@ -1,3 +1,5 @@
+use super::*;
+
 #[cfg_attr(test, mutants::skip)]
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
@@ -161,11 +163,11 @@ pub async fn run_compactor_until_shutdown(
 ///
 /// `Time` is `PartialOrd` but not `Ord`, so this uses `Time::min` and not
 /// `std::cmp::min`.
-fn next_compactor_object_store_backoff(current: Time, max_backoff: Time) -> Time {
+pub(crate) fn next_compactor_object_store_backoff(current: Time, max_backoff: Time) -> Time {
     (current * 2.0).min(max_backoff)
 }
 
-fn compactor_run_error_is_object_store(error: &CompactorRunError) -> bool {
+pub(crate) fn compactor_run_error_is_object_store(error: &CompactorRunError) -> bool {
     match error {
         CompactorRunError::Wal(KafkaWalCompactionError::Compaction(error))
         | CompactorRunError::Compaction(error) => compaction_error_is_object_store(error),
@@ -184,7 +186,7 @@ fn compactor_run_error_is_object_store(error: &CompactorRunError) -> bool {
     }
 }
 
-fn compaction_error_is_object_store(error: &CompactionError) -> bool {
+pub(crate) fn compaction_error_is_object_store(error: &CompactionError) -> bool {
     match error {
         CompactionError::BlockStore(error) => block_store_error_is_object_store(error),
         CompactionError::EmptyWalBatch
@@ -196,11 +198,11 @@ fn compaction_error_is_object_store(error: &CompactionError) -> bool {
     }
 }
 
-fn block_store_error_is_object_store(error: &BlockStoreError) -> bool {
+pub(crate) fn block_store_error_is_object_store(error: &BlockStoreError) -> bool {
     matches!(error, BlockStoreError::ObjectStore(_))
 }
 
-async fn load_existing_compaction_frontier(
+pub(crate) async fn load_existing_compaction_frontier(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     frontier: &SharedCompactionFrontier,
@@ -215,7 +217,7 @@ async fn load_existing_compaction_frontier(
     Ok(())
 }
 
-async fn shared_compaction_frontier_from_object_store(
+pub(crate) async fn shared_compaction_frontier_from_object_store(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
 ) -> Result<SharedCompactionFrontier, CompactionFrontierStoreError> {
@@ -224,7 +226,7 @@ async fn shared_compaction_frontier_from_object_store(
     Ok(frontier)
 }
 
-async fn refresh_compaction_frontier_and_prune(
+pub(crate) async fn refresh_compaction_frontier_and_prune(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     frontier: &SharedCompactionFrontier,
@@ -242,7 +244,7 @@ async fn refresh_compaction_frontier_and_prune(
 }
 
 #[cfg_attr(test, mutants::skip)]
-fn spawn_compaction_frontier_refresher(
+pub(crate) fn spawn_compaction_frontier_refresher(
     store: Arc<dyn ObjectStore>,
     prefix: ObjectPath,
     frontier: SharedCompactionFrontier,
@@ -267,7 +269,7 @@ fn spawn_compaction_frontier_refresher(
     });
 }
 
-async fn advance_and_persist_compaction_frontier(
+pub(crate) async fn advance_and_persist_compaction_frontier(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     frontier: &SharedCompactionFrontier,
@@ -281,7 +283,7 @@ async fn advance_and_persist_compaction_frontier(
     Ok(())
 }
 
-async fn materialize_deletes_then_compact_next_kafka_wal_batch(
+pub(crate) async fn materialize_deletes_then_compact_next_kafka_wal_batch(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     consumer: &mut (impl LogWalConsumer + ?Sized),
@@ -302,7 +304,7 @@ async fn materialize_deletes_then_compact_next_kafka_wal_batch(
     .await
 }
 
-async fn compact_next_kafka_wal_batch_to_object_store_from_existing_manifest(
+pub(crate) async fn compact_next_kafka_wal_batch_to_object_store_from_existing_manifest(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     consumer: &mut (impl LogWalConsumer + ?Sized),
@@ -322,7 +324,7 @@ async fn compact_next_kafka_wal_batch_to_object_store_from_existing_manifest(
     .await
 }
 
-async fn materialize_log_deletes_before_compaction(
+pub(crate) async fn materialize_log_deletes_before_compaction(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     delete_requests: &SharedLogDeleteRequests,
@@ -343,7 +345,7 @@ async fn materialize_log_deletes_before_compaction(
 /// record carrying a trace context stands for the batch. A record without one
 /// is skipped rather than used: extracting from its headers would find no
 /// context and leave the batch in a trace of its own.
-fn set_remote_parent_from_wal_records(span: &tracing::Span, records: &[KafkaWalRecord]) {
+pub(crate) fn set_remote_parent_from_wal_records(span: &tracing::Span, records: &[KafkaWalRecord]) {
     let Some(parent) = records
         .iter()
         .find(|rec| rec.headers.iter().any(|h| h.key == "traceparent"))
@@ -359,7 +361,7 @@ fn set_remote_parent_from_wal_records(span: &tracing::Span, records: &[KafkaWalR
     );
 }
 
-async fn compact_polled_kafka_wal_records_to_object_store_from_existing_manifest(
+pub(crate) async fn compact_polled_kafka_wal_records_to_object_store_from_existing_manifest(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     consumer: &mut (impl LogWalConsumer + ?Sized),
@@ -393,7 +395,7 @@ async fn compact_polled_kafka_wal_records_to_object_store_from_existing_manifest
     .await
 }
 
-async fn compact_polled_kafka_wal_records_inner(
+pub(crate) async fn compact_polled_kafka_wal_records_inner(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     consumer: &mut (impl LogWalConsumer + ?Sized),
@@ -451,4 +453,3 @@ async fn compact_polled_kafka_wal_records_inner(
 
     Ok(descriptors)
 }
-

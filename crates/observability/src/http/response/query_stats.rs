@@ -1,4 +1,6 @@
-fn loki_query_stats() -> Value {
+use super::*;
+
+pub(crate) fn loki_query_stats() -> Value {
     json!({
         "ingester": {
             "compressedBytes": 0,
@@ -31,4 +33,3 @@ fn loki_query_stats() -> Value {
         }
     })
 }
-

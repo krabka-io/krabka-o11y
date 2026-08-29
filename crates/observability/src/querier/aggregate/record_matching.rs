@@ -1,4 +1,6 @@
-fn append_matching_hot_log_record(
+use super::*;
+
+pub(crate) fn append_matching_hot_log_record(
     streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,
     plan: &StreamPlan,
     record: &WalLogRecord,
@@ -37,7 +39,7 @@ fn append_matching_hot_log_record(
     }
 }
 
-fn is_deleted_log_entry(
+pub(crate) fn is_deleted_log_entry(
     delete_filters: &[ActiveLogDeleteFilter],
     labels: &Labels,
     line: &str,
@@ -53,7 +55,7 @@ fn is_deleted_log_entry(
     })
 }
 
-fn matching_loki_stream_entry(
+pub(crate) fn matching_loki_stream_entry(
     query: &StreamQuery,
     labels: &Labels,
     line: &str,
@@ -70,7 +72,7 @@ fn matching_loki_stream_entry(
     Some((stream_labels, evaluation.line))
 }
 
-fn matching_loki_metric_sample(
+pub(crate) fn matching_loki_metric_sample(
     query: &MetricQuery,
     labels: &Labels,
     line: &str,
@@ -109,12 +111,12 @@ fn matching_loki_metric_sample(
     Ok(Some((metric_labels, evaluation.line, unwrap_sample)))
 }
 
-fn parse_metric_sample_value(value: &str) -> Option<MetricValue> {
+pub(crate) fn parse_metric_sample_value(value: &str) -> Option<MetricValue> {
     let (numerator, denominator) = parse_decimal_sample_literal(value)?;
     Some(MetricValue::new(numerator, denominator))
 }
 
-fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> {
+pub(crate) fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> {
     if value.is_empty() {
         return None;
     }
@@ -183,7 +185,7 @@ fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> {
     ))
 }
 
-fn parse_decimal_sample_exponent(value: &str) -> Option<i32> {
+pub(crate) fn parse_decimal_sample_exponent(value: &str) -> Option<i32> {
     if value.is_empty() {
         return None;
     }
@@ -194,14 +196,14 @@ fn parse_decimal_sample_exponent(value: &str) -> Option<i32> {
     value.parse::<i32>().ok()
 }
 
-fn should_insert_unknown_detected_level(labels: &Labels) -> bool {
+pub(crate) fn should_insert_unknown_detected_level(labels: &Labels) -> bool {
     !labels.contains_key("detected_level")
         && !labels.contains_key("level")
         && !labels.contains_key("severity")
         && !labels.contains_key("severity_text")
 }
 
-fn should_insert_unknown_detected_level_for_stream_query(
+pub(crate) fn should_insert_unknown_detected_level_for_stream_query(
     query: &StreamQuery,
     labels: &Labels,
 ) -> bool {
@@ -212,13 +214,16 @@ fn should_insert_unknown_detected_level_for_stream_query(
             .any(|stage| matches!(stage, PipelineStage::KeepLabels(_)))
 }
 
-fn sort_loki_stream_values(streams: &mut BTreeMap<Labels, Vec<[String; 2]>>) {
+pub(crate) fn sort_loki_stream_values(streams: &mut BTreeMap<Labels, Vec<[String; 2]>>) {
     for values in streams.values_mut() {
         values.sort_by_key(|[timestamp, _]| timestamp.parse::<i64>().unwrap_or(i64::MAX));
     }
 }
 
-fn structured_metadata_value(metadata: &MapArray, row: usize) -> Result<Labels, QueryError> {
+pub(crate) fn structured_metadata_value(
+    metadata: &MapArray,
+    row: usize,
+) -> Result<Labels, QueryError> {
     let entries = metadata.value(row);
     let keys = entries
         .column_by_name("key")
@@ -245,7 +250,7 @@ fn structured_metadata_value(metadata: &MapArray, row: usize) -> Result<Labels, 
         .collect())
 }
 
-fn append_matching_metric_row(
+pub(crate) fn append_matching_metric_row(
     samples: &mut MetricSamples,
     plan: &StreamPlan,
     label_index: &LabelIndex,
@@ -320,7 +325,7 @@ fn append_matching_metric_row(
     Ok(())
 }
 
-fn append_matching_hot_metric_record(
+pub(crate) fn append_matching_hot_metric_record(
     samples: &mut MetricSamples,
     plan: &StreamPlan,
     record: &WalLogRecord,
@@ -390,10 +395,9 @@ fn append_matching_hot_metric_record(
 }
 
 #[derive(Clone, Copy)]
-struct QueryRow<'a> {
-    fingerprint: SeriesFingerprint,
-    timestamp_ns: i64,
-    line: &'a str,
-    structured_metadata: &'a Labels,
+pub(crate) struct QueryRow<'a> {
+    pub(crate) fingerprint: SeriesFingerprint,
+    pub(crate) timestamp_ns: i64,
+    pub(crate) line: &'a str,
+    pub(crate) structured_metadata: &'a Labels,
 }
-

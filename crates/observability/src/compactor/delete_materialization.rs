@@ -1,4 +1,6 @@
-async fn poll_accumulated_log_compaction_records(
+use super::*;
+
+pub(crate) async fn poll_accumulated_log_compaction_records(
     consumer: &mut (impl LogWalConsumer + ?Sized),
     initial_timeout: Time,
     accumulation_window: Time,
@@ -30,7 +32,7 @@ async fn poll_accumulated_log_compaction_records(
     Ok(records)
 }
 
-async fn materialize_delete_requests_in_existing_object_store_blocks(
+pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     delete_requests: &SharedLogDeleteRequests,
@@ -110,7 +112,7 @@ async fn materialize_delete_requests_in_existing_object_store_blocks(
 }
 
 #[cfg_attr(test, mutants::skip)]
-fn materialize_delete_requests_in_existing_local_manifest_blocks(
+pub(crate) fn materialize_delete_requests_in_existing_local_manifest_blocks(
     root: &FsPath,
     delete_requests: &SharedLogDeleteRequests,
 ) -> Result<(), CompactorRunError> {
@@ -181,7 +183,7 @@ fn materialize_delete_requests_in_existing_local_manifest_blocks(
 }
 
 #[cfg_attr(test, mutants::skip)]
-async fn materialize_delete_requests_in_object_store_block_index(
+pub(crate) async fn materialize_delete_requests_in_object_store_block_index(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     tenant: &str,
@@ -267,7 +269,7 @@ async fn materialize_delete_requests_in_object_store_block_index(
     Ok(changed.then_some((next_label_index, next_block_index)))
 }
 
-fn active_log_delete_tenants(
+pub(crate) fn active_log_delete_tenants(
     delete_requests: &SharedLogDeleteRequests,
 ) -> Result<BTreeSet<String>, ActiveLogDeleteFilterError> {
     delete_requests.refresh()?;
@@ -282,7 +284,7 @@ fn active_log_delete_tenants(
         .collect())
 }
 
-fn insert_descriptor_labels(
+pub(crate) fn insert_descriptor_labels(
     target: &mut LabelIndex,
     source: &LabelIndex,
     tenant: &str,
@@ -300,7 +302,7 @@ fn insert_descriptor_labels(
     Ok(())
 }
 
-fn wal_compaction_chunks(records: Vec<WalLogRecord>) -> Vec<Vec<WalLogRecord>> {
+pub(crate) fn wal_compaction_chunks(records: Vec<WalLogRecord>) -> Vec<Vec<WalLogRecord>> {
     let mut chunks: Vec<Vec<WalLogRecord>> = Vec::new();
     for record in records {
         let Some(position) = record.position else {
@@ -323,7 +325,9 @@ fn wal_compaction_chunks(records: Vec<WalLogRecord>) -> Vec<Vec<WalLogRecord>> {
     chunks
 }
 
-fn wal_record_time_range(records: &[WalLogRecord]) -> Result<TimeRange, CompactionError> {
+pub(crate) fn wal_record_time_range(
+    records: &[WalLogRecord],
+) -> Result<TimeRange, CompactionError> {
     let first = records.first().ok_or(CompactionError::EmptyWalBatch)?;
     let mut start_ns = first.timestamp_ns;
     let mut end_ns = first.timestamp_ns;
@@ -334,10 +338,10 @@ fn wal_record_time_range(records: &[WalLogRecord]) -> Result<TimeRange, Compacti
     Ok(TimeRange::new(start_ns, end_ns)?)
 }
 
-type TenantCompactionIndexCache = BTreeMap<String, (LabelIndex, BlockIndex)>;
+pub(crate) type TenantCompactionIndexCache = BTreeMap<String, (LabelIndex, BlockIndex)>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LogCompactionIndexOutput {
+pub(crate) enum LogCompactionIndexOutput {
     FullManifestAndShardCatalog,
     ShardManifests,
 }
@@ -364,7 +368,7 @@ pub async fn compact_log_block_to_object_store(
     .await
 }
 
-async fn compact_log_block_to_object_store_with_index_output(
+pub(crate) async fn compact_log_block_to_object_store_with_index_output(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     key: &BlockKey,
@@ -388,7 +392,7 @@ async fn compact_log_block_to_object_store_with_index_output(
     Ok(descriptor)
 }
 
-async fn write_tenant_compaction_indexes_to_object_store(
+pub(crate) async fn write_tenant_compaction_indexes_to_object_store(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     tenant: &str,
@@ -473,4 +477,3 @@ pub enum CompactionError {
     #[error(transparent)]
     Commit(#[from] CompactionCommitError),
 }
-

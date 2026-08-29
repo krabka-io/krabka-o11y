@@ -1,4 +1,6 @@
-async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier(
+use super::*;
+
+pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     plan: &StreamPlan,
@@ -19,7 +21,7 @@ async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier(
     .await
 }
 
-async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes(
+pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     plan: &StreamPlan,
@@ -85,4 +87,3 @@ async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier_and
         &warnings,
     ))
 }
-

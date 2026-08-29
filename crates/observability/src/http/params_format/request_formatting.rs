@@ -1,4 +1,6 @@
-fn form_body_query(body: &Bytes) -> Result<String, HttpQueryError> {
+use super::*;
+
+pub(crate) fn form_body_query(body: &Bytes) -> Result<String, HttpQueryError> {
     String::from_utf8(body.to_vec()).map_err(|_| HttpQueryError::InvalidPercentEncoding)
 }
 
@@ -8,7 +10,10 @@ fn form_body_query(body: &Bytes) -> Result<String, HttpQueryError> {
 /// dropping it lets an empty `raw_query` take that arm, and it is only reached
 /// when the body is empty too, so the arm returns the same empty string the
 /// fall-through would have.
-fn post_query_params(raw_query: Option<&str>, body: &Bytes) -> Result<String, HttpQueryError> {
+pub(crate) fn post_query_params(
+    raw_query: Option<&str>,
+    body: &Bytes,
+) -> Result<String, HttpQueryError> {
     let body_query = form_body_query(body)?;
     match (raw_query, body_query.is_empty()) {
         (Some(raw_query), true) if !raw_query.is_empty() => Ok(raw_query.to_owned()),
@@ -23,7 +28,7 @@ fn post_query_params(raw_query: Option<&str>, body: &Bytes) -> Result<String, Ht
 ///
 /// Its first arm's guard is a permanent survivor for the same reason as
 /// [`post_query_params`].
-fn post_query_params_body_first(
+pub(crate) fn post_query_params_body_first(
     raw_query: Option<&str>,
     body: &Bytes,
 ) -> Result<String, HttpQueryError> {
@@ -37,12 +42,12 @@ fn post_query_params_body_first(
     }
 }
 
-fn execute_format_query(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
+pub(crate) fn execute_format_query(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
     let query = parse_format_query_param(raw_query)?;
     format_logql_query(&query)
 }
 
-fn parse_format_query_param(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
+pub(crate) fn parse_format_query_param(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
     let Some(raw_query) = raw_query else {
         return Err(HttpQueryError::LokiFormatMissingQuery);
     };
@@ -55,7 +60,7 @@ fn parse_format_query_param(raw_query: Option<&str>) -> Result<String, HttpQuery
     Err(HttpQueryError::LokiFormatMissingQuery)
 }
 
-fn format_logql_query(query: &str) -> Result<String, HttpQueryError> {
+pub(crate) fn format_logql_query(query: &str) -> Result<String, HttpQueryError> {
     if let Some(error) = scalar_vector_plain_parse_error(query) {
         return Err(HttpQueryError::LokiFormatPlainParse(error));
     }
@@ -128,28 +133,28 @@ fn format_logql_query(query: &str) -> Result<String, HttpQueryError> {
     }
 }
 
-fn label_join_format_query_error(query: &str) -> Option<String> {
+pub(crate) fn label_join_format_query_error(query: &str) -> Option<String> {
     query
         .trim_start()
         .starts_with("label_join")
         .then(|| "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER".to_string())
 }
 
-fn format_label_replace_metric_binary_arithmetic(query: &str) -> Option<String> {
+pub(crate) fn format_label_replace_metric_binary_arithmetic(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_arithmetic_query(query)?;
     let (modifiers, right_text) = split_leading_vector_binary_modifiers(right_text);
     let operator = format_binary_operator_line(operator, false, modifiers);
     format_label_replace_metric_binary_expression(left_text.trim(), &operator, right_text.trim())
 }
 
-fn format_label_replace_metric_binary_set(query: &str) -> Option<String> {
+pub(crate) fn format_label_replace_metric_binary_set(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_set_query(query)?;
     let (modifiers, right_text) = split_leading_vector_binary_modifiers(right_text);
     let operator = format_binary_operator_line(operator, false, modifiers);
     format_label_replace_metric_binary_expression(left_text.trim(), &operator, right_text.trim())
 }
 
-fn format_label_replace_metric_binary_comparison(query: &str) -> Option<String> {
+pub(crate) fn format_label_replace_metric_binary_comparison(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_comparison_query(query)?;
     let right_text = right_text.trim_start();
     let (bool_modifier, right_text) = if let Some(rest) = right_text.strip_prefix("bool") {
@@ -162,7 +167,7 @@ fn format_label_replace_metric_binary_comparison(query: &str) -> Option<String> 
     format_label_replace_metric_binary_expression(left_text.trim(), &operator, right_text.trim())
 }
 
-fn format_binary_operator_line(
+pub(crate) fn format_binary_operator_line(
     operator: &str,
     bool_modifier: bool,
     modifiers: Option<FormattedVectorBinaryModifiers>,
@@ -178,7 +183,7 @@ fn format_binary_operator_line(
     formatted
 }
 
-fn format_label_replace_metric_binary_expression(
+pub(crate) fn format_label_replace_metric_binary_expression(
     left_text: &str,
     operator: &str,
     right_text: &str,
@@ -195,7 +200,7 @@ fn format_label_replace_metric_binary_expression(
     ))
 }
 
-fn format_label_replace_metric_binary_operand(query: &str) -> Option<(String, bool)> {
+pub(crate) fn format_label_replace_metric_binary_operand(query: &str) -> Option<(String, bool)> {
     if let Some(formatted) = format_metric_label_replace_query(query) {
         return Some((formatted, true));
     }
@@ -214,7 +219,7 @@ fn format_label_replace_metric_binary_operand(query: &str) -> Option<(String, bo
         .map(|formatted| (formatted, false))
 }
 
-fn format_metric_vector_arithmetic_expression(query: &str) -> Option<String> {
+pub(crate) fn format_metric_vector_arithmetic_expression(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_arithmetic_query(query)?;
     let (modifiers, right_text) = split_leading_vector_binary_modifiers(right_text);
     let (left, right) = if let (Some(left), Some(right)) = (
@@ -240,7 +245,7 @@ fn format_metric_vector_arithmetic_expression(query: &str) -> Option<String> {
     ))
 }
 
-fn format_metric_vector_binary_expression(
+pub(crate) fn format_metric_vector_binary_expression(
     left: &str,
     operator: &str,
     modifiers: Option<FormattedVectorBinaryModifiers>,
@@ -255,7 +260,7 @@ fn format_metric_vector_binary_expression(
     }
 }
 
-fn format_metric_binary_arithmetic_query(query: &str) -> Option<String> {
+pub(crate) fn format_metric_binary_arithmetic_query(query: &str) -> Option<String> {
     let (left_text, _, right_text) = split_top_level_arithmetic_query(query)?;
     let (_, right_text) = split_leading_vector_binary_modifiers(right_text);
     parse_metric_query(left_text.trim()).ok()?;
@@ -273,7 +278,7 @@ fn format_metric_binary_arithmetic_query(query: &str) -> Option<String> {
     ))
 }
 
-fn format_metric_binary_comparison_query(query: &str) -> Option<String> {
+pub(crate) fn format_metric_binary_comparison_query(query: &str) -> Option<String> {
     let (left_text, _, right_text) = split_top_level_comparison_query(query)?;
     let right_text = right_text.trim_start();
     let right_text = right_text
@@ -295,7 +300,7 @@ fn format_metric_binary_comparison_query(query: &str) -> Option<String> {
     ))
 }
 
-fn format_metric_binary_set_query(query: &str) -> Option<String> {
+pub(crate) fn format_metric_binary_set_query(query: &str) -> Option<String> {
     let (left_text, _, right_text) = split_top_level_set_query(query)?;
     let (_, right_text) = split_leading_vector_binary_modifiers(right_text);
     parse_metric_query(left_text.trim()).ok()?;
@@ -313,7 +318,7 @@ fn format_metric_binary_set_query(query: &str) -> Option<String> {
     ))
 }
 
-fn format_metric_binary_expression(
+pub(crate) fn format_metric_binary_expression(
     left: &str,
     operator: &str,
     bool_modifier: bool,
@@ -334,12 +339,14 @@ fn format_metric_binary_expression(
     format!("({left} {operator}{bool_text} {}  {right})", matching.text)
 }
 
-struct FormattedMetricVectorMatching {
-    text: String,
-    has_group: bool,
+pub(crate) struct FormattedMetricVectorMatching {
+    pub(crate) text: String,
+    pub(crate) has_group: bool,
 }
 
-fn format_metric_vector_matching(matching: &MetricVectorMatching) -> FormattedMetricVectorMatching {
+pub(crate) fn format_metric_vector_matching(
+    matching: &MetricVectorMatching,
+) -> FormattedMetricVectorMatching {
     match matching {
         MetricVectorMatching::On { labels, group } => FormattedMetricVectorMatching {
             text: format_metric_vector_matching_text("on", labels, group.as_ref()),
@@ -352,7 +359,7 @@ fn format_metric_vector_matching(matching: &MetricVectorMatching) -> FormattedMe
     }
 }
 
-fn format_metric_vector_matching_text(
+pub(crate) fn format_metric_vector_matching_text(
     modifier: &str,
     labels: &[String],
     group: Option<&MetricVectorGroupModifier>,
@@ -365,7 +372,7 @@ fn format_metric_vector_matching_text(
     text
 }
 
-fn format_metric_vector_group_modifier(group: &MetricVectorGroupModifier) -> String {
+pub(crate) fn format_metric_vector_group_modifier(group: &MetricVectorGroupModifier) -> String {
     match group {
         MetricVectorGroupModifier::Left(labels) => {
             format_metric_vector_group_modifier_text("group_left", labels)
@@ -376,7 +383,10 @@ fn format_metric_vector_group_modifier(group: &MetricVectorGroupModifier) -> Str
     }
 }
 
-fn format_metric_vector_group_modifier_text(modifier: &str, labels: &[String]) -> String {
+pub(crate) fn format_metric_vector_group_modifier_text(
+    modifier: &str,
+    labels: &[String],
+) -> String {
     if labels.is_empty() {
         modifier.to_string()
     } else {
@@ -384,7 +394,7 @@ fn format_metric_vector_group_modifier_text(modifier: &str, labels: &[String]) -
     }
 }
 
-fn format_metric_binary_set_operator(op: MetricBinarySetOp) -> &'static str {
+pub(crate) fn format_metric_binary_set_operator(op: MetricBinarySetOp) -> &'static str {
     match op {
         MetricBinarySetOp::And => "and",
         MetricBinarySetOp::Or => "or",
@@ -392,7 +402,7 @@ fn format_metric_binary_set_operator(op: MetricBinarySetOp) -> &'static str {
     }
 }
 
-fn split_leading_vector_binary_modifiers(
+pub(crate) fn split_leading_vector_binary_modifiers(
     query: &str,
 ) -> (Option<FormattedVectorBinaryModifiers>, &str) {
     let Some((matching_modifier, rest)) = split_leading_vector_matching_modifier(query) else {
@@ -414,7 +424,7 @@ fn split_leading_vector_binary_modifiers(
     )
 }
 
-fn split_leading_vector_matching_modifier(query: &str) -> Option<(String, &str)> {
+pub(crate) fn split_leading_vector_matching_modifier(query: &str) -> Option<(String, &str)> {
     let query = query.trim_start();
     for modifier in ["on", "ignoring"] {
         if let Some(rest) = query.strip_prefix(modifier) {
@@ -430,7 +440,7 @@ fn split_leading_vector_matching_modifier(query: &str) -> Option<(String, &str)>
     None
 }
 
-fn split_leading_vector_group_modifier(query: &str) -> (Option<String>, &str) {
+pub(crate) fn split_leading_vector_group_modifier(query: &str) -> (Option<String>, &str) {
     let query = query.trim_start();
     for modifier in ["group_left", "group_right"] {
         if let Some(rest) = query.strip_prefix(modifier) {
@@ -452,4 +462,3 @@ fn split_leading_vector_group_modifier(query: &str) -> (Option<String>, &str) {
     }
     (None, query)
 }
-

@@ -1,10 +1,12 @@
+use super::*;
+
 /// Records one push-handler ingest outcome from the response status and returns
 /// the response unchanged.
 ///
 /// `ok` is true for any 2xx. The WAL/produce failure counter is bumped
 /// separately at the [`append_distributor_wal_records`] error site, so a 4xx
 /// validation or quota reject here does not inflate it.
-fn record_ingest_response(
+pub(crate) fn record_ingest_response(
     state: &DistributorState,
     resp: Response,
     body: ByteSize,
@@ -19,11 +21,11 @@ fn record_ingest_response(
 }
 
 /// A measured length, as a byte quantity.
-fn measured_size(len: usize) -> ByteSize {
+pub(crate) fn measured_size(len: usize) -> ByteSize {
     ByteSize::from_bytes(u64::try_from(len).unwrap_or(u64::MAX))
 }
 
-fn otlp_http_error_response(error: DistributorError) -> Response {
+pub(crate) fn otlp_http_error_response(error: DistributorError) -> Response {
     if matches!(
         error,
         DistributorError::TimestampTooOld { .. } | DistributorError::TimestampTooNew { .. }
@@ -39,7 +41,7 @@ fn otlp_http_error_response(error: DistributorError) -> Response {
     error.into_response()
 }
 
-fn encode_otlp_status_message(message: &str) -> Vec<u8> {
+pub(crate) fn encode_otlp_status_message(message: &str) -> Vec<u8> {
     let message = message.trim_end_matches('\n').as_bytes();
     let mut body = vec![0x12];
     encode_varint(message.len() as u64, &mut body);
@@ -47,7 +49,7 @@ fn encode_otlp_status_message(message: &str) -> Vec<u8> {
     body
 }
 
-fn encode_varint(mut value: u64, body: &mut Vec<u8>) {
+pub(crate) fn encode_varint(mut value: u64, body: &mut Vec<u8>) {
     while value >= 0x80 {
         // `|` against `^` is a permanent mutation survivor here: the masked
         // byte has its top bit clear, so setting it and flipping it agree.
@@ -57,7 +59,7 @@ fn encode_varint(mut value: u64, body: &mut Vec<u8>) {
     body.push(u8::try_from(value).expect("final varint byte fits in u8"));
 }
 
-fn validate_ingest_body_limit(
+pub(crate) fn validate_ingest_body_limit(
     state: &DistributorState,
     body: ByteSize,
 ) -> Result<(), DistributorError> {
@@ -75,7 +77,7 @@ fn validate_ingest_body_limit(
     Ok(())
 }
 
-async fn append_wal_records(
+pub(crate) async fn append_wal_records(
     sink: &dyn LogWalSink,
     records: Vec<WalLogRecord>,
 ) -> Result<(), WalSinkError> {
@@ -85,7 +87,7 @@ async fn append_wal_records(
     Ok(())
 }
 
-async fn append_distributor_wal_records(
+pub(crate) async fn append_distributor_wal_records(
     state: &DistributorState,
     records: Vec<WalLogRecord>,
 ) -> Result<(), DistributorError> {
@@ -116,7 +118,7 @@ async fn append_distributor_wal_records(
     result
 }
 
-async fn check_ingest_quota(
+pub(crate) async fn check_ingest_quota(
     limiter: &dyn LogIngestLimiter,
     records: &[WalLogRecord],
 ) -> Result<(), DistributorError> {
@@ -129,7 +131,7 @@ async fn check_ingest_quota(
         .map_err(DistributorError::IngestQuota)
 }
 
-fn normalize_loki_http_push(
+pub(crate) fn normalize_loki_http_push(
     headers: &HeaderMap,
     body: &[u8],
     reject_old_samples_max_age: Option<Time>,
@@ -174,7 +176,7 @@ fn normalize_loki_http_push(
     }
 }
 
-fn validate_loki_json_push_stream_objects(
+pub(crate) fn validate_loki_json_push_stream_objects(
     payload: LokiPushRequest,
     body: &[u8],
 ) -> Result<LokiTypedPushRequest, DistributorError> {
@@ -219,7 +221,7 @@ fn validate_loki_json_push_stream_objects(
     Ok(LokiTypedPushRequest { streams })
 }
 
-fn validate_loki_json_push_value_arrays(
+pub(crate) fn validate_loki_json_push_value_arrays(
     payload: &LokiTypedPushRequest,
     body: &[u8],
 ) -> Result<(), DistributorError> {
@@ -239,7 +241,7 @@ fn validate_loki_json_push_value_arrays(
     Ok(())
 }
 
-fn validate_loki_json_push_timestamp_types(
+pub(crate) fn validate_loki_json_push_timestamp_types(
     payload: &LokiTypedPushRequest,
     body: &[u8],
 ) -> Result<(), DistributorError> {
@@ -262,7 +264,7 @@ fn validate_loki_json_push_timestamp_types(
     Ok(())
 }
 
-fn loki_json_push_value_parse_error(body: &[u8], value: &Value) -> String {
+pub(crate) fn loki_json_push_value_parse_error(body: &[u8], value: &Value) -> String {
     let body = String::from_utf8_lossy(body);
     let value_text = value.to_string();
     let value_start = body.find(&value_text).unwrap_or(body.len());
@@ -274,7 +276,7 @@ fn loki_json_push_value_parse_error(body: &[u8], value: &Value) -> String {
     )
 }
 
-fn loki_json_push_payload_parse_error(body: &[u8]) -> String {
+pub(crate) fn loki_json_push_payload_parse_error(body: &[u8]) -> String {
     let body = String::from_utf8_lossy(body);
     let value_start = body
         .char_indices()
@@ -291,7 +293,7 @@ fn loki_json_push_payload_parse_error(body: &[u8]) -> String {
     )
 }
 
-fn loki_json_push_values_field_parse_error(body: &[u8], value: &Value) -> String {
+pub(crate) fn loki_json_push_values_field_parse_error(body: &[u8], value: &Value) -> String {
     let body = String::from_utf8_lossy(body);
     let value_text = value.to_string();
     let value_start = body.find(&value_text).unwrap_or(body.len());
@@ -303,7 +305,7 @@ fn loki_json_push_values_field_parse_error(body: &[u8], value: &Value) -> String
     )
 }
 
-fn loki_json_push_stream_parse_error(body: &[u8], value: &Value) -> String {
+pub(crate) fn loki_json_push_stream_parse_error(body: &[u8], value: &Value) -> String {
     let body = String::from_utf8_lossy(body);
     let value_text = value.to_string();
     let value_start = body.find(&value_text).unwrap_or(body.len());
@@ -315,7 +317,7 @@ fn loki_json_push_stream_parse_error(body: &[u8], value: &Value) -> String {
     )
 }
 
-fn loki_json_push_labels_field_parse_error(body: &[u8]) -> String {
+pub(crate) fn loki_json_push_labels_field_parse_error(body: &[u8]) -> String {
     let body = String::from_utf8_lossy(body);
     let context = loki_decode_error_context(&body, body.len().saturating_sub(12));
     let bigger_context = loki_decode_error_context(&body, body.len().saturating_sub(52));
@@ -325,7 +327,7 @@ fn loki_json_push_labels_field_parse_error(body: &[u8]) -> String {
     )
 }
 
-fn loki_json_push_streams_parse_error(body: &[u8], value: &Value) -> String {
+pub(crate) fn loki_json_push_streams_parse_error(body: &[u8], value: &Value) -> String {
     let body = String::from_utf8_lossy(body);
     let value_text = value.to_string();
     let value_start = body.find(&value_text).unwrap_or(body.len());
@@ -339,7 +341,7 @@ fn loki_json_push_streams_parse_error(body: &[u8], value: &Value) -> String {
     )
 }
 
-fn validate_loki_json_structured_metadata_value_types(
+pub(crate) fn validate_loki_json_structured_metadata_value_types(
     payload: &LokiTypedPushRequest,
     body: &[u8],
 ) -> Result<(), DistributorError> {
@@ -367,7 +369,7 @@ fn validate_loki_json_structured_metadata_value_types(
     Ok(())
 }
 
-fn loki_structured_metadata_object_parse_error(body: &[u8], value: &Value) -> String {
+pub(crate) fn loki_structured_metadata_object_parse_error(body: &[u8], value: &Value) -> String {
     let body = String::from_utf8_lossy(body);
     let value_text = value.to_string();
     let value_start = body.find(&value_text).unwrap_or(body.len());
@@ -379,7 +381,11 @@ fn loki_structured_metadata_object_parse_error(body: &[u8], value: &Value) -> St
     )
 }
 
-fn loki_structured_metadata_value_parse_error(body: &[u8], name: &str, value: &Value) -> String {
+pub(crate) fn loki_structured_metadata_value_parse_error(
+    body: &[u8],
+    name: &str,
+    value: &Value,
+) -> String {
     let body = String::from_utf8_lossy(body);
     let key = quote_logql_string(name);
     let needle = format!("{key}:{value}");
@@ -395,20 +401,23 @@ fn loki_structured_metadata_value_parse_error(body: &[u8], name: &str, value: &V
     )
 }
 
-fn loki_decode_error_context(body: &str, start: usize) -> &str {
+pub(crate) fn loki_decode_error_context(body: &str, start: usize) -> &str {
     let start = previous_char_boundary(body, start.min(body.len()));
     let end = previous_char_boundary(body, body.len().min(start + 80));
     &body[start..end]
 }
 
-fn previous_char_boundary(value: &str, mut offset: usize) -> usize {
+pub(crate) fn previous_char_boundary(value: &str, mut offset: usize) -> usize {
     while !value.is_char_boundary(offset) {
         offset -= 1;
     }
     offset
 }
 
-fn decode_loki_http_body(headers: &HeaderMap, body: &[u8]) -> Result<Vec<u8>, DistributorError> {
+pub(crate) fn decode_loki_http_body(
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<Vec<u8>, DistributorError> {
     let Some(encoding) = headers
         .get(CONTENT_ENCODING)
         .and_then(|value| value.to_str().ok())
@@ -440,7 +449,7 @@ fn decode_loki_http_body(headers: &HeaderMap, body: &[u8]) -> Result<Vec<u8>, Di
     ))
 }
 
-fn normalize_otlp_http_logs(
+pub(crate) fn normalize_otlp_http_logs(
     headers: &HeaderMap,
     body: &[u8],
     reject_old_samples_max_age: Option<Time>,
@@ -472,4 +481,3 @@ fn normalize_otlp_http_logs(
         creation_grace_period,
     )
 }
-

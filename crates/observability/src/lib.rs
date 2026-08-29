@@ -128,29 +128,31 @@ use url::Url;
 
 use crate::metrics::ServiceMetrics;
 
-// Role-oriented source files are included at crate scope to preserve the public API
-// while allowing each subsystem to evolve independently.
-include!("config.rs");
-include!("service.rs");
-include!("compactor/mod.rs");
-include!("wal/mod.rs");
-include!("distributor/mod.rs");
-include!("querier/state.rs");
-include!("service_runtime.rs");
-include!("http/router.rs");
-include!("deletes.rs");
-include!("ruler/store.rs");
-include!("deletes_api.rs");
-include!("ruler/api.rs");
-include!("http/handlers.rs");
-include!("querier/metric_eval.rs");
-include!("querier/analytics.rs");
-include!("http/params_format.rs");
-include!("querier/tail.rs");
-include!("querier/metadata.rs");
-include!("http/params.rs");
-include!("querier/scan.rs");
-include!("querier/aggregate.rs");
-include!("http/response.rs");
-include!("error.rs");
-include!("tests.rs");
+mod compactor;
+mod config;
+mod deletes;
+mod deletes_api;
+mod distributor;
+mod error;
+mod http;
+mod querier;
+mod ruler;
+mod service;
+mod service_runtime;
+mod wal;
+
+pub use compactor::*;
+pub use config::*;
+pub use deletes::*;
+pub use deletes_api::*;
+pub use distributor::*;
+pub use error::*;
+pub use http::*;
+pub use querier::*;
+pub use ruler::*;
+pub use service::*;
+pub use service_runtime::*;
+pub use wal::*;
+
+#[cfg(test)]
+mod tests;

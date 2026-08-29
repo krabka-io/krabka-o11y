@@ -1,4 +1,6 @@
-async fn execute_http_metric_instant_query(
+use super::*;
+
+pub(crate) async fn execute_http_metric_instant_query(
     state: &QuerierState,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -51,7 +53,7 @@ async fn execute_http_metric_instant_query(
     Ok(loki_vector_response_from_matrix(response))
 }
 
-async fn execute_http_stream_query(
+pub(crate) async fn execute_http_stream_query(
     state: &QuerierState,
     query: &str,
     tenant: &str,
@@ -128,7 +130,7 @@ async fn execute_http_stream_query(
     Ok(add_loki_query_stats_for_stream_plan(response, &plan))
 }
 
-fn validate_loki_interval(interval: Option<i64>) -> Result<(), HttpQueryError> {
+pub(crate) fn validate_loki_interval(interval: Option<i64>) -> Result<(), HttpQueryError> {
     if let Some(interval_ns) = interval
         && interval_ns < 0
     {
@@ -136,4 +138,3 @@ fn validate_loki_interval(interval: Option<i64>) -> Result<(), HttpQueryError> {
     }
     Ok(())
 }
-

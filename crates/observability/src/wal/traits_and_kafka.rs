@@ -1,3 +1,5 @@
+use super::*;
+
 #[async_trait]
 pub trait LogWalSink: Send + Sync + 'static {
     async fn append(&self, record: WalLogRecord) -> Result<(), WalSinkError>;
@@ -43,7 +45,7 @@ pub trait LogWalConsumer: Send + 'static {
 
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryWalSink {
-    records: Arc<Mutex<Vec<WalLogRecord>>>,
+    pub(crate) records: Arc<Mutex<Vec<WalLogRecord>>>,
 }
 
 impl InMemoryWalSink {
@@ -73,7 +75,7 @@ impl LogHotTail for InMemoryWalSink {
 }
 
 #[derive(Clone, Debug, Default)]
-struct AllowAllIngestLimiter;
+pub(crate) struct AllowAllIngestLimiter;
 
 #[async_trait]
 impl LogIngestLimiter for AllowAllIngestLimiter {
@@ -87,7 +89,7 @@ impl LogIngestLimiter for AllowAllIngestLimiter {
 }
 
 #[derive(Clone, Debug, Default)]
-struct AllowAllQueryAuthorizer;
+pub(crate) struct AllowAllQueryAuthorizer;
 
 #[async_trait]
 impl LogQueryAuthorizer for AllowAllQueryAuthorizer {
@@ -97,7 +99,7 @@ impl LogQueryAuthorizer for AllowAllQueryAuthorizer {
 }
 
 #[derive(Clone, Debug, Default)]
-struct UnavailableQueryAuthorizer;
+pub(crate) struct UnavailableQueryAuthorizer;
 
 #[async_trait]
 impl LogQueryAuthorizer for UnavailableQueryAuthorizer {
@@ -109,14 +111,14 @@ impl LogQueryAuthorizer for UnavailableQueryAuthorizer {
     }
 }
 
-struct BrokerBackedQueryAuthorizer {
-    admin: tokio::sync::Mutex<AdminClient>,
-    wal_topic: String,
-    connected: Arc<AtomicBool>,
+pub(crate) struct BrokerBackedQueryAuthorizer {
+    pub(crate) admin: tokio::sync::Mutex<AdminClient>,
+    pub(crate) wal_topic: String,
+    pub(crate) connected: Arc<AtomicBool>,
 }
 
 impl BrokerBackedQueryAuthorizer {
-    async fn connect(
+    pub(crate) async fn connect(
         bootstrap: &str,
         wal_topic: String,
         client_resource_policy: ClientResourcePolicy,
@@ -165,13 +167,13 @@ impl LogQueryAuthorizer for BrokerBackedQueryAuthorizer {
 ///
 /// The querier uses it to fail closed while the real
 /// [`BrokerBackedQueryAuthorizer`] connects asynchronously.
-struct SwappableQueryAuthorizer {
-    inner: Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>>,
+pub(crate) struct SwappableQueryAuthorizer {
+    pub(crate) inner: Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>>,
 }
 
 impl SwappableQueryAuthorizer {
     /// Creates a new swappable authorizer that starts unavailable.
-    fn new() -> (Self, Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>>) {
+    pub(crate) fn new() -> (Self, Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>>) {
         let inner: Arc<tokio::sync::RwLock<Arc<dyn LogQueryAuthorizer>>> = Arc::new(
             tokio::sync::RwLock::new(Arc::new(UnavailableQueryAuthorizer)),
         );
@@ -192,17 +194,17 @@ impl LogQueryAuthorizer for SwappableQueryAuthorizer {
     }
 }
 
-const PRODUCER_BYTE_RATE_QUOTA_KEY: &str = "producer_byte_rate";
+pub(crate) const PRODUCER_BYTE_RATE_QUOTA_KEY: &str = "producer_byte_rate";
 
-struct BrokerBackedIngestLimiter {
-    admin: tokio::sync::Mutex<AdminClient>,
-    wal_topic: String,
-    burst_window: Time,
-    buckets: Mutex<BTreeMap<String, IngestQuotaBucket>>,
+pub(crate) struct BrokerBackedIngestLimiter {
+    pub(crate) admin: tokio::sync::Mutex<AdminClient>,
+    pub(crate) wal_topic: String,
+    pub(crate) burst_window: Time,
+    pub(crate) buckets: Mutex<BTreeMap<String, IngestQuotaBucket>>,
 }
 
 impl BrokerBackedIngestLimiter {
-    async fn connect(
+    pub(crate) async fn connect(
         bootstrap: &str,
         wal_topic: String,
         client_resource_policy: ClientResourcePolicy,
@@ -222,7 +224,7 @@ impl BrokerBackedIngestLimiter {
     }
 }
 
-fn admin_connection_options(
+pub(crate) fn admin_connection_options(
     client_resource_policy: ClientResourcePolicy,
 ) -> krabka_client_core::ConnectionOptions {
     krabka_client_core::ConnectionOptions {
@@ -287,7 +289,7 @@ impl LogIngestLimiter for BrokerBackedIngestLimiter {
     }
 }
 
-fn check_tenant_wal_write_acl(
+pub(crate) fn check_tenant_wal_write_acl(
     tenant: &str,
     wal_topic: &str,
     acls: &[AclEntry],
@@ -323,14 +325,18 @@ fn check_tenant_wal_write_acl(
     }
 }
 
-fn acl_matches_tenant_wal_write(acl: &AclEntry, principal: &str, wal_topic: &str) -> bool {
+pub(crate) fn acl_matches_tenant_wal_write(
+    acl: &AclEntry,
+    principal: &str,
+    wal_topic: &str,
+) -> bool {
     acl.resource_type == ResourceType::Topic
         && matches!(acl.operation, AclOperation::All | AclOperation::Write)
         && (acl.principal == principal || acl.principal == "User:*")
         && matches_acl_topic_pattern(acl, wal_topic)
 }
 
-fn check_tenant_wal_read_acl(
+pub(crate) fn check_tenant_wal_read_acl(
     tenant: &str,
     wal_topic: &str,
     acls: &[AclEntry],
@@ -366,14 +372,18 @@ fn check_tenant_wal_read_acl(
     }
 }
 
-fn acl_matches_tenant_wal_read(acl: &AclEntry, principal: &str, wal_topic: &str) -> bool {
+pub(crate) fn acl_matches_tenant_wal_read(
+    acl: &AclEntry,
+    principal: &str,
+    wal_topic: &str,
+) -> bool {
     acl.resource_type == ResourceType::Topic
         && matches!(acl.operation, AclOperation::All | AclOperation::Read)
         && (acl.principal == principal || acl.principal == "User:*")
         && matches_acl_topic_pattern(acl, wal_topic)
 }
 
-fn matches_acl_topic_pattern(acl: &AclEntry, wal_topic: &str) -> bool {
+pub(crate) fn matches_acl_topic_pattern(acl: &AclEntry, wal_topic: &str) -> bool {
     match acl.pattern_type {
         PatternType::Literal => acl.resource_name == wal_topic || acl.resource_name == "*",
         PatternType::Prefixed => wal_topic.starts_with(&acl.resource_name),
@@ -386,15 +396,15 @@ fn matches_acl_topic_pattern(acl: &AclEntry, wal_topic: &str) -> bool {
 /// extent. The extent measured from it multiplies the rate into a byte
 /// allowance.
 #[derive(Debug)]
-struct IngestQuotaBucket {
-    rate: ByteRate,
-    burst_window: Time,
-    available: ByteSize,
-    updated_at: Instant,
+pub(crate) struct IngestQuotaBucket {
+    pub(crate) rate: ByteRate,
+    pub(crate) burst_window: Time,
+    pub(crate) available: ByteSize,
+    pub(crate) updated_at: Instant,
 }
 
 impl IngestQuotaBucket {
-    fn new(rate: ByteRate, burst_window: Time) -> Self {
+    pub(crate) fn new(rate: ByteRate, burst_window: Time) -> Self {
         Self {
             rate,
             burst_window,
@@ -403,7 +413,7 @@ impl IngestQuotaBucket {
         }
     }
 
-    fn update_rate(&mut self, rate: ByteRate) {
+    pub(crate) fn update_rate(&mut self, rate: ByteRate) {
         self.refill();
         self.rate = rate;
         // `>` is a permanent mutation survivor against `>=`: the two differ
@@ -414,7 +424,7 @@ impl IngestQuotaBucket {
         }
     }
 
-    fn consume(&mut self, size: ByteSize) -> bool {
+    pub(crate) fn consume(&mut self, size: ByteSize) -> bool {
         self.refill();
         if size > self.available {
             return false;
@@ -423,7 +433,7 @@ impl IngestQuotaBucket {
         true
     }
 
-    fn refill(&mut self) {
+    pub(crate) fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.updated_at).as_time();
         self.updated_at = now;
@@ -432,16 +442,16 @@ impl IngestQuotaBucket {
         self.available = (self.available + refilled).min(self.capacity());
     }
 
-    fn capacity(&self) -> ByteSize {
+    pub(crate) fn capacity(&self) -> ByteSize {
         Self::burst_capacity(self.rate, self.burst_window)
     }
 
-    fn burst_capacity(rate: ByteRate, burst_window: Time) -> ByteSize {
+    pub(crate) fn burst_capacity(rate: ByteRate, burst_window: Time) -> ByteSize {
         (rate * burst_window).into()
     }
 }
 
-fn ingest_quota_bytes(records: &[WalLogRecord]) -> ByteSize {
+pub(crate) fn ingest_quota_bytes(records: &[WalLogRecord]) -> ByteSize {
     measured_size(
         records
             .iter()
@@ -472,7 +482,6 @@ fn ingest_quota_bytes(records: &[WalLogRecord]) -> ByteSize {
 /// overlaps. The function uses [`i64::div_euclid`], so negative, pre-epoch,
 /// timestamps still bucket monotonically, and the bucket that contains a given
 /// timestamp is unambiguous.
-fn hot_tail_bucket_key(timestamp_ns: i64, bucket_width: Time) -> i64 {
+pub(crate) fn hot_tail_bucket_key(timestamp_ns: i64, bucket_width: Time) -> i64 {
     timestamp_ns.div_euclid(bucket_width.nanos_i64())
 }
-

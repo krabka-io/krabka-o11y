@@ -1,4 +1,6 @@
-async fn collect_detected_fields(
+use super::*;
+
+pub(crate) async fn collect_detected_fields(
     state: &QuerierState,
     headers: &HeaderMap,
     params: &DetectedFieldsParams,
@@ -83,7 +85,7 @@ async fn collect_detected_fields(
     Ok(fields)
 }
 
-fn detect_detected_level_field(
+pub(crate) fn detect_detected_level_field(
     fields: &mut BTreeMap<String, DetectedFieldStats>,
     labels: &Labels,
     line: &str,
@@ -100,7 +102,7 @@ fn detect_detected_level_field(
     );
 }
 
-fn detect_structured_metadata_fields(
+pub(crate) fn detect_structured_metadata_fields(
     fields: &mut BTreeMap<String, DetectedFieldStats>,
     metadata: &Labels,
 ) {
@@ -115,7 +117,7 @@ fn detect_structured_metadata_fields(
     }
 }
 
-fn detect_json_fields(fields: &mut BTreeMap<String, DetectedFieldStats>, line: &str) {
+pub(crate) fn detect_json_fields(fields: &mut BTreeMap<String, DetectedFieldStats>, line: &str) {
     let Ok(Value::Object(object)) = serde_json::from_str::<Value>(line) else {
         return;
     };
@@ -133,14 +135,14 @@ fn detect_json_fields(fields: &mut BTreeMap<String, DetectedFieldStats>, line: &
     }
 }
 
-fn detect_logfmt_fields(fields: &mut BTreeMap<String, DetectedFieldStats>, line: &str) {
+pub(crate) fn detect_logfmt_fields(fields: &mut BTreeMap<String, DetectedFieldStats>, line: &str) {
     for (name, value) in parse_logfmt_pairs(line) {
         let ty = field_type_from_str(&value);
         add_detected_field(fields, &name, value, ty, "logfmt");
     }
 }
 
-fn add_detected_field(
+pub(crate) fn add_detected_field(
     fields: &mut BTreeMap<String, DetectedFieldStats>,
     name: &str,
     value: String,
@@ -153,7 +155,7 @@ fn add_detected_field(
         .or_insert_with(|| DetectedFieldStats::new(ty, value, parser));
 }
 
-fn add_generated_detected_field(
+pub(crate) fn add_generated_detected_field(
     fields: &mut BTreeMap<String, DetectedFieldStats>,
     name: &str,
     value: String,
@@ -165,7 +167,7 @@ fn add_generated_detected_field(
         .or_insert_with(|| DetectedFieldStats::new_generated(ty, value));
 }
 
-fn detected_json_value_string(value: &Value) -> Option<String> {
+pub(crate) fn detected_json_value_string(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
         Value::Bool(value) => Some(value.to_string()),
@@ -175,7 +177,7 @@ fn detected_json_value_string(value: &Value) -> Option<String> {
     }
 }
 
-fn field_type_from_json(value: &Value) -> DetectedFieldType {
+pub(crate) fn field_type_from_json(value: &Value) -> DetectedFieldType {
     match value {
         Value::Bool(_) => DetectedFieldType::Boolean,
         Value::Number(number) => {
@@ -190,7 +192,7 @@ fn field_type_from_json(value: &Value) -> DetectedFieldType {
     }
 }
 
-fn field_type_from_str(value: &str) -> DetectedFieldType {
+pub(crate) fn field_type_from_str(value: &str) -> DetectedFieldType {
     let normalized = value.to_ascii_lowercase();
     if matches!(normalized.as_str(), "true" | "false") {
         return DetectedFieldType::Boolean;
@@ -210,7 +212,7 @@ fn field_type_from_str(value: &str) -> DetectedFieldType {
     DetectedFieldType::String
 }
 
-fn is_prometheus_duration_literal(value: &str) -> bool {
+pub(crate) fn is_prometheus_duration_literal(value: &str) -> bool {
     let mut pos = 0;
     let mut parsed_chunk = false;
     let mut previous_unit_order = None;
@@ -246,7 +248,7 @@ fn is_prometheus_duration_literal(value: &str) -> bool {
     parsed_chunk
 }
 
-fn detected_duration_unit(unit: &str) -> Option<(u8, u16)> {
+pub(crate) fn detected_duration_unit(unit: &str) -> Option<(u8, u16)> {
     match unit {
         "y" => Some((0, 1 << 0)),
         "w" => Some((1, 1 << 1)),
@@ -261,7 +263,7 @@ fn detected_duration_unit(unit: &str) -> Option<(u8, u16)> {
     }
 }
 
-fn is_bytes_literal(value: &str) -> bool {
+pub(crate) fn is_bytes_literal(value: &str) -> bool {
     let unit_start = value
         .find(|ch: char| ch.is_ascii_alphabetic())
         .unwrap_or(value.len());
@@ -273,14 +275,14 @@ fn is_bytes_literal(value: &str) -> bool {
     amount.is_finite() && amount >= 0.0 && detected_bytes_unit(&value[unit_start..]).is_some()
 }
 
-fn detected_bytes_unit(unit: &str) -> Option<()> {
+pub(crate) fn detected_bytes_unit(unit: &str) -> Option<()> {
     match unit {
         "B" | "kB" | "KB" | "MB" | "GB" | "TB" | "KiB" | "MiB" | "GiB" | "TiB" => Some(()),
         _ => None,
     }
 }
 
-fn parse_logfmt_pairs(line: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_logfmt_pairs(line: &str) -> Vec<(String, String)> {
     let bytes = line.as_bytes();
     let mut pairs = Vec::new();
     let mut index = 0;
@@ -333,7 +335,7 @@ fn parse_logfmt_pairs(line: &str) -> Vec<(String, String)> {
     pairs
 }
 
-async fn execute_index_volume_query(
+pub(crate) async fn execute_index_volume_query(
     state: &QuerierState,
     headers: &HeaderMap,
     raw_query: Option<&str>,
@@ -372,7 +374,7 @@ async fn execute_index_volume_query(
     Ok(add_loki_query_stats_for_stream_plan(response, &plan))
 }
 
-fn index_volume_samples(
+pub(crate) fn index_volume_samples(
     state: &QuerierState,
     tenant: &str,
     plan: &StreamPlan,
@@ -405,7 +407,7 @@ fn index_volume_samples(
     volumes
 }
 
-fn volume_metrics_for_labels(labels: &Labels, params: &VolumeParams) -> Vec<Labels> {
+pub(crate) fn volume_metrics_for_labels(labels: &Labels, params: &VolumeParams) -> Vec<Labels> {
     match params.aggregate_by {
         VolumeAggregateBy::Series => {
             let labels = if let Some(target_labels) = &params.target_labels {
@@ -429,14 +431,14 @@ fn volume_metrics_for_labels(labels: &Labels, params: &VolumeParams) -> Vec<Labe
     }
 }
 
-fn project_labels(labels: &Labels, target_labels: &[String]) -> Labels {
+pub(crate) fn project_labels(labels: &Labels, target_labels: &[String]) -> Labels {
     target_labels
         .iter()
         .filter_map(|name| labels.get(name).map(|value| (name.clone(), value.clone())))
         .collect()
 }
 
-fn loki_volume_vector_response(
+pub(crate) fn loki_volume_vector_response(
     volumes: BTreeMap<Labels, BTreeMap<i64, u64>>,
     timestamp: i64,
     limit: usize,
@@ -458,18 +460,17 @@ fn loki_volume_vector_response(
     }))
 }
 
-fn limit_volume_series(
+pub(crate) fn limit_volume_series(
     volumes: BTreeMap<Labels, BTreeMap<i64, u64>>,
     limit: usize,
 ) -> Vec<(Labels, BTreeMap<i64, u64>)> {
     volumes.into_iter().take(limit).collect()
 }
 
-fn sample_time_bucket(sample_time: i64, start: i64, step: i64) -> i64 {
+pub(crate) fn sample_time_bucket(sample_time: i64, start: i64, step: i64) -> i64 {
     if sample_time <= start {
         return start;
     }
     let offset = sample_time - start;
     start + (offset / step) * step
 }
-

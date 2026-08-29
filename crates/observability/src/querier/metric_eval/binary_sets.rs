@@ -1,4 +1,6 @@
-fn apply_metric_binary_set_to_loki_result(
+use super::*;
+
+pub(crate) fn apply_metric_binary_set_to_loki_result(
     left: &mut Value,
     right: &Value,
     op: MetricBinarySetOp,
@@ -62,15 +64,18 @@ fn apply_metric_binary_set_to_loki_result(
     }
 }
 
-fn metric_series_labels(series: &Value) -> Option<Labels> {
+pub(crate) fn metric_series_labels(series: &Value) -> Option<Labels> {
     series.get("metric").and_then(json_object_to_labels)
 }
 
-fn sort_loki_metric_results_by_labels(results: &mut [Value]) {
+pub(crate) fn sort_loki_metric_results_by_labels(results: &mut [Value]) {
     results.sort_by_key(metric_series_labels);
 }
 
-fn metric_vector_matching_key(labels: &Labels, matching: Option<&MetricVectorMatching>) -> Labels {
+pub(crate) fn metric_vector_matching_key(
+    labels: &Labels,
+    matching: Option<&MetricVectorMatching>,
+) -> Labels {
     match matching {
         None => labels.clone(),
         Some(MetricVectorMatching::On { labels: names, .. }) => names
@@ -85,7 +90,7 @@ fn metric_vector_matching_key(labels: &Labels, matching: Option<&MetricVectorMat
     }
 }
 
-fn metric_vector_group_modifier(
+pub(crate) fn metric_vector_group_modifier(
     matching: Option<&MetricVectorMatching>,
 ) -> Option<&MetricVectorGroupModifier> {
     match matching {
@@ -96,7 +101,7 @@ fn metric_vector_group_modifier(
     }
 }
 
-fn include_metric_group_labels(
+pub(crate) fn include_metric_group_labels(
     output_series: &mut Value,
     source_series: &Value,
     labels: &[String],
@@ -121,7 +126,7 @@ fn include_metric_group_labels(
     }
 }
 
-fn apply_metric_binary_set_to_series(
+pub(crate) fn apply_metric_binary_set_to_series(
     left_series: &mut Value,
     right_series: &Value,
     op: MetricBinarySetOp,
@@ -153,7 +158,7 @@ fn apply_metric_binary_set_to_series(
     metric_binary_set_keeps_sample(op, matched)
 }
 
-fn metric_binary_set_keeps_sample(op: MetricBinarySetOp, matched: bool) -> bool {
+pub(crate) fn metric_binary_set_keeps_sample(op: MetricBinarySetOp, matched: bool) -> bool {
     match op {
         MetricBinarySetOp::And => matched,
         MetricBinarySetOp::Or => true,
@@ -161,11 +166,11 @@ fn metric_binary_set_keeps_sample(op: MetricBinarySetOp, matched: bool) -> bool 
     }
 }
 
-fn metric_samples_share_timestamp(left_sample: &Value, right_sample: &Value) -> bool {
+pub(crate) fn metric_samples_share_timestamp(left_sample: &Value, right_sample: &Value) -> bool {
     metric_binary_sample_timestamps_match(left_sample, right_sample)
 }
 
-fn apply_metric_scalar_arithmetic_to_loki_result(
+pub(crate) fn apply_metric_scalar_arithmetic_to_loki_result(
     value: &mut Value,
     arithmetic: &MetricScalarArithmetic,
     query: &str,
@@ -201,7 +206,7 @@ fn apply_metric_scalar_arithmetic_to_loki_result(
     Ok(())
 }
 
-fn apply_metric_scalar_arithmetic_to_series(
+pub(crate) fn apply_metric_scalar_arithmetic_to_series(
     series: &mut Value,
     op: MetricScalarArithmeticOp,
     scalar: MetricValue,
@@ -230,7 +235,7 @@ fn apply_metric_scalar_arithmetic_to_series(
     apply_metric_scalar_arithmetic_to_sample(sample, op, scalar, scalar_on_left)
 }
 
-fn apply_metric_scalar_arithmetic_to_sample(
+pub(crate) fn apply_metric_scalar_arithmetic_to_sample(
     sample: &mut Value,
     op: MetricScalarArithmeticOp,
     scalar: MetricValue,
@@ -256,7 +261,7 @@ fn apply_metric_scalar_arithmetic_to_sample(
     true
 }
 
-fn metric_scalar_arithmetic_value(
+pub(crate) fn metric_scalar_arithmetic_value(
     sample: MetricValue,
     op: MetricScalarArithmeticOp,
     scalar: MetricValue,
@@ -277,7 +282,7 @@ fn metric_scalar_arithmetic_value(
     }
 }
 
-fn apply_metric_scalar_comparison_to_loki_result(
+pub(crate) fn apply_metric_scalar_comparison_to_loki_result(
     value: &mut Value,
     comparison: &MetricScalarComparison,
     query: &str,
@@ -308,7 +313,7 @@ fn apply_metric_scalar_comparison_to_loki_result(
     Ok(())
 }
 
-fn apply_metric_scalar_comparison_to_series(
+pub(crate) fn apply_metric_scalar_comparison_to_series(
     series: &mut Value,
     comparison: &MetricScalarComparison,
     scalar: MetricValue,
@@ -331,7 +336,7 @@ fn apply_metric_scalar_comparison_to_series(
     apply_metric_scalar_comparison_to_sample(sample, comparison, scalar)
 }
 
-fn apply_metric_scalar_comparison_to_sample(
+pub(crate) fn apply_metric_scalar_comparison_to_sample(
     sample: &mut Value,
     comparison: &MetricScalarComparison,
     scalar: MetricValue,
@@ -362,7 +367,7 @@ fn apply_metric_scalar_comparison_to_sample(
     }
 }
 
-fn metric_scalar_comparison_matches(
+pub(crate) fn metric_scalar_comparison_matches(
     sample: MetricValue,
     op: ComparisonOp,
     scalar: MetricValue,
@@ -385,11 +390,11 @@ fn metric_scalar_comparison_matches(
     }
 }
 
-fn default_metric_range_step(time_range: TimeRange) -> i64 {
+pub(crate) fn default_metric_range_step(time_range: TimeRange) -> i64 {
     time_range.end_ns.saturating_sub(time_range.start_ns).max(1)
 }
 
-async fn execute_http_metric_range_query(
+pub(crate) async fn execute_http_metric_range_query(
     state: &QuerierState,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -450,4 +455,3 @@ async fn execute_http_metric_range_query(
     .await
     .map_err(HttpQueryError::from)
 }
-

@@ -1,3 +1,5 @@
+use super::*;
+
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
 pub async fn execute_stream_query(
@@ -8,7 +10,7 @@ pub async fn execute_stream_query(
     execute_stream_query_with_deletes(root, plan, label_index, &[]).await
 }
 
-async fn execute_stream_query_with_deletes(
+pub(crate) async fn execute_stream_query_with_deletes(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     label_index: &LabelIndex,
@@ -65,7 +67,7 @@ pub async fn execute_stream_query_with_hot_tail_frontier(
     .await
 }
 
-async fn execute_stream_query_with_hot_tail_frontier_and_deletes(
+pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     label_index: &LabelIndex,
@@ -113,29 +115,29 @@ pub async fn execute_stream_query_from_object_store(
     .await
 }
 
-struct ObjectStoreStreamScan {
-    value: Value,
-    scanned_blocks: Vec<BlockDescriptor>,
+pub(crate) struct ObjectStoreStreamScan {
+    pub(crate) value: Value,
+    pub(crate) scanned_blocks: Vec<BlockDescriptor>,
 }
 
 #[derive(Clone, Copy)]
-struct QueryHotTail<'a> {
-    records: &'a [WalLogRecord],
-    frontier: &'a CompactionFrontier,
-    delete_filters: &'a [ActiveLogDeleteFilter],
+pub(crate) struct QueryHotTail<'a> {
+    pub(crate) records: &'a [WalLogRecord],
+    pub(crate) frontier: &'a CompactionFrontier,
+    pub(crate) delete_filters: &'a [ActiveLogDeleteFilter],
 }
 
 #[derive(Clone, Copy)]
-struct StreamScanOptions {
-    direction: LokiDirection,
-    limit: Option<usize>,
-    end_exclusive: Option<i64>,
-    allow_limit_short_circuit: bool,
-    block_fetch_concurrency: NonZeroUsize,
+pub(crate) struct StreamScanOptions {
+    pub(crate) direction: LokiDirection,
+    pub(crate) limit: Option<usize>,
+    pub(crate) end_exclusive: Option<i64>,
+    pub(crate) allow_limit_short_circuit: bool,
+    pub(crate) block_fetch_concurrency: NonZeroUsize,
 }
 
 impl StreamScanOptions {
-    fn exhaustive() -> Self {
+    pub(crate) fn exhaustive() -> Self {
         Self {
             direction: LokiDirection::Forward,
             limit: None,
@@ -146,7 +148,7 @@ impl StreamScanOptions {
         }
     }
 
-    fn from_stream_options(
+    pub(crate) fn from_stream_options(
         direction: LokiDirection,
         limit: Option<usize>,
         interval: Option<i64>,
@@ -162,19 +164,19 @@ impl StreamScanOptions {
         }
     }
 
-    fn with_block_fetch_concurrency(mut self, concurrency: NonZeroUsize) -> Self {
+    pub(crate) fn with_block_fetch_concurrency(mut self, concurrency: NonZeroUsize) -> Self {
         self.block_fetch_concurrency = concurrency;
         self
     }
 
-    fn reached_limit(self, streams: &BTreeMap<Labels, Vec<[String; 2]>>) -> bool {
+    pub(crate) fn reached_limit(self, streams: &BTreeMap<Labels, Vec<[String; 2]>>) -> bool {
         self.allow_limit_short_circuit
             && self
                 .limit
                 .is_some_and(|limit| count_stream_map_lines(streams, self.end_exclusive) >= limit)
     }
 
-    fn block_fetch_concurrency(self) -> usize {
+    pub(crate) fn block_fetch_concurrency(self) -> usize {
         if !self.allow_limit_short_circuit {
             return self.block_fetch_concurrency.get();
         }
@@ -185,7 +187,7 @@ impl StreamScanOptions {
     }
 }
 
-fn count_stream_map_lines(
+pub(crate) fn count_stream_map_lines(
     streams: &BTreeMap<Labels, Vec<[String; 2]>>,
     end_exclusive: Option<i64>,
 ) -> usize {
@@ -206,7 +208,7 @@ fn count_stream_map_lines(
         .fold(0_usize, usize::saturating_add)
 }
 
-fn object_store_stream_blocks_in_scan_order(
+pub(crate) fn object_store_stream_blocks_in_scan_order(
     blocks: &[BlockDescriptor],
     direction: LokiDirection,
 ) -> Vec<&BlockDescriptor> {
@@ -252,7 +254,10 @@ pub fn metric_plan_scan_sql(
     Ok(stream_plan_scan_sql_for_time_range(plan, scan_range))
 }
 
-fn metric_scan_range(query: &MetricQuery, eval_range: TimeRange) -> Result<TimeRange, QueryError> {
+pub(crate) fn metric_scan_range(
+    query: &MetricQuery,
+    eval_range: TimeRange,
+) -> Result<TimeRange, QueryError> {
     let scan_end_ns = eval_range.end_ns.saturating_sub(query.offset_ns.0);
     let scan_start_ns = eval_range
         .start_ns
@@ -261,7 +266,10 @@ fn metric_scan_range(query: &MetricQuery, eval_range: TimeRange) -> Result<TimeR
     Ok(TimeRange::new(scan_start_ns, scan_end_ns)?)
 }
 
-fn stream_plan_scan_sql_for_time_range(plan: &StreamPlan, time_range: TimeRange) -> String {
+pub(crate) fn stream_plan_scan_sql_for_time_range(
+    plan: &StreamPlan,
+    time_range: TimeRange,
+) -> String {
     let mut predicates = vec![format!(
         "timestamp_ns >= {} and timestamp_ns <= {}",
         time_range.start_ns, time_range.end_ns
@@ -285,7 +293,7 @@ fn stream_plan_scan_sql_for_time_range(plan: &StreamPlan, time_range: TimeRange)
     )
 }
 
-fn literal_line_filter_sql_predicates(pipeline: &[PipelineStage]) -> Vec<String> {
+pub(crate) fn literal_line_filter_sql_predicates(pipeline: &[PipelineStage]) -> Vec<String> {
     let mut predicates = Vec::new();
     for stage in pipeline {
         if stage.mutates_line() {
@@ -319,17 +327,17 @@ fn literal_line_filter_sql_predicates(pipeline: &[PipelineStage]) -> Vec<String>
     predicates
 }
 
-fn sql_like_pattern_literal(value: &str) -> String {
+pub(crate) fn sql_like_pattern_literal(value: &str) -> String {
     sql_string_literal(value)
         .replace('%', "\\%")
         .replace('_', "\\_")
 }
 
-fn sql_string_literal(value: &str) -> String {
+pub(crate) fn sql_string_literal(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\'', "''")
 }
 
-async fn execute_stream_query_from_object_store_with_hot_tail_frontier(
+pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontier(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     plan: &StreamPlan,
@@ -350,7 +358,7 @@ async fn execute_stream_query_from_object_store_with_hot_tail_frontier(
     )
 }
 
-async fn execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options(
+pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     plan: &StreamPlan,
@@ -446,7 +454,7 @@ async fn execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_
     })
 }
 
-async fn collect_object_store_stream_log_batches(
+pub(crate) async fn collect_object_store_stream_log_batches(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     block: &BlockDescriptor,
@@ -466,4 +474,3 @@ async fn collect_object_store_stream_log_batches(
         .collect()
         .await?)
 }
-

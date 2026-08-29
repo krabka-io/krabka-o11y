@@ -1,13 +1,15 @@
+use super::*;
+
 #[derive(Clone)]
 pub struct DistributorState {
-    sink: Arc<dyn LogWalSink>,
-    ingest_limiter: Arc<dyn LogIngestLimiter>,
-    prepare_shutdown: Arc<AtomicBool>,
-    max_ingest_body: Option<ByteSize>,
-    wal_append_timeout: Option<Time>,
-    reject_old_samples_max_age: Option<Time>,
-    creation_grace_period: Option<Time>,
-    metrics: ServiceMetrics,
+    pub(crate) sink: Arc<dyn LogWalSink>,
+    pub(crate) ingest_limiter: Arc<dyn LogIngestLimiter>,
+    pub(crate) prepare_shutdown: Arc<AtomicBool>,
+    pub(crate) max_ingest_body: Option<ByteSize>,
+    pub(crate) wal_append_timeout: Option<Time>,
+    pub(crate) reject_old_samples_max_age: Option<Time>,
+    pub(crate) creation_grace_period: Option<Time>,
+    pub(crate) metrics: ServiceMetrics,
 }
 
 pub fn distributor_router(sink: impl LogWalSink) -> Router {
@@ -23,58 +25,58 @@ pub fn distributor_router(sink: impl LogWalSink) -> Router {
 }
 
 #[derive(Clone, Copy)]
-struct RoleOps {
-    target: &'static str,
-    ring_component: &'static str,
-    role_ring_path: Option<&'static str>,
+pub(crate) struct RoleOps {
+    pub(crate) target: &'static str,
+    pub(crate) ring_component: &'static str,
+    pub(crate) role_ring_path: Option<&'static str>,
 }
 
 #[derive(Clone)]
-struct ServiceReadiness {
-    wal_connected: Arc<AtomicBool>,
-    authorization_connected: Arc<AtomicBool>,
+pub(crate) struct ServiceReadiness {
+    pub(crate) wal_connected: Arc<AtomicBool>,
+    pub(crate) authorization_connected: Arc<AtomicBool>,
 }
 
 impl ServiceReadiness {
-    fn ready() -> Self {
+    pub(crate) fn ready() -> Self {
         Self {
             wal_connected: Arc::new(AtomicBool::new(true)),
             authorization_connected: Arc::new(AtomicBool::new(true)),
         }
     }
 
-    fn deferred_querier() -> Self {
+    pub(crate) fn deferred_querier() -> Self {
         Self {
             wal_connected: Arc::new(AtomicBool::new(false)),
             authorization_connected: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    fn is_ready(&self) -> bool {
+    pub(crate) fn is_ready(&self) -> bool {
         self.wal_connected.load(AtomicOrdering::SeqCst)
             && self.authorization_connected.load(AtomicOrdering::SeqCst)
     }
 }
 
-const DISTRIBUTOR_OPS: RoleOps = RoleOps {
+pub(crate) const DISTRIBUTOR_OPS: RoleOps = RoleOps {
     target: "distributor",
     ring_component: "krabka-distributor",
     role_ring_path: Some("/distributor/ring"),
 };
 
-const QUERIER_OPS: RoleOps = RoleOps {
+pub(crate) const QUERIER_OPS: RoleOps = RoleOps {
     target: "querier",
     ring_component: "krabka-querier",
     role_ring_path: None,
 };
 
-const COMPACTOR_OPS: RoleOps = RoleOps {
+pub(crate) const COMPACTOR_OPS: RoleOps = RoleOps {
     target: "compactor",
     ring_component: "krabka-compactor",
     role_ring_path: Some("/compactor/ring"),
 };
 
-fn with_role_ops_routes<S>(
+pub(crate) fn with_role_ops_routes<S>(
     mut router: Router<S>,
     ops: RoleOps,
     readiness: ServiceReadiness,
@@ -97,7 +99,7 @@ where
     router.layer(Extension(ops)).layer(Extension(readiness))
 }
 
-fn distributor_router_with_sink(
+pub(crate) fn distributor_router_with_sink(
     sink: Arc<dyn LogWalSink>,
     ingest_limiter: Arc<dyn LogIngestLimiter>,
     max_ingest_body: Option<ByteSize>,
@@ -151,10 +153,10 @@ fn distributor_router_with_sink(
 
 #[derive(Clone)]
 pub struct OtlpGrpcLogsService {
-    sink: Arc<dyn LogWalSink>,
-    ingest_limiter: Arc<dyn LogIngestLimiter>,
-    wal_append_timeout: Option<Time>,
-    metrics: ServiceMetrics,
+    pub(crate) sink: Arc<dyn LogWalSink>,
+    pub(crate) ingest_limiter: Arc<dyn LogIngestLimiter>,
+    pub(crate) wal_append_timeout: Option<Time>,
+    pub(crate) metrics: ServiceMetrics,
 }
 
 pub fn otlp_grpc_logs_service(sink: impl LogWalSink) -> OtlpGrpcLogsService {
@@ -205,119 +207,119 @@ impl LogsService for OtlpGrpcLogsService {
 }
 
 #[derive(Debug, Deserialize)]
-struct LokiPushRequest {
+pub(crate) struct LokiPushRequest {
     #[serde(default)]
-    streams: Option<Value>,
+    pub(crate) streams: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
-struct LokiTypedPushRequest {
-    streams: Vec<LokiPushStream>,
+pub(crate) struct LokiTypedPushRequest {
+    pub(crate) streams: Vec<LokiPushStream>,
 }
 
 #[derive(Debug, Deserialize)]
-struct LokiPushStream {
+pub(crate) struct LokiPushStream {
     #[serde(default)]
-    stream: Option<Labels>,
+    pub(crate) stream: Option<Labels>,
     #[serde(default)]
-    values: Option<Vec<Value>>,
+    pub(crate) values: Option<Vec<Value>>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct LokiProtoPushRequest {
+pub(crate) struct LokiProtoPushRequest {
     #[prost(message, repeated, tag = "1")]
-    streams: Vec<LokiProtoStream>,
+    pub(crate) streams: Vec<LokiProtoStream>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct LokiProtoStream {
+pub(crate) struct LokiProtoStream {
     #[prost(string, tag = "1")]
-    labels: String,
+    pub(crate) labels: String,
     #[prost(message, repeated, tag = "2")]
-    entries: Vec<LokiProtoEntry>,
+    pub(crate) entries: Vec<LokiProtoEntry>,
     #[prost(uint64, tag = "3")]
-    hash: u64,
+    pub(crate) hash: u64,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct LokiProtoEntry {
+pub(crate) struct LokiProtoEntry {
     #[prost(message, optional, tag = "1")]
-    timestamp: Option<LokiProtoTimestamp>,
+    pub(crate) timestamp: Option<LokiProtoTimestamp>,
     #[prost(string, tag = "2")]
-    line: String,
+    pub(crate) line: String,
     #[prost(message, repeated, tag = "3")]
-    structured_metadata: Vec<LokiProtoLabelPair>,
+    pub(crate) structured_metadata: Vec<LokiProtoLabelPair>,
     #[prost(message, repeated, tag = "4")]
-    parsed: Vec<LokiProtoLabelPair>,
+    pub(crate) parsed: Vec<LokiProtoLabelPair>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct LokiProtoTimestamp {
+pub(crate) struct LokiProtoTimestamp {
     #[prost(int64, tag = "1")]
-    seconds: i64,
+    pub(crate) seconds: i64,
     #[prost(int32, tag = "2")]
-    nanos: i32,
+    pub(crate) nanos: i32,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct LokiProtoLabelPair {
+pub(crate) struct LokiProtoLabelPair {
     #[prost(string, tag = "1")]
-    name: String,
+    pub(crate) name: String,
     #[prost(string, tag = "2")]
-    value: String,
+    pub(crate) value: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OtlpLogsRequest {
-    resource_logs: Vec<OtlpResourceLogs>,
+pub(crate) struct OtlpLogsRequest {
+    pub(crate) resource_logs: Vec<OtlpResourceLogs>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OtlpResourceLogs {
-    resource: Option<OtlpResource>,
-    scope_logs: Vec<OtlpScopeLogs>,
+pub(crate) struct OtlpResourceLogs {
+    pub(crate) resource: Option<OtlpResource>,
+    pub(crate) scope_logs: Vec<OtlpScopeLogs>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OtlpResource {
-    attributes: Option<Vec<OtlpKeyValue>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OtlpScopeLogs {
-    scope: Option<OtlpScope>,
-    log_records: Vec<OtlpLogRecord>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OtlpScope {
-    attributes: Option<Vec<OtlpKeyValue>>,
+pub(crate) struct OtlpResource {
+    pub(crate) attributes: Option<Vec<OtlpKeyValue>>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OtlpLogRecord {
-    time_unix_nano: Value,
+pub(crate) struct OtlpScopeLogs {
+    pub(crate) scope: Option<OtlpScope>,
+    pub(crate) log_records: Vec<OtlpLogRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct OtlpScope {
+    pub(crate) attributes: Option<Vec<OtlpKeyValue>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OtlpLogRecord {
+    pub(crate) time_unix_nano: Value,
     #[serde(default)]
-    severity_number: Option<Value>,
+    pub(crate) severity_number: Option<Value>,
     #[serde(default)]
-    severity_text: Option<String>,
-    body: Option<OtlpAnyValue>,
-    attributes: Option<Vec<OtlpKeyValue>>,
+    pub(crate) severity_text: Option<String>,
+    pub(crate) body: Option<OtlpAnyValue>,
+    pub(crate) attributes: Option<Vec<OtlpKeyValue>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct OtlpKeyValue {
-    key: String,
-    value: OtlpAnyValue,
+pub(crate) struct OtlpKeyValue {
+    pub(crate) key: String,
+    pub(crate) value: OtlpAnyValue,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-enum OtlpAnyValue {
+pub(crate) enum OtlpAnyValue {
     #[serde(rename = "stringValue")]
     String(String),
     #[serde(rename = "boolValue")]
@@ -335,13 +337,13 @@ enum OtlpAnyValue {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct OtlpArrayValue {
-    values: Option<Vec<OtlpAnyValue>>,
+pub(crate) struct OtlpArrayValue {
+    pub(crate) values: Option<Vec<OtlpAnyValue>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct OtlpKeyValueList {
-    values: Option<Vec<OtlpKeyValue>>,
+pub(crate) struct OtlpKeyValueList {
+    pub(crate) values: Option<Vec<OtlpKeyValue>>,
 }
 
 /// Tenant for an ingest request, from `X-Scope-OrgID`. It falls back to
@@ -350,7 +352,7 @@ struct OtlpKeyValueList {
 /// The value only labels the ingest span and the per-tenant metric. The WAL
 /// records carry their own per-record tenant, so a permissive fallback here
 /// never affects storage.
-fn ingest_tenant(headers: &HeaderMap) -> String {
+pub(crate) fn ingest_tenant(headers: &HeaderMap) -> String {
     headers
         .get("X-Scope-OrgID")
         .and_then(|v| v.to_str().ok())
@@ -359,7 +361,7 @@ fn ingest_tenant(headers: &HeaderMap) -> String {
         .to_string()
 }
 
-async fn push_logs(
+pub(crate) async fn push_logs(
     State(state): State<DistributorState>,
     headers: HeaderMap,
     body: Bytes,
@@ -408,7 +410,7 @@ async fn push_logs(
     .await
 }
 
-async fn push_otlp_logs(
+pub(crate) async fn push_otlp_logs(
     State(state): State<DistributorState>,
     headers: HeaderMap,
     body: Bytes,
@@ -471,4 +473,3 @@ async fn push_otlp_logs(
     .instrument(span)
     .await
 }
-

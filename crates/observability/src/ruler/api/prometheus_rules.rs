@@ -1,5 +1,7 @@
+use super::*;
+
 impl PrometheusRulesFilters {
-    fn parse(raw_query: Option<&str>) -> Result<Self, HttpQueryError> {
+    pub(crate) fn parse(raw_query: Option<&str>) -> Result<Self, HttpQueryError> {
         let mut filters = Self::default();
         let Some(raw_query) = raw_query else {
             return Ok(filters);
@@ -48,11 +50,11 @@ impl PrometheusRulesFilters {
         Ok(filters)
     }
 
-    fn has_rule_filter(&self) -> bool {
+    pub(crate) fn has_rule_filter(&self) -> bool {
         self.rule_kind.is_some() || !self.rule_names.is_empty() || !self.label_selectors.is_empty()
     }
 
-    fn matches_rule(&self, rule: &Value, source_rule: &serde_yaml::Value) -> bool {
+    pub(crate) fn matches_rule(&self, rule: &Value, source_rule: &serde_yaml::Value) -> bool {
         if self
             .rule_kind
             .is_some_and(|kind| rule.get("type").and_then(Value::as_str) != Some(kind))
@@ -70,7 +72,7 @@ impl PrometheusRulesFilters {
         self.matches_rule_labels(source_rule)
     }
 
-    fn matches_rule_labels(&self, source_rule: &serde_yaml::Value) -> bool {
+    pub(crate) fn matches_rule_labels(&self, source_rule: &serde_yaml::Value) -> bool {
         if self.label_selectors.is_empty() {
             return true;
         }
@@ -85,7 +87,7 @@ impl PrometheusRulesFilters {
         })
     }
 
-    fn page_groups(
+    pub(crate) fn page_groups(
         &self,
         groups: Vec<PrometheusRuleGroupResponse>,
     ) -> Result<PrometheusRulesPage, HttpQueryError> {
@@ -125,17 +127,17 @@ impl PrometheusRulesFilters {
 }
 
 #[derive(Default)]
-struct PrometheusRulesPage {
-    groups: Vec<Value>,
-    next_token: Option<String>,
+pub(crate) struct PrometheusRulesPage {
+    pub(crate) groups: Vec<Value>,
+    pub(crate) next_token: Option<String>,
 }
 
-struct PrometheusRuleGroupResponse {
-    token: String,
-    value: Value,
+pub(crate) struct PrometheusRuleGroupResponse {
+    pub(crate) token: String,
+    pub(crate) value: Value,
 }
 
-async fn prometheus_rule_groups_response(
+pub(crate) async fn prometheus_rule_groups_response(
     state: &QuerierState,
     tenant: &str,
     namespaces: &LokiRuleNamespaces,
@@ -174,11 +176,11 @@ async fn prometheus_rule_groups_response(
     filters.page_groups(response_groups)
 }
 
-fn prometheus_rule_group_page_token(namespace: &str, group_name: &str) -> String {
+pub(crate) fn prometheus_rule_group_page_token(namespace: &str, group_name: &str) -> String {
     URL_SAFE_NO_PAD.encode(format!("{namespace}\n{group_name}"))
 }
 
-async fn prometheus_rules_for_group(
+pub(crate) async fn prometheus_rules_for_group(
     state: &QuerierState,
     tenant: &str,
     group: &serde_yaml::Value,
@@ -209,7 +211,7 @@ async fn prometheus_rules_for_group(
     Ok(response_rules)
 }
 
-fn prometheus_rule_response(rule: &serde_yaml::Value) -> Option<Value> {
+pub(crate) fn prometheus_rule_response(rule: &serde_yaml::Value) -> Option<Value> {
     let fields = loki_yaml_mapping(rule)?;
     let query = yaml_string_field(fields, "expr")?;
     if let Some(name) = yaml_string_field(fields, "alert") {
@@ -240,29 +242,38 @@ fn prometheus_rule_response(rule: &serde_yaml::Value) -> Option<Value> {
     })
 }
 
-fn prometheus_rule_group_interval_seconds(group: &serde_yaml::Value) -> i64 {
+pub(crate) fn prometheus_rule_group_interval_seconds(group: &serde_yaml::Value) -> i64 {
     loki_yaml_mapping(group)
         .and_then(|fields| yaml_duration_seconds_field(fields, "interval"))
         .unwrap_or(0)
 }
 
-fn yaml_duration_seconds_field(fields: &serde_yaml::Mapping, name: &'static str) -> Option<i64> {
+pub(crate) fn yaml_duration_seconds_field(
+    fields: &serde_yaml::Mapping,
+    name: &'static str,
+) -> Option<i64> {
     yaml_duration_ns_field(fields, name)
         .and_then(|duration_ns| duration_ns.checked_div(1_000_000_000))
 }
 
-fn yaml_duration_ns_field(fields: &serde_yaml::Mapping, name: &'static str) -> Option<i64> {
+pub(crate) fn yaml_duration_ns_field(
+    fields: &serde_yaml::Mapping,
+    name: &'static str,
+) -> Option<i64> {
     let duration = yaml_string_field(fields, name)?;
     parse_prometheus_duration(duration)
 }
 
-fn yaml_string_field<'a>(fields: &'a serde_yaml::Mapping, name: &'static str) -> Option<&'a str> {
+pub(crate) fn yaml_string_field<'a>(
+    fields: &'a serde_yaml::Mapping,
+    name: &'static str,
+) -> Option<&'a str> {
     fields
         .get(serde_yaml_key(name))
         .and_then(serde_yaml::Value::as_str)
 }
 
-fn yaml_string_map_field(fields: &serde_yaml::Mapping, name: &'static str) -> Value {
+pub(crate) fn yaml_string_map_field(fields: &serde_yaml::Mapping, name: &'static str) -> Value {
     let values = fields
         .get(serde_yaml_key(name))
         .and_then(loki_yaml_mapping)
@@ -278,7 +289,10 @@ fn yaml_string_map_field(fields: &serde_yaml::Mapping, name: &'static str) -> Va
     Value::Object(values)
 }
 
-fn yaml_string_template_map_field(fields: &serde_yaml::Mapping, name: &'static str) -> Labels {
+pub(crate) fn yaml_string_template_map_field(
+    fields: &serde_yaml::Mapping,
+    name: &'static str,
+) -> Labels {
     fields
         .get(serde_yaml_key(name))
         .and_then(loki_yaml_mapping)
@@ -293,7 +307,7 @@ fn yaml_string_template_map_field(fields: &serde_yaml::Mapping, name: &'static s
         .unwrap_or_default()
 }
 
-fn yaml_string_labels_field(fields: &serde_yaml::Mapping, name: &'static str) -> Labels {
+pub(crate) fn yaml_string_labels_field(fields: &serde_yaml::Mapping, name: &'static str) -> Labels {
     fields
         .get(serde_yaml_key(name))
         .and_then(loki_yaml_mapping)
@@ -308,7 +322,11 @@ fn yaml_string_labels_field(fields: &serde_yaml::Mapping, name: &'static str) ->
         .unwrap_or_default()
 }
 
-fn expand_prometheus_alert_template(template: &str, labels: &Labels, value: &str) -> String {
+pub(crate) fn expand_prometheus_alert_template(
+    template: &str,
+    labels: &Labels,
+    value: &str,
+) -> String {
     let mut expanded = String::with_capacity(template.len());
     let mut remaining = template;
     while let Some(start) = remaining.find("{{") {
@@ -341,7 +359,11 @@ fn expand_prometheus_alert_template(template: &str, labels: &Labels, value: &str
     expanded
 }
 
-fn prometheus_alert_template_map(templates: &Labels, labels: &Labels, value: &str) -> Value {
+pub(crate) fn prometheus_alert_template_map(
+    templates: &Labels,
+    labels: &Labels,
+    value: &str,
+) -> Value {
     Value::Object(
         templates
             .iter()
@@ -355,18 +377,18 @@ fn prometheus_alert_template_map(templates: &Labels, labels: &Labels, value: &st
     )
 }
 
-fn loki_yaml_mapping(value: &serde_yaml::Value) -> Option<&serde_yaml::Mapping> {
+pub(crate) fn loki_yaml_mapping(value: &serde_yaml::Value) -> Option<&serde_yaml::Mapping> {
     match value {
         serde_yaml::Value::Mapping(fields) => Some(fields),
         _ => None,
     }
 }
 
-fn serde_yaml_key(value: &'static str) -> serde_yaml::Value {
+pub(crate) fn serde_yaml_key(value: &'static str) -> serde_yaml::Value {
     serde_yaml::Value::String(value.to_string())
 }
 
-fn remove_empty_object_field(value: &mut Value, field: &'static str) {
+pub(crate) fn remove_empty_object_field(value: &mut Value, field: &'static str) {
     let Some(fields) = value.as_object_mut() else {
         return;
     };
@@ -379,7 +401,7 @@ fn remove_empty_object_field(value: &mut Value, field: &'static str) {
     }
 }
 
-async fn prometheus_alerts_response(
+pub(crate) async fn prometheus_alerts_response(
     state: &QuerierState,
     tenant: &str,
     namespaces: &LokiRuleNamespaces,
@@ -404,7 +426,7 @@ async fn prometheus_alerts_response(
     Ok(alerts)
 }
 
-async fn prometheus_alerts_for_rule(
+pub(crate) async fn prometheus_alerts_for_rule(
     state: &QuerierState,
     tenant: &str,
     rule: &serde_yaml::Value,
@@ -442,4 +464,3 @@ async fn prometheus_alerts_for_rule(
         &result,
     ))
 }
-

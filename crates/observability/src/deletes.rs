@@ -1,54 +1,58 @@
+use super::*;
+
 #[derive(Clone, Default)]
-struct CompactorDeleteState {
-    delete_requests: SharedLogDeleteRequests,
+pub(crate) struct CompactorDeleteState {
+    pub(crate) delete_requests: SharedLogDeleteRequests,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-struct CompactorDeleteRequests {
-    next_id: u64,
-    requests: Vec<CompactorDeleteRequest>,
+pub(crate) struct CompactorDeleteRequests {
+    pub(crate) next_id: u64,
+    pub(crate) requests: Vec<CompactorDeleteRequest>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct CompactorDeleteRequest {
-    tenant: String,
-    request_id: String,
-    query: String,
-    start_time: i64,
-    end_time: i64,
-    status: String,
-    created_at: i64,
+pub(crate) struct CompactorDeleteRequest {
+    pub(crate) tenant: String,
+    pub(crate) request_id: String,
+    pub(crate) query: String,
+    pub(crate) start_time: i64,
+    pub(crate) end_time: i64,
+    pub(crate) status: String,
+    pub(crate) created_at: i64,
 }
 
 #[derive(Clone)]
-struct ActiveLogDeleteFilter {
-    time_range: TimeRange,
-    query: StreamQuery,
+pub(crate) struct ActiveLogDeleteFilter {
+    pub(crate) time_range: TimeRange,
+    pub(crate) query: StreamQuery,
 }
 
 #[derive(Serialize)]
-struct CompactorDeleteRequestResponse {
-    request_id: String,
-    start_time: i64,
-    end_time: i64,
-    query: String,
-    status: String,
-    created_at: i64,
+pub(crate) struct CompactorDeleteRequestResponse {
+    pub(crate) request_id: String,
+    pub(crate) start_time: i64,
+    pub(crate) end_time: i64,
+    pub(crate) query: String,
+    pub(crate) status: String,
+    pub(crate) created_at: i64,
 }
 
-struct CreateDeleteRequestParams {
-    query: String,
-    start_time: i64,
-    end_time: i64,
+pub(crate) struct CreateDeleteRequestParams {
+    pub(crate) query: String,
+    pub(crate) start_time: i64,
+    pub(crate) end_time: i64,
 }
 
-struct ListDeleteRequestsParams {
-    start_time: Option<i64>,
-    end_time: Option<i64>,
+pub(crate) struct ListDeleteRequestsParams {
+    pub(crate) start_time: Option<i64>,
+    pub(crate) end_time: Option<i64>,
 }
 
 impl SharedLogDeleteRequests {
-    fn from_data_root(root: impl AsRef<FsPath>) -> Result<Self, LogDeleteRequestStoreError> {
+    pub(crate) fn from_data_root(
+        root: impl AsRef<FsPath>,
+    ) -> Result<Self, LogDeleteRequestStoreError> {
         let path = log_delete_requests_path(root.as_ref());
         Ok(Self {
             inner: Arc::new(Mutex::new(read_log_delete_requests(&path)?)),
@@ -56,7 +60,7 @@ impl SharedLogDeleteRequests {
         })
     }
 
-    fn persist(&self) -> Result<(), LogDeleteRequestStoreError> {
+    pub(crate) fn persist(&self) -> Result<(), LogDeleteRequestStoreError> {
         let Some(path) = &self.storage_path else {
             return Ok(());
         };
@@ -64,7 +68,7 @@ impl SharedLogDeleteRequests {
         write_log_delete_requests(path, &requests)
     }
 
-    fn refresh(&self) -> Result<(), LogDeleteRequestStoreError> {
+    pub(crate) fn refresh(&self) -> Result<(), LogDeleteRequestStoreError> {
         let Some(path) = &self.storage_path else {
             return Ok(());
         };
@@ -74,11 +78,11 @@ impl SharedLogDeleteRequests {
     }
 }
 
-fn log_delete_requests_path(root: &FsPath) -> PathBuf {
+pub(crate) fn log_delete_requests_path(root: &FsPath) -> PathBuf {
     root.join("log-delete-requests.json")
 }
 
-fn read_log_delete_requests(
+pub(crate) fn read_log_delete_requests(
     path: &FsPath,
 ) -> Result<CompactorDeleteRequests, LogDeleteRequestStoreError> {
     let bytes = match std::fs::read(path) {
@@ -99,7 +103,7 @@ fn read_log_delete_requests(
     })
 }
 
-fn write_log_delete_requests(
+pub(crate) fn write_log_delete_requests(
     path: &FsPath,
     requests: &CompactorDeleteRequests,
 ) -> Result<(), LogDeleteRequestStoreError> {
@@ -124,4 +128,3 @@ fn write_log_delete_requests(
         source,
     })
 }
-

@@ -1,3 +1,5 @@
+use super::*;
+
 /// Snapshots the hot-tail records that overlap `time_range`, plus the
 /// compaction frontier.
 ///
@@ -8,7 +10,7 @@
 /// plan range drops only records the downstream filter would reject
 /// anyway. Results are identical to a full-buffer scan, and a narrow window
 /// avoids a touch of the whole retained buffer.
-fn hot_tail_snapshot(
+pub(crate) fn hot_tail_snapshot(
     state: &QuerierState,
     time_range: TimeRange,
 ) -> (Vec<WalLogRecord>, CompactionFrontier) {
@@ -25,16 +27,16 @@ fn hot_tail_snapshot(
     )
 }
 
-struct TailStream {
-    plan: StreamPlan,
-    source: Option<Arc<dyn LogHotTail>>,
-    frontier: CompactionFrontierSource,
-    delete_filters: Vec<ActiveLogDeleteFilter>,
-    limit: Option<usize>,
-    delay_for: i64,
+pub(crate) struct TailStream {
+    pub(crate) plan: StreamPlan,
+    pub(crate) source: Option<Arc<dyn LogHotTail>>,
+    pub(crate) frontier: CompactionFrontierSource,
+    pub(crate) delete_filters: Vec<ActiveLogDeleteFilter>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) delay_for: i64,
 }
 
-async fn prepare_http_tail(
+pub(crate) async fn prepare_http_tail(
     state: &QuerierState,
     headers: &HeaderMap,
     params: &QueryParams,
@@ -74,7 +76,7 @@ async fn prepare_http_tail(
     })
 }
 
-async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
+pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
     let Some(source) = tail.source else {
         let _ = send_tail_frame(&mut socket, json!({ "streams": [] })).await;
         return;
@@ -115,7 +117,7 @@ async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
     }
 }
 
-fn eligible_tail_record_count(records: &[WalLogRecord], delay_for: i64) -> usize {
+pub(crate) fn eligible_tail_record_count(records: &[WalLogRecord], delay_for: i64) -> usize {
     if delay_for <= 0 {
         return records.len();
     }
@@ -127,21 +129,21 @@ fn eligible_tail_record_count(records: &[WalLogRecord], delay_for: i64) -> usize
         .count()
 }
 
-async fn send_tail_frame(socket: &mut WebSocket, frame: Value) -> bool {
+pub(crate) async fn send_tail_frame(socket: &mut WebSocket, frame: Value) -> bool {
     socket
         .send(Message::Text(frame.to_string().into()))
         .await
         .is_ok()
 }
 
-fn tail_frame_is_empty(frame: &Value) -> bool {
+pub(crate) fn tail_frame_is_empty(frame: &Value) -> bool {
     frame
         .get("streams")
         .and_then(Value::as_array)
         .is_none_or(Vec::is_empty)
 }
 
-fn apply_loki_tail_frame_limit(mut frame: Value, limit: Option<usize>) -> Value {
+pub(crate) fn apply_loki_tail_frame_limit(mut frame: Value, limit: Option<usize>) -> Value {
     let Some(limit) = limit else {
         return frame;
     };
@@ -168,4 +170,3 @@ fn apply_loki_tail_frame_limit(mut frame: Value, limit: Option<usize>) -> Value 
 
     frame
 }
-

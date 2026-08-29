@@ -1,4 +1,9 @@
-fn parse_vector_arithmetic_operator(query: &str, position: usize) -> Option<(&'static str, usize)> {
+use super::*;
+
+pub(crate) fn parse_vector_arithmetic_operator(
+    query: &str,
+    position: usize,
+) -> Option<(&'static str, usize)> {
     for (raw, formatted) in [
         ("+", "+"),
         ("-", "-"),
@@ -14,7 +19,10 @@ fn parse_vector_arithmetic_operator(query: &str, position: usize) -> Option<(&'s
     None
 }
 
-fn parse_formatted_vector_function(query: &str, position: usize) -> Option<(String, usize)> {
+pub(crate) fn parse_formatted_vector_function(
+    query: &str,
+    position: usize,
+) -> Option<(String, usize)> {
     if let Some(scalar) = query[position..].strip_prefix("vector(") {
         let scalar_end = scalar.find(')')?;
         let scalar_text = &scalar[..scalar_end];
@@ -33,7 +41,11 @@ fn parse_formatted_vector_function(query: &str, position: usize) -> Option<(Stri
     Some((formatted, call_end))
 }
 
-fn find_logql_function_call_end(query: &str, position: usize, name: &str) -> Option<usize> {
+pub(crate) fn find_logql_function_call_end(
+    query: &str,
+    position: usize,
+    name: &str,
+) -> Option<usize> {
     let rest = &query[position..];
     let rest = rest.strip_prefix(name)?;
     let mut chars = rest.char_indices();
@@ -71,7 +83,7 @@ fn find_logql_function_call_end(query: &str, position: usize, name: &str) -> Opt
     None
 }
 
-fn format_stream_query(query: &StreamQuery) -> String {
+pub(crate) fn format_stream_query(query: &StreamQuery) -> String {
     let mut formatted = format!(
         "{{{}}}",
         query
@@ -92,7 +104,7 @@ fn format_stream_query(query: &StreamQuery) -> String {
     formatted
 }
 
-fn format_label_matcher(matcher: &krabka_logql::LabelMatcher) -> String {
+pub(crate) fn format_label_matcher(matcher: &krabka_logql::LabelMatcher) -> String {
     format!(
         "{}{}{}",
         matcher.name,
@@ -106,7 +118,7 @@ fn format_label_matcher(matcher: &krabka_logql::LabelMatcher) -> String {
     )
 }
 
-fn format_pipeline_stage(stage: &PipelineStage) -> String {
+pub(crate) fn format_pipeline_stage(stage: &PipelineStage) -> String {
     match stage {
         PipelineStage::LineFilter(filter) => {
             let value = if filter.is_ip_matcher() {
@@ -222,7 +234,7 @@ fn format_pipeline_stage(stage: &PipelineStage) -> String {
     }
 }
 
-fn format_logfmt_parser_flags(config: &LogfmtParserConfig) -> String {
+pub(crate) fn format_logfmt_parser_flags(config: &LogfmtParserConfig) -> String {
     let mut flags = Vec::new();
     if config.keep_empty() {
         flags.push("--keep-empty");
@@ -237,7 +249,7 @@ fn format_logfmt_parser_flags(config: &LogfmtParserConfig) -> String {
     }
 }
 
-fn format_label_selection_set(selections: &LabelSelectionSet) -> String {
+pub(crate) fn format_label_selection_set(selections: &LabelSelectionSet) -> String {
     selections
         .selections()
         .iter()
@@ -258,7 +270,7 @@ fn format_label_selection_set(selections: &LabelSelectionSet) -> String {
         .join(", ")
 }
 
-fn format_field_filter(filter: &FieldFilter) -> String {
+pub(crate) fn format_field_filter(filter: &FieldFilter) -> String {
     format!(
         "{}{}{}",
         filter.name,
@@ -282,7 +294,7 @@ fn format_field_filter(filter: &FieldFilter) -> String {
     )
 }
 
-fn format_field_filter_expression(expression: &FieldFilterExpression) -> String {
+pub(crate) fn format_field_filter_expression(expression: &FieldFilterExpression) -> String {
     match expression {
         FieldFilterExpression::Filter(filter) => format_field_filter(filter),
         FieldFilterExpression::Group(expression) => {
@@ -302,11 +314,11 @@ fn format_field_filter_expression(expression: &FieldFilterExpression) -> String 
     }
 }
 
-fn quote_logql_string(value: &str) -> String {
+pub(crate) fn quote_logql_string(value: &str) -> String {
     serde_json::to_string(value).expect("string serialization cannot fail")
 }
 
-fn validate_query_series_limit(
+pub(crate) fn validate_query_series_limit(
     state: &QuerierState,
     plan: &StreamPlan,
 ) -> Result<(), HttpQueryError> {
@@ -323,7 +335,7 @@ fn validate_query_series_limit(
     Ok(())
 }
 
-fn validate_query_bytes_limit(
+pub(crate) fn validate_query_bytes_limit(
     state: &QuerierState,
     plan: &StreamPlan,
 ) -> Result<(), HttpQueryError> {
@@ -341,4 +353,3 @@ fn validate_query_bytes_limit(
     }
     Ok(())
 }
-

@@ -1,4 +1,6 @@
-fn ring_status_page(instance: &'static str) -> Response {
+use super::*;
+
+pub(crate) fn ring_status_page(instance: &'static str) -> Response {
     (
         StatusCode::OK,
         [("content-type", "text/html; charset=utf-8")],
@@ -13,7 +15,7 @@ fn ring_status_page(instance: &'static str) -> Response {
         .into_response()
 }
 
-fn ruler_status_page() -> Response {
+pub(crate) fn ruler_status_page() -> Response {
     (
         StatusCode::OK,
         [("content-type", "text/html; charset=utf-8")],
@@ -23,7 +25,7 @@ fn ruler_status_page() -> Response {
         .into_response()
 }
 
-async fn loki_rules(State(state): State<QuerierState>, headers: HeaderMap) -> Response {
+pub(crate) async fn loki_rules(State(state): State<QuerierState>, headers: HeaderMap) -> Response {
     let tenant = match loki_ruler_tenant(&headers) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
@@ -39,11 +41,11 @@ async fn loki_rules(State(state): State<QuerierState>, headers: HeaderMap) -> Re
     loki_yaml_response(StatusCode::OK, &namespaces)
 }
 
-async fn loki_page_not_found() -> Response {
+pub(crate) async fn loki_page_not_found() -> Response {
     text_response(StatusCode::NOT_FOUND, "404 page not found\n")
 }
 
-fn missing_loki_rule_directory_response(tenant: &str) -> Response {
+pub(crate) fn missing_loki_rule_directory_response(tenant: &str) -> Response {
     text_response(
         StatusCode::BAD_REQUEST,
         &format!(
@@ -52,7 +54,7 @@ fn missing_loki_rule_directory_response(tenant: &str) -> Response {
     )
 }
 
-async fn loki_rule_namespace(
+pub(crate) async fn loki_rule_namespace(
     State(state): State<QuerierState>,
     Path(namespace): Path<String>,
     headers: HeaderMap,
@@ -81,7 +83,7 @@ async fn loki_rule_namespace(
     )
 }
 
-fn missing_loki_rule_namespace_response(tenant: &str, namespace: &str) -> Response {
+pub(crate) fn missing_loki_rule_namespace_response(tenant: &str, namespace: &str) -> Response {
     text_response(
         StatusCode::BAD_REQUEST,
         &format!(
@@ -90,7 +92,7 @@ fn missing_loki_rule_namespace_response(tenant: &str, namespace: &str) -> Respon
     )
 }
 
-async fn create_loki_rule_group(
+pub(crate) async fn create_loki_rule_group(
     State(state): State<QuerierState>,
     Path(namespace): Path<String>,
     headers: HeaderMap,
@@ -128,7 +130,7 @@ async fn create_loki_rule_group(
     json_response(StatusCode::ACCEPTED, &json!({ "status": "success" }))
 }
 
-async fn delete_loki_rule_namespace(
+pub(crate) async fn delete_loki_rule_namespace(
     State(state): State<QuerierState>,
     Path(namespace): Path<String>,
     headers: HeaderMap,
@@ -161,7 +163,7 @@ async fn delete_loki_rule_namespace(
     json_response(StatusCode::ACCEPTED, &json!({ "status": "success" }))
 }
 
-async fn loki_rule_group(
+pub(crate) async fn loki_rule_group(
     State(state): State<QuerierState>,
     Path((namespace, group_name)): Path<(String, String)>,
     headers: HeaderMap,
@@ -190,7 +192,7 @@ async fn loki_rule_group(
     loki_yaml_response(StatusCode::OK, group)
 }
 
-async fn delete_loki_rule_group(
+pub(crate) async fn delete_loki_rule_group(
     State(state): State<QuerierState>,
     Path((namespace, group_name)): Path<(String, String)>,
     headers: HeaderMap,
@@ -229,7 +231,7 @@ async fn delete_loki_rule_group(
     json_response(StatusCode::ACCEPTED, &json!({ "status": "success" }))
 }
 
-fn loki_ruler_tenant(headers: &HeaderMap) -> Result<String, HttpQueryError> {
+pub(crate) fn loki_ruler_tenant(headers: &HeaderMap) -> Result<String, HttpQueryError> {
     match headers.get("X-Scope-OrgID") {
         Some(value) => {
             let tenant = value.to_str().map_err(|_| HttpQueryError::InvalidTenant)?;
@@ -243,7 +245,7 @@ fn loki_ruler_tenant(headers: &HeaderMap) -> Result<String, HttpQueryError> {
     }
 }
 
-fn loki_rule_namespace_response(
+pub(crate) fn loki_rule_namespace_response(
     namespaces: &LokiRuleNamespaces,
 ) -> BTreeMap<String, Vec<serde_yaml::Value>> {
     namespaces
@@ -252,13 +254,13 @@ fn loki_rule_namespace_response(
         .collect()
 }
 
-fn parse_loki_rule_group(body: &[u8]) -> Result<serde_yaml::Value, ()> {
+pub(crate) fn parse_loki_rule_group(body: &[u8]) -> Result<serde_yaml::Value, ()> {
     let rule_group = serde_yaml::from_slice(body).map_err(|_| ())?;
     validate_loki_rule_group(&rule_group)?;
     Ok(rule_group)
 }
 
-fn loki_rule_group_name(rule_group: &serde_yaml::Value) -> Option<&str> {
+pub(crate) fn loki_rule_group_name(rule_group: &serde_yaml::Value) -> Option<&str> {
     let serde_yaml::Value::Mapping(fields) = rule_group else {
         return None;
     };
@@ -268,7 +270,7 @@ fn loki_rule_group_name(rule_group: &serde_yaml::Value) -> Option<&str> {
         .filter(|name| !name.is_empty())
 }
 
-fn validate_loki_rule_group(rule_group: &serde_yaml::Value) -> Result<(), ()> {
+pub(crate) fn validate_loki_rule_group(rule_group: &serde_yaml::Value) -> Result<(), ()> {
     let fields = loki_yaml_mapping(rule_group).ok_or(())?;
     if loki_rule_group_name(rule_group).is_none() {
         return Err(());
@@ -283,7 +285,7 @@ fn validate_loki_rule_group(rule_group: &serde_yaml::Value) -> Result<(), ()> {
     Ok(())
 }
 
-fn validate_loki_rule(rule: &serde_yaml::Value) -> Result<(), ()> {
+pub(crate) fn validate_loki_rule(rule: &serde_yaml::Value) -> Result<(), ()> {
     let fields = loki_yaml_mapping(rule).ok_or(())?;
     yaml_string_field(fields, "expr")
         .filter(|expr| !expr.is_empty())
@@ -296,7 +298,7 @@ fn validate_loki_rule(rule: &serde_yaml::Value) -> Result<(), ()> {
     Ok(())
 }
 
-fn loki_yaml_response(status: StatusCode, value: &impl Serialize) -> Response {
+pub(crate) fn loki_yaml_response(status: StatusCode, value: &impl Serialize) -> Response {
     match serde_yaml::to_string(value) {
         Ok(body) => (
             status,
@@ -308,7 +310,7 @@ fn loki_yaml_response(status: StatusCode, value: &impl Serialize) -> Response {
     }
 }
 
-async fn prometheus_rules(
+pub(crate) async fn prometheus_rules(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -366,7 +368,7 @@ async fn prometheus_rules(
     )
 }
 
-async fn prometheus_alerts(
+pub(crate) async fn prometheus_alerts(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -410,15 +412,14 @@ async fn prometheus_alerts(
 }
 
 #[derive(Debug, Default, PartialEq)]
-struct PrometheusRulesFilters {
-    rule_kind: Option<&'static str>,
-    rule_names: BTreeSet<String>,
-    rule_groups: BTreeSet<String>,
-    files: BTreeSet<String>,
-    label_selectors: Vec<StreamQuery>,
-    group_limit: Option<usize>,
-    group_next_token: Option<String>,
-    exclude_alerts: bool,
-    evaluation_time: Option<i64>,
+pub(crate) struct PrometheusRulesFilters {
+    pub(crate) rule_kind: Option<&'static str>,
+    pub(crate) rule_names: BTreeSet<String>,
+    pub(crate) rule_groups: BTreeSet<String>,
+    pub(crate) files: BTreeSet<String>,
+    pub(crate) label_selectors: Vec<StreamQuery>,
+    pub(crate) group_limit: Option<usize>,
+    pub(crate) group_next_token: Option<String>,
+    pub(crate) exclude_alerts: bool,
+    pub(crate) evaluation_time: Option<i64>,
 }
-

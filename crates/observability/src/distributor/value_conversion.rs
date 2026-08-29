@@ -1,4 +1,6 @@
-fn otlp_value_to_json(value: &OtlpAnyValue) -> Value {
+use super::*;
+
+pub(crate) fn otlp_value_to_json(value: &OtlpAnyValue) -> Value {
     match value {
         OtlpAnyValue::String(value) | OtlpAnyValue::Bytes(value) => Value::String(value.clone()),
         OtlpAnyValue::Bool(value) => Value::Bool(*value),
@@ -24,7 +26,7 @@ fn otlp_value_to_json(value: &OtlpAnyValue) -> Value {
     }
 }
 
-fn proto_value_to_string(value: &ProtoAnyValue) -> String {
+pub(crate) fn proto_value_to_string(value: &ProtoAnyValue) -> String {
     value
         .value
         .as_ref()
@@ -32,7 +34,7 @@ fn proto_value_to_string(value: &ProtoAnyValue) -> String {
         .unwrap_or_default()
 }
 
-fn proto_any_value_to_string(value: &proto_any_value::Value) -> String {
+pub(crate) fn proto_any_value_to_string(value: &proto_any_value::Value) -> String {
     match value {
         proto_any_value::Value::StringValue(value) => value.clone(),
         proto_any_value::Value::BoolValue(value) => value.to_string(),
@@ -67,7 +69,7 @@ fn proto_any_value_to_string(value: &proto_any_value::Value) -> String {
     }
 }
 
-fn proto_value_to_json(value: &ProtoAnyValue) -> Value {
+pub(crate) fn proto_value_to_json(value: &ProtoAnyValue) -> Value {
     match value.value.as_ref() {
         Some(proto_any_value::Value::StringValue(value)) => Value::String(value.clone()),
         Some(proto_any_value::Value::BoolValue(value)) => Value::Bool(*value),
@@ -99,7 +101,7 @@ fn proto_value_to_json(value: &ProtoAnyValue) -> Value {
     }
 }
 
-fn hex_string(bytes: &[u8]) -> String {
+pub(crate) fn hex_string(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -109,7 +111,7 @@ fn hex_string(bytes: &[u8]) -> String {
     out
 }
 
-fn parse_structured_metadata(
+pub(crate) fn parse_structured_metadata(
     metadata: Option<&Value>,
 ) -> Result<BTreeMap<String, String>, DistributorError> {
     let Some(metadata) = metadata else {
@@ -130,7 +132,7 @@ fn parse_structured_metadata(
         .collect::<Result<BTreeMap<_, _>, DistributorError>>()
 }
 
-fn metadata_value_to_string(value: &Value) -> String {
+pub(crate) fn metadata_value_to_string(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
         Value::Bool(value) => value.to_string(),
@@ -139,4 +141,3 @@ fn metadata_value_to_string(value: &Value) -> String {
         Value::Array(_) | Value::Object(_) => value.to_string(),
     }
 }
-

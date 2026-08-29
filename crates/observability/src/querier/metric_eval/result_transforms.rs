@@ -1,4 +1,6 @@
-fn execute_http_scalar_vector_expression_result(
+use super::*;
+
+pub(crate) fn execute_http_scalar_vector_expression_result(
     query: &str,
     time_range: TimeRange,
     step: Option<i64>,
@@ -26,7 +28,10 @@ fn execute_http_scalar_vector_expression_result(
     Ok(add_loki_query_stats(value))
 }
 
-fn retain_metric_binary_on_labels(value: &mut Value, matching: Option<&MetricVectorMatching>) {
+pub(crate) fn retain_metric_binary_on_labels(
+    value: &mut Value,
+    matching: Option<&MetricVectorMatching>,
+) {
     let Some(MetricVectorMatching::On {
         labels,
         group: None,
@@ -48,7 +53,7 @@ fn retain_metric_binary_on_labels(value: &mut Value, matching: Option<&MetricVec
     }
 }
 
-fn sort_loki_vector_result(value: &mut Value, descending: bool) {
+pub(crate) fn sort_loki_vector_result(value: &mut Value, descending: bool) {
     if value.pointer("/data/resultType").and_then(Value::as_str) != Some("vector") {
         return;
     }
@@ -76,28 +81,28 @@ fn sort_loki_vector_result(value: &mut Value, descending: bool) {
     });
 }
 
-fn loki_vector_sample_value(sample: &Value) -> Option<MetricValue> {
+pub(crate) fn loki_vector_sample_value(sample: &Value) -> Option<MetricValue> {
     sample
         .pointer("/value/1")
         .and_then(Value::as_str)
         .and_then(parse_metric_sample_value)
 }
 
-fn metric_query_uses_approx_topk(query: &MetricQuery) -> bool {
+pub(crate) fn metric_query_uses_approx_topk(query: &MetricQuery) -> bool {
     query
         .vector_aggregation
         .as_ref()
         .is_some_and(|aggregation| matches!(aggregation.op, VectorAggregationOp::ApproxTopK(_)))
 }
 
-fn metric_query_uses_count_values(query: &MetricQuery) -> bool {
+pub(crate) fn metric_query_uses_count_values(query: &MetricQuery) -> bool {
     query
         .vector_aggregation
         .as_ref()
         .is_some_and(|aggregation| matches!(aggregation.op, VectorAggregationOp::CountValues(_)))
 }
 
-async fn execute_http_metric_binary_arithmetic_query(
+pub(crate) async fn execute_http_metric_binary_arithmetic_query(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -125,7 +130,7 @@ async fn execute_http_metric_binary_arithmetic_query(
     Ok(left)
 }
 
-async fn execute_http_metric_binary_comparison_query(
+pub(crate) async fn execute_http_metric_binary_comparison_query(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -154,7 +159,7 @@ async fn execute_http_metric_binary_comparison_query(
     Ok(left)
 }
 
-async fn execute_http_metric_binary_set_query(
+pub(crate) async fn execute_http_metric_binary_set_query(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -169,7 +174,7 @@ async fn execute_http_metric_binary_set_query(
     Ok(left)
 }
 
-async fn execute_http_metric_scalar_comparison_query(
+pub(crate) async fn execute_http_metric_scalar_comparison_query(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -242,7 +247,7 @@ async fn execute_http_metric_scalar_comparison_query(
     ))
 }
 
-async fn execute_http_metric_scalar_arithmetic_query(
+pub(crate) async fn execute_http_metric_scalar_arithmetic_query(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -315,7 +320,7 @@ async fn execute_http_metric_scalar_arithmetic_query(
     ))
 }
 
-fn apply_metric_binary_arithmetic_to_loki_result(
+pub(crate) fn apply_metric_binary_arithmetic_to_loki_result(
     left: &mut Value,
     right: &Value,
     op: MetricScalarArithmeticOp,
@@ -374,7 +379,7 @@ fn apply_metric_binary_arithmetic_to_loki_result(
     }
 }
 
-fn apply_metric_binary_arithmetic_group_right_to_results(
+pub(crate) fn apply_metric_binary_arithmetic_group_right_to_results(
     left_results: &mut Vec<Value>,
     right_results: &[Value],
     op: MetricScalarArithmeticOp,
@@ -405,7 +410,7 @@ fn apply_metric_binary_arithmetic_group_right_to_results(
     }
 }
 
-fn apply_metric_binary_arithmetic_to_series(
+pub(crate) fn apply_metric_binary_arithmetic_to_series(
     left_series: &mut Value,
     right_series: &Value,
     op: MetricScalarArithmeticOp,
@@ -439,4 +444,3 @@ fn apply_metric_binary_arithmetic_to_series(
     };
     apply_metric_binary_arithmetic_to_sample(left_sample, right_sample, op)
 }
-

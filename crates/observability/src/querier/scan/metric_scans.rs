@@ -1,4 +1,6 @@
-async fn collect_object_store_metric_log_batches(
+use super::*;
+
+pub(crate) async fn collect_object_store_metric_log_batches(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     block: &BlockDescriptor,
@@ -21,7 +23,7 @@ async fn collect_object_store_metric_log_batches(
         .await?)
 }
 
-fn append_matching_log_batches(
+pub(crate) fn append_matching_log_batches(
     streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,
     plan: &StreamPlan,
     label_index: &LabelIndex,
@@ -101,7 +103,7 @@ pub fn execute_tail_query_with_frontier(
     execute_tail_query_with_frontier_and_deletes(plan, hot_tail, frontier, &[])
 }
 
-fn execute_tail_query_with_frontier_and_deletes(
+pub(crate) fn execute_tail_query_with_frontier_and_deletes(
     plan: &StreamPlan,
     hot_tail: &[WalLogRecord],
     frontier: &CompactionFrontier,
@@ -135,7 +137,7 @@ pub async fn execute_metric_query(
     execute_metric_query_with_deletes(root, plan, query, label_index, &[]).await
 }
 
-async fn execute_metric_query_with_deletes(
+pub(crate) async fn execute_metric_query_with_deletes(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -198,7 +200,7 @@ pub async fn execute_metric_query_with_hot_tail_frontier(
     .await
 }
 
-async fn execute_metric_query_with_hot_tail_frontier_and_deletes(
+pub(crate) async fn execute_metric_query_with_hot_tail_frontier_and_deletes(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -245,7 +247,7 @@ pub async fn execute_metric_query_range(
     .await
 }
 
-async fn execute_metric_query_range_with_deletes(
+pub(crate) async fn execute_metric_query_range_with_deletes(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -290,7 +292,7 @@ pub async fn execute_metric_query_from_object_store(
     .await
 }
 
-async fn execute_metric_query_from_object_store_with_hot_tail_frontier(
+pub(crate) async fn execute_metric_query_from_object_store_with_hot_tail_frontier(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     plan: &StreamPlan,
@@ -314,7 +316,7 @@ async fn execute_metric_query_from_object_store_with_hot_tail_frontier(
     .await
 }
 
-async fn execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes(
+pub(crate) async fn execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     plan: &StreamPlan,
@@ -411,7 +413,7 @@ pub async fn execute_metric_query_range_with_hot_tail_frontier(
     .await
 }
 
-async fn execute_metric_query_range_with_hot_tail_frontier_and_deletes(
+pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_deletes(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -460,4 +462,3 @@ async fn execute_metric_query_range_with_hot_tail_frontier_and_deletes(
 
     Ok(loki_matrix_response(format_metric_samples(samples, query)))
 }
-

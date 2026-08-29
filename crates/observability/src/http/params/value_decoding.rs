@@ -1,4 +1,6 @@
-fn parse_decimal_seconds_timestamp(value: &str) -> Option<i64> {
+use super::*;
+
+pub(crate) fn parse_decimal_seconds_timestamp(value: &str) -> Option<i64> {
     let (negative, unsigned) = match value.as_bytes().first() {
         Some(b'-') => (true, &value[1..]),
         Some(b'+') => (false, &value[1..]),
@@ -37,7 +39,10 @@ fn parse_decimal_seconds_timestamp(value: &str) -> Option<i64> {
     i64::try_from(timestamp_ns).ok()
 }
 
-fn parse_usize_query_param(name: &'static str, value: &str) -> Result<usize, HttpQueryError> {
+pub(crate) fn parse_usize_query_param(
+    name: &'static str,
+    value: &str,
+) -> Result<usize, HttpQueryError> {
     if name == "limit" {
         let limit = value
             .parse::<i64>()
@@ -56,7 +61,7 @@ fn parse_usize_query_param(name: &'static str, value: &str) -> Result<usize, Htt
         })
 }
 
-fn decode_form_component(component: &str) -> Result<String, HttpQueryError> {
+pub(crate) fn decode_form_component(component: &str) -> Result<String, HttpQueryError> {
     let mut bytes = Vec::with_capacity(component.len());
     let mut iter = component.as_bytes().iter().copied();
     while let Some(byte) = iter.next() {
@@ -80,7 +85,7 @@ fn decode_form_component(component: &str) -> Result<String, HttpQueryError> {
     String::from_utf8(bytes).map_err(|_| HttpQueryError::InvalidPercentEncoding)
 }
 
-fn hex_value(byte: u8) -> Option<u8> {
+pub(crate) fn hex_value(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
         b'a'..=b'f' => Some(byte - b'a' + 10),
@@ -89,7 +94,7 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn grpc_tenant(metadata: &tonic::metadata::MetadataMap) -> Result<&str, tonic::Status> {
+pub(crate) fn grpc_tenant(metadata: &tonic::metadata::MetadataMap) -> Result<&str, tonic::Status> {
     metadata
         .get("x-scope-orgid")
         .ok_or_else(|| tonic::Status::invalid_argument("missing tenant header"))?
@@ -104,7 +109,7 @@ fn grpc_tenant(metadata: &tonic::metadata::MetadataMap) -> Result<&str, tonic::S
         })
 }
 
-async fn authorized_tenant<'a>(
+pub(crate) async fn authorized_tenant<'a>(
     state: &QuerierState,
     headers: &'a HeaderMap,
 ) -> Result<&'a str, HttpQueryError> {
@@ -113,7 +118,7 @@ async fn authorized_tenant<'a>(
     Ok(tenant)
 }
 
-async fn authorized_tenants(
+pub(crate) async fn authorized_tenants(
     state: &QuerierState,
     headers: &HeaderMap,
 ) -> Result<Vec<String>, HttpQueryError> {
@@ -132,7 +137,7 @@ async fn authorized_tenants(
     Ok(tenants)
 }
 
-fn tenant(headers: &HeaderMap) -> Result<&str, HttpQueryError> {
+pub(crate) fn tenant(headers: &HeaderMap) -> Result<&str, HttpQueryError> {
     headers
         .get("X-Scope-OrgID")
         .ok_or(HttpQueryError::MissingTenant)?
@@ -147,7 +152,10 @@ fn tenant(headers: &HeaderMap) -> Result<&str, HttpQueryError> {
         })
 }
 
-fn time_range(params: &QueryParams, kind: QueryKind) -> Result<TimeRange, HttpQueryError> {
+pub(crate) fn time_range(
+    params: &QueryParams,
+    kind: QueryKind,
+) -> Result<TimeRange, HttpQueryError> {
     match kind {
         QueryKind::Instant => {
             if let Some(time) = params.time {
@@ -166,18 +174,18 @@ fn time_range(params: &QueryParams, kind: QueryKind) -> Result<TimeRange, HttpQu
 }
 
 /// Window a query covers when it names neither `start` nor `since`.
-const LOKI_DEFAULT_QUERY_RANGE: Time = hours(1);
+pub(crate) const LOKI_DEFAULT_QUERY_RANGE: Time = hours(1);
 /// Window the metadata endpoints index over when the request names no range.
-const LOKI_METADATA_DEFAULT_INDEX_RANGE: Time = hours(6);
-const LOKI_DEFAULT_TAIL_LIMIT: usize = 100;
-const LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS: i64 = 11_000;
+pub(crate) const LOKI_METADATA_DEFAULT_INDEX_RANGE: Time = hours(6);
+pub(crate) const LOKI_DEFAULT_TAIL_LIMIT: usize = 100;
+pub(crate) const LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS: i64 = 11_000;
 /// Longest `delay_for` a tail request may ask the querier to hold back.
-const LOKI_MAX_TAIL_DELAY: Time = secs(5);
+pub(crate) const LOKI_MAX_TAIL_DELAY: Time = secs(5);
 /// Widest window `/loki/api/v1/index/volume` and the range endpoints accept
 /// (`Loki`'s 30d 1h default, to the nanosecond).
-const LOKI_VOLUME_MAX_QUERY_RANGE: Time = secs(2_595_600);
+pub(crate) const LOKI_VOLUME_MAX_QUERY_RANGE: Time = secs(2_595_600);
 
-fn current_unix_time_ns() -> i64 {
+pub(crate) fn current_unix_time_ns() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| {
@@ -185,7 +193,7 @@ fn current_unix_time_ns() -> i64 {
         })
 }
 
-fn optional_start_end_range(
+pub(crate) fn optional_start_end_range(
     start: Option<i64>,
     since: Option<i64>,
     end: Option<i64>,
@@ -194,7 +202,7 @@ fn optional_start_end_range(
     TimeRange::new(start, end.unwrap_or(i64::MAX)).map_err(HttpQueryError::from)
 }
 
-fn start_or_since(
+pub(crate) fn start_or_since(
     start: Option<i64>,
     since: Option<i64>,
     end: Option<i64>,
@@ -221,22 +229,21 @@ fn start_or_since(
 }
 
 #[derive(Clone, Copy)]
-enum QueryKind {
+pub(crate) enum QueryKind {
     Instant,
     Range,
 }
 
 #[derive(Clone, Copy)]
-enum LokiDirection {
+pub(crate) enum LokiDirection {
     Forward,
     Backward,
 }
 
-fn loki_direction(direction: Option<&str>) -> Result<LokiDirection, HttpQueryError> {
+pub(crate) fn loki_direction(direction: Option<&str>) -> Result<LokiDirection, HttpQueryError> {
     match direction {
         None | Some("backward") => Ok(LokiDirection::Backward),
         Some("forward") => Ok(LokiDirection::Forward),
         Some(value) => Err(HttpQueryError::InvalidDirection(value.to_string())),
     }
 }
-

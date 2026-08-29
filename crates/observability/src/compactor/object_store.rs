@@ -1,5 +1,7 @@
+use super::*;
+
 #[cfg_attr(test, mutants::skip)]
-fn build_configured_object_store(
+pub(crate) fn build_configured_object_store(
     config: &ServiceConfig,
 ) -> Result<Option<ConfiguredObjectStore>, ServiceConfigError> {
     let Some(raw_url) = config.object_store_url.as_deref() else {
@@ -37,7 +39,7 @@ fn build_configured_object_store(
     }
 }
 
-async fn load_querier_shared_compaction_frontier(
+pub(crate) async fn load_querier_shared_compaction_frontier(
     config: &ServiceConfig,
     configured_store: Option<&ConfiguredObjectStore>,
     object_store: Option<&dyn ObjectStore>,
@@ -72,7 +74,7 @@ async fn load_querier_shared_compaction_frontier(
     Ok((None, None))
 }
 
-fn compactor_delete_requests_for_config(
+pub(crate) fn compactor_delete_requests_for_config(
     config: &ServiceConfig,
     provided: Option<SharedLogDeleteRequests>,
 ) -> Result<SharedLogDeleteRequests, LogDeleteRequestStoreError> {
@@ -81,4 +83,3 @@ fn compactor_delete_requests_for_config(
         None => SharedLogDeleteRequests::from_data_root(&config.data_root),
     }
 }
-

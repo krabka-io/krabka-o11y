@@ -1,3 +1,5 @@
+use super::*;
+
 /// Buffer holding polled hot-tail records.
 ///
 /// Records arrive from Kafka polling in NO timestamp order, so the buffer keeps
@@ -16,21 +18,21 @@
 /// hours of logs touches only the window's records, instead of a scan of the
 /// entire buffer.
 #[derive(Debug)]
-struct HotTailBuffer {
-    bucket_width: Time,
-    records: Vec<WalLogRecord>,
-    buckets: BTreeMap<i64, Vec<usize>>,
+pub(crate) struct HotTailBuffer {
+    pub(crate) bucket_width: Time,
+    pub(crate) records: Vec<WalLogRecord>,
+    pub(crate) buckets: BTreeMap<i64, Vec<usize>>,
 }
 
 impl HotTailBuffer {
-    fn push(&mut self, record: WalLogRecord) {
+    pub(crate) fn push(&mut self, record: WalLogRecord) {
         let index = self.records.len();
         let bucket = hot_tail_bucket_key(record.timestamp_ns, self.bucket_width);
         self.records.push(record);
         self.buckets.entry(bucket).or_default().push(index);
     }
 
-    fn prune_compacted(&mut self, frontier: &CompactionFrontier) -> usize {
+    pub(crate) fn prune_compacted(&mut self, frontier: &CompactionFrontier) -> usize {
         let before = self.records.len();
         if before == 0 {
             return 0;
@@ -52,7 +54,7 @@ impl HotTailBuffer {
         pruned
     }
 
-    fn rebuild_buckets(&mut self) {
+    pub(crate) fn rebuild_buckets(&mut self) {
         self.buckets.clear();
         for (index, record) in self.records.iter().enumerate() {
             self.buckets
@@ -65,7 +67,7 @@ impl HotTailBuffer {
         }
     }
 
-    fn records_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<WalLogRecord> {
+    pub(crate) fn records_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<WalLogRecord> {
         if start_ns > end_ns {
             return Vec::new();
         }
@@ -104,7 +106,7 @@ impl Default for HotTailBuffer {
 
 #[derive(Clone, Debug, Default)]
 pub struct BufferedLogHotTail {
-    buffer: Arc<Mutex<HotTailBuffer>>,
+    pub(crate) buffer: Arc<Mutex<HotTailBuffer>>,
 }
 
 impl BufferedLogHotTail {
@@ -113,7 +115,7 @@ impl BufferedLogHotTail {
     // width, and the width is an index granularity that push and query both
     // read from the same field. Whatever it is, the two stay consistent and no
     // record is found or lost because of it.
-    fn with_bucket_width(bucket_width: Time) -> Self {
+    pub(crate) fn with_bucket_width(bucket_width: Time) -> Self {
         Self {
             buffer: Arc::new(Mutex::new(HotTailBuffer {
                 bucket_width,
@@ -174,8 +176,8 @@ impl LogHotTail for BufferedLogHotTail {
 
 #[derive(Clone)]
 pub struct KafkaLogWalSink {
-    producer: Arc<Producer>,
-    topic: String,
+    pub(crate) producer: Arc<Producer>,
+    pub(crate) topic: String,
 }
 
 impl KafkaLogWalSink {
@@ -235,7 +237,7 @@ impl LogWalSink for KafkaLogWalSink {
 }
 
 pub struct KafkaLogWalConsumer {
-    consumer: Consumer,
+    pub(crate) consumer: Consumer,
 }
 
 impl KafkaLogWalConsumer {
@@ -401,7 +403,7 @@ pub async fn poll_log_hot_tail_once(
     poll_log_hot_tail_once_with_frontier(consumer, hot_tail, timeout, None).await
 }
 
-async fn poll_log_hot_tail_once_with_frontier(
+pub(crate) async fn poll_log_hot_tail_once_with_frontier(
     consumer: &mut (impl LogWalConsumer + ?Sized),
     hot_tail: &BufferedLogHotTail,
     timeout: Time,
@@ -421,7 +423,7 @@ async fn poll_log_hot_tail_once_with_frontier(
 }
 
 #[cfg_attr(test, mutants::skip)]
-fn spawn_log_hot_tail_poller(
+pub(crate) fn spawn_log_hot_tail_poller(
     consumer: Arc<tokio::sync::Mutex<Box<dyn LogWalConsumer>>>,
     hot_tail: BufferedLogHotTail,
     frontier: Option<SharedCompactionFrontier>,
@@ -459,4 +461,3 @@ fn spawn_log_hot_tail_poller(
         }
     })
 }
-

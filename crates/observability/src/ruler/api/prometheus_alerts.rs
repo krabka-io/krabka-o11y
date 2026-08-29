@@ -1,4 +1,6 @@
-fn prometheus_alerts_from_query_result(
+use super::*;
+
+pub(crate) fn prometheus_alerts_from_query_result(
     alert_states: &SharedPrometheusAlertStates,
     tenant: &str,
     alert_name: &str,
@@ -105,18 +107,18 @@ fn prometheus_alerts_from_query_result(
     alerts
 }
 
-struct PrometheusRetainedAlertParams<'a> {
-    tenant: &'a str,
-    alert_name: &'a str,
-    query: &'a str,
-    evaluation_time: i64,
-    hold_duration_ns: i64,
-    keep_firing_for_ns: i64,
-    active_keys: &'a BTreeSet<PrometheusAlertKey>,
-    annotation_templates: &'a Labels,
+pub(crate) struct PrometheusRetainedAlertParams<'a> {
+    pub(crate) tenant: &'a str,
+    pub(crate) alert_name: &'a str,
+    pub(crate) query: &'a str,
+    pub(crate) evaluation_time: i64,
+    pub(crate) hold_duration_ns: i64,
+    pub(crate) keep_firing_for_ns: i64,
+    pub(crate) active_keys: &'a BTreeSet<PrometheusAlertKey>,
+    pub(crate) annotation_templates: &'a Labels,
 }
 
-fn retained_prometheus_alerts(
+pub(crate) fn retained_prometheus_alerts(
     states: &BTreeMap<PrometheusAlertKey, PrometheusAlertRuntimeState>,
     params: &PrometheusRetainedAlertParams<'_>,
 ) -> (Vec<Value>, BTreeSet<PrometheusAlertKey>) {
@@ -148,7 +150,7 @@ fn retained_prometheus_alerts(
     (retained_alerts, retained_keys)
 }
 
-fn prometheus_alert_key_matches_rule(
+pub(crate) fn prometheus_alert_key_matches_rule(
     key: &PrometheusAlertKey,
     params: &PrometheusRetainedAlertParams<'_>,
 ) -> bool {
@@ -158,10 +160,9 @@ fn prometheus_alert_key_matches_rule(
         && !params.active_keys.contains(key)
 }
 
-fn prometheus_active_at(timestamp_ns: i64) -> String {
+pub(crate) fn prometheus_active_at(timestamp_ns: i64) -> String {
     OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ns))
         .ok()
         .and_then(|timestamp| timestamp.format(&Rfc3339).ok())
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string())
 }
-

@@ -1,4 +1,6 @@
-async fn label_values(
+use super::*;
+
+pub(crate) async fn label_values(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     Path(name): Path<String>,
@@ -16,7 +18,7 @@ async fn label_values(
     resp
 }
 
-async fn label_values_post(
+pub(crate) async fn label_values_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     Path(name): Path<String>,
@@ -37,7 +39,7 @@ async fn label_values_post(
     }
 }
 
-async fn series(
+pub(crate) async fn series(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -54,7 +56,7 @@ async fn series(
     resp
 }
 
-async fn series_post(
+pub(crate) async fn series_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -74,7 +76,7 @@ async fn series_post(
     }
 }
 
-async fn api_prom_label_names(
+pub(crate) async fn api_prom_label_names(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -89,7 +91,7 @@ async fn api_prom_label_names(
     }
 }
 
-async fn api_prom_label_names_post(
+pub(crate) async fn api_prom_label_names_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -109,7 +111,7 @@ async fn api_prom_label_names_post(
     }
 }
 
-async fn api_prom_label_values(
+pub(crate) async fn api_prom_label_values(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     Path(_name): Path<String>,
@@ -125,7 +127,7 @@ async fn api_prom_label_values(
     }
 }
 
-async fn api_prom_label_values_post(
+pub(crate) async fn api_prom_label_values_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     Path(_name): Path<String>,
@@ -146,7 +148,7 @@ async fn api_prom_label_values_post(
     }
 }
 
-async fn api_prom_series(
+pub(crate) async fn api_prom_series(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -161,7 +163,7 @@ async fn api_prom_series(
     }
 }
 
-async fn api_prom_series_post(
+pub(crate) async fn api_prom_series_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -181,7 +183,7 @@ async fn api_prom_series_post(
     }
 }
 
-async fn index_stats(
+pub(crate) async fn index_stats(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -195,7 +197,7 @@ async fn index_stats(
     resp
 }
 
-async fn index_stats_post(
+pub(crate) async fn index_stats_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -211,7 +213,7 @@ async fn index_stats_post(
     }
 }
 
-async fn index_volume(
+pub(crate) async fn index_volume(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -232,7 +234,7 @@ async fn index_volume(
     resp
 }
 
-async fn index_volume_post(
+pub(crate) async fn index_volume_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -249,7 +251,7 @@ async fn index_volume_post(
     }
 }
 
-async fn index_volume_range(
+pub(crate) async fn index_volume_range(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -262,7 +264,7 @@ async fn index_volume_range(
     }
 }
 
-async fn index_volume_range_post(
+pub(crate) async fn index_volume_range_post(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -278,7 +280,7 @@ async fn index_volume_range_post(
     }
 }
 
-async fn tail(
+pub(crate) async fn tail(
     State(state): State<QuerierState>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
@@ -297,7 +299,7 @@ async fn tail(
     }
 }
 
-async fn handle_query(
+pub(crate) async fn handle_query(
     state: QuerierState,
     headers: HeaderMap,
     raw_query: Option<&str>,
@@ -319,7 +321,7 @@ async fn handle_query(
     }
 }
 
-async fn handle_api_prom_query(
+pub(crate) async fn handle_api_prom_query(
     state: QuerierState,
     headers: HeaderMap,
     raw_query: Option<&str>,
@@ -335,7 +337,7 @@ async fn handle_api_prom_query(
     }
 }
 
-async fn handle_api_prom_query_range(
+pub(crate) async fn handle_api_prom_query_range(
     state: QuerierState,
     headers: HeaderMap,
     raw_query: Option<&str>,
@@ -351,7 +353,7 @@ async fn handle_api_prom_query_range(
     }
 }
 
-fn api_prom_streams_only_response(value: &Value) -> Response {
+pub(crate) fn api_prom_streams_only_response(value: &Value) -> Response {
     if value.pointer("/data/resultType").and_then(Value::as_str) == Some("streams") {
         json_response(StatusCode::OK, value)
     } else {
@@ -362,7 +364,7 @@ fn api_prom_streams_only_response(value: &Value) -> Response {
     }
 }
 
-async fn execute_http_query(
+pub(crate) async fn execute_http_query(
     state: &QuerierState,
     headers: &HeaderMap,
     params: QueryParams,
@@ -375,7 +377,7 @@ async fn execute_http_query(
     execute_http_query_for_tenant(state, &tenants[0], &params, kind).await
 }
 
-async fn execute_http_multi_tenant_query(
+pub(crate) async fn execute_http_multi_tenant_query(
     state: &QuerierState,
     tenants: &[String],
     params: &QueryParams,
@@ -412,4 +414,3 @@ async fn execute_http_multi_tenant_query(
         })))
     }))
 }
-

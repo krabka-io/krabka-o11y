@@ -1,15 +1,17 @@
-type MetricSamples = BTreeMap<Labels, BTreeMap<i64, MetricSampleState>>;
-type FormattedMetricSeries = Vec<(Labels, Vec<[String; 2]>)>;
+use super::*;
+
+pub(crate) type MetricSamples = BTreeMap<Labels, BTreeMap<i64, MetricSampleState>>;
+pub(crate) type FormattedMetricSeries = Vec<(Labels, Vec<[String; 2]>)>;
 
 #[derive(Clone, Copy)]
-struct MetricWindow<'a> {
-    query: &'a MetricQuery,
-    eval_times: &'a [i64],
-    range_ns: i64,
-    delete_filters: &'a [ActiveLogDeleteFilter],
+pub(crate) struct MetricWindow<'a> {
+    pub(crate) query: &'a MetricQuery,
+    pub(crate) eval_times: &'a [i64],
+    pub(crate) range_ns: i64,
+    pub(crate) delete_filters: &'a [ActiveLogDeleteFilter],
 }
 
-fn merge_metric_samples(samples: &mut MetricSamples, block_samples: MetricSamples) {
+pub(crate) fn merge_metric_samples(samples: &mut MetricSamples, block_samples: MetricSamples) {
     for (labels, values) in block_samples {
         let target = samples.entry(labels).or_default();
         for (timestamp_ns, value) in values {
@@ -19,7 +21,11 @@ fn merge_metric_samples(samples: &mut MetricSamples, block_samples: MetricSample
     }
 }
 
-fn apply_absent_over_time(samples: &mut MetricSamples, query: &MetricQuery, eval_times: &[i64]) {
+pub(crate) fn apply_absent_over_time(
+    samples: &mut MetricSamples,
+    query: &MetricQuery,
+    eval_times: &[i64],
+) {
     if !matches!(query.aggregation, RangeAggregation::AbsentOverTime) {
         return;
     }
@@ -44,7 +50,7 @@ fn apply_absent_over_time(samples: &mut MetricSamples, query: &MetricQuery, eval
     }
 }
 
-fn absent_metric_labels(query: &MetricQuery) -> Labels {
+pub(crate) fn absent_metric_labels(query: &MetricQuery) -> Labels {
     query
         .stream
         .matchers
@@ -54,7 +60,7 @@ fn absent_metric_labels(query: &MetricQuery) -> Labels {
         .collect::<Labels>()
 }
 
-fn metric_samples_from_batches(
+pub(crate) fn metric_samples_from_batches(
     batches: &[datafusion::arrow::record_batch::RecordBatch],
     plan: &StreamPlan,
     query: &MetricQuery,
@@ -121,7 +127,10 @@ fn metric_samples_from_batches(
     Ok(samples)
 }
 
-fn format_metric_samples(samples: MetricSamples, query: &MetricQuery) -> FormattedMetricSeries {
+pub(crate) fn format_metric_samples(
+    samples: MetricSamples,
+    query: &MetricQuery,
+) -> FormattedMetricSeries {
     let samples = if let Some(grouping) = &query.range_grouping {
         group_range_samples(samples, grouping)
     } else {
@@ -164,7 +173,10 @@ fn format_metric_samples(samples: MetricSamples, query: &MetricQuery) -> Formatt
         .collect()
 }
 
-fn sort_formatted_vector_samples(series: &mut FormattedMetricSeries, op: &VectorAggregationOp) {
+pub(crate) fn sort_formatted_vector_samples(
+    series: &mut FormattedMetricSeries,
+    op: &VectorAggregationOp,
+) {
     match op {
         VectorAggregationOp::Sort | VectorAggregationOp::SortDesc => {
             series.sort_by(|left, right| {
@@ -190,7 +202,10 @@ fn sort_formatted_vector_samples(series: &mut FormattedMetricSeries, op: &Vector
     }
 }
 
-fn group_range_samples(samples: MetricSamples, grouping: &VectorGrouping) -> MetricSamples {
+pub(crate) fn group_range_samples(
+    samples: MetricSamples,
+    grouping: &VectorGrouping,
+) -> MetricSamples {
     let mut grouped: MetricSamples = BTreeMap::new();
 
     for (labels, values) in samples {
@@ -204,7 +219,7 @@ fn group_range_samples(samples: MetricSamples, grouping: &VectorGrouping) -> Met
     grouped
 }
 
-fn aggregate_vector_samples(
+pub(crate) fn aggregate_vector_samples(
     samples: MetricSamples,
     query: &MetricQuery,
     vector_aggregation: &VectorAggregation,
@@ -270,7 +285,7 @@ fn aggregate_vector_samples(
         .collect()
 }
 
-fn count_values_vector_samples(
+pub(crate) fn count_values_vector_samples(
     samples: MetricSamples,
     query: &MetricQuery,
     grouping: Option<&VectorGrouping>,
@@ -306,7 +321,7 @@ fn count_values_vector_samples(
         .collect()
 }
 
-fn select_all_vector_samples(
+pub(crate) fn select_all_vector_samples(
     samples: MetricSamples,
     query: &MetricQuery,
 ) -> BTreeMap<Labels, BTreeMap<i64, MetricValue>> {
@@ -325,12 +340,12 @@ fn select_all_vector_samples(
 }
 
 #[derive(Clone, Copy)]
-enum VectorSelection {
+pub(crate) enum VectorSelection {
     Largest,
     Smallest,
 }
 
-fn select_vector_samples(
+pub(crate) fn select_vector_samples(
     samples: MetricSamples,
     query: &MetricQuery,
     grouping: Option<&VectorGrouping>,
@@ -374,7 +389,7 @@ fn select_vector_samples(
     selected
 }
 
-fn vector_group_labels(labels: &Labels, grouping: Option<&VectorGrouping>) -> Labels {
+pub(crate) fn vector_group_labels(labels: &Labels, grouping: Option<&VectorGrouping>) -> Labels {
     match grouping {
         Some(VectorGrouping::By(names)) => names
             .iter()
@@ -389,7 +404,7 @@ fn vector_group_labels(labels: &Labels, grouping: Option<&VectorGrouping>) -> La
     }
 }
 
-fn range_sample_value(value: MetricSampleState, query: &MetricQuery) -> MetricValue {
+pub(crate) fn range_sample_value(value: MetricSampleState, query: &MetricQuery) -> MetricValue {
     match query.aggregation {
         RangeAggregation::CountOverTime
         | RangeAggregation::BytesOverTime
@@ -417,7 +432,7 @@ fn range_sample_value(value: MetricSampleState, query: &MetricQuery) -> MetricVa
     }
 }
 
-fn is_unwrapped_metric_query(query: &MetricQuery) -> bool {
+pub(crate) fn is_unwrapped_metric_query(query: &MetricQuery) -> bool {
     query
         .stream
         .pipeline
@@ -426,10 +441,9 @@ fn is_unwrapped_metric_query(query: &MetricQuery) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct MetricValue {
-    numerator: i128,
-    denominator: u128,
+pub(crate) struct MetricValue {
+    pub(crate) numerator: i128,
+    pub(crate) denominator: u128,
 }
 
-const METRIC_DECIMAL_SCALE: u128 = 1_000_000_000;
-
+pub(crate) const METRIC_DECIMAL_SCALE: u128 = 1_000_000_000;

@@ -1,4 +1,6 @@
-async fn execute_http_metric_expression_query(
+use super::*;
+
+pub(crate) async fn execute_http_metric_expression_query(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -132,7 +134,7 @@ async fn execute_http_metric_expression_query(
     execute_http_metric_query(state, tenant, time_range, step, kind, query).await
 }
 
-async fn execute_http_label_replace_metric_binary_expression(
+pub(crate) async fn execute_http_label_replace_metric_binary_expression(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -205,7 +207,7 @@ async fn execute_http_label_replace_metric_binary_expression(
     }
 }
 
-async fn execute_http_metric_binary_operand(
+pub(crate) async fn execute_http_metric_binary_operand(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -248,7 +250,7 @@ async fn execute_http_metric_binary_operand(
     execute_http_metric_query(state, tenant, time_range, step, kind, query).await
 }
 
-async fn execute_http_sort_vector_expression(
+pub(crate) async fn execute_http_sort_vector_expression(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -271,7 +273,7 @@ async fn execute_http_sort_vector_expression(
     Ok(value)
 }
 
-async fn execute_http_metric_vector_arithmetic_expression(
+pub(crate) async fn execute_http_metric_vector_arithmetic_expression(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -322,7 +324,7 @@ async fn execute_http_metric_vector_arithmetic_expression(
     }
 }
 
-async fn execute_http_metric_vector_comparison_expression(
+pub(crate) async fn execute_http_metric_vector_comparison_expression(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -375,7 +377,7 @@ async fn execute_http_metric_vector_comparison_expression(
     }
 }
 
-async fn execute_http_metric_vector_set_expression(
+pub(crate) async fn execute_http_metric_vector_set_expression(
     state: &QuerierState,
     tenant: &str,
     time_range: TimeRange,
@@ -427,7 +429,7 @@ async fn execute_http_metric_vector_set_expression(
     }
 }
 
-fn normalize_loki_vector_sample_timestamps_to_seconds(value: &mut Value) {
+pub(crate) fn normalize_loki_vector_sample_timestamps_to_seconds(value: &mut Value) {
     let Some(results) = value
         .pointer_mut("/data/result")
         .and_then(Value::as_array_mut)
@@ -451,4 +453,3 @@ fn normalize_loki_vector_sample_timestamps_to_seconds(value: &mut Value) {
         };
     }
 }
-
