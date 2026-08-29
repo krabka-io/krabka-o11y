@@ -1,4 +1,4 @@
-"""krabka-broker — Bazel module (bzlmod).
+"""krabka-o11y — Bazel module (bzlmod).
 
 Bazel is the build and test path; Cargo stays the dependency source of truth.
 `crate.from_cargo` reads the same `Cargo.toml` / `Cargo.lock` that Cargo does,

@@ -1,4 +1,4 @@
-# krabka-broker Bazel configuration.
+# krabka-o11y Bazel configuration.
 #
 # Cargo remains the dependency source of truth; Bazel reads the same
 # Cargo.toml / Cargo.lock through rules_rs (see MODULE.bazel).
