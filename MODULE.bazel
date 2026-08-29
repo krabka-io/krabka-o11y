@@ -229,6 +229,7 @@ SIBLING_MEMBERS = {
     "krabka-records-legacy": "crates/records-legacy",
     "krabka-remote-storage": "crates/remote-storage",
     "krabka-remote-storage-topic": "crates/remote-storage-topic",
+    "krabka-schema-serde": "crates/schema-serde",
     "krabka-security": "crates/security",
     "krabka-telemetry": "crates/telemetry",
     "krabka-throttle": "crates/throttle",
