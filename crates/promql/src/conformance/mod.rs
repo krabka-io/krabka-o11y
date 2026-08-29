@@ -278,11 +278,20 @@ pub mod testkit {
     }
 
     fn corpus_path_enabled(path: &Path) -> bool {
-        if cfg!(feature = "experimental-functions") {
-            return true;
-        }
+        // `-> true` is a permanent mutation survivor under
+        // `experimental-functions`, where the first arm already answers for
+        // every path. The filename test that decides it otherwise lives in
+        // `corpus_path_needs_experimental_functions`, which no feature gate
+        // hides from a test.
+        cfg!(feature = "experimental-functions") || !corpus_path_needs_experimental_functions(path)
+    }
 
-        path.file_name().and_then(|name| name.to_str()) != Some("limit.test")
+    /// Whether a corpus file can only run with `experimental-functions` on.
+    ///
+    /// `limit.test` is the one such file: it exercises `limitk` and
+    /// `limit_ratio`, which do not exist in a default build.
+    fn corpus_path_needs_experimental_functions(path: &Path) -> bool {
+        path.file_name().and_then(|name| name.to_str()) == Some("limit.test")
     }
 
     async fn run_corpus_path(dir: &Path, path: &Path) -> FileResult {
@@ -676,6 +685,21 @@ pub mod testkit {
     fn relative_floats_equal(actual: f64, expected: f64) -> bool {
         let abs_sum = actual.abs() + expected.abs();
         let diff = (actual - expected).abs();
+        // Three permanent mutation survivors sit in what follows.
+        //
+        // The first `||` can become `&&`: they differ only when exactly one
+        // side is zero and the sum still reaches the smallest normal, and there
+        // the absolute band asks whether the other side is under 1e-314 while
+        // the relative one divides it by itself -- both say no.
+        //
+        // `abs_sum <` can become `<=`: at a sum of exactly `MIN_POSITIVE` the
+        // two branches agree everywhere, meeting at the same crossing where a
+        // difference of `FLOAT_TOLERANCE * MIN_POSITIVE` is excluded either way.
+        //
+        // The final `<` can become `<=`: that needs the quotient to land
+        // exactly on `FLOAT_TOLERANCE`, which is not itself a representable
+        // double -- searching the neighbourhood of the exact solution across
+        // forty binades finds no pair of doubles that divide to it.
         if matches!(actual.classify(), std::num::FpCategory::Zero)
             || matches!(expected.classify(), std::num::FpCategory::Zero)
             || abs_sum < f64::MIN_POSITIVE
@@ -767,6 +791,522 @@ pub mod testkit {
             .unwrap_or(value)
             .replace("\\\"", "\"")
             .replace("\\\\", "\\")
+    }
+    #[cfg(test)]
+    mod tests {
+        use assert2::check;
+        use crabka_metrics::{NativeHistogram, ResetHint};
+
+        use super::*;
+
+        /// The corpus's range comparison: the result must be a matrix, must
+        /// carry the expected series, and every step must match. Each failure
+        /// is a distinct refusal, so none of them can stand in for another.
+        #[test]
+        fn a_range_result_is_compared_series_by_series_and_step_by_step() {
+            let step = crabka_units::minutes(1);
+            let matrix = |values: &[f64]| {
+                QueryResult::RangeMatrix(vec![crate::RangeSeries {
+                    labels: metric_to_labels(r#"up{job="api"}"#),
+                    samples: values
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            (
+                                i64::try_from(index).expect("index fits i64") * 60_000,
+                                SampleValue::Float(*value),
+                            )
+                        })
+                        .collect(),
+                }])
+            };
+            let expect = vec![ExpectLine {
+                metric: r#"up{job="api"}"#.to_owned(),
+                values: vec![
+                    SampleSpec::Value(0.0),
+                    SampleSpec::Value(1.0),
+                    SampleSpec::Value(2.0),
+                ],
+            }];
+
+            check!(compare_range_result(matrix(&[0.0, 1.0, 2.0]), &expect, 0, step).is_ok());
+
+            let wrong_value = compare_range_result(matrix(&[0.0, 9.0, 2.0]), &expect, 0, step);
+            check!(wrong_value.is_err(), "a differing step must be refused");
+
+            let wrong_length = compare_range_result(matrix(&[0.0, 1.0]), &expect, 0, step);
+            check!(wrong_length.is_err(), "a missing step must be refused");
+
+            let no_series =
+                compare_range_result(QueryResult::RangeMatrix(Vec::new()), &expect, 0, step);
+            check!(
+                no_series
+                    .expect_err("an empty matrix is not one series")
+                    .to_string()
+                    .contains("expected 1 series, got 0")
+            );
+
+            let not_a_matrix = compare_range_result(
+                QueryResult::Scalar {
+                    ts_ms: 0,
+                    value: 1.0,
+                },
+                &expect,
+                0,
+                step,
+            );
+            check!(
+                not_a_matrix
+                    .expect_err("a scalar is not a matrix")
+                    .to_string()
+                    .contains("expected range matrix result, got scalar")
+            );
+        }
+
+        /// A range evaluation's outcome is routed by whether the query was
+        /// expected to fail: an unexpected success, an unexpected error, and a
+        /// mismatching result are each refused, and only a matching result
+        /// with satisfied annotations passes.
+        #[test]
+        fn a_range_evaluation_routes_its_outcome_by_what_the_test_expected() {
+            let step = crabka_units::minutes(1);
+            let expect = vec![ExpectLine {
+                metric: r#"up{job="api"}"#.to_owned(),
+                values: vec![SampleSpec::Value(7.0)],
+            }];
+            let matrix = |value: f64| {
+                QueryResult::RangeMatrix(vec![crate::RangeSeries {
+                    labels: metric_to_labels(r#"up{job="api"}"#),
+                    samples: vec![(0, SampleValue::Float(value))],
+                }])
+            };
+            let raised = Annotations::default();
+
+            check!(
+                handle_range_eval_result(
+                    Ok((matrix(7.0), raised.clone())),
+                    &expect,
+                    &[],
+                    None,
+                    0,
+                    step
+                )
+                .is_ok(),
+                "a matching result passes"
+            );
+            check!(
+                handle_range_eval_result(
+                    Ok((matrix(8.0), raised.clone())),
+                    &expect,
+                    &[],
+                    None,
+                    0,
+                    step
+                )
+                .is_err(),
+                "a differing result is refused"
+            );
+            check!(
+                handle_range_eval_result(
+                    Ok((matrix(7.0), raised.clone())),
+                    &expect,
+                    &[],
+                    Some("boom"),
+                    0,
+                    step
+                )
+                .is_err(),
+                "a success where failure was expected is refused"
+            );
+            check!(
+                handle_range_eval_result(
+                    Err(PromqlError::Exec("boom happened".to_owned())),
+                    &expect,
+                    &[],
+                    Some("boom"),
+                    0,
+                    step
+                )
+                .is_ok(),
+                "the expected failure passes"
+            );
+            check!(
+                handle_range_eval_result(
+                    Err(PromqlError::Exec("boom happened".to_owned())),
+                    &expect,
+                    &[],
+                    None,
+                    0,
+                    step
+                )
+                .is_err(),
+                "an unexpected failure is refused"
+            );
+            check!(
+                handle_range_eval_result(
+                    Ok((matrix(7.0), raised)),
+                    &expect,
+                    &[AnnotationExpect::AnyWarn],
+                    None,
+                    0,
+                    step
+                )
+                .is_err(),
+                "an unsatisfied annotation is refused"
+            );
+        }
+
+        /// A report's case count is what its pass ratio divides by, and only
+        /// `eval` statements are cases -- a `load` or a `clear` is setup.
+        #[test]
+        fn only_eval_statements_count_as_cases() {
+            let file = parse_test_file(
+                r#"
+load 1m
+  up{job="api"} 0+1x2
+
+eval instant at 1m up{job="api"}
+  up{job="api"} 1
+
+eval range from 0m to 2m step 1m up{job="api"}
+  up{job="api"} 0 1 2
+
+clear
+
+load 1m
+  down{job="api"} 0+1x2
+
+eval instant at 2m down{job="api"}
+  down{job="api"} 2
+"#,
+            )
+            .expect("the test file parses");
+            check!(count_eval_cases(&file) == 3);
+
+            let setup_only = parse_test_file("load 1m\n  up{job=\"api\"} 0+1x2\n")
+                .expect("the setup-only file parses");
+            check!(count_eval_cases(&setup_only) == 0);
+        }
+
+        /// Only `limit.test` needs `experimental-functions`; every other
+        /// corpus file runs in a default build. The check reads the file name,
+        /// not the whole path, so a directory of that name does not count.
+        #[test]
+        fn only_the_limit_corpus_file_needs_experimental_functions() {
+            for (path, needs) in [
+                ("corpus/limit.test", true),
+                ("limit.test", true),
+                ("corpus/limits.test", false),
+                ("corpus/limit.test/inner.test", false),
+                ("corpus/aggregators.test", false),
+                ("", false),
+            ] {
+                check!(
+                    corpus_path_needs_experimental_functions(Path::new(path)) == needs,
+                    "{path}"
+                );
+            }
+        }
+
+        /// The report names every file it ran, its pass state, and its case
+        /// counts, and writes that same text to disk -- creating the parent
+        /// directory on the way.
+        #[test]
+        fn a_report_renders_and_writes_every_file_it_ran() {
+            let report = Report {
+                files: vec![
+                    FileResult {
+                        name: "good.test".to_owned(),
+                        passed: true,
+                        passed_cases: 3,
+                        total_cases: 3,
+                        error: None,
+                    },
+                    FileResult {
+                        name: "bad.test".to_owned(),
+                        passed: false,
+                        passed_cases: 1,
+                        total_cases: 4,
+                        error: Some("boom".to_owned()),
+                    },
+                ],
+            };
+            let expected = "PromQL conformance report\n\
+                 files: 2\n\
+                 PASS good.test 3/3\n\
+                 FAIL bad.test 1/4\n  boom\n";
+            check!(report.to_string() == expected);
+
+            let dir = tempfile::tempdir().expect("a temp dir");
+            let path = dir.path().join("nested").join("report.txt");
+            report.write_to(&path).expect("the report is written");
+            let written = std::fs::read_to_string(&path).expect("the report is readable");
+            check!(written == expected);
+        }
+
+        /// An instant expectation carries exactly one value. Anything else --
+        /// no value, a placeholder, or several -- is refused, and the two
+        /// refusals say different things.
+        #[test]
+        fn an_instant_expectation_takes_exactly_one_value() {
+            let line = |values: Vec<SampleSpec>| ExpectLine {
+                metric: "m".to_owned(),
+                values,
+            };
+            let single = expect_single_instant_value(&line(vec![SampleSpec::Value(2.5)]))
+                .expect("one value is accepted");
+            check!(single == SampleValue::Float(2.5));
+
+            for (name, values, message) in [
+                (
+                    "no value at all",
+                    Vec::new(),
+                    "execution error: expected one value for instant expectation `m`",
+                ),
+                (
+                    "a placeholder",
+                    vec![SampleSpec::Missing],
+                    "execution error: expected one value for instant expectation `m`",
+                ),
+                (
+                    "two values",
+                    vec![SampleSpec::Value(1.0), SampleSpec::Value(2.0)],
+                    "execution error: expected one value for instant expectation `m`, got 2",
+                ),
+            ] {
+                let error = expect_single_instant_value(&line(values))
+                    .expect_err("not a single instant value");
+                // Exact, not `contains`: the fall-through message starts with
+                // the same words and only adds a count, so a substring check
+                // would accept either arm answering for the other.
+                check!(error.to_string() == message, "{name}: {error}");
+            }
+        }
+
+        /// The corpus's annotation oracle: `warn`/`info` need at least one of
+        /// that kind, `no_warn`/`no_info` need none, and a `msg:` directive
+        /// needs an exact match. A failure names the expectation it could not
+        /// satisfy, so the description is checked against literal text rather
+        /// than against the describing function's own output.
+        #[test]
+        fn annotation_expectations_are_checked_against_what_was_raised() {
+            let none = Annotations::default();
+            let warned = Annotations {
+                warnings: vec!["w one".to_owned()],
+                infos: Vec::new(),
+            };
+            let informed = Annotations {
+                warnings: Vec::new(),
+                infos: vec!["i one".to_owned()],
+            };
+
+            for (expect, raised, unsatisfied_description) in [
+                (AnnotationExpect::AnyWarn, &warned, None),
+                (AnnotationExpect::AnyWarn, &none, Some("expect warn")),
+                (AnnotationExpect::AnyInfo, &informed, None),
+                (AnnotationExpect::AnyInfo, &none, Some("expect info")),
+                (AnnotationExpect::NoWarn, &none, None),
+                (AnnotationExpect::NoWarn, &warned, Some("expect no_warn")),
+                (AnnotationExpect::NoInfo, &none, None),
+                (AnnotationExpect::NoInfo, &informed, Some("expect no_info")),
+                (AnnotationExpect::WarnMsg("w one".to_owned()), &warned, None),
+                (
+                    AnnotationExpect::WarnMsg("w two".to_owned()),
+                    &warned,
+                    Some("expect warn msg:w two"),
+                ),
+                (
+                    AnnotationExpect::InfoMsg("i one".to_owned()),
+                    &informed,
+                    None,
+                ),
+                (
+                    AnnotationExpect::InfoMsg("i two".to_owned()),
+                    &informed,
+                    Some("expect info msg:i two"),
+                ),
+                (AnnotationExpect::Ordered, &none, None),
+            ] {
+                let result = compare_annotations(std::slice::from_ref(&expect), raised);
+                match unsatisfied_description {
+                    None => {
+                        check!(result.is_ok(), "{expect:?} against {raised:?}");
+                    }
+                    Some(description) => {
+                        let message = result
+                            .expect_err("the expectation is not satisfied")
+                            .to_string();
+                        check!(message.contains(description), "{expect:?}: {message}");
+                    }
+                }
+            }
+        }
+
+        /// An expected-failure directive matches when the raised error contains
+        /// its text, and an empty directive accepts any error at all.
+        #[test]
+        fn an_expected_failure_must_appear_in_the_raised_error() {
+            let error = PromqlError::Exec("vector cannot contain metrics".to_owned());
+            for (expected, matches) in [
+                ("", true),
+                ("cannot contain", true),
+                ("vector cannot contain metrics", true),
+                ("some other failure", false),
+            ] {
+                check!(
+                    compare_expected_failure(&error, expected).is_ok() == matches,
+                    "{expected:?}"
+                );
+            }
+        }
+
+        /// Splitting an expected line's label set is the corpus's own parser:
+        /// a comma only separates pairs outside a quoted value, a backslash
+        /// only escapes inside one, and a trailing comma ends the list rather
+        /// than starting an empty pair.
+        #[test]
+        fn label_pairs_split_only_on_commas_outside_quotes() {
+            for (name, inside, expected) in [
+                (
+                    "two plain pairs",
+                    r#"a="x",b="y""#,
+                    vec![r#"a="x""#, r#"b="y""#],
+                ),
+                (
+                    "surrounding space is trimmed",
+                    r#"a="x" , b="y""#,
+                    vec![r#"a="x""#, r#"b="y""#],
+                ),
+                (
+                    "a comma inside a value does not separate",
+                    r#"a="x,y",b="z""#,
+                    vec![r#"a="x,y""#, r#"b="z""#],
+                ),
+                (
+                    "an escaped quote does not end the value",
+                    r#"a="x\",y",b="z""#,
+                    vec![r#"a="x\",y""#, r#"b="z""#],
+                ),
+                (
+                    "a backslash outside a value escapes nothing",
+                    r#"a=\,b="x""#,
+                    vec![r"a=\", r#"b="x""#],
+                ),
+                (
+                    "a trailing comma ends the list",
+                    r#"a="x","#,
+                    vec![r#"a="x""#],
+                ),
+                ("nothing at all", "", Vec::new()),
+            ] {
+                check!(split_label_pairs(inside) == expected, "{name}");
+            }
+        }
+
+        /// The corpus's own oracle. Every comparison below is what decides
+        /// whether a `.test` file passed, so a loosened one would quietly
+        /// accept every wrong answer the engine could give.
+        #[test]
+        fn float_comparison_accepts_only_what_prometheus_calls_equal() {
+            for (name, actual, expected, equal) in [
+                ("plainly different values", 1.0, 2.0, false),
+                ("the same value", 1.0, 1.0, true),
+                ("two zeroes", 0.0, 0.0, true),
+                ("matching infinities", f64::INFINITY, f64::INFINITY, true),
+                (
+                    "opposing infinities",
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    false,
+                ),
+                ("an infinity against a number", f64::INFINITY, 1.0, false),
+                ("two NaNs", f64::NAN, f64::NAN, true),
+                ("a NaN against a number", f64::NAN, 1.0, false),
+            ] {
+                check!(floats_equal(actual, expected) == equal, "{name}");
+            }
+
+            for (name, actual, expected, equal) in [
+                // Half the tolerance apart relative to their sum, and one and
+                // a half times it relative to their product: the denominator
+                // has to be the sum.
+                ("just inside the tolerance", 1.0, 1.000_001_5, true),
+                // Zero against a value far above the absolute band. The band
+                // is the tolerance times the smallest normal, not either one
+                // of them on its own.
+                ("zero against a small number", 0.0, 1e-300, false),
+                // Exactly on the absolute band, which is excluded.
+                (
+                    "zero against the band itself",
+                    0.0,
+                    FLOAT_TOLERANCE * f64::MIN_POSITIVE,
+                    false,
+                ),
+                // Neither is zero and neither rounds to it, but together they
+                // fall under the smallest normal, so the absolute band decides
+                // -- by relative difference they are a third apart.
+                ("two subnormals", 1e-320, 2e-320, true),
+            ] {
+                check!(
+                    relative_floats_equal(actual, expected) == equal,
+                    "{name}: {actual} vs {expected}"
+                );
+            }
+        }
+
+        /// A float and a histogram are never equal, whatever they hold.
+        #[test]
+        fn instant_values_of_different_kinds_are_never_equal() {
+            let histogram = SampleValue::Histogram(NativeHistogram {
+                schema: 0,
+                is_float: true,
+                reset_hint: ResetHint::Unknown,
+                zero_threshold: 0.0,
+                zero_count: 0.0,
+                count: 0.0,
+                sum: 0.0,
+                positive_spans: Vec::new(),
+                positive_counts: Vec::new(),
+                negative_spans: Vec::new(),
+                negative_counts: Vec::new(),
+                custom_values: None,
+                start_timestamp_ms: None,
+            });
+            for (name, actual, expected, equal) in [
+                (
+                    "equal floats",
+                    SampleValue::Float(1.0),
+                    SampleValue::Float(1.0),
+                    true,
+                ),
+                (
+                    "different floats",
+                    SampleValue::Float(1.0),
+                    SampleValue::Float(2.0),
+                    false,
+                ),
+                (
+                    "equal histograms",
+                    histogram.clone(),
+                    histogram.clone(),
+                    true,
+                ),
+                (
+                    "a float against a histogram",
+                    SampleValue::Float(0.0),
+                    histogram.clone(),
+                    false,
+                ),
+                (
+                    "a histogram against a float",
+                    histogram,
+                    SampleValue::Float(0.0),
+                    false,
+                ),
+            ] {
+                check!(instant_values_equal(&actual, &expected) == equal, "{name}");
+            }
+        }
     }
 }
 
@@ -1973,6 +2513,26 @@ fn parse_error(line: Line<'_>, message: impl Into<String>) -> PromqlError {
 mod tests {
 
     use super::*;
+
+    /// Bucket indices accumulate across spans: the first span's offset is the
+    /// starting index, and every later one steps on from where the previous
+    /// span left off. A span whose counts run out ends the walk there.
+    #[test]
+    fn later_histogram_spans_step_on_from_the_previous_one() {
+        let span = |offset, length| BucketSpan { offset, length };
+        assert2::check!(
+            spanned_histogram_counts(&[span(2, 2), span(3, 2)], &[1.0, 2.0, 3.0, 4.0])
+                == BTreeMap::from([(2, 1.0), (3, 2.0), (7, 3.0), (8, 4.0)])
+        );
+        assert2::check!(
+            spanned_histogram_counts(&[span(2, 2)], &[1.0, 2.0])
+                == BTreeMap::from([(2, 1.0), (3, 2.0)])
+        );
+        assert2::check!(
+            spanned_histogram_counts(&[span(2, 2), span(3, 2)], &[1.0, 2.0, 3.0])
+                == BTreeMap::from([(2, 1.0), (3, 2.0), (7, 3.0)])
+        );
+    }
 
     #[test]
     fn parse_legacy_test_file_load_eval_and_clear() {

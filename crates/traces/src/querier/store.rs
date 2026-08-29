@@ -2647,13 +2647,612 @@ fn block_err(err: &crabka_blockstore::BlockStoreError) -> TraceqlError {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
+    fn matcher(scope: MatchScope, key: &str, op: MatchCmp, value: MatchValue) -> SpanMatcher {
+        SpanMatcher {
+            scope,
+            key: key.to_string(),
+            op,
+            value,
+            negated: false,
+        }
+    }
+
+    /// `collect_intrinsic_value` reports a tag's value along with the type
+    /// name a client should read it as, so both halves are pinned. The type is
+    /// the easier half to get wrong: it is a literal beside the value rather
+    /// than derived from the column, so a duration labelled "int" or an id
+    /// labelled "duration" is a change nothing about the value can reveal.
+    #[test]
+    fn collecting_an_intrinsic_reports_its_value_and_type() {
+        let batch = span_batch(&[span_with_nested_refs()]).expect("one-span batch");
+        let collect = |tag: &str| {
+            let mut values = BTreeSet::new();
+            super::collect_intrinsic_value(&batch, 0, tag, &mut values).expect("readable");
+            values.into_iter().collect::<Vec<_>>()
+        };
+        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+
+        // Durations carry their own type name rather than "int".
+        check!(collect("span:duration") == vec![pair("duration", "500")]);
+        check!(collect("trace:duration") == vec![pair("duration", "500")]);
+
+        // Counts and enumerations are ints.
+        check!(
+            collect("span:kind") == vec![pair("int", "2")],
+            "server is kind 2"
+        );
+        check!(
+            collect("span:status") == vec![pair("int", "1")],
+            "ok is status 1"
+        );
+        check!(collect("span:childCount") == vec![pair("int", "0")]);
+        check!(collect("span:nestedSetLeft") == vec![pair("int", "1")]);
+        check!(collect("span:nestedSetRight") == vec![pair("int", "2")]);
+        check!(
+            collect("span:Parent") == vec![pair("int", "-1")],
+            "a root has no parent index"
+        );
+
+        // Ids render as hex strings.
+        check!(collect("span:id") == vec![pair("string", "0202020202020202")]);
+        check!(collect("trace:id") == vec![pair("string", "01010101010101010101010101010101")]);
+
+        // Text columns.
+        check!(collect("span:name") == vec![pair("string", "GET /users")]);
+        check!(collect("trace:rootName") == vec![pair("string", "GET /users")]);
+        check!(collect("trace:rootService") == vec![pair("string", "api")]);
+        check!(collect("instrumentation:name") == vec![pair("string", "otel-rust")]);
+        check!(collect("instrumentation:version") == vec![pair("string", "1.2.3")]);
+
+        // A null parent id contributes nothing rather than an empty string,
+        // which would otherwise appear as a real tag value in the results.
+        check!(
+            collect("span:parentID") == vec![],
+            "this span has no parent"
+        );
+
+        // An empty status message is skipped, and a real one is not. Both
+        // sides are needed: with only the empty case, dropping the emptiness
+        // check changes nothing observable.
+        check!(collect("span:statusMessage") == vec![], "empty is omitted");
+        let mut failed = span_with_nested_refs();
+        failed.status_message = "upstream timeout".into();
+        let failed_batch = span_batch(&[failed]).expect("one-span batch");
+        let mut message = BTreeSet::new();
+        super::collect_intrinsic_value(&failed_batch, 0, "span:statusMessage", &mut message)
+            .expect("readable");
+        check!(
+            message.into_iter().collect::<Vec<_>>() == vec![pair("string", "upstream timeout")],
+            "a real message is reported"
+        );
+
+        // An unknown tag collects nothing and is not an error.
+        check!(collect("span:nonsense") == vec![]);
+        check!(collect("") == vec![]);
+    }
+
+    /// `intrinsic_matches` reads a different column per key, so the fixture is
+    /// a real span batch rather than a hand-built one: a batch missing a
+    /// column would fail to resolve rather than report a mismatch, and the
+    /// nested event and link columns only exist on a span that has them.
+    ///
+    /// The span here is `span_with_nested_refs`, which carries one event, one
+    /// link, resource and span attributes, and an instrumentation scope.
+    #[test]
+    fn every_span_intrinsic_reads_its_own_column() {
+        // A second event and link, so that "one of them matches" is a
+        // different question from "all of them do". With a single event the
+        // two agree and neither can be tested.
+        let mut span = span_with_nested_refs();
+        span.events.push(EventRecord {
+            time_unix_nano: 1_200,
+            name: "retry".into(),
+            attrs: Vec::new(),
+        });
+        span.links.push(LinkRecord {
+            trace_id: [7; 16],
+            span_id: [6; 8],
+            attrs: Vec::new(),
+        });
+        let batch = span_batch(&[span]).expect("one-span batch");
+        let hit = |key: &str, value: MatchValue| {
+            super::intrinsic_matches(
+                &batch,
+                0,
+                &matcher(MatchScope::Intrinsic, key, MatchCmp::Eq, value),
+            )
+            .expect("intrinsic is readable")
+        };
+        let str_hit = |key: &str, value: &str| hit(key, MatchValue::Str(value.to_string()));
+
+        // Flat span columns.
+        check!(str_hit("span:name", "GET /users"));
+        check!(
+            !str_hit("span:name", "GET /orders"),
+            "a different name does not match"
+        );
+        check!(hit("span:duration", MatchValue::Int(500)));
+        check!(!hit("span:duration", MatchValue::Int(501)));
+        check!(str_hit("span:id", "0202020202020202"), "ids render as hex");
+        check!(str_hit("trace:id", "01010101010101010101010101010101"));
+        check!(str_hit("span:statusMessage", ""));
+
+        // The instrumentation scope is its own pair of columns.
+        check!(str_hit("instrumentation:name", "otel-rust"));
+        check!(str_hit("instrumentation:version", "1.2.3"));
+        check!(
+            !str_hit("instrumentation:name", "1.2.3"),
+            "the two are not interchangeable"
+        );
+
+        // Trace-level columns are derived from the span set, not the span.
+        check!(str_hit("trace:rootService", "api"));
+        check!(str_hit("trace:rootName", "GET /users"));
+        check!(hit("trace:duration", MatchValue::Int(500)));
+
+        // Nested columns: the event and link the span actually carries.
+        check!(
+            str_hit("event:name", "exception"),
+            "the first event matches"
+        );
+        check!(str_hit("event:name", "retry"), "and so does the second");
+        check!(
+            !str_hit("event:name", "timeout"),
+            "the attribute is not the name"
+        );
+        check!(
+            hit("event:timeSinceStart", MatchValue::Int(50)),
+            "relative to span start"
+        );
+        check!(
+            hit("event:timeSinceStart", MatchValue::Int(200)),
+            "the second event too"
+        );
+        check!(str_hit("link:traceID", "09090909090909090909090909090909"));
+        check!(str_hit("link:spanID", "0808080808080808"));
+        check!(
+            str_hit("link:traceID", "07070707070707070707070707070707"),
+            "the second link"
+        );
+        check!(
+            !str_hit("link:traceID", "0808080808080808"),
+            "the link's two ids are not interchangeable"
+        );
+
+        // An unknown intrinsic matches everything rather than nothing. That is
+        // the permissive default a filter wants -- an unrecognised predicate
+        // excludes no rows instead of silently emptying the result -- but it
+        // is the opposite of what the named keys above do, so it is pinned.
+        check!(str_hit("span:nonsense", "anything"));
+        check!(str_hit("", "anything"), "including an empty key");
+    }
+
+    /// `link_matcher_matches_link` answers one matcher against one link. Its
+    /// two scopes read different halves of the link -- Link reads the
+    /// attributes, Intrinsic reads the two ids -- so a hit and a miss are
+    /// pinned in each: a mutant that answers a constant is invisible to
+    /// whichever half it happens to agree with.
+    #[test]
+    fn a_link_matcher_reads_the_link_it_is_given() {
+        let link = LinkRef {
+            trace_id: [9; 16],
+            span_id: [8; 8],
+            // Two keys with different values, so a mutant that inverts the
+            // key filter selects the *other* attribute rather than nothing,
+            // and returns a wrong answer instead of an empty one.
+            attributes: vec![
+                ("link.kind".into(), AttrValue::Str("retry".into())),
+                ("link.reason".into(), AttrValue::Str("timeout".into())),
+            ],
+        };
+        let m = |scope, key, op, value| {
+            super::link_matcher_matches_link(&link, &matcher(scope, key, op, value))
+        };
+        let eq =
+            |scope, key, value: &str| m(scope, key, MatchCmp::Eq, MatchValue::Str(value.into()));
+
+        // Link scope reads the attributes, and each key reads its own value.
+        check!(eq(MatchScope::Link, "link.kind", "retry"));
+        check!(eq(MatchScope::Link, "link.reason", "timeout"));
+        check!(
+            !eq(MatchScope::Link, "link.kind", "timeout"),
+            "not the other key's value"
+        );
+        check!(!eq(MatchScope::Link, "link.reason", "retry"));
+        check!(
+            !eq(MatchScope::Link, "link.absent", "retry"),
+            "an absent key matches nothing"
+        );
+
+        // Intrinsic scope reads the two ids, hex-encoded and not interchangeable.
+        let trace_hex = "09090909090909090909090909090909";
+        let span_hex = "0808080808080808";
+        check!(eq(MatchScope::Intrinsic, "link:traceID", trace_hex));
+        check!(eq(MatchScope::Intrinsic, "link:spanID", span_hex));
+        check!(
+            !eq(MatchScope::Intrinsic, "link:traceID", span_hex),
+            "ids do not cross over"
+        );
+        check!(!eq(MatchScope::Intrinsic, "link:spanID", trace_hex));
+
+        // A link always has both ids, so `= nil` is false and `!= nil` holds.
+        check!(!m(
+            MatchScope::Intrinsic,
+            "link:traceID",
+            MatchCmp::Eq,
+            MatchValue::Nil
+        ));
+        check!(m(
+            MatchScope::Intrinsic,
+            "link:traceID",
+            MatchCmp::Neq,
+            MatchValue::Nil
+        ));
+        check!(!m(
+            MatchScope::Intrinsic,
+            "link:spanID",
+            MatchCmp::Eq,
+            MatchValue::Nil
+        ));
+        check!(m(
+            MatchScope::Intrinsic,
+            "link:spanID",
+            MatchCmp::Neq,
+            MatchValue::Nil
+        ));
+
+        // An unrecognised intrinsic key is a non-match here. Note this is the
+        // opposite of the span-level matcher, which lets an unknown intrinsic
+        // through; the two defaults disagree and both are load-bearing.
+        check!(!eq(MatchScope::Intrinsic, "link:nonsense", "anything"));
+        check!(!eq(MatchScope::Intrinsic, "", "anything"));
+
+        // Any other scope is a non-match whatever the key says.
+        check!(!eq(MatchScope::Span, "link.kind", "retry"));
+        check!(!eq(MatchScope::Resource, "link.kind", "retry"));
+        check!(!eq(MatchScope::Event, "link.kind", "retry"));
+
+        // Negation inverts whatever the answer was, in both directions.
+        let negated = |scope, key, value: &str| {
+            let mut matcher = matcher(scope, key, MatchCmp::Eq, MatchValue::Str(value.into()));
+            matcher.negated = true;
+            super::link_matcher_matches_link(&link, &matcher)
+        };
+        check!(
+            !negated(MatchScope::Link, "link.kind", "retry"),
+            "a hit becomes a miss"
+        );
+        check!(
+            negated(MatchScope::Link, "link.kind", "timeout"),
+            "and a miss becomes a hit"
+        );
+    }
+
+    /// A span with no links still answers link matchers: `= nil` holds and
+    /// `!= nil` does not. Everything else is a non-match, and a negated
+    /// matcher inverts whatever the answer was.
+    #[test]
+    fn a_span_without_links_matches_only_absence() {
+        let m = |scope, key, op, value| {
+            super::link_matcher_matches_absence(&matcher(scope, key, op, value))
+        };
+
+        // Scoped at the link itself.
+        check!(m(
+            MatchScope::Link,
+            "anything",
+            MatchCmp::Eq,
+            MatchValue::Nil
+        ));
+        check!(!m(
+            MatchScope::Link,
+            "anything",
+            MatchCmp::Neq,
+            MatchValue::Nil
+        ));
+        check!(
+            !m(
+                MatchScope::Link,
+                "anything",
+                MatchCmp::Eq,
+                MatchValue::Int(1)
+            ),
+            "a real value cannot match a link that is not there"
+        );
+
+        // The two link intrinsics behave the same way.
+        for key in ["link:traceID", "link:spanID"] {
+            check!(
+                m(MatchScope::Intrinsic, key, MatchCmp::Eq, MatchValue::Nil),
+                "{key}"
+            );
+            check!(
+                !m(MatchScope::Intrinsic, key, MatchCmp::Neq, MatchValue::Nil),
+                "{key}"
+            );
+        }
+
+        // An intrinsic that is not about links does not match at all.
+        check!(!m(
+            MatchScope::Intrinsic,
+            "span:name",
+            MatchCmp::Eq,
+            MatchValue::Nil
+        ));
+        check!(!m(
+            MatchScope::Intrinsic,
+            "event:name",
+            MatchCmp::Eq,
+            MatchValue::Nil
+        ));
+
+        // Nor does any other scope.
+        for scope in [MatchScope::Span, MatchScope::Resource, MatchScope::Event] {
+            check!(!m(scope, "anything", MatchCmp::Eq, MatchValue::Nil));
+        }
+
+        // Negation flips the answer, both ways.
+        let mut negated = matcher(MatchScope::Link, "x", MatchCmp::Eq, MatchValue::Nil);
+        negated.negated = true;
+        check!(
+            !super::link_matcher_matches_absence(&negated),
+            "a negated absence match is a non-match"
+        );
+        negated.op = MatchCmp::Neq;
+        check!(
+            super::link_matcher_matches_absence(&negated),
+            "and a negated non-match is a match"
+        );
+    }
+
+    /// Events mirror links exactly, over their own scope and intrinsics.
+    #[test]
+    fn a_span_without_events_matches_only_absence() {
+        let m = |scope, key, op, value| {
+            super::event_matcher_matches_absence(&matcher(scope, key, op, value))
+        };
+
+        check!(m(
+            MatchScope::Event,
+            "anything",
+            MatchCmp::Eq,
+            MatchValue::Nil
+        ));
+        check!(!m(
+            MatchScope::Event,
+            "anything",
+            MatchCmp::Neq,
+            MatchValue::Nil
+        ));
+
+        for key in ["event:name", "event:timeSinceStart"] {
+            check!(
+                m(MatchScope::Intrinsic, key, MatchCmp::Eq, MatchValue::Nil),
+                "{key}"
+            );
+            check!(
+                !m(MatchScope::Intrinsic, key, MatchCmp::Neq, MatchValue::Nil),
+                "{key}"
+            );
+        }
+
+        // A link intrinsic is not an event intrinsic, and the reverse holds
+        // in the link matcher above -- the two must not answer for each other.
+        check!(!m(
+            MatchScope::Intrinsic,
+            "link:traceID",
+            MatchCmp::Eq,
+            MatchValue::Nil
+        ));
+        check!(!m(
+            MatchScope::Link,
+            "anything",
+            MatchCmp::Eq,
+            MatchValue::Nil
+        ));
+
+        let mut negated = matcher(MatchScope::Event, "x", MatchCmp::Eq, MatchValue::Nil);
+        negated.negated = true;
+        check!(!super::event_matcher_matches_absence(&negated));
+    }
+
+    /// `nil_matches` and `nested_presence_matches` are the two ways a matcher
+    /// asks about presence. The first says whether a value that exists can
+    /// match; the second answers for a whole collection and declines to
+    /// answer for any operator other than equality.
+    #[test]
+    fn presence_matchers_answer_only_about_nil() {
+        check!(super::nil_matches(MatchCmp::Eq, &MatchValue::Nil));
+        check!(!super::nil_matches(MatchCmp::Neq, &MatchValue::Nil));
+        check!(!super::nil_matches(MatchCmp::Eq, &MatchValue::Int(0)));
+        check!(!super::nil_matches(MatchCmp::Lt, &MatchValue::Nil));
+
+        // A value that is present is not nil, and differs from nil.
+        check!(super::present_value_matches(MatchCmp::Eq, &MatchValue::Nil) == Some(false));
+        check!(super::present_value_matches(MatchCmp::Neq, &MatchValue::Nil) == Some(true));
+        check!(
+            super::present_value_matches(MatchCmp::Eq, &MatchValue::Int(1)) == None,
+            "a real comparison is left to the caller"
+        );
+        check!(super::present_value_matches(MatchCmp::Lt, &MatchValue::Nil) == None);
+
+        // A collection answers about itself, so the sense flips with content.
+        check!(super::nested_presence_matches(false, MatchCmp::Eq, &MatchValue::Nil) == Some(true));
+        check!(super::nested_presence_matches(true, MatchCmp::Eq, &MatchValue::Nil) == Some(false));
+        check!(
+            super::nested_presence_matches(false, MatchCmp::Neq, &MatchValue::Nil) == Some(false)
+        );
+        check!(super::nested_presence_matches(true, MatchCmp::Neq, &MatchValue::Nil) == Some(true));
+        check!(
+            super::nested_presence_matches(true, MatchCmp::Eq, &MatchValue::Int(1)) == None,
+            "only nil is answered here"
+        );
+    }
+
+    /// The comparison operators are the whole of a matcher's meaning, so each
+    /// is checked on the boundary where the strict and non-strict forms part
+    /// company, and either side of it so a comparison stuck on one answer is
+    /// caught too.
+    #[test]
+    fn integer_comparisons_are_exact_at_the_boundary() {
+        let five = MatchValue::Int(5);
+        let cmp = |value, op| super::int_matches(value, op, &five);
+
+        check!(cmp(5, MatchCmp::Eq));
+        check!(!cmp(5, MatchCmp::Neq));
+        check!(!cmp(5, MatchCmp::Lt), "5 < 5");
+        check!(cmp(5, MatchCmp::Lte), "5 <= 5");
+        check!(!cmp(5, MatchCmp::Gt), "5 > 5");
+        check!(cmp(5, MatchCmp::Gte), "5 >= 5");
+
+        check!(cmp(4, MatchCmp::Lt) && cmp(4, MatchCmp::Lte) && cmp(4, MatchCmp::Neq));
+        check!(!cmp(4, MatchCmp::Gt) && !cmp(4, MatchCmp::Gte) && !cmp(4, MatchCmp::Eq));
+        check!(cmp(6, MatchCmp::Gt) && cmp(6, MatchCmp::Gte) && cmp(6, MatchCmp::Neq));
+        check!(!cmp(6, MatchCmp::Lt) && !cmp(6, MatchCmp::Lte) && !cmp(6, MatchCmp::Eq));
+
+        // Regex operators have no meaning against a number.
+        check!(!cmp(5, MatchCmp::Re) && !cmp(5, MatchCmp::Nre));
+
+        // A value of another type never matches, whatever the operator.
+        for op in [MatchCmp::Eq, MatchCmp::Lt, MatchCmp::Gte] {
+            check!(
+                !super::int_matches(5, op, &MatchValue::Bool(true)),
+                "an integer does not compare with a bool"
+            );
+        }
+    }
+
+    /// The float matcher mirrors the integer one, with the extra case that
+    /// NaN compares equal to nothing at all -- not even itself -- which is
+    /// what the partial comparison is there to express.
+    #[test]
+    fn float_comparisons_are_exact_and_nan_matches_nothing() {
+        let five = MatchValue::Float(5.0);
+        let cmp = |value, op| super::float_matches(value, op, &five);
+
+        check!(cmp(5.0, MatchCmp::Eq));
+        check!(!cmp(5.0, MatchCmp::Lt) && cmp(5.0, MatchCmp::Lte));
+        check!(!cmp(5.0, MatchCmp::Gt) && cmp(5.0, MatchCmp::Gte));
+        check!(cmp(4.5, MatchCmp::Lt) && cmp(5.5, MatchCmp::Gt));
+
+        // NaN is unordered against everything.
+        check!(!cmp(f64::NAN, MatchCmp::Eq), "NaN is equal to nothing");
+        check!(
+            cmp(f64::NAN, MatchCmp::Neq),
+            "so it differs from everything"
+        );
+        check!(!cmp(f64::NAN, MatchCmp::Lt) && !cmp(f64::NAN, MatchCmp::Gt));
+        check!(!cmp(f64::NAN, MatchCmp::Lte) && !cmp(f64::NAN, MatchCmp::Gte));
+
+        check!(
+            !super::float_matches(5.0, MatchCmp::Eq, &MatchValue::Int(5)),
+            "a float does not compare with an integer"
+        );
+    }
+
+    /// Booleans support only equality; every ordering operator is a
+    /// non-match rather than an error.
+    #[test]
+    fn booleans_compare_only_for_equality() {
+        let yes = MatchValue::Bool(true);
+
+        check!(super::bool_matches(true, MatchCmp::Eq, &yes));
+        check!(!super::bool_matches(false, MatchCmp::Eq, &yes));
+        check!(super::bool_matches(false, MatchCmp::Neq, &yes));
+        check!(!super::bool_matches(true, MatchCmp::Neq, &yes));
+
+        for op in [
+            MatchCmp::Lt,
+            MatchCmp::Lte,
+            MatchCmp::Gt,
+            MatchCmp::Gte,
+            MatchCmp::Re,
+            MatchCmp::Nre,
+        ] {
+            check!(
+                !super::bool_matches(true, op, &yes),
+                "ordering has no meaning"
+            );
+        }
+
+        check!(
+            !super::bool_matches(true, MatchCmp::Eq, &MatchValue::Int(1)),
+            "a bool does not compare with an integer"
+        );
+    }
+
+    /// Span kind and status names come off the wire as strings and have to
+    /// land on the numbers the stored spans use. Every name is checked, since
+    /// a table is exactly where an off-by-one goes unnoticed.
+    #[test]
+    fn span_kind_and_status_names_map_to_their_stored_numbers() {
+        let kinds = [
+            ("unspecified", 0),
+            ("internal", 1),
+            ("server", 2),
+            ("client", 3),
+            ("producer", 4),
+            ("consumer", 5),
+        ];
+        for (name, value) in kinds {
+            check!(super::kind_enum_value(name) == Some(value), "kind {name}");
+        }
+        check!(
+            super::kind_enum_value("Server") == None,
+            "the match is case-sensitive"
+        );
+        check!(super::kind_enum_value("") == None);
+        check!(
+            super::kind_enum_value("gateway") == None,
+            "an unknown kind is not a number"
+        );
+
+        for (name, value) in [("unset", 0), ("ok", 1), ("error", 2)] {
+            check!(
+                super::status_enum_value(name) == Some(value),
+                "status {name}"
+            );
+        }
+        check!(
+            super::status_enum_value("OK") == None,
+            "the match is case-sensitive"
+        );
+        check!(super::status_enum_value("failed") == None);
+    }
+
+    /// Trace and span ids are rendered as lower-case hex, two characters per
+    /// byte, with leading zeroes kept -- a byte dropping its high nibble
+    /// would produce an id that no longer round-trips.
+    #[test]
+    fn bytes_render_as_two_hex_characters_each() {
+        let hex = super::bytes_to_hex;
+
+        check!(hex(&[]) == "");
+        check!(
+            hex(&[0x00]) == "00",
+            "a zero byte is two characters, not none"
+        );
+        check!(hex(&[0x0f]) == "0f", "the leading zero is kept");
+        check!(hex(&[0xf0]) == "f0");
+        check!(hex(&[0xff]) == "ff");
+        check!(hex(&[0xab, 0xcd]) == "abcd", "bytes keep their order");
+        check!(hex(&[0x01, 0x23, 0x45, 0x67]) == "01234567");
+        check!(
+            hex(&[0x89, 0xab, 0xcd, 0xef]) == "89abcdef",
+            "digits above nine are lower case"
+        );
+        check!(hex(&[0xde; 16]).len() == 32, "a trace id is 32 characters");
+    }
+
     use arc_swap::ArcSwap;
     use arrow::{
         array::{
-            ArrayRef, FixedSizeBinaryBuilder, Int32Array, Int64Array, StringArray,
+            ArrayRef, BooleanArray, FixedSizeBinaryBuilder, Float64Array, Int32Array, Int64Array,
+            ListArray, ListBuilder, PrimitiveDictionaryBuilder, StringArray, StringBuilder,
             StringDictionaryBuilder,
         },
-        datatypes::{DataType, Field, Int32Type, Schema, SchemaRef},
+        buffer::{NullBuffer, OffsetBuffer},
+        datatypes::{DataType, Field, Int32Type, Int64Type, Schema, SchemaRef},
     };
     use assert2::check;
     use crabka_blockstore::{
@@ -2867,6 +3466,295 @@ mod tests {
         methods.append_value("POST");
         columns.push(Arc::new(methods.finish()) as ArrayRef);
         RecordBatch::try_new(schema, columns).unwrap()
+    }
+
+    /// `nested_string_attrs` pairs a row's attribute keys with the first
+    /// value of each key's value list, skipping anything incomplete. Its skip
+    /// conditions are `||` pairs that survived because no fixture made the
+    /// two halves disagree, so every skip below fires for exactly one reason.
+    ///
+    /// Two further properties need shapes a naive fixture does not have: one
+    /// key has *two* values, without which taking the first and taking the
+    /// last are the same read; and there is one more key than value list,
+    /// without which pairing by the shorter and by the longer agree.
+    #[test]
+    fn nested_attributes_pair_each_key_with_its_first_value() {
+        fn list(values: &mut ListBuilder<ListBuilder<StringBuilder>>, entries: &[Option<&str>]) {
+            for entry in entries {
+                match entry {
+                    Some(value) => values.values().values().append_value(value),
+                    None => values.values().values().append_null(),
+                }
+            }
+            values.values().append(true);
+        }
+
+        let mut keys = ListBuilder::new(StringBuilder::new());
+        for key in ["a", "", "c", "d", "e", "f"] {
+            if key.is_empty() {
+                keys.values().append_null();
+            } else {
+                keys.values().append_value(key);
+            }
+        }
+        keys.append(true);
+        keys.append_null();
+        let keys = keys.finish();
+        let mut values = ListBuilder::new(ListBuilder::new(StringBuilder::new()));
+        list(&mut values, &[Some("1")]);
+        list(&mut values, &[Some("2")]);
+        list(&mut values, &[]);
+        list(&mut values, &[None]);
+        list(&mut values, &[Some("first"), Some("second")]);
+        // Five value lists against six keys, so pairing by the longer runs
+        // off the end.
+        values.append(true);
+        // A second row, whose keys list is null while this one is not.
+        list(&mut values, &[Some("z")]);
+        values.append(true);
+        let values = values.finish();
+
+        let attrs = |row| super::nested_string_attrs(&keys, &values, row).expect("the row reads");
+
+        // "" has a null key, "c" an empty value list, "d" a null first value,
+        // and "f" no value list at all. Each is skipped for its own reason,
+        // so loosening any one guard admits a different spurious pair.
+        check!(
+            attrs(0)
+                == vec![
+                    ("a".to_string(), AttrValue::Str("1".to_string())),
+                    ("e".to_string(), AttrValue::Str("first".to_string())),
+                ]
+        );
+
+        // A row whose keys are null yields nothing, whatever the values hold.
+        check!(attrs(1).is_empty());
+    }
+
+    /// A null list row still carries offsets, and Arrow does not require them
+    /// to be empty -- a builder always writes an empty range, but the format
+    /// permits a null row to span real values, and a Parquet reader may hand
+    /// one over. So the row-level null check must be honoured rather than
+    /// inferred from the row reading as empty.
+    ///
+    /// This is the only shape that separates the two halves of that check:
+    /// with a builder-made array, reading through a null row yields nothing
+    /// anyway, and skipping it or walking it give the same empty answer.
+    #[test]
+    fn a_null_attribute_row_is_skipped_even_when_it_spans_values() {
+        let item = |name, data_type| Arc::new(Field::new(name, data_type, true));
+
+        // Row 0 is null, yet its offsets cover the single key "x".
+        let keys = ListArray::new(
+            item("item", DataType::Utf8),
+            OffsetBuffer::new(vec![0, 1].into()),
+            Arc::new(StringArray::from(vec!["x"])),
+            Some(NullBuffer::from(vec![false])),
+        );
+
+        // The matching values row is present and well formed, so the only
+        // reason to skip is the null flag on the keys.
+        let mut values = ListBuilder::new(ListBuilder::new(StringBuilder::new()));
+        values.values().values().append_value("v");
+        values.values().append(true);
+        values.append(true);
+        let values = values.finish();
+
+        check!(
+            super::nested_string_attrs(&keys, &values, 0)
+                .expect("the row reads")
+                .is_empty(),
+            "a null keys row contributes nothing, whatever its offsets span"
+        );
+    }
+
+    /// The typed column readers each downcast a column and return one cell.
+    /// Every one of them survived as a constant, so the values are chosen to
+    /// avoid the constants: the int column is read at row 1, because row 0
+    /// holds 1, which is itself one of the answers a collapsed body gives.
+    #[test]
+    fn the_typed_column_readers_return_their_own_cell_or_refuse_the_column() {
+        let batch = typed_attr_batch();
+        let column = |name: &str| {
+            batch
+                .column_by_name(&format!("{ATTR_PREFIX}{name}"))
+                .expect("the column is present")
+                .clone()
+        };
+
+        check!(super::int64_array_value(column("int").as_ref(), 1).expect("an int column") == 2);
+        check!(
+            (super::float64_array_value(column("float").as_ref(), 0).expect("a float column")
+                - 1.5)
+                .abs()
+                < f64::EPSILON
+        );
+        // Both rows, since true and false are each a constant a collapsed
+        // body returns and neither alone rules the other out.
+        check!(super::bool_array_value(column("bool").as_ref(), 0).expect("a bool column"));
+        check!(!super::bool_array_value(column("bool").as_ref(), 1).expect("a bool column"));
+        check!(
+            super::string_array_value(column("str").as_ref(), 1).expect("a string column") == "two"
+        );
+
+        // A column of the wrong type is refused rather than reinterpreted.
+        check!(super::int64_array_value(column("str").as_ref(), 0).is_err());
+        check!(super::float64_array_value(column("int").as_ref(), 0).is_err());
+        check!(super::bool_array_value(column("int").as_ref(), 0).is_err());
+
+        // By name: the cell is read from the named column, and an absent name
+        // is an error rather than a default.
+        check!(super::int64_value(&batch, &format!("{ATTR_PREFIX}int"), 1).expect("by name") == 2);
+        // The error must name the absent column: falling back to some other
+        // column also fails, but for the wrong reason and with the wrong
+        // message, which is the only thing separating the two.
+        check!(
+            super::int64_value(&batch, "no.such.column", 0)
+                .expect_err("an absent column is an error")
+                .to_string()
+                .contains("no.such.column"),
+            "the error names the column that is missing"
+        );
+    }
+
+    /// `nullable_fixed_value` reads one fixed-width binary cell, or None when
+    /// it is null. The trace id is neither all-zero nor all-one, so a body
+    /// collapsed to either constant is distinguishable from a real read.
+    #[test]
+    fn a_nullable_fixed_column_reads_its_own_row_or_none() {
+        let batch = batch();
+        let trace_id = |row| {
+            super::nullable_fixed_value::<16>(&batch, COL_TRACE_ID, row)
+                .expect("the trace id column is readable")
+        };
+
+        check!(trace_id(0) == Some([7; 16]));
+        check!(
+            trace_id(1) == Some([9; 16]),
+            "and each row reads its own cell"
+        );
+        check!(
+            super::nullable_fixed_value::<8>(&batch, COL_PARENT_SPAN_ID, 0)
+                .expect("the parent column is readable")
+                .is_none(),
+            "a null cell is None, not a zeroed id"
+        );
+
+        // A width that disagrees with the column is an error rather than a
+        // silent truncation, and an absent column is an error too.
+        check!(super::nullable_fixed_value::<4>(&batch, COL_TRACE_ID, 0).is_err());
+        check!(super::nullable_fixed_value::<16>(&batch, "no.such.column", 0).is_err());
+    }
+
+    /// A batch carrying one promoted attribute column of every type the
+    /// reader supports, alongside the three kinds it must skip: a column
+    /// type it does not handle, a null cell, and a dictionary whose values
+    /// are not strings.
+    fn typed_attr_batch() -> RecordBatch {
+        let mut fields = test_schema()
+            .fields()
+            .iter()
+            .map(|field| field.as_ref().clone())
+            .collect::<Vec<_>>();
+        let mut columns = batch().columns().to_vec();
+
+        let mut dict = StringDictionaryBuilder::<Int32Type>::new();
+        dict.append_value("GET");
+        dict.append_value("POST");
+        // A dictionary of integers, not strings. It must be skipped: the
+        // string reader would misread it.
+        let mut int_dict = PrimitiveDictionaryBuilder::<Int32Type, Int64Type>::new();
+        int_dict.append_value(7);
+        int_dict.append_value(8);
+
+        let string_dict = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
+        let integer_dict =
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Int64));
+        let typed: Vec<(&str, DataType, ArrayRef)> = vec![
+            (
+                "str",
+                DataType::Utf8,
+                Arc::new(StringArray::from(vec!["one", "two"])),
+            ),
+            ("dict", string_dict, Arc::new(dict.finish())),
+            (
+                "int",
+                DataType::Int64,
+                Arc::new(Int64Array::from(vec![1, 2])),
+            ),
+            (
+                "float",
+                DataType::Float64,
+                Arc::new(Float64Array::from(vec![1.5, 2.5])),
+            ),
+            (
+                "bool",
+                DataType::Boolean,
+                Arc::new(BooleanArray::from(vec![true, false])),
+            ),
+            (
+                "unsupported",
+                DataType::Int32,
+                Arc::new(Int32Array::from(vec![7, 8])),
+            ),
+            ("intdict", integer_dict, Arc::new(int_dict.finish())),
+            // Null in row 0 only, so the skip is provably per-row.
+            (
+                "nullable",
+                DataType::Utf8,
+                Arc::new(StringArray::from(vec![None, Some("x")])),
+            ),
+        ];
+        for (name, data_type, column) in typed {
+            fields.push(Field::new(format!("{ATTR_PREFIX}{name}"), data_type, true));
+            columns.push(column);
+        }
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)
+            .expect("the typed attribute batch is well formed")
+    }
+
+    /// `attr_values_with_resource` reads one row's promoted attribute
+    /// columns, turning each into the `AttrValue` its Arrow type implies.
+    /// Every supported type is pinned to a value of that type, since an arm
+    /// borrowed from a neighbouring arm still produces a well-formed pair
+    /// and only the variant gives it away.
+    #[test]
+    fn promoted_attributes_take_the_value_type_their_column_declares() {
+        let batch = typed_attr_batch();
+        let row = |index| {
+            super::attr_values_with_resource(&batch, index, false).expect("the row is readable")
+        };
+        let str_value = |value: &str| AttrValue::Str(value.to_string());
+
+        // Row 0. `unsupported`, `intdict` and `nullable` are all absent:
+        // an unhandled column type, a non-string dictionary, and a null cell.
+        check!(
+            row(0)
+                == vec![
+                    ("svc".to_string(), str_value("a")),
+                    ("str".to_string(), str_value("one")),
+                    ("dict".to_string(), str_value("GET")),
+                    ("int".to_string(), AttrValue::Int(1)),
+                    ("float".to_string(), AttrValue::Float(1.5)),
+                    ("bool".to_string(), AttrValue::Bool(true)),
+                ]
+        );
+
+        // Row 1 differs in every value, so an arm that ignores its row index
+        // is caught, and `nullable` now appears -- the null skip is per-cell,
+        // not a decision made once for the whole column.
+        check!(
+            row(1)
+                == vec![
+                    ("svc".to_string(), str_value("b")),
+                    ("str".to_string(), str_value("two")),
+                    ("dict".to_string(), str_value("POST")),
+                    ("int".to_string(), AttrValue::Int(2)),
+                    ("float".to_string(), AttrValue::Float(2.5)),
+                    ("bool".to_string(), AttrValue::Bool(false)),
+                    ("nullable".to_string(), str_value("x")),
+                ]
+        );
     }
 
     fn resource_service_matcher(op: MatchCmp, value: MatchValue) -> SpanMatcher {
@@ -3911,6 +4799,114 @@ mod tests {
                     value: "exception".into(),
                 }]
         );
+    }
+
+    /// `cold_batches` consults a job's block before scanning it, and refuses
+    /// a window it cannot serve. Its three tests survived because no case
+    /// made either half of the overlap check fail on its own, and because
+    /// every window used was an ordinary forward one.
+    ///
+    /// The block spans two spans rather than one, so `min_ts` and `max_ts`
+    /// differ. With a single span they are equal, and an inverted window
+    /// cannot then also overlap the block -- which is the shape that
+    /// separates the early return from the overlap test doing the same job.
+    #[tokio::test]
+    async fn cold_batches_scans_only_a_job_whose_block_overlaps_the_window() {
+        let object_store = Arc::new(InMemory::new());
+        let blocks = Arc::new(BlockStore::new(
+            object_store.clone(),
+            Url::parse("memory:///").expect("a valid url"),
+        ));
+        let writer = BlockWriter::new(object_store);
+
+        let mut early = span_with_nested_refs();
+        early.start_ns = 1_000;
+        let mut late = span_with_nested_refs();
+        late.span_id = [3; 8];
+        late.start_ns = 5_000;
+        let batch = span_batch(&[early.clone(), late]).expect("the spans form a batch");
+        let meta = writer
+            .write_block_with_decl(
+                "tenant",
+                "blocks/cold.parquet",
+                span_block_schema(),
+                &[batch],
+                &span_block_decl(),
+                SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+            )
+            .await
+            .expect("the block writes");
+
+        let mut index = TraceIndex::new();
+        let mut bloom = ShardedTraceBloom::with_tempo_defaults(1);
+        bloom.insert(&early.trace_id);
+        index.add_trace_block(
+            "tenant",
+            TraceBlockStats {
+                object_key: meta.object_key.clone(),
+                min_ts: meta.min_ts,
+                max_ts: meta.max_ts,
+                bloom,
+                tag_names: BTreeSet::new(),
+                tag_values: BTreeMap::new(),
+            },
+        );
+        let store = CrabkaSpanStore::new(blocks, shared(index), None);
+        let (min, max) = (meta.min_ts, meta.max_ts);
+        check!(
+            min < max,
+            "the block must span a range for these cases to differ"
+        );
+
+        let scan = |start: i64, end: i64, object_key: String| {
+            let store = &store;
+            async move {
+                let job = ScanJob {
+                    object_key,
+                    row_group_start: 0,
+                    row_group_end: 1,
+                };
+                store
+                    .cold_batches("tenant", start, end, Some(&job))
+                    .await
+                    .expect("the scan runs")
+                    .iter()
+                    .map(RecordBatch::num_rows)
+                    .sum::<usize>()
+            }
+        };
+        let key = meta.object_key.clone();
+
+        // The job's own block over its own range: rows come back.
+        check!(scan(min, max, key.clone()).await > 0);
+
+        // A zero-width window inside the block is legal and still scans. This
+        // is the only input separating `end < start` from `end <= start`.
+        check!(
+            scan(max, max, key.clone()).await > 0,
+            "an empty window is not an inverted one"
+        );
+
+        // An inverted window that would otherwise overlap the block. The
+        // early return must catch it, and it is the overlap that makes this
+        // case distinguish `<` from `==` rather than reaching the same
+        // answer by a different route.
+        check!(scan(max, min, key.clone()).await == 0, "end before start");
+
+        // Windows that miss the block on one side each. Each fails exactly
+        // one half of the overlap test, so loosening either `&&` shows.
+        check!(
+            scan(min - 100, min - 1, key.clone()).await == 0,
+            "the window ends before the block starts"
+        );
+        check!(
+            scan(max + 1, max + 100, key.clone()).await == 0,
+            "the window starts after the block ends"
+        );
+
+        // A job naming a block the index does not hold scans nothing, even
+        // though the window overlaps a block that IS held.
+        check!(scan(min, max, "blocks/absent.parquet".to_string()).await == 0);
     }
 
     fn span_with_nested_refs() -> Span {

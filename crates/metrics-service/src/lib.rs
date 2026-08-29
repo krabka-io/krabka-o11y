@@ -187,6 +187,23 @@ impl RulerStateWalRecord {
 }
 
 #[must_use]
+/// Builds a keyed producer record for the ruler topics.
+///
+/// Shared by the state and recording-rule sinks so both agree on the shape,
+/// and separated from the send so it can be checked without a broker. The
+/// partition is deliberately absent: the producer keys on `key`, which is
+/// what keeps a compacted topic's records for one entity on one partition.
+fn keyed_producer_record(topic: String, key: Bytes, value: Vec<u8>) -> ProducerRecord {
+    ProducerRecord {
+        topic,
+        partition: None,
+        key: Some(key),
+        value: Some(Bytes::from(value)),
+        ..Default::default()
+    }
+}
+
+#[must_use]
 pub fn ruler_state_compaction_key(record: &RulerStateWalRecord) -> Bytes {
     match record {
         RulerStateWalRecord::Group(record) => Bytes::from(format!(
@@ -633,13 +650,7 @@ impl KafkaRulerStateSink {
             .map_err(|error| RulerWalError::Append(error.to_string()))?;
         let ack = self
             .producer
-            .send(ProducerRecord {
-                topic: self.topic.clone(),
-                partition: None,
-                key: Some(key),
-                value: Some(Bytes::from(value)),
-                ..Default::default()
-            })
+            .send(keyed_producer_record(self.topic.clone(), key, value))
             .await;
         ack.await
             .map_err(|error| RulerWalError::Append(error.to_string()))?
@@ -726,13 +737,7 @@ impl RecordingRuleWalSink for KafkaRecordingRuleWalSink {
         let key = partition_key(&record.tenant, record.series_fingerprint());
         let ack = self
             .producer
-            .send(ProducerRecord {
-                topic: self.topic.clone(),
-                partition: None,
-                key: Some(key),
-                value: Some(Bytes::from(value)),
-                ..Default::default()
-            })
+            .send(keyed_producer_record(self.topic.clone(), key, value))
             .await;
         ack.await
             .map_err(|error| RulerWalError::Append(error.to_string()))?
@@ -1658,7 +1663,273 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
+    /// Manifest listing has three rules with no test between them: the range
+    /// filter is an *overlap* test, so a manifest ending exactly when the query
+    /// starts still counts; the extension match is deliberately case
+    /// insensitive; and a manifest deleted from the store has to leave the
+    /// cache rather than be served from it forever.
+    #[tokio::test]
+    async fn manifest_listing_covers_its_boundaries() {
+        use crabka_metrics::{CompactionIndexManifest, MetricBlockKind};
+        use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
+
+        fn manifest(index_key: &str, min_ts: i64, max_ts: i64) -> CompactionIndexManifest {
+            CompactionIndexManifest {
+                tenant: "tenant-a".to_string(),
+                kind: MetricBlockKind::Float,
+                block_key: format!("{index_key}.parquet"),
+                index_key: index_key.to_string(),
+                first_offset: 0,
+                last_offset: 0,
+                row_count: 1,
+                min_ts,
+                max_ts,
+                fingerprints: vec![1],
+                series: Vec::new(),
+            }
+        }
+
+        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        for entry in [
+            manifest("m/a.index", 0, 100),
+            manifest("m/b.INDEX", 300, 400),
+        ] {
+            store
+                .put(
+                    &Path::from(entry.index_key.clone()),
+                    PutPayload::from(entry.encode().unwrap()),
+                )
+                .await
+                .unwrap();
+        }
+        // Not an index sidecar, so it must never be decoded.
+        store
+            .put(&Path::from("m/notes.txt"), PutPayload::from("ignore me"))
+            .await
+            .unwrap();
+
+        // Case-insensitive extension: both sidecars are found, the .txt is not.
+        let all = super::load_compaction_manifests(store.clone(), "m")
+            .await
+            .unwrap();
+        assert2::assert!(all.len() == 2, "an uppercase .INDEX is still an index");
+
+        // Overlap, not containment: `a` ends exactly when the range starts.
+        let touching = super::load_compaction_manifests_for_range(store.clone(), "m", 100, 200)
+            .await
+            .unwrap();
+        assert2::assert!(
+            touching
+                .iter()
+                .map(|m| m.index_key.as_str())
+                .collect::<Vec<_>>()
+                == vec!["m/a.index"],
+            "a manifest ending at the range start overlaps it"
+        );
+
+        // The other end of the same overlap test: `b` begins exactly when the
+        // range stops, so it overlaps too.
+        let both = super::load_compaction_manifests_for_range(store.clone(), "m", 100, 300)
+            .await
+            .unwrap();
+        assert2::assert!(
+            both.iter()
+                .map(|m| m.index_key.as_str())
+                .collect::<Vec<_>>()
+                == vec!["m/a.index", "m/b.INDEX"],
+            "a manifest starting at the range end overlaps it"
+        );
+
+        // A manifest that leaves the store leaves the cache with it.
+        let cache = tokio::sync::RwLock::new(std::collections::BTreeMap::new());
+        super::load_compaction_manifests_filtered_with_cache(
+            store.clone(),
+            "m",
+            None,
+            Some(&cache),
+        )
+        .await
+        .unwrap();
+        assert2::assert!(cache.read().await.len() == 2);
+
+        store.delete(&Path::from("m/a.index")).await.unwrap();
+        super::load_compaction_manifests_filtered_with_cache(
+            store.clone(),
+            "m",
+            None,
+            Some(&cache),
+        )
+        .await
+        .unwrap();
+        assert2::assert!(
+            cache.read().await.keys().cloned().collect::<Vec<_>>() == vec!["m/b.INDEX".to_string()],
+            "the deleted manifest is evicted"
+        );
+    }
+
+    /// The compaction key decides which records replace one another on a
+    /// compacted topic. Two entities must never share a key, and one entity
+    /// must always produce the same key, so the parts are checked for being
+    /// present, ordered, and separated.
+    #[test]
+    fn ruler_state_compaction_keys_identify_one_entity_each() {
+        let group = |tenant: &str, namespace: &str, name: &str| {
+            super::ruler_state_compaction_key(&super::RulerStateWalRecord::Group(
+                super::RulerGroupStateRecord {
+                    tenant: tenant.into(),
+                    namespace: namespace.into(),
+                    group: name.into(),
+                    // Not part of the key: the record replaces its predecessor.
+                    last_eval_ms: 1,
+                },
+            ))
+        };
+
+        check!(group("t", "ns", "g") == Bytes::from("group\0t\0ns\0g"));
+        check!(
+            group("t", "ns", "g") == group("t", "ns", "g"),
+            "the same entity keys alike"
+        );
+        check!(
+            group("t", "ns", "g") != group("t", "ns", "h"),
+            "a different group differs"
+        );
+        check!(
+            group("t", "ns", "g") != group("u", "ns", "g"),
+            "so does a different tenant"
+        );
+        check!(
+            group("t", "ns", "g") != group("t", "n", "sg"),
+            "the separator stops a shifted split from colliding"
+        );
+
+        let alert = |rule: &str, labels: &[(&str, &str)]| {
+            super::ruler_state_compaction_key(&super::RulerStateWalRecord::Alert(
+                super::RulerAlertStateRecord {
+                    tenant: "t".into(),
+                    rule_id: rule.into(),
+                    labels: labels
+                        .iter()
+                        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                        .collect(),
+                    active_since_ms: Some(1),
+                    keep_firing_until_ms: None,
+                },
+            ))
+        };
+
+        check!(alert("r", &[]) == Bytes::from("alert\0t\0r"));
+        check!(alert("r", &[("a", "1")]) == Bytes::from("alert\0t\0r\0a=1"));
+        check!(
+            alert("r", &[("a", "1"), ("b", "2")]) == Bytes::from("alert\0t\0r\0a=1\0b=2"),
+            "every label is part of the identity"
+        );
+        check!(
+            alert("r", &[("a", "1")]) != alert("r", &[("a", "2")]),
+            "an alert with different label values is a different alert"
+        );
+
+        // A group key and an alert key can never collide, whatever they hold.
+        check!(group("t", "ns", "g") != alert("t\0ns\0g", &[]));
+    }
+
+    /// The producer record both ruler sinks build, checked without a broker.
+    #[test]
+    fn a_ruler_record_carries_its_topic_key_and_value() {
+        let record = super::keyed_producer_record(
+            "ruler-state".to_string(),
+            Bytes::from_static(b"the-key"),
+            b"the-value".to_vec(),
+        );
+
+        check!(record.topic == "ruler-state");
+        check!(
+            record.partition == None,
+            "partitioning is left to the producer"
+        );
+        check!(record.key.as_deref() == Some(&b"the-key"[..]));
+        check!(record.value.as_deref() == Some(&b"the-value"[..]));
+    }
+
     use super::{current_time_ms, duration_ms, unix_time_ms};
+
+    /// The Noop sink's only job is to say so. It drops every alert, and the
+    /// warning is the entire behaviour -- an operator whose alertmanager is
+    /// unconfigured learns it from this line or not at all. A body replaced by
+    /// `Ok(())` is silent, and the negation dropped warns on the empty batch
+    /// and stays silent on the one that had alerts in it.
+    #[test]
+    fn the_noop_alertmanager_sink_warns_only_when_it_drops_something() {
+        use std::sync::{Arc, Mutex};
+
+        use crabka_promql::AlertmanagerSink as _;
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt as _, registry};
+
+        #[derive(Clone, Default)]
+        struct Captured(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for Captured {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for Captured {
+            type Writer = Self;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        fn dispatch(alerts: Vec<crabka_promql::AlertmanagerAlert>) -> String {
+            let captured = Captured::default();
+            let subscriber = registry().with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(captured.clone())
+                    .with_ansi(false)
+                    .without_time(),
+            );
+            // `with_default` sets the subscriber for this thread and is sync, so
+            // the runtime is built inside it rather than around it -- a
+            // `#[tokio::test]` would already be driving one and `block_on`
+            // cannot nest.
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("current-thread runtime");
+            with_default(subscriber, || {
+                runtime.block_on(async {
+                    super::NoopAlertmanagerSink
+                        .dispatch_alerts(alerts)
+                        .await
+                        .expect("the noop sink always succeeds");
+                });
+            });
+            String::from_utf8(captured.0.lock().unwrap().clone()).unwrap()
+        }
+
+        let alert = crabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([("alertname".into(), "Down".into())]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 1,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        };
+        let with_alerts = dispatch(vec![alert]);
+        check!(
+            with_alerts.contains("alertmanager sink is not configured"),
+            "captured: {with_alerts:?}"
+        );
+        check!(
+            with_alerts.contains("alert_count=1"),
+            "captured: {with_alerts:?}"
+        );
+
+        check!(dispatch(Vec::new()).is_empty());
+    }
 
     /// Both clocks convert a duration to milliseconds and saturate rather than
     /// wrap. A constant in either place makes every block-store refresh window
@@ -1898,6 +2169,67 @@ mod tests {
         assert2::assert!(status_is_success);
         assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
         assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+    }
+
+    /// The `MetricStore` impl on the refreshing store is delegation: resolve
+    /// the store covering the range, then forward. Nothing drove it, so a
+    /// reader replaced by an empty vec described a tenant with no series at
+    /// all -- which is exactly what an empty store looks like, so an assertion
+    /// against one proves nothing. The head is seeded first, and each reader
+    /// asserted against what was seeded.
+    #[tokio::test]
+    async fn refreshing_store_readers_forward_to_the_covering_store() {
+        use crabka_metrics::{SamplePayload, WalRecord};
+
+        let head = crabka_promql::WalHead::new();
+        head.apply_wal_record(&WalRecord {
+            tenant: "acme".into(),
+            labels: vec![
+                ("__name__".into(), "http_requests_total".into()),
+                ("route".into(), "/orders".into()),
+            ],
+            payload: SamplePayload::Float {
+                timestamp_ms: 1_000,
+                value: 7.0,
+                start_timestamp_ms: None,
+            },
+            exemplars: Vec::new(),
+        });
+
+        let store = super::RefreshingMetricBlockStore::new(
+            Arc::new(InMemory::new()) as Arc<dyn ObjectStore>,
+            url::Url::parse("memory:///").unwrap(),
+            "metrics",
+            head,
+        );
+
+        let names = store.label_names("acme", &[], 0, 10_000).await.unwrap();
+        check!(names.contains(&"__name__".to_string()), "names: {names:?}");
+        check!(names.contains(&"route".to_string()), "names: {names:?}");
+
+        let routes = store
+            .label_values("acme", "route", &[], 0, 10_000)
+            .await
+            .unwrap();
+        check!(routes == vec!["/orders".to_string()], "routes: {routes:?}");
+
+        let active = store.cardinality_active_series("acme").await.unwrap();
+        check!(!active.is_empty(), "active series: {active:?}");
+
+        // The remaining readers delegate the same way. Each is asserted
+        // non-empty against the seeded series, which is what a reader replaced
+        // by an empty vec cannot produce.
+        let card_names = store.cardinality_label_names("acme").await.unwrap();
+        check!(!card_names.is_empty(), "cardinality names: {card_names:?}");
+
+        let card_values = store.cardinality_label_values("acme").await.unwrap();
+        check!(
+            !card_values.is_empty(),
+            "cardinality values: {card_values:?}"
+        );
+
+        let blocks = store.tsdb_blocks("acme").await;
+        check!(blocks.is_ok(), "tsdb blocks: {blocks:?}");
     }
 
     #[test]
@@ -2435,6 +2767,207 @@ rules:
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert2::assert!(body["data"]["groups"][0]["lastEvaluation"] == "1970-01-01T00:01:00Z");
+    }
+
+    /// The consumer loop polls until told to stop, accumulating what each
+    /// poll saw. Every field of the running total has to advance on every
+    /// poll, and the committed offsets have to accumulate rather than be
+    /// replaced -- a caller reading the summary to decide when it has caught
+    /// up would otherwise stop early or never.
+    #[tokio::test]
+    async fn the_consumer_loop_accumulates_every_polls_result() {
+        let state =
+            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+        let record = |group: &str| {
+            super::RulerStateWalRecord::Group(crabka_promql::RulerGroupStateRecord {
+                tenant: "tenant-a".to_string(),
+                namespace: "team-a".to_string(),
+                group: group.to_string(),
+                last_eval_ms: 60_000,
+            })
+            .encode()
+            .unwrap()
+        };
+
+        // Three polls: two records, then one, then none. The batches differ
+        // so a loop that reused one poll's result would not add up.
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![
+                vec![
+                    consumer_record(super::RULER_STATE_TOPIC, 0, 1, Some(record("a"))),
+                    consumer_record(super::RULER_STATE_TOPIC, 1, 5, Some(record("b"))),
+                ],
+                vec![consumer_record(
+                    super::RULER_STATE_TOPIC,
+                    2,
+                    9,
+                    Some(record("c")),
+                )],
+                vec![],
+            ],
+            commit_calls: 0,
+        };
+
+        let summary = super::run_ruler_state_consumer_loop(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+            |summary| summary.polls >= 3,
+        )
+        .await
+        .unwrap();
+
+        assert2::assert!(
+            summary.polls == 3,
+            "one count per poll, including the empty one"
+        );
+        assert2::assert!(summary.polled_records == 3, "2 + 1 + 0");
+        assert2::assert!(summary.replayed_records == 3);
+        assert2::assert!(
+            summary.committed_offsets
+                == vec![
+                    super::WalHeadPartitionOffset {
+                        partition: super::PartitionIndex(0),
+                        offset: super::Offset(2),
+                    },
+                    super::WalHeadPartitionOffset {
+                        partition: super::PartitionIndex(1),
+                        offset: super::Offset(6),
+                    },
+                    super::WalHeadPartitionOffset {
+                        partition: super::PartitionIndex(2),
+                        offset: super::Offset(10),
+                    },
+                ],
+            "offsets from every poll, in order, got {:?}",
+            summary.committed_offsets
+        );
+
+        // The empty third poll replayed nothing, so it committed nothing.
+        assert2::assert!(consumer.commit_calls == 2);
+    }
+
+    /// The stop predicate is consulted after each poll, so a loop told to
+    /// stop immediately still does exactly one poll's worth of work.
+    #[tokio::test]
+    async fn the_consumer_loop_stops_after_the_poll_that_satisfies_it() {
+        let state =
+            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![vec![], vec![]],
+            commit_calls: 0,
+        };
+
+        let summary = super::run_ruler_state_consumer_loop(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+            |_| true,
+        )
+        .await
+        .unwrap();
+
+        assert2::assert!(summary.polls == 1, "stopping at once still polls once");
+        assert2::assert!(
+            consumer.batches.len() == 1,
+            "and consumes exactly one batch"
+        );
+    }
+
+    /// A poll that replays nothing must not commit. Committing on an empty
+    /// batch would advance the group past records it never applied, and the
+    /// state they carry would be lost on the next restart.
+    #[tokio::test]
+    async fn poll_ruler_state_consumer_once_does_not_commit_without_progress() {
+        let state =
+            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![vec![]],
+            commit_calls: 0,
+        };
+        let result = super::poll_ruler_state_consumer_once(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+        )
+        .await
+        .unwrap();
+
+        assert2::assert!(
+            result
+                == super::WalHeadReplayResult {
+                    polled_records: 0,
+                    replayed_records: 0,
+                    committed_offsets: vec![],
+                }
+        );
+        assert2::assert!(consumer.commit_calls == 0, "an empty poll commits nothing");
+
+        // Polled but not replayed: a record from another topic is counted as
+        // seen and applied to nothing. Committing here would advance this
+        // group's offsets on the strength of someone else's records.
+        let state_record =
+            super::RulerStateWalRecord::Group(crabka_promql::RulerGroupStateRecord {
+                tenant: "tenant-a".to_string(),
+                namespace: "team-a".to_string(),
+                group: "recording".to_string(),
+                last_eval_ms: 60_000,
+            });
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![vec![consumer_record(
+                "some-other-topic",
+                1,
+                7,
+                Some(state_record.encode().unwrap()),
+            )]],
+            commit_calls: 0,
+        };
+        let result = super::poll_ruler_state_consumer_once(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+        )
+        .await
+        .unwrap();
+
+        assert2::assert!(result.polled_records == 1, "the record was seen");
+        assert2::assert!(result.replayed_records == 0, "but it was not ours to apply");
+        assert2::assert!(
+            consumer.commit_calls == 0,
+            "a poll that applies nothing commits nothing"
+        );
+    }
+
+    /// A record with no value cannot be replayed. It is reported with the
+    /// partition and offset it sits at rather than skipped, so the record
+    /// that stalled the replay can be found, and nothing is committed past it.
+    #[tokio::test]
+    async fn a_valueless_ruler_state_record_stops_the_replay_where_it_sits() {
+        let state =
+            super::prometheus_api_state_for_store(crabka_promql::InMemoryMetricStore::new());
+        let mut consumer = RecordingWalHeadConsumer {
+            batches: vec![vec![consumer_record(super::RULER_STATE_TOPIC, 3, 11, None)]],
+            commit_calls: 0,
+        };
+
+        let error = super::poll_ruler_state_consumer_once(
+            &mut consumer,
+            &state,
+            super::RULER_STATE_TOPIC,
+            millis(1),
+        )
+        .await
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert2::assert!(message.contains("11"), "the offset is named: {message}");
+        assert2::assert!(message.contains('3'), "so is the partition: {message}");
+        assert2::assert!(consumer.commit_calls == 0, "nothing is committed past it");
     }
 
     #[tokio::test]

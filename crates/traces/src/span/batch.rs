@@ -283,6 +283,7 @@ mod tests {
     use arrow::array::{
         Array, BooleanArray, FixedSizeBinaryArray, Int32Array, ListArray, StringArray,
     };
+    use assert2::check;
     use crabka_blockstore::{
         SCOL_ATTR_IS_ARRAY, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_NESTED_SET_LEFT,
         SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_ROOT_SERVICE_NAME, SCOL_SPAN_ID, SCOL_TRACE_ID,
@@ -290,6 +291,45 @@ mod tests {
     };
 
     use super::*;
+
+    /// `extend_block_attr_value` appends one block attribute's values onto
+    /// another of the same variant. The three non-string arms survived
+    /// because nothing extended anything but strings -- and deleting an arm
+    /// reaches an `unreachable!`, so the failure is a panic rather than a
+    /// wrong answer. The order is pinned too: appending and prepending are
+    /// both plausible and only differ when both sides are non-empty.
+    #[test]
+    fn extending_a_block_attribute_appends_to_its_own_variant() {
+        let extend = |mut existing: BlockAttrValue, next: BlockAttrValue| {
+            super::extend_block_attr_value(&mut existing, next);
+            existing
+        };
+
+        check!(
+            extend(
+                BlockAttrValue::Str(vec!["a".into()]),
+                BlockAttrValue::Str(vec!["b".into(), "c".into()]),
+            ) == BlockAttrValue::Str(vec!["a".into(), "b".into(), "c".into()])
+        );
+        check!(
+            extend(
+                BlockAttrValue::Int(vec![1]),
+                BlockAttrValue::Int(vec![2, 3])
+            ) == BlockAttrValue::Int(vec![1, 2, 3])
+        );
+        check!(
+            extend(
+                BlockAttrValue::Double(vec![1.5]),
+                BlockAttrValue::Double(vec![2.5, 3.5]),
+            ) == BlockAttrValue::Double(vec![1.5, 2.5, 3.5])
+        );
+        check!(
+            extend(
+                BlockAttrValue::Bool(vec![true]),
+                BlockAttrValue::Bool(vec![false, true]),
+            ) == BlockAttrValue::Bool(vec![true, false, true])
+        );
+    }
     use crate::span::{
         EventRecord, KeyValue, LinkRecord, SpanKind as TraceKind, StatusCode as TraceStatus,
     };

@@ -6,6 +6,20 @@
 # print.
 
 test_tool = "nextest"
+
+# promql puts fifteen of its tests behind `experimental-functions`, which is not
+# a default feature, so a default-feature sweep compiles them out and every
+# mutant in the code they cover reports as a survivor with nothing wrong --
+# twenty-two in `double_exponential_smoothing` alone read that way.
+#
+# Sweep that crate with the feature on:
+#
+#     cargo mutants -p crabka-promql --features experimental-functions ...
+#
+# It is deliberately not set here. This file is shared with every other crate
+# and with the Bazel targets, and `--all-features` would also switch on
+# `vendored-protoc` -- which //bazel:defs.bzl explicitly filters out -- and
+# `heap-profiling`, neither of which any test needs.
 profile = "mutants"
 
 # A surviving mutant in the ingest and query paths is often only caught by the

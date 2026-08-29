@@ -2311,6 +2311,69 @@ fn exemplar_row(fingerprint: u64, exemplar: &WalExemplar) -> ExemplarRow {
 
 #[cfg(test)]
 mod tests {
+
+    /// A buffer flushes on either threshold, and on neither when empty. The
+    /// row and age thresholds are checked at their own boundary with the other
+    /// far from its own, so each is shown to be sufficient by itself -- a
+    /// buffer that flushed only when both were met would pass a test that
+    /// crossed them together.
+    #[test]
+    fn a_compaction_buffer_flushes_on_rows_or_age_but_never_when_empty() {
+        use std::time::{Duration, Instant};
+
+        let config = super::CompactionLoopConfig {
+            wal_topic: "wal".into(),
+            poll_timeout: secs(1),
+            flush_max_rows: 3,
+            flush_max_age: secs(10),
+        };
+        let record = |offset: i64| super::CompactionWalRecord {
+            partition: crabka_ids::PartitionIndex(0),
+            offset: crabka_ids::Offset(offset),
+            value: Vec::new(),
+        };
+        let now = Instant::now();
+
+        // Empty flushes on neither threshold, however old the clock claims to be.
+        let empty = super::CompactionBuffer::new();
+        check!(!empty.should_flush(&config, now));
+        check!(
+            !empty.should_flush(&config, now + Duration::from_hours(1)),
+            "an empty buffer has nothing to age"
+        );
+
+        // Rows alone, with the age nowhere near its threshold.
+        let mut by_rows = super::CompactionBuffer::new();
+        by_rows.extend(vec![record(1), record(2)], now);
+        check!(!by_rows.should_flush(&config, now), "two of three rows");
+        by_rows.extend(vec![record(3)], now);
+        check!(
+            by_rows.should_flush(&config, now),
+            "the third row is enough"
+        );
+
+        // Age alone, with the row count nowhere near its threshold.
+        let mut by_age = super::CompactionBuffer::new();
+        by_age.extend(vec![record(1)], now);
+        check!(
+            !by_age.should_flush(&config, now + Duration::from_secs(9)),
+            "one second short"
+        );
+        check!(
+            by_age.should_flush(&config, now + Duration::from_secs(10)),
+            "exactly the age threshold is enough"
+        );
+
+        // The age is measured from the first record in, not the most recent,
+        // so a later arrival does not reset the deadline.
+        let mut anchored = super::CompactionBuffer::new();
+        anchored.extend(vec![record(1)], now);
+        anchored.extend(vec![record(2)], now + Duration::from_secs(9));
+        check!(
+            anchored.should_flush(&config, now + Duration::from_secs(10)),
+            "the deadline follows the oldest record"
+        );
+    }
     use std::{
         collections::BTreeMap,
         sync::{Arc, Mutex},
@@ -2371,6 +2434,70 @@ mod tests {
             negative_counts: Vec::new(),
             custom_values: None,
             start_timestamp_ms: Some(10),
+        }
+    }
+
+    /// Each block kind draws its fingerprints from its own row collection.
+    /// Every row kind here carries a different fingerprint, so a kind reading
+    /// its neighbour's rows returns the wrong series -- with one shared
+    /// fingerprint, or with only float rows populated, all four arms agree.
+    #[test]
+    fn each_block_kind_draws_its_fingerprints_from_its_own_rows() {
+        let named = |name: &str| {
+            let mut labels = Labels::new();
+            labels.insert("__name__", name);
+            labels
+        };
+        let rows = super::TenantCompactionRows {
+            tenant: "t".to_string(),
+            series_labels: std::collections::BTreeMap::from([
+                (1, named("float")),
+                (2, named("histogram")),
+                (3, named("exemplar")),
+                (4, named("metadata")),
+            ]),
+            float_rows: vec![FloatRow {
+                fingerprint: 1,
+                timestamp_ms: 0,
+                value: 0.0,
+            }],
+            histogram_rows: vec![super::NativeHistogramRow {
+                fingerprint: 2,
+                timestamp_ms: 0,
+                hist: hist(),
+            }],
+            exemplar_rows: vec![super::ExemplarRow {
+                fingerprint: 3,
+                timestamp_ms: 0,
+                value: 0.0,
+                trace_id: None,
+                span_id: None,
+                labels: Vec::new(),
+            }],
+            metadata_rows: vec![super::MetadataRow {
+                fingerprint: 4,
+                metric_family_name: String::new(),
+                metric_type: String::new(),
+                help: String::new(),
+                unit: String::new(),
+            }],
+            // `ClockReadings` arrived after this test did, and building a
+            // reading needs a whole decoded payload. The four kinds below are
+            // what it pins.
+            clock_rows: Vec::new(),
+        };
+
+        for (kind, want) in [
+            (super::MetricBlockKind::Float, 1_u64),
+            (super::MetricBlockKind::NativeHistograms, 2),
+            (super::MetricBlockKind::Exemplars, 3),
+            (super::MetricBlockKind::Metadata, 4),
+        ] {
+            let series = super::series_labels_for_kind(&rows, kind);
+            check!(
+                series.iter().map(|s| s.fingerprint).collect::<Vec<_>>() == vec![want],
+                "{kind:?}"
+            );
         }
     }
 

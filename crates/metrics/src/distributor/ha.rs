@@ -465,6 +465,20 @@ mod tests {
                     lease_timestamp_ms: 2_000,
                 })
         );
+
+        // The takeover needs the lease to be stale by MORE than the timeout,
+        // not merely as stale as it. One millisecond either side of exactly
+        // 1_000ms elapsed is the only pair that separates `>` from `>=`, and
+        // getting it wrong hands the cluster to a second replica a whole
+        // interval early -- both then write, which is what HA exists to stop.
+        check!(
+            tracker().elect("tenant", &replacement, 2_000, millis(1_000)) == HaElection::Drop,
+            "exactly at the timeout is not yet stale"
+        );
+        check!(matches!(
+            tracker().elect("tenant", &replacement, 2_001, millis(1_000)),
+            HaElection::Elect(_)
+        ));
     }
 
     #[test]

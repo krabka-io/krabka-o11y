@@ -327,6 +327,57 @@ mod tests {
         assert2::assert!(out == vec![batch]);
     }
 
+    /// `read_block_row_groups` is the default-cap wrapper the query path calls,
+    /// and nothing exercised it -- only the `_with_max_bytes` form beneath it.
+    /// Replaced by `Ok(vec![])` it reports every block as holding no rows, which
+    /// reads as an empty time range rather than as a failure.
+    ///
+    /// The rows read back are what pins it: `write_block` coalesces the batches
+    /// it is given into a single row group, so there is only group 0 to select,
+    /// and the distinguishing observation is that it holds both rows.
+    #[tokio::test]
+    async fn read_block_row_groups_returns_the_selected_group() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
+            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
+            Field::new("line", DataType::Utf8, true),
+        ]));
+        let group = |fp: u64, ts: i64, line: &str| {
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(UInt64Array::from(vec![fp])),
+                    Arc::new(Int64Array::from(vec![ts])),
+                    Arc::new(StringArray::from(vec![line])),
+                ],
+            )
+            .unwrap()
+        };
+        let first = group(10, 100, "first");
+        let second = group(20, 200, "second");
+
+        BlockWriter::new(store.clone())
+            .write_block("t", "b.parquet", schema, &[first.clone(), second.clone()])
+            .await
+            .unwrap();
+
+        // `write_block` coalesces the batches it is given into one row group,
+        // so group 0 is the only one there is. Reading it back must yield both
+        // rows, which an empty return does not.
+        let rows = read_block_row_groups(store.clone(), "b.parquet", &[0])
+            .await
+            .unwrap();
+        assert2::check!(rows.iter().map(RecordBatch::num_rows).sum::<usize>() == 2);
+
+        // Selecting nothing is distinct from the wrapper answering nothing:
+        // both are empty here, so the assertion above is what separates them.
+        let none = read_block_row_groups(store, "b.parquet", &[])
+            .await
+            .unwrap();
+        assert2::check!(none.iter().map(RecordBatch::num_rows).sum::<usize>() == 0);
+    }
+
     #[tokio::test]
     async fn read_block_with_max_bytes_rejects_over_cap_block() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());

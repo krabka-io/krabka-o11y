@@ -377,6 +377,50 @@ mod tests {
         check!(m.ingest_items.get() == 3);
     }
 
+    /// The request counter is split by outcome, so a swapped status label
+    /// would report every failure as a success and vice versa. Both are
+    /// recorded here and each is checked to have moved only its own series.
+    #[test]
+    fn ingest_requests_are_counted_under_their_own_outcome() {
+        let m = ServiceMetrics::new();
+        let count = |status: &str| {
+            m.ingest_requests
+                .get_or_create(&StatusLabel {
+                    status: status.into(),
+                })
+                .get()
+        };
+
+        m.record_ingest(true, IngestBytes(1), IngestItems(1), millis(1));
+        check!(count("ok") == 1);
+        check!(count("error") == 0);
+
+        m.record_ingest(false, IngestBytes(1), IngestItems(1), millis(1));
+        m.record_ingest(false, IngestBytes(1), IngestItems(1), millis(1));
+        check!(
+            count("ok") == 1,
+            "a failure must not land on the success series"
+        );
+        check!(count("error") == 2);
+    }
+
+    /// `record_blocks_built` returns early on zero. The guard has to reject
+    /// exactly zero: inverted, it would drop every real count and record only
+    /// the empty ones.
+    #[test]
+    fn blocks_built_counts_everything_except_zero() {
+        let m = ServiceMetrics::new();
+
+        m.record_blocks_built(0);
+        check!(m.blocks_built.get() == 0, "zero adds nothing");
+
+        m.record_blocks_built(3);
+        check!(m.blocks_built.get() == 3);
+
+        m.record_blocks_built(4);
+        check!(m.blocks_built.get() == 7, "counts accumulate");
+    }
+
     #[test]
     fn wal_append_failure_is_separate_from_request_outcome() {
         let m = ServiceMetrics::new();

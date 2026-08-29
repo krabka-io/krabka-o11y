@@ -296,6 +296,10 @@ fn anchored_float_range_value(
             {
                 selected.push((*timestamps.get(index)?, values.get(index).copied()?));
             }
+            // `>` is a permanent survivor against `>=`: a sample sitting
+            // exactly on `range_start_ms` is already pushed just above, and
+            // this arm only serves `changes` and `resets`, which see no change
+            // and no reset between two copies of the same value.
             selected.extend(timestamps.iter().zip(values.iter()).filter_map(
                 |(timestamp, value)| (*timestamp > range_start_ms).then_some((*timestamp, *value)),
             ));
@@ -303,6 +307,9 @@ fn anchored_float_range_value(
             .iter()
             .position(|timestamp| *timestamp == range_start_ms)
         {
+            // `<` is a permanent survivor against `<=`: `start_index` is the
+            // first timestamp equal to `range_start_ms`, so everything before
+            // it is strictly below and the two spellings pick the same sample.
             if let Some(previous_index) = timestamps[..start_index]
                 .iter()
                 .rposition(|timestamp| *timestamp < range_start_ms)
@@ -385,6 +392,9 @@ fn smoothed_float_range_value(
     if !matches!(kind, RangeFn::Delta | RangeFn::Increase | RangeFn::Rate) {
         return None;
     }
+    // Permanent survivor against `&&`: the caller builds both slices from one
+    // series, so the lengths always agree, and an empty window returns `None`
+    // from `boundary_value` below anyway.
     if timestamps.len() != values.len() || timestamps.is_empty() {
         return None;
     }
@@ -397,6 +407,10 @@ fn smoothed_float_range_value(
     let start = boundary_value(timestamps, &smoothed_values, range_start_ms)?;
     let end = boundary_value(timestamps, &smoothed_values, range_end_ms)?;
     let mut result = end - start;
+    // `< 0.0` is a permanent survivor against `== 0.0` and `<= 0.0`:
+    // `counter_corrected_values` returns a non-decreasing series, and
+    // interpolating or extrapolating one never puts the start above the end,
+    // so `result` is never negative and at zero the clamp is a no-op.
     if matches!(kind, RangeFn::Increase | RangeFn::Rate) && result < 0.0 {
         result = 0.0;
     }
@@ -426,6 +440,10 @@ fn counter_corrected_values(values: &[f64]) -> Option<Vec<f64>> {
 }
 
 fn boundary_value(timestamps: &[i64], values: &[f64], target_ms: i64) -> Option<f64> {
+    // `||` against `&&` is a permanent mutation survivor. Both callers pair the
+    // timestamps with values derived from them, so the lengths always agree and
+    // the second arm alone decides -- and both callers have already returned
+    // `None` for an empty series before they get here.
     if timestamps.len() != values.len() || timestamps.is_empty() {
         return None;
     }
@@ -438,6 +456,9 @@ fn boundary_value(timestamps: &[i64], values: &[f64], target_ms: i64) -> Option<
     {
         return values.get(index).copied();
     }
+    // `>` against `>=` is a permanent mutation survivor: a timestamp equal to
+    // the target was already returned by the exact-match search above, so by
+    // here no timestamp can equal it and the two spellings select the same one.
     if let Some(after_index) = timestamps
         .iter()
         .position(|timestamp| *timestamp > target_ms)
@@ -962,6 +983,14 @@ fn range_samples(
     series
         .samples
         .iter()
+        // Both comparisons here are permanent mutation survivors, and so is the
+        // `&&`. Every `RangeEval` arrives from a matrix selector or a subquery
+        // that has already fetched exactly `(end - range, end]`, so this
+        // re-applies a window that is always a no-op -- removing the filter
+        // outright leaves the whole suite, conformance corpus included, green.
+        // It stays as the function's stated contract: four construction sites
+        // feed `RangeEval`, and a fifth should not be able to widen a window
+        // by forgetting to trim.
         .filter(move |(timestamp, _)| *timestamp > range_start_ms && *timestamp <= range_end_ms)
         .map(|(timestamp, value)| (*timestamp, value))
 }
@@ -985,6 +1014,11 @@ impl ExtremumKind {
         if running.is_nan() {
             return true;
         }
+        // Both comparisons are permanent mutation survivors. Loosening either
+        // one only lets an *equal* candidate replace the running value, and
+        // `running` is a bare `f64`: swapping it for its own equal leaves the
+        // fold's result identical. A NaN candidate compares false under all
+        // four spellings.
         match self {
             Self::Min => running > candidate,
             Self::Max => running < candidate,
@@ -1046,6 +1080,9 @@ fn over_time_mean(values: impl Iterator<Item = f64>) -> f64 {
     for value in values {
         count += 1.0;
         if mean.is_infinite() {
+            // Both `> 0.0` here are permanent survivors against `>= 0.0`:
+            // each operand is already known infinite, so neither is ever 0.0
+            // and the two spellings pick the same sign.
             if value.is_infinite() && (value > 0.0) == (mean > 0.0) {
                 // Same-sign infinity: the mean stays that infinity.
                 continue;
@@ -1072,7 +1109,15 @@ pub(super) fn kahan_sum_inc(increment: f64, sum: f64, comp: f64) -> (f64, f64) {
     let new_sum = sum + increment;
     // Recover the rounding error lost when `increment` is small relative to
     // `sum` (or vice versa), matching Prometheus' branch on magnitude.
-    let new_comp = if sum.abs() >= increment.abs() {
+    //
+    // An infinite running sum drops the compensation instead. Without this the
+    // very first infinite increment leaves `(inf - inf) + x`, which is NaN, and
+    // the NaN rides `comp` all the way to the `sum + comp` at the end -- so
+    // `avg_over_time` over a series holding a single +Inf returned NaN where
+    // Prometheus returns +Inf. Matches the `IsInf(t, 0)` arm of `kahanSumInc`.
+    let new_comp = if new_sum.is_infinite() {
+        0.0
+    } else if sum.abs() >= increment.abs() {
         comp + ((sum - new_sum) + increment)
     } else {
         comp + ((increment - new_sum) + sum)
@@ -1123,6 +1168,9 @@ fn extrapolated_rate(
     kind: RangeFn,
 ) -> Option<f64> {
     let n = timestamps.len();
+    // Permanent survivor, and equivalent: at n == 1 dropping this guard only
+    // defers the `None`, because first and last are the same sample and the
+    // zero-width `sampled_interval` returns a few lines below.
     if n < 2 || values.len() != n {
         return None;
     }
@@ -1157,8 +1205,13 @@ fn extrapolated_rate(
         duration_to_end = average_duration_between_samples / 2.0;
     }
 
+    // `> 0.0` is a permanent survivor against `>= 0.0`: at result == 0 the
+    // division below yields an infinity or a NaN, and neither is `<` anything,
+    // so the cut never applies either way.
     if is_counter && result > 0.0 && values[0] >= 0.0 {
         let duration_to_zero = sampled_interval * (values[0] / result);
+        // Another permanent survivor: `<` against `<=` differs only when the
+        // two are equal, and then the assignment stores the value already held.
         if duration_to_zero < duration_to_start {
             duration_to_start = duration_to_zero;
         }

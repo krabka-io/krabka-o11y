@@ -166,6 +166,54 @@ mod tests {
     use super::*;
     use crate::{BucketSpan, ResetHint};
 
+    /// `timestamp_ms` answers for the two payloads that carry a timestamp and
+    /// declines for the two that do not. The two timestamps differ, so a
+    /// variant reading the other's field is visible rather than merely
+    /// returning a plausible number.
+    #[test]
+    fn only_the_sample_payloads_that_carry_a_timestamp_report_one() {
+        use super::SamplePayload;
+
+        let float = SamplePayload::Float {
+            timestamp_ms: 11,
+            value: 1.5,
+            start_timestamp_ms: Some(99),
+        };
+        let histogram = SamplePayload::Hist {
+            timestamp_ms: 22,
+            hist: hist(),
+        };
+        let metadata = SamplePayload::Metadata {
+            metric_family_name: "m".into(),
+            metric_type: "counter".into(),
+            help: String::new(),
+            unit: String::new(),
+        };
+
+        assert!(float.timestamp_ms() == Some(11));
+        assert!(histogram.timestamp_ms() == Some(22));
+        assert!(metadata.timestamp_ms() == None);
+        assert!(SamplePayload::Exemplars.timestamp_ms() == None);
+
+        // A float's start timestamp is a different field and must not be
+        // returned in place of its timestamp.
+        assert!(float.timestamp_ms() != Some(99));
+
+        // Zero and negative are values, not absences.
+        let epoch = SamplePayload::Float {
+            timestamp_ms: 0,
+            value: 0.0,
+            start_timestamp_ms: None,
+        };
+        assert!(epoch.timestamp_ms() == Some(0), "the epoch is a timestamp");
+        let before = SamplePayload::Float {
+            timestamp_ms: -1,
+            value: 0.0,
+            start_timestamp_ms: None,
+        };
+        assert!(before.timestamp_ms() == Some(-1));
+    }
+
     fn hist() -> NativeHistogram {
         NativeHistogram {
             schema: 2,

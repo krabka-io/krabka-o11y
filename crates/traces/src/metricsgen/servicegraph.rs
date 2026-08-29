@@ -49,7 +49,7 @@ pub enum RecordOutcome {
 }
 
 /// A half-edge until both client and server sides arrive.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Edge {
     pub client_service: Option<String>,
     pub server_service: Option<String>,
@@ -623,6 +623,304 @@ fn ns_to_seconds(ns: i64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// `EdgeStore::complete` folds one finished edge into the aggregate for
+    /// its client/server/kind triple. Each counter is checked after a run of
+    /// edges rather than after one, since a counter that increments by the
+    /// wrong amount, or from the wrong field, still moves.
+    #[test]
+    fn completing_edges_accumulates_per_triple() {
+        let edge = |client: &str, server: &str, failed: bool, client_ns, server_ns| super::Edge {
+            client_service: Some(client.to_string()),
+            server_service: Some(server.to_string()),
+            client_latency_ns: client_ns,
+            server_latency_ns: server_ns,
+            failed,
+            connection_type: super::ConnectionType::Unset,
+            first_seen_ns: 0,
+        };
+        // Every figure here is a whole number of requests, or a sum of whole
+        // seconds, so each is exactly representable. The comparison carries a
+        // tolerance because a bare `==` on a float is refused, not because any
+        // of these is expected to drift.
+        let is = |actual: f64, expected: f64| (actual - expected).abs() < f64::EPSILON;
+        let key = |client: &str, server: &str| {
+            (
+                client.to_string(),
+                server.to_string(),
+                super::ConnectionType::Unset,
+            )
+        };
+
+        let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
+        store.complete(edge(
+            "a",
+            "b",
+            false,
+            Some(1_000_000_000),
+            Some(2_000_000_000),
+        ));
+        store.complete(edge("a", "b", true, Some(3_000_000_000), None));
+        store.complete(edge("c", "d", false, None, None));
+
+        let agg = &store.aggregates[&key("a", "b")];
+        check!(is(agg.requests, 2.0), "one per completed edge");
+        check!(is(agg.failed, 1.0), "only the failed one counts");
+        check!(
+            is(agg.client_seconds_count, 2.0),
+            "both carried a client latency"
+        );
+        check!(is(agg.client_seconds_sum, 4.0), "one second plus three");
+        check!(
+            is(agg.server_seconds_count, 1.0),
+            "only one carried a server latency"
+        );
+        check!(is(agg.server_seconds_sum, 2.0));
+
+        // A different triple aggregates separately rather than merging.
+        let other = &store.aggregates[&key("c", "d")];
+        check!(is(other.requests, 1.0));
+        check!(is(other.failed, 0.0), "not failed");
+        check!(
+            is(other.client_seconds_count, 0.0),
+            "no latency recorded at all"
+        );
+        check!(is(other.server_seconds_count, 0.0));
+        check!(store.aggregates.len() == 2, "two triples, not one");
+
+        // Messaging latency is off by default, so a messaging edge records
+        // nothing under it even when it carries a latency.
+        let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
+        let mut messaging = edge("a", "b", false, Some(1_000_000_000), Some(2_000_000_000));
+        messaging.connection_type = super::ConnectionType::MessagingSystem;
+        store.complete(messaging.clone());
+        let agg = &store.aggregates[&(
+            "a".to_string(),
+            "b".to_string(),
+            super::ConnectionType::MessagingSystem,
+        )];
+        check!(is(agg.messaging_seconds_count, 0.0), "disabled by default");
+
+        // With it enabled, the server latency is preferred over the client's.
+        let cfg = super::MetricsGenConfig {
+            enable_messaging_system_latency: true,
+            ..super::MetricsGenConfig::default()
+        };
+        let mut store = super::EdgeStore::new(&cfg);
+        store.complete(messaging);
+        let agg = &store.aggregates[&(
+            "a".to_string(),
+            "b".to_string(),
+            super::ConnectionType::MessagingSystem,
+        )];
+        check!(is(agg.messaging_seconds_count, 1.0));
+        check!(
+            is(agg.messaging_seconds_sum, 2.0),
+            "the server latency, not the client's"
+        );
+    }
+
+    /// An edge survives a round trip through the checkpoint codec.
+    ///
+    /// Every field holds a value distinct from every other, so a decoder that
+    /// reads them in the wrong order is caught: the two service names and the
+    /// two latencies are adjacent pairs of the same shape, and swapping either
+    /// pair is invisible when both sides carry the same value.
+    #[test]
+    fn an_edge_round_trips_through_the_checkpoint_codec() {
+        let edge = super::Edge {
+            client_service: Some("client-svc".to_string()),
+            server_service: Some("server-svc".to_string()),
+            client_latency_ns: Some(11),
+            server_latency_ns: Some(22),
+            failed: true,
+            connection_type: super::ConnectionType::Database,
+            first_seen_ns: 1_234_567,
+        };
+        let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&edge))
+            .expect("round trip");
+        check!(decoded == edge);
+
+        // Absent optionals stay absent rather than becoming defaults.
+        let sparse = super::Edge {
+            client_service: None,
+            server_service: None,
+            client_latency_ns: None,
+            server_latency_ns: None,
+            failed: false,
+            connection_type: super::ConnectionType::Unset,
+            first_seen_ns: 0,
+        };
+        let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&sparse))
+            .expect("round trip");
+        check!(decoded == sparse);
+
+        // One side present and the other absent, which is what a swapped pair
+        // turns into rather than a difference in value.
+        let half = super::Edge {
+            client_service: Some("only-client".to_string()),
+            server_service: None,
+            client_latency_ns: None,
+            server_latency_ns: Some(99),
+            ..edge.clone()
+        };
+        let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&half))
+            .expect("round trip");
+        check!(decoded == half);
+
+        // Every connection type survives, and each is distinguishable.
+        for connection_type in [
+            super::ConnectionType::Unset,
+            super::ConnectionType::VirtualNode,
+            super::ConnectionType::MessagingSystem,
+            super::ConnectionType::Database,
+        ] {
+            let one = super::Edge {
+                connection_type,
+                ..edge.clone()
+            };
+            let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&one))
+                .expect("round trip");
+            check!(
+                decoded.connection_type == connection_type,
+                "{connection_type:?}"
+            );
+        }
+
+        // A negative first-seen timestamp is a value, not a sentinel.
+        let past = super::Edge {
+            first_seen_ns: -5,
+            ..edge.clone()
+        };
+        let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&past))
+            .expect("round trip");
+        check!(decoded.first_seen_ns == -5);
+    }
+
+    /// The checkpoint decoder rejects what it cannot read rather than
+    /// returning a partly-filled edge.
+    #[test]
+    fn a_malformed_checkpoint_value_is_rejected() {
+        // Shorter than the fixed header.
+        check!(super::decode_checkpoint_value(&[]).is_err());
+        check!(
+            super::decode_checkpoint_value(&[0; 9]).is_err(),
+            "one byte short of ten"
+        );
+
+        // A connection type outside the four defined ones.
+        let mut bytes = vec![4_u8];
+        bytes.extend_from_slice(&0_i64.to_be_bytes());
+        bytes.push(0);
+        check!(
+            matches!(
+                super::decode_checkpoint_value(&bytes),
+                Err(super::CheckpointCodecError::BadConnectionType)
+            ),
+            "an unknown connection type names itself"
+        );
+
+        // A well-formed header followed by a truncated optional field.
+        let mut bytes = vec![0_u8];
+        bytes.extend_from_slice(&0_i64.to_be_bytes());
+        bytes.push(0);
+        bytes.push(1);
+        check!(
+            super::decode_checkpoint_value(&bytes).is_err(),
+            "string length missing"
+        );
+    }
+
+    /// The optional decoders read a presence byte, then the value, and leave
+    /// the cursor exactly past what they consumed. Each case checks the
+    /// remaining buffer as well as the value: a decoder that returns the right
+    /// answer but misplaces the cursor corrupts every field after it, and the
+    /// value alone cannot see that.
+    #[test]
+    fn optional_fields_decode_and_leave_the_cursor_past_them() {
+        // Absent: one presence byte consumed, nothing else.
+        let mut buf = &[0_u8, 0xff][..];
+        check!(super::get_optional_i64(&mut buf).expect("absent") == None);
+        check!(buf == &[0xff], "only the presence byte is consumed");
+
+        // Present: presence byte plus eight big-endian bytes.
+        let mut buf = &[1, 0, 0, 0, 0, 0, 0, 0, 7, 0xff][..];
+        check!(super::get_optional_i64(&mut buf).expect("present") == Some(7));
+        check!(buf == &[0xff], "and the value after it");
+
+        // Negative values survive the round trip as two's complement.
+        let mut buf = &[1, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff][..];
+        check!(super::get_optional_i64(&mut buf).expect("present") == Some(-1));
+
+        // Any non-zero presence byte means present, not just 1.
+        let mut buf = &[2, 0, 0, 0, 0, 0, 0, 0, 9][..];
+        check!(super::get_optional_i64(&mut buf).expect("present") == Some(9));
+
+        // Truncation is an error rather than a short read.
+        let mut buf = &[][..];
+        check!(
+            super::get_optional_i64(&mut buf).is_err(),
+            "no presence byte"
+        );
+        let mut buf = &[1, 0, 0][..];
+        check!(
+            super::get_optional_i64(&mut buf).is_err(),
+            "value cut short"
+        );
+        let mut buf = &[1, 0, 0, 0, 0, 0, 0, 0][..];
+        check!(
+            super::get_optional_i64(&mut buf).is_err(),
+            "one byte short of eight"
+        );
+
+        // Strings carry a four-byte length ahead of their bytes.
+        let mut buf = &[1, 0, 0, 0, 2, b'h', b'i', 0xff][..];
+        check!(super::get_optional_string(&mut buf).expect("present") == Some("hi".to_string()));
+        check!(
+            buf == &[0xff],
+            "cursor past the string, not past the buffer"
+        );
+
+        let mut buf = &[0, 0xff][..];
+        check!(super::get_optional_string(&mut buf).expect("absent") == None);
+        check!(buf == &[0xff]);
+
+        // An empty string is present and zero-length, which is not absent.
+        let mut buf = &[1, 0, 0, 0, 0, 0xff][..];
+        check!(super::get_optional_string(&mut buf).expect("present") == Some(String::new()));
+        check!(buf == &[0xff]);
+
+        let mut buf = &[1, 0, 0][..];
+        check!(
+            super::get_optional_string(&mut buf).is_err(),
+            "length cut short"
+        );
+        // Exactly one byte short of a four-byte length: the bound has to be
+        // `< 4`, and `< 3` would read past the end.
+        let mut buf = &[1, 0, 0, 0][..];
+        check!(
+            super::get_optional_string(&mut buf).is_err(),
+            "three bytes of length"
+        );
+        // A string that exactly fills the buffer is complete, not truncated,
+        // which is the case that separates `< len` from `< len + 1`.
+        let mut buf = &[1, 0, 0, 0, 2, b'h', b'i'][..];
+        check!(
+            super::get_optional_string(&mut buf).expect("complete") == Some("hi".to_string()),
+            "a string may end the buffer"
+        );
+        check!(buf.is_empty(), "and leave nothing behind");
+        let mut buf = &[1, 0, 0, 0, 9, b'h'][..];
+        check!(
+            super::get_optional_string(&mut buf).is_err(),
+            "declared longer than remains"
+        );
+        let mut buf = &[1, 0, 0, 0, 1, 0xff][..];
+        check!(
+            super::get_optional_string(&mut buf).is_err(),
+            "not valid utf-8"
+        );
+    }
     use assert2::check;
     use crabka_units::{ByteSize, convert::ByteSizeExt as _, secs};
 
@@ -703,6 +1001,52 @@ mod tests {
                     .map_or(0.0, |(_, count)| *count),
                 _ => panic!("{name} not a histogram"),
             })
+    }
+
+    /// An edge completes only once BOTH sides have been seen. Every other
+    /// test pairs a client with a server, where the edge is two-sided by the
+    /// time the update path runs and `&&` and `||` agree; and the creating
+    /// span never reaches that test at all. A second client span on the same
+    /// edge is the case that separates them.
+    #[test]
+    fn an_edge_needs_both_sides_before_it_completes() {
+        let mut store = EdgeStore::new(&MetricsGenConfig::default());
+        let client = span(
+            "frontend",
+            [0xA; 8],
+            [0; 8],
+            SpanKind::Client,
+            StatusCode::Ok,
+            10_000_000,
+        );
+        // Same edge, same side: a retry of the same call.
+        let retry = span(
+            "frontend",
+            [0xA; 8],
+            [0; 8],
+            SpanKind::Client,
+            StatusCode::Ok,
+            12_000_000,
+        );
+        let server = span(
+            "backend",
+            [0xB; 8],
+            [0xA; 8],
+            SpanKind::Server,
+            StatusCode::Ok,
+            8_000_000,
+        );
+
+        // The first span creates the edge. The second takes the update path
+        // with the server side still missing, and must not complete it.
+        assert2::check!(store.record_span(&client, 0) == RecordOutcome::Recorded);
+        assert2::check!(
+            store.record_span(&retry, 1) == RecordOutcome::Recorded,
+            "an edge with only a client side is still incomplete"
+        );
+
+        // Only the other side finishes it.
+        assert2::check!(store.record_span(&server, 2) == RecordOutcome::Completed);
     }
 
     #[test]

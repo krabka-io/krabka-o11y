@@ -1100,13 +1100,12 @@ fn heatmap_slot_timestamp(
     time_buckets: usize,
     timestamp: i64,
 ) -> Option<i64> {
-    if timestamp < start_ms || timestamp >= end_ms || start_ms >= end_ms || time_buckets == 0 {
+    if timestamp < start_ms || timestamp >= end_ms || time_buckets == 0 {
         return None;
     }
     let time_span = i128::from(end_ms - start_ms);
     let raw = i128::from(timestamp - start_ms) * i128::try_from(time_buckets).ok()? / time_span;
-    let bucket = raw.clamp(0, i128::try_from(time_buckets - 1).ok()?);
-    let bucket = i64::try_from(bucket).ok()?;
+    let bucket = i64::try_from(raw).ok()?;
     let step_ms = (end_ms - start_ms) / i64::try_from(time_buckets).ok()?;
     Some(start_ms + (bucket + 1) * step_ms)
 }
@@ -2618,25 +2617,7 @@ fn merge_profile_id_selector(
         )
     };
 
-    let trimmed = label_selector.trim();
-    let merged = if trimmed.is_empty() || trimmed == "{}" {
-        format!("{{{matcher}}}")
-    } else if let Some(inner) = trimmed.strip_prefix('{') {
-        let inner = inner
-            .strip_suffix('}')
-            .ok_or_else(|| ProfileError::Plan("unclosed label selector".to_string()))?
-            .trim();
-        if inner.is_empty() {
-            format!("{{{matcher}}}")
-        } else {
-            format!("{{{inner},{matcher}}}")
-        }
-    } else {
-        format!("{{{trimmed},{matcher}}}")
-    };
-
-    parse_label_selector(&merged)?;
-    Ok(merged)
+    merge_label_matcher(label_selector, &matcher)
 }
 
 fn merge_profile_type_selector(
@@ -2865,6 +2846,345 @@ mod tests {
     use base64::Engine;
     use crabka_pprof::{FunctionRec, LineRec, LocationRec};
     use crabka_units::secs;
+
+    /// Converting a heatmap to its wire form derives a step from the time
+    /// span and stamps each slot with its own *end*. The span is `end - start`
+    /// and every existing fixture starts at zero, where subtracting and adding
+    /// agree -- so the heatmap here starts at 1000ms, making the two differ.
+    ///
+    /// The whole series is compared rather than the step alone, because the
+    /// step is not a field: it only shows through the slot timestamps.
+    #[test]
+    fn a_heatmap_stamps_each_slot_with_the_end_of_its_own_bucket() {
+        let series = pb::querier::v1::HeatmapSeries::from(crabka_pprof::Heatmap {
+            start_ms: 1_000,
+            end_ms: 5_000,
+            time_buckets: 4,
+            value_buckets: 2,
+            min_value: 0,
+            max_value: 100,
+            counts: vec![vec![1, 2], vec![3, 4], vec![5, 6], vec![7, 8]],
+        });
+
+        // A 4000ms span over 4 buckets is a 1000ms step, so the slots end at
+        // 2000..5000. Adding instead of subtracting would give a 1500ms step
+        // and run the last slot out to 7000, past the heatmap's own end.
+        let slot = |timestamp, counts: Vec<i32>| pb::querier::v1::HeatmapSlot {
+            timestamp,
+            y_min: vec![0.0, 50.0],
+            counts,
+            exemplars: Vec::new(),
+        };
+        check!(
+            series
+                == pb::querier::v1::HeatmapSeries {
+                    labels: Vec::new(),
+                    slots: vec![
+                        slot(2_000, vec![1, 2]),
+                        slot(3_000, vec![3, 4]),
+                        slot(4_000, vec![5, 6]),
+                        slot(5_000, vec![7, 8]),
+                    ],
+                }
+        );
+
+        // No time buckets means no step to derive and no slots to stamp.
+        let empty = pb::querier::v1::HeatmapSeries::from(crabka_pprof::Heatmap {
+            start_ms: 1_000,
+            end_ms: 5_000,
+            time_buckets: 0,
+            value_buckets: 2,
+            min_value: 0,
+            max_value: 100,
+            counts: Vec::new(),
+        });
+        check!(empty.slots.is_empty());
+    }
+
+    /// `heatmap_slot_timestamp` places a sample in one of `time_buckets` slots
+    /// and returns the slot's *end*. Everything here is boundary work: the
+    /// guard is four clauses joined by `||`, so each has to reject on its own,
+    /// and the arithmetic is a multiply-then-divide whose operators all look
+    /// alike from the middle of a range.
+    ///
+    /// With start 0, end 100 and 4 buckets the step is 25, so a timestamp maps
+    /// to 25, 50, 75 or 100 and nothing else.
+    #[test]
+    fn heatmap_slots_are_bounded_and_end_labelled() {
+        let slot = |ts| super::heatmap_slot_timestamp(0, 100, 4, ts);
+
+        // Each guard clause, alone: before the range, on the exclusive end,
+        // past it, an inverted range, and no buckets.
+        check!(slot(-1) == None, "before start");
+        check!(slot(100) == None, "end is exclusive");
+        check!(slot(101) == None, "past end");
+        check!(
+            super::heatmap_slot_timestamp(100, 0, 4, 50) == None,
+            "inverted"
+        );
+        check!(
+            super::heatmap_slot_timestamp(0, 100, 0, 50) == None,
+            "no buckets"
+        );
+
+        // Inside: the first instant, each bucket edge, and the last instant.
+        check!(slot(0) == Some(25), "start of the first bucket");
+        check!(slot(24) == Some(25), "last ms of the first bucket");
+        check!(slot(25) == Some(50), "first ms of the second");
+        check!(slot(50) == Some(75), "first ms of the third");
+        check!(slot(75) == Some(100), "first ms of the last");
+        check!(slot(99) == Some(100), "last ms in range");
+
+        // Offset from zero: with start_ms 0 a sign error in the span is
+        // invisible, so repeat over 1000..1400 (step 100).
+        let offset = |ts| super::heatmap_slot_timestamp(1000, 1400, 4, ts);
+        check!(offset(999) == None, "before an offset start");
+        check!(
+            offset(1000) == Some(1100),
+            "first instant of an offset range"
+        );
+        check!(offset(1150) == Some(1200), "mid offset range");
+        check!(offset(1399) == Some(1400), "last ms of an offset range");
+        check!(offset(1400) == None, "offset end is exclusive");
+    }
+
+    /// `query_param_i64` reads the first parameter matching `name`. The lookup
+    /// compares keys for equality, so a flipped comparison would return some
+    /// *other* parameter's value rather than nothing — the cases below use
+    /// distinct values so that swap is visible.
+    #[test]
+    fn query_params_are_read_by_name_and_must_parse() {
+        let params = [
+            ("limit".to_string(), "10".to_string()),
+            ("offset".to_string(), "20".to_string()),
+            ("limit".to_string(), "30".to_string()),
+            ("depth".to_string(), "-4".to_string()),
+            ("junk".to_string(), "not a number".to_string()),
+        ];
+        let get = |name| super::query_param_i64(&params, name);
+
+        check!(
+            get("limit") == Some(10),
+            "first match wins, not the later one"
+        );
+        check!(
+            get("offset") == Some(20),
+            "a distinct key gets its own value"
+        );
+        check!(get("depth") == Some(-4), "negatives parse");
+        check!(get("junk") == None, "an unparseable value is not a match");
+        check!(get("absent") == None, "a missing key has no value");
+    }
+
+    /// `label_matcher_value_escape` protects the four characters that would
+    /// otherwise terminate or corrupt a quoted matcher value.
+    #[test]
+    fn label_matcher_values_escape_exactly_four_characters() {
+        let escape = super::label_matcher_value_escape;
+
+        check!(escape(r"a\b") == r"a\\b", "a backslash doubles");
+        check!(escape(r#"a"b"#) == r#"a\"b"#, "a quote is escaped");
+        check!(
+            escape("a\nb") == r"a\nb",
+            "a newline becomes an escape pair"
+        );
+        check!(escape("a\tb") == r"a\tb", "a tab becomes an escape pair");
+        check!(escape("plain") == "plain", "ordinary text is untouched");
+        check!(escape("") == "", "an empty value stays empty");
+        check!(
+            escape("\\\"\n\t") == r#"\\\"\n\t"#,
+            "all four together, in order"
+        );
+    }
+
+    /// `is_internal_label` gates the one reserved label name.
+    #[test]
+    fn only_the_profile_id_label_is_internal() {
+        check!(super::is_internal_label(super::PROFILE_ID_LABEL));
+        check!(!super::is_internal_label("service_name"));
+        check!(
+            !super::is_internal_label(""),
+            "the empty name is not reserved"
+        );
+    }
+
+    /// `dot_escape` guards a DOT string literal. It is a near-twin of
+    /// `label_matcher_value_escape` but deliberately does *not* escape tabs,
+    /// which DOT accepts literally inside quotes.
+    #[test]
+    fn dot_values_escape_three_characters_and_leave_tabs_alone() {
+        let escape = super::dot_escape;
+
+        check!(escape(r"a\b") == r"a\\b", "a backslash doubles");
+        check!(escape("a\"b") == r#"a\"b"#, "a quote is escaped");
+        check!(
+            escape("a\nb") == r"a\nb",
+            "a newline becomes an escape pair"
+        );
+        check!(escape("a\tb") == "a\tb", "a tab is left literal");
+        check!(escape("plain") == "plain", "ordinary text is untouched");
+    }
+
+    /// `merge_profile_id_selector` folds a profile-id filter into a label
+    /// selector. The id count picks the matcher form (exact vs alternation)
+    /// and the selector's existing shape picks how the two are joined, so the
+    /// cases below cross both.
+    #[test]
+    fn profile_ids_merge_into_every_selector_shape() {
+        let merge = |sel: &str, ids: &[&str]| {
+            let ids: Vec<String> = ids.iter().map(|s| (*s).to_string()).collect();
+            super::merge_profile_id_selector(sel, &ids)
+        };
+
+        // No ids: the selector is handed back untouched, brackets and all.
+        check!(merge(r#"{service="api"}"#, &[]).unwrap() == r#"{service="api"}"#);
+        check!(
+            merge("", &[]).unwrap() == "",
+            "an empty selector stays empty"
+        );
+
+        // One id uses an exact match; more than one uses an anchored
+        // alternation. The boundary between the two forms is at exactly 1.
+        check!(merge("", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#);
+        check!(merge("", &["abc", "def"]).unwrap() == r#"{__profile_id__=~"^(?:abc|def)$"}"#);
+
+        // The four selector shapes an empty-vs-braced-vs-populated input takes.
+        check!(merge("{}", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#);
+        check!(
+            merge("  ", &["abc"]).unwrap() == r#"{__profile_id__="abc"}"#,
+            "blank trims to empty"
+        );
+        check!(
+            merge(r#"{service="api"}"#, &["abc"]).unwrap()
+                == r#"{service="api",__profile_id__="abc"}"#
+        );
+
+        // A selector that opens a brace but never closes it is rejected rather
+        // than silently repaired.
+        check!(merge(r#"{service="api""#, &["abc"]).is_err());
+    }
+
+    /// A render offset is a count and a one-letter unit. The units differ only
+    /// in scale, so each is checked against the millisecond total it stands
+    /// for rather than merely for being accepted.
+    #[test]
+    fn render_offsets_scale_by_their_unit() {
+        let parse = |value| super::parse_render_offset(value).map(Time::millis_i64);
+
+        check!(parse("1s").unwrap() == 1_000);
+        check!(parse("1m").unwrap() == 60_000);
+        check!(parse("1h").unwrap() == 3_600_000);
+        check!(parse("1d").unwrap() == 86_400_000);
+        check!(
+            parse("90m").unwrap() == 5_400_000,
+            "counts above one scale too"
+        );
+        check!(parse("0s").unwrap() == 0);
+        check!(
+            parse("-30m").unwrap() == -1_800_000,
+            "an offset may look forward"
+        );
+
+        // The unit is the last character and the count is everything before it.
+        let err = parse("1w").unwrap_err().to_string();
+        check!(err.contains("duration unit \"w\""), "got: {err}");
+        let err = parse("s").unwrap_err().to_string();
+        check!(
+            err.contains("invalid render relative duration"),
+            "got: {err}"
+        );
+        let err = parse("").unwrap_err().to_string();
+        check!(
+            err.contains("invalid render relative duration"),
+            "got: {err}"
+        );
+        let err = parse("1.5h").unwrap_err().to_string();
+        check!(
+            err.contains("invalid render relative duration"),
+            "got: {err}"
+        );
+
+        // An offset too large to express in milliseconds is an error rather
+        // than a silently different lookback.
+        let err = parse("9223372036854775807d").unwrap_err().to_string();
+        check!(err.contains("overflows"), "got: {err}");
+    }
+
+    /// `types_label_pairs` is a straight rename across a protobuf boundary.
+    /// It has one way to go wrong, and it is worth ruling out.
+    #[test]
+    fn label_pairs_keep_their_names_with_their_values() {
+        let pairs = super::types_label_pairs(vec![
+            ("service".to_string(), "api".to_string()),
+            ("env".to_string(), "prod".to_string()),
+        ]);
+        check!(
+            pairs
+                == vec![
+                    pb::types::v1::LabelPair {
+                        name: "service".to_string(),
+                        value: "api".to_string()
+                    },
+                    pb::types::v1::LabelPair {
+                        name: "env".to_string(),
+                        value: "prod".to_string()
+                    },
+                ]
+        );
+        check!(super::types_label_pairs(vec![]).is_empty());
+    }
+
+    /// `flamegraph_dot` walks the flamegraph level by level, laying bars out
+    /// left to right. Each bar's x position is the running sum of the bars
+    /// before it plus its own offset, and a bar is wired to the bar on the
+    /// level above whose span contains its left edge.
+    ///
+    /// The graph below is a root of width 10 over two children of width 4 and
+    /// 6, plus a third level under the second child, so parent selection has
+    /// to discriminate between two candidates rather than always pick the
+    /// first. One name needs escaping and one index is out of range.
+    #[test]
+    fn flamegraph_dot_lays_out_bars_and_wires_them_to_their_parents() {
+        let graph = crabka_pprof::FlameGraph {
+            names: vec!["root".to_string(), "a\"quoted".to_string(), "b".to_string()],
+            levels: vec![
+                crabka_pprof::Level {
+                    values: vec![0, 10, 2, 0],
+                },
+                crabka_pprof::Level {
+                    values: vec![0, 4, 4, 1, 0, 6, 6, 2],
+                },
+                // Offset 4 from a running end of 0 puts this under "b", not "a".
+                crabka_pprof::Level {
+                    values: vec![4, 6, 6, 9],
+                },
+                // A negative name index cannot convert at all, which is a
+                // different failure from index 9 above: that one converts and
+                // then misses. Both fall back to a placeholder rather than
+                // naming some unrelated frame.
+                crabka_pprof::Level {
+                    values: vec![0, 6, 6, -1],
+                },
+            ],
+            total: 10,
+            max_self: 6,
+        };
+
+        let expected = concat!(
+            "digraph flamegraph {\n",
+            "  node [shape=box];\n",
+            "  n0 [label=\"root\\ntotal=10 self=2\"];\n",
+            "  n1 [label=\"a\\\"quoted\\ntotal=4 self=4\"];\n",
+            "  n0 -> n1;\n",
+            "  n2 [label=\"b\\ntotal=6 self=6\"];\n",
+            "  n0 -> n2;\n",
+            "  n3 [label=\"unknown:9\\ntotal=6 self=6\"];\n",
+            "  n2 -> n3;\n",
+            "  n4 [label=\"unknown:18446744073709551615\\ntotal=6 self=6\"];\n",
+            "}\n",
+        );
+        check!(super::flamegraph_dot(&graph) == expected);
+    }
 
     use super::*;
     use crate::{Limits, OverridesProvider};

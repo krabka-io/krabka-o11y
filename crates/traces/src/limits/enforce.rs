@@ -221,10 +221,31 @@ mod rate_bucket {
 
 #[cfg(test)]
 mod tests {
+    use assert2::check;
     use crabka_units::{bytes, hours, per_sec};
 
     use super::*;
     use crate::limits::{LimitError, Limits};
+
+    /// `f64_from_u64` converts through a decimal string rather than casting,
+    /// so a limit above 2^53 keeps its magnitude instead of being rounded by
+    /// the cast. The answers avoid 0, 1 and -1, which are exactly the
+    /// constants a collapsed body returns.
+    #[test]
+    fn a_u64_limit_converts_to_a_float_of_the_same_magnitude() {
+        let convert = super::f64_from_u64;
+        let close = |left: f64, right: f64| (left - right).abs() < f64::EPSILON;
+
+        check!(close(convert(0), 0.0));
+        check!(close(convert(7), 7.0));
+        check!(close(convert(1_000_000), 1_000_000.0));
+
+        // u64::MAX is about 1.8e19. A float cannot hold it exactly, but it
+        // must not become infinity, one, or a rounded-to-nothing zero.
+        check!(convert(u64::MAX) > 1.8e19);
+        check!(convert(u64::MAX) < 1.9e19);
+        check!(convert(u64::MAX).is_finite());
+    }
 
     fn limits_with(spans: u64, attr_bytes: u32) -> Limits {
         Limits {

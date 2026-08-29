@@ -561,12 +561,7 @@ mod tests {
     #[test]
     fn mapping_symbolization_round_trips_every_flag_combination() {
         for bits in 0_u8..16 {
-            let parts = (
-                bits & 1 != 0,
-                bits & 2 != 0,
-                bits & 4 != 0,
-                bits & 8 != 0,
-            );
+            let parts = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
             let flags = MappingSymbolization::from_parts(parts);
             check!(
                 (
@@ -583,12 +578,7 @@ mod tests {
         // what a flag stored at the wrong bit would do.
         let mut seen = std::collections::HashSet::new();
         for bits in 0_u8..16 {
-            let parts = (
-                bits & 1 != 0,
-                bits & 2 != 0,
-                bits & 4 != 0,
-                bits & 8 != 0,
-            );
+            let parts = (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
             check!(seen.insert(MappingSymbolization::from_parts(parts)));
         }
     }

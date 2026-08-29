@@ -144,6 +144,34 @@ impl KafkaSink {
     }
 }
 
+/// Builds the WAL producer record for a serialized entry.
+///
+/// Separated from the send so the record's shape can be checked without a
+/// broker: the topic it lands on, that partitioning is left to the producer,
+/// and that the key and value are not transposed.
+fn wal_producer_record(
+    key: Bytes,
+    value: Vec<u8>,
+    trace_headers: Vec<(String, String)>,
+) -> ProducerRecord {
+    ProducerRecord {
+        topic: WAL_TOPIC.to_string(),
+        // No explicit partition: the producer's partitioner keys on `key`, so
+        // every record for a series lands on one partition and stays ordered.
+        partition: None,
+        key: Some(key),
+        value: Some(Bytes::from(value)),
+        headers: trace_headers
+            .into_iter()
+            .map(|(key, value)| ProducerHeader {
+                key,
+                value: Some(Bytes::from(value.into_bytes())),
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
 #[async_trait::async_trait]
 impl WalSink for KafkaSink {
     async fn append(&self, key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
@@ -155,28 +183,30 @@ impl WalSink for KafkaSink {
         // span onto this producer's trace. Additive: it only appends the
         // traceparent/tracestate headers, and is an empty `Vec` (no-op) when no
         // span is active or OTLP is disabled.
-        let headers = current_trace_headers()
-            .into_iter()
-            .map(|(key, value)| ProducerHeader {
-                key,
-                value: Some(Bytes::from(value.into_bytes())),
-            })
-            .collect::<Vec<_>>();
         let ack = self
             .producer
-            .send(ProducerRecord {
-                topic: WAL_TOPIC.to_string(),
-                partition: None,
-                key: Some(key),
-                value: Some(Bytes::from(value)),
-                headers,
-                ..Default::default()
-            })
+            .send(wal_producer_record(key, value, current_trace_headers()))
             .await;
         ack.await
             .map_err(|error| ProduceError::Append(error.to_string()))?
             .map_err(|error| ProduceError::Append(error.to_string()))?;
         Ok(())
+    }
+}
+
+#[must_use]
+/// Builds a keyed producer record for a compacted topic.
+///
+/// Separated from the send so the record's shape can be checked without a
+/// broker. The partition is deliberately absent: the producer keys on `key`,
+/// which is what keeps a compacted topic's records for one entity together.
+fn keyed_producer_record(topic: String, key: Bytes, value: Vec<u8>) -> ProducerRecord {
+    ProducerRecord {
+        topic,
+        partition: None,
+        key: Some(key),
+        value: Some(Bytes::from(value)),
+        ..Default::default()
     }
 }
 
@@ -216,13 +246,7 @@ impl HaElectionSink for KafkaHaElectionSink {
             .map_err(|error| ProduceError::Append(error.to_string()))?;
         let ack = self
             .producer
-            .send(ProducerRecord {
-                topic: self.topic.clone(),
-                partition: None,
-                key: Some(key),
-                value: Some(Bytes::from(value)),
-                ..Default::default()
-            })
+            .send(keyed_producer_record(self.topic.clone(), key, value))
             .await;
         ack.await
             .map_err(|error| ProduceError::Append(error.to_string()))?
@@ -1296,34 +1320,35 @@ impl IntoResponse for PushError {
     }
 }
 
+/// The gRPC status a push failure reaches the client as.
+///
+/// The errors that carry an HTTP status share one mapping rather than each
+/// repeating it as a match guard. Three of those guards could never match:
+/// wire errors only ever report 400 or 415, and OTLP errors only 400, so the
+/// arms testing them for 429 and 500 were unreachable. Going through the
+/// status code keeps the intent, applies it to all three uniformly, and stays
+/// correct if any of them gains a new code.
 fn status_from_push_error(error: &PushError) -> Status {
+    let message = error.to_string();
     match error {
-        PushError::Limit(limit)
-            if limit.http_status() == StatusCode::TOO_MANY_REQUESTS.as_u16() =>
-        {
-            Status::resource_exhausted(error.to_string())
-        }
-        PushError::Produce(_) => Status::internal(error.to_string()),
-        PushError::Wire(wire) if wire.status_code() == StatusCode::TOO_MANY_REQUESTS.as_u16() => {
-            Status::resource_exhausted(error.to_string())
-        }
-        PushError::Wire(wire)
-            if wire.status_code() == StatusCode::INTERNAL_SERVER_ERROR.as_u16() =>
-        {
-            Status::internal(error.to_string())
-        }
-        PushError::Otlp(otlp)
-            if otlp.status_code() == StatusCode::INTERNAL_SERVER_ERROR.as_u16() =>
-        {
-            Status::internal(error.to_string())
-        }
+        PushError::Produce(_) => Status::internal(message),
+        PushError::Limit(limit) => status_from_http_status(limit.http_status(), message),
+        PushError::Wire(wire) => status_from_http_status(wire.status_code(), message),
+        PushError::Otlp(otlp) => status_from_http_status(otlp.status_code(), message),
         PushError::MissingTenant
         | PushError::InvalidTenant(_)
-        | PushError::TooOldSample { .. }
-        | PushError::Limit(_)
-        | PushError::Wire(_)
         | PushError::Clock(_)
-        | PushError::Otlp(_) => Status::invalid_argument(error.to_string()),
+        | PushError::TooOldSample { .. } => Status::invalid_argument(message),
+    }
+}
+
+fn status_from_http_status(http_status: u16, message: String) -> Status {
+    if http_status == StatusCode::TOO_MANY_REQUESTS.as_u16() {
+        Status::resource_exhausted(message)
+    } else if http_status == StatusCode::INTERNAL_SERVER_ERROR.as_u16() {
+        Status::internal(message)
+    } else {
+        Status::invalid_argument(message)
     }
 }
 
@@ -1623,7 +1648,867 @@ fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A push failure reaches an HTTP client as a status code and a gRPC
+    /// client as a code, and the two mappings are separate pieces of code
+    /// over the same errors. Both are pinned per variant, because a variant
+    /// that borrows its neighbour's status still produces a valid response
+    /// and only the code itself gives it away.
+    #[test]
+    fn a_push_failure_reaches_http_and_grpc_clients_as_its_own_status() {
+        use axum::response::IntoResponse as _;
+
+        use crate::limits::LimitError;
+
+        let rate_limited = || LimitError::IngestionRateExceeded {
+            rate: 1.0,
+            observed: 2.0,
+        };
+        let bad_request = || LimitError::MaxSeriesPerUser {
+            limit: 1,
+            observed: 2,
+        };
+        let unprocessable = || LimitError::SamplesPerQueryExceeded {
+            limit: 1,
+            observed: 2,
+        };
+
+        // The three-way gRPC mapping. 429 and 500 each have their own code;
+        // everything else is an invalid argument, including codes that are
+        // neither an obvious client nor server fault.
+        let grpc = |http| super::status_from_http_status(http, "boom".to_string()).code();
+        check!(grpc(429) == tonic::Code::ResourceExhausted);
+        check!(grpc(500) == tonic::Code::Internal);
+        check!(grpc(400) == tonic::Code::InvalidArgument);
+        check!(grpc(422) == tonic::Code::InvalidArgument);
+        check!(
+            grpc(200) == tonic::Code::InvalidArgument,
+            "even a success code"
+        );
+        check!(
+            super::status_from_http_status(429, "boom".to_string()).message() == "boom",
+            "the message is carried through, not replaced"
+        );
+
+        // Per-variant gRPC codes.
+        let code = |error: &super::PushError| super::status_from_push_error(error).code();
+        check!(code(&super::PushError::MissingTenant) == tonic::Code::InvalidArgument);
+        check!(
+            code(&super::PushError::InvalidTenant("x".to_string())) == tonic::Code::InvalidArgument
+        );
+        check!(
+            code(&super::PushError::TooOldSample {
+                timestamp_ms: 1,
+                oldest_allowed_ms: 2,
+            }) == tonic::Code::InvalidArgument
+        );
+        check!(code(&super::PushError::Limit(rate_limited())) == tonic::Code::ResourceExhausted);
+        check!(code(&super::PushError::Limit(bad_request())) == tonic::Code::InvalidArgument);
+        check!(code(&super::PushError::Limit(unprocessable())) == tonic::Code::InvalidArgument);
+        check!(
+            code(&super::PushError::Produce(super::ProduceError::Append(
+                "io".to_string()
+            ))) == tonic::Code::Internal,
+            "a produce failure is ours, not the client's"
+        );
+
+        // Per-variant HTTP statuses, which are a separate mapping over the
+        // same errors and disagree with the gRPC one on the 422 case.
+        let http = |error: super::PushError| error.into_response().status();
+        check!(http(super::PushError::MissingTenant) == axum::http::StatusCode::BAD_REQUEST);
+        check!(
+            http(super::PushError::InvalidTenant("x".to_string()))
+                == axum::http::StatusCode::BAD_REQUEST
+        );
+        check!(
+            http(super::PushError::TooOldSample {
+                timestamp_ms: 1,
+                oldest_allowed_ms: 2,
+            }) == axum::http::StatusCode::BAD_REQUEST
+        );
+        check!(
+            http(super::PushError::Limit(rate_limited()))
+                == axum::http::StatusCode::TOO_MANY_REQUESTS
+        );
+        check!(http(super::PushError::Limit(bad_request())) == axum::http::StatusCode::BAD_REQUEST);
+        check!(
+            http(super::PushError::Limit(unprocessable()))
+                == axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "422 survives the HTTP path though gRPC folds it into invalid-argument"
+        );
+        check!(
+            http(super::PushError::Produce(super::ProduceError::Append(
+                "io".to_string()
+            ))) == axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    /// A negative out-of-order window disables the check; a zero window does
+    /// not. Zero means no out-of-order tolerance at all, so a sample older
+    /// than the newest already seen is rejected -- which is the case that
+    /// separates `< ZERO` from `<= ZERO`, since every other window agrees.
+    #[test]
+    fn a_zero_out_of_order_window_still_rejects_older_samples() {
+        use crate::wire::DecodedSample;
+
+        let (state, _sink) = test_state();
+        let series = |timestamp_ms: i64| {
+            let mut labels = Labels::default();
+            labels.insert("__name__", "requests");
+            DecodedSeries {
+                labels,
+                samples: vec![DecodedSample::new(timestamp_ms, 1.0)],
+                histograms: Vec::new(),
+                exemplars: Vec::new(),
+                metadata: None,
+            }
+        };
+        let window = |ms: i64| Limits {
+            out_of_order_time_window: Time::from_millis(ms),
+            ..Limits::default()
+        };
+
+        // A zero window: the first sample sets the mark, and one before it is
+        // refused.
+        let zero = window(0);
+        check!(super::enforce_out_of_order_window(&state, &zero, "t", &[series(1_000)]).is_ok());
+        check!(
+            super::enforce_out_of_order_window(&state, &zero, "t", &[series(999)]).is_err(),
+            "one millisecond earlier is out of order"
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &zero, "t", &[series(1_000)]).is_ok(),
+            "the same timestamp is not older"
+        );
+
+        // A positive window admits samples within it and refuses those beyond.
+        let (state, _sink) = test_state();
+        let ten = window(10_000);
+        check!(super::enforce_out_of_order_window(&state, &ten, "t", &[series(100_000)]).is_ok());
+        check!(
+            super::enforce_out_of_order_window(&state, &ten, "t", &[series(90_000)]).is_ok(),
+            "exactly the window back is still allowed"
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &ten, "t", &[series(89_999)]).is_err(),
+            "one millisecond beyond it is not"
+        );
+
+        // A negative window disables the check entirely.
+        let (state, _sink) = test_state();
+        let disabled = window(-1);
+        check!(
+            super::enforce_out_of_order_window(&state, &disabled, "t", &[series(1_000)]).is_ok()
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &disabled, "t", &[series(1)]).is_ok(),
+            "anything goes when the window is negative"
+        );
+    }
+
+    /// The per-series sample cap counts samples, histograms and exemplars
+    /// together. All three are populated here and the total is placed either
+    /// side of the limit, because a sum that subtracts one term instead of
+    /// adding it still produces a number -- just a smaller one that slips
+    /// under the cap.
+    #[test]
+    fn the_per_series_sample_cap_counts_all_three_collections() {
+        use crate::{
+            histogram::NativeHistogram,
+            wire::{DecodedExemplar, DecodedSample},
+        };
+
+        let histogram = || NativeHistogram {
+            schema: 0,
+            is_float: false,
+            reset_hint: crate::ResetHint::Unknown,
+            zero_threshold: 0.0,
+            zero_count: 0.0,
+            count: 0.0,
+            sum: 0.0,
+            positive_spans: Vec::new(),
+            positive_counts: Vec::new(),
+            negative_spans: Vec::new(),
+            negative_counts: Vec::new(),
+            custom_values: None,
+            start_timestamp_ms: None,
+        };
+        let series = |samples: usize, histograms: usize, exemplars: usize| {
+            let mut labels = Labels::default();
+            labels.insert("__name__", "requests");
+            DecodedSeries {
+                labels,
+                samples: (0..samples)
+                    .map(|i| DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
+                    .collect(),
+                histograms: (0..histograms)
+                    .map(|i| (i64::try_from(i).expect("small"), histogram()))
+                    .collect(),
+                exemplars: (0..exemplars)
+                    .map(|i| DecodedExemplar {
+                        labels: Labels::default(),
+                        timestamp_ms: i64::try_from(i).expect("small"),
+                        value: 1.0,
+                    })
+                    .collect(),
+                metadata: None,
+            }
+        };
+        let limits = super::TenantLimits {
+            max_samples_per_series: 6,
+            max_series_per_request: 10,
+            ..super::TenantLimits::default()
+        };
+
+        // Three, two and one make exactly the cap, which is allowed.
+        check!(
+            super::validate(&[series(3, 2, 1)], &limits).is_ok(),
+            "exactly at the cap"
+        );
+
+        // One more of any kind is over it, whichever collection grows.
+        check!(
+            super::validate(&[series(4, 2, 1)], &limits).is_err(),
+            "one more sample"
+        );
+        check!(
+            super::validate(&[series(3, 3, 1)], &limits).is_err(),
+            "one more histogram"
+        );
+        check!(
+            super::validate(&[series(3, 2, 2)], &limits).is_err(),
+            "one more exemplar"
+        );
+
+        // Each collection alone reaches the cap on its own terms.
+        check!(super::validate(&[series(6, 0, 0)], &limits).is_ok());
+        check!(super::validate(&[series(7, 0, 0)], &limits).is_err());
+        check!(super::validate(&[series(0, 7, 0)], &limits).is_err());
+        check!(super::validate(&[series(0, 0, 7)], &limits).is_err());
+
+        // The series cap is separate and counts series, not samples.
+        let many = vec![series(1, 0, 0); 10];
+        check!(
+            super::validate(&many, &limits).is_ok(),
+            "ten series is the cap"
+        );
+        let too_many = vec![series(1, 0, 0); 11];
+        check!(
+            super::validate(&too_many, &limits).is_err(),
+            "eleven is over it"
+        );
+    }
+
+    /// `keyed_producer_record` takes its topic from the caller, unlike the WAL
+    /// record beside it which fixes one. The partition is still left unset so
+    /// the partitioner keys on the record key.
+    #[test]
+    fn a_keyed_record_takes_the_topic_it_is_given() {
+        let record = super::keyed_producer_record(
+            "elections".to_string(),
+            Bytes::from_static(b"tenant-key"),
+            b"payload".to_vec(),
+        );
+
+        check!(
+            record.topic == "elections",
+            "the given topic, not the WAL one"
+        );
+        check!(record.topic != WAL_TOPIC);
+        check!(record.partition == None, "the partitioner must choose");
+        check!(record.key.as_deref() == Some(&b"tenant-key"[..]));
+        check!(
+            record.value.as_deref() == Some(&b"payload"[..]),
+            "not the key again"
+        );
+        check!(record.headers.is_empty(), "no trace context on this path");
+    }
+
+    /// `wal_producer_record` shapes one WAL append. The partition is left
+    /// unset deliberately: the producer's partitioner keys on the record key,
+    /// which is what keeps a series on one partition and in order. Setting a
+    /// partition here would silently defeat that, so its absence is asserted
+    /// rather than left unmentioned.
+    #[test]
+    fn a_wal_record_carries_its_key_value_and_headers_without_a_partition() {
+        let record = super::wal_producer_record(
+            Bytes::from_static(b"series-key"),
+            b"payload".to_vec(),
+            vec![
+                ("traceparent".to_string(), "00-abc-def-01".to_string()),
+                ("tracestate".to_string(), "vendor=1".to_string()),
+            ],
+        );
+
+        check!(record.topic == WAL_TOPIC);
+        check!(
+            record.partition == None,
+            "the partitioner must choose, not this"
+        );
+        check!(record.key.as_deref() == Some(&b"series-key"[..]));
+        check!(
+            record.value.as_deref() == Some(&b"payload"[..]),
+            "not the key again"
+        );
+
+        // Headers keep their order and their pairing; the two values differ so
+        // a swap between them is visible.
+        check!(record.headers.len() == 2);
+        check!(record.headers[0].key == "traceparent");
+        check!(record.headers[0].value.as_deref() == Some(&b"00-abc-def-01"[..]));
+        check!(record.headers[1].key == "tracestate");
+        check!(record.headers[1].value.as_deref() == Some(&b"vendor=1"[..]));
+
+        // No trace context means no headers, rather than empty ones.
+        let bare = super::wal_producer_record(Bytes::from_static(b"k"), b"v".to_vec(), Vec::new());
+        check!(bare.headers.is_empty());
+    }
+
+    /// `decoded_sample_count` totals three collections across every series.
+    /// Each carries a different number, so a term dropped from the sum is a
+    /// specific shortfall rather than merely a smaller total -- with equal
+    /// counts, dropping any one of the three looks the same.
+    #[test]
+    fn a_decoded_batch_counts_samples_histograms_and_exemplars() {
+        use crate::{
+            histogram::NativeHistogram,
+            wire::{DecodedExemplar, DecodedSample},
+        };
+
+        let series = |samples: usize, histograms: usize, exemplars: usize| DecodedSeries {
+            labels: Labels::default(),
+            samples: (0..samples)
+                .map(|i| DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
+                .collect(),
+            histograms: (0..histograms)
+                .map(|i| {
+                    (
+                        i64::try_from(i).expect("small"),
+                        NativeHistogram {
+                            schema: 0,
+                            is_float: false,
+                            reset_hint: crate::ResetHint::Unknown,
+                            zero_threshold: 0.0,
+                            zero_count: 0.0,
+                            count: 0.0,
+                            sum: 0.0,
+                            positive_spans: Vec::new(),
+                            positive_counts: Vec::new(),
+                            negative_spans: Vec::new(),
+                            negative_counts: Vec::new(),
+                            custom_values: None,
+                            start_timestamp_ms: None,
+                        },
+                    )
+                })
+                .collect(),
+            exemplars: (0..exemplars)
+                .map(|i| DecodedExemplar {
+                    labels: Labels::default(),
+                    timestamp_ms: i64::try_from(i).expect("small"),
+                    value: 1.0,
+                })
+                .collect(),
+            metadata: None,
+        };
+
+        // Three different counts, so dropping any one term is distinguishable
+        // from dropping either other.
+        check!(super::decoded_sample_count(&[series(3, 5, 7)]) == 15);
+        check!(
+            super::decoded_sample_count(&[series(3, 0, 0)]) == 3,
+            "samples alone"
+        );
+        check!(
+            super::decoded_sample_count(&[series(0, 5, 0)]) == 5,
+            "histograms alone"
+        );
+        check!(
+            super::decoded_sample_count(&[series(0, 0, 7)]) == 7,
+            "exemplars alone"
+        );
+
+        // Several series add up rather than the largest winning.
+        check!(super::decoded_sample_count(&[series(3, 0, 0), series(4, 0, 0)]) == 7);
+
+        // Nothing at all is zero, not one.
+        check!(super::decoded_sample_count(&[]) == 0);
+        check!(
+            super::decoded_sample_count(&[series(0, 0, 0)]) == 0,
+            "an empty series counts none"
+        );
+    }
+
+    /// `tenant_limits_to_limits` copies five fields across and leaves the rest
+    /// at their defaults. Two of the five are byte sizes and two are counts,
+    /// so every value here is distinct: a field reading its neighbour still
+    /// produces a well-formed limit, and only distinct values show it.
+    #[test]
+    fn tenant_limits_map_field_by_field_onto_the_shared_limits() {
+        use crabka_units::{bytes, per_sec, secs};
+
+        let tenant = super::TenantLimits {
+            max_label_name_len: bytes(11),
+            max_label_value_len: bytes(22),
+            max_samples_per_series: 33,
+            max_series_per_request: 44,
+            ingestion_rate: per_sec(55),
+            ingestion_burst_size: 66,
+            out_of_order_time_window: secs(77),
+        };
+
+        let limits = super::tenant_limits_to_limits(&tenant);
+
+        check!(limits.max_label_name_length == bytes(11));
+        check!(
+            limits.max_label_value_length == bytes(22),
+            "not the name length"
+        );
+        check!(
+            limits.ingestion_burst_size == 66,
+            "the burst, not a sample count"
+        );
+        check!(limits.out_of_order_time_window == secs(77));
+        check!(limits.ingestion_rate == per_sec(55));
+
+        // The fields with no counterpart keep the shared default rather than
+        // picking up a value from the tenant's own limits.
+        let defaults = super::Limits::default();
+        check!(
+            limits.max_global_series_per_user == defaults.max_global_series_per_user,
+            "a field with no source stays at its default"
+        );
+    }
     use std::sync::Mutex;
+
+    fn decoded_series(labels: &[(&str, &str)], samples: usize) -> crate::wire::DecodedSeries {
+        let mut set = crabka_blockstore::Labels::new();
+        for (name, value) in labels {
+            set.insert(*name, *value);
+        }
+        crate::wire::DecodedSeries {
+            labels: set,
+            samples: (0..samples)
+                .map(|i| crate::wire::DecodedSample {
+                    timestamp_ms: i64::try_from(i).unwrap_or(0),
+                    value: 1.0,
+                    start_timestamp_ms: None,
+                })
+                .collect(),
+            histograms: vec![],
+            exemplars: vec![],
+            metadata: None,
+        }
+    }
+
+    /// Every structural limit rejects what exceeds it, so a request sitting
+    /// exactly on each one is still accepted. Each is checked at its edge and
+    /// one past it, and the errors are matched on their text because the four
+    /// differ only in which number they name.
+    #[test]
+    fn structural_limits_admit_exactly_their_boundary() {
+        let limits = TenantLimits {
+            max_series_per_request: 2,
+            max_samples_per_series: 3,
+            max_label_name_len: crabka_units::bytes(4),
+            max_label_value_len: crabka_units::bytes(5),
+            ..TenantLimits::default()
+        };
+
+        let two = [
+            decoded_series(&[("ok", "v")], 1),
+            decoded_series(&[("ok", "v")], 1),
+        ];
+        assert!(
+            super::validate(&two, &limits).is_ok(),
+            "two series fit a limit of two"
+        );
+
+        let three = [
+            decoded_series(&[("ok", "v")], 1),
+            decoded_series(&[("ok", "v")], 1),
+            decoded_series(&[("ok", "v")], 1),
+        ];
+        let err = super::validate(&three, &limits).unwrap_err().to_string();
+        assert!(
+            err.contains("series per request 3 exceeds limit 2"),
+            "got: {err}"
+        );
+
+        let at_edge = [decoded_series(&[("ok", "v")], 3)];
+        assert!(
+            super::validate(&at_edge, &limits).is_ok(),
+            "three samples fit a limit of three"
+        );
+        let over = [decoded_series(&[("ok", "v")], 4)];
+        let err = super::validate(&over, &limits).unwrap_err().to_string();
+        assert!(
+            err.contains("samples per series 4 exceeds limit 3"),
+            "got: {err}"
+        );
+
+        let at_edge = [decoded_series(&[("abcd", "v")], 1)];
+        assert!(
+            super::validate(&at_edge, &limits).is_ok(),
+            "a four-byte name fits"
+        );
+        let over = [decoded_series(&[("abcde", "v")], 1)];
+        let err = super::validate(&over, &limits).unwrap_err().to_string();
+        assert!(
+            err.contains("label name length 5 exceeds limit 4"),
+            "got: {err}"
+        );
+
+        let at_edge = [decoded_series(&[("ok", "vwxyz")], 1)];
+        assert!(
+            super::validate(&at_edge, &limits).is_ok(),
+            "a five-byte value fits"
+        );
+        let over = [decoded_series(&[("ok", "vwxyz!")], 1)];
+        let err = super::validate(&over, &limits).unwrap_err().to_string();
+        assert!(
+            err.contains("label value length 6 exceeds limit 5"),
+            "got: {err}"
+        );
+
+        let bad = [decoded_series(&[("has space", "v")], 1)];
+        let err = super::validate(&bad, &limits).unwrap_err().to_string();
+        assert!(err.contains("invalid label name"), "got: {err}");
+    }
+
+    /// The per-series sample budget counts samples, histograms and exemplars
+    /// together, so a series can exceed it without any one kind doing so.
+    #[test]
+    fn the_sample_budget_counts_every_kind_together() {
+        let limits = TenantLimits {
+            max_samples_per_series: 3,
+            ..TenantLimits::default()
+        };
+
+        let mut series = decoded_series(&[("ok", "v")], 2);
+        series.exemplars = vec![crate::wire::DecodedExemplar {
+            labels: crabka_blockstore::Labels::new(),
+            value: 1.0,
+            timestamp_ms: 1,
+        }];
+        assert!(
+            super::validate(std::slice::from_ref(&series), &limits).is_ok(),
+            "two samples and one exemplar is exactly three"
+        );
+
+        series.exemplars.push(crate::wire::DecodedExemplar {
+            labels: crabka_blockstore::Labels::new(),
+            value: 1.0,
+            timestamp_ms: 2,
+        });
+        let err = super::validate(&[series], &limits).unwrap_err().to_string();
+        assert!(
+            err.contains("samples per series 4 exceeds limit 3"),
+            "got: {err}"
+        );
+    }
+
+    /// The HA election compaction key identifies one tenant-and-cluster pair.
+    /// Two pairs sharing a key would let one cluster's election overwrite
+    /// another's, so the separator has to do its job.
+    #[test]
+    fn ha_election_keys_identify_one_tenant_and_cluster() {
+        let key = |tenant: &str, cluster: &str| {
+            super::ha_election_compaction_key(&crate::distributor::ha::HaElectionRecord {
+                tenant: tenant.into(),
+                cluster: cluster.into(),
+                // Neither is part of the identity: a later election for the
+                // same pair replaces the earlier one.
+                replica: "replica-1".into(),
+                lease_timestamp_ms: 1,
+            })
+        };
+
+        check!(key("t", "c") == Bytes::from("t\0c"));
+        check!(key("t", "c") == key("t", "c"), "the same pair keys alike");
+        check!(
+            key("t", "c") != key("t", "d"),
+            "a different cluster differs"
+        );
+        check!(key("t", "c") != key("u", "c"), "so does a different tenant");
+        check!(
+            key("t", "c") != key("tc", ""),
+            "the separator stops a shifted split from colliding"
+        );
+    }
+
+    /// The record both compacted sinks build, checked without a broker.
+    #[test]
+    fn a_compacted_record_carries_its_topic_key_and_value() {
+        let record = super::keyed_producer_record(
+            "ha-elections".to_string(),
+            Bytes::from_static(b"the-key"),
+            b"the-value".to_vec(),
+        );
+
+        check!(record.topic == "ha-elections");
+        check!(
+            record.partition == None,
+            "partitioning is left to the producer"
+        );
+        check!(record.key.as_deref() == Some(&b"the-key"[..]));
+        check!(record.value.as_deref() == Some(&b"the-value"[..]));
+    }
+
+    /// The WAL record's shape, checked without a broker. The key and value
+    /// are distinguishable byte strings so a transposition is visible, and
+    /// the absent partition matters: supplying one would override the
+    /// producer's key-based partitioner and break per-series ordering.
+    #[test]
+    fn a_wal_record_carries_its_key_value_and_trace_headers() {
+        let record = super::wal_producer_record(
+            Bytes::from_static(b"the-key"),
+            b"the-value".to_vec(),
+            vec![
+                ("traceparent".to_string(), "00-abc-def-01".to_string()),
+                ("tracestate".to_string(), "vendor=1".to_string()),
+            ],
+        );
+
+        check!(record.topic == super::WAL_TOPIC);
+        check!(
+            record.partition == None,
+            "partitioning is left to the producer"
+        );
+        check!(record.key.as_deref() == Some(&b"the-key"[..]));
+        check!(record.value.as_deref() == Some(&b"the-value"[..]));
+        check!(
+            record
+                .headers
+                .iter()
+                .map(|header| (
+                    header.key.as_str(),
+                    header
+                        .value
+                        .as_deref()
+                        .map(|v| String::from_utf8_lossy(v).into_owned())
+                ))
+                .collect::<Vec<_>>()
+                == vec![
+                    ("traceparent", Some("00-abc-def-01".to_string())),
+                    ("tracestate", Some("vendor=1".to_string())),
+                ],
+            "headers keep their names, values and order"
+        );
+
+        // No active span means no headers, not an empty-valued one.
+        let bare = super::wal_producer_record(Bytes::from_static(b"k"), b"v".to_vec(), vec![]);
+        check!(bare.headers.is_empty());
+    }
+
+    /// The HTTP-to-gRPC mapping the error kinds share. Only two codes get a
+    /// status of their own; everything else is the caller's fault by default,
+    /// which is the safer reading for a code nobody has mapped yet.
+    #[test]
+    fn http_statuses_map_to_the_grpc_code_the_client_should_act_on() {
+        let map = |code| super::status_from_http_status(code, "why".to_string()).code();
+
+        check!(
+            map(429) == tonic::Code::ResourceExhausted,
+            "too many requests"
+        );
+        check!(map(500) == tonic::Code::Internal, "our fault");
+
+        for code in [400, 404, 415, 422, 428, 430, 499, 501, 503] {
+            check!(
+                map(code) == tonic::Code::InvalidArgument,
+                "{code} has no status of its own"
+            );
+        }
+
+        check!(
+            super::status_from_http_status(500, "why".to_string()).message() == "why",
+            "the reason is carried through"
+        );
+    }
+
+    /// Every push failure has to reach the client as the status it should act
+    /// on: back off, retry later, or stop sending this request. The table
+    /// covers each error kind, including the ones that reach the catch-all,
+    /// since that is where a guard that stopped matching would land.
+    #[test]
+    fn push_errors_reach_the_client_as_the_status_to_act_on() {
+        use crate::{limits::LimitError, wire::WireError};
+
+        let cases: Vec<(super::PushError, tonic::Code, &str)> = vec![
+            (
+                LimitError::IngestionRateExceeded {
+                    rate: 1.0,
+                    observed: 2.0,
+                }
+                .into(),
+                tonic::Code::ResourceExhausted,
+                "a rate limit is a back-off",
+            ),
+            (
+                LimitError::MaxSeriesPerUser {
+                    limit: 1,
+                    observed: 2,
+                }
+                .into(),
+                tonic::Code::InvalidArgument,
+                "a series limit is the request's fault",
+            ),
+            (
+                LimitError::QueryRangeTooLong {
+                    limit_secs: 1,
+                    observed_secs: 2,
+                }
+                .into(),
+                tonic::Code::InvalidArgument,
+                "an unprocessable range is too",
+            ),
+            (
+                super::ProduceError::Append("wal down".into()).into(),
+                tonic::Code::Internal,
+                "a failed append is ours, not the client's",
+            ),
+            (
+                WireError::UnsupportedContentType("text/plain".into()).into(),
+                tonic::Code::InvalidArgument,
+                "an undecodable body is the request's fault",
+            ),
+            (
+                WireError::Invalid("bad".into()).into(),
+                tonic::Code::InvalidArgument,
+                "so is an invalid one",
+            ),
+            (
+                super::PushError::MissingTenant,
+                tonic::Code::InvalidArgument,
+                "a missing tenant header",
+            ),
+            (
+                super::PushError::InvalidTenant("a/b".into()),
+                tonic::Code::InvalidArgument,
+                "an unusable tenant header",
+            ),
+            (
+                super::PushError::TooOldSample {
+                    timestamp_ms: 1,
+                    oldest_allowed_ms: 2,
+                },
+                tonic::Code::InvalidArgument,
+                "a sample the store will not take",
+            ),
+        ];
+
+        for (error, expected, why) in cases {
+            let status = super::status_from_push_error(&error);
+            check!(status.code() == expected, "{why}: {error}");
+            check!(
+                !status.message().is_empty(),
+                "{why}: the reason is carried through"
+            );
+        }
+    }
+
+    /// The exemplar codepoint budget is summed across every label name and
+    /// value, and compared with a strict `>` so a set landing exactly on the
+    /// limit is allowed.
+    ///
+    /// Two things go wrong quietly here. Read as `>=`, the budget is one
+    /// codepoint tighter than documented and an exemplar sitting on the limit
+    /// is refused. And the running total is a sum: read as a product, a single
+    /// label still totals plausibly while several no longer do, so the check
+    /// only misfires once an exemplar carries more than one label.
+    #[test]
+    fn exemplar_codepoints_are_summed_and_capped_at_the_limit() {
+        let exemplar = |pairs: &[(&str, &str)]| {
+            let mut labels = crabka_blockstore::Labels::new();
+            for (name, value) in pairs {
+                labels.insert(*name, *value);
+            }
+            DecodedExemplar {
+                labels,
+                timestamp_ms: 0,
+                value: 1.0,
+            }
+        };
+
+        // Eight labels of eight codepoints each side: 128, exactly the budget.
+        let owned: Vec<(String, String)> = (0..8)
+            .map(|i| (format!("name{i:04}"), format!("valu{i:04}")))
+            .collect();
+        let at_limit: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        let total: usize = at_limit
+            .iter()
+            .map(|(n, v)| n.chars().count() + v.chars().count())
+            .sum();
+        check!(
+            total == MAX_EXEMPLAR_LABEL_CODEPOINTS,
+            "fixture is {total}, not the budget"
+        );
+
+        check!(
+            validate_exemplar_labels(&exemplar(&at_limit)).is_ok(),
+            "a set landing exactly on the budget is allowed"
+        );
+
+        // One codepoint more, spread across the same number of labels, is not.
+        let mut over = at_limit.clone();
+        over.push(("x", ""));
+        check!(
+            validate_exemplar_labels(&exemplar(&over)).is_err(),
+            "one codepoint past the budget is refused"
+        );
+
+        // One label whose value alone exceeds the budget.
+        let long = "v".repeat(MAX_EXEMPLAR_LABEL_CODEPOINTS + 1);
+        check!(
+            validate_exemplar_labels(&exemplar(&[("trace_id", long.as_str())])).is_err(),
+            "single label over the budget"
+        );
+    }
+
+    /// A push failure's gRPC code tells the client what to do next: back off
+    /// (`resource_exhausted`), retry later (`internal`), or stop and fix the
+    /// request (`invalid_argument`). The mapping is a chain of match guards on
+    /// the underlying HTTP status, and a guard forced either way sends the
+    /// wrong instruction -- a rate limit reported as `invalid_argument` makes a
+    /// client give up on a request that would succeed after a pause, and a bad
+    /// request reported as `resource_exhausted` makes it retry-storm one that
+    /// never will.
+    #[test]
+    fn push_errors_map_to_the_grpc_code_the_client_should_act_on() {
+        use crate::limits::LimitError;
+
+        let over_rate = PushError::Limit(LimitError::IngestionRateExceeded {
+            rate: 100.0,
+            observed: 150.0,
+        });
+        check!(
+            status_from_push_error(&over_rate).code() == tonic::Code::ResourceExhausted,
+            "429 limit is resource_exhausted"
+        );
+
+        // A 400-class limit is the client's mistake, not a reason to back off.
+        let too_many_series = PushError::Limit(LimitError::MaxSeriesPerUser {
+            limit: 10,
+            observed: 11,
+        });
+        check!(
+            status_from_push_error(&too_many_series).code() == tonic::Code::InvalidArgument,
+            "400 limit is invalid_argument"
+        );
+
+        let too_long = PushError::Limit(LimitError::LabelNameTooLong {
+            limit: 8,
+            observed: 9,
+        });
+        check!(
+            status_from_push_error(&too_long).code() == tonic::Code::InvalidArgument,
+            "label length is invalid_argument"
+        );
+    }
 
     use assert2::{assert, check};
     use axum::{body::Body, http::Request};
@@ -3368,6 +4253,159 @@ overrides:
                 }
         );
         assert!(tracker.elected_replica("tenant-a", "c1") == Some("r1".to_string()));
+    }
+
+    /// A poll that replays nothing must not commit. Committing on an empty
+    /// batch would advance the group past records it never applied, and the
+    /// elections they carry would be lost on the next restart.
+    #[tokio::test]
+    async fn poll_ha_election_consumer_once_does_not_commit_without_progress() {
+        let tracker = HaTracker::default();
+
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![vec![]],
+            commit_calls: 0,
+        };
+        let result =
+            poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
+                .await
+                .unwrap();
+        assert!(
+            result
+                == HaElectionReplayResult {
+                    polled_records: 0,
+                    replayed_records: 0,
+                    committed_offsets: vec![],
+                }
+        );
+        assert!(consumer.commit_calls == 0, "an empty poll commits nothing");
+
+        // Polled but not replayed: a record from another topic is seen and
+        // applied to nothing. Committing here would advance this group's
+        // offsets on the strength of someone else's records.
+        let record = HaElectionRecord {
+            tenant: "tenant-a".to_string(),
+            cluster: "c1".to_string(),
+            replica: "r1".to_string(),
+            lease_timestamp_ms: 42_000,
+        };
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![vec![consumer_record(
+                "some-other-topic",
+                1,
+                7,
+                Some(record.encode().unwrap()),
+            )]],
+            commit_calls: 0,
+        };
+        let result =
+            poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
+                .await
+                .unwrap();
+        assert!(result.polled_records == 1, "the record was seen");
+        assert!(result.replayed_records == 0, "but it was not ours to apply");
+        assert!(
+            consumer.commit_calls == 0,
+            "a poll that applies nothing commits nothing"
+        );
+    }
+
+    /// The election consumer loop polls until told to stop, accumulating
+    /// what each poll saw. A caller watching the summary to decide when it
+    /// has caught up depends on every field advancing on every poll.
+    #[tokio::test]
+    async fn the_ha_election_loop_accumulates_every_polls_result() {
+        let tracker = HaTracker::default();
+        let record = |cluster: &str| {
+            HaElectionRecord {
+                tenant: "tenant-a".to_string(),
+                cluster: cluster.to_string(),
+                replica: "r1".to_string(),
+                lease_timestamp_ms: 42_000,
+            }
+            .encode()
+            .unwrap()
+        };
+
+        // Two records, then one, then none, so a loop that reused a single
+        // poll's result would not add up.
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![
+                vec![
+                    consumer_record(HA_TRACKER_TOPIC, 0, 1, Some(record("c1"))),
+                    consumer_record(HA_TRACKER_TOPIC, 1, 5, Some(record("c2"))),
+                ],
+                vec![consumer_record(HA_TRACKER_TOPIC, 2, 9, Some(record("c3")))],
+                vec![],
+            ],
+            commit_calls: 0,
+        };
+
+        let summary = run_ha_election_consumer_loop(
+            &mut consumer,
+            &tracker,
+            HA_TRACKER_TOPIC,
+            millis(1),
+            |summary| summary.polls >= 3,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            summary.polls == 3,
+            "one count per poll, including the empty one"
+        );
+        assert!(summary.polled_records == 3, "2 + 1 + 0");
+        assert!(summary.replayed_records == 3);
+        assert!(
+            summary.committed_offsets
+                == vec![
+                    HaElectionPartitionOffset {
+                        partition: PartitionIndex(0),
+                        offset: Offset(2),
+                    },
+                    HaElectionPartitionOffset {
+                        partition: PartitionIndex(1),
+                        offset: Offset(6),
+                    },
+                    HaElectionPartitionOffset {
+                        partition: PartitionIndex(2),
+                        offset: Offset(10),
+                    },
+                ],
+            "offsets from every poll, in order"
+        );
+        assert!(
+            consumer.commit_calls == 2,
+            "the empty poll committed nothing"
+        );
+    }
+
+    /// The stop predicate is consulted after each poll, so a loop told to
+    /// stop immediately still does exactly one poll's worth of work.
+    #[tokio::test]
+    async fn the_ha_election_loop_stops_after_the_poll_that_satisfies_it() {
+        let tracker = HaTracker::default();
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![vec![], vec![]],
+            commit_calls: 0,
+        };
+
+        let summary = run_ha_election_consumer_loop(
+            &mut consumer,
+            &tracker,
+            HA_TRACKER_TOPIC,
+            millis(1),
+            |_| true,
+        )
+        .await
+        .unwrap();
+
+        assert!(summary.polls == 1, "stopping at once still polls once");
+        assert!(
+            consumer.batches.len() == 1,
+            "and consumes exactly one batch"
+        );
     }
 
     #[tokio::test]

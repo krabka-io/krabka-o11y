@@ -130,6 +130,43 @@ mod tests {
         assert2::check!(sets[1].nested_set_right < sets[0].nested_set_right);
     }
 
+    /// The self-parenting span has to share the forest with an unrelated root
+    /// for the guard to be observable.
+    ///
+    /// With only its own child beside it, dropping the guard produces the same
+    /// intervals: the span falls out of `roots`, but the `chain(0..len)` sweep
+    /// that exists for cycle-orphaned spans picks it up again in the same
+    /// order. Put a real root next to it and the orders diverge -- the sweep
+    /// reaches the self-parent *after* that root, so the two swap intervals,
+    /// and `nestedSetParent` stops matching the enclosing span's left.
+    #[test]
+    fn a_self_parenting_span_is_numbered_before_an_unrelated_root() {
+        let spans = vec![
+            SpanNode {
+                span_id: sid(1),
+                parent_span_id: Some(sid(1)),
+            },
+            SpanNode {
+                span_id: sid(2),
+                parent_span_id: None,
+            },
+        ];
+
+        let sets = assign_nested_set(&spans);
+        // Both are roots, in span order: the self-parent is first.
+        assert2::check!(
+            (sets[0].nested_set_left, sets[0].nested_set_right) == (1, 2),
+            "self-parent: {:?}",
+            sets[0]
+        );
+        assert2::check!(
+            (sets[1].nested_set_left, sets[1].nested_set_right) == (3, 4),
+            "unrelated root: {:?}",
+            sets[1]
+        );
+        assert2::check!((sets[0].parent_id, sets[1].parent_id) == (-1, -1));
+    }
+
     fn node(id: u8, parent: Option<u8>) -> SpanNode {
         SpanNode {
             span_id: sid(id),

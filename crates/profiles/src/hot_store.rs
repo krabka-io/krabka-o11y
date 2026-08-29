@@ -365,7 +365,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::array::{Array, BinaryArray};
-    use assert2::assert;
+    use assert2::{assert, check};
     use crabka_blockstore::{LabelMatcher, MatchOp};
     use crabka_pprof::{EngineOpts, FlameEngine, PCOL_TRACE_ID, ProfileStore, SeriesAgg};
     use crabka_units::{Time, convert::TimeExt as _, secs};
@@ -413,6 +413,145 @@ mod tests {
                 mappings: vec![],
             },
         }
+    }
+
+    /// A rebuild is amortized: it happens once evictions reach a
+    /// `1 / REBUILD_AMORTIZE_FACTOR` share of what is still retained, and
+    /// never when nothing has been evicted. Both halves of that condition are
+    /// pinned at their edge, since a rebuild on every eviction and a rebuild
+    /// that never fires both leave queries answering correctly, just slower
+    /// or hungrier.
+    #[test]
+    fn a_rebuild_waits_until_evictions_are_worth_it() {
+        let state = |evicted, retained| super::RetainedState {
+            records: std::iter::repeat_with(|| super::Retained {
+                max_ts_ms: 0,
+                record: record(),
+            })
+            .take(retained)
+            .collect(),
+            evicted_since_rebuild: evicted,
+        };
+        let should = |evicted, retained| {
+            super::WalTailProfileStore::should_rebuild(&state(evicted, retained))
+        };
+
+        // Nothing evicted is never worth a rebuild, however small the store.
+        check!(!should(0, 0), "an empty store at rest");
+        check!(!should(0, 8), "a full store at rest");
+
+        // One eviction covers eight retained records, so that is the edge.
+        check!(!should(1, 9), "one eviction does not cover nine");
+        check!(should(1, 8), "one eviction exactly covers eight");
+        check!(should(1, 7), "and more than covers seven");
+        check!(should(2, 16), "the ratio holds as both grow");
+        check!(!should(2, 17), "and so does the edge above it");
+    }
+
+    /// The four metadata queries all delegate to the current snapshot,
+    /// passing the tenant, matchers and time window straight through. Each is
+    /// checked against a store holding two tenants at two different times, so
+    /// a delegation that drops an argument, swaps the window ends, or answers
+    /// from the wrong tenant returns something visibly different.
+    #[tokio::test]
+    async fn metadata_queries_respect_tenant_and_time_window() {
+        use crabka_pprof::ProfileStore as _;
+
+        let store = super::WalTailProfileStore::new();
+
+        let mut early = record();
+        early.samples[0].timestamp_ns = 1_000_000_000;
+        store.append_record(early).unwrap();
+
+        let mut late = record();
+        late.tenant = "tenant-b".to_string();
+        late.labels = vec![
+            ("__name__".to_string(), "process_cpu".to_string()),
+            ("region".to_string(), "eu".to_string()),
+            ("__profile_type__".to_string(), PT.to_string()),
+        ];
+        late.samples[0].timestamp_ns = 9_000_000_000;
+        store.append_record(late).unwrap();
+
+        // Milliseconds, and wide enough to cover both records.
+        let (all_start, all_end) = (0_i64, 10_000_i64);
+
+        let names = store
+            .label_names("tenant-a", &[], all_start, all_end)
+            .await
+            .unwrap();
+        check!(
+            names.contains(&"service_name".to_string()),
+            "got: {names:?}"
+        );
+        check!(
+            !names.contains(&"region".to_string()),
+            "tenant-b's label must not leak"
+        );
+
+        let names = store
+            .label_names("tenant-b", &[], all_start, all_end)
+            .await
+            .unwrap();
+        check!(names.contains(&"region".to_string()), "got: {names:?}");
+        check!(
+            !names.contains(&"service_name".to_string()),
+            "tenant-a's label must not leak"
+        );
+
+        let values = store
+            .label_values("tenant-a", "service_name", &[], all_start, all_end)
+            .await
+            .unwrap();
+        check!(values == vec!["api".to_string()], "got: {values:?}");
+
+        let types = store
+            .profile_types("tenant-a", all_start, all_end)
+            .await
+            .unwrap();
+        check!(!types.is_empty(), "tenant-a has a profile type");
+        check!(
+            store
+                .profile_types("tenant-c", all_start, all_end)
+                .await
+                .unwrap()
+                == Vec::<String>::new(),
+            "an unknown tenant has none"
+        );
+
+        let series = store
+            .series("tenant-a", &[], &[], all_start, all_end)
+            .await
+            .unwrap();
+        check!(series.len() == 1, "got: {series:?}");
+
+        // The window is honoured at both ends: tenant-a's sample sits at
+        // 1000ms, so a window that stops before it or starts after it is
+        // empty. A delegation that swapped the ends would answer differently.
+        check!(
+            store
+                .series("tenant-a", &[], &[], 0, 500)
+                .await
+                .unwrap()
+                .is_empty(),
+            "before"
+        );
+        check!(
+            store
+                .series("tenant-a", &[], &[], 2_000, 10_000)
+                .await
+                .unwrap()
+                .is_empty(),
+            "after"
+        );
+        check!(
+            !store
+                .series("tenant-a", &[], &[], 900, 1_100)
+                .await
+                .unwrap()
+                .is_empty(),
+            "around"
+        );
     }
 
     #[tokio::test]

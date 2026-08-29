@@ -69,6 +69,31 @@ impl PprofProfile {
         )
     }
 
+    /// Frame names for `sample`, leaf first, in the order pprof stores
+    /// `location_id`.
+    ///
+    /// A location resolves through its first line to a function, and the
+    /// function's name through the string table. Ids that resolve to none of
+    /// those are skipped: a profile that names only some of its frames is
+    /// still worth reading.
+    #[must_use]
+    pub fn stack_frames(&self, sample: &crate::proto::Sample) -> Vec<&str> {
+        sample
+            .location_id
+            .iter()
+            .filter_map(|id| {
+                let location = self.inner.location.iter().find(|loc| loc.id == *id)?;
+                let line = location.line.first()?;
+                let function = self
+                    .inner
+                    .function
+                    .iter()
+                    .find(|func| func.id == line.function_id)?;
+                self.string(function.name)
+            })
+            .collect()
+    }
+
     #[must_use]
     pub fn samples(&self) -> &[crate::proto::Sample] {
         &self.inner.sample

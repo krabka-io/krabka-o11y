@@ -205,6 +205,31 @@ mod tests {
         },
     };
 
+    /// `any_to_text` renders every scalar OTLP value as a string. A collapsed
+    /// body returns None, an empty string, or a fixed word, so each arm is
+    /// pinned to a rendering that is none of those -- and both booleans are
+    /// checked, since one of them renders as a word a mutant might guess.
+    #[test]
+    fn an_otlp_any_value_renders_as_text_for_every_scalar_kind() {
+        let text = |value: Value| super::any_to_text(&AnyValue { value: Some(value) });
+
+        assert2::check!(text(Value::StringValue("hi".into())) == Some("hi".to_string()));
+        assert2::check!(text(Value::IntValue(7)) == Some("7".to_string()));
+        assert2::check!(text(Value::DoubleValue(1.5)) == Some("1.5".to_string()));
+        assert2::check!(text(Value::BoolValue(true)) == Some("true".to_string()));
+        assert2::check!(text(Value::BoolValue(false)) == Some("false".to_string()));
+        assert2::check!(text(Value::BytesValue(vec![0xAB, 0xCD])) == Some("abcd".to_string()));
+
+        // An array has no text form, and neither has an absent value. Both
+        // must be None rather than an empty string, which would render as a
+        // present-but-blank attribute downstream.
+        assert2::check!(
+            text(Value::ArrayValue(ArrayValue { values: vec![] })).is_none(),
+            "an array is not text"
+        );
+        assert2::check!(super::any_to_text(&AnyValue { value: None }).is_none());
+    }
+
     use super::*;
 
     fn kv(key: &str, value: &str) -> OtlpKv {

@@ -279,11 +279,231 @@ fn secs_ceil(extent: Time) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// Eviction drops the least recently used tenant, not merely *a* tenant.
+    /// A test that only checks the cap holds passes just as well when the
+    /// newest is evicted instead, which would throw away the bucket in active
+    /// use and keep the idle ones.
+    #[test]
+    fn eviction_drops_the_least_recently_used_tenant() {
+        let enforcer = IngestEnforcer::with_max_rate_buckets(2);
+        let limits = Limits {
+            ingestion_rate: per_sec(1_000),
+            ingestion_burst_size: 1_000,
+            ..Limits::default()
+        };
+        let touch = |tenant: &str| {
+            enforcer
+                .check_sample_rate(&limits, tenant, 1)
+                .expect("within the rate");
+        };
+        let holds = |tenant: &str| enforcer.sample_rate_buckets.contains_key(tenant);
+
+        // Three tenants into a cap of two: the first touched is the one to go.
+        touch("a");
+        touch("b");
+        touch("c");
+        check!(enforcer.sample_rate_buckets.len() == 2, "the cap holds");
+        check!(!holds("a"), "the least recently used went");
+        check!(holds("b") && holds("c"), "the other two stayed");
+
+        // Touching b again makes c the oldest, so the next arrival evicts c
+        // rather than b -- which is what separates least-recently-used from
+        // first-in-first-out.
+        touch("b");
+        touch("d");
+        check!(enforcer.sample_rate_buckets.len() == 2);
+        check!(!holds("c"), "c was the least recently used by then");
+        check!(holds("b"), "b was rescued by being touched");
+        check!(holds("d"));
+    }
+
+    /// `next_touch_stamp` is a logical clock: every call must hand out a value
+    /// no earlier than the last, and never the same one twice. Eviction picks
+    /// the least-recently-touched tenant by comparing these, so a clock that
+    /// stood still would make every tenant equally old.
+    #[test]
+    fn touch_stamps_never_repeat_and_never_go_backwards() {
+        let enforcer = IngestEnforcer::new();
+
+        let first = enforcer.next_touch_stamp();
+        let second = enforcer.next_touch_stamp();
+        let third = enforcer.next_touch_stamp();
+
+        check!(second > first, "{second} follows {first}");
+        check!(third > second, "{third} follows {second}");
+
+        // A run of them is strictly increasing, so no value is handed out
+        // twice however many times it is called.
+        let stamps: Vec<u64> = (0..8).map(|_| enforcer.next_touch_stamp()).collect();
+        check!(
+            stamps.windows(2).all(|pair| pair[1] > pair[0]),
+            "not strictly increasing: {stamps:?}"
+        );
+        check!(stamps[7] > third);
+
+        // Two enforcers keep their own clocks rather than sharing one.
+        let other = IngestEnforcer::new();
+        check!(
+            other.next_touch_stamp() <= first,
+            "a fresh clock starts over"
+        );
+    }
     use assert2::{assert, check};
     use crabka_blockstore::Labels;
 
     use super::*;
     use crate::limits::Limits;
+
+    /// The per-query sample cap is off when zero and otherwise strict, so a
+    /// query landing exactly on it is still served.
+    #[test]
+    fn the_sample_cap_admits_exactly_its_limit() {
+        let limits = |max_samples_per_query| Limits {
+            max_samples_per_query,
+            ..Limits::default()
+        };
+
+        check!(
+            QueryEnforcer::check_sample_count(&limits(0), u64::MAX).is_ok(),
+            "zero is off"
+        );
+        check!(
+            QueryEnforcer::check_sample_count(&limits(10), 10).is_ok(),
+            "ten fits ten"
+        );
+        check!(QueryEnforcer::check_sample_count(&limits(10), 0).is_ok());
+
+        let err = QueryEnforcer::check_sample_count(&limits(10), 11).unwrap_err();
+        check!(
+            matches!(
+                err,
+                LimitError::SamplesPerQueryExceeded {
+                    limit: 10,
+                    observed: 11
+                }
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    /// Label length caps reject only what exceeds them, and the name and the
+    /// value have separate caps, so each is checked at its own edge against a
+    /// label set where the other is comfortably inside.
+    #[test]
+    fn label_length_caps_admit_exactly_their_limit() {
+        let limits = Limits {
+            max_label_name_length: crabka_units::bytes(4),
+            max_label_value_length: crabka_units::bytes(5),
+            ..Limits::default()
+        };
+        let label = |name: &str, value: &str| {
+            let mut set = Labels::new();
+            set.insert(name, value);
+            set
+        };
+
+        check!(
+            IngestEnforcer::check_labels(&limits, &label("abcd", "vwxyz")).is_ok(),
+            "both at edge"
+        );
+
+        let err = IngestEnforcer::check_labels(&limits, &label("abcde", "v")).unwrap_err();
+        check!(
+            matches!(
+                err,
+                LimitError::LabelNameTooLong {
+                    limit: 4,
+                    observed: 5
+                }
+            ),
+            "got: {err:?}"
+        );
+
+        let err = IngestEnforcer::check_labels(&limits, &label("ab", "vwxyz!")).unwrap_err();
+        check!(
+            matches!(
+                err,
+                LimitError::LabelValueTooLong {
+                    limit: 5,
+                    observed: 6
+                }
+            ),
+            "got: {err:?}"
+        );
+
+        check!(
+            IngestEnforcer::check_labels(&limits, &Labels::new()).is_ok(),
+            "no labels, no limit"
+        );
+    }
+
+    /// Both query caps are off when zero and otherwise reject only what
+    /// exceeds them, so a query landing exactly on either is still allowed.
+    /// The two are checked one at a time, since a range within the length cap
+    /// can still be outside the lookback and the errors name different fields.
+    #[test]
+    fn query_range_caps_admit_exactly_their_limit() {
+        let limits = |length_secs, lookback_secs| Limits {
+            max_query_length: crabka_units::secs(length_secs),
+            max_query_lookback: crabka_units::secs(lookback_secs),
+            ..Limits::default()
+        };
+        let now = 1_000_000_i64;
+
+        // Zero turns a cap off: an enormous range passes.
+        check!(QueryEnforcer::check_range(&limits(0, 0), 0, now, now).is_ok());
+
+        // Length cap of 10s: a 10s range fits, 10.001s does not.
+        let start = now - 10_000;
+        check!(QueryEnforcer::check_range(&limits(10, 0), start, now, now).is_ok());
+        let err = QueryEnforcer::check_range(&limits(10, 0), start - 1, now, now).unwrap_err();
+        check!(
+            matches!(
+                err,
+                LimitError::QueryRangeTooLong {
+                    limit_secs: 10,
+                    observed_secs: 11
+                }
+            ),
+            "got: {err:?}"
+        );
+
+        // Lookback cap of 10s, measured from the range start to now. The
+        // length cap is off, so only the lookback can reject here.
+        check!(QueryEnforcer::check_range(&limits(0, 10), start, now, now).is_ok());
+        let err = QueryEnforcer::check_range(&limits(0, 10), start - 1, now, now).unwrap_err();
+        check!(
+            matches!(
+                err,
+                LimitError::QueryLookbackExceeded {
+                    limit_secs: 10,
+                    observed_secs: 11
+                }
+            ),
+            "got: {err:?}"
+        );
+
+        // A range running backwards has no extent and cannot exceed anything.
+        check!(QueryEnforcer::check_range(&limits(10, 10), now, now - 60_000, now).is_ok());
+    }
+
+    /// Reported seconds round *up*, so a range a millisecond over a whole
+    /// second is reported as the next second rather than the one it passed.
+    #[test]
+    fn reported_seconds_round_up() {
+        check!(secs_ceil(crabka_units::millis(0)) == 0);
+        check!(
+            secs_ceil(crabka_units::millis(1)) == 1,
+            "any remainder rounds up"
+        );
+        check!(
+            secs_ceil(crabka_units::millis(1_000)) == 1,
+            "a whole second stays whole"
+        );
+        check!(secs_ceil(crabka_units::millis(1_001)) == 2);
+        check!(secs_ceil(crabka_units::secs(90)) == 90);
+    }
 
     fn limits_with(series: u64, name_len: ByteSize, val_len: ByteSize) -> Limits {
         Limits {
@@ -456,5 +676,52 @@ mod tests {
         check!(QueryEnforcer::check_series_count(&l, 11).is_err());
         check!(QueryEnforcer::check_sample_count(&l, 1001).is_err());
         check!(QueryEnforcer::check_series_count(&l, 10).is_ok());
+        // Exactly at the cap is within it, which is what separates `>` from
+        // `>=`: read the other way, a tenant is refused the last sample the
+        // limit allows them.
+        check!(QueryEnforcer::check_sample_count(&l, 1000).is_ok());
+    }
+
+    /// A label exactly at the length cap is allowed; one byte over is not.
+    ///
+    /// Every one of these limits is a `>` against the configured maximum, and
+    /// away from the boundary `>` and `>=` agree. Read as `>=`, the cap becomes
+    /// one byte tighter than configured and a tenant is refused a label the
+    /// documented limit permits.
+    #[test]
+    fn label_lengths_are_capped_at_the_limit_not_below_it() {
+        let l = Limits {
+            max_label_name_length: bytes(8),
+            max_label_value_length: bytes(4),
+            ..Limits::default()
+        };
+        let labels = |name: &str, value: &str| {
+            let mut out = Labels::new();
+            out.insert(name, value);
+            out
+        };
+
+        check!(IngestEnforcer::check_labels(&l, &labels("12345678", "abcd")).is_ok());
+        check!(IngestEnforcer::check_labels(&l, &labels("123456789", "abcd")).is_err());
+        check!(IngestEnforcer::check_labels(&l, &labels("12345678", "abcde")).is_err());
+    }
+
+    /// The query range and lookback caps, at the boundary.
+    #[test]
+    fn query_extents_are_capped_at_the_limit_not_below_it() {
+        let l = Limits {
+            max_query_length: secs(60),
+            max_query_lookback: secs(600),
+            ..Limits::default()
+        };
+        let now = 1_000_000_000_i64;
+
+        // A range exactly 60s long, ending now: both caps are met exactly.
+        check!(QueryEnforcer::check_range(&l, now - 60_000, now, now).is_ok());
+        // One millisecond longer than the range cap.
+        check!(QueryEnforcer::check_range(&l, now - 60_001, now, now).is_err());
+        // Exactly at the lookback cap, then one millisecond past it.
+        check!(QueryEnforcer::check_range(&l, now - 600_000, now - 599_000, now).is_ok());
+        check!(QueryEnforcer::check_range(&l, now - 600_001, now - 599_000, now).is_err());
     }
 }

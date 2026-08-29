@@ -3526,6 +3526,114 @@ async fn vector_vector_group_right_fill_left_preserves_unmatched_many_side() {
     assert2::assert!(approx_eq(values["c"].1, 7.0));
 }
 
+/// Fills are not commutative, but every fill test above uses `+`, where
+/// `0 + present` and `present + 0` agree -- so the operand order on both fill
+/// paths was free to be backwards. `-` tells them apart: a series present only
+/// on the right must yield `0 - value`, not `value - 0`.
+#[tokio::test]
+async fn one_to_one_fill_subtracts_in_the_declared_operand_order() {
+    let mut store = InMemoryMetricStore::new();
+    for (name, job, value) in [
+        ("a", "shared", 3.0),
+        ("a", "left_only", 4.0),
+        ("b", "shared", 1.0),
+        ("b", "right_only", 5.0),
+    ] {
+        store.push_float(
+            "tenant-a",
+            labels(&[("__name__", name), ("job", job)]),
+            10_000,
+            value,
+        );
+    }
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "a - on (job) fill(0) b", 10_000)
+        .await
+        .unwrap();
+
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    let values = samples
+        .iter()
+        .map(|sample| {
+            (
+                sample.labels.get("job").expect("job label"),
+                float_value(&sample.value),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert2::assert!(values.len() == 3);
+    assert2::assert!(approx_eq(values["shared"], 2.0));
+    assert2::assert!(approx_eq(values["left_only"], 4.0));
+    assert2::assert!(approx_eq(values["right_only"], -5.0));
+}
+
+/// `on (...)` builds the result labels from the clause itself, so naming a
+/// metadata label there would otherwise carry `__name__` into the output of an
+/// arithmetic expression -- which never has one.
+#[tokio::test]
+async fn matching_on_a_metadata_label_keeps_it_out_of_the_result() {
+    let mut store = InMemoryMetricStore::new();
+    store.push_float(
+        "tenant-a",
+        labels(&[("__name__", "x"), ("job", "a")]),
+        10_000,
+        7.0,
+    );
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "x - on (__name__) x", 10_000)
+        .await
+        .unwrap();
+
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(samples.len() == 1);
+    assert2::assert!(samples[0].labels.iter().count() == 0);
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 0.0));
+}
+
+/// `group_left (...)` copies the named labels off the one side. A metadata
+/// label named there must still be skipped, or every result row inherits the
+/// *other* operand's metric name.
+#[tokio::test]
+async fn group_left_does_not_copy_a_metadata_label_from_the_one_side() {
+    let mut store = InMemoryMetricStore::new();
+    for (instance, value) in [("1", 3.0), ("2", 4.0)] {
+        store.push_float(
+            "tenant-a",
+            labels(&[("__name__", "a"), ("job", "x"), ("instance", instance)]),
+            10_000,
+            value,
+        );
+    }
+    store.push_float(
+        "tenant-a",
+        labels(&[("__name__", "b"), ("job", "x")]),
+        10_000,
+        10.0,
+    );
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "a + on (job) group_left(__name__) b", 10_000)
+        .await
+        .unwrap();
+
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(samples.len() == 2);
+    for sample in &samples {
+        assert2::assert!(sample.labels.get("__name__") == None);
+    }
+}
+
 #[tokio::test]
 async fn info_function_adds_target_info_data_labels_by_job_and_instance() {
     let mut store = InMemoryMetricStore::new();
@@ -4225,6 +4333,309 @@ async fn instant_resets_counts_counter_decreases_in_range() {
     check!(approx_eq(float_value(&samples[0].value), 2.0));
 }
 
+/// `resets` on native histograms counts a reset when *any* component shrinks,
+/// not just `count` and `sum`. Each case below lowers exactly one component
+/// and holds the rest, so the clause under test is the only one that can
+/// report the reset -- a series where two components fall together proves
+/// nothing about either.
+#[tokio::test]
+async fn resets_counts_a_drop_in_any_native_histogram_component() {
+    let histogram =
+        |count: f64, sum: f64, zero_count: f64, positive: f64, negative: f64| NativeHistogram {
+            schema: 0,
+            is_float: true,
+            reset_hint: ResetHint::No,
+            zero_threshold: 1.0,
+            zero_count,
+            count,
+            sum,
+            positive_spans: vec![BucketSpan {
+                offset: 0,
+                length: 1,
+            }],
+            positive_counts: vec![positive],
+            negative_spans: vec![BucketSpan {
+                offset: 0,
+                length: 1,
+            }],
+            negative_counts: vec![negative],
+            custom_values: None,
+            start_timestamp_ms: None,
+        };
+
+    for (case, second, want) in [
+        ("nothing drops", histogram(10.0, 10.0, 5.0, 3.0, 3.0), 0.0),
+        ("count", histogram(9.0, 10.0, 5.0, 3.0, 3.0), 1.0),
+        ("sum", histogram(10.0, 9.0, 5.0, 3.0, 3.0), 1.0),
+        ("zero bucket", histogram(10.0, 10.0, 4.0, 3.0, 3.0), 1.0),
+        ("positive bucket", histogram(10.0, 10.0, 5.0, 2.0, 3.0), 1.0),
+        ("negative bucket", histogram(10.0, 10.0, 5.0, 3.0, 2.0), 1.0),
+    ] {
+        let mut store = InMemoryMetricStore::new();
+        store.push_histogram(
+            "tenant-a",
+            labels(&[("__name__", "h")]),
+            0,
+            histogram(10.0, 10.0, 5.0, 3.0, 3.0),
+        );
+        store.push_histogram("tenant-a", labels(&[("__name__", "h")]), 60_000, second);
+
+        let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+        let result = engine
+            .query_instant("tenant-a", "resets(h[5m])", 60_000)
+            .await
+            .unwrap();
+
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {case}");
+        };
+        assert2::assert!(samples.len() == 1, "{case}");
+        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{case}");
+    }
+}
+
+/// A counter that holds its value across a step has not reset. The anchored
+/// `increase` correction fires only on a strict decrease, so a flat pair must
+/// contribute nothing -- counting it as a reset adds the whole pre-step value
+/// back and more than triples the answer here.
+#[tokio::test]
+async fn anchored_increase_does_not_treat_a_flat_counter_step_as_a_reset() {
+    let mut store = InMemoryMetricStore::new();
+    for (ts, value) in [(0, 5.0), (60_000, 5.0), (120_000, 7.0)] {
+        store.push_float("tenant-a", labels(&[("__name__", "ctr")]), ts, value);
+    }
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "increase(anchored(ctr[5m]))", 120_000)
+        .await
+        .unwrap();
+
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected vector");
+    };
+    assert2::assert!(samples.len() == 1);
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 2.0));
+
+    // The same fold as `rate`, divided by the range in seconds. `increase`
+    // never reaches that division.
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "rate(anchored(ctr[5m]))", 120_000)
+        .await
+        .expect("an anchored rate")
+    else {
+        panic!("expected a vector");
+    };
+    assert2::assert!(approx_eq(
+        float_value(&samples[0].value),
+        0.006_666_666_666_666_667
+    ));
+}
+
+/// Past the last sample, `smoothed` extrapolates only while the gap stays
+/// within 1.1x the sample interval, and clamps to the last value beyond that.
+/// Both sides of that threshold have to be pinned: a test on either one alone
+/// leaves the slack factor free to move.
+#[tokio::test]
+async fn smoothed_delta_extrapolates_only_within_the_sample_interval_slack() {
+    let mut store = InMemoryMetricStore::new();
+    for (ts, value) in [(0, 0.0), (60_000, 60.0)] {
+        store.push_float("tenant-a", labels(&[("__name__", "m")]), ts, value);
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    // The interval is 60s, so the slack runs to 66s past the last sample.
+    for (case, eval_ms, want) in [
+        ("63s past the last sample extrapolates", 123_000, 120.0),
+        // Exactly 66s -- 1.1 times the 60s interval -- is not past it. This
+        // pair is what separates `>` from `>=`, and the two cases either side
+        // of it above cannot.
+        (
+            "66s past the last sample is exactly the slack",
+            126_000,
+            120.0,
+        ),
+        ("70s past it clamps to the last value", 130_000, 50.0),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", "delta(smoothed(m[2m]))", eval_ms)
+            .await
+            .unwrap();
+
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {case}");
+        };
+        assert2::assert!(samples.len() == 1, "{case}");
+        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{case}");
+    }
+
+    // `delta` stops at the difference; only `rate` divides by the range.
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "rate(smoothed(m[3m]))", 123_000)
+        .await
+        .expect("a smoothed rate")
+    else {
+        panic!("expected a vector");
+    };
+    assert2::assert!(approx_eq(
+        float_value(&samples[0].value),
+        0.683_333_333_333_333_3
+    ));
+}
+
+/// Fill modifiers are meaningless for set operators and are refused. Each
+/// form below sets only one side, so a guard that joined the two checks with
+/// `&&` instead of `||` would accept the single-sided ones -- `fill(0)` sets
+/// both and is refused either way.
+#[tokio::test]
+async fn a_fill_modifier_is_refused_on_a_set_operator() {
+    let mut store = InMemoryMetricStore::new();
+    for name in ["a", "b"] {
+        store.push_float(
+            "tenant-a",
+            labels(&[("__name__", name), ("job", "x")]),
+            10_000,
+            1.0,
+        );
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for query in [
+        "a and on (job) fill_left(0) b",
+        "a or on (job) fill_right(0) b",
+        "a unless on (job) fill(0) b",
+    ] {
+        let error = engine
+            .query_instant("tenant-a", query, 10_000)
+            .await
+            .expect_err("a fill modifier on a set operator is a planning error");
+        assert2::assert!(
+            matches!(
+                &error,
+                PromqlError::Plan(message)
+                    if message.contains("fill modifiers are invalid for set operators")
+            ),
+            "{query}: {error}"
+        );
+    }
+}
+
+/// A comparison without `bool` keeps the operand's own labels, metric name
+/// and all; every other binary form drops the metric name. The rule is
+/// written out separately on five paths -- one-to-one matched and filled,
+/// many-to-one filled, one-to-many matched and filled -- and each pairs a
+/// comparison with the arithmetic form of the same query, because a
+/// comparison case alone cannot tell `is_comparison() && !bool` from
+/// `is_comparison() || !bool`.
+#[tokio::test]
+async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
+    let mut store = InMemoryMetricStore::new();
+    for (name, job, extra, value) in [
+        ("a", "x", Some(("extra", "1")), 5.0),
+        ("a", "y", Some(("extra", "2")), 5.0),
+        ("b", "x", None, 3.0),
+        ("m", "x", Some(("inst", "1")), 7.0),
+        ("m", "y", Some(("inst", "9")), 7.0),
+    ] {
+        let mut pairs = vec![("__name__", name), ("job", job)];
+        if let Some(extra) = extra {
+            pairs.push(extra);
+        }
+        store.push_float("tenant-a", labels(&pairs), 10_000, value);
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (query, want) in [
+        // One-to-one: `x` matches, `y` takes the right-fill path.
+        (
+            "a > on (job) fill_right(0) b",
+            vec![
+                vec![("__name__", "a"), ("extra", "1"), ("job", "x")],
+                vec![("__name__", "a"), ("extra", "2"), ("job", "y")],
+            ],
+        ),
+        (
+            "a + on (job) fill_right(0) b",
+            vec![vec![("job", "x")], vec![("job", "y")]],
+        ),
+        // The mirror of the pair above: here the *left* side is filled, so the
+        // surviving row keeps the right operand's labels rather than the
+        // left's, and only a left-fill query reaches that branch.
+        (
+            "b < on (job) fill_left(0) a",
+            vec![
+                vec![("__name__", "a"), ("extra", "2"), ("job", "y")],
+                vec![("__name__", "b"), ("job", "x")],
+            ],
+        ),
+        (
+            "b + on (job) fill_left(0) a",
+            vec![vec![("job", "x")], vec![("job", "y")]],
+        ),
+        // `bool` puts a comparison back on the arithmetic rule.
+        ("a > bool on (job) b", vec![vec![("job", "x")]]),
+        // Many-to-one: `x` matches, `y` takes the right-fill path.
+        (
+            "m > on (job) group_left fill_right(0) b",
+            vec![
+                vec![("__name__", "m"), ("inst", "1"), ("job", "x")],
+                vec![("__name__", "m"), ("inst", "9"), ("job", "y")],
+            ],
+        ),
+        (
+            "m + on (job) group_left fill_right(0) b",
+            vec![
+                vec![("inst", "1"), ("job", "x")],
+                vec![("inst", "9"), ("job", "y")],
+            ],
+        ),
+        // One-to-many: `x` matches, `y` takes the left-fill path.
+        (
+            "b < on (job) group_right fill_left(0) m",
+            vec![
+                vec![("__name__", "m"), ("inst", "1"), ("job", "x")],
+                vec![("__name__", "m"), ("inst", "9"), ("job", "y")],
+            ],
+        ),
+        (
+            "b + on (job) group_right fill_left(0) m",
+            vec![
+                vec![("inst", "1"), ("job", "x")],
+                vec![("inst", "9"), ("job", "y")],
+            ],
+        ),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", query, 10_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {query}");
+        };
+        let mut got = samples
+            .iter()
+            .map(|sample| {
+                sample
+                    .labels
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        got.sort();
+        let want = want
+            .iter()
+            .map(|pairs| {
+                pairs
+                    .iter()
+                    .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert2::assert!(got == want, "{query}");
+    }
+}
+
 #[tokio::test]
 async fn instant_irate_uses_last_two_samples_per_second() {
     let mut store = InMemoryMetricStore::new();
@@ -4330,6 +4741,23 @@ async fn instant_predict_linear_extrapolates_gauge_series() {
     check!(samples.len() == 1);
     check!(samples[0].labels.get("__name__").is_none());
     check!(samples[0].labels.get("job") == Some("api"));
+    check!(approx_eq(float_value(&samples[0].value), 7.0));
+    // The same series over a window that admits all three samples. `[2m]`
+    // starts exactly at the first one, and the window excludes its own start,
+    // so only two ever reached the regression -- leaving a guard that refused
+    // three samples with nothing to refuse.
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant(
+            "tenant-a",
+            "predict_linear(disk_free_bytes[3m], 60)",
+            120_000,
+        )
+        .await
+        .expect("a prediction")
+    else {
+        panic!("expected a vector");
+    };
+    check!(samples.len() == 1, "three samples still predict");
     check!(approx_eq(float_value(&samples[0].value), 7.0));
 }
 
@@ -4458,6 +4886,1123 @@ async fn instant_double_exponential_smoothing_smooths_gauge_series() {
     check!(approx_eq(float_value(&samples[0].value), 17.625));
 }
 
+/// The same smoothing with *distinct* factors. Every other test here passes
+/// `0.5, 0.5`, where `factor` and `1.0 - factor` are the same number, so
+/// swapping either one is invisible -- as is reversing which of the two the
+/// value and the trend are weighted by. Four samples also run the trend update
+/// twice, which a shorter series never reaches, and the pair case pins the
+/// two-sample minimum.
+#[cfg(feature = "experimental-functions")]
+#[tokio::test]
+async fn instant_double_exponential_smoothing_weights_each_factor_distinctly() {
+    let mut store = InMemoryMetricStore::new();
+    // The initial trend is 2.0, not 1.0: at 1.0 the trend carry `(1 - tf) *
+    // trend` equals `(1 - tf) / trend`, so that multiply would be free to be a
+    // divide.
+    for (ts_ms, value) in [(0_i64, 1.0), (60_000, 3.0), (120_000, 4.0), (180_000, 8.0)] {
+        store.push_float("tenant-a", labels(&[("__name__", "g")]), ts_ms, value);
+    }
+    for (ts_ms, value) in [(120_000_i64, 1.0), (180_000, 2.0)] {
+        store.push_float("tenant-a", labels(&[("__name__", "pair")]), ts_ms, value);
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (query, want) in [
+        ("double_exponential_smoothing(g[4m], 0.3, 0.4)", 7.006),
+        // Two samples are the minimum the fold accepts.
+        ("double_exponential_smoothing(pair[2m], 0.3, 0.4)", 2.0),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", query, 180_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {query}");
+        };
+        assert2::assert!(samples.len() == 1, "{query}");
+        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+    }
+}
+
+/// Prometheus extrapolates a counter out to the edges of the range, but only
+/// as far as 1.1x the average sample spacing; past that it settles for half a
+/// spacing. Each geometry below trips a different part of that: the first
+/// clamps at the end and is cut short at the start by the counter's own zero
+/// crossing, the second clamps at the start with a counter that never crosses
+/// zero, and the third clamps at neither edge. A series that simply spans its
+/// range never enters any of them.
+#[tokio::test]
+async fn increase_extrapolates_to_the_range_edges_by_the_sample_spacing() {
+    let mut store = InMemoryMetricStore::new();
+    for (name, points) in [
+        (
+            "ends_short",
+            vec![
+                (50_000_i64, 0.0),
+                (60_000, 10.0),
+                (70_000, 20.0),
+                (80_000, 30.0),
+            ],
+        ),
+        (
+            "starts_late",
+            vec![(70_000_i64, 5.0), (80_000, 15.0), (90_000, 25.0)],
+        ),
+        (
+            "spans_range",
+            vec![
+                (45_000_i64, 2.0),
+                (60_000, 4.0),
+                (75_000, 6.0),
+                (95_000, 10.0),
+            ],
+        ),
+    ] {
+        for (ts_ms, value) in points {
+            store.push_float("tenant-a", labels(&[("__name__", name)]), ts_ms, value);
+        }
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (query, want) in [
+        // 20s to the range end is over 1.1x the 10s spacing, so it clamps to
+        // half a spacing; the counter starts at zero, so the extrapolation
+        // back to the range start is cut to the zero crossing instead.
+        ("increase(ends_short[1m])", 35.0),
+        // The mirror: 30s to the range start clamps, 10s to the end does not,
+        // and a counter starting above zero leaves the start alone.
+        ("increase(starts_late[1m])", 35.0),
+        // Neither gap reaches the threshold, so both extrapolate in full.
+        ("increase(spans_range[1m])", 9.6),
+        // `rate` is that same extrapolation over the range in seconds.
+        ("rate(spans_range[1m])", 0.16),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", query, 100_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {query}");
+        };
+        assert2::assert!(samples.len() == 1, "{query}");
+        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+    }
+}
+
+/// The same three geometries through the *other* extrapolation implementation.
+///
+/// `rate`/`increase`/`delta` lower onto a float-only operator leaf, which
+/// cannot carry native histograms, so a selector that matches even one
+/// histogram series routes the whole call through the interpreter kernel
+/// instead -- a separate, byte-for-byte port of the same arithmetic. A float
+/// series with a histogram sibling under its own name is the only shape that
+/// reaches it, and without one the kernel's copy is never executed at all.
+#[tokio::test]
+async fn increase_extrapolates_the_same_way_through_the_histogram_kernel() {
+    let mut store = InMemoryMetricStore::new();
+    for (name, points) in [
+        (
+            "k_ends_short",
+            vec![
+                (50_000_i64, 0.0),
+                (60_000, 10.0),
+                (70_000, 20.0),
+                (80_000, 30.0),
+            ],
+        ),
+        (
+            "k_starts_late",
+            vec![(70_000_i64, 5.0), (80_000, 15.0), (90_000, 25.0)],
+        ),
+        (
+            "k_spans_range",
+            vec![
+                (45_000_i64, 2.0),
+                (60_000, 4.0),
+                (75_000, 6.0),
+                (95_000, 10.0),
+            ],
+        ),
+        // 11.05s to the range end sits between 1.1x the 10s spacing (11.0)
+        // and that spacing plus 1.1 (11.1), so the threshold has to be a
+        // product rather than a sum for the end to clamp at all.
+        (
+            "k_thr_edge",
+            vec![(68_950_i64, 0.0), (78_950, 10.0), (88_950, 20.0)],
+        ),
+    ] {
+        for (ts_ms, value) in points {
+            store.push_float(
+                "tenant-a",
+                labels(&[("__name__", name), ("series", "f")]),
+                ts_ms,
+                value,
+            );
+        }
+        // One histogram sibling is enough to route the call to the kernel.
+        store.push_histogram(
+            "tenant-a",
+            labels(&[("__name__", name), ("series", "h")]),
+            60_000,
+            native_histogram(4.0, 10.0),
+        );
+    }
+    // A float series whose only sample falls before the window contributes
+    // nothing to the result.
+    store.push_float(
+        "tenant-a",
+        labels(&[("__name__", "k_no_points"), ("series", "f")]),
+        10_000,
+        1.0,
+    );
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "k_no_points"), ("series", "h")]),
+        60_000,
+        native_histogram(4.0, 10.0),
+    );
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (query, want) in [
+        ("increase(k_ends_short[1m])", 35.0),
+        ("increase(k_starts_late[1m])", 35.0),
+        ("increase(k_spans_range[1m])", 9.6),
+        ("rate(k_spans_range[1m])", 0.16),
+        // `delta` is not a counter, so the zero-crossing cut never applies and
+        // the start clamp stands on its own -- and the whole guard has to be
+        // an `&&` chain, since under `||` a non-counter would take the cut.
+        ("delta(k_thr_edge[1m])", 30.0),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", query, 100_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {query}");
+        };
+        let float = samples
+            .iter()
+            .find(|sample| sample.labels.get("series") == Some("f"))
+            .unwrap_or_else(|| panic!("{query}: no float series in the result"));
+        assert2::assert!(approx_eq(float_value(&float.value), want), "{query}");
+    }
+
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "increase(k_no_points[1m])", 100_000)
+        .await
+        .expect("a window with no float points is not an error")
+    else {
+        panic!("expected a vector");
+    };
+    assert2::assert!(
+        !samples
+            .iter()
+            .any(|sample| sample.labels.get("series") == Some("f")),
+        "a float series with no points in the window yields no sample"
+    );
+}
+
+/// `avg_over_time` carries infinities the way Prometheus does: a mean that has
+/// gone infinite stays there through finite samples, an infinity of the same
+/// sign keeps it, and only the opposite infinity or a NaN turns it into a NaN.
+/// Nothing fed the fold an infinity before, which left every arm of that guard
+/// free -- and hid that the Kahan compensation went NaN on the very first
+/// infinite increment and rode all the way out to the result.
+///
+/// The last case pins the compensation itself. It differs from the uncorrected
+/// mean only in the final bits, so it is compared bit-for-bit; a relative
+/// tolerance would accept the fold running backwards.
+#[tokio::test]
+async fn avg_over_time_carries_infinities_and_keeps_its_compensation() {
+    let mut store = InMemoryMetricStore::new();
+    let series = [
+        ("inf_then_finite", vec![f64::INFINITY, 1.0, 2.0]),
+        ("neg_inf_then_finite", vec![f64::NEG_INFINITY, 1.0]),
+        (
+            "opposite_infinities",
+            vec![f64::INFINITY, f64::NEG_INFINITY],
+        ),
+        ("inf_then_nan", vec![f64::INFINITY, f64::NAN]),
+        ("inf_twice", vec![f64::INFINITY, f64::INFINITY]),
+        ("finite_then_inf", vec![1.0, f64::INFINITY]),
+        ("compensated", vec![1.0, 0.1, 0.1]),
+    ];
+    for (name, values) in &series {
+        for (index, value) in values.iter().enumerate() {
+            let ts_ms = 10_000 + 10_000 * i64::try_from(index).expect("a small index");
+            store.push_float(
+                "tenant-a",
+                labels(&[("__name__", *name), ("series", "f")]),
+                ts_ms,
+                *value,
+            );
+        }
+        // `*_over_time` lowers onto a float-only operator leaf unless the
+        // selector also matches a native histogram, which routes the call to
+        // the interpreter kernel's own fold. Without a sibling here the kernel
+        // copy is never executed.
+        store.push_histogram(
+            "tenant-a",
+            labels(&[("__name__", *name), ("series", "h")]),
+            20_000,
+            native_histogram(4.0, 10.0),
+        );
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (name, want) in [
+        // A finite sample cannot pull an infinite mean back.
+        ("inf_then_finite", Some(f64::INFINITY)),
+        ("neg_inf_then_finite", Some(f64::NEG_INFINITY)),
+        // Opposite infinities, and a NaN, are the two things that do.
+        ("opposite_infinities", None),
+        ("inf_then_nan", None),
+        // Same-sign infinity leaves it alone, and an infinity arriving after a
+        // finite start still takes the mean there.
+        ("inf_twice", Some(f64::INFINITY)),
+        ("finite_then_inf", Some(f64::INFINITY)),
+    ] {
+        let query = format!("avg_over_time({name}[1m])");
+        let QueryResult::InstantVector(samples) = engine
+            .query_instant("tenant-a", &query, 60_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"))
+        else {
+            panic!("expected a vector for {query}");
+        };
+        let float = samples
+            .iter()
+            .find(|sample| sample.labels.get("series") == Some("f"))
+            .unwrap_or_else(|| panic!("{query}: no float series in the result"));
+        let got = float_value(&float.value);
+        match want {
+            Some(want) => {
+                assert2::assert!(got.to_bits() == want.to_bits(), "{query}: got {got}");
+            }
+            None => assert2::assert!(got.is_nan(), "{query}: got {got}"),
+        }
+    }
+
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "avg_over_time(compensated[1m])", 60_000)
+        .await
+        .expect("a compensated mean")
+    else {
+        panic!("expected a vector");
+    };
+    let float = samples
+        .iter()
+        .find(|sample| sample.labels.get("series") == Some("f"))
+        .expect("a float series in the result");
+    assert2::assert!(
+        float_value(&float.value).to_bits() == 0.399_999_999_999_999_97_f64.to_bits(),
+        "the Kahan compensation is added, not subtracted or dropped"
+    );
+}
+
+/// `stdvar_over_time` runs a compensated Welford fold, and each of its three
+/// compensations is added back rather than subtracted. The difference is in
+/// the final bits, so this is compared bit-for-bit -- a relative tolerance
+/// accepts all three of them running the wrong way.
+#[tokio::test]
+async fn stdvar_over_time_adds_back_each_of_its_compensations() {
+    let mut store = InMemoryMetricStore::new();
+    for (index, value) in [1.0_f64, 0.1, 1.0, 1.0].into_iter().enumerate() {
+        let ts_ms = 10_000 + 10_000 * i64::try_from(index).expect("a small index");
+        store.push_float(
+            "tenant-a",
+            labels(&[("__name__", "v"), ("series", "f")]),
+            ts_ms,
+            value,
+        );
+    }
+    // The histogram sibling routes the fold through the interpreter kernel's
+    // own copy; without it the operator leaf's copy answers instead.
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "v"), ("series", "h")]),
+        20_000,
+        native_histogram(4.0, 10.0),
+    );
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "stdvar_over_time(v[5m])", 40_000)
+        .await
+        .expect("a variance")
+    else {
+        panic!("expected a vector");
+    };
+    let float = samples
+        .iter()
+        .find(|sample| sample.labels.get("series") == Some("f"))
+        .expect("a float series in the result");
+    assert2::assert!(
+        float_value(&float.value).to_bits() == 0.151_875_000_000_000_04_f64.to_bits(),
+        "got {}",
+        float_value(&float.value)
+    );
+}
+
+/// `kahan_sum_inc` recovers the bits lost when one operand dwarfs the other,
+/// on both magnitude branches, and gives up on an infinite running sum rather
+/// than carrying a NaN forward.
+#[test]
+fn kahan_sum_inc_recovers_lost_bits_on_both_branches() {
+    use super::range_functions::kahan_sum_inc;
+
+    // |sum| >= |increment|: the increment falls off the end of the sum, and
+    // all of it comes back as compensation.
+    let (sum, comp) = kahan_sum_inc(1.0, 1e16, 0.0);
+    assert2::assert!(sum.to_bits() == 1e16_f64.to_bits());
+    assert2::assert!(comp.to_bits() == 1.0_f64.to_bits(), "got {comp}");
+
+    // The swapped branch has to compute the residue the other way round.
+    let (sum, comp) = kahan_sum_inc(1e16, 1.0, 0.0);
+    assert2::assert!(sum.to_bits() == 1e16_f64.to_bits());
+    assert2::assert!(comp.to_bits() == 1.0_f64.to_bits(), "got {comp}");
+
+    // An infinite sum leaves no residue to recover; computing one gives NaN.
+    let (sum, comp) = kahan_sum_inc(f64::INFINITY, 0.0, 0.0);
+    assert2::assert!(sum.to_bits() == f64::INFINITY.to_bits());
+    assert2::assert!(comp.to_bits() == 0.0_f64.to_bits(), "got {comp}");
+}
+
+/// `increase` over native histograms recompacts the result's spans: buckets
+/// that did not move are dropped from both ends, and the gap between the two
+/// input spans splits what remains into two runs. Every other histogram-rate
+/// test uses a single dense span where the compaction has nothing to do --
+/// no edge to strip, no gap to split on, and no second span offset to add in.
+#[tokio::test]
+async fn increase_recompacts_native_histogram_spans_around_gaps() {
+    let histogram = |counts: Vec<f64>| NativeHistogram {
+        schema: 0,
+        is_float: true,
+        reset_hint: ResetHint::No,
+        zero_threshold: 0.0,
+        zero_count: 0.0,
+        count: counts.iter().sum(),
+        sum: 0.0,
+        positive_spans: vec![
+            BucketSpan {
+                offset: 0,
+                length: 3,
+            },
+            BucketSpan {
+                offset: 2,
+                length: 3,
+            },
+            // A third run, so the second emitted span has a non-zero
+            // `previous_span_end` to subtract -- at the first one it is still
+            // zero, where subtracting and adding it agree.
+            BucketSpan {
+                offset: 2,
+                length: 3,
+            },
+        ],
+        positive_counts: counts,
+        negative_spans: vec![],
+        negative_counts: vec![],
+        custom_values: None,
+        start_timestamp_ms: None,
+    };
+
+    let mut store = InMemoryMetricStore::new();
+    // The outermost buckets hold still, as does one in the middle of a run.
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "h")]),
+        10_000,
+        histogram(vec![1.0; 9]),
+    );
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "h")]),
+        20_000,
+        histogram(vec![1.0, 3.0, 4.0, 5.0, 6.0, 1.0, 7.0, 8.0, 1.0]),
+    );
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let result = engine
+        .query_instant("tenant-a", "increase(h[5m])", 20_000)
+        .await
+        .expect("a histogram increase");
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected a vector");
+    };
+    assert2::assert!(samples.len() == 1);
+    let SampleValue::Histogram(histogram) = &samples[0].value else {
+        panic!("expected a histogram sample");
+    };
+
+    // The input spans cover 0..=2, 5..=7 and 10..=12. Buckets 0 and 12 hold
+    // still and are trimmed; the gaps at 3..=4 and 8..=9 split the rest into
+    // three runs. Bucket 7 holds still too but sits inside a run, so it stays.
+    check!(
+        histogram.positive_spans
+            == vec![
+                BucketSpan {
+                    offset: 1,
+                    length: 2
+                },
+                BucketSpan {
+                    offset: 2,
+                    length: 3
+                },
+                BucketSpan {
+                    offset: 2,
+                    length: 2
+                },
+            ]
+    );
+    check!(histogram.positive_counts.len() == 7);
+}
+
+/// The histogram extrapolation is a third copy of the same geometry, and the
+/// span test above only reads the shape of the result, never its numbers --
+/// which is why the sample spacing, the 1.1x threshold and both half-interval
+/// clamps were all free here. The three series below clamp at the end, at the
+/// start, and at a gap sitting between 1.1x the spacing and the spacing plus
+/// 1.1.
+#[tokio::test]
+async fn increase_extrapolates_native_histogram_counts_by_the_sample_spacing() {
+    fn h(count: f64) -> NativeHistogram {
+        NativeHistogram {
+            schema: 0,
+            is_float: true,
+            reset_hint: ResetHint::No,
+            zero_threshold: 0.0,
+            zero_count: 0.0,
+            count,
+            sum: count,
+            positive_spans: vec![BucketSpan {
+                offset: 0,
+                length: 1,
+            }],
+            positive_counts: vec![count],
+            negative_spans: vec![],
+            negative_counts: vec![],
+            custom_values: None,
+            start_timestamp_ms: None,
+        }
+    }
+
+    let mut store = InMemoryMetricStore::new();
+    for (name, points) in [
+        (
+            "gh_ends_short",
+            vec![
+                (50_000_i64, 0.0),
+                (60_000, 10.0),
+                (70_000, 20.0),
+                (80_000, 30.0),
+            ],
+        ),
+        (
+            "gh_starts_late",
+            vec![(70_000_i64, 5.0), (80_000, 15.0), (90_000, 25.0)],
+        ),
+        (
+            "gh_thr_edge",
+            vec![(68_950_i64, 0.0), (78_950, 10.0), (88_950, 20.0)],
+        ),
+    ] {
+        for (ts_ms, count) in points {
+            store.push_histogram("tenant-a", labels(&[("__name__", name)]), ts_ms, h(count));
+        }
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (query, want) in [
+        // 20s to the range end clamps to half a 10s spacing; 10s to the start
+        // does not.
+        ("increase(gh_ends_short[1m])", 45.0),
+        // The mirror.
+        ("increase(gh_starts_late[1m])", 35.0),
+        // 11.05s to the end: over 1.1x the spacing, under the spacing plus 1.1.
+        ("increase(gh_thr_edge[1m])", 30.0),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", query, 100_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {query}");
+        };
+        assert2::assert!(samples.len() == 1, "{query}");
+        let SampleValue::Histogram(histogram) = &samples[0].value else {
+            panic!("expected a histogram sample for {query}");
+        };
+        assert2::assert!(approx_eq(histogram.count, want), "{query}");
+    }
+}
+
+/// `histogram_fraction` over classic buckets, where the outermost bounds are
+/// infinite. An open-ended bucket counts in full only when the query's own
+/// bound is open the same way -- a finite bound never reaches into it, however
+/// far out it goes. Nothing exercised those two arms, nor a query bound that
+/// lands inside a bucket rather than on its edge.
+#[tokio::test]
+async fn histogram_fraction_counts_open_ended_classic_buckets_only_against_open_bounds() {
+    let mut store = InMemoryMetricStore::new();
+    // Cumulative counts. The first `le` is negative, so the opening bucket runs
+    // from -Inf, and the `+Inf` bucket closes the series at the other end.
+    for (name, points) in [
+        (
+            "hc",
+            vec![("-1", 2.0), ("0", 3.0), ("1", 6.0), ("+Inf", 10.0)],
+        ),
+        ("hc2", vec![("-1", 2.0), ("+Inf", 5.0)]),
+        // A bucket four wide, so dividing by its width is not the same as
+        // multiplying by it -- which it is for every bucket above.
+        ("hc3", vec![("0", 0.0), ("4", 8.0), ("+Inf", 10.0)]),
+    ] {
+        for (le, count) in points {
+            store.push_float(
+                "tenant-a",
+                labels(&[("__name__", name), ("le", le)]),
+                10_000,
+                count,
+            );
+        }
+    }
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (query, want) in [
+        // A range on bucket edges takes whole buckets.
+        ("histogram_fraction(0, 1, hc)", 0.3),
+        // The -Inf bucket counts only against an -Inf bound...
+        ("histogram_fraction(-Inf, -1, hc)", 0.2),
+        ("histogram_fraction(-2, -1, hc)", 0.0),
+        // ...and the +Inf bucket only against a +Inf bound.
+        ("histogram_fraction(1, Inf, hc)", 0.4),
+        ("histogram_fraction(1, 2, hc)", 0.0),
+        // A bucket open at the top with a finite lower edge is still reached
+        // through the upper arm, not the lower one.
+        ("histogram_fraction(-1, Inf, hc2)", 0.6),
+        // Everything, and a bound landing inside a bucket rather than on it.
+        ("histogram_fraction(-Inf, Inf, hc)", 1.0),
+        ("histogram_fraction(0.5, 1, hc)", 0.15),
+        // Partial cover of a four-wide bucket: half of it, not eight times it.
+        ("histogram_fraction(1, 3, hc3)", 0.4),
+        ("histogram_fraction(0, 4, hc3)", 0.8),
+        ("histogram_fraction(2, Inf, hc3)", 0.6),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", query, 10_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {query}");
+        };
+        assert2::assert!(samples.len() == 1, "{query}");
+        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+    }
+}
+
+/// The degenerate inputs to the histogram folds. A classic series without a
+/// `+Inf` bucket has no total to divide by and yields NaN; two buckets are
+/// enough to interpolate between; and a NaN bound, or a histogram holding
+/// nothing, yields NaN rather than a number. Each guard below is a chain of
+/// `||`, and no test had ever made exactly one of its clauses true -- which is
+/// what tells the chain apart from the same clauses joined by `&&`.
+#[tokio::test]
+async fn the_histogram_folds_refuse_their_degenerate_inputs() {
+    let mut store = InMemoryMetricStore::new();
+    for (name, points) in [
+        // Two buckets, closed with +Inf: the smallest series that interpolates.
+        ("c2", vec![("1", 1.0), ("+Inf", 2.0)]),
+        // No +Inf bucket at all, so there is no total.
+        ("cf", vec![("1", 1.0), ("2", 2.0)]),
+    ] {
+        for (le, count) in points {
+            store.push_float(
+                "tenant-a",
+                labels(&[("__name__", name), ("le", le)]),
+                10_000,
+                count,
+            );
+        }
+    }
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "nh")]),
+        10_000,
+        native_histogram(4.0, 8.0),
+    );
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "nh0")]),
+        10_000,
+        native_histogram(0.0, 0.0),
+    );
+    // A negative count is the only way to tell the `count <= 0.0` clause from
+    // the NaN one beside it: at exactly zero the fold divides zero by zero and
+    // reaches NaN by itself.
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "nhneg")]),
+        10_000,
+        native_histogram(-1.0, 0.0),
+    );
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    let value = |query: &'static str| {
+        let engine = &engine;
+        async move {
+            let result = engine
+                .query_instant("tenant-a", query, 10_000)
+                .await
+                .unwrap_or_else(|error| panic!("{query}: {error}"));
+            let QueryResult::InstantVector(samples) = result else {
+                panic!("expected a vector for {query}");
+            };
+            assert2::assert!(samples.len() == 1, "{query}");
+            float_value(&samples[0].value)
+        }
+    };
+
+    // Two buckets are enough to interpolate: the rank lands on the first one's
+    // upper bound.
+    assert2::assert!(approx_eq(value("histogram_quantile(0.5, c2)").await, 1.0));
+
+    for query in [
+        // Without a +Inf bucket there is no total to divide by.
+        "histogram_quantile(0.5, cf)",
+        "histogram_fraction(0, 1, cf)",
+        // A NaN bound poisons the fold, from either side, on either kind.
+        "histogram_fraction(NaN, 1, c2)",
+        "histogram_fraction(NaN, 1, nh)",
+        "histogram_fraction(0, NaN, nh)",
+        // A histogram holding nothing, or less than nothing, has no fraction.
+        "histogram_fraction(0, 1, nh0)",
+        "histogram_fraction(0, 1, nhneg)",
+    ] {
+        assert2::assert!(value(query).await.is_nan(), "{query}");
+    }
+}
+
+/// A classic histogram answers correctly alongside a native sibling under the
+/// same name -- the mixed case, which every other classic test avoids by
+/// keeping the two apart. The window bounds are the infinite ones, so the
+/// buckets open at each end are the ones being read.
+#[tokio::test]
+async fn a_classic_histogram_answers_beside_a_native_sibling() {
+    let mut store = InMemoryMetricStore::new();
+    // A classic histogram closed at both ends by an infinity.
+    for (le, count) in [("-1", 2.0), ("0", 3.0), ("1", 6.0), ("+Inf", 10.0)] {
+        store.push_float(
+            "tenant-a",
+            labels(&[("__name__", "hk"), ("kind", "classic"), ("le", le)]),
+            10_000,
+            count,
+        );
+    }
+    // The native sibling that sends the call to the kernel.
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "hk"), ("kind", "native")]),
+        10_000,
+        native_histogram(4.0, 8.0),
+    );
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (query, want) in [
+        // The bucket running from -Inf, and the one running to +Inf.
+        ("histogram_fraction(-Inf, -1, hk)", 0.2),
+        ("histogram_fraction(1, Inf, hk)", 0.4),
+        ("histogram_fraction(0, 1, hk)", 0.3),
+    ] {
+        let QueryResult::InstantVector(samples) = engine
+            .query_instant("tenant-a", query, 10_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"))
+        else {
+            panic!("expected a vector for {query}");
+        };
+        let classic = samples
+            .iter()
+            .find(|sample| sample.labels.get("kind") == Some("classic"))
+            .unwrap_or_else(|| panic!("{query}: no classic series in the result"));
+        assert2::assert!(approx_eq(float_value(&classic.value), want), "{query}");
+    }
+}
+
+/// Averaging native histograms sums them and scales by one over the count.
+/// Every other scaling in these tests uses a factor of -1, where multiplying
+/// and dividing agree -- a half does not.
+#[tokio::test]
+async fn avg_over_time_scales_a_native_histogram_by_one_over_the_count() {
+    let histogram = |value: f64| NativeHistogram {
+        schema: 0,
+        is_float: true,
+        reset_hint: ResetHint::No,
+        zero_threshold: 1.0,
+        zero_count: value,
+        count: value,
+        sum: value,
+        positive_spans: vec![],
+        positive_counts: vec![],
+        negative_spans: vec![],
+        negative_counts: vec![],
+        custom_values: None,
+        start_timestamp_ms: None,
+    };
+    let mut store = InMemoryMetricStore::new();
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "h")]),
+        10_000,
+        histogram(4.0),
+    );
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "h")]),
+        20_000,
+        histogram(6.0),
+    );
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "avg_over_time(h[5m])", 20_000)
+        .await
+        .expect("a histogram average")
+    else {
+        panic!("expected a vector");
+    };
+    let SampleValue::Histogram(averaged) = &samples[0].value else {
+        panic!("expected a histogram sample");
+    };
+    check!(
+        approx_eq(averaged.zero_count, 5.0),
+        "the zero bucket averages"
+    );
+    check!(approx_eq(averaged.count, 5.0));
+    check!(approx_eq(averaged.sum, 5.0));
+}
+
+/// Bucket bounds at a schema other than zero. At schema 0 the exponent factor
+/// is one, so multiplying the index by it, dividing by it, and negating the
+/// schema all give the same bound -- every histogram test above uses that
+/// schema. At schema 1 the buckets are a square root apart.
+#[tokio::test]
+async fn native_histogram_bucket_bounds_follow_the_schema() {
+    let mut store = InMemoryMetricStore::new();
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "h")]),
+        10_000,
+        NativeHistogram {
+            schema: 1,
+            is_float: true,
+            reset_hint: ResetHint::No,
+            zero_threshold: 0.0,
+            zero_count: 0.0,
+            count: 2.0,
+            sum: 3.0,
+            // Buckets 1 and 2: (1, sqrt 2] and (sqrt 2, 2].
+            positive_spans: vec![BucketSpan {
+                offset: 1,
+                length: 2,
+            }],
+            positive_counts: vec![1.0, 1.0],
+            negative_spans: vec![],
+            negative_counts: vec![],
+            custom_values: None,
+            start_timestamp_ms: None,
+        },
+    );
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "histogram_quantile(0.5, h)", 10_000)
+        .await
+        .expect("a quantile")
+    else {
+        panic!("expected a vector");
+    };
+    check!(
+        approx_eq(float_value(&samples[0].value), std::f64::consts::SQRT_2),
+        "the median sits on the boundary between the two buckets: {}",
+        float_value(&samples[0].value)
+    );
+}
+
+/// `increase` over native histograms needs every consecutive pair in the
+/// window to line up -- same schema, same shape, same zero threshold -- and
+/// yields nothing when they do not. The check is an eight-clause conjunction
+/// and no test ever gave it a mismatched pair, so any one of its `&&` could
+/// have been an `||` and the fold would have run on histograms it cannot
+/// combine. Each variant below differs in exactly one of those clauses.
+#[tokio::test]
+async fn increase_refuses_native_histograms_that_do_not_line_up() {
+    fn base() -> NativeHistogram {
+        NativeHistogram {
+            schema: 0,
+            is_float: true,
+            reset_hint: ResetHint::No,
+            zero_threshold: 1.0,
+            zero_count: 1.0,
+            count: 6.0,
+            sum: 10.0,
+            positive_spans: vec![BucketSpan {
+                offset: 0,
+                length: 2,
+            }],
+            positive_counts: vec![1.0, 2.0],
+            negative_spans: vec![BucketSpan {
+                offset: 0,
+                length: 1,
+            }],
+            negative_counts: vec![1.0],
+            custom_values: None,
+            start_timestamp_ms: None,
+        }
+    }
+    fn grown() -> NativeHistogram {
+        NativeHistogram {
+            count: 12.0,
+            sum: 20.0,
+            positive_counts: vec![3.0, 4.0],
+            negative_counts: vec![2.0],
+            ..base()
+        }
+    }
+
+    let variants = [
+        (
+            "schema",
+            NativeHistogram {
+                schema: 1,
+                ..grown()
+            },
+        ),
+        (
+            "is_float",
+            NativeHistogram {
+                is_float: false,
+                ..grown()
+            },
+        ),
+        (
+            "zero_threshold",
+            NativeHistogram {
+                zero_threshold: 2.0,
+                ..grown()
+            },
+        ),
+        (
+            "custom_values",
+            NativeHistogram {
+                custom_values: Some(vec![1.0]),
+                ..grown()
+            },
+        ),
+        (
+            "positive_spans",
+            NativeHistogram {
+                positive_spans: vec![BucketSpan {
+                    offset: 1,
+                    length: 2,
+                }],
+                ..grown()
+            },
+        ),
+        (
+            "negative_spans",
+            NativeHistogram {
+                negative_spans: vec![BucketSpan {
+                    offset: 1,
+                    length: 1,
+                }],
+                ..grown()
+            },
+        ),
+        // The two counts-length clauses cannot be isolated: the store rejects
+        // a histogram whose counts disagree with its spans, so equal spans
+        // already force equal counts lengths. These grow both together.
+        (
+            "positive bucket count",
+            NativeHistogram {
+                positive_spans: vec![BucketSpan {
+                    offset: 0,
+                    length: 3,
+                }],
+                positive_counts: vec![3.0, 4.0, 5.0],
+                ..grown()
+            },
+        ),
+        (
+            "negative bucket count",
+            NativeHistogram {
+                negative_spans: vec![BucketSpan {
+                    offset: 0,
+                    length: 2,
+                }],
+                negative_counts: vec![2.0, 3.0],
+                ..grown()
+            },
+        ),
+    ];
+
+    let mut store = InMemoryMetricStore::new();
+    for (index, (_, variant)) in variants.iter().enumerate() {
+        let name = format!("hx{index}");
+        store.push_histogram("tenant-a", labels(&[("__name__", &name)]), 10_000, base());
+        store.push_histogram(
+            "tenant-a",
+            labels(&[("__name__", &name)]),
+            20_000,
+            variant.clone(),
+        );
+    }
+    // A pair that does line up, so a check stuck at false is caught too.
+    store.push_histogram("tenant-a", labels(&[("__name__", "ok")]), 10_000, base());
+    store.push_histogram("tenant-a", labels(&[("__name__", "ok")]), 20_000, grown());
+
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    for (index, (field, _)) in variants.iter().enumerate() {
+        let query = format!("increase(hx{index}[5m])");
+        let QueryResult::InstantVector(samples) = engine
+            .query_instant("tenant-a", &query, 20_000)
+            .await
+            .unwrap_or_else(|error| panic!("{field}: {error}"))
+        else {
+            panic!("expected a vector for {field}");
+        };
+        assert2::assert!(samples.is_empty(), "{field} differs, so there is no sample");
+    }
+
+    let QueryResult::InstantVector(samples) = engine
+        .query_instant("tenant-a", "increase(ok[5m])", 20_000)
+        .await
+        .expect("a matched pair")
+    else {
+        panic!("expected a vector");
+    };
+    assert2::assert!(samples.len() == 1, "a matched pair does produce a sample");
+}
+
+/// `histogram_quantile` interpolates inside the bucket the rank lands in, and
+/// which way depends on where that bucket sits. One spanning zero interpolates
+/// linearly; one entirely positive interpolates geometrically; one entirely
+/// negative does the same on magnitudes and flips the sign back. Only the
+/// linear arm had ever run -- the negative arm's sign, its multiply and its
+/// ratio were all free, and in a bucket starting at 1.0 dividing by the lower
+/// bound is the same as multiplying by it, so the positive arm needs a bucket
+/// that starts somewhere else.
+#[tokio::test]
+async fn histogram_quantile_interpolates_each_kind_of_native_bucket() {
+    let mut store = InMemoryMetricStore::new();
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "h")]),
+        10_000,
+        NativeHistogram {
+            schema: 0,
+            is_float: true,
+            reset_hint: ResetHint::No,
+            zero_threshold: 0.5,
+            zero_count: 2.0,
+            count: 12.0,
+            sum: 0.0,
+            // Buckets -4..-2 and -2..-1, then the zero bucket, then 1..2 and
+            // 2..4. The last is the one that separates dividing by the lower
+            // bound from multiplying by it.
+            positive_spans: vec![BucketSpan {
+                offset: 1,
+                length: 2,
+            }],
+            positive_counts: vec![4.0, 2.0],
+            negative_spans: vec![BucketSpan {
+                offset: 1,
+                length: 2,
+            }],
+            negative_counts: vec![3.0, 1.0],
+            custom_values: None,
+            start_timestamp_ms: None,
+        },
+    );
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (quantile, want) in [
+        // Lands in -2..-1: geometric on magnitudes, negated.
+        (0.1, -1.909_683_207_820_833),
+        // Lands inside the zero bucket, not on an edge -- at the edge the
+        // interpolation returns the upper bound whatever the lower one is.
+        (0.35, -0.400_000_000_000_000_36),
+        // And exactly at its top edge.
+        (0.5, 0.5),
+        // Lands in 1..2 and then in 2..4: geometric.
+        (0.75, 1.681_792_830_507_429),
+        (0.9, 2.639_015_821_545_789_3),
+    ] {
+        let query = format!("histogram_quantile({quantile}, h)");
+        let result = engine
+            .query_instant("tenant-a", &query, 10_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {query}");
+        };
+        assert2::assert!(samples.len() == 1, "{query}");
+        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+    }
+}
+
+/// `histogram_stdvar` weights each bucket by the square of the distance from
+/// its representative value to the mean, and that value is the geometric
+/// midpoint -- negated for a bucket below zero, arithmetic for one spanning
+/// it. The `sum` here is deliberately not zero: at a mean of zero the squaring
+/// hides the sign, so a negative bucket's midpoint could come back positive
+/// and the variance would not move.
+#[tokio::test]
+async fn histogram_stdvar_places_each_bucket_at_its_own_midpoint() {
+    let mut store = InMemoryMetricStore::new();
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "h")]),
+        10_000,
+        NativeHistogram {
+            schema: 0,
+            is_float: true,
+            reset_hint: ResetHint::No,
+            zero_threshold: 0.5,
+            zero_count: 2.0,
+            count: 12.0,
+            sum: 12.0,
+            positive_spans: vec![BucketSpan {
+                offset: 1,
+                length: 2,
+            }],
+            positive_counts: vec![4.0, 2.0],
+            negative_spans: vec![BucketSpan {
+                offset: 1,
+                length: 2,
+            }],
+            negative_counts: vec![3.0, 1.0],
+            custom_values: None,
+            start_timestamp_ms: None,
+        },
+    );
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+
+    for (query, want) in [
+        ("histogram_stdvar(h)", 3.459_559_885_480_119_5),
+        ("histogram_stddev(h)", 1.859_989_216_495_654_6),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", query, 10_000)
+            .await
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected a vector for {query}");
+        };
+        assert2::assert!(samples.len() == 1, "{query}");
+        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+    }
+}
+
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
 async fn instant_double_exponential_smoothing_validates_factors() {
@@ -4556,6 +6101,178 @@ async fn instant_count_and_present_over_time_include_native_histograms() {
         check!(
             approx_eq(float_value(&samples[0].value), expected),
             "{query}"
+        );
+    }
+}
+
+/// Prometheus' mean keeps an infinite running value infinite, and only a
+/// contradicting sample turns it into NaN. Nothing else in the suite drives
+/// the kernel's infinity arms, which decide when a sample is skipped.
+#[tokio::test]
+async fn instant_avg_over_time_holds_an_infinite_mean_until_it_is_contradicted() {
+    for (name, values, expected) in [
+        (
+            "two infinities of the same sign stay that infinity",
+            vec![f64::INFINITY, f64::INFINITY],
+            f64::INFINITY,
+        ),
+        (
+            "a finite sample cannot pull it back",
+            vec![f64::INFINITY, 5.0],
+            f64::INFINITY,
+        ),
+        (
+            "the other infinity contradicts it",
+            vec![f64::INFINITY, f64::NEG_INFINITY],
+            f64::NAN,
+        ),
+        ("so does a NaN", vec![f64::INFINITY, f64::NAN], f64::NAN),
+        (
+            "and it works negative too",
+            vec![f64::NEG_INFINITY, -5.0],
+            f64::NEG_INFINITY,
+        ),
+        // The 1e-16 rounds away as the running mean absorbs it, and only the
+        // compensation still holds it. Adding that back lands on the nearest
+        // double to two thirds; subtracting it, or dropping it, lands one ulp
+        // either side.
+        (
+            "the compensation is added back, not subtracted",
+            vec![1.0, 1e-16, 1.0],
+            0.666_666_666_666_666_7,
+        ),
+    ] {
+        let mut store = InMemoryMetricStore::new();
+        for (index, value) in values.iter().enumerate() {
+            store.push_float(
+                "tenant-a",
+                labels(&[("__name__", "queue_depth"), ("job", "api")]),
+                i64::try_from(index).unwrap() * 1_000,
+                *value,
+            );
+        }
+        // A native histogram under the same name routes the selector through
+        // the interpreter's range kernel rather than the operator leaf.
+        store.push_histogram(
+            "tenant-a",
+            labels(&[("__name__", "queue_depth"), ("job", "cache")]),
+            1_000,
+            native_histogram(4.0, 1.0),
+        );
+
+        let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+        let result = engine
+            .query_instant("tenant-a", "avg_over_time(queue_depth[5m])", 60_000)
+            .await
+            .unwrap();
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected vector");
+        };
+        let sample = samples
+            .iter()
+            .find(|sample| sample.labels.get("job") == Some("api"))
+            .unwrap_or_else(|| panic!("{name}: the float series is missing"));
+        let got = float_value(&sample.value);
+        if expected.is_nan() {
+            check!(got.is_nan(), "{name}: {got}");
+        } else {
+            // Exact, not approximate: the compensation case differs from its
+            // mutants by a single ulp.
+            check!(got.to_bits() == expected.to_bits(), "{name}: {got}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn instant_irate_reads_the_last_two_samples_and_recovers_from_a_reset() {
+    for (name, samples, expected) in [
+        (
+            "two samples are enough",
+            vec![(0_i64, 10.0), (60_000, 70.0)],
+            1.0,
+        ),
+        (
+            "a flat counter rates to zero",
+            vec![(0, 10.0), (60_000, 10.0)],
+            0.0,
+        ),
+        (
+            "a reset takes the last value alone",
+            vec![(0, 100.0), (60_000, 10.0)],
+            10.0 / 60.0,
+        ),
+    ] {
+        let mut store = InMemoryMetricStore::new();
+        for (ts_ms, value) in samples {
+            store.push_float(
+                "tenant-a",
+                labels(&[("__name__", "http_requests_total"), ("job", "api")]),
+                ts_ms,
+                value,
+            );
+        }
+        // A native histogram under the same name routes the selector through
+        // the interpreter's range kernel rather than the operator leaf. It
+        // folds to nothing itself -- `irate` wants floats -- so the one series
+        // that comes back is the counter.
+        store.push_histogram(
+            "tenant-a",
+            labels(&[("__name__", "http_requests_total"), ("job", "cache")]),
+            60_000,
+            native_histogram(4.0, 1.0),
+        );
+
+        let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+        let result = engine
+            .query_instant("tenant-a", "irate(http_requests_total[5m])", 60_000)
+            .await
+            .unwrap();
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected vector");
+        };
+        check!(samples.len() == 1, "{name}");
+        check!(
+            approx_eq(float_value(&samples[0].value), expected),
+            "{name}: {}",
+            float_value(&samples[0].value)
+        );
+    }
+}
+
+#[tokio::test]
+async fn instant_over_time_windows_are_open_at_the_start_and_closed_at_the_end() {
+    let mut store = InMemoryMetricStore::new();
+    for (ts_ms, sum) in [(0_i64, 1.0), (10_000, 2.0), (60_000, 3.0)] {
+        store.push_histogram(
+            "tenant-a",
+            labels(&[("__name__", "queue_depth"), ("job", "api")]),
+            ts_ms,
+            native_histogram(4.0, sum),
+        );
+    }
+
+    // A `[50s]` range ending at 60s starts at exactly 10s. Prometheus' window
+    // is half-open, so the sample sitting on that start is out and only the
+    // one at 60s is in. This pins that boundary as engine behaviour rather
+    // than as a property of whichever layer happens to apply the trim.
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    for (query, expected) in [
+        ("histogram_sum(first_over_time(queue_depth[50s]))", 3.0),
+        ("histogram_sum(last_over_time(queue_depth[50s]))", 3.0),
+        ("count_over_time(queue_depth[50s])", 1.0),
+    ] {
+        let result = engine
+            .query_instant("tenant-a", query, 60_000)
+            .await
+            .unwrap();
+        let QueryResult::InstantVector(samples) = result else {
+            panic!("expected vector");
+        };
+        check!(samples.len() == 1, "{query}");
+        check!(
+            approx_eq(float_value(&samples[0].value), expected),
+            "{query}: {}",
+            float_value(&samples[0].value)
         );
     }
 }

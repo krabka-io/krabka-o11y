@@ -208,7 +208,9 @@ def crate_tests(
       no_harness: test stems declared `harness = false` in Cargo.toml.
       doc_tests: whether to emit a `rust_doc_test`. `cargo test` runs rustdoc
         examples; without this they are simply not run.
-      mutants: whether to emit a `cargo_mutants_test` over the unit tests.
+      mutants: whether to emit a `cargo_mutants_test`. The sweep runs the
+        unit tests *and* the suites under tests/ against every mutant; the
+        latter carry most of the coverage in several of these crates.
       mutants_jobs: mutants built and tested concurrently within one shard.
       mutants_shards: Bazel shards the sweep is split across.
       mutants_timeout: Bazel timeout for one shard of the sweep.

@@ -2207,7 +2207,10 @@ fn f64_from_usize(value: usize) -> Result<f64> {
 }
 
 fn usize_from_integer_f64(value: f64) -> Result<usize> {
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+    // No finiteness clause: `fract()` of an infinity or a NaN is NaN, and
+    // `NaN != 0.0` holds, so the fractional test already refuses every
+    // non-finite value. A separate `is_finite` test is unreachable.
+    if value < 0.0 || value.fract() != 0.0 {
         return Err(TraceqlError::Exec(format!(
             "expected non-negative integer float, got {value}"
         )));
@@ -2635,6 +2638,38 @@ fn u64_from_i64(v: i64) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    /// `usize_from_integer_f64` refuses anything that is not a non-negative
+    /// whole number. Joined with `&&` instead of `||`, a value has to be both
+    /// kinds of wrong at once to be refused -- so a negative or a fractional
+    /// limit sails through and is parsed as a count. Infinities and NaNs are
+    /// refused by the fractional clause, whose `fract()` is NaN for both.
+    #[test]
+    fn a_limit_must_be_a_non_negative_whole_number() {
+        use super::usize_from_integer_f64;
+
+        check!(usize_from_integer_f64(0.0).unwrap() == 0);
+        check!(usize_from_integer_f64(42.0).unwrap() == 42);
+
+        // The first two are wrong in exactly one way, so each isolates one
+        // clause; the non-finite pair rides on the fractional clause.
+        //
+        // The guard's *message* is what has to be asserted, not merely that an
+        // error came back: `-1.0` and `1.5` both fail the `parse::<usize>()`
+        // below the guard as well, so `is_err()` holds whether or not the guard
+        // fired. Only the diagnostic separates a rejected limit from a value
+        // that happened not to parse.
+        let refused = |value: f64| match usize_from_integer_f64(value) {
+            Err(TraceqlError::Exec(message)) => {
+                message.contains("expected non-negative integer float")
+            }
+            _ => false,
+        };
+        check!(refused(-1.0), "negative");
+        check!(refused(1.5), "fractional");
+        check!(refused(f64::INFINITY), "infinite");
+        check!(refused(f64::NAN), "not a number");
+    }
 
     use arrow::{
         array::{
@@ -5605,6 +5640,54 @@ mod tests {
         }
     }
 
+    /// `validate_compare_selection` decides whether a `compare()` selection can
+    /// use the cheap per-row evaluator or has to go through the planner. It
+    /// walks the whole expression, so a selection is only simple when every
+    /// leaf in it is: one unsupported leaf anywhere disqualifies the lot.
+    #[test]
+    fn a_compare_selection_is_simple_only_if_every_leaf_is() {
+        let selection = |query: &str| {
+            crate::parser::parse(query)
+                .unwrap_or_else(|e| panic!("query {query:?} did not parse: {e}"))
+                .root
+        };
+        let simple = |query: &str| validate_compare_selection(&selection(query)).is_ok();
+
+        check!(simple(r#"{ .svc = "a" }"#), "an attribute comparison");
+        check!(simple("{ span:duration > 100ms }"), "a supported intrinsic");
+        check!(simple("{ name = \"x\" }"), "another supported intrinsic");
+        check!(
+            simple(r#"{ .a = "x" } && { .b = "y" }"#),
+            "both sides simple"
+        );
+        check!(
+            simple(r#"{ .a = "x" } || { .b = "y" }"#),
+            "either side simple"
+        );
+
+        // A structural operator is never simple, wherever it sits.
+        check!(
+            !simple(r#"{ .a = "x" } > { .b = "y" }"#),
+            "a structural selection"
+        );
+        check!(
+            !simple(r#"{ .a = "x" } && ({ .b = "y" } > { .c = "z" })"#),
+            "a structural operand inside a conjunction"
+        );
+
+        // An intrinsic the comparison cannot classify disqualifies its whole
+        // expression, however deeply it is nested.
+        check!(!simple("{ span:id = \"abc\" }"), "an unsupported intrinsic");
+        check!(
+            !simple(r#"{ .a = "x" } && { span:id = "abc" }"#),
+            "one unsupported leaf is enough"
+        );
+        check!(
+            !simple(r#"{ .a = "x" && !(span:id = "abc") }"#),
+            "negation is descended into"
+        );
+    }
+
     #[test]
     fn usize_from_integer_f64_validates_and_converts() {
         let cases = [
@@ -5615,8 +5698,8 @@ mod tests {
             // negative is rejected (distinguishes `<` from `<=`/`==`).
             (-0.5, None),
             (-1.0, None),
-            // The `|| value < 0.0 ||` chain: a NaN (non-finite) and a fractional
-            // value are both rejected, so neither `&&` form would pass them.
+            // A NaN, an infinity and a fractional value are all rejected by
+            // the fractional clause -- `fract()` is NaN for both non-finites.
             (f64::NAN, None),
             (f64::INFINITY, None),
             (2.5, None),
@@ -5624,6 +5707,37 @@ mod tests {
         for (value, want) in cases {
             check!(usize_from_integer_f64(value).ok() == want, "input {value}");
         }
+
+        // Rejecting is not enough: the guard has to be the thing that rejects.
+        // Infinity is non-negative with a zero fractional part, so without the
+        // finiteness check it reaches the parse and fails there instead, with
+        // a message about digits rather than about the value.
+        let err = usize_from_integer_f64(f64::INFINITY)
+            .unwrap_err()
+            .to_string();
+        check!(
+            err.contains("expected non-negative integer float, got inf"),
+            "got: {err}"
+        );
+        let err = usize_from_integer_f64(f64::NAN).unwrap_err().to_string();
+        check!(
+            err.contains("expected non-negative integer float, got NaN"),
+            "got: {err}"
+        );
+
+        // A value that is finite, non-negative and whole can still be too
+        // large to hold. That path must report the failure rather than
+        // saturate, which is what a plain cast would do.
+        let too_big = 1e30_f64;
+        let err = usize_from_integer_f64(too_big).unwrap_err().to_string();
+        check!(
+            err.contains("number too large to fit in target type"),
+            "the conversion failure is reported as written, got: {err}"
+        );
+        check!(
+            !err.contains("expected non-negative integer float"),
+            "it passed the guard and failed the conversion, got: {err}"
+        );
     }
 
     #[test]

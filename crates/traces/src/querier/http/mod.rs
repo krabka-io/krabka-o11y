@@ -2516,6 +2516,322 @@ fn base64<const N: usize>(bytes: [u8; N]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// The intrinsic tag names are Tempo's API surface: a client asking for
+    /// `span:parentID` gets nothing back if this map spells it `span:parentId`.
+    /// Every variant is named here, and the names are checked for being
+    /// distinct as well as correct -- returning a neighbour's string is the
+    /// failure a per-variant spot check misses. A new variant needs a row.
+    #[test]
+    fn every_intrinsic_maps_to_its_tempo_tag_name() {
+        let cases = [
+            (Intrinsic::Name, "span:name"),
+            (Intrinsic::Duration, "span:duration"),
+            (Intrinsic::Kind, "span:kind"),
+            (Intrinsic::Status, "span:status"),
+            (Intrinsic::StatusMessage, "span:statusMessage"),
+            (Intrinsic::Id, "span:id"),
+            (Intrinsic::ParentId, "span:parentID"),
+            (Intrinsic::ChildCount, "span:childCount"),
+            (Intrinsic::TraceDuration, "trace:duration"),
+            (Intrinsic::TraceRootName, "trace:rootName"),
+            (Intrinsic::TraceRootService, "trace:rootService"),
+            (Intrinsic::TraceId, "trace:id"),
+            (Intrinsic::EventName, "event:name"),
+            (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
+            (Intrinsic::LinkTraceId, "link:traceID"),
+            (Intrinsic::LinkSpanId, "link:spanID"),
+            (Intrinsic::InstrumentationName, "instrumentation:name"),
+            (Intrinsic::InstrumentationVersion, "instrumentation:version"),
+            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
+            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
+            (Intrinsic::NestedSetParent, "span:nestedSetParent"),
+        ];
+
+        for (intrinsic, want) in &cases {
+            check!(
+                super::intrinsic_tag_name(intrinsic) == *want,
+                "{intrinsic:?}"
+            );
+        }
+
+        let names = cases
+            .iter()
+            .map(|(_, name)| *name)
+            .collect::<std::collections::BTreeSet<_>>();
+        check!(
+            names.len() == cases.len(),
+            "every intrinsic has its own name"
+        );
+    }
+
+    /// `collect_trace_intrinsic_values` reports one trace-level intrinsic
+    /// with the type name a client reads it as. Three of the four arms
+    /// survived: deleting one falls through to the catch-all and reports
+    /// nothing, which looks the same as an unknown tag unless the real tag's
+    /// value is pinned.
+    ///
+    /// The two string-valued names are given different values, so an arm
+    /// reading its neighbour's field still produces a well-formed pair and is
+    /// caught only by the value.
+    #[test]
+    fn a_trace_intrinsic_reports_its_own_value_and_type() {
+        let trace = TraceSpans {
+            trace_id: [9; 16],
+            root_service_name: "svc-a".into(),
+            root_trace_name: "root-a".into(),
+            resource_attributes: Vec::new(),
+            spans: vec![SpanRef {
+                span_id: [1; 8],
+                parent_span_id: None,
+                name: "root-a".into(),
+                kind: 0,
+                nested_set_left: 1,
+                nested_set_right: 2,
+                nested_set_parent: 0,
+                start_time_unix_nano: 1_001,
+                duration: nanos(200),
+                status_code: 0,
+                status_message: String::new(),
+                instrumentation_name: String::new(),
+                instrumentation_version: String::new(),
+                resource_attributes: Vec::new(),
+                attributes: Vec::new(),
+                events: Vec::new(),
+                links: Vec::new(),
+            }],
+        };
+        let collect = |tag: &str| {
+            let mut values = BTreeSet::new();
+            super::collect_trace_intrinsic_values(&trace, tag, &mut values);
+            values.into_iter().collect::<Vec<_>>()
+        };
+        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+
+        check!(collect("trace:id") == vec![pair("string", "09090909090909090909090909090909")]);
+        check!(collect("trace:rootName") == vec![pair("string", "root-a")]);
+        check!(collect("trace:rootService") == vec![pair("string", "svc-a")]);
+        check!(
+            collect("trace:duration") == vec![pair("duration", "200")],
+            "the duration is typed as a duration, not a string"
+        );
+
+        // An unrecognised intrinsic contributes nothing, which is exactly
+        // what a deleted arm looks like -- hence pinning the values above.
+        check!(collect("trace:nonsense").is_empty());
+        check!(collect("").is_empty());
+    }
+
+    /// `optional_time_bounds` defaults an absent bound to the widest window
+    /// and refuses an inverted one. An empty window -- end equal to start --
+    /// is legal, which is the single input separating `<` from `<=`.
+    #[test]
+    fn querier_time_bounds_allow_an_empty_window_but_not_an_inverted_one() {
+        let uri = |query: &str| {
+            format!("http://x/api?{query}")
+                .parse::<Uri>()
+                .expect("a valid uri")
+        };
+
+        check!(super::optional_time_bounds(&uri("start=5&end=5")).is_ok());
+        check!(super::optional_time_bounds(&uri("start=5&end=4")).is_err());
+        check!(super::optional_time_bounds(&uri("start=5&end=6")).is_ok());
+        check!(super::optional_time_bounds(&uri("")) == Ok((0, i64::MAX)));
+        check!(super::optional_time_bounds(&uri("start=abc")).is_err());
+    }
+
+    /// `span_kind_json` names the five kinds OTLP defines a string for.
+    /// Unspecified is deliberately not among them -- it maps to nothing rather
+    /// than to a name -- so zero is checked alongside the values either side
+    /// of the range.
+    #[test]
+    fn span_kind_json_names_five_kinds_and_refuses_the_rest() {
+        let name = super::span_kind_json;
+
+        check!(name(1) == Some("SPAN_KIND_INTERNAL"));
+        check!(name(2) == Some("SPAN_KIND_SERVER"));
+        check!(name(3) == Some("SPAN_KIND_CLIENT"));
+        check!(name(4) == Some("SPAN_KIND_PRODUCER"));
+        check!(name(5) == Some("SPAN_KIND_CONSUMER"));
+
+        check!(name(0) == None, "unspecified has no name here");
+        check!(name(6) == None, "one past the last kind");
+        check!(name(-1) == None, "nor does a negative kind");
+        check!(name(i32::MAX) == None);
+    }
+
+    /// `otlp_span` copies a span field by field into the OTLP shape, which is
+    /// where a pair of same-typed fields quietly changes places. Every value
+    /// in the fixture is distinct, and the two id fields differ in length as
+    /// well as content, so a swap is visible rather than merely wrong.
+    #[test]
+    fn a_span_maps_field_by_field_into_otlp() {
+        let span = SpanRef {
+            span_id: [2; 8],
+            parent_span_id: Some([3; 8]),
+            name: "GET /users".into(),
+            kind: 2,
+            nested_set_left: 1,
+            nested_set_right: 2,
+            nested_set_parent: 0,
+            start_time_unix_nano: 1_000,
+            duration: nanos(250),
+            status_code: 1,
+            status_message: "boom".into(),
+            instrumentation_name: String::new(),
+            instrumentation_version: String::new(),
+            resource_attributes: Vec::new(),
+            attributes: Vec::new(),
+            events: vec![crabka_traceql::EventRef {
+                time_since_start: nanos(50),
+                name: "retry".into(),
+                attributes: vec![(
+                    "event.reason".to_string(),
+                    crabka_traceql::AttrValue::Str("throttled".into()),
+                )],
+            }],
+            links: vec![crabka_traceql::LinkRef {
+                trace_id: [9; 16],
+                span_id: [8; 8],
+                attributes: vec![(
+                    "link.kind".to_string(),
+                    crabka_traceql::AttrValue::Str("retry".into()),
+                )],
+            }],
+        };
+
+        let otlp = super::otlp_span([1; 16], &span);
+
+        check!(
+            otlp.trace_id == vec![1_u8; 16],
+            "the trace id is the one passed in"
+        );
+        check!(
+            otlp.span_id == vec![2_u8; 8],
+            "not the span's own trace field"
+        );
+        check!(otlp.parent_span_id == vec![3_u8; 8]);
+        check!(otlp.name == "GET /users");
+        check!(otlp.kind == 2, "the kind, not the status code beside it");
+        check!(otlp.start_time_unix_nano == 1_000);
+        check!(
+            otlp.end_time_unix_nano == 1_250,
+            "the end is the start plus the duration, not either alone"
+        );
+        check!(otlp.events.len() == 1);
+        check!(otlp.events[0].name == "retry");
+        check!(
+            otlp.events[0].time_unix_nano == 1_050,
+            "an event time is absolute, not relative to the span"
+        );
+        check!(otlp.links.len() == 1, "the link is carried across");
+        check!(otlp.links[0].trace_id == vec![9_u8; 16]);
+        check!(otlp.links[0].span_id == vec![8_u8; 8]);
+
+        // Attributes cross over on both the link and the event. Each carries a
+        // different key, so a mapper reading the other's list is visible.
+        check!(
+            otlp.links[0].attributes.len() == 1,
+            "the link keeps its attribute"
+        );
+        check!(otlp.links[0].attributes[0].key == "link.kind");
+        check!(
+            otlp.events[0].attributes.len() == 1,
+            "and the event keeps its own"
+        );
+        check!(otlp.events[0].attributes[0].key == "event.reason");
+        let status = otlp.status.as_ref().expect("a status is always emitted");
+        check!(status.code == 1);
+        check!(status.message == "boom");
+
+        // A root span carries an empty parent rather than a missing field,
+        // which is what OTLP expects and is distinct from a zeroed id.
+        let root = SpanRef {
+            parent_span_id: None,
+            ..span
+        };
+        let otlp = super::otlp_span([1; 16], &root);
+        check!(otlp.parent_span_id.is_empty(), "no parent means no bytes");
+    }
+
+    /// `collect_span_intrinsic_values` answers from the span itself, except
+    /// for the child count, which it derives by counting the other spans whose
+    /// parent index is this span's left bound. That relationship is the only
+    /// part that can be got wrong by reading a plausible-looking neighbouring
+    /// field, so the fixture gives the parent two children and a third span
+    /// that belongs to neither.
+    #[test]
+    fn span_intrinsics_come_from_the_span_and_children_from_the_set() {
+        let span = |id: u8, left: i32, right: i32, parent: i32| SpanRef {
+            span_id: [id; 8],
+            parent_span_id: None,
+            name: format!("span-{id}"),
+            kind: 2,
+            nested_set_left: left,
+            nested_set_right: right,
+            nested_set_parent: parent,
+            start_time_unix_nano: 1_000,
+            duration: nanos(250),
+            status_code: 1,
+            status_message: String::new(),
+            instrumentation_name: String::new(),
+            instrumentation_version: String::new(),
+            resource_attributes: Vec::new(),
+            attributes: Vec::new(),
+            events: Vec::new(),
+            links: Vec::new(),
+        };
+
+        // Parent at left 1; two children point at it; a fourth span does not.
+        let parent = span(1, 1, 8, 0);
+        let spans = vec![
+            parent.clone(),
+            span(2, 2, 3, 1),
+            span(3, 4, 5, 1),
+            span(4, 6, 7, 9),
+        ];
+        let collect = |source: &SpanRef, tag: &str| {
+            let mut values = BTreeSet::new();
+            super::collect_span_intrinsic_values(source, &spans, tag, &mut values);
+            values.into_iter().collect::<Vec<_>>()
+        };
+        let pair = |type_: &str, value: &str| (type_.to_string(), value.to_string());
+
+        // Counted from the set, not read from the span.
+        check!(collect(&parent, "span:childCount") == vec![pair("int", "2")]);
+        check!(
+            collect(&spans[1], "span:childCount") == vec![pair("int", "0")],
+            "a leaf has none"
+        );
+
+        // Read straight from the span, each with its own type name.
+        check!(collect(&parent, "span:duration") == vec![pair("duration", "250")]);
+        check!(collect(&parent, "span:id") == vec![pair("string", "0101010101010101")]);
+        check!(collect(&parent, "span:kind") == vec![pair("int", "2")]);
+        check!(collect(&parent, "span:name") == vec![pair("string", "span-1")]);
+        check!(collect(&parent, "span:status") == vec![pair("int", "1")]);
+        check!(collect(&parent, "span:nestedSetRight") == vec![pair("int", "8")]);
+
+        // Two spellings of the same tag reach the same field.
+        check!(collect(&spans[1], "span:nestedSetParent") == vec![pair("int", "1")]);
+        check!(collect(&spans[1], "span:Parent") == vec![pair("int", "1")]);
+
+        // The three guarded tags are omitted when empty and reported when not.
+        check!(collect(&parent, "span:statusMessage") == vec![]);
+        check!(collect(&parent, "instrumentation:name") == vec![]);
+        check!(collect(&parent, "instrumentation:version") == vec![]);
+
+        let mut filled = parent.clone();
+        filled.status_message = "boom".into();
+        filled.instrumentation_name = "otel".into();
+        filled.instrumentation_version = "2.0".into();
+        check!(collect(&filled, "span:statusMessage") == vec![pair("string", "boom")]);
+        check!(collect(&filled, "instrumentation:name") == vec![pair("string", "otel")]);
+        check!(collect(&filled, "instrumentation:version") == vec![pair("string", "2.0")]);
+
+        // An unknown tag collects nothing.
+        check!(collect(&parent, "span:nonsense") == vec![]);
+    }
     use std::{
         collections::{BTreeMap, BTreeSet},
         sync::Arc,
@@ -2523,6 +2839,48 @@ mod tests {
 
     use arc_swap::ArcSwap;
     use assert2::check;
+
+    /// With no step given, a range query gets roughly a hundred points,
+    /// rounded up to a whole second and never below one second. Both the
+    /// rounding and the floor matter: a sub-second step would return far more
+    /// points than asked for, and a truncating round would return one fewer.
+    #[test]
+    fn a_default_range_step_is_a_whole_second_and_never_zero() {
+        const SECOND: i64 = 1_000_000_000;
+        let step = |start: i64, end: i64| {
+            super::default_query_range_step_ns(UnixNano(start), UnixNano(end))
+        };
+
+        // 1000s over 100 points is 10s exactly.
+        check!(step(0, 1_000 * SECOND) == 10 * SECOND);
+        // 100s over 100 points is 1s exactly, the smallest unrounded step.
+        check!(step(0, 100 * SECOND) == SECOND);
+
+        // Anything that does not divide evenly rounds up rather than down,
+        // so the step still covers the range in a hundred points.
+        check!(
+            step(0, 1_001 * SECOND) == 11 * SECOND,
+            "10.01s rounds up to 11s"
+        );
+        check!(step(0, 150 * SECOND) == 2 * SECOND, "1.5s rounds up to 2s");
+
+        // Below a hundred seconds the floor takes over.
+        check!(
+            step(0, 50 * SECOND) == SECOND,
+            "a short range still steps by a second"
+        );
+        check!(step(0, 1) == SECOND, "so does a one-nanosecond range");
+        check!(step(0, 0) == SECOND, "and an empty one");
+
+        // A backwards range has no extent and cannot produce a smaller step.
+        check!(step(1_000 * SECOND, 0) == SECOND);
+
+        // The offset does not matter, only the span.
+        check!(
+            step(5_000 * SECOND, 6_000 * SECOND) == 10 * SECOND,
+            "the same span away from zero gives the same step"
+        );
+    }
     use axum::{
         body::Body,
         http::{Request, StatusCode},

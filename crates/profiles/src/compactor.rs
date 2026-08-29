@@ -497,12 +497,120 @@ async fn write_batches(
 
 #[cfg(test)]
 mod tests {
+
+    /// `fnv1a` hashes a list of keys into one value, folding a separator
+    /// between them so that where one key ends and the next begins is part of
+    /// the input. Two compaction inputs that join differently must not share
+    /// an output name.
+    ///
+    /// The expected hashes are stated outright rather than compared against
+    /// each other. Inequality is too weak a claim for a hash: dropping the
+    /// separator, or leaving it unmixed, or replacing the xor with an or, all
+    /// still produce different values for different inputs, and all survived
+    /// a version of this test that only asserted the values differed.
+    #[test]
+    fn hashing_keys_folds_a_separator_between_them() {
+        let hash = |keys: &[&str]| {
+            super::fnv1a(&keys.iter().map(|k| (*k).to_string()).collect::<Vec<_>>())
+        };
+
+        // No keys leaves the offset basis untouched.
+        check!(hash(&[]) == 0xcbf2_9ce4_8422_2325);
+
+        // One empty key still folds a separator, so it is not the same as no
+        // key at all.
+        check!(hash(&[""]) == 0xaf64_724c_8602_eb6e);
+        check!(hash(&["a"]) == 0x089b_c907_b544_c769);
+
+        // Order is part of the input.
+        check!(hash(&["a", "b"]) == 0xd2b3_7181_9297_f98a);
+        check!(hash(&["b", "a"]) == 0x0185_7199_9fe5_8c66);
+
+        // So is where the keys divide: the same bytes split two ways, and
+        // joined into one, give three different hashes.
+        check!(hash(&["ab", "c"]) == 0x20ba_9b30_25a8_b421);
+        check!(hash(&["a", "bc"]) == 0xa0a3_542c_19b9_00ab);
+        check!(hash(&["abc"]) == 0xfc18_2483_ee08_06dc);
+    }
     use std::sync::Arc;
 
     use assert2::{assert, check};
     use crabka_blockstore::{BlockIndex, Labels};
     use crabka_pprof::{EngineOpts, FlameEngine};
     use object_store::{ObjectStore, memory::InMemory};
+
+    /// The compactor hashes a *list* of keys, not a blob, so it folds a 0xff
+    /// separator in after each one. Without it a single key `ab` and the pair
+    /// `a`, `b` would collide, and two different compaction inputs would
+    /// share a key.
+    ///
+    /// The expected values are computed from the FNV-1a definition rather
+    /// than captured from this implementation.
+    #[test]
+    fn compaction_keys_hash_their_boundaries_not_just_their_bytes() {
+        let hash = |keys: &[&str]| {
+            super::fnv1a(&keys.iter().map(|k| (*k).to_string()).collect::<Vec<_>>())
+        };
+
+        check!(
+            hash(&[]) == 0xcbf2_9ce4_8422_2325,
+            "no keys is the offset basis"
+        );
+        check!(hash(&["a"]) == 0x089b_c907_b544_c769);
+        check!(hash(&["ab"]) == 0xe720_2e19_0542_452f);
+        check!(hash(&["a", "b"]) == 0xd2b3_7181_9297_f98a);
+
+        // The three relationships the separator exists to guarantee.
+        check!(
+            hash(&["ab"]) != hash(&["a", "b"]),
+            "a split is not the same as a join"
+        );
+        check!(hash(&["a", "b"]) != hash(&["b", "a"]), "order matters");
+        check!(hash(&["a"]) != hash(&[]), "a key is not nothing");
+    }
+
+    /// The compacted object key spans the whole input: the earliest start and
+    /// the latest end across every block, not the first block's range. The
+    /// blocks below are deliberately out of order so a key built from
+    /// position rather than from the extremes is visibly wrong.
+    #[test]
+    fn a_compacted_key_spans_the_whole_input_range() {
+        let block = |min_ts, max_ts| BlockMeta {
+            tenant: "t".to_string(),
+            object_key: String::new(),
+            min_ts,
+            max_ts,
+            row_count: 0,
+            fingerprints: vec![],
+        };
+        let inputs = vec!["a".to_string(), "b".to_string()];
+        let digest = format!("{:016x}", super::fnv1a(&inputs));
+
+        let blocks = [block(300, 400), block(100, 500), block(200, 250)];
+        check!(
+            super::compacted_key("tenant", &blocks, &inputs)
+                == format!("blocks/tenant/compacted/100-500-{digest}.parquet")
+        );
+
+        // A single block spans itself.
+        check!(
+            super::compacted_key("tenant", &[block(7, 9)], &inputs)
+                == format!("blocks/tenant/compacted/7-9-{digest}.parquet")
+        );
+
+        // No blocks leaves both ends at zero rather than failing.
+        check!(
+            super::compacted_key("tenant", &[], &inputs)
+                == format!("blocks/tenant/compacted/0-0-{digest}.parquet")
+        );
+
+        // The digest covers the inputs, so a different input list is a
+        // different key even over the same range.
+        check!(
+            super::compacted_key("tenant", &blocks, &["a".to_string()])
+                != super::compacted_key("tenant", &blocks, &inputs)
+        );
+    }
 
     use super::*;
     use crate::{
@@ -737,6 +845,39 @@ mod tests {
         );
         let dests: BTreeSet<u64> = map.values().copied().collect();
         assert!(dests.len() == 3);
+    }
+
+    /// A partition the map does not mention keeps its own id. Falling back to
+    /// the default instead would collapse every unmapped partition onto zero,
+    /// aliasing them together -- the exact failure
+    /// [`recompacting_an_already_compacted_block_does_not_alias_partitions`]
+    /// exists to prevent, but which no test reached through this function.
+    #[test]
+    fn remap_partitions_keeps_a_partition_the_map_does_not_mention() {
+        use arrow::datatypes::{DataType, Field, Schema};
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            PCOL_STACKTRACE_PARTITION,
+            DataType::UInt64,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(UInt64Array::from(vec![7_u64, 9, 7])) as ArrayRef],
+        )
+        .unwrap();
+
+        let remapped =
+            remap_partitions(&batch, &BTreeMap::from([(7_u64, 42_u64)])).expect("remaps");
+
+        let column = remapped.column(0).as_primitive::<UInt64Type>();
+        let values = (0..remapped.num_rows())
+            .map(|row| column.value(row))
+            .collect::<Vec<_>>();
+        assert!(
+            values == vec![42_u64, 9, 42],
+            "9 is unmapped and keeps its id"
+        );
     }
 
     #[test]

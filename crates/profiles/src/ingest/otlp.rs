@@ -328,6 +328,411 @@ fn resolve_service_name(rp: &pb::otlp_profiles::ResourceProfiles) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// `resolve_service_name` reads `service.name` from the resource, and
+    /// falls back to a fixed placeholder for every way that can fail. Each way
+    /// is checked separately, since they reach the fallback by different
+    /// routes and a guard removed from one is invisible to the others.
+    #[test]
+    fn a_missing_service_name_falls_back_rather_than_erroring() {
+        use pb::opentelemetry::proto::{
+            common::v1::{AnyValue, KeyValue, any_value::Value},
+            resource::v1::Resource,
+        };
+
+        let with_attrs = |attrs: Vec<KeyValue>| pb::otlp_profiles::ResourceProfiles {
+            resource: Some(Resource {
+                attributes: attrs,
+                ..Resource::default()
+            }),
+            ..pb::otlp_profiles::ResourceProfiles::default()
+        };
+        let attr = |key: &str, value: Option<Value>| KeyValue {
+            key: key.to_string(),
+            value: Some(AnyValue { value }),
+        };
+
+        // The name is found and returned as written.
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "service.name",
+                Some(Value::StringValue("checkout".into()))
+            )])) == "checkout"
+        );
+
+        // Found among others rather than only as the first attribute.
+        check!(
+            super::resolve_service_name(&with_attrs(vec![
+                attr("host.name", Some(Value::StringValue("box".into()))),
+                attr("service.name", Some(Value::StringValue("checkout".into()))),
+            ])) == "checkout"
+        );
+
+        // Every route to the fallback.
+        check!(
+            super::resolve_service_name(&pb::otlp_profiles::ResourceProfiles::default())
+                == "unknown_service",
+            "no resource at all"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(Vec::new())) == "unknown_service",
+            "a resource with no attributes"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "host.name",
+                Some(Value::StringValue("box".into()))
+            )])) == "unknown_service",
+            "the wrong key"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr("service.name", None)]))
+                == "unknown_service",
+            "the key with no value"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "service.name",
+                Some(Value::IntValue(7))
+            )])) == "unknown_service",
+            "a value that is not a string"
+        );
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "service.name",
+                Some(Value::StringValue(String::new()))
+            )])) == "unknown_service",
+            "an empty name is not a name"
+        );
+    }
+
+    /// `otlp_profile_to_pprof` renumbers OTLP's zero-based table indexes into
+    /// pprof's one-based ids and copies each table across field by field.
+    ///
+    /// Every table here holds two entries with values that differ in every
+    /// field, and the second entry is the one referenced, so an off-by-one in
+    /// the renumbering and a pair of transposed fields both change the result.
+    /// The whole decoded profile is compared at once.
+    #[test]
+    fn otlp_tables_are_renumbered_one_based_and_copied_field_by_field() {
+        use pb::otlp_profiles::{
+            Function, Line, Location, Mapping, Profile, ProfilesDictionary, Sample, Stack,
+            ValueType,
+        };
+
+        let dict = ProfilesDictionary {
+            //             0   1          2        3       4       5        6
+            string_table: [
+                "", "samples", "count", "fn_a", "fn_b", "sys_a", "sys_b",
+                //             7        8        9        10
+                "file_a", "file_b", "map_a", "map_b",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            mapping_table: vec![
+                Mapping {
+                    memory_start: 0x10,
+                    memory_limit: 0x20,
+                    file_offset: 0x30,
+                    filename_strindex: 9,
+                    ..Default::default()
+                },
+                Mapping {
+                    memory_start: 0x40,
+                    memory_limit: 0x50,
+                    file_offset: 0x60,
+                    filename_strindex: 10,
+                    ..Default::default()
+                },
+            ],
+            function_table: vec![
+                Function {
+                    name_strindex: 3,
+                    system_name_strindex: 5,
+                    filename_strindex: 7,
+                    start_line: 11,
+                },
+                Function {
+                    name_strindex: 4,
+                    system_name_strindex: 6,
+                    filename_strindex: 8,
+                    start_line: 22,
+                },
+            ],
+            location_table: vec![
+                Location {
+                    mapping_index: 0,
+                    address: 0x100,
+                    lines: vec![Line {
+                        function_index: 0,
+                        line: 1,
+                        column: 2,
+                    }],
+                    ..Default::default()
+                },
+                // References the *second* mapping and function, so a
+                // renumbering that is off by one lands somewhere visible.
+                Location {
+                    mapping_index: 1,
+                    address: 0x200,
+                    lines: vec![Line {
+                        function_index: 1,
+                        line: 3,
+                        column: 4,
+                    }],
+                    ..Default::default()
+                },
+            ],
+            stack_table: vec![Stack {
+                location_indices: vec![1, 0],
+            }],
+            ..Default::default()
+        };
+
+        let profile = Profile {
+            sample_type: Some(ValueType {
+                type_strindex: 1,
+                unit_strindex: 2,
+            }),
+            period_type: Some(ValueType {
+                type_strindex: 2,
+                unit_strindex: 1,
+            }),
+            period: 99,
+            time_unix_nano: 1_700_000_000_000_000_000,
+            duration_nano: 5_000,
+            samples: vec![Sample {
+                stack_index: 0,
+                values: vec![7],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let decoded = super::otlp_profile_to_pprof(&profile, &dict).unwrap();
+        let inner = decoded.inner();
+
+        check!(
+            inner.mapping
+                == vec![
+                    crabka_pprof::proto::Mapping {
+                        id: 1,
+                        memory_start: 0x10,
+                        memory_limit: 0x20,
+                        file_offset: 0x30,
+                        filename: 9,
+                        ..Default::default()
+                    },
+                    crabka_pprof::proto::Mapping {
+                        id: 2,
+                        memory_start: 0x40,
+                        memory_limit: 0x50,
+                        file_offset: 0x60,
+                        filename: 10,
+                        ..Default::default()
+                    },
+                ]
+        );
+        check!(
+            inner.function
+                == vec![
+                    crabka_pprof::proto::Function {
+                        id: 1,
+                        name: 3,
+                        system_name: 5,
+                        filename: 7,
+                        start_line: 11,
+                    },
+                    crabka_pprof::proto::Function {
+                        id: 2,
+                        name: 4,
+                        system_name: 6,
+                        filename: 8,
+                        start_line: 22,
+                    },
+                ]
+        );
+        check!(
+            inner.location
+                == vec![
+                    crabka_pprof::proto::Location {
+                        id: 1,
+                        mapping_id: 1,
+                        address: 0x100,
+                        line: vec![crabka_pprof::proto::Line {
+                            function_id: 1,
+                            line: 1,
+                            column: 2
+                        }],
+                        ..Default::default()
+                    },
+                    crabka_pprof::proto::Location {
+                        id: 2,
+                        mapping_id: 2,
+                        address: 0x200,
+                        line: vec![crabka_pprof::proto::Line {
+                            function_id: 2,
+                            line: 3,
+                            column: 4
+                        }],
+                        ..Default::default()
+                    },
+                ]
+        );
+
+        // Stack order is preserved as written, leaf first.
+        check!(
+            inner.sample
+                == vec![crabka_pprof::proto::Sample {
+                    location_id: vec![2, 1],
+                    value: vec![7],
+                    label: vec![],
+                }]
+        );
+
+        check!(inner.time_nanos == 1_700_000_000_000_000_000);
+        check!(inner.duration_nanos == 5_000);
+        check!(inner.period == 99);
+        check!(
+            inner.sample_type == vec![crabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            "sample type keeps type and unit in order"
+        );
+        check!(
+            inner.period_type == Some(crabka_pprof::proto::ValueType { r#type: 2, unit: 1 }),
+            "period type is not the sample type"
+        );
+    }
+
+    /// Table indexes are zero-based, so the first invalid one is the length
+    /// itself. That is the only value that separates a bounds check on `>=`
+    /// from one on `>`, and getting it wrong yields an id one past the table
+    /// rather than an error.
+    #[test]
+    fn a_table_index_equal_to_the_length_is_out_of_bounds() {
+        use pb::otlp_profiles::{
+            Function, Line, Location, Profile, ProfilesDictionary, Sample, Stack,
+        };
+
+        let dict = ProfilesDictionary {
+            string_table: vec![String::new(), "fn_a".into()],
+            function_table: vec![Function {
+                name_strindex: 1,
+                ..Default::default()
+            }],
+            location_table: vec![Location {
+                lines: vec![Line {
+                    function_index: 0,
+                    line: 1,
+                    column: 0,
+                }],
+                ..Default::default()
+            }],
+            // One location exists, so index 1 is the first one past the end.
+            stack_table: vec![Stack {
+                location_indices: vec![1],
+            }],
+            ..Default::default()
+        };
+        let profile = Profile {
+            samples: vec![Sample {
+                stack_index: 0,
+                values: vec![1],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let err = super::otlp_profile_to_pprof(&profile, &dict)
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("references missing location"), "got: {err}");
+
+        // A negative index cannot convert at all and is rejected the same way.
+        let mut dict = dict;
+        dict.stack_table = vec![Stack {
+            location_indices: vec![-1],
+        }];
+        let err = super::otlp_profile_to_pprof(&profile, &dict)
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("references missing location"), "got: {err}");
+    }
+
+    /// The service name comes from the `service.name` resource attribute.
+    /// Everything that is not a non-empty string there falls back to the
+    /// placeholder, because a profile filed under an empty or absent name is
+    /// unattributable.
+    #[test]
+    fn the_service_name_falls_back_whenever_it_is_not_a_usable_string() {
+        use pb::opentelemetry::proto::{
+            common::v1::{AnyValue, KeyValue, any_value::Value},
+            resource::v1::Resource,
+        };
+
+        let with_attrs = |attrs: Vec<KeyValue>| pb::otlp_profiles::ResourceProfiles {
+            resource: Some(Resource {
+                attributes: attrs,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let attr = |key: &str, value: Option<Value>| KeyValue {
+            key: key.to_string(),
+            value: Some(AnyValue { value }),
+        };
+
+        check!(
+            super::resolve_service_name(&with_attrs(vec![attr(
+                "service.name",
+                Some(Value::StringValue("payments".to_string()))
+            )])) == "payments"
+        );
+
+        // The key is matched, not the position.
+        check!(
+            super::resolve_service_name(&with_attrs(vec![
+                attr("other", Some(Value::StringValue("first".to_string()))),
+                attr(
+                    "service.name",
+                    Some(Value::StringValue("payments".to_string()))
+                ),
+            ])) == "payments"
+        );
+
+        // Each way the attribute can be present but unusable.
+        for (name, rp) in [
+            (
+                "no resource at all",
+                pb::otlp_profiles::ResourceProfiles::default(),
+            ),
+            ("no attributes", with_attrs(vec![])),
+            (
+                "a different key",
+                with_attrs(vec![attr(
+                    "host.name",
+                    Some(Value::StringValue("h".into())),
+                )]),
+            ),
+            (
+                "an empty name",
+                with_attrs(vec![attr(
+                    "service.name",
+                    Some(Value::StringValue(String::new())),
+                )]),
+            ),
+            (
+                "a non-string value",
+                with_attrs(vec![attr("service.name", Some(Value::IntValue(7)))]),
+            ),
+            ("no value", with_attrs(vec![attr("service.name", None)])),
+        ] {
+            check!(
+                super::resolve_service_name(&rp) == "unknown_service",
+                "{name} should fall back"
+            );
+        }
+    }
     use assert2::{assert, check};
 
     use super::*;

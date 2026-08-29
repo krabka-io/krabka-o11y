@@ -36,6 +36,10 @@ crate_tests(
     # shard here was killed mid-sweep -- and a killed shard reports nothing
     # rather than failing, so eight crates read as "0 mutants, 0 missed" when
     # they had simply never finished. pprof alone needs 2628s.
+    # `eternal` is the largest category Bazel offers but it is only 3600s, not
+    # unlimited, and the larger crates run past that too. Going beyond an hour
+    # needs --test_timeout on the command line, which overrides the category;
+    # the sweep script passes it.
     # One cargo job per shard. Bazel already runs the shards concurrently, so
     # the default of 4 multiplied out to shards x 4 concurrent cargo builds --
     # 48 on a 32-core machine, which drove load average past 200 and made every

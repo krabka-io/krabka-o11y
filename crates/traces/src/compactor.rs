@@ -898,6 +898,123 @@ mod tests {
         AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode, batch::span_batch,
     };
 
+    /// `recompute_nested_sets` renumbers a trace's spans as a nested set.
+    /// The tree is deliberately lopsided -- three children under the root and
+    /// one grandchild -- because a balanced one lets a mutated child count
+    /// coincide with the true one: with five rows and a root of three
+    /// children, counting the rows that are NOT children gives two, and the
+    /// two answers are only distinguishable when they differ.
+    #[test]
+    fn nested_sets_number_a_tree_in_preorder_and_count_each_span_children() {
+        let at = |span_id: [u8; 8], parent: Option<[u8; 8]>| {
+            mk_span(span_id, parent, 0, 1_000, "op", "api")
+        };
+        let batch = span_batch(&[
+            at([1; 8], None),
+            at([2; 8], Some([1; 8])),
+            at([3; 8], Some([1; 8])),
+            at([4; 8], Some([1; 8])),
+            at([5; 8], Some([2; 8])),
+        ])
+        .expect("the spans form a batch");
+
+        let out = super::recompute_nested_sets(&batch).expect("the tree is numbered");
+        let ints = |name: &str| {
+            out.column_by_name(name)
+                .expect("the column is present")
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .expect("the column is i32")
+                .values()
+                .to_vec()
+        };
+
+        // Pre-order: the root spans 1..10, its first child 2..5 with the sole
+        // grandchild 3..4 inside it, then the remaining children in row order.
+        check!(ints(SCOL_NESTED_SET_LEFT) == vec![1, 2, 6, 8, 3]);
+        check!(ints(SCOL_NESTED_SET_RIGHT) == vec![10, 5, 7, 9, 4]);
+        // A root's nested-set parent is the -1 sentinel, not a row or a zero.
+        check!(ints(SCOL_PARENT_ID) == vec![-1, 1, 1, 1, 2]);
+        check!(ints(SCOL_CHILD_COUNT) == vec![3, 1, 0, 0, 0]);
+    }
+
+    /// A span naming itself as its parent is treated as a root rather than as
+    /// its own child. Without that guard the traversal re-enters the same row
+    /// forever, so this case is the difference between a numbered batch and a
+    /// hang.
+    #[test]
+    fn a_self_parented_span_is_a_root_rather_than_its_own_child() {
+        let batch = span_batch(&[mk_span([1; 8], Some([1; 8]), 0, 1_000, "op", "api")])
+            .expect("the span forms a batch");
+
+        let out = super::recompute_nested_sets(&batch).expect("the self-parent is numbered");
+        let ints = |name: &str| {
+            out.column_by_name(name)
+                .expect("the column is present")
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .expect("the column is i32")
+                .values()
+                .to_vec()
+        };
+
+        check!(ints(SCOL_NESTED_SET_LEFT) == vec![1]);
+        check!(ints(SCOL_NESTED_SET_RIGHT) == vec![2]);
+        check!(
+            ints(SCOL_PARENT_ID) == vec![-1],
+            "a root, not a child of itself"
+        );
+        check!(ints(SCOL_CHILD_COUNT) == vec![0]);
+    }
+
+    /// `MetadataValueArray::string_value` renders one cell of an Arrow column
+    /// as text, and each of the four implementations formats a different type.
+    /// The values are chosen so that no two render alike -- an implementation
+    /// reaching the wrong column would otherwise produce something plausible.
+    #[test]
+    fn every_metadata_column_renders_its_own_cell_as_text() {
+        let strings = StringArray::from(vec!["alpha", "beta"]);
+        check!(strings.string_value(0) == "alpha");
+        check!(
+            strings.string_value(1) == "beta",
+            "the index selects the cell"
+        );
+
+        let ints = Int64Array::from(vec![42_i64, -7]);
+        check!(ints.string_value(0) == "42");
+        check!(ints.string_value(1) == "-7", "a negative keeps its sign");
+
+        let floats = Float64Array::from(vec![1.5_f64, 0.0]);
+        check!(
+            floats.string_value(0) == "1.5",
+            "a fraction is not truncated"
+        );
+        check!(
+            floats.string_value(1) == "0",
+            "zero renders without a fraction"
+        );
+
+        let bools = BooleanArray::from(vec![true, false]);
+        check!(bools.string_value(0) == "true");
+        check!(bools.string_value(1) == "false", "and false is not empty");
+
+        // No two of the four render the same text for their first cell, so an
+        // implementation borrowed from a neighbouring type is visible.
+        let rendered = [
+            strings.string_value(0),
+            ints.string_value(0),
+            floats.string_value(0),
+            bools.string_value(0),
+        ];
+        let mut unique = rendered.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        check!(
+            unique.len() == 4,
+            "the four renderings must differ: {rendered:?}"
+        );
+    }
+
     fn span() -> Span {
         Span {
             trace_id: [1; 16],

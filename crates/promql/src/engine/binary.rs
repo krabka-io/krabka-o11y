@@ -85,6 +85,10 @@ impl BinaryOp {
             T_LSS => Ok(Self::Lt),
             T_GTE => Ok(Self::Gte),
             T_LTE => Ok(Self::Lte),
+            // Unreachable by construction: `combine_instant_binary` routes every
+            // set operator through `SetOp::from_token` before it gets here, so
+            // no query reaches this arm and a sweep will always report it as a
+            // survivor. It stays as the diagnostic for that routing breaking.
             T_LAND | T_LOR | T_LUNLESS => Err(PromqlError::Plan(format!(
                 "set operator `{token}` reached the arithmetic operator path"
             ))),
@@ -260,6 +264,12 @@ impl SetOp {
     }
 }
 
+/// Rejects a modifier that only a set operator may carry.
+///
+/// Unreachable by construction, and so a permanent mutation survivor:
+/// `promql-parser` sets `ManyToMany` only for `and`/`or`/`unless`, and
+/// `combine_instant_binary` routes those away before calling this. It stays as
+/// the guard for that invariant, not as live validation.
 fn validate_binary_modifier(modifier: Option<&BinModifier>) -> Result<()> {
     let Some(modifier) = modifier else {
         return Ok(());
@@ -811,6 +821,13 @@ fn binary_match_key(labels: &Labels, modifier: Option<&BinModifier>) -> String {
         Some(LabelModifier::Exclude(exclude)) => {
             let excluded = exclude.labels.iter().collect::<BTreeSet<_>>();
             for (name, value) in labels.iter() {
+                // Only `__name__` here, deliberately: with an explicit
+                // `ignoring (...)` clause Prometheus leaves `__type__` and
+                // `__unit__` in the match key, so series differing only in
+                // those do *not* pair up. Default matching below drops all
+                // three. Making the two agree fails the upstream
+                // `type_and_unit.test` case
+                // `... / ignoring(group) ...`, which must yield no samples.
                 if name == "__name__" || excluded.contains(name) {
                     continue;
                 }

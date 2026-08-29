@@ -904,6 +904,63 @@ fn u32_from_i64(value: i64, field: &str) -> Result<u32, ProfilesError> {
 
 #[cfg(test)]
 mod tests {
+
+    /// `merge_ingest_limits` takes each field from the override when that
+    /// override is positive, and from the base otherwise. The four fields fall
+    /// back independently, so every value here differs from every other: a
+    /// field that reads its neighbour's override still produces a positive
+    /// number, and only distinct values make that visible.
+    #[test]
+    fn ingest_limits_fall_back_field_by_field() {
+        use crabka_units::bytes;
+
+        let base = crate::ingest::TenantLimits {
+            max_label_name: bytes(11),
+            max_label_names_per_series: 22,
+            max_label_value: bytes(33),
+            session_id_buckets: 44,
+        };
+        let zeroed = super::Limits {
+            max_label_name: bytes(0),
+            max_label_value: bytes(0),
+            max_label_names_per_series: 0,
+            max_session_id_cardinality: 0,
+            ..super::Limits::default()
+        };
+
+        // Every override unset: the base survives intact, field for field.
+        let merged = super::merge_ingest_limits(&base, &zeroed);
+        check!(merged.max_label_name == bytes(11));
+        check!(merged.max_label_names_per_series == 22);
+        check!(merged.max_label_value == bytes(33));
+        check!(merged.session_id_buckets == 44);
+
+        // Every override set: each replaces its own field and no other.
+        let overridden = super::Limits {
+            max_label_name: bytes(55),
+            max_label_value: bytes(66),
+            max_label_names_per_series: 77,
+            max_session_id_cardinality: 88,
+            ..super::Limits::default()
+        };
+        let merged = super::merge_ingest_limits(&base, &overridden);
+        check!(merged.max_label_name == bytes(55));
+        check!(merged.max_label_value == bytes(66));
+        check!(merged.max_label_names_per_series == 77);
+        check!(merged.session_id_buckets == 88);
+
+        // One field overridden at a time, so a fallback that reads the wrong
+        // side shows up as the other three changing when they should not.
+        let one = super::Limits {
+            max_label_value: bytes(66),
+            ..zeroed.clone()
+        };
+        let merged = super::merge_ingest_limits(&base, &one);
+        check!(merged.max_label_value == bytes(66), "the overridden one");
+        check!(merged.max_label_name == bytes(11), "and only that one");
+        check!(merged.max_label_names_per_series == 22);
+        check!(merged.session_id_buckets == 44);
+    }
     use std::sync::{Arc, Mutex};
 
     use assert2::{assert, check};
@@ -911,6 +968,410 @@ mod tests {
     use prost::Message;
 
     use super::*;
+
+    /// `positive_or` and `merge_ingest_limits` implement one rule: a
+    /// per-tenant override counts only when it is set, and zero means unset.
+    /// Every field has to make that choice independently, so the case below
+    /// overrides exactly one field at a time and checks the other three still
+    /// come from the base.
+    #[test]
+    fn a_zero_override_falls_back_to_the_base_limit_field_by_field() {
+        let base = crate::ingest::TenantLimits {
+            max_label_name: bytes(11),
+            max_label_names_per_series: 22,
+            max_label_value: bytes(33),
+            session_id_buckets: 44,
+        };
+
+        // Limits::default() is not an empty override: its label caps are
+        // real values that would legitimately win. "Unset" means zero, so
+        // that is what the baseline here has to be.
+        let unset = || Limits {
+            max_label_name: bytes(0),
+            max_label_value: bytes(0),
+            max_label_names_per_series: 0,
+            max_session_id_cardinality: 0,
+            ..Limits::default()
+        };
+
+        check!(
+            super::merge_ingest_limits(&base, &unset()) == base,
+            "an override that sets nothing changes nothing"
+        );
+
+        // Each field on its own, with the rest left unset.
+        check!(
+            super::merge_ingest_limits(
+                &base,
+                &Limits {
+                    max_label_name: bytes(1),
+                    ..unset()
+                }
+            ) == crate::ingest::TenantLimits {
+                max_label_name: bytes(1),
+                ..base.clone()
+            }
+        );
+        check!(
+            super::merge_ingest_limits(
+                &base,
+                &Limits {
+                    max_label_names_per_series: 2,
+                    ..unset()
+                }
+            ) == crate::ingest::TenantLimits {
+                max_label_names_per_series: 2,
+                ..base.clone()
+            }
+        );
+        check!(
+            super::merge_ingest_limits(
+                &base,
+                &Limits {
+                    max_label_value: bytes(3),
+                    ..unset()
+                }
+            ) == crate::ingest::TenantLimits {
+                max_label_value: bytes(3),
+                ..base.clone()
+            }
+        );
+        check!(
+            super::merge_ingest_limits(
+                &base,
+                &Limits {
+                    max_session_id_cardinality: 4,
+                    ..unset()
+                }
+            ) == crate::ingest::TenantLimits {
+                session_id_buckets: 4,
+                ..base.clone()
+            }
+        );
+    }
+
+    /// `rate_tokens_per_sec` rounds a fractional rate up, floors it at one
+    /// token so a trickle still admits something, and caps it at the burst
+    /// size when one is configured.
+    #[test]
+    fn the_token_rate_rounds_up_floors_at_one_and_respects_the_burst_cap() {
+        let rate = |per_second: f64, burst| {
+            super::rate_tokens_per_sec(&Limits {
+                ingestion_rate: Frequency::from_per_sec(per_second),
+                ingestion_burst_profiles: burst,
+                ..Limits::default()
+            })
+        };
+
+        check!(
+            rate(10.0, 0) == 10,
+            "a whole rate with no cap passes through"
+        );
+        check!(rate(10.2, 0) == 11, "a fraction rounds up, not down");
+        check!(rate(0.1, 0) == 1, "a trickle still admits one");
+        check!(rate(0.0, 0) == 1, "so does nothing at all");
+
+        // The cap binds only when it is both set and lower than the rate.
+        check!(rate(10.0, 4) == 4, "a lower burst caps the rate");
+        check!(rate(10.0, 10) == 10, "an equal burst leaves it alone");
+        check!(rate(10.0, 40) == 10, "a higher burst does not raise it");
+    }
+
+    /// `u32_from_i64` names the field it could not convert, because the
+    /// caller has several and the message is all that distinguishes them.
+    #[test]
+    fn narrowing_to_u32_names_the_field_that_did_not_fit() {
+        check!(super::u32_from_i64(0, "width").unwrap() == 0);
+        check!(super::u32_from_i64(i64::from(u32::MAX), "width").unwrap() == u32::MAX);
+
+        let err = super::u32_from_i64(-1, "width").unwrap_err().to_string();
+        check!(err.contains("width does not fit u32"), "got: {err}");
+        let err = super::u32_from_i64(i64::from(u32::MAX) + 1, "height")
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("height does not fit u32"), "got: {err}");
+    }
+
+    fn state_with_ingestion(rate: f64, burst: u64, max_tenants: usize) -> Arc<DistributorState> {
+        Arc::new(DistributorState {
+            sink: Arc::new(RecordingSink(Mutex::default())),
+            limits: TenantLimitConfig::default(),
+            profile_overrides: OverridesProvider::from_yaml(&format!(
+                "overrides:\n  tenant-a:\n    ingestion_rate_profiles_per_sec: {rate}\n    ingestion_burst_profiles: {burst}\n"
+            ))
+            .expect("the overrides parse"),
+            active_series: Mutex::default(),
+            ingestion_buckets: Mutex::default(),
+            relabel: vec![],
+            max_decompressed: mebibytes(16),
+            max_tracked_tenants: max_tenants,
+            legacy_decode_limits: LegacyDecodeLimits::default(),
+            metrics: ServiceMetrics::new(),
+        })
+    }
+
+    /// A burst cap rejects an over-sized batch outright, before the token
+    /// bucket is consulted.
+    ///
+    /// The `> 0` in that guard cannot be tested from outside:
+    /// `rate_tokens_per_sec` clamps the bucket's own rate to the burst
+    /// whenever the burst is positive, so any batch the guard would reject
+    /// the bucket rejects too, with the same error. The guard is an early
+    /// exit, not a distinct behaviour. What IS pinned here is the zero case
+    /// -- a zero burst means unlimited rather than "reject everything" --
+    /// and the boundary, where a batch of exactly the burst is allowed.
+    #[test]
+    fn a_burst_cap_rejects_an_over_sized_batch_before_the_bucket() {
+        let state = state_with_ingestion(1_000_000.0, 2, 4096);
+
+        check!(
+            super::enforce_ingestion_rate(&state, "tenant-a", 2).is_ok(),
+            "at the cap"
+        );
+        check!(
+            super::enforce_ingestion_rate(&state, "tenant-a", 3).is_err(),
+            "one over the cap, with a rate that would otherwise allow it"
+        );
+
+        // A zero burst means "no burst cap", not "reject everything", so the
+        // guard must be `> 0` rather than a plain non-zero test.
+        let unlimited = state_with_ingestion(1_000_000.0, 0, 4096);
+        check!(super::enforce_ingestion_rate(&unlimited, "tenant-a", 5_000).is_ok());
+
+        // A tenant with no override of its own is not rate limited at all --
+        // asked for well past the DEFAULT burst of 10_000, which is what
+        // separates "skipped entirely" from "happened to fit under the
+        // default cap".
+        check!(super::enforce_ingestion_rate(&state, "tenant-b", 20_000).is_ok());
+        // And an empty batch is never rejected, whatever the caps say.
+        check!(super::enforce_ingestion_rate(&state, "tenant-a", 0).is_ok());
+    }
+
+    /// The per-tenant bucket map is capped, evicting one existing tenant
+    /// before admitting a new one. The cap is only reached by admitting more
+    /// tenants than it allows, and the eviction is only observable in the
+    /// map's size -- so the test counts buckets rather than trusting a
+    /// tenant to still be present.
+    #[test]
+    fn the_bucket_map_evicts_before_admitting_a_tenant_past_its_cap() {
+        let state = state_with_ingestion(1_000_000.0, 0, 2);
+        let rate = crabka_units::Frequency::from_per_sec_u64(10);
+        let buckets = |state: &DistributorState| {
+            state
+                .ingestion_buckets
+                .lock()
+                .expect("the bucket lock is held")
+                .len()
+        };
+
+        for tenant in ["a", "b"] {
+            super::ingestion_bucket_for_tenant(&state, tenant, rate).expect("a bucket is issued");
+        }
+        check!(buckets(&state) == 2, "both tenants fit under the cap");
+
+        // The third tenant is one past the cap, so admitting it must evict.
+        super::ingestion_bucket_for_tenant(&state, "c", rate).expect("a bucket is issued");
+        check!(buckets(&state) == 2, "the map does not grow past its cap");
+
+        // Re-asking for a tenant already held must not evict anything. Which
+        // tenant an eviction picks is arbitrary, so both consequences are
+        // checked: dropping some other tenant shrinks the map, and dropping
+        // this one hands back a different bucket.
+        let before =
+            super::ingestion_bucket_for_tenant(&state, "c", rate).expect("a bucket is issued");
+        let again =
+            super::ingestion_bucket_for_tenant(&state, "c", rate).expect("a bucket is issued");
+        check!(buckets(&state) == 2, "no other tenant was evicted");
+        check!(
+            Arc::ptr_eq(&before, &again),
+            "and this tenant kept its bucket"
+        );
+    }
+
+    fn state_with_max_series(limit: u64) -> Arc<DistributorState> {
+        Arc::new(DistributorState {
+            sink: Arc::new(RecordingSink(Mutex::default())),
+            limits: TenantLimitConfig::default(),
+            profile_overrides: OverridesProvider::from_yaml(&format!(
+                "overrides:\n  tenant-a:\n    max_series: {limit}\n"
+            ))
+            .unwrap(),
+            active_series: Mutex::default(),
+            ingestion_buckets: Mutex::default(),
+            relabel: vec![],
+            max_decompressed: mebibytes(16),
+            max_tracked_tenants: 4096,
+            legacy_decode_limits: LegacyDecodeLimits::default(),
+            metrics: ServiceMetrics::new(),
+        })
+    }
+
+    fn series_record(name: &str) -> ProfileRecord {
+        ProfileRecord {
+            tenant: "tenant-a".to_string(),
+            labels: vec![("__name__".to_string(), name.to_string())],
+            profile_type: "cpu".to_string(),
+            samples: vec![],
+            symbols: crate::wal::WalSymbolSet {
+                strings: vec![],
+                functions: vec![],
+                locations: vec![],
+                mappings: vec![],
+            },
+        }
+    }
+
+    /// The max-series budget counts *distinct new* fingerprints, reserves them
+    /// only if they all fit, and leaves the tenant's set untouched when they
+    /// do not. That last property is the one worth guarding: a rejection that
+    /// half-reserved would burn budget on a request that never landed.
+    #[test]
+    fn max_series_reserves_all_or_nothing() {
+        let state = state_with_max_series(2);
+        let reserved = |records: &[ProfileRecord]| {
+            super::enforce_and_reserve_max_series(&state, "tenant-a", records)
+        };
+        let held = || {
+            state
+                .active_series
+                .lock()
+                .unwrap()
+                .get("tenant-a")
+                .map_or(0, std::collections::BTreeSet::len)
+        };
+
+        // A repeated series counts once, so this fits a budget of two.
+        let two = [series_record("a"), series_record("b"), series_record("a")];
+        check!(
+            reserved(&two).unwrap().len() == 2,
+            "three records, two series"
+        );
+        check!(held() == 2);
+
+        // Re-offering what is already held adds nothing and stays within budget.
+        check!(reserved(&two).unwrap().is_empty(), "nothing new to reserve");
+        check!(held() == 2);
+
+        // One more distinct series is over the limit, and is refused whole.
+        let err = reserved(&[series_record("c")]).unwrap_err().to_string();
+        check!(err.contains("max series exceeded"), "got: {err}");
+        check!(held() == 2, "a rejected request reserves nothing");
+
+        // Even a request that mixes a known series with a new one is refused
+        // in full rather than admitting the part that fits.
+        let err = reserved(&[series_record("a"), series_record("d")])
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("max series exceeded"), "got: {err}");
+        check!(held() == 2, "still nothing reserved");
+    }
+
+    /// A limit of zero means unlimited, so nothing is tracked at all.
+    #[test]
+    fn a_max_series_limit_of_zero_tracks_nothing() {
+        let state = state_with_max_series(0);
+        let records = [series_record("a"), series_record("b")];
+
+        check!(
+            super::enforce_and_reserve_max_series(&state, "tenant-a", &records)
+                .unwrap()
+                .is_empty()
+        );
+        check!(
+            state.active_series.lock().unwrap().is_empty(),
+            "no tenant is tracked"
+        );
+    }
+
+    /// pprof ids are indexes into a reference table. The optional form treats
+    /// zero as "absent" and returns zero without a lookup; the required form
+    /// has no such case and must reject zero like any other unknown id.
+    #[test]
+    fn pprof_ids_resolve_through_the_reference_table() {
+        let refs = HashMap::from([(7_u64, 1_u32), (9, 2)]);
+
+        check!(
+            super::normalize_optional_pprof_id(0, &refs, "f").unwrap() == 0,
+            "zero is absent"
+        );
+        check!(super::normalize_optional_pprof_id(7, &refs, "f").unwrap() == 1);
+        check!(super::normalize_optional_pprof_id(9, &refs, "f").unwrap() == 2);
+        let err = super::normalize_optional_pprof_id(8, &refs, "location")
+            .unwrap_err()
+            .to_string();
+        check!(
+            err.contains("location references missing id 8"),
+            "got: {err}"
+        );
+
+        // The required form differs only in how it treats zero.
+        check!(super::normalize_required_pprof_id(7, &refs, "f").unwrap() == 1);
+        let err = super::normalize_required_pprof_id(0, &refs, "function")
+            .unwrap_err()
+            .to_string();
+        check!(
+            err.contains("function references missing id 0"),
+            "got: {err}"
+        );
+    }
+
+    /// Every limit breach maps to the status the client should act on:
+    /// back off, or stop sending this shape of request.
+    #[test]
+    fn every_limit_error_maps_to_the_code_the_client_should_act_on() {
+        let cases = [
+            (
+                crate::limits::LimitError::IngestionRateExceeded {
+                    rate: 1.0,
+                    observed: 2.0,
+                },
+                Code::ResourceExhausted,
+            ),
+            (
+                crate::limits::LimitError::MaxSeries {
+                    limit: 1,
+                    observed: 2,
+                },
+                Code::ResourceExhausted,
+            ),
+            (
+                crate::limits::LimitError::SessionCardinalityExceeded { limit: 1 },
+                Code::ResourceExhausted,
+            ),
+            (
+                crate::limits::LimitError::LabelNameTooLong {
+                    limit: 1,
+                    observed: 2,
+                },
+                Code::InvalidArgument,
+            ),
+            (
+                crate::limits::LimitError::LabelValueTooLong {
+                    limit: 1,
+                    observed: 2,
+                },
+                Code::InvalidArgument,
+            ),
+            (
+                crate::limits::LimitError::TooManyLabels {
+                    limit: 1,
+                    observed: 2,
+                },
+                Code::InvalidArgument,
+            ),
+            (
+                crate::limits::LimitError::QueryLengthExceeded {
+                    limit_secs: 1,
+                    observed_secs: 2,
+                },
+                Code::InvalidArgument,
+            ),
+        ];
+
+        for (err, expected) in cases {
+            check!(super::limit_connect_code(&err) == expected, "for {err}");
+        }
+    }
 
     /// `ingest_span_tenant` reads the `X-Scope-OrgID` header. It returns the
     /// value verbatim when the header is present and non-empty. It returns

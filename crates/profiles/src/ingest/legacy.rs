@@ -358,7 +358,7 @@ fn parse_unix_time_ms(value: &str) -> Result<i64, ProfilesError> {
     let numeric = value
         .parse::<i64>()
         .map_err(|err| ProfilesError::Invalid(format!("invalid ingest time {value:?}: {err}")))?;
-    Ok(if numeric.abs() < 10_000_000_000 {
+    Ok(if numeric.unsigned_abs() < 10_000_000_000 {
         numeric.saturating_mul(1000)
     } else {
         numeric
@@ -1126,8 +1126,15 @@ fn urldecode(s: &str) -> String {
         match byte {
             b'+' => out.push(' '),
             b'%' => {
-                let (Some(hi), Some(lo)) = (bytes.next(), bytes.next()) else {
+                let (first, second) = (bytes.next(), bytes.next());
+                let (Some(hi), Some(lo)) = (first, second) else {
+                    // An escape cut short by the end of the input keeps
+                    // whatever it consumed, the same way an unparseable one
+                    // below does.
                     out.push('%');
+                    if let Some(first) = first {
+                        out.push(char::from(first));
+                    }
                     continue;
                 };
                 let hex = [hi, lo];
@@ -1153,6 +1160,636 @@ mod tests {
     use crabka_units::mebibytes;
 
     use super::*;
+
+    /// `read_tree_varint` decodes a base-128 varint and advances `pos` past
+    /// exactly the bytes it consumed. Each case checks the value *and* the
+    /// resulting offset, because a decoder that returns the right number but
+    /// leaves the cursor in the wrong place corrupts every field after it.
+    #[test]
+    fn tree_varints_decode_and_advance_the_cursor() {
+        let read = |bytes: &[u8]| {
+            let mut pos = 0_usize;
+            super::read_tree_varint(bytes, &mut pos, "field").map(|v| (v, pos))
+        };
+
+        check!(read(&[0x00]).unwrap() == (0, 1), "zero is one byte");
+        check!(
+            read(&[0x7f]).unwrap() == (127, 1),
+            "the largest single byte"
+        );
+        check!(
+            read(&[0x80, 0x01]).unwrap() == (128, 2),
+            "the smallest two-byte value"
+        );
+        check!(
+            read(&[0xff, 0x01]).unwrap() == (255, 2),
+            "continuation bits are stripped"
+        );
+        check!(read(&[0xac, 0x02]).unwrap() == (300, 2), "low group first");
+        check!(
+            read(&[0xff, 0xff, 0xff, 0xff, 0x0f]).unwrap() == (u64::from(u32::MAX), 5),
+            "a full u32 spans five bytes"
+        );
+
+        // A trailing byte after the terminator is left for the next field.
+        let mut pos = 0_usize;
+        check!(super::read_tree_varint(&[0x01, 0x02], &mut pos, "field").unwrap() == 1);
+        check!(pos == 1, "the cursor stops at the terminator");
+
+        // Running out of input names the field being read.
+        let err = read(&[0x80]).unwrap_err().to_string();
+        check!(err.contains("ended before field"), "got: {err}");
+        let err = read(&[]).unwrap_err().to_string();
+        check!(err.contains("ended before field"), "got: {err}");
+
+        // Ten continuation bytes push the shift past what a u64 can hold.
+        let err = read(&[0x80; 12]).unwrap_err().to_string();
+        check!(err.contains("overflows u64"), "got: {err}");
+    }
+
+    /// Encodes one node of Pyroscope's binary tree format: a name, the value
+    /// charged to the node itself, and how many children follow it.
+    fn tree_node(name: &str, self_value: u64, children: u64) -> Vec<u8> {
+        fn varint(mut value: u64, out: &mut Vec<u8>) {
+            loop {
+                let byte = u8::try_from(value & 0x7f).expect("seven bits fit a byte");
+                value >>= 7;
+                if value == 0 {
+                    out.push(byte);
+                    return;
+                }
+                out.push(byte | 0x80);
+            }
+        }
+        let mut out = Vec::new();
+        varint(name.len() as u64, &mut out);
+        out.extend_from_slice(name.as_bytes());
+        varint(self_value, &mut out);
+        varint(children, &mut out);
+        out
+    }
+
+    /// `tree_to_pprof` walks a pre-order node stream, carrying each node's
+    /// path down to its children and charging self values to the path that
+    /// reaches them.
+    ///
+    /// The fixture is an unnamed root over two children, the first of which
+    /// has a child of its own, so the decoder has to resume the root's second
+    /// child after descending. Both a named node with its own value and one
+    /// whose value sits only in a descendant are represented.
+    #[test]
+    fn tree_nodes_decode_into_the_stacks_that_reach_them() {
+        let mut body = Vec::new();
+        body.extend(tree_node("", 0, 3));
+        body.extend(tree_node("a", 10, 1));
+        body.extend(tree_node("a1", 5, 0));
+        body.extend(tree_node("b", 7, 0));
+        // A named node worth nothing on its own. It must not become a sample:
+        // only a positive self value earns one.
+        body.extend(tree_node("c", 0, 0));
+
+        let profile =
+            super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
+
+        check!(profile.sample_types() == vec![("samples".to_string(), "bytes".to_string())]);
+
+        let decoded: Vec<(Vec<&str>, &[i64])> = profile
+            .samples()
+            .iter()
+            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
+            .collect();
+        check!(
+            decoded
+                == vec![
+                    (vec!["a"], [10].as_slice()),
+                    (vec!["a1", "a"], [5].as_slice()),
+                    (vec!["b"], [7].as_slice()),
+                ]
+        );
+    }
+
+    /// A payload that stops immediately after a node name is short, not
+    /// oversized: the name itself fits exactly, and it is the fields *after*
+    /// it that are missing. The distinction decides which error the caller
+    /// sees, so it is pinned here.
+    #[test]
+    fn a_tree_name_ending_at_the_payload_edge_reports_the_missing_field() {
+        let mut body = Vec::new();
+        body.extend(tree_node("", 0, 1));
+        body.extend_from_slice(&[0x01, b'a']);
+
+        let err = super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("ended before node self value"), "got: {err}");
+    }
+
+    /// The node budget counts nodes, so a tree of exactly `max_nodes` is
+    /// allowed and one more is not.
+    #[test]
+    fn the_tree_node_budget_admits_exactly_its_limit() {
+        let mut body = Vec::new();
+        body.extend(tree_node("", 0, 3));
+        body.extend(tree_node("a", 10, 1));
+        body.extend(tree_node("a1", 5, 0));
+        body.extend(tree_node("b", 7, 0));
+        body.extend(tree_node("c", 0, 0));
+
+        let limits = |max_nodes| LegacyDecodeLimits {
+            max_nodes,
+            ..LegacyDecodeLimits::default()
+        };
+        check!(
+            super::tree_to_pprof("app", "bytes", &body, limits(5)).is_ok(),
+            "five nodes fit"
+        );
+
+        let err = super::tree_to_pprof("app", "bytes", &body, limits(4))
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("exceeds node budget"), "got: {err}");
+    }
+
+    /// A node may declare one more child than there are bytes left, because a
+    /// child costs at least one byte only once its own fields are counted.
+    /// The check is a cheap early reject, so at the boundary the payload has
+    /// to fail later, on the missing bytes themselves, and say so.
+    #[test]
+    fn a_child_count_at_the_payload_edge_fails_on_the_missing_node() {
+        let body = [0x00, 0x00, 0x01];
+
+        let err = super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("ended before node name length"), "got: {err}");
+
+        // Two children with nothing left is over the line and is rejected up
+        // front instead.
+        let body = [0x00, 0x00, 0x02];
+        let err = super::tree_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
+            .unwrap_err()
+            .to_string();
+        check!(
+            err.contains("children length exceeds remaining payload"),
+            "got: {err}"
+        );
+    }
+
+    /// Encodes one node of Pyroscope's binary trie format: the suffix this
+    /// node adds to its parent's key, the value charged to the whole key, and
+    /// how many children follow.
+    fn trie_node(suffix: &str, value: u64, children: u64) -> Vec<u8> {
+        fn varint(mut value: u64, out: &mut Vec<u8>) {
+            loop {
+                let byte = u8::try_from(value & 0x7f).expect("seven bits fit a byte");
+                value >>= 7;
+                if value == 0 {
+                    out.push(byte);
+                    return;
+                }
+                out.push(byte | 0x80);
+            }
+        }
+        let mut out = Vec::new();
+        varint(suffix.len() as u64, &mut out);
+        out.extend_from_slice(suffix.as_bytes());
+        varint(value, &mut out);
+        varint(children, &mut out);
+        out
+    }
+
+    /// `trie_to_pprof` builds each node's key by appending its suffix to its
+    /// parent's, then splits the finished key on ';' into frames.
+    ///
+    /// The fixture shares the prefix "main;" across two children, gives one of
+    /// them a child of its own so the decoder has to unwind two levels, and
+    /// includes a second top-level node so the synthetic forest root is
+    /// exercised rather than a single tree.
+    #[test]
+    fn trie_nodes_extend_their_parents_key() {
+        let mut body = Vec::new();
+        body.extend(trie_node("main;", 0, 2));
+        body.extend(trie_node("work", 7, 1));
+        body.extend(trie_node(";inner", 4, 0));
+        body.extend(trie_node("idle", 3, 0));
+        body.extend(trie_node("other", 2, 0));
+
+        let profile =
+            super::trie_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
+
+        let decoded: Vec<(Vec<&str>, &[i64])> = profile
+            .samples()
+            .iter()
+            .map(|sample| (profile.stack_frames(sample), sample.value.as_slice()))
+            .collect();
+        check!(
+            decoded
+                == vec![
+                    (vec!["idle", "main"], [3].as_slice()),
+                    (vec!["work", "main"], [7].as_slice()),
+                    (vec!["inner", "work", "main"], [4].as_slice()),
+                    (vec!["other"], [2].as_slice()),
+                ]
+        );
+    }
+
+    /// The same five-node trie as above, reused to pin each limit at its
+    /// boundary rather than well inside it. Every one of these guards is an
+    /// inequality, and an inequality tested only far from its edge is
+    /// indistinguishable from the one next to it.
+    #[test]
+    fn the_trie_limits_admit_exactly_their_boundary() {
+        let mut body = Vec::new();
+        body.extend(trie_node("main;", 0, 2));
+        body.extend(trie_node("work", 7, 1));
+        body.extend(trie_node(";inner", 4, 0));
+        body.extend(trie_node("idle", 3, 0));
+        body.extend(trie_node("other", 2, 0));
+        let decode = |limits| super::trie_to_pprof("app", "bytes", &body, limits);
+
+        // Five nodes fit a budget of five, and not one of four.
+        let nodes = |max_nodes| LegacyDecodeLimits {
+            max_nodes,
+            ..LegacyDecodeLimits::default()
+        };
+        check!(decode(nodes(5)).is_ok(), "five nodes fit a budget of five");
+        let err = decode(nodes(4)).unwrap_err().to_string();
+        check!(err.contains("exceeds node budget"), "got: {err}");
+
+        // The deepest node sits under two frames, so a depth cap of two
+        // rejects it and three admits it.
+        let depth = |max_trie_depth| LegacyDecodeLimits {
+            max_trie_depth,
+            ..LegacyDecodeLimits::default()
+        };
+        check!(decode(depth(3)).is_ok(), "three levels fit a cap of three");
+        let err = decode(depth(2)).unwrap_err().to_string();
+        check!(err.contains("exceeds maximum depth"), "got: {err}");
+
+        // Materialized keys total 43 bytes: the shared "main;" prefix is
+        // copied into each descendant, which is the amplification the budget
+        // exists to bound.
+        let path = |n| LegacyDecodeLimits {
+            max_path_bytes: crabka_units::bytes(n),
+            ..LegacyDecodeLimits::default()
+        };
+        check!(
+            decode(path(43)).is_ok(),
+            "43 bytes of keys fit a budget of 43"
+        );
+        let err = decode(path(42)).unwrap_err().to_string();
+        check!(err.contains("exceeds path-bytes budget"), "got: {err}");
+    }
+
+    /// A suffix that ends exactly at the payload edge is not oversized; the
+    /// value and child count that should follow it are simply missing, and
+    /// the error names that rather than the suffix.
+    #[test]
+    fn a_trie_suffix_ending_at_the_payload_edge_reports_the_missing_value() {
+        let body = [0x04, b'm', b'a', b'i', b'n'];
+
+        let err = super::trie_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default())
+            .unwrap_err()
+            .to_string();
+        check!(err.contains("ended before trie node value"), "got: {err}");
+    }
+
+    /// The (stack, value) pairs a decoded profile carries, root-first and
+    /// sorted so a comparison does not depend on map order.
+    fn frames_and_values(profile: &PprofProfile) -> Vec<(String, i64)> {
+        // `stack_frames` returns leaf-first, the pprof convention; folded
+        // input is written root-first.
+        let mut out = profile
+            .samples()
+            .iter()
+            .map(|sample| {
+                let mut frames = profile
+                    .stack_frames(sample)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                frames.reverse();
+                (frames.join(";"), sample.value[0])
+            })
+            .collect::<Vec<_>>();
+        out.sort();
+        out
+    }
+
+    /// Folded input has four rules and no test held any of them: repeats of a
+    /// stack accumulate, the value is the *last* whitespace-separated field so
+    /// frame names may contain spaces, empty frames between separators are
+    /// dropped, and blank and `#` lines are skipped. Errors name the 1-based
+    /// line.
+    #[test]
+    fn folded_stacks_accumulate_and_take_the_value_from_the_last_field() {
+        let parse = |body: &str| super::folded_to_pprof("app", "count", body);
+
+        // The same stack twice adds up; overwriting would leave 4.
+        let profile = parse("main;work 3\nmain;work 4\n").expect("two folded lines");
+        check!(frames_and_values(&profile) == vec![("main;work".to_string(), 7)]);
+
+        // A comment and a blank are skipped; the value is the last field, so
+        // "my func" survives as one frame; the empty frame is dropped.
+        let profile = parse("# a comment\n\nmy func;;other 5\n").expect("one folded line");
+        check!(frames_and_values(&profile) == vec![("my func;other".to_string(), 5)]);
+
+        // The third line of the body is named as line 3, not 2.
+        let err = parse("main 1\nmain 2\nnovalue\n").unwrap_err().to_string();
+        check!(err.contains("folded line 3 missing value"), "got: {err}");
+    }
+
+    /// `lines` input is folded input without a value: each line counts once.
+    /// It shares the comment, blank and empty-frame rules with
+    /// [`folded_to_pprof`] and had no test for any of them, nor for a body
+    /// that yields nothing being an error rather than an empty profile.
+    #[test]
+    fn lines_input_counts_one_per_line_and_skips_comments() {
+        let parse = |body: &str| super::lines_to_pprof("app", "count", body);
+
+        // The comment and the blank are skipped, the empty frame is dropped,
+        // and both remaining lines fold into one stack counted twice.
+        let profile = parse("# comment\n\nmain;;work\nmain;work\n").expect("two counted lines");
+        check!(frames_and_values(&profile) == vec![("main;work".to_string(), 2)]);
+
+        // Nothing countable is an error, not a profile with no samples.
+        let err = parse("# only a comment\n").unwrap_err().to_string();
+        check!(err.contains("lines profile has no samples"), "got: {err}");
+
+        // The empty stack is on the third line, and the error says so.
+        let err = parse("main\nmain\n;;\n").unwrap_err().to_string();
+        check!(
+            err.contains("lines profile line 3 has empty stack"),
+            "got: {err}"
+        );
+    }
+
+    /// Wraps `parts` as a multipart body with a fixed boundary.
+    fn multipart_body(parts: &[(&str, &[u8])]) -> bytes::Bytes {
+        let mut body = Vec::new();
+        for (name, content) in parts {
+            body.extend_from_slice(b"--test-boundary\r\n");
+            body.extend_from_slice(
+                format!("Content-Disposition: form-data; name=\"{name}\"\r\n").as_bytes(),
+            );
+            body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+            body.extend_from_slice(content);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(b"--test-boundary--\r\n");
+        bytes::Bytes::from(body)
+    }
+
+    /// Each ingest format accepts its own part names and ignores the rest.
+    /// The guards are all equality tests against the query's format, so a
+    /// flipped one makes a format reject its own payload and accept every
+    /// other format's -- which only shows up when the same part name is tried
+    /// under a format that should ignore it.
+    #[test]
+    fn multipart_parts_are_accepted_only_under_their_own_format() {
+        let folded = b"main;work 7\n".as_slice();
+        let mut nested_nodes = Vec::new();
+        nested_nodes.extend(tree_node("", 0, 1));
+        nested_nodes.extend(tree_node("main", 7, 0));
+        let shared_prefix = trie_node("main", 7, 0);
+        let speedscope = br#"{
+            "shared": { "frames": [{ "name": "main" }] },
+            "profiles": [{
+              "type": "sampled", "name": "cpu", "unit": "samples",
+              "startValue": 0, "endValue": 10,
+              "samples": [[0]], "weights": [2]
+            }]
+        }"#
+        .as_slice();
+
+        // (format, part name, payload, whether it should yield a profile)
+        let cases: &[(&str, &str, &[u8], bool)] = &[
+            ("groups", "profile", folded, true),
+            ("groups", "groups", folded, true),
+            ("groups", "folded", folded, true),
+            ("groups", "tree", folded, false),
+            ("lines", "profile", folded, true),
+            ("lines", "folded", folded, true),
+            ("tree", "profile", &nested_nodes, true),
+            ("tree", "tree", &nested_nodes, true),
+            ("tree", "trie", &nested_nodes, false),
+            ("trie", "profile", &shared_prefix, true),
+            ("trie", "trie", &shared_prefix, true),
+            ("trie", "tree", &shared_prefix, false),
+            ("speedscope", "profile", speedscope, true),
+            ("speedscope", "speedscope", speedscope, true),
+            ("speedscope", "tree", speedscope, false),
+            // The jfr reader falls back to folded text for input that is not
+            // a binary recording, which keeps this row cheap.
+            ("jfr", "jfr", folded, true),
+            ("jfr", "profile", folded, false),
+        ];
+
+        for (format, part, payload, expect_ok) in cases {
+            let query = parse_ingest_query(&format!("name=app&format={format}")).unwrap();
+            let result = futures::executor::block_on(super::decode_ingest_multipart_with_limits(
+                &query,
+                "multipart/form-data; boundary=test-boundary",
+                multipart_body(&[(part, payload)]),
+                mebibytes(1),
+                LegacyDecodeLimits::default(),
+            ));
+            check!(
+                result.is_ok() == *expect_ok,
+                "format={format} part={part} gave {result:?}"
+            );
+        }
+    }
+
+    /// The per-part size cap rejects what exceeds it, so a part of exactly
+    /// the limit is still accepted.
+    #[test]
+    fn a_multipart_part_of_exactly_the_limit_is_accepted() {
+        let folded = b"main;work 7\n".as_slice();
+        let query = parse_ingest_query("name=app&format=groups").unwrap();
+        let decode = |limit| {
+            futures::executor::block_on(super::decode_ingest_multipart_with_limits(
+                &query,
+                "multipart/form-data; boundary=test-boundary",
+                multipart_body(&[("profile", folded)]),
+                crabka_units::bytes(limit),
+                LegacyDecodeLimits::default(),
+            ))
+        };
+
+        let len = u32::try_from(folded.len()).expect("fixture fits a u32");
+        check!(decode(len).is_ok(), "a part exactly at the limit fits");
+        let err = decode(len - 1).unwrap_err();
+        check!(
+            matches!(err, ProfilesError::TooLarge { .. }),
+            "got: {err:?}"
+        );
+    }
+
+    /// A part with no name is not a profile. Nothing downstream distinguishes
+    /// an unnamed part from one named "profile" except this lookup, so an
+    /// anonymous payload must be ignored rather than adopted.
+    #[test]
+    fn an_unnamed_multipart_part_is_ignored() {
+        let query = parse_ingest_query("name=app&format=groups").unwrap();
+        let mut body = Vec::new();
+        body.extend_from_slice(b"--test-boundary\r\n");
+        body.extend_from_slice(b"Content-Disposition: form-data\r\n");
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        body.extend_from_slice(b"main;work 7\n");
+        body.extend_from_slice(b"\r\n--test-boundary--\r\n");
+
+        let result = futures::executor::block_on(super::decode_ingest_multipart_with_limits(
+            &query,
+            "multipart/form-data; boundary=test-boundary",
+            bytes::Bytes::from(body),
+            mebibytes(1),
+            LegacyDecodeLimits::default(),
+        ));
+        check!(
+            result.is_err(),
+            "an unnamed part must not be read as the profile"
+        );
+    }
+
+    /// A "labels" part carries extra labels, but only for jfr uploads. Under
+    /// any other format the part is not a labels document and must be left
+    /// alone, so the guard is checked from both sides.
+    #[test]
+    fn a_labels_part_is_read_only_for_jfr_uploads() {
+        let folded = b"main;work 7\n".as_slice();
+        let labels = br#"{"service_name":"payments"}"#.as_slice();
+        let decode = |format: &str, profile_part: &str| {
+            let query = parse_ingest_query(&format!("name=app&format={format}")).unwrap();
+            futures::executor::block_on(super::decode_ingest_multipart_with_limits(
+                &query,
+                "multipart/form-data; boundary=test-boundary",
+                multipart_body(&[("labels", labels), (profile_part, folded)]),
+                mebibytes(1),
+                LegacyDecodeLimits::default(),
+            ))
+        };
+
+        let raw = decode("jfr", "jfr").unwrap();
+        check!(raw.labels.get("service_name") == Some("payments"));
+
+        // The same part under a format that has no labels concept.
+        let raw = decode("groups", "profile").unwrap();
+        check!(
+            raw.labels.get("service_name") == None,
+            "labels: {:?}",
+            raw.labels
+        );
+    }
+
+    /// Ingest timestamps arrive as either seconds or milliseconds and are
+    /// told apart by magnitude, so the cutoff itself is the interesting part.
+    /// `i64::MIN` is included because it is the one input whose magnitude
+    /// cannot be taken as a signed value.
+    #[test]
+    fn ingest_times_below_the_cutoff_are_read_as_seconds() {
+        let parse = super::parse_unix_time_ms;
+
+        check!(parse("0").unwrap() == 0);
+        check!(parse("1").unwrap() == 1_000, "seconds scale up");
+        check!(
+            parse("  7  ").unwrap() == 7_000,
+            "surrounding space is trimmed"
+        );
+        check!(parse("-1").unwrap() == -1_000, "negative seconds scale too");
+        check!(
+            parse("9999999999").unwrap() == 9_999_999_999_000,
+            "the largest value still read as seconds"
+        );
+        check!(
+            parse("10000000000").unwrap() == 10_000_000_000,
+            "the cutoff itself is already milliseconds"
+        );
+        check!(
+            parse("-10000000000").unwrap() == -10_000_000_000,
+            "the cutoff is on magnitude, not sign"
+        );
+        check!(parse("9223372036854775807").unwrap() == i64::MAX);
+        check!(parse("-9223372036854775808").unwrap() == i64::MIN);
+
+        check!(parse("").is_err(), "an empty value is not a time");
+        check!(parse("later").is_err(), "a word is not a time");
+    }
+
+    /// `urldecode` expands percent escapes and '+' in ingest query strings.
+    /// Anything it cannot expand is passed through as written, so a malformed
+    /// escape neither disappears nor takes the characters after it with it.
+    #[test]
+    fn urldecode_expands_escapes_and_passes_through_the_rest() {
+        let decode = super::urldecode;
+
+        check!(decode("plain") == "plain", "ordinary text is untouched");
+        check!(decode("") == "", "an empty string stays empty");
+        check!(decode("a+b") == "a b", "plus is a space");
+        check!(decode("a%20b") == "a b", "an escape is expanded");
+        check!(decode("a%2Fb") == "a/b", "uppercase hex");
+        check!(decode("a%2fb") == "a/b", "lowercase hex");
+        check!(decode("%41%42") == "AB", "back to back escapes");
+        // Percent is not self-escaping here: "%%" is simply an escape whose
+        // first digit is not hex, so both characters survive.
+        check!(
+            decode("100%%") == "100%%",
+            "a doubled percent is not one literal"
+        );
+
+        // Malformed escapes keep every character they consumed.
+        check!(
+            decode("a%zz") == "a%zz",
+            "unparseable hex is left as written"
+        );
+        check!(
+            decode("a%2") == "a%2",
+            "an escape cut short keeps its digit"
+        );
+        check!(decode("a%") == "a%", "a trailing percent stands alone");
+        check!(decode("a%2z") == "a%2z", "a bad second digit is kept too");
+    }
+
+    /// A jfr labels part is a flat JSON object. Scalars are stringified so
+    /// that a label written as a number and one written as a string arrive
+    /// the same way; anything with structure is rejected rather than
+    /// flattened into something meaningless.
+    #[test]
+    fn jfr_labels_stringify_scalars_and_reject_structure() {
+        let parse = |raw: &str| super::parse_labels_part(raw.as_bytes());
+
+        check!(parse("").unwrap() == vec![], "an absent part is no labels");
+        check!(
+            parse("{}").unwrap() == vec![],
+            "an empty object is no labels"
+        );
+
+        let labels =
+            parse(r#"{"text":"a","int":7,"float":1.5,"yes":true,"no":false,"nothing":null}"#)
+                .unwrap();
+        // Document order is kept rather than sorted, so a caller reading the
+        // first label gets the first one written.
+        check!(
+            labels
+                == vec![
+                    ("text".to_string(), "a".to_string()),
+                    ("int".to_string(), "7".to_string()),
+                    ("float".to_string(), "1.5".to_string()),
+                    ("yes".to_string(), "true".to_string()),
+                    ("no".to_string(), "false".to_string()),
+                    ("nothing".to_string(), String::new()),
+                ]
+        );
+
+        let err = parse(r#"{"list":[1,2]}"#).unwrap_err().to_string();
+        check!(err.contains("`list` must be a scalar"), "got: {err}");
+        let err = parse(r#"{"nested":{"a":1}}"#).unwrap_err().to_string();
+        check!(err.contains("`nested` must be a scalar"), "got: {err}");
+        let err = parse("[1,2]").unwrap_err().to_string();
+        check!(err.contains("must be a JSON object"), "got: {err}");
+        let err = parse("not json").unwrap_err().to_string();
+        check!(err.contains("is not JSON"), "got: {err}");
+    }
 
     #[test]
     fn parse_query_extracts_name_labels_format() {

@@ -292,12 +292,22 @@ fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
                     "name" => case.name = format!("{file}:{value}"),
                     "kind" => case.kind = value.to_string(),
                     "query" => case.query = Some(value.to_string()),
-                    "trace_id" => case.trace_id = value.parse().ok(),
+                    "trace_id" => case.trace_id = Some(parse_field(&case.name, "trace_id", value)),
                     "expect_trace_ids" => case.expect_trace_ids = Some(value.to_string()),
                     "expect_span_ids" => case.expect_span_ids = Some(value.to_string()),
-                    "expect_series_count" => case.expect_series_count = value.parse().ok(),
-                    "expect_span_count" => case.expect_span_count = value.parse().ok(),
-                    _ => {}
+                    "expect_series_count" => {
+                        case.expect_series_count =
+                            Some(parse_field(&case.name, "expect_series_count", value));
+                    }
+                    "expect_span_count" => {
+                        case.expect_span_count =
+                            Some(parse_field(&case.name, "expect_span_count", value));
+                    }
+                    // An unrecognised key is a typo in the corpus, not an
+                    // optional extra. Silently ignoring it would drop the
+                    // expectation it was meant to state and leave the case
+                    // passing on a weaker assertion than its author wrote.
+                    other => panic!("{}: unknown case key `{other}`", case.name),
                 }
             }
             (!block.trim().is_empty()).then_some(case)
@@ -305,13 +315,29 @@ fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
         .collect()
 }
 
+/// Parses one numeric field of a corpus case, failing loudly rather than
+/// leaving it unset. A field that will not parse is a mistake in the case
+/// file, and treating it as absent removes the assertion it was written to
+/// make.
+fn parse_field<T: std::str::FromStr>(case: &str, key: &str, value: &str) -> T {
+    value
+        .parse()
+        .unwrap_or_else(|_| panic!("{case}: `{key}` is not a valid value: {value:?}"))
+}
+
+/// Parses a comma-separated id list. Empty entries are allowed so a trailing
+/// comma is harmless, but an entry that is not a number is a mistake in the
+/// case file and stops the run: dropping it would silently shorten the list
+/// the case is asserting against.
 fn parse_u8_list(value: Option<&str>) -> Vec<u8> {
     value
         .unwrap_or_default()
         .split(',')
-        .filter_map(|item| {
-            let item = item.trim();
-            (!item.is_empty()).then(|| item.parse().ok()).flatten()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            item.parse()
+                .unwrap_or_else(|_| panic!("`{item}` is not a valid id in list {value:?}"))
         })
         .collect()
 }
@@ -561,6 +587,335 @@ query: { .svc = "x" }
                 events: Vec::new(),
                 links: Vec::new(),
             }
+        );
+    }
+
+    /// `parse_u8_list` reads the id lists a case asserts against. Blank
+    /// entries are tolerated so a trailing comma is harmless, but an entry
+    /// that is not a number stops the run rather than shortening the list --
+    /// a case asserting against three ids and silently checking two is worse
+    /// than a case that fails.
+    #[test]
+    fn id_lists_tolerate_blanks_and_reject_nonsense() {
+        let parse = super::parse_u8_list;
+
+        assert!(parse(None) == Vec::<u8>::new(), "an absent list is empty");
+        assert!(parse(Some("")) == Vec::<u8>::new());
+        assert!(parse(Some("1,2,3")) == vec![1, 2, 3]);
+        assert!(
+            parse(Some(" 1 , 2 ")) == vec![1, 2],
+            "space around entries is trimmed"
+        );
+        assert!(
+            parse(Some("1,,2")) == vec![1, 2],
+            "a blank entry is skipped"
+        );
+        assert!(parse(Some("1,2,")) == vec![1, 2], "so is a trailing comma");
+        assert!(parse(Some("7")) == vec![7], "a single id needs no comma");
+        assert!(parse(Some("0,255")) == vec![0, 255], "the full byte range");
+    }
+
+    /// `run_search_case` is what turns a corpus case into a verdict, so a
+    /// fault here weakens every case at once rather than one of them. It is
+    /// exercised against the same engine the corpus uses, with a case known
+    /// to hold and the same case with each expectation spoiled in turn.
+    #[tokio::test]
+    async fn a_search_case_passes_only_when_both_expectations_hold() {
+        let engine = super::engine();
+        let case = |traces: &str, spans: &str| super::Case {
+            name: "t".into(),
+            kind: "search".into(),
+            query: Some(r#"{ .http.method = "GET" }"#.into()),
+            trace_id: None,
+            expect_trace_ids: Some(traces.into()),
+            expect_span_ids: Some(spans.into()),
+            expect_series_count: None,
+            expect_span_count: None,
+        };
+
+        let result = super::run_search_case(&engine, case("1", "1")).await;
+        assert!(result.passed, "message: {}", result.message);
+        assert!(result.passed_assertions == 2);
+        assert!(result.total_assertions == 2);
+
+        // Each expectation on its own must be able to fail the case.
+        let result = super::run_search_case(&engine, case("2", "1")).await;
+        assert!(!result.passed, "a wrong trace id must fail");
+        assert!(
+            result.passed_assertions == 1,
+            "the span assertion still held"
+        );
+        assert!(result.message.contains("trace ids expected"));
+
+        let result = super::run_search_case(&engine, case("1", "2")).await;
+        assert!(!result.passed, "a wrong span id must fail");
+        assert!(
+            result.passed_assertions == 1,
+            "the trace assertion still held"
+        );
+        assert!(result.message.contains("span ids expected"));
+
+        let result = super::run_search_case(&engine, case("2", "2")).await;
+        assert!(!result.passed);
+        assert!(result.passed_assertions == 0, "neither assertion held");
+
+        // A case with no query asserts nothing and must not be reported as a
+        // pass, which is the vacuous outcome worth guarding against.
+        let mut empty = case("1", "1");
+        empty.query = None;
+        let result = super::run_search_case(&engine, empty).await;
+        assert!(!result.passed);
+        assert!(result.message == "missing query");
+    }
+
+    /// A search reports how much span data it scanned, which Tempo surfaces
+    /// as `metrics.inspectedBytes`. It is accumulated across the scans a
+    /// selector plans, so a query that matches nothing still inspects
+    /// something, and a query over more data inspects at least as much.
+    #[tokio::test]
+    async fn a_search_reports_the_span_data_it_scanned() {
+        use crabka_units::convert::ByteSizeExt;
+
+        let engine = super::engine();
+        let inspected = |query: &'static str| async move {
+            super::engine()
+                .search("t", query, 0, 10_000, 20)
+                .await
+                .expect("query runs")
+                .inspected
+        };
+
+        let matched = inspected(r#"{ .http.method = "GET" }"#).await;
+        assert!(
+            matched > <crabka_units::ByteSize as ByteSizeExt>::ZERO,
+            "a search that scans spans reports the bytes it read, got {matched:?}"
+        );
+
+        // A query matching nothing still had to read the spans to find that
+        // out, so the figure reflects scanning rather than results.
+        let unmatched = inspected(r#"{ .http.method = "NOPE" }"#).await;
+        assert!(
+            unmatched > <crabka_units::ByteSize as ByteSizeExt>::ZERO,
+            "a search that matches nothing still scans, got {unmatched:?}"
+        );
+
+        let response = engine
+            .search("t", r#"{ .http.method = "GET" }"#, 0, 10_000, 20)
+            .await
+            .expect("query runs");
+        assert!(
+            response.inspected == matched,
+            "the figure is stable across runs"
+        );
+    }
+
+    /// A selector over a nested scope with more than one alternative is
+    /// planned as separate scans and their results merged. Nothing reached
+    /// that path before: the shared fixture carries no events, so every query
+    /// took the single-scan branch.
+    ///
+    /// The bytes each scan inspected have to be summed across them, which is
+    /// what the response reports as Tempo's `metrics.inspectedBytes`.
+    #[tokio::test]
+    async fn a_disjunct_selector_sums_what_each_scan_inspected() {
+        use crabka_units::{ByteSize, Time, convert::ByteSizeExt};
+
+        use crate::{in_memory::InMemorySpanStore, result::EventRef};
+
+        let with_event = |id: u8, event: &str| {
+            let mut input = super::span(1, id, None, "root", 100, vec![]);
+            input.events = vec![EventRef {
+                time_since_start: Time::from_nanos(1),
+                name: event.to_string(),
+                attributes: vec![],
+            }];
+            input
+        };
+
+        let mut store = InMemorySpanStore::new();
+        store.push_trace(
+            "t",
+            "svc",
+            "root",
+            vec![with_event(1, "alpha"), with_event(2, "beta")],
+        );
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+
+        // Two alternatives over a nested scope: this is the disjunct path.
+        let response = engine
+            .search(
+                "t",
+                r#"{ event:name = "alpha" || event:name = "beta" }"#,
+                0,
+                10_000,
+                20,
+            )
+            .await
+            .expect("query runs");
+
+        assert!(
+            response.inspected > <ByteSize as ByteSizeExt>::ZERO,
+            "the scanned bytes are summed across disjuncts, got {:?}",
+            response.inspected
+        );
+        assert!(
+            !response.traces.is_empty(),
+            "both alternatives match a span"
+        );
+    }
+
+    /// The metrics and trace-by-id runners each carry a single assertion, so
+    /// the only thing standing between a real check and a vacuous pass is
+    /// that one comparison. Both are exercised with a case that holds and the
+    /// same case with the expectation moved off by one.
+    #[tokio::test]
+    async fn the_single_assertion_runners_can_fail_their_case() {
+        let engine = super::engine();
+
+        let metrics_case = |count: usize| super::Case {
+            name: "t".into(),
+            kind: "metrics".into(),
+            query: Some("{ .svc != nil } | rate()".into()),
+            trace_id: None,
+            expect_trace_ids: None,
+            expect_span_ids: None,
+            expect_series_count: Some(count),
+            expect_span_count: None,
+        };
+
+        let result = super::run_metrics_case(&engine, metrics_case(1)).await;
+        assert!(result.passed, "message: {}", result.message);
+        assert!(result.passed_assertions == 1 && result.total_assertions == 1);
+
+        let result = super::run_metrics_case(&engine, metrics_case(2)).await;
+        assert!(!result.passed, "a wrong series count must fail");
+        assert!(result.passed_assertions == 0);
+        assert!(result.message.contains("series count expected 2, got 1"));
+
+        // A metrics case that states no series count is asserting zero, not
+        // opting out. This query yields one, so it must fail.
+        let mut unstated = metrics_case(1);
+        unstated.expect_series_count = None;
+        let result = super::run_metrics_case(&engine, unstated).await;
+        assert!(!result.passed, "an unstated count means zero");
+        assert!(result.message.contains("series count expected 0, got 1"));
+
+        let mut no_query = metrics_case(1);
+        no_query.query = None;
+        let result = super::run_metrics_case(&engine, no_query).await;
+        assert!(!result.passed && result.message == "missing query");
+
+        let by_id_case = |trace_id, count: usize| super::Case {
+            name: "t".into(),
+            kind: "trace_by_id".into(),
+            query: None,
+            trace_id,
+            expect_trace_ids: None,
+            expect_span_ids: None,
+            expect_series_count: None,
+            expect_span_count: Some(count),
+        };
+
+        let result = super::run_trace_by_id_case(&engine, by_id_case(Some(1), 4)).await;
+        assert!(result.passed, "message: {}", result.message);
+
+        let result = super::run_trace_by_id_case(&engine, by_id_case(Some(1), 3)).await;
+        assert!(!result.passed, "a wrong span count must fail");
+        assert!(result.message.contains("span count expected 3, got 4"));
+
+        // A trace that is not there has no spans, which a case may assert.
+        let result = super::run_trace_by_id_case(&engine, by_id_case(Some(9), 0)).await;
+        assert!(result.passed, "message: {}", result.message);
+
+        // Unstated means zero here too, which an absent trace satisfies.
+        let mut unstated = by_id_case(Some(9), 4);
+        unstated.expect_span_count = None;
+        let result = super::run_trace_by_id_case(&engine, unstated).await;
+        assert!(result.passed, "message: {}", result.message);
+
+        let result = super::run_trace_by_id_case(&engine, by_id_case(None, 4)).await;
+        assert!(!result.passed && result.message == "missing trace_id");
+    }
+
+    #[test]
+    #[should_panic(expected = "`x` is not a valid id")]
+    fn an_unparseable_id_stops_the_run() {
+        super::parse_u8_list(Some("1,x,3"));
+    }
+
+    #[test]
+    #[should_panic(expected = "`256` is not a valid id")]
+    fn an_id_outside_a_byte_stops_the_run() {
+        super::parse_u8_list(Some("256"));
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown case key `expect_span_counts`")]
+    fn a_misspelled_case_key_stops_the_run() {
+        super::parse_cases("f.case", "name: a\nexpect_span_counts: 4\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "`expect_span_count` is not a valid value")]
+    fn a_malformed_case_number_stops_the_run() {
+        super::parse_cases("f.case", "name: a\nexpect_span_count: four\n");
+    }
+
+    /// The two id collectors differ deliberately: trace ids keep the order
+    /// the engine returned them in, because that order is part of what a
+    /// search case asserts, while span ids are sorted because they are
+    /// gathered across span sets whose order is not meaningful.
+    #[test]
+    fn trace_ids_keep_engine_order_and_span_ids_are_sorted() {
+        use crabka_units::{bytes, millis};
+
+        use crate::result::{SearchResponse, SpanRef, SpanSet, TraceResult};
+
+        // Only the first byte of each id is read, but the ids are fixed-size,
+        // so both are widened from the byte under test.
+        let span = |id: u8| SpanRef {
+            span_id: [id, 0, 0, 0, 0, 0, 0, 0],
+            parent_span_id: None,
+            name: String::new(),
+            kind: 0,
+            nested_set_left: 0,
+            nested_set_right: 0,
+            nested_set_parent: 0,
+            start_time_unix_nano: 0,
+            duration: millis(0),
+            status_code: 0,
+            status_message: String::new(),
+            instrumentation_name: String::new(),
+            instrumentation_version: String::new(),
+            resource_attributes: vec![],
+            attributes: vec![],
+            events: vec![],
+            links: vec![],
+        };
+        let trace = |id: u8, spans: Vec<u8>| TraceResult {
+            trace_id: [id, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            root_service_name: String::new(),
+            root_trace_name: String::new(),
+            start_time_unix_nano: 0,
+            duration: millis(0),
+            span_sets: vec![SpanSet {
+                spans: spans.into_iter().map(span).collect(),
+                matched: 0,
+            }],
+        };
+        let resp = SearchResponse {
+            traces: vec![trace(3, vec![9, 1]), trace(1, vec![5])],
+            inspected_traces: 0,
+            inspected: bytes(0),
+        };
+
+        assert!(
+            super::trace_ids(&resp) == vec![3, 1],
+            "engine order is kept"
+        );
+        assert!(
+            super::span_ids(&resp) == vec![1, 5, 9],
+            "span ids are sorted"
         );
     }
 

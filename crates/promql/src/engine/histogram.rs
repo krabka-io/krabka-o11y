@@ -22,6 +22,11 @@ struct ClassicBucket {
 }
 
 fn parse_classic_bucket_bound(value: &str) -> Result<f64> {
+    // Both infinity arms are permanent mutation survivors, and both are
+    // redundant: Rust's own float parser accepts "+Inf", "-Inf" and "Inf", so
+    // deleting either falls through to the same value. They stay because the
+    // `le` spellings are Prometheus wire format, and leaning on the standard
+    // library happening to accept them is not something to discover later.
     match value {
         "+Inf" | "Inf" => Ok(f64::INFINITY),
         "-Inf" => Ok(f64::NEG_INFINITY),
@@ -345,6 +350,9 @@ fn classic_histogram_quantile(quantile: f64, buckets: &mut [ClassicBucket]) -> f
         return f64::NAN;
     }
     let rank = quantile * total;
+    // The fallback is a permanent mutation survivor because it is never
+    // taken: counts are made monotonic above, the last one is the total, and
+    // `rank` is at most that total, so the search always finds a bucket.
     let bucket_index = buckets
         .iter()
         .position(|bucket| bucket.count >= rank)
@@ -440,6 +448,10 @@ fn classic_histogram_fraction(lower: f64, upper: f64, buckets: &mut [ClassicBuck
         return f64::NAN;
     }
 
+    // `||` here is a permanent survivor against `&&`: normalization runs a
+    // maximum from zero over the counts, so the total is never negative, and
+    // at exactly zero every bucket is empty and the division below reaches NaN
+    // on its own.
     let total = buckets.last().map_or(0.0, |bucket| bucket.count);
     if total <= 0.0 || total.is_nan() {
         return f64::NAN;
@@ -828,32 +840,26 @@ fn native_histogram_bucket_quantile(
 }
 
 fn bucket_overlap_fraction(bucket: NativeQuantileBucket, lower: f64, upper: f64) -> f64 {
-    if bucket.count == 0.0 || bucket.upper <= lower || bucket.lower >= upper {
-        return 0.0;
-    }
     let overlap_lower = bucket.lower.max(lower);
     let overlap_upper = bucket.upper.min(upper);
+    // `>=` against `>` is a permanent mutation survivor: the two differ only on
+    // a zero-width overlap, and there the fall-through divides that zero width
+    // by the bucket's own and returns the same 0.0.
     if overlap_lower >= overlap_upper {
         return 0.0;
     }
     if bucket.lower.is_infinite() || bucket.upper.is_infinite() {
-        if bucket.lower.is_infinite() && bucket.lower.is_sign_negative() {
+        // An open-ended bucket counts in full, or not at all: a finite query
+        // bound never reaches into one, however far out it goes.
+        //
+        // Only two open bounds get this far. A `+Inf` lower or a `-Inf` upper
+        // leaves the overlap empty against any range -- `max(+Inf, lower)` is
+        // never below `upper`, and `min(-Inf, upper)` is never above `lower` --
+        // so the test above has already returned for them.
+        if bucket.lower.is_infinite() {
             return f64::from(lower.is_infinite() && lower.is_sign_negative());
         }
-        if bucket.upper.is_infinite() && bucket.upper.is_sign_positive() {
-            return f64::from(upper.is_infinite() && upper.is_sign_positive());
-        }
-        let covers_left = if bucket.lower.is_infinite() && bucket.lower.is_sign_negative() {
-            lower.is_infinite() && lower.is_sign_negative()
-        } else {
-            lower <= bucket.lower
-        };
-        let covers_right = if bucket.upper.is_infinite() && bucket.upper.is_sign_positive() {
-            upper.is_infinite() && upper.is_sign_positive()
-        } else {
-            upper >= bucket.upper
-        };
-        return f64::from(covers_left && covers_right);
+        return f64::from(upper.is_infinite() && upper.is_sign_positive());
     }
     (overlap_upper - overlap_lower) / (bucket.upper - bucket.lower)
 }
@@ -1024,6 +1030,53 @@ mod tests {
         }
     }
 
+    /// Two histograms are range-compatible only when *every* shape field
+    /// agrees. Each case below differs in exactly one of them, and each is on
+    /// its own enough to make the pair incompatible.
+    #[test]
+    fn range_compatibility_needs_every_shape_field_to_agree() {
+        type Difference = (&'static str, fn(&mut NativeHistogram));
+        let span = |offset, length| BucketSpan { offset, length };
+        let base = || {
+            let mut histogram = histogram(0, ResetHint::Unknown);
+            histogram.positive_spans = vec![span(1, 2)];
+            histogram.positive_counts = vec![1.0, 2.0];
+            histogram.negative_spans = vec![span(0, 1)];
+            histogram.negative_counts = vec![3.0];
+            histogram
+        };
+        assert2::check!(native_histograms_are_range_compatible(&base(), &base()));
+
+        let differing: [Difference; 8] = [
+            ("schema", |h| h.schema = 1),
+            ("is_float", |h| h.is_float = !h.is_float),
+            ("zero_threshold", |h| h.zero_threshold = 1.0),
+            ("custom_values", |h| h.custom_values = Some(vec![1.0])),
+            ("positive_spans", |h| {
+                h.positive_spans = vec![BucketSpan {
+                    offset: 2,
+                    length: 2,
+                }];
+            }),
+            ("negative_spans", |h| {
+                h.negative_spans = vec![BucketSpan {
+                    offset: 1,
+                    length: 1,
+                }];
+            }),
+            ("positive_counts length", |h| h.positive_counts.push(9.0)),
+            ("negative_counts length", |h| h.negative_counts.push(9.0)),
+        ];
+        for (name, differ) in differing {
+            let mut right = base();
+            differ(&mut right);
+            assert2::check!(
+                !native_histograms_are_range_compatible(&base(), &right),
+                "{name} alone must make the pair incompatible"
+            );
+        }
+    }
+
     #[test]
     fn add_downscales_exponential_buckets() {
         let mut left = histogram(1, ResetHint::No);
@@ -1071,6 +1124,113 @@ mod tests {
         assert2::assert!((left.zero_count - 6.0).abs() < f64::EPSILON);
         assert2::assert!(left.positive_spans.is_empty());
         assert2::assert!(left.positive_counts.is_empty());
+    }
+
+    /// A bucket whose lower bound is *exactly* the zero threshold sits outside
+    /// the zero region, so `>= threshold` stops there and the bucket survives
+    /// the merge intact. Every other zero-bucket test puts the bucket strictly
+    /// below the threshold, where `>` and `>=` agree and it is folded in
+    /// either way -- which also leaves the matching keep test in
+    /// `reduced_counts_outside_zero` free to drop the boundary bucket.
+    #[test]
+    fn add_keeps_a_bucket_whose_lower_bound_is_exactly_the_zero_threshold() {
+        let mut left = histogram(0, ResetHint::No);
+        left.zero_threshold = 2.0;
+        left.zero_count = 1.0;
+        left.positive_spans = vec![BucketSpan {
+            offset: 2,
+            length: 1,
+        }];
+        left.positive_counts = vec![5.0];
+        let mut right = histogram(0, ResetHint::No);
+        right.zero_threshold = 2.0;
+        right.zero_count = 3.0;
+
+        add_compatible_native_histogram(&mut left, &right).unwrap();
+
+        assert2::assert!((left.zero_threshold - 2.0).abs() < f64::EPSILON);
+        assert2::assert!((left.zero_count - 4.0).abs() < f64::EPSILON);
+        assert2::assert!(
+            left.positive_spans
+                == vec![BucketSpan {
+                    offset: 2,
+                    length: 1
+                }]
+        );
+        assert2::assert!(left.positive_counts == vec![5.0]);
+    }
+
+    /// An *empty* bucket below the zero threshold must not widen the zero
+    /// region: only a bucket that actually holds observations forces the
+    /// threshold out to its upper bound.
+    #[test]
+    fn add_does_not_widen_the_zero_region_for_an_empty_bucket() {
+        let mut left = histogram(0, ResetHint::No);
+        left.zero_threshold = 0.75;
+        left.zero_count = 1.0;
+        left.positive_spans = vec![BucketSpan {
+            offset: 0,
+            length: 1,
+        }];
+        left.positive_counts = vec![0.0];
+        let mut right = histogram(0, ResetHint::No);
+        right.zero_threshold = 0.75;
+        right.zero_count = 2.0;
+
+        add_compatible_native_histogram(&mut left, &right).unwrap();
+
+        assert2::assert!((left.zero_threshold - 0.75).abs() < f64::EPSILON);
+        assert2::assert!((left.zero_count - 3.0).abs() < f64::EPSILON);
+    }
+
+    /// Adding two histograms recompacts the merged buckets back into spans.
+    /// Three runs separated by gaps of different widths pin the offset
+    /// arithmetic: with a single run there is none, and with two the first
+    /// emitted span still has a zero `previous_span_end` to subtract, where
+    /// subtracting and adding it agree.
+    #[test]
+    fn add_recompacts_merged_buckets_into_separate_runs() {
+        let mut left = histogram(0, ResetHint::No);
+        left.positive_spans = vec![
+            BucketSpan {
+                offset: 1,
+                length: 2,
+            },
+            BucketSpan {
+                offset: 7,
+                length: 2,
+            },
+        ];
+        left.positive_counts = vec![1.0, 2.0, 3.0, 4.0];
+        let mut right = histogram(0, ResetHint::No);
+        right.positive_spans = vec![BucketSpan {
+            offset: 5,
+            length: 2,
+        }];
+        right.positive_counts = vec![5.0, 6.0];
+
+        add_compatible_native_histogram(&mut left, &right).unwrap();
+
+        // Left holds 1,2 and 10,11; right holds 5,6. The merge runs
+        // 1..=2, 5..=6, 10..=11 -- gaps of two and of three.
+        assert2::assert!(
+            left.positive_spans
+                == vec![
+                    BucketSpan {
+                        offset: 1,
+                        length: 2
+                    },
+                    BucketSpan {
+                        offset: 2,
+                        length: 2
+                    },
+                    BucketSpan {
+                        offset: 3,
+                        length: 2
+                    },
+                ]
+        );
+        assert2::assert!(left.positive_counts == vec![1.0, 2.0, 5.0, 6.0, 3.0, 4.0]);
     }
 
     #[test]
