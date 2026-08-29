@@ -1,4 +1,4 @@
-load("//bazel:defs.bzl", "crate_library", "crate_tests")
+load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -6,6 +6,13 @@ package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml"])
 
 crate_library(name = "observability")
+
+# `bazel run //crates/observability:krabka-observability -- --help`.
+crate_binary(
+    name = "krabka-observability",
+    crate_root = "src/main.rs",
+    lib = ":observability",
+)
 
 crate_tests(
     lib = "observability",

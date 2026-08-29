@@ -60,10 +60,15 @@ alias(
     actual = "//crates/observability",
 )
 
-# The metrics query service. `bazel run //:metrics_bin -- --help`.
+# Shipped server binaries.
 alias(
     name = "metrics_bin",
     actual = "//crates/metrics:krabka-metrics",
+)
+
+alias(
+    name = "metrics_service_bin",
+    actual = "//crates/metrics-service:krabka-metrics-service",
 )
 
 alias(
@@ -74,4 +79,9 @@ alias(
 alias(
     name = "profiles_bin",
     actual = "//crates/profiles:krabka-profiles",
+)
+
+alias(
+    name = "observability_bin",
+    actual = "//crates/observability:krabka-observability",
 )
