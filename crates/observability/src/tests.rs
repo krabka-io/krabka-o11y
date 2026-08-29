@@ -1,0 +1,24 @@
+#[cfg(test)]
+mod tests {
+    include!("tests_parts/part_01.rs");
+    include!("tests_parts/part_02.rs");
+    include!("tests_parts/part_03.rs");
+    include!("tests_parts/part_04.rs");
+    include!("tests_parts/part_05.rs");
+    include!("tests_parts/part_06.rs");
+    include!("tests_parts/part_07.rs");
+    include!("tests_parts/part_08.rs");
+    include!("tests_parts/part_09.rs");
+    include!("tests_parts/part_10.rs");
+    include!("tests_parts/part_11.rs");
+    include!("tests_parts/part_12.rs");
+    include!("tests_parts/part_13.rs");
+    include!("tests_parts/part_14.rs");
+    include!("tests_parts/part_15.rs");
+    include!("tests_parts/part_16.rs");
+    include!("tests_parts/part_17.rs");
+    include!("tests_parts/part_18.rs");
+    include!("tests_parts/part_19.rs");
+    include!("tests_parts/part_20.rs");
+    include!("tests_parts/part_21.rs");
+}
