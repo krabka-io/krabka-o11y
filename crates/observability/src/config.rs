@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 /// `Loki`'s `reject_old_samples_max_age` default: samples older than this are

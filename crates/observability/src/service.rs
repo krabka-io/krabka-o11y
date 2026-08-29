@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn prometheus_alerts_from_query_result(

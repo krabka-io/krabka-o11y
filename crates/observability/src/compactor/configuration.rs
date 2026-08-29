@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn build_compactor_configured_object_store(

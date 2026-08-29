@@ -143,13 +143,19 @@ mod wal;
 
 pub use compactor::*;
 pub use config::*;
-pub use deletes::*;
-pub use deletes_api::*;
+pub(crate) use deletes::{
+    ActiveLogDeleteFilter, CompactorDeleteRequest, CompactorDeleteRequestResponse,
+    CompactorDeleteRequests, CompactorDeleteState, CreateDeleteRequestParams,
+    ListDeleteRequestsParams,
+};
+pub(crate) use deletes_api::{
+    active_log_delete_filters, active_log_delete_filters_from_requests, cancel_delete_request,
+    create_delete_request, list_delete_requests,
+};
 pub use distributor::*;
 pub use error::*;
 pub use http::*;
 pub use querier::*;
-pub use ruler::*;
 pub use service::*;
 pub use service_runtime::*;
 pub use wal::*;

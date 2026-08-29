@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn ring_status_page(instance: &'static str) -> Response {

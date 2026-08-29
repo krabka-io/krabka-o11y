@@ -1,7 +1,5 @@
-use assert2::check;
-use krabka_units::{bytes, bytes_per_sec};
-
 use super::{prelude::*, *};
+use assert2::check;
 
 /// The compaction span belongs to the producer's trace, taken from the
 /// first record that actually carries a `traceparent`. A record without

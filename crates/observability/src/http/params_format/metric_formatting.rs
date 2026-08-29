@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn format_metric_vector_set_expression(query: &str) -> Option<String> {

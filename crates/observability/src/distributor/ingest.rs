@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 /// Records one push-handler ingest outcome from the response status and returns

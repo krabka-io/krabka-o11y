@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn form_body_query(body: &Bytes) -> Result<String, HttpQueryError> {

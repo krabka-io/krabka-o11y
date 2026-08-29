@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 pub(crate) mod prelude {
     pub(crate) use std::{
         cmp::Ordering,

@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 /// Snapshots the hot-tail records that overlap `time_range`, plus the

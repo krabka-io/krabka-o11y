@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn parse_decimal_seconds_timestamp(value: &str) -> Option<i64> {

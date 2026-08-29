@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 /// Spawns a background task that retries `KafkaLogWalConsumer::connect` until

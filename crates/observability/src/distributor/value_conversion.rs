@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn otlp_value_to_json(value: &OtlpAnyValue) -> Value {

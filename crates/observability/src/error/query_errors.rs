@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn loki_error(status: StatusCode, error_type: &'static str, error: &str) -> Response {

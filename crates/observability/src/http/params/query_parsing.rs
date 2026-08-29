@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams, HttpQueryError> {

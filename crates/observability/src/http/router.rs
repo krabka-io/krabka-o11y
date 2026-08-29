@@ -1,4 +1,10 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
+use crate::ruler::{
+    create_loki_rule_group, delete_loki_rule_group, delete_loki_rule_namespace,
+    loki_page_not_found, loki_rule_group, loki_rule_namespace, loki_rules, prometheus_alerts,
+    prometheus_rules, ring_status_page, ruler_status_page,
+};
 
 pub fn loki_router(state: QuerierState) -> Router {
     loki_router_with_readiness(state, ServiceReadiness::ready())

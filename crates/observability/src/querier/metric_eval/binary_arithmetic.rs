@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn apply_metric_binary_arithmetic_to_series_with_left_operand(

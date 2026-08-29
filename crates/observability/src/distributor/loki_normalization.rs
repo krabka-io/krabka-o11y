@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn is_protobuf_content_type(headers: &HeaderMap) -> bool {

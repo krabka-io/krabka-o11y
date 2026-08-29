@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier(

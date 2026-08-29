@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) fn scalar_vector_query_is_vector(query: &str) -> bool {

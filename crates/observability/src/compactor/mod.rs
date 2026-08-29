@@ -1,3 +1,4 @@
+#[allow(clippy::wildcard_imports)]
 use super::*;
 
 pub(crate) mod configuration;
@@ -10,4 +11,4 @@ pub(crate) mod frontier;
 pub use frontier::*;
 #[path = "object_store.rs"]
 pub(crate) mod object_store_support;
-pub use object_store_support::*;
+pub(crate) use object_store_support::*;
