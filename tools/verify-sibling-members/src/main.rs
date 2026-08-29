@@ -498,19 +498,34 @@ pub fn write_sync(
     Ok(())
 }
 
+fn resolve_path(base: Option<&Path>, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else if let Some(base_dir) = base {
+        base_dir.join(path)
+    } else {
+        path
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    let workdir = std::env::var_os("BUILD_WORKING_DIRECTORY").map(PathBuf::from);
+    let cargo_toml = resolve_path(workdir.as_deref(), cli.cargo_toml);
+    let module_bazel = resolve_path(workdir.as_deref(), cli.module_bazel);
 
     let mut sibling_dirs = BTreeMap::new();
     for entry in cli.sibling_dirs {
         if let Some((name, path)) = entry.split_once('=') {
-            sibling_dirs.insert(name.to_string(), PathBuf::from(path));
+            let path_buf = resolve_path(workdir.as_deref(), PathBuf::from(path));
+            sibling_dirs.insert(name.to_string(), path_buf);
         }
     }
 
     println!("Verifying sibling members against Cargo.toml and MODULE.bazel...");
 
-    let res = match verify_workspace(&cli.cargo_toml, &cli.module_bazel, &sibling_dirs) {
+    let res = match verify_workspace(&cargo_toml, &module_bazel, &sibling_dirs) {
         Ok(res) => res,
         Err(err) => {
             eprintln!("\nError verifying sibling members: {err}");
@@ -521,8 +536,8 @@ fn main() -> ExitCode {
     if !res.is_valid {
         if cli.write {
             if let Err(err) = write_sync(
-                &cli.cargo_toml,
-                &cli.module_bazel,
+                &cargo_toml,
+                &module_bazel,
                 &res.expected_by_repo,
                 &res.patches,
             ) {
@@ -538,7 +553,7 @@ fn main() -> ExitCode {
             eprintln!("ERROR: {err}\n");
         }
         eprintln!(
-            "Run `cargo run -p verify-sibling-members -- --write` to update Cargo.toml and MODULE.bazel."
+            "Run `bazel run //:verify_sibling_members -- --write` or `cargo run -p verify-sibling-members -- --write` to update Cargo.toml and MODULE.bazel."
         );
         return ExitCode::FAILURE;
     }

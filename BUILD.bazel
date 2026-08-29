@@ -85,3 +85,9 @@ alias(
     name = "observability_bin",
     actual = "//crates/observability:krabka-observability",
 )
+
+alias(
+    name = "verify_sibling_members",
+    actual = "//tools/verify-sibling-members",
+)
+
