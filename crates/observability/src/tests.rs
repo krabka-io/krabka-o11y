@@ -1,0 +1,24 @@
+#[cfg(test)]
+mod tests {
+    include!("tests/compaction_and_query_limits.rs");
+    include!("tests/ingest_and_operations.rs");
+    include!("tests/scalar_rules_and_scans.rs");
+    include!("tests/hot_metrics_and_metadata.rs");
+    include!("tests/query_limits_and_timestamps.rs");
+    include!("tests/alerts_and_params.rs");
+    include!("tests/rules_and_expressions.rs");
+    include!("tests/durations_and_tail.rs");
+    include!("tests/scan_stats_and_samples.rs");
+    include!("tests/operators_and_alerts.rs");
+    include!("tests/vector_binary_operations.rs");
+    include!("tests/formatting_and_errors.rs");
+    include!("tests/cache_post_and_rules.rs");
+    include!("tests/detected_fields_and_params.rs");
+    include!("tests/service_and_authorization.rs");
+    include!("tests/hot_tail_frontier.rs");
+    include!("tests/shard_index_cache.rs");
+    include!("tests/runtime_policies.rs");
+    include!("tests/acl_quota_and_buffers.rs");
+    include!("tests/errors_labels_and_operators.rs");
+    include!("tests/patterns_and_prometheus_rules.rs");
+}
