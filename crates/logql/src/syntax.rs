@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::{
     ComparisonOp, DestinationLabel, DurationNanos, FieldFilter, FieldFilterExpression,
     FieldFilterLogicOp, FieldValue, IpMatcher, JsonExpressionPath, JsonExtraction,
@@ -12,9 +14,8 @@ use crate::{
         parse_bytes_literal, parse_prometheus_duration_literal,
     },
 };
-use std::fmt;
 
-/// A recursively composable LogQL expression.
+/// A recursively composable `LogQL` expression.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LogqlExpr {
     Stream {
@@ -65,7 +66,11 @@ pub enum LogqlExpr {
     },
 }
 
-/// Parse a complete, recursively nested LogQL expression.
+/// Parse a complete, recursively nested `LogQL` expression.
+///
+/// # Errors
+///
+/// Returns an error when the expression is malformed or contains an unsupported leaf query.
 pub fn parse_logql_expr(input: &str) -> Result<LogqlExpr, ParseError> {
     parse_expr(input.trim())
 }
@@ -84,12 +89,12 @@ fn parse_expr(input: &str) -> Result<LogqlExpr, ParseError> {
     }
     let mut candidate = None;
     scan_top_level(input, |at| {
-        if let Some((len, kind, precedence)) = operator_at(input, at) {
-            if candidate.as_ref().is_none_or(|(_, _, _, old)| {
+        if let Some((len, kind, precedence)) = operator_at(input, at)
+            && candidate.as_ref().is_none_or(|(_, _, _, old)| {
                 precedence < *old || (precedence == *old && precedence != 5)
-            }) {
-                candidate = Some((at, len, kind, precedence));
-            }
+            })
+        {
+            candidate = Some((at, len, kind, precedence));
         }
     })?;
     if let Some((at, len, kind, _precedence)) = candidate {
@@ -209,7 +214,7 @@ fn scan_top_level(input: &str, mut found: impl FnMut(usize)) -> Result<(), Parse
             ')' | ']' | '}' => {
                 depth = depth
                     .checked_sub(1)
-                    .ok_or_else(|| syntax_error("unmatched closing delimiter"))?
+                    .ok_or_else(|| syntax_error("unmatched closing delimiter"))?;
             }
             _ if depth == 0 => found(at),
             _ => {}
@@ -296,7 +301,7 @@ fn function_args<'a>(input: &'a str, name: &str) -> Result<Option<Vec<&'a str>>,
     let mut commas = Vec::new();
     scan_top_level(inner, |at| {
         if inner[at..].starts_with(',') {
-            commas.push(at)
+            commas.push(at);
         }
     })?;
     starts.extend(commas.iter().map(|x| x + 1));
@@ -330,6 +335,8 @@ fn parse_scalar_text(input: &str) -> bool {
 }
 
 impl LogqlExpr {
+    /// Return the original source for a stream or metric leaf.
+    #[must_use]
     pub fn source(&self) -> Option<&str> {
         match self {
             Self::Stream { source, .. } | Self::Metric { source, .. } => Some(source),
@@ -352,7 +359,7 @@ impl LogqlExpr {
     }
     fn format_at(&self, f: &mut fmt::Formatter<'_>, parent: u8, right: bool) -> fmt::Result {
         let precedence = self.precedence();
-        let parens = precedence < parent
+        let needs_parentheses = precedence < parent
             || (right
                 && precedence == parent
                 && !matches!(
@@ -362,12 +369,12 @@ impl LogqlExpr {
                         ..
                     }
                 ));
-        if parens {
+        if needs_parentheses {
             write!(f, "(")?;
         }
         match self {
             Self::Stream { source, .. } | Self::Metric { source, .. } | Self::Scalar(source) => {
-                write!(f, "{}", source.trim())?
+                write!(f, "{}", source.trim())?;
             }
             Self::Vector(expr) => {
                 write!(f, "vector(")?;
@@ -427,7 +434,7 @@ impl LogqlExpr {
                     false,
                 )?;
                 write!(f, " {}", arithmetic_text(*op))?;
-                format_matching(f, matching)?;
+                format_matching(f, matching.as_ref())?;
                 write!(f, " ")?;
                 right.format_at(
                     f,
@@ -447,7 +454,7 @@ impl LogqlExpr {
                 if *bool_modifier {
                     write!(f, " bool")?;
                 }
-                format_matching(f, matching)?;
+                format_matching(f, matching.as_ref())?;
                 write!(f, " ")?;
                 right.format_at(f, precedence, true)?;
             }
@@ -459,12 +466,12 @@ impl LogqlExpr {
             } => {
                 left.format_at(f, precedence, false)?;
                 write!(f, " {}", set_text(*op))?;
-                format_matching(f, matching)?;
+                format_matching(f, matching.as_ref())?;
                 write!(f, " ")?;
                 right.format_at(f, precedence, true)?;
             }
         }
-        if parens {
+        if needs_parentheses {
             write!(f, ")")?;
         }
         Ok(())
@@ -510,7 +517,8 @@ fn comparison_text(op: ComparisonOp) -> &'static str {
         ComparisonOp::GreaterEqual => ">=",
         ComparisonOp::Less => "<",
         ComparisonOp::LessEqual => "<=",
-        _ => "==",
+        ComparisonOp::RegexEqual => "=~",
+        ComparisonOp::RegexNotEqual => "!~",
     }
 }
 fn set_text(op: MetricBinarySetOp) -> &'static str {
@@ -522,7 +530,7 @@ fn set_text(op: MetricBinarySetOp) -> &'static str {
 }
 fn format_matching(
     f: &mut fmt::Formatter<'_>,
-    matching: &Option<MetricVectorMatching>,
+    matching: Option<&MetricVectorMatching>,
 ) -> fmt::Result {
     let Some(m) = matching else { return Ok(()) };
     let (labels, group, name) = match m {
@@ -533,10 +541,10 @@ fn format_matching(
     if let Some(group) = group {
         match group {
             MetricVectorGroupModifier::Left(labels) => {
-                write!(f, " group_left{}", format_labels(labels))?
+                write!(f, " group_left{}", format_labels(labels))?;
             }
             MetricVectorGroupModifier::Right(labels) => {
-                write!(f, " group_right{}", format_labels(labels))?
+                write!(f, " group_right{}", format_labels(labels))?;
             }
         }
     }
