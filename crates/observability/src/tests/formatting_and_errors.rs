@@ -478,3 +478,38 @@ pub(crate) fn formatting_a_logql_query_canonicalises_by_kind() {
         "a partial selector names what it wanted: {error}"
     );
 }
+
+/// Nested metric functions are formatted from `krabka-logql`'s recursive
+/// AST when the older HTTP-layer shape-specific formatters cannot represent
+/// the inner expression.
+#[test]
+pub(crate) fn formatting_uses_the_recursive_logql_ast_for_nested_expressions() {
+    let query = concat!(
+        r#"label_replace(label_replace(rate({app="web"}[5m]),"inner","$1","app","(.*)"),"#,
+        r#""outer","$1","inner","(.*)")"#,
+    );
+
+    check!(
+        super::prelude::format_logql_query(query).expect("the nested expression formats")
+            == concat!(
+                r#"label_replace(label_replace(rate({app="web"}[5m]), "inner", "$1", "app", "(.*)"), "#,
+                r#""outer", "$1", "inner", "(.*)")"#,
+            )
+    );
+}
+
+#[test]
+pub(crate) fn recursive_formatting_preserves_loki_specific_rejections() {
+    let queries = [
+        r#"sort(label_join(vector(1),"joined","/","app"))"#,
+        r#"(label_join(vector(1),"joined","/","app"))"#,
+        "sort(vector(-1))",
+    ];
+
+    for query in queries {
+        check!(
+            super::prelude::format_logql_query(query).is_err(),
+            "query: {query}"
+        );
+    }
+}

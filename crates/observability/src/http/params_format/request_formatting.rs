@@ -15,6 +15,7 @@ use crate::{
     split_query_param_pairs, split_top_level_arithmetic_query, split_top_level_comparison_query,
     split_top_level_set_query,
 };
+use krabka_logql::{LogqlExpr, parse_logql_expr};
 pub(crate) fn form_body_query(body: &Bytes) -> Result<String, HttpQueryError> {
     String::from_utf8(body.to_vec()).map_err(|_| HttpQueryError::InvalidPercentEncoding)
 }
@@ -120,6 +121,18 @@ pub(crate) fn format_logql_query(query: &str) -> Result<String, HttpQueryError> 
                 Ok(formatted)
             } else if let Ok(metric_query) = parse_metric_query(query) {
                 Ok(format_metric_query(&metric_query).unwrap_or_else(|| query.trim().to_string()))
+            } else if let Ok(expression) = parse_logql_expr(query) {
+                if logql_expression_contains_label_join(&expression) {
+                    return Err(HttpQueryError::LokiFormatPlainParse(
+                        "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER"
+                            .to_string(),
+                    ));
+                }
+                // The legacy formatters above preserve Loki's established
+                // canonical spelling for the expression shapes they support.
+                // The central recursive AST is the typed fallback for nested
+                // expressions those shallow parsers cannot represent.
+                Ok(expression.to_string())
             // The label_replace and binary arms below are shadowed: for every
             // query that could be constructed, the dedicated `format_*` branch
             // above accepts exactly what the corresponding `parse_*` here
@@ -145,6 +158,26 @@ pub(crate) fn format_logql_query(query: &str) -> Result<String, HttpQueryError> 
                 })
             }
         }
+    }
+}
+
+fn logql_expression_contains_label_join(expression: &LogqlExpr) -> bool {
+    match expression {
+        LogqlExpr::LabelJoin { .. } => true,
+        LogqlExpr::Vector(expression)
+        | LogqlExpr::LabelReplace {
+            expr: expression, ..
+        }
+        | LogqlExpr::Sort {
+            expr: expression, ..
+        } => logql_expression_contains_label_join(expression),
+        LogqlExpr::Arithmetic { left, right, .. }
+        | LogqlExpr::Comparison { left, right, .. }
+        | LogqlExpr::Set { left, right, .. } => {
+            logql_expression_contains_label_join(left)
+                || logql_expression_contains_label_join(right)
+        }
+        LogqlExpr::Stream { .. } | LogqlExpr::Metric { .. } | LogqlExpr::Scalar(_) => false,
     }
 }
 

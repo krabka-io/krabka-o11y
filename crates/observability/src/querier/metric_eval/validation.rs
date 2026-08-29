@@ -137,7 +137,7 @@ pub(crate) fn could_be_scalar_vector_expression(query: &str) -> bool {
             .sum::<usize>();
         return matches!(
             &trimmed[..ident_len],
-            "vector" | "label_replace" | "label_join"
+            "vector" | "label_replace" | "label_join" | "sort" | "sort_desc"
         );
     }
     false
