@@ -26,6 +26,7 @@ heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 assert2 = { workspace = true }
 arc-swap = { workspace = true }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
+krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-telemetry = { version = "0.4.0" }
 krabka-client-consumer = { version = "0.4.0" }
 krabka-client-producer = { version = "0.4.0" }

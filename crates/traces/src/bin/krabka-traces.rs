@@ -570,9 +570,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let shutdown = CancellationToken::new();
         let shutdown_task = shutdown.clone();
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                shutdown_task.cancel();
-            }
+            krabka_observability::shutdown_signal().await;
+            shutdown_task.cancel();
         });
 
         let role = async {
@@ -582,7 +581,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Target::LiveStore => run_live_store(cli, shutdown).await?,
                 Target::Querier => run_querier(cli, metrics, shutdown).await?,
                 Target::QueryFrontend => run_query_frontend(cli, shutdown).await?,
-                Target::Compactor => run_compactor(cli).await?,
+                Target::Compactor => run_compactor(cli, shutdown).await?,
                 Target::MetricsGenerator => run_metrics_generator(cli, shutdown).await?,
             }
             Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
@@ -1183,7 +1182,18 @@ async fn build_query_frontend_router(
     Ok(frontend::server::router_with_backend(qf))
 }
 
-async fn run_compactor(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn run_compactor(
+    cli: Cli,
+    shutdown: CancellationToken,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tokio::select! {
+        biased;
+        () = shutdown.cancelled() => Ok(()),
+        result = run_compactor_once(cli) => result,
+    }
+}
+
+async fn run_compactor_once(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let configured = build_object_store(&cli)?;
     let writer = BlockWriter::new(configured.store.clone());
     let trace_index_key = configured.object_key(&cli.trace_index_key);
