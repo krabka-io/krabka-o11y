@@ -1,5 +1,4 @@
-use super::prelude::*;
-
+use super::prelude::check;
 /// Vector arithmetic replaces each sample's value with `left op right`,
 /// keeping only the timestamps both sides carry. The operator is
 /// non-commutative here on purpose: subtraction and division both give a
@@ -40,7 +39,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
     let right = || series(&[(1, "2"), (2, "1"), (3, "1"), (4, "5"), (5, "5"), (6, "1")]);
     let apply = |op| {
         let mut output = right();
-        let kept = super::apply_metric_binary_arithmetic_to_series_with_left_operand(
+        let kept = super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
             &left,
             op,
@@ -86,7 +85,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
     // A division with no answer drops its sample rather than emitting one.
     let mut output = series(&[(1, "0")]);
     check!(
-        !super::apply_metric_binary_arithmetic_to_series_with_left_operand(
+        !super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
             &left,
             MetricScalarArithmeticOp::Divide,
@@ -97,7 +96,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
     let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
     let mut output = instant(1, "2");
     check!(
-        super::apply_metric_binary_arithmetic_to_series_with_left_operand(
+        super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
             &instant(1, "10"),
             MetricScalarArithmeticOp::Subtract,
@@ -107,7 +106,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
 
     let mut output = instant(1, "2");
     check!(
-        !super::apply_metric_binary_arithmetic_to_series_with_left_operand(
+        !super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
             &instant(2, "10"),
             MetricScalarArithmeticOp::Subtract,
@@ -161,7 +160,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
 
     let mut output = right();
     check!(
-        super::apply_metric_binary_comparison_to_series_with_left_operand(
+        super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
             ComparisonOp::Greater,
@@ -177,7 +176,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // side never had is still dropped, because there is nothing to compare.
     let mut output = right();
     check!(
-        super::apply_metric_binary_comparison_to_series_with_left_operand(
+        super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
             ComparisonOp::Greater,
@@ -197,7 +196,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // keeps exactly the samples `>` dropped.
     let mut output = right();
     check!(
-        super::apply_metric_binary_comparison_to_series_with_left_operand(
+        super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
             ComparisonOp::Less,
@@ -209,7 +208,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // Everything filtered out reports false so the caller drops the series.
     let mut output = series(&[(1, "99")]);
     check!(
-        !super::apply_metric_binary_comparison_to_series_with_left_operand(
+        !super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
             ComparisonOp::Greater,
@@ -220,7 +219,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // A left series with no values at all matches nothing.
     let mut output = right();
     check!(
-        !super::apply_metric_binary_comparison_to_series_with_left_operand(
+        !super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &serde_json::json!({"metric": {}}),
             ComparisonOp::Greater,
@@ -235,7 +234,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
     let mut output = instant(1, "1");
     check!(
-        super::apply_metric_binary_comparison_to_series_with_left_operand(
+        super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &instant(1, "10"),
             ComparisonOp::Greater,
@@ -247,7 +246,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
 
     let mut output = instant(1, "1");
     check!(
-        !super::apply_metric_binary_comparison_to_series_with_left_operand(
+        !super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &instant(2, "10"),
             ComparisonOp::Greater,
@@ -292,7 +291,7 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
     let right = range(&[2, 3]);
     let apply = |op| {
         let mut left = range(&[1, 2, 3, 4]);
-        let kept = super::apply_metric_binary_set_to_series(&mut left, &right, op);
+        let kept = super::prelude::apply_metric_binary_set_to_series(&mut left, &right, op);
         (kept, timestamps(&left))
     };
 
@@ -303,7 +302,7 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
     // When the filter empties the series it reports false, so the caller
     // can drop it rather than emitting an empty series.
     let mut left = range(&[1, 4]);
-    check!(!super::apply_metric_binary_set_to_series(
+    check!(!super::prelude::apply_metric_binary_set_to_series(
         &mut left,
         &right,
         MetricBinarySetOp::And
@@ -312,7 +311,7 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
 
     // `or` keeps a series the right side never matches at all.
     let mut left = range(&[9]);
-    check!(super::apply_metric_binary_set_to_series(
+    check!(super::prelude::apply_metric_binary_set_to_series(
         &mut left,
         &right,
         MetricBinarySetOp::Or
@@ -322,19 +321,19 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
     // same three rules apply to it.
     let instant = |ts: i64| serde_json::json!({"metric": {}, "value": [ts, ts.to_string()]});
     let mut matching = instant(5);
-    check!(super::apply_metric_binary_set_to_series(
+    check!(super::prelude::apply_metric_binary_set_to_series(
         &mut matching,
         &instant(5),
         MetricBinarySetOp::And
     ));
     let mut differing = instant(5);
-    check!(!super::apply_metric_binary_set_to_series(
+    check!(!super::prelude::apply_metric_binary_set_to_series(
         &mut differing,
         &instant(6),
         MetricBinarySetOp::And
     ));
     let mut differing = instant(5);
-    check!(super::apply_metric_binary_set_to_series(
+    check!(super::prelude::apply_metric_binary_set_to_series(
         &mut differing,
         &instant(6),
         MetricBinarySetOp::Unless
@@ -342,7 +341,7 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
 
     // A series with neither shape matches nothing.
     let mut empty = serde_json::json!({"metric": {}});
-    check!(!super::apply_metric_binary_set_to_series(
+    check!(!super::prelude::apply_metric_binary_set_to_series(
         &mut empty,
         &right,
         MetricBinarySetOp::Or
@@ -362,7 +361,7 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
 /// are equivalent mutations rather than gaps.
 #[test]
 pub(crate) fn a_top_level_set_split_needs_a_whole_word() {
-    let split = super::split_top_level_set_query;
+    let split = super::prelude::split_top_level_set_query;
 
     check!(split("a and b") == Some(("a ", "and", "b")));
     check!(split("a or b") == Some(("a ", "or", "b")));
@@ -400,7 +399,7 @@ pub(crate) fn a_top_level_set_split_needs_a_whole_word() {
 /// to right with no precedence: "a - b * c" splits at the minus.
 #[test]
 pub(crate) fn a_top_level_arithmetic_split_names_the_operator_it_found() {
-    let split = super::split_top_level_arithmetic_query;
+    let split = super::prelude::split_top_level_arithmetic_query;
 
     check!(split("a + b") == Some(("a ", "+", "b")));
     check!(split("a - b") == Some(("a ", "-", "b")));
@@ -432,7 +431,7 @@ pub(crate) fn a_top_level_arithmetic_split_names_the_operator_it_found() {
 /// split at instead.
 #[test]
 pub(crate) fn a_top_level_comparison_ignores_operators_nested_inside_the_query() {
-    let split = super::split_top_level_comparison_query;
+    let split = super::prelude::split_top_level_comparison_query;
 
     // Every operator, and the longest match wins: `>=` is not `>`.
     check!(split("up > 1") == Some(("up ", ">", "1")));

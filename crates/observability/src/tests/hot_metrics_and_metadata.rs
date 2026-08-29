@@ -1,5 +1,4 @@
-use super::prelude::*;
-
+use super::prelude::{BTreeMap, BTreeSet, BlockIndex, LabelIndex, Labels, check};
 /// `append_matching_hot_metric_record` folds one uncompacted WAL record
 /// into the samples for every evaluation window it belongs to. The window
 /// is HALF-OPEN -- `(end - range, end]` -- which is `rate()`'s own
@@ -20,7 +19,7 @@ pub(crate) async fn a_hot_metric_record_lands_in_every_window_that_contains_it()
     let record = |tenant: &str, timestamp_ns| {
         let mut labels = Labels::default();
         labels.insert("app".to_string(), "api".to_string());
-        super::WalLogRecord {
+        super::prelude::WalLogRecord {
             tenant: tenant.to_string(),
             labels,
             timestamp_ns,
@@ -41,14 +40,15 @@ pub(crate) async fn a_hot_metric_record_lands_in_every_window_that_contains_it()
     // or neither.
     let eval_times = [20_000_000_000_i64, 30_000_000_000_i64];
 
-    let windows_hit = |record: &super::WalLogRecord, frontier: &super::CompactionFrontier| {
+    let windows_hit = |record: &super::prelude::WalLogRecord,
+                       frontier: &super::prelude::CompactionFrontier| {
         let mut samples = BTreeMap::new();
-        super::append_matching_hot_metric_record(
+        super::prelude::append_matching_hot_metric_record(
             &mut samples,
             &plan,
             record,
             frontier,
-            super::MetricWindow {
+            super::prelude::MetricWindow {
                 query: &query,
                 eval_times: &eval_times,
                 range_ns,
@@ -62,7 +62,7 @@ pub(crate) async fn a_hot_metric_record_lands_in_every_window_that_contains_it()
             .copied()
             .collect::<BTreeSet<_>>()
     };
-    let open = super::CompactionFrontier::new(0);
+    let open = super::prelude::CompactionFrontier::new(0);
 
     // Exactly at a window's end: inside that window.
     check!(
@@ -87,7 +87,7 @@ pub(crate) async fn a_hot_metric_record_lands_in_every_window_that_contains_it()
 
     // A record the blocks already hold is skipped, so the hot tier does
     // not double-count it.
-    let compacted = super::CompactionFrontier::new(21_000_000_000);
+    let compacted = super::prelude::CompactionFrontier::new(21_000_000_000);
     check!(
         windows_hit(&record("tenant", 20_000_000_000), &compacted).is_empty(),
         "already compacted"
@@ -101,12 +101,12 @@ pub(crate) async fn a_hot_metric_record_lands_in_every_window_that_contains_it()
     let offset_query = parse_metric_query("count_over_time({app=\"api\"}[10s] offset 5s)")
         .expect("the offset query parses");
     let mut samples = BTreeMap::new();
-    super::append_matching_hot_metric_record(
+    super::prelude::append_matching_hot_metric_record(
         &mut samples,
         &plan,
         &record("tenant", 15_000_000_000),
         &open,
-        super::MetricWindow {
+        super::prelude::MetricWindow {
             query: &offset_query,
             eval_times: &[20_000_000_000],
             range_ns,
@@ -140,9 +140,9 @@ pub(crate) async fn a_hot_metric_record_lands_in_every_window_that_contains_it()
 /// through the same `||`.
 #[test]
 pub(crate) fn a_label_replace_binary_expression_names_its_own_kind() {
-    use super::LabelReplaceMetricBinaryExpression as Expression;
+    use super::prelude::LabelReplaceMetricBinaryExpression as Expression;
 
-    let parse = super::parse_label_replace_metric_binary_expression;
+    let parse = super::prelude::parse_label_replace_metric_binary_expression;
     let replace = r#"label_replace(up,"a","b","c","d")"#;
 
     // Arithmetic, with the label_replace on each side in turn.
@@ -212,7 +212,7 @@ pub(crate) fn a_label_replace_binary_expression_names_its_own_kind() {
 /// floor to a negative offset.
 #[test]
 pub(crate) fn a_sample_buckets_onto_the_grid_measured_from_the_query_start() {
-    let bucket = super::sample_time_bucket;
+    let bucket = super::prelude::sample_time_bucket;
     // 1_000 is deliberately not a multiple of 300.
     let (start, step) = (1_000_i64, 300_i64);
 
@@ -278,12 +278,12 @@ pub(crate) async fn missing_metadata_blocks_fall_back_to_their_indexed_fingerpri
     let mut index = BlockIndex::default();
     index.insert(present);
     index.insert(missing);
-    let state = super::QuerierState::new(dir.path(), LabelIndex::default(), index);
+    let state = super::prelude::QuerierState::new(dir.path(), LabelIndex::default(), index);
 
     let series = |time_range| {
         let state = &state;
         async move {
-            super::metadata_fingerprints_in_time_range(state, "tenant", time_range)
+            super::prelude::metadata_fingerprints_in_time_range(state, "tenant", time_range)
                 .await
                 .expect("the metadata reads")
         }
@@ -362,7 +362,8 @@ pub(crate) async fn counting_index_stats_reads_only_the_rows_a_plan_would() {
     )
     .expect("the block writes");
 
-    let state = super::QuerierState::new(dir.path(), LabelIndex::default(), BlockIndex::default());
+    let state =
+        super::prelude::QuerierState::new(dir.path(), LabelIndex::default(), BlockIndex::default());
     let plan = |fingerprints: &[u64], start_ns, end_ns| StreamPlan {
         tenant: "tenant".to_string(),
         time_range: TimeRange::new(start_ns, end_ns).expect("a valid range"),
@@ -376,7 +377,7 @@ pub(crate) async fn counting_index_stats_reads_only_the_rows_a_plan_would() {
     let count = |plan: StreamPlan| {
         let state = &state;
         async move {
-            super::count_index_stats_entries(state, &plan)
+            super::prelude::count_index_stats_entries(state, &plan)
                 .await
                 .expect("the block reads")
         }

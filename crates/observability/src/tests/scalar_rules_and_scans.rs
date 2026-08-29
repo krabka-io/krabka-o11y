@@ -1,5 +1,4 @@
-use super::prelude::*;
-
+use super::prelude::{BTreeMap, BTreeSet, LabelIndex, Labels, MetricValue, check};
 /// `metric_scalar_comparison_matches` compares a sample against a scalar,
 /// with a flag saying which side the scalar was written on. That flag only
 /// matters for the four ordered operators -- `1 > x` and `x > 1` disagree
@@ -18,7 +17,7 @@ pub(crate) fn a_scalar_comparison_answers_every_operator_from_both_sides() {
     let one = MetricValue::new(1, 1);
     let two = MetricValue::new(2, 1);
     let matches = |sample, op, scalar, scalar_on_left| {
-        super::metric_scalar_comparison_matches(sample, op, scalar, scalar_on_left)
+        super::prelude::metric_scalar_comparison_matches(sample, op, scalar, scalar_on_left)
     };
 
     // (ordering of left against right, sample, scalar, scalar_on_left)
@@ -88,21 +87,21 @@ pub(crate) fn paging_rule_groups_resumes_after_the_token_it_handed_back() {
     let groups = || {
         ["a", "b", "c", "d", "e"]
             .iter()
-            .map(|name| super::PrometheusRuleGroupResponse {
+            .map(|name| super::prelude::PrometheusRuleGroupResponse {
                 token: (*name).to_string(),
                 value: serde_json::json!({"name": name}),
             })
             .collect::<Vec<_>>()
     };
     let page = |limit: Option<usize>, token: Option<&str>| {
-        super::PrometheusRulesFilters {
+        super::prelude::PrometheusRulesFilters {
             group_limit: limit,
             group_next_token: token.map(str::to_string),
-            ..super::PrometheusRulesFilters::default()
+            ..super::prelude::PrometheusRulesFilters::default()
         }
         .page_groups(groups())
     };
-    let names = |page: &super::PrometheusRulesPage| {
+    let names = |page: &super::prelude::PrometheusRulesPage| {
         page.groups
             .iter()
             .map(|group| group["name"].as_str().expect("a name").to_string())
@@ -182,7 +181,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         fingerprints: BTreeSet::new(),
         blocks: Vec::new(),
     };
-    let record = |tenant: &str, timestamp_ns, line: &str| super::WalLogRecord {
+    let record = |tenant: &str, timestamp_ns, line: &str| super::prelude::WalLogRecord {
         tenant: tenant.to_string(),
         labels: labels.clone(),
         timestamp_ns,
@@ -201,9 +200,9 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
             }]}
         })
     };
-    let open = super::CompactionFrontier::new(0);
-    let counted = |value: &serde_json::Value, hot: &[super::WalLogRecord]| {
-        super::count_loki_stream_result_hot_tail_lines(value, &plan, hot, &open)
+    let open = super::prelude::CompactionFrontier::new(0);
+    let counted = |value: &serde_json::Value, hot: &[super::prelude::WalLogRecord]| {
+        super::prelude::count_loki_stream_result_hot_tail_lines(value, &plan, hot, &open)
     };
 
     // One record, one matching line.
@@ -237,7 +236,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         ..plan.clone()
     };
     check!(
-        super::count_loki_stream_result_hot_tail_lines(
+        super::prelude::count_loki_stream_result_hot_tail_lines(
             &response(&[(10, "a")]),
             &later_plan,
             &[record("tenant", 10, "a")],
@@ -245,9 +244,9 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         ) == 0,
         "before the range start, but after the frontier"
     );
-    let compacted = super::CompactionFrontier::new(50);
+    let compacted = super::prelude::CompactionFrontier::new(50);
     check!(
-        super::count_loki_stream_result_hot_tail_lines(
+        super::prelude::count_loki_stream_result_hot_tail_lines(
             &response(&[(10, "a")]),
             &plan,
             &[record("tenant", 10, "a")],
@@ -292,11 +291,11 @@ pub(crate) fn a_log_row_is_appended_only_when_the_plan_asked_for_it() {
     let metadata = Labels::default();
     let appended = |fingerprint, timestamp_ns| {
         let mut streams = BTreeMap::new();
-        let result = super::append_matching_log_row(
+        let result = super::prelude::append_matching_log_row(
             &mut streams,
             &plan,
             &label_index,
-            super::QueryRow {
+            super::prelude::QueryRow {
                 fingerprint,
                 timestamp_ns,
                 line: "line",
@@ -336,11 +335,11 @@ pub(crate) fn a_log_row_is_appended_only_when_the_plan_asked_for_it() {
     wants_nameless.fingerprints.insert(nameless);
     let mut streams = BTreeMap::new();
     check!(matches!(
-        super::append_matching_log_row(
+        super::prelude::append_matching_log_row(
             &mut streams,
             &wants_nameless,
             &label_index,
-            super::QueryRow {
+            super::prelude::QueryRow {
                 fingerprint: nameless,
                 timestamp_ns: 50,
                 line: "line",
@@ -348,6 +347,6 @@ pub(crate) fn a_log_row_is_appended_only_when_the_plan_asked_for_it() {
             },
             &[],
         ),
-        Err(super::QueryError::MissingSeriesLabels { .. })
+        Err(super::prelude::QueryError::MissingSeriesLabels { .. })
     ));
 }

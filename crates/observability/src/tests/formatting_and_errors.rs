@@ -1,12 +1,11 @@
-use super::prelude::*;
-
+use super::prelude::{BlockIndex, LabelIndex, Labels, QuerierState, SeriesParams, check};
 /// `format_loki_offset_duration_ns` spells a duration the way `Loki` does,
 /// picking the largest unit that fits. Each `>=` is the boundary between
 /// two units, so each is checked exactly at its own threshold and one
 /// step below it -- a `<` there sends the value to the next unit down.
 #[test]
 pub(crate) fn a_loki_offset_duration_picks_the_largest_unit_that_fits() {
-    let format = super::format_loki_offset_duration_ns;
+    let format = super::prelude::format_loki_offset_duration_ns;
 
     // Zero is a duration, not an absence. A `<= 0` guard would lose it.
     check!(format(0) == Some("0s".to_string()));
@@ -72,17 +71,37 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
 
     // The first stream takes 2 of the 5, leaving 3 for the second.
     // Adding instead would leave 7, and dividing would leave 2.
-    check!(kept(&super::apply_loki_stream_limit(streams(&[2, 10]), Some(5))) == vec![2, 3]);
+    check!(
+        kept(&super::prelude::apply_loki_stream_limit(
+            streams(&[2, 10]),
+            Some(5)
+        )) == vec![2, 3]
+    );
 
     // A stream that exhausts the budget empties every stream after it,
     // and emptied streams are dropped entirely.
-    check!(kept(&super::apply_loki_stream_limit(streams(&[5, 10]), Some(5))) == vec![5]);
+    check!(
+        kept(&super::prelude::apply_loki_stream_limit(
+            streams(&[5, 10]),
+            Some(5)
+        )) == vec![5]
+    );
 
     // Under budget, nothing is touched.
-    check!(kept(&super::apply_loki_stream_limit(streams(&[2, 2]), Some(5))) == vec![2, 2]);
+    check!(
+        kept(&super::prelude::apply_loki_stream_limit(
+            streams(&[2, 2]),
+            Some(5)
+        )) == vec![2, 2]
+    );
 
     // No limit means no truncation, and a non-streams result is left alone.
-    check!(kept(&super::apply_loki_stream_limit(streams(&[9]), None)) == vec![9]);
+    check!(
+        kept(&super::prelude::apply_loki_stream_limit(
+            streams(&[9]),
+            None
+        )) == vec![9]
+    );
 }
 
 /// The two `LogQL` token namers turn a parser's own wording into the token
@@ -90,8 +109,8 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
 /// rewrite when deleted, so every one is pinned to its own answer.
 #[test]
 pub(crate) fn logql_parse_errors_name_the_tokens_loki_clients_expect() {
-    let expected = super::expected_logql_token;
-    let unexpected = super::unexpected_logql_token;
+    let expected = super::prelude::expected_logql_token;
+    let unexpected = super::prelude::unexpected_logql_token;
 
     check!(expected("expected '\"'") == "STRING");
     check!(expected("expected closing quote") == "STRING");
@@ -130,7 +149,7 @@ pub(crate) fn logql_parse_errors_name_the_tokens_loki_clients_expect() {
 /// their offsets differ by the distance between the cases.
 #[test]
 pub(crate) fn hex_digits_map_across_all_three_ranges_and_nothing_else() {
-    let value = super::hex_value;
+    let value = super::prelude::hex_value;
 
     check!(value(b'0') == Some(0), "the low edge of the digits");
     check!(value(b'9') == Some(9), "and the high edge");
@@ -160,7 +179,7 @@ pub(crate) fn hex_digits_map_across_all_three_ranges_and_nothing_else() {
 /// nine digits.
 #[test]
 pub(crate) fn decimal_second_timestamps_scale_their_fraction_by_position() {
-    let parse = super::parse_decimal_seconds_timestamp;
+    let parse = super::prelude::parse_decimal_seconds_timestamp;
 
     check!(parse("0.0") == Some(0));
     check!(parse("1.0") == Some(1_000_000_000));
@@ -211,7 +230,7 @@ pub(crate) fn decimal_second_timestamps_scale_their_fraction_by_position() {
 /// literal, and refuse anything that is not one.
 #[test]
 pub(crate) fn a_scalar_literal_ends_where_the_number_does() {
-    let len = super::scalar_literal_len;
+    let len = super::prelude::scalar_literal_len;
 
     check!(len("1") == Some(1));
     check!(len("1234") == Some(4));
@@ -263,7 +282,7 @@ pub(crate) async fn metadata_label_sets_are_distinct_filtered_and_stripped() {
             end: None,
             since: None,
         };
-        super::metadata_label_sets(state, "t", &params)
+        super::prelude::metadata_label_sets(state, "t", &params)
             .await
             .expect("readable")
     }
@@ -327,17 +346,21 @@ pub(crate) async fn metadata_label_sets_bound_the_hot_tail_to_the_window_and_the
     // the trait says so, because a coarse time index returns whole buckets
     // -- and the caller re-applies the exact bound. This one returns
     // everything, which is the widest superset there is.
-    struct CoarseHotTail(Vec<super::WalLogRecord>);
-    impl super::LogHotTail for CoarseHotTail {
-        fn records(&self) -> Vec<super::WalLogRecord> {
+    struct CoarseHotTail(Vec<super::prelude::WalLogRecord>);
+    impl super::prelude::LogHotTail for CoarseHotTail {
+        fn records(&self) -> Vec<super::prelude::WalLogRecord> {
             self.0.clone()
         }
-        fn records_in_range(&self, _start_ns: i64, _end_ns: i64) -> Vec<super::WalLogRecord> {
+        fn records_in_range(
+            &self,
+            _start_ns: i64,
+            _end_ns: i64,
+        ) -> Vec<super::prelude::WalLogRecord> {
             self.0.clone()
         }
     }
 
-    let record = |tenant: &str, app: &str, timestamp_ns: i64| super::WalLogRecord {
+    let record = |tenant: &str, app: &str, timestamp_ns: i64| super::prelude::WalLogRecord {
         tenant: tenant.to_string(),
         labels: [("app".to_string(), app.to_string())]
             .into_iter()
@@ -366,7 +389,7 @@ pub(crate) async fn metadata_label_sets_bound_the_hot_tail_to_the_window_and_the
         end: Some(200),
         since: None,
     };
-    let sets = super::metadata_label_sets(&state, "t", &params)
+    let sets = super::prelude::metadata_label_sets(&state, "t", &params)
         .await
         .expect("readable");
 
@@ -388,7 +411,8 @@ pub(crate) async fn metadata_label_sets_bound_the_hot_tail_to_the_window_and_the
 /// returning an empty string passed the whole suite.
 #[test]
 pub(crate) fn formatting_a_logql_query_canonicalises_by_kind() {
-    let format = |query: &str| super::format_logql_query(query).map_err(|error| error.to_string());
+    let format =
+        |query: &str| super::prelude::format_logql_query(query).map_err(|error| error.to_string());
 
     // Stream selectors and pipelines come back as they went in.
     check!(format(r#"{app="web"}"#).unwrap() == r#"{app="web"}"#);

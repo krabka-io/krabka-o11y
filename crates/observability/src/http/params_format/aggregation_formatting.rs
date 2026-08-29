@@ -1,6 +1,9 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    Quantile, RangeAggregation, ScalarSample, ScalarVectorExpressionResult, VectorAggregation,
+    VectorAggregationOp, VectorGrouping, format_logql_quoted_string,
+    parse_formatted_vector_function, parse_scalar_sample, parse_vector_arithmetic_operator,
+    scalar_vector_expression_result,
+};
 pub(crate) fn format_vector_aggregation_query(
     aggregation: &VectorAggregation,
     inner: &str,
@@ -490,3 +493,4 @@ pub(crate) fn parse_vector_group_modifier(query: &str, position: usize) -> Optio
     }
     None
 }
+use std::fmt::Write as _;

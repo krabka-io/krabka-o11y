@@ -1,5 +1,5 @@
-use super::prelude::*;
-
+use super::prelude::{BTreeSet, Labels, check};
+use super::prelude::{CompactorRunError, HttpQueryError};
 /// `prometheus_alert_key_matches_rule` picks out the alerts belonging to
 /// one rule that were NOT seen in this evaluation -- the ones that may need
 /// retaining as resolved. All four conditions are and-ed, so each is broken
@@ -9,7 +9,7 @@ use super::prelude::*;
 /// which is what stops a firing alert being retained twice.
 #[test]
 pub(crate) fn a_retained_alert_key_belongs_to_its_rule_and_was_not_just_seen() {
-    let key = |tenant: &str, alert: &str, query: &str| super::PrometheusAlertKey {
+    let key = |tenant: &str, alert: &str, query: &str| super::prelude::PrometheusAlertKey {
         tenant: tenant.to_string(),
         alert_name: alert.to_string(),
         query: query.to_string(),
@@ -18,7 +18,7 @@ pub(crate) fn a_retained_alert_key_belongs_to_its_rule_and_was_not_just_seen() {
     let subject = key("tenant", "HighErrors", "up");
     let active = BTreeSet::new();
     let templates = Labels::default();
-    let params = |active_keys| super::PrometheusRetainedAlertParams {
+    let params = |active_keys| super::prelude::PrometheusRetainedAlertParams {
         tenant: "tenant",
         alert_name: "HighErrors",
         query: "up",
@@ -29,21 +29,21 @@ pub(crate) fn a_retained_alert_key_belongs_to_its_rule_and_was_not_just_seen() {
         annotation_templates: &templates,
     };
 
-    check!(super::prometheus_alert_key_matches_rule(
+    check!(super::prelude::prometheus_alert_key_matches_rule(
         &subject,
         &params(&active)
     ));
 
     // Each of the three identity fields, wrong on its own.
-    check!(!super::prometheus_alert_key_matches_rule(
+    check!(!super::prelude::prometheus_alert_key_matches_rule(
         &key("other", "HighErrors", "up"),
         &params(&active)
     ));
-    check!(!super::prometheus_alert_key_matches_rule(
+    check!(!super::prelude::prometheus_alert_key_matches_rule(
         &key("tenant", "Other", "up"),
         &params(&active)
     ));
-    check!(!super::prometheus_alert_key_matches_rule(
+    check!(!super::prelude::prometheus_alert_key_matches_rule(
         &key("tenant", "HighErrors", "down"),
         &params(&active)
     ));
@@ -52,13 +52,13 @@ pub(crate) fn a_retained_alert_key_belongs_to_its_rule_and_was_not_just_seen() {
     let mut seen = BTreeSet::new();
     seen.insert(subject.clone());
     check!(
-        !super::prometheus_alert_key_matches_rule(&subject, &params(&seen)),
+        !super::prelude::prometheus_alert_key_matches_rule(&subject, &params(&seen)),
         "an alert still firing is not also retained"
     );
     // A different key being active does not exclude this one.
     let mut other_seen = BTreeSet::new();
     other_seen.insert(key("tenant", "HighErrors", "other"));
-    check!(super::prometheus_alert_key_matches_rule(
+    check!(super::prelude::prometheus_alert_key_matches_rule(
         &subject,
         &params(&other_seen)
     ));
@@ -90,13 +90,14 @@ pub(crate) fn a_rule_matches_only_when_every_active_filter_accepts_it() {
         matchers,
         pipeline: Vec::new(),
     };
-    let filters =
-        |kind, names: &[&str], selectors: Vec<StreamQuery>| super::PrometheusRulesFilters {
+    let filters = |kind, names: &[&str], selectors: Vec<StreamQuery>| {
+        super::prelude::PrometheusRulesFilters {
             rule_kind: kind,
             rule_names: names.iter().map(|name| (*name).to_string()).collect(),
             label_selectors: selectors,
-            ..super::PrometheusRulesFilters::default()
-        };
+            ..super::prelude::PrometheusRulesFilters::default()
+        }
+    };
 
     // No filters at all accepts everything.
     check!(filters(None, &[], Vec::new()).matches_rule(&rule, &source));
@@ -167,7 +168,7 @@ pub(crate) fn a_rule_matches_only_when_every_active_filter_accepts_it() {
 /// failure.
 #[test]
 pub(crate) fn patterns_params_require_three_and_take_the_last_of_each() {
-    let parse = |query: &str| super::parse_patterns_params(Some(query));
+    let parse = |query: &str| super::prelude::parse_patterns_params(Some(query));
 
     let params = parse("query=up&start=100&end=200").expect("all three present");
     check!(params.query == "up");
@@ -202,7 +203,7 @@ pub(crate) fn patterns_params_require_three_and_take_the_last_of_each() {
         Err(HttpQueryError::MissingQueryParameter("end"))
     ));
     check!(matches!(
-        super::parse_patterns_params(None),
+        super::prelude::parse_patterns_params(None),
         Err(HttpQueryError::MissingQueryParameter("query"))
     ));
 
@@ -217,7 +218,7 @@ pub(crate) fn patterns_params_require_three_and_take_the_last_of_each() {
 /// each case checks the remainder, not just the modifier.
 #[test]
 pub(crate) fn a_vector_matching_modifier_reports_where_it_ended() {
-    let parse = super::parse_vector_matching_modifier;
+    let parse = super::prelude::parse_vector_matching_modifier;
     let after = |query: &str, position: usize| {
         parse(query, position).map(|(modifier, end)| (modifier, query[end..].to_string()))
     };
@@ -264,7 +265,7 @@ pub(crate) fn logfmt_parser_flags_carry_their_own_leading_space() {
         let extraction = LogfmtExtraction::same("level").expect("a valid extraction");
         let config = LogfmtParserConfig::with_options(vec![extraction], strict, keep_empty)
             .expect("the options are valid");
-        super::format_logfmt_parser_flags(&config)
+        super::prelude::format_logfmt_parser_flags(&config)
     };
 
     check!(flags(false, false) == "", "no flags, no space");
@@ -282,7 +283,7 @@ pub(crate) fn logfmt_parser_flags_carry_their_own_leading_space() {
 /// two lines the same kind of line.
 #[test]
 pub(crate) fn a_log_pattern_token_masks_only_its_variable_part() {
-    let token = super::log_pattern_token;
+    let token = super::prelude::log_pattern_token;
 
     // A bare token is masked whole, or kept whole.
     check!(token("connected") == "connected", "a word is not variable");
@@ -322,7 +323,7 @@ pub(crate) fn a_log_pattern_token_masks_only_its_variable_part() {
 /// parsed elsewhere.
 #[test]
 pub(crate) fn only_a_number_or_a_vector_function_could_be_a_scalar_vector_expression() {
-    let could_be = super::could_be_scalar_vector_expression;
+    let could_be = super::prelude::could_be_scalar_vector_expression;
 
     // Numbers and the characters a numeric expression can open with.
     check!(could_be("1"));
@@ -383,7 +384,7 @@ pub(crate) fn copying_descriptor_labels_refuses_a_series_the_source_cannot_name(
 
     // Both series are known, so both are copied.
     let mut target = LabelIndex::default();
-    super::insert_descriptor_labels(
+    super::prelude::insert_descriptor_labels(
         &mut target,
         &source,
         "tenant",
@@ -402,7 +403,12 @@ pub(crate) fn copying_descriptor_labels_refuses_a_series_the_source_cannot_name(
         labels
     });
     check!(matches!(
-        super::insert_descriptor_labels(&mut target, &source, "tenant", &descriptor(&[stranger])),
+        super::prelude::insert_descriptor_labels(
+            &mut target,
+            &source,
+            "tenant",
+            &descriptor(&[stranger])
+        ),
         Err(CompactorRunError::MissingSeriesLabels { .. })
     ));
 
@@ -410,14 +416,19 @@ pub(crate) fn copying_descriptor_labels_refuses_a_series_the_source_cannot_name(
     // wrong tenant is just as unknown.
     let mut target = LabelIndex::default();
     check!(
-        super::insert_descriptor_labels(&mut target, &source, "other", &descriptor(&[known]))
-            .is_err(),
+        super::prelude::insert_descriptor_labels(
+            &mut target,
+            &source,
+            "other",
+            &descriptor(&[known])
+        )
+        .is_err(),
         "a fingerprint is not global"
     );
 
     // A descriptor with no series copies nothing and succeeds.
     let mut target = LabelIndex::default();
-    super::insert_descriptor_labels(&mut target, &source, "tenant", &descriptor(&[]))
+    super::prelude::insert_descriptor_labels(&mut target, &source, "tenant", &descriptor(&[]))
         .expect("an empty descriptor is not an error");
     check!(target.labels_for("tenant", known).is_none());
 }

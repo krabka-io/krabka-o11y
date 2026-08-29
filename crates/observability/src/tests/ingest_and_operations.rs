@@ -1,5 +1,6 @@
-use super::prelude::*;
-
+use super::prelude::{BlockIndex, LabelIndex, Labels, Time, check};
+use super::prelude::{DistributorError, HttpQueryError};
+use krabka_units::convert::TimeExt as _;
 /// Both ends of the `Loki` ingestion window are strict comparisons: a
 /// timestamp exactly at the oldest or the newest acceptable value is
 /// accepted. That is the only input separating `<` from `<=`, and against
@@ -13,7 +14,7 @@ pub(crate) fn the_loki_ingestion_window_accepts_its_own_boundaries() {
     let now = 1_000_000_000_000_i64;
     let labels = Labels::default();
     let check_at = |timestamp: i64, max_age, grace| {
-        super::validate_loki_timestamp_window_at(timestamp, now, &labels, max_age, grace)
+        super::prelude::validate_loki_timestamp_window_at(timestamp, now, &labels, max_age, grace)
     };
     let hour_ns = hours(1).nanos_i64();
 
@@ -63,8 +64,10 @@ pub(crate) fn the_loki_ingestion_window_accepts_its_own_boundaries() {
 /// power is NaN, which must not reach a series as a sample.
 #[test]
 pub(crate) fn scalar_division_and_power_refuse_what_has_no_answer() {
-    let scalar = super::ScalarSample::new;
-    let value = |result: Option<super::ScalarSample>| result.and_then(super::ScalarSample::to_f64);
+    let scalar = super::prelude::ScalarSample::new;
+    let value = |result: Option<super::prelude::ScalarSample>| {
+        result.and_then(super::prelude::ScalarSample::to_f64)
+    };
 
     // Exact division, and a repeating fraction held as a rational rather
     // than rounded on the way in.
@@ -107,7 +110,7 @@ pub(crate) fn scalar_division_and_power_refuse_what_has_no_answer() {
 /// which is what decides precedence when the handler merges two sources.
 #[test]
 pub(crate) fn a_log_level_parameter_names_why_it_was_refused() {
-    let parse = |query: &str| super::parse_log_level_param(Some(query));
+    let parse = |query: &str| super::prelude::parse_log_level_param(Some(query));
 
     for level in ["debug", "info", "warn", "error"] {
         check!(parse(&format!("log_level={level}")).ok().as_deref() == Some(level));
@@ -148,7 +151,7 @@ pub(crate) fn a_log_level_parameter_names_why_it_was_refused() {
         Err(HttpQueryError::MissingQueryParameter("log_level"))
     ));
     check!(matches!(
-        super::parse_log_level_param(None),
+        super::prelude::parse_log_level_param(None),
         Err(HttpQueryError::MissingQueryParameter("log_level"))
     ));
 
@@ -168,7 +171,7 @@ pub(crate) async fn a_log_level_post_prefers_the_body_over_the_query_string() {
         let query = query.map(str::to_string);
         let body = axum::body::Bytes::from(body.to_string());
         async move {
-            let response = super::log_level_post(axum::extract::RawQuery(query), body)
+            let response = super::prelude::log_level_post(axum::extract::RawQuery(query), body)
                 .await
                 .into_response();
             let status = response.status();
@@ -235,25 +238,25 @@ pub(crate) async fn a_log_level_post_prefers_the_body_over_the_query_string() {
 /// its TTL, is not reachable against a real clock and is not attempted.
 #[test]
 pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
-    let fresh = super::DynamicIndexCache {
+    let fresh = super::prelude::DynamicIndexCache {
         cache_ttl: krabka_units::hours(1),
         shard_cache_ttl: krabka_units::hours(1),
-        ..super::DynamicIndexCache::default()
+        ..super::prelude::DynamicIndexCache::default()
     };
-    let stale = super::DynamicIndexCache {
+    let stale = super::prelude::DynamicIndexCache {
         cache_ttl: Time::ZERO,
         shard_cache_ttl: Time::ZERO,
-        ..super::DynamicIndexCache::default()
+        ..super::prelude::DynamicIndexCache::default()
     };
-    let key = || super::DynamicIndexCacheKey::TenantManifest {
+    let key = || super::prelude::DynamicIndexCacheKey::TenantManifest {
         tenant: "tenant".to_string(),
     };
-    let shard_key = || super::DynamicShardIndexCacheKey {
+    let shard_key = || super::prelude::DynamicShardIndexCacheKey {
         tenant: "tenant".to_string(),
         start_ns: 0,
         end_ns: 10,
     };
-    let held = |cache: &super::DynamicIndexCache| {
+    let held = |cache: &super::prelude::DynamicIndexCache| {
         (
             cache.entries.lock().expect("the cache lock is held").len(),
             cache
@@ -286,7 +289,7 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
     // A key that was never inserted is a miss without disturbing anything.
     check!(
         fresh
-            .get(&super::DynamicIndexCacheKey::TenantManifest {
+            .get(&super::prelude::DynamicIndexCacheKey::TenantManifest {
                 tenant: "other".to_string(),
             })
             .is_none()
@@ -299,7 +302,7 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
     fresh.insert(key(), LabelIndex::default(), BlockIndex::default());
     fresh.insert_shard_index(shard_key(), LabelIndex::default(), BlockIndex::default());
     fresh.insert_shard_ranges(
-        super::DynamicShardRangesCacheKey {
+        super::prelude::DynamicShardRangesCacheKey {
             tenant: "tenant".to_string(),
         },
         0,
@@ -331,10 +334,10 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
     // a lookup consulting the wrong one behaves identically, so here they
     // are opposites: the manifest expires immediately and the shard index
     // does not, then the reverse.
-    let short_manifest = super::DynamicIndexCache {
+    let short_manifest = super::prelude::DynamicIndexCache {
         cache_ttl: Time::ZERO,
         shard_cache_ttl: krabka_units::hours(1),
-        ..super::DynamicIndexCache::default()
+        ..super::prelude::DynamicIndexCache::default()
     };
     short_manifest.insert(key(), LabelIndex::default(), BlockIndex::default());
     short_manifest.insert_shard_index(shard_key(), LabelIndex::default(), BlockIndex::default());
@@ -347,10 +350,10 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
         "but the shard ttl is an hour"
     );
 
-    let short_shard = super::DynamicIndexCache {
+    let short_shard = super::prelude::DynamicIndexCache {
         cache_ttl: krabka_units::hours(1),
         shard_cache_ttl: Time::ZERO,
-        ..super::DynamicIndexCache::default()
+        ..super::prelude::DynamicIndexCache::default()
     };
     short_shard.insert(key(), LabelIndex::default(), BlockIndex::default());
     short_shard.insert_shard_index(shard_key(), LabelIndex::default(), BlockIndex::default());
@@ -382,7 +385,7 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
 /// `e` anyway. Both are pinned by behaviour that cannot distinguish them.
 #[test]
 pub(crate) fn a_decimal_sample_literal_parses_to_an_exact_rational() {
-    let parse = super::parse_decimal_sample_literal;
+    let parse = super::prelude::parse_decimal_sample_literal;
 
     // Whole numbers and plain decimals, unreduced.
     check!(parse("1") == Some((1, 1)));

@@ -1,6 +1,13 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    ActiveLogDeleteFilter, ActiveLogDeleteFilterError, Arc, BTreeMap, BlockDescriptor, BlockIndex,
+    BlockKey, BlockStoreError, CompactionCommitError, CompactionError, CompactionOffsetCommitter,
+    Deserialize, Error, LabelIndex, Labels, LogCompactionIndexOutput, LogRow, LogWalConsumer,
+    Mutex, ObjectPath, ObjectStore, Offset, PartitionIndex, Serialize, SeriesFingerprint, Time,
+    TimeRange, WalConsumerError, WalRecordDecodeError,
+    compact_log_block_to_object_store_with_index_output, decode_kafka_wal_record_envelope,
+    is_deleted_log_entry,
+};
+use object_store::ObjectStoreExt;
 #[derive(Debug, Error)]
 pub enum KafkaWalCompactionError {
     #[error(transparent)]

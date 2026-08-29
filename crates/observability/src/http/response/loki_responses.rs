@@ -1,5 +1,11 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::json;
+use crate::{
+    ACCEPT, Arc, ArrayRef, BTreeMap, DataType, Duration, Field, Float64Array,
+    FormattedMetricSeries, HeaderMap, HttpQueryError, Labels, LokiDirection, MetricValue,
+    RecordBatch, Response, Schema, StringArray, TimeUnit, TimestampNanosecondArray, Value,
+    loki_parquet_batch_response, loki_parquet_label_array, loki_success_value,
+    parse_metric_sample_value,
+};
 
 pub(crate) fn loki_streams_response(streams: BTreeMap<Labels, Vec<[String; 2]>>) -> Value {
     loki_streams_response_with_warnings(streams, &[])
@@ -476,3 +482,5 @@ pub(crate) fn loki_parquet_labels(
         })
         .collect()
 }
+use datafusion::arrow::array::Array as _;
+use num_traits::FromPrimitive as _;

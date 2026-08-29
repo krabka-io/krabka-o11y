@@ -181,8 +181,6 @@ pub(crate) mod prelude {
     };
 }
 
-pub(crate) use prelude::*;
-
 mod acl_quota_and_buffers;
 mod alerts_and_params;
 mod cache_post_and_rules;

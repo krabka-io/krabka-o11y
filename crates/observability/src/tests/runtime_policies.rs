@@ -1,5 +1,15 @@
-use super::prelude::*;
-
+use super::prelude::{
+    Arc, StreamScanOptions, async_trait, minutes, next_compactor_object_store_backoff, secs,
+    validate_compactor_policy, validate_distributor_policy,
+};
+use super::prelude::{
+    BlockIndex, BufferedLogHotTail, ClientResourcePolicy, CompactionFrontierSource,
+    InMemoryWalSink, IngestLimitError, LabelIndex, LogIngestLimiter, LogQueryAuthorizer,
+    QuerierState, QueryAuthorizationError, ServiceConfig, ServiceDependencies, ServiceMetrics,
+    SharedCompactionFrontier, WalLogRecord, admin_connection_options, build_service_dependencies,
+    check, millis,
+};
+use clap::Parser as _;
 #[test]
 pub(crate) fn distributor_policy_rejects_zero_and_invalid_bounds() {
     for argument in [

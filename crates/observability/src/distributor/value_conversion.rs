@@ -1,5 +1,5 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::proto_any_value;
+use crate::{BTreeMap, DistributorError, OtlpAnyValue, ProtoAnyValue, Value};
 
 pub(crate) fn otlp_value_to_json(value: &OtlpAnyValue) -> Value {
     match value {

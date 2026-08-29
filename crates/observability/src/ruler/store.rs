@@ -1,6 +1,6 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    Arc, ErrorKind, FsPath, LokiRuleStoreError, LokiRuleTenants, Mutex, PathBuf, SharedLokiRules,
+};
 impl SharedLokiRules {
     pub(crate) fn from_data_root(root: impl AsRef<FsPath>) -> Result<Self, LokiRuleStoreError> {
         let path = loki_ruler_rules_path(root.as_ref());

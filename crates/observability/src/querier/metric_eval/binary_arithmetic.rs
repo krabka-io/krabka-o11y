@@ -1,5 +1,10 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::json;
+use crate::{
+    ComparisonOp, MetricScalarArithmeticOp, MetricVectorGroupModifier, MetricVectorMatching, Value,
+    format_metric_value, include_metric_group_labels, metric_scalar_arithmetic_value,
+    metric_scalar_comparison_matches, metric_series_labels, metric_vector_group_modifier,
+    metric_vector_matching_key, parse_decimal_seconds_timestamp, parse_metric_sample_value,
+};
 
 pub(crate) fn apply_metric_binary_arithmetic_to_series_with_left_operand(
     output_series: &mut Value,
@@ -420,3 +425,4 @@ pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
         matches
     }
 }
+use num_traits::FromPrimitive as _;

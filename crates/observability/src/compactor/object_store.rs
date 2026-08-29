@@ -1,6 +1,9 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    Arc, CompactionFrontierRefreshSource, ConfiguredObjectStore, LocalFileSystem,
+    LogDeleteRequestStoreError, ObjectPath, ObjectStore, ServiceConfig, ServiceConfigError,
+    SharedCompactionFrontier, SharedLogDeleteRequests, Url, parse_url_opts,
+    querier_object_store_prefix, shared_compaction_frontier_from_object_store,
+};
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn build_configured_object_store(
     config: &ServiceConfig,

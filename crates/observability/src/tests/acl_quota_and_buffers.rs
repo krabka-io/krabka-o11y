@@ -1,5 +1,18 @@
-use super::prelude::*;
-
+use super::prelude::{
+    AclOperation, AllowAllIngestLimiter, Arc, AtomicBool, BTreeMap, CONTENT_ENCODING, CONTENT_TYPE,
+    DistributorState, HeaderMap, InMemoryWalSink, IngestQuotaBucket, KafkaWalHeader, Labels,
+    NonZeroUsize, PatternType, PermissionType, ResourceType, ServiceMetrics, Time, WalLogRecord,
+    acl_entry, bytes, bytes_per_sec, check, decode_loki_http_body, encode_varint,
+    has_native_kafka_log_headers, hot_tail_bucket_key, is_loki_json_content_type, millis, minutes,
+    secs, validate_ingest_body_limit,
+};
+use super::prelude::{
+    ByteSize, acl_matches_tenant_wal_read, acl_matches_tenant_wal_write, async_trait,
+    check_tenant_wal_read_acl, check_tenant_wal_write_acl, ingest_quota_bytes,
+    matches_acl_topic_pattern, measured_size,
+};
+use super::prelude::{Offset, PartitionIndex};
+use krabka_units::convert::{ByteSizeExt as _, TimeExt as _};
 #[test]
 pub(crate) fn acl_helpers_require_topic_operation_principal_and_pattern() {
     let allow_write = acl_entry(
@@ -271,7 +284,7 @@ pub(crate) fn a_hot_tail_buffer_range_query_loses_no_record_to_its_buckets() {
         position: None,
     };
 
-    let tail = super::BufferedLogHotTail::with_bucket_width(minutes(1));
+    let tail = super::prelude::BufferedLogHotTail::with_bucket_width(minutes(1));
     tail.append_records(vec![record(0), record(minute), record(minute * 2)]);
 
     let stamps = |start: i64, end: i64| {
@@ -301,9 +314,9 @@ pub(crate) fn a_hot_tail_buffer_range_query_loses_no_record_to_its_buckets() {
 /// position would be retried forever.
 #[test]
 pub(crate) fn only_an_object_store_compactor_error_is_classified_as_one() {
-    use super::{CompactionFrontierStoreError, CompactorRunError};
+    use super::prelude::{CompactionFrontierStoreError, CompactorRunError};
 
-    check!(super::compactor_run_error_is_object_store(
+    check!(super::prelude::compactor_run_error_is_object_store(
         &CompactorRunError::Frontier(CompactionFrontierStoreError::ObjectStore(
             object_store::Error::NotFound {
                 path: "p".to_string(),
@@ -311,10 +324,10 @@ pub(crate) fn only_an_object_store_compactor_error_is_classified_as_one() {
             }
         ))
     ));
-    check!(!super::compactor_run_error_is_object_store(
+    check!(!super::prelude::compactor_run_error_is_object_store(
         &CompactorRunError::MissingCommitPosition
     ));
-    check!(!super::compactor_run_error_is_object_store(
+    check!(!super::prelude::compactor_run_error_is_object_store(
         &CompactorRunError::Frontier(CompactionFrontierStoreError::InvalidVersion {
             expected: 1,
             actual: 2,
@@ -332,36 +345,36 @@ pub(crate) async fn accumulating_a_wal_batch_stops_when_empty_or_full() {
     struct ScriptedConsumer {
         pub(crate) batches: std::collections::VecDeque<Vec<WalRecordForTest>>,
     }
-    type WalRecordForTest = super::KafkaWalRecord;
+    type WalRecordForTest = super::prelude::KafkaWalRecord;
 
     #[async_trait]
-    impl super::LogWalConsumer for ScriptedConsumer {
+    impl super::prelude::LogWalConsumer for ScriptedConsumer {
         async fn poll(
             &mut self,
             _timeout: Time,
-        ) -> Result<Vec<super::KafkaWalRecord>, super::WalConsumerError> {
+        ) -> Result<Vec<super::prelude::KafkaWalRecord>, super::prelude::WalConsumerError> {
             Ok(self.batches.pop_front().unwrap_or_default())
         }
         async fn commit_compacted(
             &mut self,
-            _position: super::WalPosition,
-        ) -> Result<(), super::WalConsumerError> {
+            _position: super::prelude::WalPosition,
+        ) -> Result<(), super::prelude::WalConsumerError> {
             Ok(())
         }
     }
 
-    let record = |offset: i64| super::KafkaWalRecord {
+    let record = |offset: i64| super::prelude::KafkaWalRecord {
         value: Vec::new(),
         partition: PartitionIndex(0),
         offset: Offset(offset),
         timestamp_ms: None,
         headers: Vec::new(),
     };
-    let poll = |batches: Vec<Vec<super::KafkaWalRecord>>, max: usize| async move {
+    let poll = |batches: Vec<Vec<super::prelude::KafkaWalRecord>>, max: usize| async move {
         let mut consumer = ScriptedConsumer {
             batches: batches.into_iter().collect(),
         };
-        super::poll_accumulated_log_compaction_records(
+        super::prelude::poll_accumulated_log_compaction_records(
             &mut consumer,
             secs(1),
             secs(5),

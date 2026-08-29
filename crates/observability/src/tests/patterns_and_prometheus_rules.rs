@@ -1,5 +1,9 @@
-use super::prelude::*;
-
+use super::prelude::{
+    BTreeMap, BTreeSet, BlockIndex, CompactionFrontier, HeaderMap, LabelIndex, Labels,
+    PrometheusRulesFilters, QuerierState, StreamPlan, StreamQuery, TimeRange, check,
+    count_loki_metric_result_hot_tail_samples, format_metric_range_selector, json,
+    log_line_pattern, parse_metric_query, pattern_value_is_variable,
+};
 /// The patterns scan drops a row outside the query window, and the window
 /// is half-open: a row exactly on the start counts, one exactly on the end
 /// does not. Nothing had scanned a block through this endpoint, so the two
@@ -51,7 +55,7 @@ pub(crate) async fn a_patterns_scan_keeps_the_window_half_open() {
 
     let mut headers = HeaderMap::new();
     headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
-    let value = super::execute_patterns_query(
+    let value = super::prelude::execute_patterns_query(
         &state,
         &headers,
         Some("query=%7Bapp%3D%22web%22%7D&start=10&end=30&step=1h"),

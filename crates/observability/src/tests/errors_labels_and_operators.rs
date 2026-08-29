@@ -1,5 +1,17 @@
-use super::prelude::*;
-
+use super::prelude::{
+    BTreeMap, BlockIndex, CompactorDeleteRequest, HeaderMap, LabelIndex, ListDeleteRequestsParams,
+    OtlpAnyValue, OtlpArrayValue, OtlpKeyValue, OtlpKeyValueList, ProtoAnyValue, ProtoKeyValue,
+    QuerierState, TimeRange, check, contains_log_level_token, delete_request_overlaps_filter,
+    discover_detected_level_label, is_log_level_word_byte, json,
+    loki_json_push_streams_parse_error, loki_label_set, loki_push_label_parse_error,
+    loki_structured_metadata_value_parse_error, otlp_severity_number_to_string, otlp_timestamp_ns,
+    otlp_value_to_json, parse_cancel_delete_request_params, parse_create_delete_request_params,
+    parse_list_delete_requests_params, parse_loki_delete_timestamp_query_param,
+    previous_char_boundary, proto_value_to_json, ranges_overlap,
+};
+use super::prelude::{
+    loki_json_push_payload_parse_error, loki_proto_label_parse_error, proto_any_value,
+};
 #[test]
 pub(crate) fn loki_error_contexts_respect_utf8_boundaries_and_offsets() {
     let body = "{\"streams\":\"not-array\"}";
@@ -143,7 +155,7 @@ pub(crate) fn an_empty_object_field_is_removed_and_nothing_else_is() {
         "null": null,
     });
     for field in ["empty", "full", "array", "null"] {
-        super::remove_empty_object_field(&mut value, field);
+        super::prelude::remove_empty_object_field(&mut value, field);
     }
     check!(
         value == serde_json::json!({"full": {"a": 1}, "array": [], "null": null}),
@@ -153,7 +165,7 @@ pub(crate) fn an_empty_object_field_is_removed_and_nothing_else_is() {
     // A value that is not an object at all is left alone rather than
     // panicking on the way past.
     let mut scalar = serde_json::json!(7);
-    super::remove_empty_object_field(&mut scalar, "empty");
+    super::prelude::remove_empty_object_field(&mut scalar, "empty");
     check!(scalar == serde_json::json!(7));
 }
 
@@ -162,13 +174,13 @@ pub(crate) fn an_empty_object_field_is_removed_and_nothing_else_is() {
 /// it falls to the catch-all and the operator simply stops existing.
 #[test]
 pub(crate) fn every_metric_set_operator_maps_to_its_own_variant() {
-    use super::MetricBinarySetOp;
+    use super::prelude::MetricBinarySetOp;
 
-    check!(super::parse_metric_set_operator("and") == Some(MetricBinarySetOp::And));
-    check!(super::parse_metric_set_operator("or") == Some(MetricBinarySetOp::Or));
-    check!(super::parse_metric_set_operator("unless") == Some(MetricBinarySetOp::Unless));
-    check!(super::parse_metric_set_operator("nor") == None);
-    check!(super::parse_metric_set_operator("") == None);
+    check!(super::prelude::parse_metric_set_operator("and") == Some(MetricBinarySetOp::And));
+    check!(super::prelude::parse_metric_set_operator("or") == Some(MetricBinarySetOp::Or));
+    check!(super::prelude::parse_metric_set_operator("unless") == Some(MetricBinarySetOp::Unless));
+    check!(super::prelude::parse_metric_set_operator("nor") == None);
+    check!(super::prelude::parse_metric_set_operator("") == None);
 }
 
 #[test]
@@ -301,7 +313,7 @@ pub(crate) fn delete_request_query_parsing_and_overlap_boundaries() {
 /// else.
 #[test]
 pub(crate) fn cancelling_a_delete_request_takes_only_that_tenant_s() {
-    let request = |tenant: &str, request_id: &str| super::CompactorDeleteRequest {
+    let request = |tenant: &str, request_id: &str| super::prelude::CompactorDeleteRequest {
         tenant: tenant.to_string(),
         request_id: request_id.to_string(),
         query: r#"{app="api"}"#.to_string(),
@@ -310,8 +322,8 @@ pub(crate) fn cancelling_a_delete_request_takes_only_that_tenant_s() {
         status: "received".to_string(),
         created_at: 0,
     };
-    let state = super::CompactorDeleteState {
-        delete_requests: super::SharedLogDeleteRequests::default(),
+    let state = super::prelude::CompactorDeleteState {
+        delete_requests: super::prelude::SharedLogDeleteRequests::default(),
     };
     state
         .delete_requests
@@ -326,7 +338,7 @@ pub(crate) fn cancelling_a_delete_request_takes_only_that_tenant_s() {
 
     let mut headers = HeaderMap::new();
     headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
-    super::execute_cancel_delete_request(&state, &headers, Some("request_id=delete-1"))
+    super::prelude::execute_cancel_delete_request(&state, &headers, Some("request_id=delete-1"))
         .expect("the cancel succeeds");
 
     let left = state
@@ -371,7 +383,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
     for (name, response) in [
         (
             "detected_fields",
-            super::detected_fields_post(
+            super::prelude::detected_fields_post(
                 State(state.clone()),
                 headers.clone(),
                 axum::extract::RawQuery(None),
@@ -381,7 +393,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
         ),
         (
             "detected_labels",
-            super::detected_labels_post(
+            super::prelude::detected_labels_post(
                 State(state.clone()),
                 headers.clone(),
                 axum::extract::RawQuery(None),
@@ -391,7 +403,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
         ),
         (
             "index_volume",
-            super::index_volume_post(
+            super::prelude::index_volume_post(
                 State(state.clone()),
                 headers.clone(),
                 axum::extract::RawQuery(None),
@@ -401,7 +413,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
         ),
         (
             "label_names",
-            super::api_prom_label_names_post(
+            super::prelude::api_prom_label_names_post(
                 State(state.clone()),
                 headers.clone(),
                 axum::extract::RawQuery(None),

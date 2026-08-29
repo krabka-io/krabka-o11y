@@ -1,6 +1,15 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    BlockDescriptor, BrokerBackedIngestLimiter, ClientResourcePolicy, ConfiguredObjectStore,
+    KafkaLogWalConsumer, KafkaLogWalSink, ObjectPath, ObjectStore, Role, ServiceConfig,
+    ServiceConfigError, ServiceDependencies, ServiceRuntimeError, TenantCompactionIndexCache, Time,
+    advance_and_persist_compaction_frontier, build_configured_object_store,
+    compactor_delete_requests_for_config, effective_object_store_prefix,
+    load_existing_compaction_frontier,
+    materialize_delete_requests_in_existing_local_manifest_blocks,
+    materialize_deletes_then_compact_next_kafka_wal_batch, sleep,
+};
+use krabka_units::convert::StdDurationExt;
+use krabka_units::convert::TimeExt;
 pub(crate) fn build_compactor_configured_object_store(
     config: &ServiceConfig,
     object_store: Option<&dyn ObjectStore>,

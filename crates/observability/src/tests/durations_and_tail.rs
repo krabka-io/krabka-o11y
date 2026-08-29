@@ -1,12 +1,12 @@
-use super::prelude::*;
-
+use super::prelude::MetricValue;
+use super::prelude::{BTreeMap, Labels, check};
 /// `format_loki_duration_ns` composes a duration from the largest unit
 /// down, SKIPPING units that contribute nothing -- so 3661s is "1h1m1s"
 /// and not "1h1m1s0ms0us0ns". Zero is the one duration spelled with a unit
 /// it does not contain, because "" would not read as a duration at all.
 #[test]
 pub(crate) fn a_loki_duration_composes_only_the_units_it_needs() {
-    let format = super::format_loki_duration_ns;
+    let format = super::prelude::format_loki_duration_ns;
 
     // Each unit alone.
     check!(format(3_600_000_000_000) == Some("1h".to_string()));
@@ -44,7 +44,7 @@ pub(crate) fn a_loki_duration_composes_only_the_units_it_needs() {
 /// both.
 #[test]
 pub(crate) fn a_bytes_literal_needs_a_number_and_a_unit_it_knows() {
-    let is_bytes = super::is_bytes_literal;
+    let is_bytes = super::prelude::is_bytes_literal;
 
     for unit in [
         "B", "kB", "KB", "MB", "GB", "TB", "KiB", "MiB", "GiB", "TiB",
@@ -92,7 +92,7 @@ pub(crate) fn a_bytes_literal_needs_a_number_and_a_unit_it_knows() {
 /// out of order, which is worse than sending them late.
 #[test]
 pub(crate) fn a_tail_holds_back_records_newer_than_its_delay() {
-    let record = |timestamp_ns| super::WalLogRecord {
+    let record = |timestamp_ns| super::prelude::WalLogRecord {
         tenant: "tenant".to_string(),
         labels: Labels::default(),
         timestamp_ns,
@@ -100,7 +100,7 @@ pub(crate) fn a_tail_holds_back_records_newer_than_its_delay() {
         structured_metadata: BTreeMap::new(),
         position: None,
     };
-    let count = super::eligible_tail_record_count;
+    let count = super::prelude::eligible_tail_record_count;
     // Comfortably either side of now, so the wall clock cannot straddle
     // them however long the test takes to reach this line.
     let old = 1_000_000_000_000_i64;
@@ -123,7 +123,7 @@ pub(crate) fn a_tail_holds_back_records_newer_than_its_delay() {
     // one-nanosecond delay moves the cutoff too little to tell.
     let hour_ns = 3_600 * 1_000_000_000_i64;
     check!(
-        count(&[record(super::current_unix_time_ns())], hour_ns) == 0,
+        count(&[record(super::prelude::current_unix_time_ns())], hour_ns) == 0,
         "a record stamped now is newer than an hour ago"
     );
 
@@ -171,7 +171,7 @@ pub(crate) fn a_tail_frame_limit_is_spent_across_streams_in_order() {
 
     // The first stream takes 2 of the 5 and the second takes the rest.
     check!(
-        kept(&super::apply_loki_tail_frame_limit(
+        kept(&super::prelude::apply_loki_tail_frame_limit(
             frame(&[2, 10]),
             Some(5)
         )) == vec![2, 3]
@@ -180,26 +180,40 @@ pub(crate) fn a_tail_frame_limit_is_spent_across_streams_in_order() {
     // and emptied streams are dropped rather than sent with no values --
     // the same rule as the search path.
     check!(
-        kept(&super::apply_loki_tail_frame_limit(
+        kept(&super::prelude::apply_loki_tail_frame_limit(
             frame(&[5, 10]),
             Some(5)
         )) == vec![5]
     );
-    check!(kept(&super::apply_loki_tail_frame_limit(frame(&[2, 2]), Some(5))) == vec![2, 2]);
-    check!(kept(&super::apply_loki_tail_frame_limit(frame(&[9]), None)) == vec![9]);
     check!(
-        kept(&super::apply_loki_tail_frame_limit(frame(&[9]), Some(0))).is_empty(),
+        kept(&super::prelude::apply_loki_tail_frame_limit(
+            frame(&[2, 2]),
+            Some(5)
+        )) == vec![2, 2]
+    );
+    check!(
+        kept(&super::prelude::apply_loki_tail_frame_limit(
+            frame(&[9]),
+            None
+        )) == vec![9]
+    );
+    check!(
+        kept(&super::prelude::apply_loki_tail_frame_limit(
+            frame(&[9]),
+            Some(0)
+        ))
+        .is_empty(),
         "a zero limit empties every stream, and empty streams are dropped"
     );
 
     // Emptiness is about the streams array, not the values in it.
-    check!(super::tail_frame_is_empty(&frame(&[])));
-    check!(super::tail_frame_is_empty(&serde_json::json!({})));
+    check!(super::prelude::tail_frame_is_empty(&frame(&[])));
+    check!(super::prelude::tail_frame_is_empty(&serde_json::json!({})));
     check!(
-        !super::tail_frame_is_empty(&frame(&[0])),
+        !super::prelude::tail_frame_is_empty(&frame(&[0])),
         "a stream carrying no values is still a stream"
     );
-    check!(!super::tail_frame_is_empty(&frame(&[1])));
+    check!(!super::prelude::tail_frame_is_empty(&frame(&[1])));
 }
 
 /// `consume_hot_metric_sample` spends one unit of a per-series, per-instant
@@ -223,43 +237,43 @@ pub(crate) fn consuming_a_hot_metric_sample_spends_its_budget_once_per_unit() {
     counts.insert(key(&labels), 2_u64);
 
     // Two units budgeted, so two succeed and the third does not.
-    check!(super::consume_hot_metric_sample(
+    check!(super::prelude::consume_hot_metric_sample(
         &mut counts,
         &labels,
         &sample
     ));
-    check!(super::consume_hot_metric_sample(
+    check!(super::prelude::consume_hot_metric_sample(
         &mut counts,
         &labels,
         &sample
     ));
     check!(
-        !super::consume_hot_metric_sample(&mut counts, &labels, &sample),
+        !super::prelude::consume_hot_metric_sample(&mut counts, &labels, &sample),
         "the budget is spent, not merely present"
     );
     check!(counts[&key(&labels)] == 0, "and it stops at zero");
 
     // A different series has its own budget, not this one's.
     check!(
-        !super::consume_hot_metric_sample(&mut counts, &other, &sample),
+        !super::prelude::consume_hot_metric_sample(&mut counts, &other, &sample),
         "an uncounted series has nothing to spend"
     );
 
     // A different instant of the SAME series likewise: the key is the pair.
     let later = serde_json::json!([1_700_000_001, "1"]);
-    check!(!super::consume_hot_metric_sample(
+    check!(!super::prelude::consume_hot_metric_sample(
         &mut counts,
         &labels,
         &later
     ));
 
     // A sample with no timestamp at all.
-    check!(!super::consume_hot_metric_sample(
+    check!(!super::prelude::consume_hot_metric_sample(
         &mut counts,
         &labels,
         &serde_json::json!([])
     ));
-    check!(!super::consume_hot_metric_sample(
+    check!(!super::prelude::consume_hot_metric_sample(
         &mut counts,
         &labels,
         &serde_json::json!("bare")
@@ -272,7 +286,7 @@ pub(crate) fn consuming_a_hot_metric_sample_spends_its_budget_once_per_unit() {
 /// is simply wrong.
 #[test]
 pub(crate) fn a_loki_vector_sample_reads_its_value_and_not_its_timestamp() {
-    let value = |sample: serde_json::Value| super::loki_vector_sample_value(&sample);
+    let value = |sample: serde_json::Value| super::prelude::loki_vector_sample_value(&sample);
     let instant = |timestamp, sample_value| serde_json::json!({"metric": {}, "value": [timestamp, sample_value]});
 
     check!(value(instant(1_700_000_000_i64, "42")) == Some(MetricValue::new(42, 1)));
@@ -296,7 +310,7 @@ pub(crate) fn a_loki_vector_sample_reads_its_value_and_not_its_timestamp() {
 /// itself -- which is why the ordering test is `<=` and not `<`.
 #[test]
 pub(crate) fn a_prometheus_duration_literal_runs_from_larger_units_to_smaller() {
-    let is_duration = super::is_prometheus_duration_literal;
+    let is_duration = super::prelude::is_prometheus_duration_literal;
 
     // Every unit, in the one order that is allowed.
     check!(is_duration("1y2w3d4h5m6s7ms8us9ns"));
@@ -375,7 +389,7 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
     let right = series(&[(1, "2"), (6, "1")]);
     let apply = |op| {
         let mut left = series(&[(1, "10"), (2, "20"), (3, "20"), (6, "7")]);
-        let kept = super::apply_metric_binary_arithmetic_to_series(&mut left, &right, op);
+        let kept = super::prelude::apply_metric_binary_arithmetic_to_series(&mut left, &right, op);
         (kept, pairs(&left))
     };
 
@@ -392,7 +406,7 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
     // Everything dropped reports false so the caller can discard the
     // series rather than emit one with no samples.
     let mut orphan = series(&[(9, "1")]);
-    check!(!super::apply_metric_binary_arithmetic_to_series(
+    check!(!super::prelude::apply_metric_binary_arithmetic_to_series(
         &mut orphan,
         &right,
         MetricScalarArithmeticOp::Subtract,
@@ -400,7 +414,7 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
 
     // A right series with no values matches nothing at all.
     let mut left = series(&[(1, "10")]);
-    check!(!super::apply_metric_binary_arithmetic_to_series(
+    check!(!super::prelude::apply_metric_binary_arithmetic_to_series(
         &mut left,
         &serde_json::json!({"metric": {}}),
         MetricScalarArithmeticOp::Subtract,
@@ -410,7 +424,7 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
     // single sample.
     let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
     let mut left = instant(1, "10");
-    check!(super::apply_metric_binary_arithmetic_to_series(
+    check!(super::prelude::apply_metric_binary_arithmetic_to_series(
         &mut left,
         &instant(1, "2"),
         MetricScalarArithmeticOp::Subtract,

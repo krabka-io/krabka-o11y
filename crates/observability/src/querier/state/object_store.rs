@@ -1,5 +1,8 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::{
+    Arc, BlockIndex, ConfiguredObjectStore, LabelIndex, ObjectPath, ObjectStore,
+    QuerierIndexSource, QuerierState, ServiceConfig, ServiceConfigError,
+    build_querier_state_with_object_store_prefix,
+};
 
 pub(crate) fn querier_object_store_inputs<'a>(
     config: &'a ServiceConfig,

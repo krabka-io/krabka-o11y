@@ -1,5 +1,5 @@
-use super::prelude::*;
-
+use super::prelude::MetricScalarArithmeticOp;
+use super::prelude::check;
 /// `parse_metric_arithmetic_operator` names the six `PromQL` scalar
 /// operators. The variants are asserted pairwise distinct, so an arm
 /// returning a neighbour's operator cannot pass -- and every unrecognised
@@ -7,7 +7,7 @@ use super::prelude::*;
 /// would compute the wrong arithmetic instead of failing the query.
 #[test]
 pub(crate) fn every_promql_scalar_operator_parses_to_its_own_variant() {
-    let parse = super::parse_metric_arithmetic_operator;
+    let parse = super::prelude::parse_metric_arithmetic_operator;
 
     check!(parse("+") == Some(MetricScalarArithmeticOp::Add));
     check!(parse("-") == Some(MetricScalarArithmeticOp::Subtract));
@@ -46,7 +46,7 @@ pub(crate) fn every_promql_scalar_operator_parses_to_its_own_variant() {
 /// rather than a half-parsed modifier.
 #[test]
 pub(crate) fn a_leading_vector_group_modifier_is_peeled_with_its_labels() {
-    let split = super::split_leading_vector_group_modifier;
+    let split = super::prelude::split_leading_vector_group_modifier;
 
     // No modifier: the query comes back whole.
     check!(split("foo") == (None, "foo"));
@@ -91,7 +91,7 @@ pub(crate) fn a_leading_vector_group_modifier_is_peeled_with_its_labels() {
 /// alert is evaluated three times here against one shared state.
 #[test]
 pub(crate) fn an_alert_fires_once_it_has_held_for_its_configured_duration() {
-    let states = super::SharedPrometheusAlertStates::default();
+    let states = super::prelude::SharedPrometheusAlertStates::default();
     let fields: serde_yaml::Mapping =
         serde_yaml::from_str("for: 5m\n").expect("the rule fields parse");
     let result = serde_json::json!({
@@ -105,7 +105,7 @@ pub(crate) fn an_alert_fires_once_it_has_held_for_its_configured_duration() {
     let hold_ns = 5 * 60 * 1_000_000_000_i64;
     let started = 1_000_000_000_000_i64;
     let evaluate = |at| {
-        super::prometheus_alerts_from_query_result(
+        super::prelude::prometheus_alerts_from_query_result(
             &states,
             "tenant",
             "HighErrors",
@@ -142,10 +142,10 @@ pub(crate) fn an_alert_fires_once_it_has_held_for_its_configured_duration() {
 
     // A rule with no `for` fires on its first evaluation, since a zero
     // hold duration is satisfied immediately.
-    let immediate = super::SharedPrometheusAlertStates::default();
+    let immediate = super::prelude::SharedPrometheusAlertStates::default();
     let no_hold: serde_yaml::Mapping =
         serde_yaml::from_str("severity: page\n").expect("the rule fields parse");
-    let alerts = super::prometheus_alerts_from_query_result(
+    let alerts = super::prelude::prometheus_alerts_from_query_result(
         &immediate,
         "tenant",
         "Immediate",
@@ -164,14 +164,14 @@ pub(crate) fn an_alert_fires_once_it_has_held_for_its_configured_duration() {
 /// keep it.
 #[test]
 pub(crate) fn evaluating_one_alert_rule_leaves_the_other_rules_states_alone() {
-    let states = super::SharedPrometheusAlertStates::default();
+    let states = super::prelude::SharedPrometheusAlertStates::default();
     let fields: serde_yaml::Mapping =
         serde_yaml::from_str("severity: page\n").expect("the rule fields parse");
     let result = serde_json::json!({
         "data": { "result": [{ "metric": {"job": "api"}, "value": [0, "1"] }] }
     });
     let evaluate = |tenant: &str, alert: &str, query: &str| {
-        super::prometheus_alerts_from_query_result(
+        super::prelude::prometheus_alerts_from_query_result(
             &states, tenant, alert, &fields, query, 1_000, &result,
         );
     };
@@ -224,7 +224,7 @@ pub(crate) fn evaluating_one_alert_rule_leaves_the_other_rules_states_alone() {
 /// a different number.
 #[test]
 pub(crate) fn a_signed_vector_literal_is_reported_at_the_sign() {
-    let error = super::signed_vector_function_literal_error;
+    let error = super::prelude::signed_vector_function_literal_error;
     let column = |query: &str| {
         error(query).map(|message| {
             message
@@ -286,7 +286,7 @@ pub(crate) fn a_signed_vector_literal_is_reported_at_the_sign() {
 /// the same number and a byte count passes.
 #[test]
 pub(crate) fn an_unspaced_set_operator_is_reported_at_its_own_column() {
-    let error = super::unspaced_vector_set_operator_error;
+    let error = super::prelude::unspaced_vector_set_operator_error;
     let column = |query: &str| {
         error(query).map(|message| {
             message
@@ -344,7 +344,7 @@ pub(crate) fn a_vector_aggregation_renders_only_the_groupings_its_operator_allow
     use krabka_logql::{VectorAggregation, VectorAggregationOp, VectorGrouping};
 
     let render = |op, grouping| {
-        super::format_vector_aggregation_query(&VectorAggregation { op, grouping }, "up")
+        super::prelude::format_vector_aggregation_query(&VectorAggregation { op, grouping }, "up")
     };
     let by = || {
         Some(VectorGrouping::By(vec![

@@ -1,5 +1,14 @@
-use super::prelude::*;
-
+use super::prelude::proto_any_value;
+use super::prelude::{
+    Arc, AtomicOrdering, BTreeMap, CONTENT_ENCODING, CONTENT_TYPE, Duration, HeaderMap, Mutex,
+    ObjectStore, ProtoAnyValue, ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord,
+    QueryAuthorizationError, ServiceConfig, ServiceReadiness, UnavailableQueryAuthorizer, Url,
+    WalLogRecord, build_compactor_configured_object_store, check, ingest_tenant,
+    normalize_otlp_http_logs, sleep,
+};
+use crate::LogQueryAuthorizer as _;
+use clap::Parser as _;
+use prost::Message as _;
 /// Sorting a Loki vector result orders it by sample value, and touches
 /// nothing else: a matrix carries the same shape but must come back in the
 /// order it arrived. Nothing had called this at all, so returning without
@@ -27,10 +36,10 @@ pub(crate) fn sorting_a_loki_vector_result_orders_only_a_vector() {
     let mut vector = serde_json::json!({
         "data": { "resultType": "vector", "result": [sample("3"), sample("1"), sample("2")] }
     });
-    super::sort_loki_vector_result(&mut vector, false);
+    super::prelude::sort_loki_vector_result(&mut vector, false);
     check!(order(&vector) == vec!["1", "2", "3"], "ascending");
 
-    super::sort_loki_vector_result(&mut vector, true);
+    super::prelude::sort_loki_vector_result(&mut vector, true);
     check!(
         order(&vector) == vec!["3", "2", "1"],
         "descending reverses it"
@@ -40,7 +49,7 @@ pub(crate) fn sorting_a_loki_vector_result_orders_only_a_vector() {
     let mut matrix = serde_json::json!({
         "data": { "resultType": "matrix", "result": [sample("3"), sample("1")] }
     });
-    super::sort_loki_vector_result(&mut matrix, false);
+    super::prelude::sort_loki_vector_result(&mut matrix, false);
     check!(
         order(&matrix) == vec!["3", "1"],
         "a matrix is not reordered"

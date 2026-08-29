@@ -1,5 +1,4 @@
-use super::prelude::*;
-
+use super::prelude::check;
 /// Two sightings of the same field can disagree about its type, and the
 /// merge picks what still describes both. The arms are ordered, so
 /// deleting one does not fail -- it falls through to the catch-all and
@@ -7,7 +6,7 @@ use super::prelude::*;
 /// match shows the difference, so the whole six-by-six table is here.
 #[test]
 pub(crate) fn detected_field_types_merge_to_what_still_describes_both() {
-    use super::DetectedFieldType as Type;
+    use super::prelude::DetectedFieldType as Type;
 
     let cases = [
         (Type::Boolean, Type::Boolean, Type::Boolean),
@@ -61,7 +60,8 @@ pub(crate) fn detected_field_types_merge_to_what_still_describes_both() {
 /// one-hour default as well as from each other.
 #[test]
 pub(crate) fn a_repeated_detected_labels_parameter_keeps_the_first_value() {
-    let parse = |q: &str| super::parse_detected_labels_params(Some(q)).expect("a valid query");
+    let parse =
+        |q: &str| super::prelude::parse_detected_labels_params(Some(q)).expect("a valid query");
 
     let params = parse(
         "query={a=\"b\"}&query={c=\"d\"}&start=100&start=200&end=900&end=800&limit=5&limit=9",
@@ -83,7 +83,7 @@ pub(crate) fn a_repeated_detected_labels_parameter_keeps_the_first_value() {
 /// only way to tell the guard from its absence.
 #[test]
 pub(crate) fn a_repeated_log_query_parameter_keeps_the_first_value() {
-    let parse = |q: &str| super::parse_query_params(Some(q)).expect("valid query");
+    let parse = |q: &str| super::prelude::parse_query_params(Some(q)).expect("valid query");
 
     check!(parse("query=a&query=b").query == "a");
     // A LogQL selector contains `=` itself, so the split has to take the
@@ -139,8 +139,8 @@ pub(crate) fn a_repeated_log_query_parameter_keeps_the_first_value() {
     );
 
     // A query parameter is still required.
-    check!(super::parse_query_params(Some("limit=5")).is_err());
-    check!(super::parse_query_params(None).is_err());
+    check!(super::prelude::parse_query_params(Some("limit=5")).is_err());
+    check!(super::prelude::parse_query_params(None).is_err());
 }
 
 /// A repeated query parameter keeps its first value and ignores the rest.
@@ -152,7 +152,7 @@ pub(crate) fn a_repeated_log_query_parameter_keeps_the_first_value() {
 /// differ and the query has to repeat.
 #[test]
 pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
-    let parse = |q: &str| super::parse_volume_params(Some(q)).expect("valid query");
+    let parse = |q: &str| super::prelude::parse_volume_params(Some(q)).expect("valid query");
 
     check!(parse("query=a&query=b").query == "a");
     check!(parse("query=a&limit=5&limit=9").limit == 5);
@@ -164,7 +164,7 @@ pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
     );
     check!(matches!(
         parse("query=a&aggregateBy=labels&aggregateBy=series").aggregate_by,
-        super::VolumeAggregateBy::Labels
+        super::prelude::VolumeAggregateBy::Labels
     ));
 
     // The defaults still apply when a parameter is absent entirely, which
@@ -172,7 +172,7 @@ pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
     check!(parse("query=a").limit == 100);
     check!(matches!(
         parse("query=a").aggregate_by,
-        super::VolumeAggregateBy::Series
+        super::prelude::VolumeAggregateBy::Series
     ));
     check!(parse("query=a").target_labels == None);
 
@@ -183,16 +183,17 @@ pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
     );
 
     // A query with no `query` at all is an error, not a default.
-    check!(super::parse_volume_params(Some("limit=5")).is_err());
-    check!(super::parse_volume_params(None).is_err());
+    check!(super::prelude::parse_volume_params(Some("limit=5")).is_err());
+    check!(super::prelude::parse_volume_params(None).is_err());
     // An unknown aggregation is rejected rather than falling back.
-    check!(super::parse_volume_params(Some("query=a&aggregateBy=nonsense")).is_err());
+    check!(super::prelude::parse_volume_params(Some("query=a&aggregateBy=nonsense")).is_err());
 }
 
 /// The detected-fields parser carries the same first-wins contract.
 #[test]
 pub(crate) fn a_repeated_detected_fields_parameter_keeps_the_first_value() {
-    let parse = |q: &str| super::parse_detected_fields_params(Some(q)).expect("valid query");
+    let parse =
+        |q: &str| super::prelude::parse_detected_fields_params(Some(q)).expect("valid query");
 
     check!(parse("query=a&query=b").query == "a");
     check!(parse("query=a&limit=5&limit=9").limit == 5);
@@ -219,8 +220,8 @@ pub(crate) fn a_repeated_detected_fields_parameter_keeps_the_first_value() {
     check!(parse("query=a").limit == 1000);
     check!(parse("query=a").line_limit == 100);
 
-    check!(super::parse_detected_fields_params(Some("limit=5")).is_err());
-    check!(super::parse_detected_fields_params(None).is_err());
+    check!(super::prelude::parse_detected_fields_params(Some("limit=5")).is_err());
+    check!(super::prelude::parse_detected_fields_params(None).is_err());
 }
 
 /// `ScalarSample::compare` orders two rationals by cross-multiplication,
@@ -230,7 +231,7 @@ pub(crate) fn a_repeated_detected_fields_parameter_keeps_the_first_value() {
 /// forgot to cross-multiply would still get many pairs right.
 #[test]
 pub(crate) fn scalar_samples_compare_as_rationals() {
-    use super::{ScalarComparisonOp as Op, ScalarSample};
+    use super::prelude::{ScalarComparisonOp as Op, ScalarSample};
 
     let cmp = |n1: i128, d1: u128, op, n2: i128, d2: u128| {
         ScalarSample::new(n1, d1).compare(op, ScalarSample::new(n2, d2))
@@ -283,7 +284,7 @@ pub(crate) fn scalar_samples_compare_as_rationals() {
 #[test]
 pub(crate) fn duration_units_are_worth_what_they_should_relative_to_each_other() {
     let ns = |name: &str| {
-        let (_, _, nanos) = super::prometheus_duration_unit(name).expect("known unit");
+        let (_, _, nanos) = super::prelude::prometheus_duration_unit(name).expect("known unit");
         nanos
     };
 
@@ -313,15 +314,15 @@ pub(crate) fn duration_units_are_worth_what_they_should_relative_to_each_other()
         ("us", 7),
         ("ns", 8),
     ] {
-        let (got, bit, _) = super::prometheus_duration_unit(name).expect("known unit");
+        let (got, bit, _) = super::prelude::prometheus_duration_unit(name).expect("known unit");
         check!(got == ordinal, "{name} ordinal");
         check!(bit == 1_u16 << ordinal, "{name} bit");
     }
 
-    check!(super::prometheus_duration_unit("") == None);
-    check!(super::prometheus_duration_unit("mo") == None);
+    check!(super::prelude::prometheus_duration_unit("") == None);
+    check!(super::prelude::prometheus_duration_unit("mo") == None);
     check!(
-        super::prometheus_duration_unit("S") == None,
+        super::prelude::prometheus_duration_unit("S") == None,
         "case-sensitive"
     );
 }
@@ -332,7 +333,7 @@ pub(crate) fn duration_units_are_worth_what_they_should_relative_to_each_other()
 /// the bit is checked against the ordinal it is meant to shadow.
 #[test]
 pub(crate) fn every_duration_unit_maps_to_its_ordinal_and_bit() {
-    let unit = super::detected_duration_unit;
+    let unit = super::prelude::detected_duration_unit;
 
     for (name, ordinal) in [
         ("y", 0_u8),
@@ -370,7 +371,7 @@ pub(crate) fn every_duration_unit_maps_to_its_ordinal_and_bit() {
 /// the wrong ones.
 #[test]
 pub(crate) fn logfmt_pairs_split_on_unquoted_whitespace() {
-    let parse = super::parse_logfmt_pairs;
+    let parse = super::prelude::parse_logfmt_pairs;
     let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
 
     check!(parse("a=1") == vec![pair("a", "1")]);

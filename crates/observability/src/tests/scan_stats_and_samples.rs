@@ -1,5 +1,5 @@
-use super::prelude::*;
-
+use super::prelude::METRIC_DECIMAL_SCALE;
+use super::prelude::{BTreeMap, Labels, MetricValue, check};
 /// `populate_loki_query_scan_stats` fills Loki's stats block, and the two
 /// per-source sections appear only when that source contributed. An empty
 /// `ingester` or `store` object would tell a client the source was
@@ -13,7 +13,7 @@ use super::prelude::*;
 pub(crate) fn loki_scan_stats_report_only_the_sources_that_contributed() {
     let fill = |store_lines, ingester_lines, chunks| {
         let mut stats = serde_json::json!({});
-        super::populate_loki_query_scan_stats(
+        super::prelude::populate_loki_query_scan_stats(
             &mut stats,
             krabka_units::bytes(4_096),
             store_lines,
@@ -79,7 +79,7 @@ pub(crate) fn loki_scan_stats_report_only_the_sources_that_contributed() {
 /// Widening the take is an equivalent mutation.
 #[test]
 pub(crate) fn a_decimal_seconds_timestamp_scales_its_fraction_to_nanos() {
-    let parse = super::parse_decimal_seconds_timestamp;
+    let parse = super::prelude::parse_decimal_seconds_timestamp;
 
     // The fraction is positional: one digit is tenths, not nanos.
     check!(parse("5.5") == Some(5_500_000_000));
@@ -119,7 +119,9 @@ pub(crate) fn a_decimal_seconds_timestamp_scales_its_fraction_to_nanos() {
 #[test]
 pub(crate) fn a_sample_timestamp_offers_every_reading_its_encoding_allows() {
     let candidates = |timestamp: serde_json::Value| {
-        super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([timestamp, "1"]))
+        super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([
+            timestamp, "1"
+        ]))
     };
 
     // An integer is ambiguous: both the raw value and it read as seconds.
@@ -145,9 +147,13 @@ pub(crate) fn a_sample_timestamp_offers_every_reading_its_encoding_allows() {
     // Nothing parses, or there is nothing to parse.
     check!(candidates(serde_json::json!("nonsense")).is_none());
     check!(candidates(serde_json::json!(true)).is_none());
-    check!(super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([])).is_none());
     check!(
-        super::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!("bare")).is_none()
+        super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([]))
+            .is_none()
+    );
+    check!(
+        super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!("bare"))
+            .is_none()
     );
 }
 
@@ -159,7 +165,8 @@ pub(crate) fn a_sample_timestamp_offers_every_reading_its_encoding_allows() {
 /// values, and a fixture using one spelling throughout never shows it.
 #[test]
 pub(crate) fn two_samples_share_an_instant_if_any_reading_of_them_agrees() {
-    let matches = |left, right| super::metric_binary_sample_timestamps_match(&left, &right);
+    let matches =
+        |left, right| super::prelude::metric_binary_sample_timestamps_match(&left, &right);
     let at = |timestamp: serde_json::Value| serde_json::json!([timestamp, "1"]);
 
     // The same number, and the same instant written two ways.
@@ -218,7 +225,7 @@ pub(crate) fn two_samples_share_an_instant_if_any_reading_of_them_agrees() {
 #[test]
 pub(crate) fn a_metric_value_renders_without_trailing_zeros() {
     let render = |numerator, denominator| {
-        super::format_metric_value(MetricValue::new(numerator, denominator))
+        super::prelude::format_metric_value(MetricValue::new(numerator, denominator))
     };
 
     // Whole numbers take the early return and carry no point.
@@ -262,7 +269,7 @@ pub(crate) fn a_metric_value_renders_without_trailing_zeros() {
 /// parenthesised expression, and unwrapping it would produce "a)+(b".
 #[test]
 pub(crate) fn only_a_wholly_parenthesised_expression_is_unwrapped() {
-    let strip = super::strip_outer_parenthesized_expression;
+    let strip = super::prelude::strip_outer_parenthesized_expression;
 
     check!(strip("(a)") == Some("a"));
     check!(strip("  (a)  ") == Some("a"), "the query is trimmed first");
@@ -374,7 +381,7 @@ pub(crate) fn loki_stream_values_sort_numerically_not_lexicographically() {
         ],
     );
 
-    super::sort_loki_stream_values(&mut streams);
+    super::prelude::sort_loki_stream_values(&mut streams);
 
     let order = streams[&labels]
         .iter()
@@ -393,7 +400,7 @@ pub(crate) fn loki_stream_values_sort_numerically_not_lexicographically() {
 /// a byte that is not.
 #[test]
 pub(crate) fn a_form_component_decodes_its_escapes_or_refuses_them() {
-    let decode = |value: &str| super::decode_form_component(value).ok();
+    let decode = |value: &str| super::prelude::decode_form_component(value).ok();
 
     check!(decode("plain") == Some("plain".to_string()));
     check!(decode("") == Some(String::new()));
@@ -426,7 +433,7 @@ pub(crate) fn a_form_component_decodes_its_escapes_or_refuses_them() {
 /// which is what `is_none_or` is doing there.
 #[test]
 pub(crate) fn a_word_boundary_needs_whitespace_or_an_end_on_both_sides() {
-    let boundary = super::has_word_boundary;
+    let boundary = super::prelude::has_word_boundary;
 
     check!(boundary("a and b", 2, 3), "space either side");
     check!(boundary("and", 0, 3), "both ends of the string");
@@ -444,7 +451,7 @@ pub(crate) fn a_word_boundary_needs_whitespace_or_an_end_on_both_sides() {
 /// error can report a position at the very end of the input.
 #[test]
 pub(crate) fn a_line_number_counts_from_one_and_clamps_past_the_end() {
-    let line = super::line_number;
+    let line = super::prelude::line_number;
 
     check!(line("abc", 0) == 1, "the first line is one, not zero");
     check!(line("abc", 3) == 1);

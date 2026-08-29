@@ -1,6 +1,13 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    Acks, Arc, AutoOffsetReset, BTreeMap, Bytes, CancellationToken, ClientResourcePolicy,
+    CompactionFrontier, Consumer, ConsumerError, HotTailPollError, JoinHandle, KafkaWalRecord,
+    LogHotTail, LogWalConsumer, LogWalSink, Mutex, Offset, PartitionIndex, Producer, ProducerError,
+    ProducerRecord, SharedCompactionFrontier, Time, WalConsumerError, WalLogRecord, WalPosition,
+    WalRecordDecodeError, WalSinkError, decode_native_kafka_log_record,
+    has_native_kafka_log_headers, hot_tail_bucket_key, minutes, series_fingerprint, sleep,
+};
+use crate::{KafkaWalHeader, ProducerHeader, async_trait};
+use krabka_units::convert::TimeExt;
 /// Buffer holding polled hot-tail records.
 ///
 /// Records arrive from Kafka polling in NO timestamp order, so the buffer keeps

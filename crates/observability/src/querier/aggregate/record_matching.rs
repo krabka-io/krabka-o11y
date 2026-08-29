@@ -1,6 +1,9 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, LabelIndex, Labels, MapArray, MetricQuery,
+    MetricSamples, MetricValue, MetricWindow, PipelineStage, QueryError, RangeAggregation,
+    SeriesFingerprint, StreamPlan, StreamQuery, StringArray, UNWRAP_SAMPLE_VALUE_LABEL,
+    WalLogRecord, is_unwrapped_metric_query,
+};
 pub(crate) fn append_matching_hot_log_record(
     streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,
     plan: &StreamPlan,
@@ -402,3 +405,4 @@ pub(crate) struct QueryRow<'a> {
     pub(crate) line: &'a str,
     pub(crate) structured_metadata: &'a Labels,
 }
+use datafusion::arrow::array::Array as _;

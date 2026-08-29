@@ -1,10 +1,26 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::CompactorDeleteState;
+use crate::json;
 use crate::ruler::{
     create_loki_rule_group, delete_loki_rule_group, delete_loki_rule_namespace,
     loki_page_not_found, loki_rule_group, loki_rule_namespace, loki_rules, prometheus_alerts,
     prometheus_rules, ring_status_page, ruler_status_page,
 };
+use crate::{
+    AtomicOrdering, Bytes, COMPACTOR_OPS, DistributorState, Extension, HttpQueryError, QUERIER_OPS,
+    QuerierState, RawQuery, Response, RoleOps, Router, ServiceReadiness, SharedLogDeleteRequests,
+    State, StatusCode, api_prom_label_names, api_prom_label_names_post, api_prom_label_values,
+    api_prom_label_values_post, api_prom_query, api_prom_query_post, api_prom_query_range,
+    api_prom_query_range_post, api_prom_series, api_prom_series_post, cancel_delete_request,
+    create_delete_request, decode_form_component, detected_field_values,
+    detected_field_values_post, detected_fields, detected_fields_post, detected_labels,
+    detected_labels_post, form_body_query, format_query, format_query_post, get, index_stats,
+    index_stats_post, index_volume, index_volume_post, index_volume_range, index_volume_range_post,
+    json_response, label_names, label_names_post, label_values, label_values_post,
+    list_delete_requests, patterns, patterns_post, query, query_post, query_range,
+    query_range_post, series, series_post, status_metrics, tail, text_response,
+    with_role_ops_routes,
+};
+use axum::response::IntoResponse;
 
 pub fn loki_router(state: QuerierState) -> Router {
     loki_router_with_readiness(state, ServiceReadiness::ready())

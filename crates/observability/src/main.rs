@@ -91,7 +91,8 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Cli;
+    use clap::Parser as _;
 
     #[test]
     fn client_resource_policy_parses_defaults_overrides_and_invalid_values() {

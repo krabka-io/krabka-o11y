@@ -1,6 +1,13 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    ComparisonOp, MetricQuery, MetricScalarArithmeticOp, RangeAggregation, format_loki_duration_ns,
+    format_loki_offset_duration_ns, format_metric_vector_arithmetic_expression,
+    format_metric_vector_binary_expression, format_quantile, format_range_aggregation_name,
+    format_scalar_vector_expression, format_stream_query, format_vector_aggregation_query,
+    format_vector_function_text, format_vector_grouping, format_vector_label_replace_function,
+    parse_logql_string_argument, parse_metric_label_replace_query, parse_metric_query,
+    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
+    parse_scalar_sample, split_leading_vector_binary_modifiers, split_logql_function_arguments,
+};
 pub(crate) fn format_metric_vector_set_expression(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_set_query(query)?;
     let (modifiers, right_text) = split_leading_vector_binary_modifiers(right_text);

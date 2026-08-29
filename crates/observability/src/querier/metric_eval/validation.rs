@@ -1,5 +1,8 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::json;
+use crate::{
+    HttpQueryError, MetricLabelJoin, ParseError, Regex, ScalarVectorExpressionResult, Value,
+    scalar_vector_expression_result,
+};
 
 pub(crate) fn scalar_vector_query_is_vector(query: &str) -> bool {
     matches!(

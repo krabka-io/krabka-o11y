@@ -1,5 +1,4 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::{Value, json};
 
 pub(crate) fn loki_query_stats() -> Value {
     json!({

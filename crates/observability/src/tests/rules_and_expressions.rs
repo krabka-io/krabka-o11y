@@ -1,5 +1,6 @@
-use super::prelude::*;
-
+use super::prelude::HttpQueryError;
+use super::prelude::{Time, check};
+use krabka_units::convert::TimeExt as _;
 /// `read_loki_rule_tenants` treats a MISSING rules file as no rules, and
 /// every other I/O failure as an error. That distinction is the point: a
 /// store that has never had a rule written to it has no file, and starting
@@ -15,7 +16,8 @@ pub(crate) fn missing_loki_rules_are_empty_but_unreadable_ones_are_an_error() {
 
     // Absent: no rules, no error.
     let absent = dir.path().join("absent.json");
-    let tenants = super::read_loki_rule_tenants(&absent).expect("an absent file is not an error");
+    let tenants =
+        super::prelude::read_loki_rule_tenants(&absent).expect("an absent file is not an error");
     check!(tenants.is_empty());
 
     // Present and valid: the rules come back.
@@ -25,7 +27,7 @@ pub(crate) fn missing_loki_rules_are_empty_but_unreadable_ones_are_an_error() {
         r#"{"tenant-a":{"namespace":{"group":{"rules":[]}}}}"#,
     )
     .expect("the fixture writes");
-    let tenants = super::read_loki_rule_tenants(&valid).expect("valid json parses");
+    let tenants = super::prelude::read_loki_rule_tenants(&valid).expect("valid json parses");
     check!(tenants.len() == 1);
     check!(tenants.contains_key("tenant-a"));
 
@@ -33,7 +35,7 @@ pub(crate) fn missing_loki_rules_are_empty_but_unreadable_ones_are_an_error() {
     let empty = dir.path().join("empty.json");
     std::fs::write(&empty, "{}").expect("the fixture writes");
     check!(
-        super::read_loki_rule_tenants(&empty)
+        super::prelude::read_loki_rule_tenants(&empty)
             .expect("an empty object parses")
             .is_empty()
     );
@@ -43,15 +45,15 @@ pub(crate) fn missing_loki_rules_are_empty_but_unreadable_ones_are_an_error() {
     let malformed = dir.path().join("malformed.json");
     std::fs::write(&malformed, "{not json").expect("the fixture writes");
     check!(matches!(
-        super::read_loki_rule_tenants(&malformed),
-        Err(super::LokiRuleStoreError::Json { .. })
+        super::prelude::read_loki_rule_tenants(&malformed),
+        Err(super::prelude::LokiRuleStoreError::Json { .. })
     ));
 
     // A directory where a file was expected is an I/O error, which is how
     // a non-NotFound failure is reached without special privileges.
     check!(matches!(
-        super::read_loki_rule_tenants(dir.path()),
-        Err(super::LokiRuleStoreError::Io { .. })
+        super::prelude::read_loki_rule_tenants(dir.path()),
+        Err(super::prelude::LokiRuleStoreError::Io { .. })
     ));
 }
 
@@ -66,9 +68,9 @@ pub(crate) fn missing_loki_rules_are_empty_but_unreadable_ones_are_an_error() {
 /// the tail ignored, which would silently accept a typo as a valid query.
 #[test]
 pub(crate) fn a_scalar_vector_expression_must_consume_its_whole_query() {
-    use super::ScalarVectorExpressionResult;
+    use super::prelude::ScalarVectorExpressionResult;
 
-    let result = super::scalar_vector_expression_result;
+    let result = super::prelude::scalar_vector_expression_result;
     let scalar = |query: &str| match result(query) {
         Some(ScalarVectorExpressionResult::Scalar { sample }) => Some(sample),
         _ => None,
@@ -169,7 +171,7 @@ pub(crate) fn a_scalar_vector_expression_must_consume_its_whole_query() {
 /// fixed-shape field a client parses positionally.
 #[test]
 pub(crate) fn a_loki_query_length_always_writes_all_three_units() {
-    let format = |seconds: i64| super::format_loki_query_length(Time::from_nanos(seconds));
+    let format = |seconds: i64| super::prelude::format_loki_query_length(Time::from_nanos(seconds));
     let secs = 1_000_000_000_i64;
 
     check!(format(0) == "0h0m0s", "every unit, even at zero");
@@ -196,7 +198,7 @@ pub(crate) fn a_loki_query_length_always_writes_all_three_units() {
 /// a zero one -- absent means the caller did not ask.
 #[test]
 pub(crate) fn a_loki_interval_is_refused_only_when_negative() {
-    let validate = super::validate_loki_interval;
+    let validate = super::prelude::validate_loki_interval;
 
     check!(validate(None).is_ok(), "an absent interval is not an error");
     check!(validate(Some(0)).is_ok(), "and neither is zero");
@@ -221,7 +223,7 @@ pub(crate) fn loki_vector_timestamps_are_rewritten_from_nanos_to_seconds() {
         let mut value = serde_json::json!({
             "data": {"result": [{"metric": {}, "value": [timestamp, "1"]}]}
         });
-        super::normalize_loki_vector_sample_timestamps_to_seconds(&mut value);
+        super::prelude::normalize_loki_vector_sample_timestamps_to_seconds(&mut value);
         value["data"]["result"][0]["value"][0].clone()
     };
 
@@ -242,7 +244,7 @@ pub(crate) fn loki_vector_timestamps_are_rewritten_from_nanos_to_seconds() {
     // A response with no result array is left untouched.
     let mut empty = serde_json::json!({"status": "success"});
     let before = empty.clone();
-    super::normalize_loki_vector_sample_timestamps_to_seconds(&mut empty);
+    super::prelude::normalize_loki_vector_sample_timestamps_to_seconds(&mut empty);
     check!(empty == before);
 }
 
@@ -258,7 +260,7 @@ pub(crate) fn loki_vector_timestamps_are_rewritten_from_nanos_to_seconds() {
 pub(crate) fn a_vector_comparison_records_which_side_the_literal_was_on() {
     use krabka_logql::ComparisonOp;
 
-    let parse = super::parse_metric_vector_comparison_expression;
+    let parse = super::prelude::parse_metric_vector_comparison_expression;
 
     let right = parse("up > vector(1)").expect("a vector on the right");
     check!(right.metric_query == "up");
@@ -311,7 +313,10 @@ pub(crate) fn a_vector_comparison_records_which_side_the_literal_was_on() {
 #[test]
 pub(crate) fn a_request_takes_its_query_from_the_string_before_the_body() {
     let take = |raw_query: Option<&str>, body: &[u8]| {
-        super::request_query_or_form_body(raw_query, &axum::body::Bytes::from(body.to_vec()))
+        super::prelude::request_query_or_form_body(
+            raw_query,
+            &axum::body::Bytes::from(body.to_vec()),
+        )
     };
 
     // The query string wins when both carry something.
@@ -354,7 +359,7 @@ pub(crate) fn a_request_takes_its_query_from_the_string_before_the_body() {
 #[test]
 pub(crate) fn a_query_string_splits_only_before_a_known_key() {
     fn split(query: &str) -> Vec<&str> {
-        super::split_query_param_pairs(query, &["query", "start", "end"])
+        super::prelude::split_query_param_pairs(query, &["query", "start", "end"])
     }
 
     check!(split("query=up") == vec!["query=up"]);
@@ -395,7 +400,7 @@ pub(crate) fn a_query_string_splits_only_before_a_known_key() {
 /// sending each parameter once cannot tell the two rules apart.
 #[test]
 pub(crate) fn series_params_accumulate_matchers_but_keep_the_first_time_bound() {
-    let parse = |query: &str| super::parse_series_params(Some(query));
+    let parse = |query: &str| super::prelude::parse_series_params(Some(query));
 
     // Both spellings of a matcher, accumulating in the order sent.
     let params = parse("match[]=a&match[]=b").expect("matchers parse");
@@ -428,7 +433,7 @@ pub(crate) fn series_params_accumulate_matchers_but_keep_the_first_time_bound() 
     check!(params.since.is_none());
 
     // No query string at all is not an error.
-    let params = super::parse_series_params(None).expect("no query is valid");
+    let params = super::prelude::parse_series_params(None).expect("no query is valid");
     check!(params.matchers.is_empty());
 
     // Unknown parameters are ignored rather than refused.

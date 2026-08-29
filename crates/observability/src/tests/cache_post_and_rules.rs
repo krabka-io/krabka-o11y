@@ -1,5 +1,4 @@
-use super::prelude::*;
-
+use super::prelude::{Bytes, check};
 /// The shard-range cache answers only when its entry is both fresh and
 /// covers far enough back, and it *evicts* on either failure rather than
 /// leaving the entry to be retried. Both halves matter: a caller that gets
@@ -9,19 +8,19 @@ use super::prelude::*;
 pub(crate) fn a_stale_or_short_shard_range_entry_is_evicted_not_reused() {
     use std::time::{Duration, Instant};
 
-    let key = super::DynamicShardRangesCacheKey {
+    let key = super::prelude::DynamicShardRangesCacheKey {
         tenant: "t".to_string(),
     };
-    let ranges = vec![super::TimeRange {
+    let ranges = vec![super::prelude::TimeRange {
         start_ns: 100,
         end_ns: 200,
     }];
 
     let seed = |loaded_at: Instant, listed_from_ns: i64| {
-        let cache = super::DynamicIndexCache::default();
+        let cache = super::prelude::DynamicIndexCache::default();
         cache.shard_ranges.lock().expect("fresh lock").insert(
             key.clone(),
-            super::CachedShardRanges {
+            super::prelude::CachedShardRanges {
                 loaded_at,
                 listed_from_ns,
                 ranges: ranges.clone(),
@@ -29,8 +28,9 @@ pub(crate) fn a_stale_or_short_shard_range_entry_is_evicted_not_reused() {
         );
         cache
     };
-    let entries =
-        |cache: &super::DynamicIndexCache| cache.shard_ranges.lock().expect("fresh lock").len();
+    let entries = |cache: &super::prelude::DynamicIndexCache| {
+        cache.shard_ranges.lock().expect("fresh lock").len()
+    };
 
     // Fresh, and covering back to 100: a request from 100 or later is served.
     let cache = seed(Instant::now(), 100);
@@ -63,7 +63,7 @@ pub(crate) fn a_stale_or_short_shard_range_entry_is_evicted_not_reused() {
 
     // A key that was never cached is simply absent, and nothing is
     // inserted by asking for it.
-    let cache = super::DynamicIndexCache::default();
+    let cache = super::prelude::DynamicIndexCache::default();
     check!(cache.get_shard_ranges(&key, 100) == None);
     check!(entries(&cache) == 0);
 }
@@ -76,10 +76,11 @@ pub(crate) fn a_stale_or_short_shard_range_entry_is_evicted_not_reused() {
 #[test]
 pub(crate) fn a_posted_query_puts_the_url_first_and_the_body_second() {
     let merge = |raw: Option<&str>, body: &str| {
-        super::post_query_params(raw, &Bytes::from(body.to_owned())).expect("valid body")
+        super::prelude::post_query_params(raw, &Bytes::from(body.to_owned())).expect("valid body")
     };
     let body_first = |raw: Option<&str>, body: &str| {
-        super::post_query_params_body_first(raw, &Bytes::from(body.to_owned())).expect("valid body")
+        super::prelude::post_query_params_body_first(raw, &Bytes::from(body.to_owned()))
+            .expect("valid body")
     };
 
     // Both sides present: the order is the whole difference between the
@@ -104,7 +105,7 @@ pub(crate) fn a_posted_query_puts_the_url_first_and_the_body_second() {
 /// the filter unset rather than setting it to a default.
 #[test]
 pub(crate) fn rules_filters_take_only_the_values_they_recognise() {
-    use super::PrometheusRulesFilters as Filters;
+    use super::prelude::PrometheusRulesFilters as Filters;
     let parse = |q: &str| Filters::parse(Some(q)).expect("valid query");
 
     // `type` maps two spellings and rejects the rest.
@@ -153,7 +154,7 @@ pub(crate) fn rules_filters_take_only_the_values_they_recognise() {
 /// entry is what separates the pairs; sampling would not.
 #[test]
 pub(crate) fn every_metric_comparison_operator_maps_to_its_own_variant() {
-    use super::{ComparisonOp, parse_metric_comparison_operator as parse};
+    use super::prelude::{ComparisonOp, parse_metric_comparison_operator as parse};
 
     check!(parse("==") == Some(ComparisonOp::Equal));
     check!(parse("!=") == Some(ComparisonOp::NotEqual));
@@ -178,7 +179,7 @@ pub(crate) fn every_metric_comparison_operator_maps_to_its_own_variant() {
 /// one, and the returned text alone would look correct either way.
 #[test]
 pub(crate) fn a_vector_group_modifier_reports_what_it_consumed() {
-    let parse = super::parse_vector_group_modifier;
+    let parse = super::prelude::parse_vector_group_modifier;
 
     // Bare, with the length being the whole modifier.
     check!(parse("group_left", 0) == Some(("group_left".to_string(), 10)));
@@ -210,9 +211,10 @@ pub(crate) fn a_vector_group_modifier_reports_what_it_consumed() {
 /// than rounded into something plausible.
 #[test]
 pub(crate) fn metric_values_round_trip_through_their_decimal_scale() {
-    use super::MetricValue;
+    use super::prelude::MetricValue;
 
-    let round_trip = |value: f64| MetricValue::from_f64(value).and_then(super::MetricValue::to_f64);
+    let round_trip =
+        |value: f64| MetricValue::from_f64(value).and_then(super::prelude::MetricValue::to_f64);
 
     check!(round_trip(0.0) == Some(0.0));
     check!(round_trip(1.0) == Some(1.0));
@@ -243,12 +245,12 @@ pub(crate) fn metric_values_round_trip_through_their_decimal_scale() {
 /// NaN, which is the whole reason it is not just `%`.
 #[test]
 pub(crate) fn metric_modulo_refuses_a_zero_divisor() {
-    use super::MetricValue;
+    use super::prelude::MetricValue;
 
     let modulo = |a: f64, b: f64| {
         MetricValue::from_f64(a)?
             .modulo(MetricValue::from_f64(b)?)
-            .and_then(super::MetricValue::to_f64)
+            .and_then(super::prelude::MetricValue::to_f64)
     };
 
     check!(modulo(7.0, 3.0) == Some(1.0));
@@ -269,7 +271,7 @@ pub(crate) fn metric_modulo_refuses_a_zero_divisor() {
 /// count of zero, so it must be false at zero and true at one.
 #[test]
 pub(crate) fn a_sample_state_has_samples_from_the_first_one() {
-    let mut state = super::MetricSampleState::default();
+    let mut state = super::prelude::MetricSampleState::default();
     check!(!state.has_samples(), "an empty state has none");
 
     state.count = 1;
@@ -284,11 +286,11 @@ pub(crate) fn a_sample_state_has_samples_from_the_first_one() {
 /// take the last writer at each end instead of the first.
 #[test]
 pub(crate) fn recording_samples_keeps_the_earliest_and_the_latest() {
-    let value = |numerator: i128| super::MetricValue {
+    let value = |numerator: i128| super::prelude::MetricValue {
         numerator,
         denominator: 1,
     };
-    let mut state = super::MetricSampleState::default();
+    let mut state = super::prelude::MetricSampleState::default();
 
     state.record(10, value(1));
     state.record(5, value(2));
@@ -316,7 +318,7 @@ pub(crate) fn recording_samples_keeps_the_earliest_and_the_latest() {
 #[test]
 pub(crate) fn a_scalar_sample_formats_its_sign_and_stops_at_nine_decimals() {
     let format = |numerator: i128, denominator: u128| {
-        super::ScalarSample::new(numerator, denominator).format()
+        super::prelude::ScalarSample::new(numerator, denominator).format()
     };
 
     check!(format(0, 1) == "0", "zero carries no sign");
@@ -337,12 +339,12 @@ pub(crate) fn a_scalar_sample_formats_its_sign_and_stops_at_nine_decimals() {
 /// held -- the only thing that separates `<` from `<=` at either end.
 #[test]
 pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
-    let value = |numerator: i128| super::MetricValue {
+    let value = |numerator: i128| super::prelude::MetricValue {
         numerator,
         denominator: 1,
     };
 
-    let mut left = super::MetricSampleState {
+    let mut left = super::prelude::MetricSampleState {
         count: 1,
         min: Some(value(5)),
         max: Some(value(5)),
@@ -352,7 +354,7 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
     };
     // Every field of the incoming state wins: a lower minimum, a higher
     // maximum, an earlier first and a later last.
-    left.merge(super::MetricSampleState {
+    left.merge(super::prelude::MetricSampleState {
         count: 1,
         min: Some(value(3)),
         max: Some(value(9)),
@@ -368,7 +370,7 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
     check!(left.last == Some((20, value(3))), "the later last wins");
 
     // Now the other way round, so neither side is simply preferred.
-    let mut right = super::MetricSampleState {
+    let mut right = super::prelude::MetricSampleState {
         count: 1,
         min: Some(value(3)),
         max: Some(value(9)),
@@ -376,7 +378,7 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
         last: Some((20, value(3))),
         ..Default::default()
     };
-    right.merge(super::MetricSampleState {
+    right.merge(super::prelude::MetricSampleState {
         count: 1,
         min: Some(value(5)),
         max: Some(value(5)),
@@ -393,13 +395,13 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
     check!(right.last == Some((20, value(3))), "the held last survives");
 
     // Matching timestamps on both sides: the value already held stays.
-    let mut tied = super::MetricSampleState {
+    let mut tied = super::prelude::MetricSampleState {
         count: 1,
         first: Some((10, value(1))),
         last: Some((10, value(1))),
         ..Default::default()
     };
-    tied.merge(super::MetricSampleState {
+    tied.merge(super::prelude::MetricSampleState {
         count: 1,
         first: Some((10, value(7))),
         last: Some((10, value(7))),
@@ -423,10 +425,10 @@ pub(crate) fn merging_sample_states_keeps_the_extremes_and_the_ends() {
 /// query at all.
 #[test]
 pub(crate) fn empty_prometheus_rules_filter_values_are_ignored() {
-    let filters = super::PrometheusRulesFilters::parse(Some(
+    let filters = super::prelude::PrometheusRulesFilters::parse(Some(
         "time=&rule_name=&rule_group=&file=&group_limit=&group_next_token=&match=",
     ))
     .expect("empty values are ignored, not rejected");
 
-    check!(filters == super::PrometheusRulesFilters::default());
+    check!(filters == super::prelude::PrometheusRulesFilters::default());
 }

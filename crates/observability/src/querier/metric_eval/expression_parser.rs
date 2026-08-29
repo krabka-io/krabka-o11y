@@ -1,6 +1,7 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
-
+use crate::{
+    BTreeMap, Regex, ScalarSample, ScalarVectorExpressionResult, VectorScalarExpressionParser,
+    parse_scalar_sample,
+};
 impl<'a> VectorScalarExpressionParser<'a> {
     pub(crate) fn new(input: &'a str) -> Self {
         Self {

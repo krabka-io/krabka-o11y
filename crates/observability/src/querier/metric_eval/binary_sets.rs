@@ -1,5 +1,16 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::QueryHotTail;
+use crate::json;
+use crate::{
+    ActiveLogDeleteFilter, Arc, BTreeSet, ComparisonOp, HttpQueryError, Labels, MetricBinarySetOp,
+    MetricQuery, MetricScalarArithmetic, MetricScalarArithmeticOp, MetricScalarComparison,
+    MetricValue, MetricVectorGroupModifier, MetricVectorMatching, Ordering, ParseError,
+    QuerierState, StreamPlan, TimeRange, Value,
+    execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
+    execute_metric_query_range_with_deletes,
+    execute_metric_query_range_with_hot_tail_frontier_and_deletes, format_metric_value,
+    hot_tail_snapshot, json_object_to_labels, matching_metric_binary_sample,
+    metric_binary_sample_timestamps_match, parse_metric_sample_value,
+};
 
 pub(crate) fn apply_metric_binary_set_to_loki_result(
     left: &mut Value,

@@ -1,5 +1,6 @@
-use super::prelude::*;
-
+use super::prelude::HttpQueryError;
+use super::prelude::{BTreeMap, BTreeSet, BlockIndex, LabelIndex, Labels, check};
+use krabka_units::convert::TimeExt as _;
 /// The three per-query limits share a shape: unset means no limit, a query
 /// exactly at the limit is allowed, and one unit over is refused. Each is
 /// checked at all three points, because `>` and `>=` differ only at the
@@ -40,20 +41,28 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
             })
             .collect(),
     };
-    let base = || super::QuerierState::new(".", LabelIndex::default(), BlockIndex::default());
+    let base =
+        || super::prelude::QuerierState::new(".", LabelIndex::default(), BlockIndex::default());
 
     // Series: three fingerprints against a limit of three, then two.
     check!(
-        super::validate_query_series_limit(&base(), &plan(3, &[])).is_ok(),
+        super::prelude::validate_query_series_limit(&base(), &plan(3, &[])).is_ok(),
         "unset"
     );
     check!(
-        super::validate_query_series_limit(&base().with_max_query_series(3), &plan(3, &[])).is_ok(),
+        super::prelude::validate_query_series_limit(
+            &base().with_max_query_series(3),
+            &plan(3, &[])
+        )
+        .is_ok(),
         "exactly at the limit"
     );
     check!(
-        super::validate_query_series_limit(&base().with_max_query_series(2), &plan(3, &[]))
-            .is_err(),
+        super::prelude::validate_query_series_limit(
+            &base().with_max_query_series(2),
+            &plan(3, &[])
+        )
+        .is_err(),
         "one over"
     );
 
@@ -61,11 +70,11 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
     // used -- one block cannot tell a sum from a maximum.
     let two_blocks = plan(0, &[40, 60]);
     check!(
-        super::validate_query_bytes_limit(&base(), &two_blocks).is_ok(),
+        super::prelude::validate_query_bytes_limit(&base(), &two_blocks).is_ok(),
         "unset"
     );
     check!(
-        super::validate_query_bytes_limit(
+        super::prelude::validate_query_bytes_limit(
             &base().with_max_query_read(krabka_units::bytes(100)),
             &two_blocks,
         )
@@ -73,7 +82,7 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
         "exactly at the summed limit"
     );
     check!(
-        super::validate_query_bytes_limit(
+        super::prelude::validate_query_bytes_limit(
             &base().with_max_query_read(krabka_units::bytes(99)),
             &two_blocks,
         )
@@ -84,11 +93,11 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
     // Length: measured in bytes of the query text.
     let query = "{app=\"api\"}";
     check!(
-        super::validate_query_length_limit(&base(), query).is_ok(),
+        super::prelude::validate_query_length_limit(&base(), query).is_ok(),
         "unset"
     );
     check!(
-        super::validate_query_length_limit(
+        super::prelude::validate_query_length_limit(
             &base().with_max_query_length(krabka_units::bytes(
                 u32::try_from(query.len()).expect("a short query")
             )),
@@ -98,7 +107,7 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
         "exactly at the limit"
     );
     check!(
-        super::validate_query_length_limit(
+        super::prelude::validate_query_length_limit(
             &base().with_max_query_length(krabka_units::bytes(
                 u32::try_from(query.len()).expect("a short query") - 1
             )),
@@ -110,18 +119,21 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
 
     // Each refusal names its own limit rather than a shared message.
     check!(matches!(
-        super::validate_query_series_limit(&base().with_max_query_series(2), &plan(3, &[])),
+        super::prelude::validate_query_series_limit(
+            &base().with_max_query_series(2),
+            &plan(3, &[])
+        ),
         Err(HttpQueryError::QuerySeriesTooLarge { .. })
     ));
     check!(matches!(
-        super::validate_query_bytes_limit(
+        super::prelude::validate_query_bytes_limit(
             &base().with_max_query_read(krabka_units::bytes(99)),
             &two_blocks,
         ),
         Err(HttpQueryError::QueryBytesTooLarge { .. })
     ));
     check!(matches!(
-        super::validate_query_length_limit(
+        super::prelude::validate_query_length_limit(
             &base().with_max_query_length(krabka_units::bytes(1)),
             query,
         ),
@@ -141,9 +153,9 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
 pub(crate) fn a_volume_query_range_is_capped_at_its_limit_exactly() {
     use krabka_blockstore::TimeRange;
 
-    let max_ns = super::LOKI_VOLUME_MAX_QUERY_RANGE.nanos_i64();
+    let max_ns = super::prelude::LOKI_VOLUME_MAX_QUERY_RANGE.nanos_i64();
     let range = |start_ns, end_ns| {
-        super::validate_loki_volume_query_range_limit(
+        super::prelude::validate_loki_volume_query_range_limit(
             TimeRange::new(start_ns, end_ns).expect("a valid range"),
         )
     };
@@ -171,8 +183,9 @@ pub(crate) fn a_volume_query_range_is_capped_at_its_limit_exactly() {
 /// instant, so it is accepted, which is what separates `< 0` from `<= 0`.
 #[test]
 pub(crate) fn a_native_timestamp_may_be_the_epoch_but_not_before_it() {
-    let validate =
-        |timestamp_ns| super::validate_native_timestamp_ns(timestamp_ns, timestamp_ns.to_string());
+    let validate = |timestamp_ns| {
+        super::prelude::validate_native_timestamp_ns(timestamp_ns, timestamp_ns.to_string())
+    };
 
     check!(validate(0).ok() == Some(0), "the epoch is a real instant");
     check!(validate(1).ok() == Some(1));
@@ -212,7 +225,7 @@ pub(crate) fn counting_stream_lines_stops_before_its_bound_but_keeps_odd_entries
             })
             .collect::<BTreeMap<_, _>>()
     };
-    let count = super::count_stream_map_lines;
+    let count = super::prelude::count_stream_map_lines;
 
     // Unbounded: every entry across every stream.
     let two = streams(&[("api", &["1", "2", "3"]), ("web", &["4", "5"])]);
@@ -256,7 +269,7 @@ pub(crate) fn a_loki_stream_interval_keeps_the_first_entry_of_each_window() {
         })
     };
     let kept = |mut value: serde_json::Value, interval| {
-        super::apply_loki_stream_interval(&mut value, interval);
+        super::prelude::apply_loki_stream_interval(&mut value, interval);
         value
             .pointer("/data/result")
             .and_then(serde_json::Value::as_array)
@@ -305,7 +318,7 @@ pub(crate) fn a_loki_stream_interval_keeps_the_first_entry_of_each_window() {
     let mut empty = serde_json::json!({
         "data": {"result": [{"stream": {}, "values": []}]}
     });
-    super::apply_loki_stream_interval(&mut empty, Some(10));
+    super::prelude::apply_loki_stream_interval(&mut empty, Some(10));
     check!(
         empty["data"]["result"]
             .as_array()
@@ -325,7 +338,7 @@ pub(crate) fn a_loki_stream_interval_keeps_the_first_entry_of_each_window() {
 /// multiplied by the wrong scale.
 #[test]
 pub(crate) fn a_prometheus_duration_sums_its_chunks_in_nanoseconds() {
-    let parse = super::parse_prometheus_duration;
+    let parse = super::prelude::parse_prometheus_duration;
     let secs = 1_000_000_000_i64;
 
     // Each unit's own scale.
@@ -372,7 +385,7 @@ pub(crate) fn a_prometheus_duration_sums_its_chunks_in_nanoseconds() {
 /// swapped nibble order is invisible.
 #[test]
 pub(crate) fn hex_rendering_puts_the_high_nibble_first() {
-    let hex = super::hex_string;
+    let hex = super::prelude::hex_string;
 
     check!(hex(&[0xAB]) == "ab", "high nibble first");
     check!(hex(&[0x0F]) == "0f", "a leading zero is kept");
@@ -393,7 +406,7 @@ pub(crate) fn hex_rendering_puts_the_high_nibble_first() {
 pub(crate) fn only_an_object_store_failure_is_classified_as_retryable() {
     use krabka_blockstore::LogBlockStoreError as BlockStoreError;
 
-    let is_object_store = super::compaction_error_is_object_store;
+    let is_object_store = super::prelude::compaction_error_is_object_store;
     let object_store_error = || {
         BlockStoreError::ObjectStore(object_store::Error::NotFound {
             path: "block".to_string(),
@@ -402,12 +415,12 @@ pub(crate) fn only_an_object_store_failure_is_classified_as_retryable() {
     };
 
     // The one that is.
-    check!(super::block_store_error_is_object_store(
+    check!(super::prelude::block_store_error_is_object_store(
         &object_store_error()
     ));
-    check!(is_object_store(&super::CompactionError::BlockStore(
-        object_store_error()
-    )));
+    check!(is_object_store(
+        &super::prelude::CompactionError::BlockStore(object_store_error())
+    ));
 
     // Every other block-store failure is not, including an I/O error,
     // which also arrives while talking to storage but is not the object
@@ -427,24 +440,37 @@ pub(crate) fn only_an_object_store_failure_is_classified_as_retryable() {
         ]
     };
     for error in others() {
-        check!(!super::block_store_error_is_object_store(&error), "{error}");
+        check!(
+            !super::prelude::block_store_error_is_object_store(&error),
+            "{error}"
+        );
     }
     for error in others() {
-        check!(!is_object_store(&super::CompactionError::BlockStore(error)));
+        check!(!is_object_store(
+            &super::prelude::CompactionError::BlockStore(error)
+        ));
     }
 
     // And every compaction failure that is not a block-store one at all.
-    check!(!is_object_store(&super::CompactionError::EmptyWalBatch));
-    check!(!is_object_store(&super::CompactionError::AllRowsDeleted));
     check!(!is_object_store(
-        &super::CompactionError::MissingWalPosition { timestamp_ns: 1 }
+        &super::prelude::CompactionError::EmptyWalBatch
     ));
-    check!(!is_object_store(&super::CompactionError::MixedTenant {
-        expected: "a".to_string(),
-        actual: "b".to_string(),
-    }));
-    check!(!is_object_store(&super::CompactionError::MixedPartition {
-        expected: 1,
-        actual: 2,
-    }));
+    check!(!is_object_store(
+        &super::prelude::CompactionError::AllRowsDeleted
+    ));
+    check!(!is_object_store(
+        &super::prelude::CompactionError::MissingWalPosition { timestamp_ns: 1 }
+    ));
+    check!(!is_object_store(
+        &super::prelude::CompactionError::MixedTenant {
+            expected: "a".to_string(),
+            actual: "b".to_string(),
+        }
+    ));
+    check!(!is_object_store(
+        &super::prelude::CompactionError::MixedPartition {
+            expected: 1,
+            actual: 2,
+        }
+    ));
 }

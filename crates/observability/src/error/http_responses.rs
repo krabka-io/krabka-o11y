@@ -1,5 +1,8 @@
-#[allow(clippy::wildcard_imports)]
-use super::*;
+use crate::{
+    HttpQueryError, IntoResponse, QueryAuthorizationError, QueryError, Response, StatusCode,
+    loki_error, loki_format_query_invalid_response, loki_parse_error, loki_parse_error_text,
+    text_response,
+};
 
 impl IntoResponse for HttpQueryError {
     fn into_response(self) -> Response {
