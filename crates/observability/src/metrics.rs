@@ -283,7 +283,7 @@ mod tests {
     use krabka_units::{bytes, millis};
     use tower::ServiceExt as _;
 
-    use super::*;
+    use super::{RouteStatusLabel, ServiceMetrics, StatusLabel, metrics_router};
 
     #[tokio::test]
     async fn registry_has_logs_prefix_and_all_metrics() {

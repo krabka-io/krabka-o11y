@@ -2,3 +2,7 @@
 # accommodates linear end-to-end integration scenarios without blanket lint
 # allows; scenarios above 200 lines must still be decomposed.
 too-many-lines-threshold = 200
+
+disallowed-macros = [
+    { path = "std::include", reason = "Use idiomatic module declarations (`mod filename;`) instead of text inclusion." }
+]
