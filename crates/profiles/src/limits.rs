@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{EndMs, StartMs};
 
-#[path = "limits/overrides.rs"]
 mod overrides;
 
 pub use overrides::{OverridesError, OverridesProvider};

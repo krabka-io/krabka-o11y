@@ -18,5 +18,4 @@ pub use frontier::{
     compact_wal_records_to_object_store, read_compaction_frontier_from_object_store,
     write_compaction_frontier_to_object_store,
 };
-#[path = "object_store.rs"]
 pub(crate) mod object_store_support;
