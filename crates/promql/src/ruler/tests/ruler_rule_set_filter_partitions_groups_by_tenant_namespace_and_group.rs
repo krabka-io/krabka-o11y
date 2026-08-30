@@ -50,6 +50,6 @@ pub(crate) fn ruler_rule_set_filter_partitions_groups_by_tenant_namespace_and_gr
             ])
     );
     for (index, total) in [(0, shard_count), (shard_count + 1, shard_count), (1, 0)] {
-        assert2::assert!(super::RulerShard::new(index, total).is_err());
+        assert2::assert!(super::super::RulerShard::new(index, total).is_err());
     }
 }

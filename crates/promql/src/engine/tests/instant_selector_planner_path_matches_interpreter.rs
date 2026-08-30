@@ -92,7 +92,7 @@ pub(crate) async fn instant_selector_planner_path_matches_interpreter() {
             assert2::assert!(planner.len() == 1);
             let value = float_value(&planner[0].value);
             assert2::assert!(value.is_nan());
-            assert2::assert!(!super::is_stale_nan(value));
+            assert2::assert!(!super::super::is_stale_nan(value));
         }
         if query == "up{job=\"db\"}" {
             // Stale-NaN marker terminates the series: empty result.

@@ -17,6 +17,6 @@ pub(crate) fn parse_duration_supports_all_units_and_compounds_and_rejects_bad_in
         ("5x", None),
         ("abc", None),
     ] {
-        assert2::assert!(super::parse_duration(input).ok() == want);
+        assert2::assert!(super::super::parse_duration(input).ok() == want);
     }
 }

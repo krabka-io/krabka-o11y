@@ -9,7 +9,7 @@ pub(crate) fn assert_aggregate_nan_staleness(query: &str, via_operators: &[crate
         assert2::assert!(via_operators.len() == 1);
         let value = float_value(&via_operators[0].value);
         assert2::assert!(value.is_nan());
-        assert2::assert!(!super::is_stale_nan(value));
+        assert2::assert!(!super::super::is_stale_nan(value));
     }
     if query == "count(nan_metric)" {
         assert2::assert!(via_operators.len() == 1);

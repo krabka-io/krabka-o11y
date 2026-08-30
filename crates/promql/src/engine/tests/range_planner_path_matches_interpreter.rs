@@ -187,7 +187,7 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
         while let Expr::Paren(paren) = probe {
             probe = &paren.expr;
         }
-        assert2::assert!(super::range_expr_routes_through_planner(probe));
+        assert2::assert!(super::super::range_expr_routes_through_planner(probe));
         // The public range path now routes these through the planner (the
         // only evaluation engine); it must evaluate without falling back.
         let planner = engine
@@ -209,7 +209,7 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
         while let Expr::Paren(paren) = probe {
             probe = &paren.expr;
         }
-        assert2::assert!(!super::range_expr_routes_through_planner(probe));
+        assert2::assert!(!super::super::range_expr_routes_through_planner(probe));
     }
 
     // The headline fix, proven directly on the SPARSE aggregate-over-rate.
@@ -262,5 +262,5 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
         panic!("expected float at 180k");
     };
     assert2::assert!(nan_value.is_nan());
-    assert2::assert!(!super::is_stale_nan(nan_value));
+    assert2::assert!(!super::super::is_stale_nan(nan_value));
 }

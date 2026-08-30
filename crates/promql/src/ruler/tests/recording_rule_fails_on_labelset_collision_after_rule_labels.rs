@@ -21,7 +21,7 @@ pub(crate) async fn recording_rule_fails_on_labelset_collision_after_rule_labels
     )
     .await;
 
-    assert2::assert!(let Err(super::PromqlError::Exec(_)) = &result);
+    assert2::assert!(let Err(super::super::PromqlError::Exec(_)) = &result);
     if let Err(super::super::PromqlError::Exec(message)) = result {
         assert2::assert!(message.contains("same labelset after applying rule labels"));
     }

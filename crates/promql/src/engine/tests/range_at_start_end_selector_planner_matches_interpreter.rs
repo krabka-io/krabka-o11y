@@ -46,7 +46,7 @@ pub(crate) async fn range_at_start_end_selector_planner_matches_interpreter() {
         while let Expr::Paren(paren) = probe {
             probe = &paren.expr;
         }
-        assert2::assert!(super::range_expr_routes_through_planner(probe));
+        assert2::assert!(super::super::range_expr_routes_through_planner(probe));
 
         // (2) the planner resolves `@ start()`/`@ end()` to a FIXED eval
         // instant repeated across every grid step, so each surviving series

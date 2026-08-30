@@ -14,6 +14,6 @@ pub(crate) fn min_present_time_preserves_legitimate_zero_min_time() {
         (None, None, 0),
         (Some(20), Some(50), 20),
     ] {
-        assert2::assert!(super::min_present_time(left, right) == want);
+        assert2::assert!(super::super::min_present_time(left, right) == want);
     }
 }

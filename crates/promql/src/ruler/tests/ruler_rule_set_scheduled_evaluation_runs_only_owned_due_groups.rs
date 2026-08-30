@@ -26,19 +26,19 @@ rules:
     }
     let mut group_state = super::super::RulerGroupState::default();
     group_state.apply_records(vec![
-        super::RulerGroupStateRecord {
+        super::super::RulerGroupStateRecord {
             tenant: "tenant-a".to_string(),
             namespace: "team-a".to_string(),
             group: "not-yet".to_string(),
             last_eval_ms: 120_000,
         },
-        super::RulerGroupStateRecord {
+        super::super::RulerGroupStateRecord {
             tenant: "tenant-a".to_string(),
             namespace: "team-b".to_string(),
             group: "due".to_string(),
             last_eval_ms: 60_000,
         },
-        super::RulerGroupStateRecord {
+        super::super::RulerGroupStateRecord {
             tenant: "tenant-a".to_string(),
             namespace: "team-c".to_string(),
             group: "also-due".to_string(),

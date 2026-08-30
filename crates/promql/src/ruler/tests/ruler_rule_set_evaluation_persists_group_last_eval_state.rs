@@ -52,7 +52,7 @@ rules:
 
     assert2::assert!(
         evaluation
-            == super::RulerGroupEvaluation {
+            == super::super::RulerGroupEvaluation {
                 recording_records: 1,
                 alerts_dispatched: 1,
                 last_eval_ms: 120_000,
@@ -61,13 +61,13 @@ rules:
     assert2::assert!(
         state_sink.group_records()
             == vec![
-                super::RulerGroupStateRecord {
+                super::super::RulerGroupStateRecord {
                     tenant: "tenant-a".to_string(),
                     namespace: "team-a".to_string(),
                     group: "recording".to_string(),
                     last_eval_ms: 120_000,
                 },
-                super::RulerGroupStateRecord {
+                super::super::RulerGroupStateRecord {
                     tenant: "tenant-a".to_string(),
                     namespace: "team-b".to_string(),
                     group: "alerting".to_string(),
@@ -77,7 +77,7 @@ rules:
     );
     assert2::assert!(
         state_sink.alert_records()
-            == vec![super::RulerAlertStateRecord {
+            == vec![super::super::RulerAlertStateRecord {
                 tenant: "tenant-a".to_string(),
                 rule_id: "InstanceUp\nup > 0".to_string(),
                 labels: BTreeMap::from([

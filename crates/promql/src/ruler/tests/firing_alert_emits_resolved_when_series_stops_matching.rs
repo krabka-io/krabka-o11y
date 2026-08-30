@@ -46,7 +46,7 @@ expr: up > 0
     assert2::assert!(resolved == 1);
     assert2::assert!(
         resolved_sink.alerts()
-            == vec![super::AlertmanagerAlert {
+            == vec![super::super::AlertmanagerAlert {
                 labels: BTreeMap::from([
                     ("__name__".to_string(), "up".to_string()),
                     ("alertname".to_string(), "InstanceUp".to_string()),

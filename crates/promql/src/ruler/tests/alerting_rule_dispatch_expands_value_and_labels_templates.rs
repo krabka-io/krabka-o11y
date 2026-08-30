@@ -31,7 +31,7 @@ annotations:
     // untouched.
     assert2::assert!(
         sink.alerts()
-            == vec![super::AlertmanagerAlert {
+            == vec![super::super::AlertmanagerAlert {
                 labels: BTreeMap::from([
                     ("__name__".to_string(), "up".to_string()),
                     ("alertname".to_string(), "InstanceUp".to_string()),

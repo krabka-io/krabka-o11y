@@ -52,14 +52,14 @@ for: 5m
     check!(
         state_sink.alert_records()
             == vec![
-                super::RulerAlertStateRecord {
+                super::super::RulerAlertStateRecord {
                     tenant: "tenant-a".to_string(),
                     rule_id: "InstanceUp\nup > 0".to_string(),
                     labels: alert_labels.clone(),
                     active_since_ms: Some(60_000),
                     keep_firing_until_ms: None,
                 },
-                super::RulerAlertStateRecord {
+                super::super::RulerAlertStateRecord {
                     tenant: "tenant-a".to_string(),
                     rule_id: "InstanceUp\nup > 0".to_string(),
                     labels: alert_labels,

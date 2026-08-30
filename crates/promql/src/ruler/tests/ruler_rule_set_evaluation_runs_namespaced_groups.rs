@@ -53,7 +53,7 @@ rules:
     .expect("pending rule-set evaluation");
     assert2::assert!(
         pending
-            == super::RulerGroupEvaluation {
+            == super::super::RulerGroupEvaluation {
                 recording_records: 1,
                 alerts_dispatched: 0,
                 last_eval_ms: 60_000,
@@ -73,7 +73,7 @@ rules:
     .expect("firing rule-set evaluation");
     assert2::assert!(
         firing
-            == super::RulerGroupEvaluation {
+            == super::super::RulerGroupEvaluation {
                 recording_records: 1,
                 alerts_dispatched: 1,
                 last_eval_ms: 360_000,
@@ -112,7 +112,7 @@ rules:
     );
     assert2::assert!(
         alert_sink.alerts()
-            == vec![super::AlertmanagerAlert {
+            == vec![super::super::AlertmanagerAlert {
                 labels: BTreeMap::from([
                     ("__name__".to_string(), "up".to_string()),
                     ("alertname".to_string(), "InstanceUp".to_string()),

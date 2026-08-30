@@ -28,7 +28,7 @@ pub(crate) async fn range_scalar_expr_planner_path_matches_interpreter() {
         while let Expr::Paren(paren) = probe {
             probe = &paren.expr;
         }
-        assert2::assert!(super::range_expr_routes_through_planner(probe));
+        assert2::assert!(super::super::range_expr_routes_through_planner(probe));
         let planner = engine
             .query_range("t", query, start, end, step)
             .await

@@ -43,7 +43,7 @@ pub(crate) async fn range_bare_selector_lookback_boundary_matches_prometheus() {
         while let Expr::Paren(paren) = probe {
             probe = &paren.expr;
         }
-        assert2::assert!(super::range_expr_routes_through_planner(probe));
+        assert2::assert!(super::super::range_expr_routes_through_planner(probe));
     }
 
     // (2) planner (public range path) yields the boundary-correct grid.
