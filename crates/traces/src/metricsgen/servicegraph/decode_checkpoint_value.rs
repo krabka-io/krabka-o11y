@@ -1,4 +1,4 @@
-use super::*;
+use super::{Buf, CheckpointCodecError, ConnectionType, Edge, get_optional_i64, get_optional_string};
 
 pub(crate) fn decode_checkpoint_value(mut buf: &[u8]) -> Result<Edge, CheckpointCodecError> {
     if buf.len() < 10 {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MAX_RESOLUTION_POINTS, PromqlError, Time, TimeExt};
 
 /// Rejects a range query whose resolution exceeds the per-timeseries point cap.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchScope, RecordBatch, SpanMatcher, TraceqlError, attr_values_match, batch_attr_matches, event_values, instrumentation_matches, intrinsic_matches, link_values, resource_matches};
 
 pub(crate) fn row_matcher_matches(
     batch: &RecordBatch,

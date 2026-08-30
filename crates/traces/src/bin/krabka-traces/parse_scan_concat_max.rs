@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, DEFAULT_SCAN_CONCAT_MAX, parse_positive_whole_byte_size};
 
 pub(crate) fn parse_scan_concat_max(value: &str) -> Result<ByteSize, String> {
     let size = parse_positive_whole_byte_size(value)?;

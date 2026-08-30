@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, CompactionIndexError, HistogramCodecError};
 
 /// Errors raised while writing compacted metric blocks.
 #[derive(Debug, thiserror::Error)]

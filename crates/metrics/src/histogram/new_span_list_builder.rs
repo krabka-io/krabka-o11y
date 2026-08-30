@@ -1,4 +1,4 @@
-use super::*;
+use super::{Int32Builder, ListBuilder, StructBuilder, UInt32Builder, span_list_field, span_struct_fields};
 
 pub(crate) fn new_span_list_builder() -> ListBuilder<StructBuilder> {
     let struct_builder = StructBuilder::new(

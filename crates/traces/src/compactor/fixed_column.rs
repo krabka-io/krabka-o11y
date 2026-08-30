@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, FixedSizeBinaryArray, RecordBatch, TracesError};
 
 pub(crate) fn fixed_column<'a>(
     batch: &'a RecordBatch,

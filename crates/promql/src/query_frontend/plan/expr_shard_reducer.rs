@@ -1,4 +1,4 @@
-use super::*;
+use super::{Expr, QueryShardReducer, T_COUNT, T_MAX, T_MIN, T_SUM};
 
 pub(crate) fn expr_shard_reducer(expr: &Expr) -> QueryShardReducer {
     match expr {

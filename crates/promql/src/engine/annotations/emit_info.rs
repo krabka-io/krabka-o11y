@@ -1,4 +1,4 @@
-use super::*;
+use super::ANNOTATIONS;
 
 /// Records a `PromQL info:`-class annotation for the current query.
 ///

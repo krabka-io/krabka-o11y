@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BTreeSet, LabelNameCardinality, SeriesFingerprint};
 
 pub(crate) fn label_name_cardinality(
     by_name: BTreeMap<String, BTreeSet<SeriesFingerprint>>,

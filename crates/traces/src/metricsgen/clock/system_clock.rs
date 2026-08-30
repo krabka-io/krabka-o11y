@@ -1,4 +1,4 @@
-use super::*;
+use super::{Clock, SystemTime, UNIX_EPOCH};
 
 /// Production clock.
 #[derive(Debug, Clone, Default)]

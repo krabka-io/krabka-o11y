@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, HistogramCodecError, RecordBatch, schema_mismatch};
 
 // cargo-mutants: generic downcast glue is covered by caller-specific schema tests.
 #[cfg_attr(test, mutants::skip)]

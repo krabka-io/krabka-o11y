@@ -1,4 +1,4 @@
-use super::*;
+use super::{Expr, T_COUNT, T_GROUP, T_MAX, T_MIN, T_SUM};
 
 pub(crate) fn expr_supports_frontend_sharding(expr: &Expr) -> bool {
     match expr {

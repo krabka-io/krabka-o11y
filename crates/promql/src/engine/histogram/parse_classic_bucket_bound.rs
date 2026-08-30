@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromqlError, Result};
 
 pub(crate) fn parse_classic_bucket_bound(value: &str) -> Result<f64> {
     // Both infinity arms are permanent mutation survivors, and both are

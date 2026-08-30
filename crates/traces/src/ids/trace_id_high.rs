@@ -1,4 +1,4 @@
-use super::*;
+use super::{Display, From, Into};
 
 /// The high 64 bits of a 128-bit Jaeger trace id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]

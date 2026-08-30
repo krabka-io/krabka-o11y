@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorState, HeaderMap, PushError, PushSuccess, TranslationStrategy, append_decoded_series, decode_otlp_stateful_bytes, require_otlp_protobuf_content_type, tenant_from_headers};
 
 pub(crate) async fn otlp_push_inner(
     state: &DistributorState,

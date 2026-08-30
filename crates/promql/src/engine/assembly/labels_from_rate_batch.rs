@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, Labels, RecordBatch, StringArray, rate_range};
 
 /// Reconstructs a [`Labels`] set from the string label columns of one row of a
 /// rate-range projection output batch.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BucketSpan, Deserialize, ResetHint, Serialize};
 
 /// A native histogram sample with absolute bucket counts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

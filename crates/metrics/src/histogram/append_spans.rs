@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, BucketSpan, Int32Builder, ListBuilder, StructBuilder, UInt32Builder};
 
 pub(crate) fn append_spans(builder: &mut ListBuilder<StructBuilder>, spans: &[BucketSpan]) {
     let struct_builder = builder.values();

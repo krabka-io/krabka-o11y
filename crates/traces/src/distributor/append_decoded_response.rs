@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorState, HeaderMap, IntoResponse, Response, Span, error_response, produce_spans, tenant};
 
 pub(crate) async fn append_decoded_response(
     state: &DistributorState,

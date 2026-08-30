@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, AtomicI64, Clock, Ordering};
 
 /// Deterministic test clock.
 #[derive(Debug, Clone)]

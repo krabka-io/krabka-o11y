@@ -1,4 +1,4 @@
-use super::*;
+use super::{AnyValueJson, AttrValue};
 
 impl From<&AnyValueJson> for AttrValue {
     fn from(v: &AnyValueJson) -> Self {

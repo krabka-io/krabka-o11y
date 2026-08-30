@@ -1,4 +1,4 @@
-use super::*;
+use super::{ExtendedSelectorModifier, PromqlError, Result};
 
 pub(crate) fn validate_extended_selector_modifier(
     function_name: &str,

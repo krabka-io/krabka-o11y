@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ByteRateExt, ByteSize, ByteSizeExt, Counter, EncodeLabelSet, Family, FrequencyExt, Histogram, Mutex, RatioExt, Registry, SharedRegistry, StatusLabel, StdDurationExt, TenantLabel, Time, TimeExt};
 
 /// Cheaply-clonable bundle of metric handles. Construct it once with
 /// [`ServiceMetrics::new`], then hand out clones to the handlers that emit.

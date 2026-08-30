@@ -1,4 +1,4 @@
-use super::*;
+use super::parse_logfmt_value;
 
 pub(crate) fn parse_logfmt_tags(tags: &str) -> Option<Vec<(String, String)>> {
     let mut out = Vec::new();

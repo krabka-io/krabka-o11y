@@ -1,4 +1,4 @@
-use super::*;
+use super::{HashMap, NestedSet, Span};
 
 /// Assign modified pre-order traversal intervals to spans of one trace.
 #[must_use]

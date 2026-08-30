@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, histogram_reset_indices, native_histograms_are_range_compatible};
 
 pub(crate) fn count_histogram_resets(histograms: &[NativeHistogram]) -> Option<f64> {
     if histograms.len() < 2

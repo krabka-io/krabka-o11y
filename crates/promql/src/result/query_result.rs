@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, RangeSeries};
 
 /// A `PromQL` evaluation result.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]

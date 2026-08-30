@@ -1,4 +1,4 @@
-use super::*;
+use super::{clamp_float, round_to_nearest};
 
 /// Which per-row scalar function a [`ScalarMathUdf`] evaluates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

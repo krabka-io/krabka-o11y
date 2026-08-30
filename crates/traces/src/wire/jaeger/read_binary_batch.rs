@@ -1,4 +1,4 @@
-use super::*;
+use super::{BT_LIST, BT_STRUCT, BinaryInput, JaegerBatch, WireError, read_binary_process, read_binary_span};
 
 pub(crate) fn read_binary_batch(input: &mut BinaryInput<'_>) -> Result<JaegerBatch, WireError> {
     let mut out = JaegerBatch::default();

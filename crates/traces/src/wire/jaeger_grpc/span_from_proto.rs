@@ -1,4 +1,4 @@
-use super::*;
+use super::{JaegerSpan, WireError, api_v2, duration_micros, key_value_from_proto, log_from_proto, ref_from_proto, span_id_part, timestamp_micros, trace_id_parts};
 
 pub(crate) fn span_from_proto(span: api_v2::Span) -> Result<JaegerSpan, WireError> {
     let (trace_id_high, trace_id_low) = trace_id_parts(&span.trace_id)?;

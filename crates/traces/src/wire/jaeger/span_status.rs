@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, KeyValue, StatusCode};
 
 pub(crate) fn span_status(tags: &[KeyValue]) -> StatusCode {
     if tags.iter().any(|tag| {

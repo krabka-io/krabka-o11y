@@ -1,4 +1,4 @@
-use super::*;
+use super::is_leap_year;
 
 pub(crate) fn days_in_month(year: i32, month: u8) -> u8 {
     match month {

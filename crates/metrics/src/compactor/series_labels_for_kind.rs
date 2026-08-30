@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, CompactionSeriesLabels, MetricBlockKind, ObjectStoreExt, TenantCompactionRows};
 
 pub(crate) fn series_labels_for_kind(
     rows: &TenantCompactionRows,

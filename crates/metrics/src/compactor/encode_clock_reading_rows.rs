@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ClockColumns, ClockReadingRow, HistogramCodecError, RecordBatch, clock_reading_schema};
 
 /// Encodes sorted clock rows into a block against
 /// [`clock_reading_schema`](crate::schema::clock_reading_schema).

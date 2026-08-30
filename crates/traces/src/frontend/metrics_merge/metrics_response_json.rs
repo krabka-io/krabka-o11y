@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, MetricSeries, Serialize};
 
 /// The response body for `/api/metrics/query_range` and
 /// `/api/metrics/query`.

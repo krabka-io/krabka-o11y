@@ -1,4 +1,4 @@
-use super::*;
+use super::{AnyValue, any_value};
 
 pub(crate) fn attribute_value(value: Option<&AnyValue>) -> Option<String> {
     match value?.value.as_ref()? {

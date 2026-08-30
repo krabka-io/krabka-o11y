@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels};
 
 /// Builds a [`Labels`] set from an alert label map for template `$labels.NAME`
 /// lookups.

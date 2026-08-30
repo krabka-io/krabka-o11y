@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, add_bucket_maps, remap_custom_counts};
 
 pub(crate) fn add_custom_histogram(left: &mut NativeHistogram, right: &NativeHistogram) {
     let left_values = left.custom_values.as_deref().unwrap_or_default();

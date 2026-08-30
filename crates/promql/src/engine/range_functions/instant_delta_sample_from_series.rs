@@ -1,4 +1,4 @@
-use super::*;
+use super::{IrateFn, RangeSeries, SampleValue, Time, TimeExt, instant_delta};
 
 pub(crate) fn instant_delta_sample_from_series(
     series: &RangeSeries,

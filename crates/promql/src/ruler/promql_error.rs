@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromqlError, RulerWalError};
 
 impl From<RulerWalError> for PromqlError {
     fn from(error: RulerWalError) -> Self {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{key_is_safe_attribute, parse_logfmt_tags};
 
 pub(crate) fn tags_to_traceql(tags: &str) -> Option<String> {
     let parts: Vec<String> = parse_logfmt_tags(tags)?

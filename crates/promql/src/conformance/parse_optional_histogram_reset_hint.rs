@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Line, ResetHint, Result, parse_error};
 
 pub(crate) fn parse_optional_histogram_reset_hint(
     fields: &BTreeMap<&str, &str>,

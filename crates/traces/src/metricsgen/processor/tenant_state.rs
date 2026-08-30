@@ -1,4 +1,4 @@
-use super::*;
+use super::{EdgeStore, SpanMetricsRegistry};
 
 #[derive(Debug)]
 pub(crate) struct TenantState {

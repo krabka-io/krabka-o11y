@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompiledLabelMatcher, CompiledLabelMatchers, LabelMatcher, MatchOp, PromqlError, Regex, Result};
 
 /// Compiles a matcher set once and precompiles each `=~`/`!~` regex.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockWriter, CompactionIndexSink, CompactionOffsetCommitter, CompactionWalRecord, CompactionWindowError, CompactionWindowResult, write_compaction_partition_window};
 
 /// Decodes, compacts, writes, and commits one assigned WAL partition window.
 ///

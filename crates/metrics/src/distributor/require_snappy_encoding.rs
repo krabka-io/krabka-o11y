@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, WireError, header_list_includes};
 
 pub(crate) fn require_snappy_encoding(headers: &HeaderMap) -> Result<(), WireError> {
     let encoding = headers

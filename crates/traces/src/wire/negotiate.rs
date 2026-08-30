@@ -1,4 +1,4 @@
-use super::*;
+use super::{WireError, WireFormat};
 
 /// Pick the decoder from the request path.
 ///

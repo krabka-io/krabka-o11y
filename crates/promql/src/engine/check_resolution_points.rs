@@ -1,4 +1,4 @@
-use super::*;
+use super::{MAX_RESOLUTION_POINTS, PromqlError, Result, Time, TimeExt};
 
 /// Returns the resolution-point count `(end_ms - start_ms) / step + 1`.
 ///

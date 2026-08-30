@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedSeries, HaElectionRecord, HaTracker, ha_election_at, now_ms};
 
 /// The HA election action required for a decoded ingest request.
 #[derive(Debug, Clone, PartialEq, Eq)]

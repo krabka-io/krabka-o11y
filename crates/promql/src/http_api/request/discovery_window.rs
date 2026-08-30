@@ -1,4 +1,4 @@
-use super::*;
+use super::{ApiError, DiscoveryParams, timestamp_ms, validate_timestamp_range};
 
 pub(crate) struct DiscoveryWindow {
     pub(crate) start_ms: i64,

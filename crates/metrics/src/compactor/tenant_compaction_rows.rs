@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, ClockReadingRow, ExemplarRow, FloatRow, MetadataRow, NativeHistogramRow};
 
 /// Compacted rows for a single tenant.
 #[derive(Clone, Debug, PartialEq)]

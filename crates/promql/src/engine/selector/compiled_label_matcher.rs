@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchOp, Regex};
 
 /// One label matcher with its `=~`/`!~` regex compiled ahead of time, anchored
 /// `^(?:...)$` exactly as `labels_match` anchors it.

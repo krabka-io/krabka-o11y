@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockWriter, CompactionBatchResult, CompactionBuffer, CompactionClock, CompactionConsumerPoll, CompactionIndexSink, CompactionLoopConfig, CompactionLoopResult, CompactionOffsetCommitter, CompactionPollError, CompactionPollResult, compaction_wal_records_from_consumer_records, flush_buffer};
 
 /// Accumulate-then-flush compactor loop with an injectable clock.
 ///

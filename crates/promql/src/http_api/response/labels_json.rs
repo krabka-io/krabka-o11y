@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels, Map, Value};
 
 pub(crate) fn labels_json(labels: &Labels) -> Value {
     let pairs = labels

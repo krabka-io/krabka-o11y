@@ -1,4 +1,4 @@
-use super::*;
+use super::{AggregateExpr, Expr};
 
 pub(crate) fn aggregate_k(aggregate: &AggregateExpr) -> Option<usize> {
     let param = aggregate.param.as_ref()?;

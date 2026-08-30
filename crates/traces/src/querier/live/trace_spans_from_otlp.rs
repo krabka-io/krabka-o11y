@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, EventRef, LinkRef, Result, SpanRef, TraceSpans, TracesData, attrs_from_otlp, fixed_16, fixed_8, time_from_nanos_u64};
 
 pub(crate) fn trace_spans_from_otlp(trace_id: &[u8; 16], data: TracesData) -> Result<TraceSpans> {
     let mut trace = TraceSpans {

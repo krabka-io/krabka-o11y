@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricSeries, merge_samples};
 
 /// Merge a series into the accumulator.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, DecodedExemplar, DecodedSample, DecodedSeries, Message, SymbolTable, WireError, WrittenCounts, labels_from_refs, metadata_from_v2, pb, snappy_block_decode, v2_histogram_to_native};
 
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DataType, Field, Schema, SchemaRef, fingerprint_field, timestamp_field};
 
 /// Metric metadata rows used by the per-tenant metadata index.
 #[must_use]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScopeTagsJson, parse_scope};
 
 /// The `/api/v2/search/tags` body: `{ scopes: [{ name, tags }], metrics }`.
 #[derive(Clone, Debug, serde::Deserialize)]

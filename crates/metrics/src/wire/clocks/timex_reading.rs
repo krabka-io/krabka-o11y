@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, i64};
 
 /// The kernel clock discipline measurements from `adjtimex(2)`.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 /// Counter-reset semantics carried with each histogram sample.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

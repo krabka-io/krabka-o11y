@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, DecodedSeries, DistributorState, LimitError, Limits};
 
 /// Enforces the per-user active-series limit and records the new series under a
 /// single lock acquisition. The lock covers the check AND the insert, which

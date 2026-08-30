@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionCommitError, CompactionWriteError, PartitionIndex, WalError};
 
 /// Errors raised while processing a compaction WAL window.
 #[derive(Debug, thiserror::Error)]

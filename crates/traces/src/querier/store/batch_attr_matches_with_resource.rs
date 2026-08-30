@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchCmp, MatchValue, RecordBatch, TraceqlError, attr_values_match, attr_values_with_resource};
 
 pub(crate) fn batch_attr_matches_with_resource(
     batch: &RecordBatch,

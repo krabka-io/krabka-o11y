@@ -1,4 +1,4 @@
-use super::*;
+use super::{Expr, LabelModifier, RankReduction, T_BOTTOMK, T_TOPK, aggregate_k, expr_contains_aggregate, expr_supports_frontend_sharding};
 
 pub(crate) fn rank_reduction(expr: &Expr) -> Option<(usize, RankReduction, Option<LabelModifier>)> {
     match expr {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{NumberDataPoint, ToPrimitive, number_data_point};
 
 pub(crate) fn number_value(point: &NumberDataPoint) -> Option<f64> {
     match point.value {

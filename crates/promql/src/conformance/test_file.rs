@@ -1,4 +1,4 @@
-use super::*;
+use super::Statement;
 
 /// Parsed Prometheus `.test` file.
 #[derive(Clone, Debug, PartialEq)]

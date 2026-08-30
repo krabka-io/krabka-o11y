@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteRateExt, ByteSize, ByteSizeExt, Deserialize, Frequency, FrequencyExt, RatioExt, Serialize, Time, TimeExt, kibibytes, non_negative_time, per_sec, serde_units};
 
 /// Mimir-style per-tenant limits used by metrics ingest and query paths.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CancellationToken, DistributorState, GrpcServer, OtlpGrpcService, SocketAddr, TraceServiceServer};
 
 /// Serve the OTLP/gRPC trace receiver until cancelled.
 ///

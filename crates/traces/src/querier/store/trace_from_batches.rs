@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, COL_DURATION, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, COL_KIND, COL_NAME, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID, COL_ROOT_SERVICE_NAME, COL_ROOT_SPAN_NAME, COL_SPAN_ID, COL_START, COL_STATUS_CODE, COL_STATUS_MESSAGE, COL_TRACE_ID, RecordBatch, SpanRef, Time, TimeExt, TraceSpans, TraceqlError, attr_values, deduplicate_trace_spans, event_values, fixed, fixed_value, int32_value, int64_value, link_values, nullable_fixed_value, resource_attr_values, string_value};
 
 pub(crate) fn trace_from_batches(
     trace_id: &[u8; 16],

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, format_sample_value};
 
 pub(crate) fn expand_alert_action(action: &str, value: f64, labels: &Labels) -> Option<String> {
     if action == "$value" {

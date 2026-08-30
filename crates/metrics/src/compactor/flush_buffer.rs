@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockWriter, CompactionIndexSink, CompactionLoopResult, CompactionOffsetCommitter, CompactionPartitionOffset, CompactionPollError, CompactionWalRecord, process_compaction_record_batch};
 
 /// Writes one block from the buffered records, commits their offsets, and folds
 /// the result into the running loop summary.

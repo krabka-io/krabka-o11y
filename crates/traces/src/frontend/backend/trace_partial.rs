@@ -1,4 +1,4 @@
-use super::*;
+use super::{Metrics, TraceByIdResponseJson};
 
 /// The partial result of one by-id job: the typed v2 trace body, which may be
 /// empty, plus the accounting.

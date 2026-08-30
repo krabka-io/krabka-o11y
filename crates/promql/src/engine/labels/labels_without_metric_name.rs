@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, is_result_metadata_label};
 
 pub(crate) fn labels_without_metric_name(input: &Labels) -> Labels {
     let mut labels = Labels::new();

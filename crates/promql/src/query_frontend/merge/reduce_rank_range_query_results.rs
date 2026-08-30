@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BTreeSet, LabelModifier, PromqlError, QueryResult, RankCandidate, RankReduction, SampleValue, SeriesFingerprint, aggregate_labels, compare_rank_candidates, label_sort_key};
 
 pub(crate) fn reduce_rank_range_query_results(
     result: QueryResult,

@@ -1,4 +1,4 @@
-use super::*;
+use super::SpanRecord;
 
 /// Decoded records from one Kafka partition and their inclusive offset range.
 #[derive(Clone, Debug, PartialEq)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, ByteSizeExt, Deserialize, Serialize, TraceEnvelopeJson};
 
 /// The querier's v2 by-id response body.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

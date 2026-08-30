@@ -1,4 +1,4 @@
-use super::*;
+use super::{ExtendedSelectorModifier, Labels, OuterRangeFn, RangeSeries, SampleValue, Time, deriv_sample_from_series, instant_delta_sample_from_series, labels_without_metric_name, over_time_sample_from_series, predict_linear_sample_from_series, quantile_over_time_sample_from_series, range_function_sample_from_series};
 
 /// Folds one series' window into its `(result labels, value)`.
 ///

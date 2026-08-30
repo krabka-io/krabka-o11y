@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, SpanRecord, attr_value_to_string, service_name, wal};
 
 #[must_use]
 pub fn project_wal_record(record: wal::SpanRecord, size: ByteSize) -> SpanRecord {

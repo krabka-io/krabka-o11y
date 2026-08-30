@@ -1,4 +1,4 @@
-use super::*;
+use super::{AppState, HeaderMap, Response, SpanStore, State, Uri, query_instant_inner};
 
 pub(crate) async fn query_instant<S>(
     State(state): State<AppState<S>>,

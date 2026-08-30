@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, VectorSelector, build_label_matchers};
 
 pub(crate) fn label_matcher_sets(selector: &VectorSelector) -> Vec<Vec<LabelMatcher>> {
     if selector.matchers.or_matchers.is_empty() {

@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 #[derive(Clone)]
 pub(crate) struct ExemplarRow {

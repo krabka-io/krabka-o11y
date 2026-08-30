@@ -1,4 +1,4 @@
-use super::*;
+use super::{Frequency, FrequencyExt, f64_from_usize};
 
 /// `usize::MAX` is the CLI's "no limit" spelling. A zero rate is how the shared
 /// limits express unlimited.

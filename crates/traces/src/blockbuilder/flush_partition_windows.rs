@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, BTreeMap, BlockBuildOptions, BlockBuilderConfig, BlockWriter, ObjectStore, PartitionWindow, TraceIndex, TracesError, build_blocks_with_options, tenants_in_records};
 
 /// Flush decoded partition windows and durably save the trace index.
 ///

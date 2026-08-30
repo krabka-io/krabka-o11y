@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CancellationToken, Consumer, LiveStore, RwLock, TracesError, ingest_wal_payloads};
 
 /// Consume traces WAL records and rebuild the in-memory hot tier.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, AtomicU64, TokenBucket};
 
 /// Per-tenant ingestion-rate token bucket with a monotonic last-touch stamp.
 /// The enforcer uses that stamp for least-recently-used eviction after the map

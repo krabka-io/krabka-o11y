@@ -1,4 +1,4 @@
-use super::*;
+use super::{AggregationTemporality, DecodedSeries, DeltaAccumulator, ExemplarPolicy, KeyValue, Metric, OtlpError, Sum, TranslationStrategy, delta_sum_series, metric_metadata, scalar_series, sum_metadata_type, translated_metric_name};
 
 pub(crate) fn sum_series(
     metric: &Metric,

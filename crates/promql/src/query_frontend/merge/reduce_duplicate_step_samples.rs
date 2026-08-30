@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromqlError, QueryShardReducer, SampleValue, add_compatible_native_histogram};
 
 pub(crate) fn reduce_duplicate_step_samples(
     samples: &mut Vec<(i64, SampleValue)>,

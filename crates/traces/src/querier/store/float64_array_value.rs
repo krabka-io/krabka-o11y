@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, Float64Array, TraceqlError};
 
 pub(crate) fn float64_array_value(col: &dyn Array, row: usize) -> Result<f64, TraceqlError> {
     col.as_any()

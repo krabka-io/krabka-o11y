@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CancellationToken, DistributorState, SocketAddr, handle_jaeger_compact_datagram};
 
 /// Serve the Jaeger compact-Thrift UDP receiver until cancelled.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockMetaInfo, CatalogError, async_trait};
 
 /// The block-catalog door: which blocks overlap `[start_ns, end_ns]` for a
 /// tenant.

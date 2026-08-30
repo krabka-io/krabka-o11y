@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, FixedSizeBinaryArray, StructArray, TraceqlError};
 
 pub(crate) fn struct_fixed_field<'a>(
     values: &'a StructArray,

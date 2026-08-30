@@ -1,4 +1,4 @@
-use super::*;
+use super::TagScope;
 
 pub(crate) const SCOPE_ORDER: &[TagScope] = &[
     TagScope::Resource,

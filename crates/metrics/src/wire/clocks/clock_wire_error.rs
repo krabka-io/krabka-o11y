@@ -1,4 +1,4 @@
-use super::*;
+use super::{WireError, i64};
 
 /// Errors raised while decoding a clock reading batch.
 #[derive(Debug, thiserror::Error)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, native_histogram_bucket_mean, native_histogram_buckets};
 
 pub(crate) fn native_histogram_stdvar(hist: &NativeHistogram) -> f64 {
     if hist.count <= 0.0 || hist.count.is_nan() {

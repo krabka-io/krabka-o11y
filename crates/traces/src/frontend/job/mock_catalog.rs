@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockCatalog, BlockMetaInfo, CatalogError, async_trait};
 
 /// A canned block catalog for tests.
 pub struct MockCatalog {

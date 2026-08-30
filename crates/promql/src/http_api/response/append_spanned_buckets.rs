@@ -1,4 +1,4 @@
-use super::*;
+use super::{BucketSpan, HistogramBucketJson};
 
 pub(crate) fn append_spanned_buckets(
     buckets: &mut Vec<HistogramBucketJson>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, BlockCatalog, HeaderMap, IntoResponse, Json, Path, QuerierBackend, QueryFrontend, Response, State, StatusCode, TraceStatus, Uri, backend_error_response, json, optional_time_bounds, parse_hex16, tenant};
 
 pub(crate) async fn trace_by_id<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,

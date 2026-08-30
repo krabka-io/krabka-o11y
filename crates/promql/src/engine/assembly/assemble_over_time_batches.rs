@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, BTreeMap, Float64Array, InstantSample, Labels, PromqlError, QueryResult, RecordBatch, Result, SampleValue, SeriesFingerprint, labels_from_rate_batch, labels_without_metric_name, over_time_range};
 
 /// Assembles `*_over_time` projection output batches into a result.
 ///

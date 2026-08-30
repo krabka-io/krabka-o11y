@@ -1,4 +1,4 @@
-use super::*;
+use super::{Metrics, TraceJson};
 
 /// The partial result of one search job: the matched traces as typed Tempo
 /// JSON, plus the job's accounting.

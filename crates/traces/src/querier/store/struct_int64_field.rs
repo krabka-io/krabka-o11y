@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, Int64Array, StructArray, TraceqlError};
 
 pub(crate) fn struct_int64_field<'a>(
     values: &'a StructArray,

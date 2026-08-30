@@ -1,4 +1,4 @@
-use super::*;
+use super::OtlpTracesData;
 
 /// Tempo `TraceByIDResponse`, which is
 /// `message TraceByIDResponse { Trace trace = 1; }`. It is the

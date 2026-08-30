@@ -1,4 +1,4 @@
-use super::*;
+use super::{RESOURCE_ATTR_PREFIX, Span, SpanAttr, push_span_attr};
 
 pub(crate) fn span_attrs(span: &Span) -> Vec<SpanAttr> {
     let mut attrs = Vec::new();

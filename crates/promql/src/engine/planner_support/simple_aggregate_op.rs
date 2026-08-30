@@ -1,4 +1,4 @@
-use super::*;
+use super::{SimpleAggregateOp, T_AVG, T_COUNT, T_GROUP, T_MAX, T_MIN, T_SUM, TokenType};
 
 /// Maps an aggregation token to its simple-aggregation lowering. Returns `None`
 /// for an op outside the simple set, such as a param op, `stddev`, or `stdvar`.

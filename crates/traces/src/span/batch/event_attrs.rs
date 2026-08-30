@@ -1,4 +1,4 @@
-use super::*;
+use super::{KeyValue, event_attr_value};
 
 pub(crate) fn event_attrs(attrs: &[KeyValue]) -> Vec<(String, String)> {
     attrs

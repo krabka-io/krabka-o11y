@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromqlError, Result, SystemTime, duration_to_i64_ms};
 
 pub(crate) fn system_time_ms(time: SystemTime) -> Result<i64> {
     match time.duration_since(SystemTime::UNIX_EPOCH) {

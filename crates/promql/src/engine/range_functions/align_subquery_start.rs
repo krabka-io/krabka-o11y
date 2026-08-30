@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, TimeExt};
 
 pub(crate) fn align_subquery_start(start_ms: i64, step: Time) -> i64 {
     let step_ms = step.millis_i64();

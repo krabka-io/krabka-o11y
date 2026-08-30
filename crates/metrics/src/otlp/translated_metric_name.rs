@@ -1,4 +1,4 @@
-use super::*;
+use super::{Metric, TranslationStrategy, normalize_name, prometheus_unit_suffix};
 
 pub(crate) fn translated_metric_name(
     metric: &Metric,

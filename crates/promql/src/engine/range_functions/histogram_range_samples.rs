@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, RangeSeries, SampleValue, Time, range_samples};
 
 pub(crate) fn histogram_range_samples(
     series: &RangeSeries,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{AnnotationExpect, ExpectLine, LoadSeries, RangeExpect, Time};
 
 /// A top-level Prometheus `.test` statement.
 #[derive(Clone, Debug, PartialEq)]

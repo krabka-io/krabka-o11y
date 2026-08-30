@@ -1,4 +1,4 @@
-use super::*;
+use super::{Exemplar, SeriesSample};
 
 /// One named Prometheus series without the `__name__` label.
 #[derive(Clone, Debug, PartialEq)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{OuterRangeFn, OverTimeFamily, OverTimeFn};
 
 /// Maps an [`OverTimeFamily`] to the shared [`OuterRangeFn`] of the same name.
 ///

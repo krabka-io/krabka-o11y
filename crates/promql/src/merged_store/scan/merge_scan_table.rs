@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, COL_FINGERPRINT, COL_TIMESTAMP, MemTable, PromqlError, SessionContext, quote_ident};
 
 pub(crate) async fn merge_scan_table<const N: usize>(
     ctx: &SessionContext,

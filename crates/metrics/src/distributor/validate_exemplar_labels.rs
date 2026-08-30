@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedExemplar, MAX_EXEMPLAR_LABEL_CODEPOINTS, WireError, is_valid_label_name};
 
 pub(crate) fn validate_exemplar_labels(exemplar: &DecodedExemplar) -> Result<(), WireError> {
     let codepoints = exemplar

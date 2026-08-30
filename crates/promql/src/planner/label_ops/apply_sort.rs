@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, SortOrder, labels_key, sort_value};
 
 /// Sorts an already-assembled instant vector by sample value in `order`.
 ///

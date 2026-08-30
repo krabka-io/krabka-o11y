@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DistributorState, ExportTraceServiceRequest, ExportTraceServiceResponse, GrpcRequest, GrpcResponse, GrpcStatus, TraceService, TracesData, decode_otlp, grpc_status_from_error, produce_spans, tenant_metadata};
 
 /// OTLP/gRPC trace export service backed by the traces WAL.
 pub struct OtlpGrpcService {

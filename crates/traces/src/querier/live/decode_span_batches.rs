@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, Result, StreamReader, TraceqlError};
 
 pub(crate) fn decode_span_batches(bytes: &[u8]) -> Result<Vec<RecordBatch>> {
     if bytes.is_empty() {

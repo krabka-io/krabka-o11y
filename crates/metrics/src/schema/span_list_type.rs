@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DataType, Field, Fields};
 
 pub(crate) fn span_list_type() -> DataType {
     let struct_fields = Fields::from(vec![

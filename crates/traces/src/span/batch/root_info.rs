@@ -1,4 +1,4 @@
-use super::*;
+use super::{Span, Time, TimeExt, service_name};
 
 /// Compute the trace-level columns for one trace: the root service and name,
 /// the trace start, and the trace duration.

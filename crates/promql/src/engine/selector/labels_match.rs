@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, Labels, MatchOp, PromqlError, Regex, Result};
 
 pub(crate) fn labels_match(labels: &Labels, matchers: &[LabelMatcher]) -> Result<bool> {
     for matcher in matchers {

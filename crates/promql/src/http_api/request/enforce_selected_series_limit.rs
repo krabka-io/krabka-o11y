@@ -1,4 +1,4 @@
-use super::*;
+use super::{ApiError, MetricStore, PrometheusApiState, QueryEnforcer};
 
 pub(crate) fn enforce_selected_series_limit<S: MetricStore>(
     state: &PrometheusApiState<S>,

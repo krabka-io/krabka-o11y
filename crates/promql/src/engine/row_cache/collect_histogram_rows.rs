@@ -1,4 +1,4 @@
-use super::*;
+use super::{HistogramRow, PromqlError, Result, ScanResult, decode_native_histograms};
 
 pub(crate) async fn collect_histogram_rows(
     scan: ScanResult,

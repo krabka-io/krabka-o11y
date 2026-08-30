@@ -1,4 +1,4 @@
-use super::*;
+use super::{HistogramExtrapolation, NativeHistogram, RangeFn, ResetHint, Time, compact_histogram_spans, extrapolated_histogram_component, extrapolated_histogram_counts, histogram_reset_indices, native_histograms_are_range_compatible};
 
 pub(crate) fn range_histogram_sample(
     timestamps: &[i64],

@@ -1,4 +1,4 @@
-use super::*;
+use super::Time;
 
 /// Expected sample timestamps for an instant query that returns a range vector.
 #[derive(Clone, Debug, PartialEq)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Metrics, ScopedTag};
 
 /// The partial result of one tag-names job.
 #[derive(Clone, Debug, Default)]

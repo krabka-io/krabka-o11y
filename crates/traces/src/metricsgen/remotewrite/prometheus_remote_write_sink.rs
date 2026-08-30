@@ -1,4 +1,4 @@
-use super::*;
+use super::{RemoteWriteSink, SeriesPayload, SinkError, async_trait, encode_write_request, to_timeseries};
 
 /// HTTP client for Prometheus `remote_write`.
 pub struct PrometheusRemoteWriteSink {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, BTreeMap, BTreeSet, TagScope, tag_scope_key};
 
 pub(crate) fn merge_dynamic_scope(
     by_scope: &mut BTreeMap<&'static str, (TagScope, BTreeSet<String>)>,

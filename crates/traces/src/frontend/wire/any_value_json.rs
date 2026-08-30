@@ -1,4 +1,4 @@
-use super::*;
+use super::{ArrayValueJson, AttrValue, Deserialize, Serialize};
 
 /// OTLP `AnyValue`, holding the variants `TraceQL` surfaces.
 ///

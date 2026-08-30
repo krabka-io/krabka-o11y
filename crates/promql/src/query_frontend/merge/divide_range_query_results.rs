@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, PromqlError, QueryResult, RangeSeries, SampleValue, scaled_native_histogram};
 
 pub(crate) fn divide_range_query_results(
     sums: QueryResult,

@@ -1,4 +1,4 @@
-use super::*;
+use super::JobShard;
 
 /// A tag-values job for one tag over a window.
 #[derive(Clone, Debug, PartialEq, Eq)]

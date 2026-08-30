@@ -1,4 +1,4 @@
-use super::*;
+use super::TraceByIdResponseJson;
 
 /// Total span count of a typed by-id body. This is a helper for callers and
 /// tests.

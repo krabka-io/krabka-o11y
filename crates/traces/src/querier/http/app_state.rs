@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, HttpConfig, ServiceMetrics, SpanStore, TraceqlEngine};
 
 pub(crate) struct AppState<S: SpanStore> {
     pub(crate) engine: Arc<TraceqlEngine<S>>,

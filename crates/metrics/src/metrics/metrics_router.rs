@@ -1,4 +1,4 @@
-use super::*;
+use super::{SharedRegistry, export};
 
 /// Builds the `/metrics` exporter router. The admin server merges this with the
 /// pprof routes through `serve_admin_from_env_with`. Do not merge

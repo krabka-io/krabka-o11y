@@ -1,4 +1,4 @@
-use super::*;
+use super::{ConsumerRecord, HaElectionConsumerError, Time};
 
 #[async_trait::async_trait]
 pub trait HaElectionConsumerPoll: Send {

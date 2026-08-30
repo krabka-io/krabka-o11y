@@ -1,4 +1,4 @@
-use super::*;
+use super::{WireError, WireFormat, proto_param_value};
 
 /// Dispatches on the `proto=` parameter of the `Content-Type` header. A bare
 /// `application/x-protobuf` stays the v1 default.

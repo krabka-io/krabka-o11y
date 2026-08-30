@@ -1,4 +1,4 @@
-use super::*;
+use super::{AggregateExpr, Expr, PromqlError, Result};
 
 pub(crate) fn aggregate_quantile(aggregate: &AggregateExpr) -> Result<f64> {
     let Some(param) = &aggregate.param else {

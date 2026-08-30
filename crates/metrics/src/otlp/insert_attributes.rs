@@ -1,4 +1,4 @@
-use super::*;
+use super::{KeyValue, Labels, TranslationStrategy, attribute_value, normalize_name};
 
 pub(crate) fn insert_attributes(labels: &mut Labels, attributes: &[KeyValue]) {
     for attribute in attributes {

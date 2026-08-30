@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteRateExt, ByteSizeExt, FrequencyExt, RatioExt, StdDurationExt, TimeExt};
 
 /// Counts of what an [`InMemoryMetricStore::prune`] pass evicted.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

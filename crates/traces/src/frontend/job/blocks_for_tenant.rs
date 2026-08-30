@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockMetaInfo, BlockStore, BlockStoreResult, RowGroupInfo, TraceIndex};
 
 /// Read the block metadata for one tenant out of a `TraceIndex`, together with
 /// the parquet row-group metadata.

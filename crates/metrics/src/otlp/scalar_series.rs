@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedMetadata, DecodedSample, DecodedSeries, ExemplarPolicy, KeyValue, NumberDataPoint, OtlpError, exemplars_from_number_point, labels, nanos_to_millis, number_value};
 
 pub(crate) fn scalar_series(
     name: &str,

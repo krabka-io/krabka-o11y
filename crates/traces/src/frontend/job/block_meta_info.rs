@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockCatalog, ByteSize, ByteSizeExt, RowGroupInfo};
 
 /// Block metadata the planner needs, from the querier's block catalog.
 #[derive(Clone, Debug, PartialEq)]

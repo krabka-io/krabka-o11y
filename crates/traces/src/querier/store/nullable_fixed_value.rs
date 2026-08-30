@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, RecordBatch, TraceqlError, fixed};
 
 pub(crate) fn nullable_fixed_value<const N: usize>(
     batch: &RecordBatch,

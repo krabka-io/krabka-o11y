@@ -1,4 +1,4 @@
-use super::*;
+use super::ToPrimitive;
 
 pub(crate) fn counts(float_counts: &[f64], deltas: &[i64]) -> Vec<f64> {
     if !float_counts.is_empty() {

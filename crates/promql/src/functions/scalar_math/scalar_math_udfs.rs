@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScalarMathOp, ScalarUDF, scalar_math_udf};
 
 /// Every scalar-math UDF, ready to register on a [`SessionContext`].
 #[must_use]

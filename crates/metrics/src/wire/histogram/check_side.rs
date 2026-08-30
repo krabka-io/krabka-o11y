@@ -1,4 +1,4 @@
-use super::*;
+use super::{BucketSpan, WireError, span_bucket_total};
 
 pub(crate) fn check_side(side: &str, spans: &[BucketSpan], counts: usize) -> Result<(), WireError> {
     let expected = span_bucket_total(spans);

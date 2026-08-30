@@ -1,4 +1,4 @@
-use super::*;
+use super::{ApiError, BTreeMap, Labels, SeriesFingerprint, pb, remote_read_labels};
 
 pub(crate) fn remote_read_series<'a>(
     by_fp: &'a mut BTreeMap<SeriesFingerprint, pb::v1::TimeSeries>,

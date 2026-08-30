@@ -1,4 +1,4 @@
-use super::*;
+use super::{BT_I32, BT_I64, BinaryInput, JaegerRef, WireError};
 
 pub(crate) fn read_binary_ref(input: &mut BinaryInput<'_>) -> Result<JaegerRef, WireError> {
     let mut out = JaegerRef::default();

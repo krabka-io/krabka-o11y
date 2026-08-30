@@ -1,4 +1,4 @@
-use super::*;
+use super::CompactionBatchResult;
 
 /// Result of one compactor consumer poll and processing pass.
 #[derive(Clone, Debug, PartialEq)]

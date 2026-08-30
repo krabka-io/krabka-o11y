@@ -1,4 +1,4 @@
-use super::*;
+use super::{EventRef, Int64Builder, StringBuilder, TimeExt};
 
 pub(crate) fn append_nested_event(
     event: Option<&EventRef>,

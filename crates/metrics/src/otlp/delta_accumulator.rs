@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, DeltaHistogramState, DeltaKey, DeltaState, Labels, NativeHistogram, OtlpError, add_compatible_native_histogram, delta_key};
 
 /// Stateful accumulator for OTLP delta-temporality sums and histograms.
 #[derive(Clone, Debug, Default)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{RangeSeries, SampleValue, Time, TimeExt};
 
 pub(crate) fn range_samples(
     series: &RangeSeries,

@@ -1,4 +1,4 @@
-use super::*;
+use super::UnixNanos;
 
 /// This ingester's own clock, at the moment a clock batch arrives.
 ///

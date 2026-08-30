@@ -1,4 +1,4 @@
-use super::*;
+use super::{TagScope, Uri, parse_tag_scope, query_param};
 
 pub(crate) fn scope_param(uri: &Uri) -> Result<Option<TagScope>, &'static str> {
     query_param(uri, "scope")

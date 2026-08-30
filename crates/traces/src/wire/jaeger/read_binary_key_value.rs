@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, BT_BINARY, BT_BOOL, BT_DOUBLE, BT_I64, BinaryInput, KeyValue, WireError};
 
 pub(crate) fn read_binary_key_value(input: &mut BinaryInput<'_>) -> Result<KeyValue, WireError> {
     let mut key = String::new();

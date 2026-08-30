@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, Int32Array, RecordBatch, TracesError};
 
 pub(crate) fn replace_int32_columns(
     batch: &RecordBatch,

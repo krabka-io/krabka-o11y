@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, Result, ScopedTag, TagScope, TraceSpans, TypedValue};
 
 #[async_trait::async_trait]
 pub trait LiveSource: Send + Sync {

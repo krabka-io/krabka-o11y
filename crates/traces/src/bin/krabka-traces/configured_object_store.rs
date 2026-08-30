@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ObjectStore, Path, Url, blockbuilder};
 
 pub(crate) struct ConfiguredObjectStore {
     pub(crate) store: Arc<dyn ObjectStore>,

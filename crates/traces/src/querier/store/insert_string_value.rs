@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, RecordBatch, TraceqlError, string_value};
 
 pub(crate) fn insert_string_value(
     batch: &RecordBatch,

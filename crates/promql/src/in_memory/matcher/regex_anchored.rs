@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromqlError, Result};
 
 pub(crate) fn regex_anchored(pattern: &str) -> Result<regex::Regex> {
     regex::Regex::new(&format!("^(?:{pattern})$"))

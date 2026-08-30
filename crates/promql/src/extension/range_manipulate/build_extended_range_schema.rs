@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DataType, ExecutionPlan, Field, RANGE_SUFFIX, Schema, SchemaRef, UserDefinedLogicalNodeCore, range_array_type};
 
 /// Builds the extended range-vector schema that the module contract describes.
 ///

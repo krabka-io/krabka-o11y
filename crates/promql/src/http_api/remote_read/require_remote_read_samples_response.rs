@@ -1,4 +1,4 @@
-use super::*;
+use super::{ApiError, StatusCode, pb};
 
 pub(crate) fn require_remote_read_samples_response(request: &pb::v1::ReadRequest) -> Result<(), ApiError> {
     if request.accepted_response_types.is_empty()

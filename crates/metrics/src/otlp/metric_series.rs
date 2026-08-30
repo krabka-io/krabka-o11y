@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedSeries, DeltaAccumulator, KeyValue, Metric, OtlpError, TranslationStrategy, exponential_histogram_series, gauge_series, histogram_series, metric, reject_far_future_points, sum_series, summary_series};
 
 pub(crate) fn metric_series(
     metric: &Metric,

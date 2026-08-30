@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, ListArray};
 
 pub(crate) fn list_offsets(list: &ListArray, row: usize) -> Option<(usize, usize)> {
     if list.is_null(row) {

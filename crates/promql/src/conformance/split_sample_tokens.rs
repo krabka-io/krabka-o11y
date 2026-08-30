@@ -1,4 +1,4 @@
-use super::*;
+use super::{Line, Result, parse_error};
 
 pub(crate) fn split_sample_tokens<'a>(src: &'a str, line: Line<'_>) -> Result<Vec<&'a str>> {
     let mut tokens = Vec::new();

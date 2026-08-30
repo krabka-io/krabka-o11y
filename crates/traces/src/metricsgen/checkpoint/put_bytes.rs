@@ -1,4 +1,4 @@
-use super::*;
+use super::{BufMut, BytesMut};
 
 pub(crate) fn put_bytes(buf: &mut BytesMut, bytes: &[u8]) {
     let len = u32::try_from(bytes.len()).expect("checkpoint key segment too long");

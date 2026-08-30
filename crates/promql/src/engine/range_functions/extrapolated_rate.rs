@@ -1,4 +1,4 @@
-use super::*;
+use super::{RangeFn, Time, TimeExt, ToPrimitive};
 
 // Prometheus computes extrapolation in f64 seconds; timestamp/range deltas
 // intentionally enter that float domain here.

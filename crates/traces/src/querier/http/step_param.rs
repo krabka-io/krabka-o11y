@@ -1,4 +1,4 @@
-use super::*;
+use super::{UnixNano, Uri, default_query_range_step_ns, parse_step_to_ns, query_param};
 
 pub(crate) fn step_param(uri: &Uri, start_ns: UnixNano, end_ns: UnixNano) -> Result<i64, &'static str> {
     let Some(step) = query_param(uri, "step") else {

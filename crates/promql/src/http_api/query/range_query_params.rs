@@ -1,4 +1,4 @@
-use super::*;
+use super::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct RangeQueryParams {

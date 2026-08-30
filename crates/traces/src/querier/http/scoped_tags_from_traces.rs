@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, ScopedTag, TagScope, TraceSpans, trace_resource_attributes};
 
 pub(crate) fn scoped_tags_from_traces(traces: &[TraceSpans], scope: Option<TagScope>) -> Vec<ScopedTag> {
     let mut out = Vec::new();

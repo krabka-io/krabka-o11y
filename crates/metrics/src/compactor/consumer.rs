@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionConsumerCommit, CompactionConsumerCommitError, CompactionConsumerCommitMut, CompactionConsumerPoll, CompactionConsumerPollError, Consumer, ConsumerRecord, Time, TryStreamExt, async_trait};
 
 #[async_trait]
 impl CompactionConsumerPoll for Consumer {

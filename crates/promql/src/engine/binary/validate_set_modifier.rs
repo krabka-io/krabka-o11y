@@ -1,4 +1,4 @@
-use super::*;
+use super::{BinModifier, PromqlError, Result};
 
 pub(crate) fn validate_set_modifier(modifier: Option<&BinModifier>) -> Result<()> {
     let Some(modifier) = modifier else {

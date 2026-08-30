@@ -1,4 +1,4 @@
-use super::*;
+use super::SampleSpec;
 
 /// One expected output line.
 #[derive(Clone, Debug, PartialEq)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{AGGREGATE_VALUE_COLUMN, Expr, VALUE_COLUMN, avg, cast, col, count, lit, max, prom_max_udaf, prom_min_udaf, sum};
 
 /// The simple aggregation operators this module lowers.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, HeaderMap, MetricStore, PrometheusApiState, RangeQueryParams, Response, acquire_query_permit, query_range_dispatch, record_query_response};
 
 pub(crate) async fn query_range_inner<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, BTreeMap, SpanRef};
 
 pub(crate) fn recompute_trace_nested_sets(spans: &mut [SpanRef]) {
     enum Frame {

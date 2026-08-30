@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, NANOS_PER_MILLI, Serialize, Time, TimeExt, i64};
 
 /// An instant on the Unix epoch timeline, in nanoseconds.
 ///

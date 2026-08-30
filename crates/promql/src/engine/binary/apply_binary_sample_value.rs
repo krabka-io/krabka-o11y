@@ -1,4 +1,4 @@
-use super::*;
+use super::{BinModifier, BinaryOp, InstantSample, Result, SampleValue, ScalarSide, apply_histogram_float_binary, apply_histogram_histogram_binary, emit_info, incompatible_types_in_binop_info};
 
 pub(crate) fn apply_binary_sample_value(
     left: &InstantSample,

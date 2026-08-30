@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BTreeSet, MetricMetadata, TenantCompactionRows};
 
 /// Tenant-scoped metric metadata lookup.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

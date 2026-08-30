@@ -1,4 +1,4 @@
-use super::*;
+use super::{SessionContext, prom_max_udaf, prom_min_udaf};
 
 /// Registers `prom_min`/`prom_max` on `ctx` so the aggregation planner can lower
 /// `min`/`max` onto NaN-ignoring UDAFs that match the interpreter.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{RangeFn, Time};
 
 pub(crate) struct HistogramExtrapolation<'a> {
     pub(crate) timestamps: &'a [i64],

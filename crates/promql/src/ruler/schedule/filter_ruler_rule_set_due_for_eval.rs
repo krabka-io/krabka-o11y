@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, RulerGroupState, ruler_group_due_for_eval};
 
 /// Returns the rule groups whose configured interval has elapsed.
 #[must_use]

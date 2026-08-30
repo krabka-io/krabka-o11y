@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BlockWriter, CompactionBatchResult, CompactionCommitError, CompactionConsumerCommitMut, CompactionIndexSink, CompactionWalRecord, CompactionWindowError, PartitionIndex, TryStreamExt, write_compaction_partition_window};
 
 pub(crate) async fn process_compaction_record_batch_with_consumer<S, C>(
     block_writer: &BlockWriter,

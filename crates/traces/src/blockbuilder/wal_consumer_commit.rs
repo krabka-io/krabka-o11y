@@ -1,4 +1,4 @@
-use super::*;
+use super::TracesError;
 
 /// Minimal WAL-consumer commit surface the block-builder loop drives.
 ///

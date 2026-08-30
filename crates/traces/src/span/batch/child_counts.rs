@@ -1,4 +1,4 @@
-use super::*;
+use super::HashMap;
 
 pub(crate) fn child_counts(nested: &[crate::span::nested_set::NestedSet]) -> Vec<i32> {
     // Single O(n) pass: tally how many nodes name each `parent_id`, then each

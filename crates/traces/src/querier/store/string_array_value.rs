@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, DictionaryArray, Int32Type, LargeStringArray, StringArray, StringViewArray, TraceqlError};
 
 pub(crate) fn string_array_value(col: &dyn Array, row: usize) -> Result<String, TraceqlError> {
     col.as_any()

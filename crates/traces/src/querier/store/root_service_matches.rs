@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, SpanMatcher, nested_presence_matches, string_matches};
 
 pub(crate) fn root_service_matches(value: &str, matcher: &SpanMatcher) -> bool {
     nested_presence_matches(!value.is_empty(), matcher.op, &matcher.value)

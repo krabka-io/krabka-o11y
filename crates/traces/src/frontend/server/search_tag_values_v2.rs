@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, BlockCatalog, HeaderMap, IntoResponse, Json, Path, QuerierBackend, QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, json, optional_time_bounds, tenant};
 
 pub(crate) async fn search_tag_values_v2<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,

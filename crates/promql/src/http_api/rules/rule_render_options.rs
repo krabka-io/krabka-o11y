@@ -1,4 +1,4 @@
-use super::*;
+use super::RuleTypeFilter;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RuleRenderOptions {

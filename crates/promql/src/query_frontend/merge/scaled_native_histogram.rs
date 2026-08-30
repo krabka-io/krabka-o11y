@@ -1,4 +1,4 @@
-use super::*;
+use super::NativeHistogram;
 
 pub(crate) fn scaled_native_histogram(histogram: &NativeHistogram, factor: f64) -> NativeHistogram {
     let mut out = histogram.clone();

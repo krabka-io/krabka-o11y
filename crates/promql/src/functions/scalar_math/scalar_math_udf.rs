@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, Array, ArrayRef, ColumnarValue, DataFusionError, DataType, DfResult, Float64Array, Float64Builder, ScalarFunctionArgs, ScalarMathOp, ScalarUDF, ScalarUDFImpl, Signature, Volatility, scalar_f64};
 
 /// A `ScalarUDFImpl` over the inner instant vector's `value` column.
 ///

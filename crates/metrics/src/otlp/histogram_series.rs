@@ -1,4 +1,4 @@
-use super::*;
+use super::{AggregationTemporality, DecodedSeries, DeltaAccumulator, Histogram, KeyValue, Metric, OtlpError, TranslationStrategy, accumulate_delta_float_series, classic_histogram_series, metric_metadata, translated_metric_name};
 
 pub(crate) fn histogram_series(
     metric: &Metric,

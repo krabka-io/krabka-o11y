@@ -1,4 +1,4 @@
-use super::*;
+use super::{AnnotationExpect, Line, Result, parse_error};
 
 pub(crate) fn parse_expect_directive(directive: &str, line: Line<'_>) -> Result<AnnotationExpect> {
     let directive = directive.trim();

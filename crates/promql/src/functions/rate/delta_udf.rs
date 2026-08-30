@@ -1,4 +1,4 @@
-use super::*;
+use super::{RateFamily, RateUdf, ScalarUDF};
 
 /// The `delta` UDF: gauge first..last delta with boundary extrapolation.
 #[must_use]

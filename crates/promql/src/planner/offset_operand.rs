@@ -1,4 +1,4 @@
-use super::*;
+use super::{consume_ident, consume_number_duration, is_ident_start, matching_delimiter, skip_ws};
 
 pub(crate) fn offset_operand(chars: &[char], after_keyword: usize) -> Option<(String, usize)> {
     let mut start = skip_ws(chars, after_keyword);

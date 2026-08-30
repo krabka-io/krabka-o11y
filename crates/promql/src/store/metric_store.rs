@@ -1,4 +1,4 @@
-use super::*;
+use super::{ExemplarRecord, LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels, MetadataRecord, PromqlError, ScanResult, TsdbBlock, TsdbStats};
 
 /// Resolves `PromQL` matchers to `DataFusion` tables over the metric data of a tenant.
 #[async_trait::async_trait]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedMetadata, DecodedSeries, Labels, metadata_type, pb};
 
 pub(crate) fn metadata_series_from_v1(metadata: pb::v1::MetricMetadata) -> DecodedSeries {
     let mut labels = Labels::new();

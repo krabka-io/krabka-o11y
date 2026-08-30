@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, Response, StatusCode, TracesError, tempo_error_response};
 
 pub(crate) fn error_response(err: &TracesError) -> Response {
     let status =

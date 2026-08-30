@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, StatusCode};
 
 pub(crate) fn zipkin_status(tags: &BTreeMap<String, String>) -> (StatusCode, String) {
     match tags.get("error") {

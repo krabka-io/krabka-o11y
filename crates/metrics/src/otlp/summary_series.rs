@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedSeries, KeyValue, Metric, Summary, TranslationStrategy, metric_metadata, summary_point_series, translated_metric_name};
 
 pub(crate) fn summary_series(
     metric: &Metric,

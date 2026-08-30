@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, BlockBuilderConfig, BlockWriter, FlushAccumulator, Mutex, ObjectStore, ServiceMetrics, TraceIndex, TracesError, WalConsumerCommit, flush_partition_windows};
 
 /// Flush the accumulated buffer to durable blocks, then commit WAL offsets.
 ///

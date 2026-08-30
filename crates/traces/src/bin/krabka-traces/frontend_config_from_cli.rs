@@ -1,4 +1,4 @@
-use super::*;
+use super::{Cli, FrontendConfig, SocketAddr, UnixNano, max_trace_size, parse_querier_addrs};
 
 /// Map the role CLI onto the new query-frontend [`FrontendConfig`].
 ///

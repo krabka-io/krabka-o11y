@@ -1,4 +1,4 @@
-use super::*;
+use super::{JaegerBatch, Span, WireError, api_v2, process_from_proto, span_from_proto, spans_from_batch};
 
 ///
 /// # Errors

@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, OuterRangeFn, RangeEval, outer_range_sample_from_series};
 
 /// Applies an [`OuterRangeFn`] over an evaluated range vector.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::HaElectionReplayError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HaElectionConsumerError {

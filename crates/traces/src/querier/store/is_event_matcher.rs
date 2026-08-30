@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchScope, SpanMatcher};
 
 pub(crate) fn is_event_matcher(matcher: &SpanMatcher) -> bool {
     matcher.scope == MatchScope::Event

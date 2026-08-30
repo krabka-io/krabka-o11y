@@ -1,4 +1,4 @@
-use super::*;
+use super::UnixNano;
 
 /// Default query-range step when the request supplies none.
 ///

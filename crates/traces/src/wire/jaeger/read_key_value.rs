@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, CompactInput, KeyValue, T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_DOUBLE, T_I64, WireError};
 
 pub(crate) fn read_key_value(input: &mut CompactInput<'_>) -> Result<KeyValue, WireError> {
     let mut key = String::new();

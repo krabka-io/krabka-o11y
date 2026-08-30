@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DistributorState, Router, jaeger_push, otlp_push, post, zipkin_push};
 
 /// Build the distributor HTTP router.
 pub fn router(state: Arc<DistributorState>) -> Router {

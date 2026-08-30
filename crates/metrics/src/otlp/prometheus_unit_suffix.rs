@@ -1,4 +1,4 @@
-use super::*;
+use super::{prometheus_base_unit_suffix, strip_ucum_annotations};
 
 pub(crate) fn prometheus_unit_suffix(unit: &str) -> Option<String> {
     let cleaned = strip_ucum_annotations(unit.trim());

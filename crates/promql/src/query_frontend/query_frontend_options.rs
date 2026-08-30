@@ -1,4 +1,4 @@
-use super::*;
+use super::Time;
 
 /// Query-frontend range splitting and sharding options.
 ///

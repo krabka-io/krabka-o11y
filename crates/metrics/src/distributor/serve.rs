@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DistributorState, Future, SocketAddr, TcpListener, router};
 
 /// Binds and serves the metrics distributor until `shutdown` resolves.
 /// # Errors

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, Map, Value, expand_alert_template};
 
 /// Applies [`expand_alert_template`] to every string value of a JSON object.
 ///

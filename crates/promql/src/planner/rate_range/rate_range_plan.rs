@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, LogicalPlan, SeriesFingerprint, SessionContext};
 
 /// The assembled operator plan and the per-series labels that reattach label
 /// sets to the projected rate values.

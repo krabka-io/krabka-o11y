@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromqlError, Result, SampleValue};
 
 pub(crate) fn count_values_label_value(value: &SampleValue) -> Result<String> {
     match value {

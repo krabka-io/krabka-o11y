@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DataType, Field, Schema, SchemaRef, fingerprint_field, timestamp_field};
 
 /// Float samples, which are counters, gauges, and classic histogram bucket
 /// series.

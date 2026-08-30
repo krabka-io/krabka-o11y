@@ -1,4 +1,4 @@
-use super::*;
+use super::{BT_BINARY, BT_BOOL, BT_BYTE, BT_DOUBLE, BT_I16, BT_I32, BT_I64, BT_LIST, BT_MAP, BT_SET, BT_STOP, BT_STRUCT, WireError};
 
 pub(crate) struct BinaryInput<'a> {
     pub(crate) bytes: &'a [u8],

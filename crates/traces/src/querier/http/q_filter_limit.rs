@@ -1,4 +1,4 @@
-use super::*;
+use super::{Uri, optional_usize_param};
 
 pub(crate) fn q_filter_limit(
     uri: &Uri,

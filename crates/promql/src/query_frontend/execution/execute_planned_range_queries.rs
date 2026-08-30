@@ -1,4 +1,4 @@
-use super::*;
+use super::{FrontendRangeQuery, PromqlError, QueryResult, RangeQueryCache, RangeQueryExecutor, execute_single_range_query};
 
 /// Executes the planned sub-queries concurrently, one per sub-range and shard.
 ///

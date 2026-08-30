@@ -1,4 +1,4 @@
-use super::*;
+use super::Series;
 
 /// Batch of series for one tenant.
 #[derive(Clone, Debug, PartialEq)]

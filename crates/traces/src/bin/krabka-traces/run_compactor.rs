@@ -1,4 +1,4 @@
-use super::*;
+use super::{CancellationToken, Cli, run_compactor_once};
 
 pub(crate) async fn run_compactor(
     cli: Cli,

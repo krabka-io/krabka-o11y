@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSizeExt, DecodedSeries, TenantLimits, WireError, is_valid_label_name, validate_exemplar_labels};
 
 /// Validates the decoded series against the structural limits.
 /// # Errors

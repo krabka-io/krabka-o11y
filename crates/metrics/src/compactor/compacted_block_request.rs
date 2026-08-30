@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionSeriesLabels, MetricBlockKind, PartitionIndex, RecordBatch};
 
 pub(crate) struct CompactedBlockRequest<'a> {
     pub(crate) tenant: &'a str,

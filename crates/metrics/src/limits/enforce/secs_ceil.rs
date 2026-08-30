@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, TimeExt, ToPrimitive};
 
 /// An extent in whole seconds, rounded up. This is the unit the limit errors
 /// report.

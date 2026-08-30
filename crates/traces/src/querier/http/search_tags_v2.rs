@@ -1,4 +1,4 @@
-use super::*;
+use super::{AppState, HeaderMap, Response, SpanStore, State, Uri, search_tags_v2_inner};
 
 pub(crate) async fn search_tags_v2<S>(
     State(state): State<AppState<S>>,

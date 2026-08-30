@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Labels, SamplePayload, Serialize, WalError, WalExemplar};
 
 /// A single metrics WAL record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

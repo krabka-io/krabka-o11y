@@ -1,4 +1,4 @@
-use super::*;
+use super::{ColdAttributeTagNames, INSTRUMENTATION_ATTR_PREFIX, RESOURCE_ATTR_PREFIX, RecordBatch, TraceqlError, attr_values_with_resource, event_values, link_values};
 
 pub(crate) fn collect_attribute_tag_names(
     batch: &RecordBatch,

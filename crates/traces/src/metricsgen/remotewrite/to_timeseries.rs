@@ -1,4 +1,4 @@
-use super::*;
+use super::{Series, SeriesSample, WireTimeSeries, push_classic_histogram, with_name};
 
 #[must_use]
 pub fn to_timeseries(series: &[Series]) -> Vec<WireTimeSeries> {

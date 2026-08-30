@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BucketSpan, OtlpError, ToPrimitive, compact_spanned_histogram_counts, exponential_histogram_data_point};
 
 pub(crate) fn downscaled_spans(
     buckets: Option<&exponential_histogram_data_point::Buckets>,

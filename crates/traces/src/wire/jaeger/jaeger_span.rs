@@ -1,4 +1,4 @@
-use super::*;
+use super::{JaegerLog, JaegerRef, KeyValue};
 
 #[derive(Clone, Default)]
 pub(crate) struct JaegerSpan {

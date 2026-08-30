@@ -1,4 +1,4 @@
-use super::*;
+use super::{ClockSourceKind, ClockSyncState, Deserialize, GnssReading, NtpReading, PtpReading, Serialize, Time, TimeExt, TimexReading, UnixNanos, i64};
 
 /// One validated clock reading: one clock, on one host, at one moment.
 ///

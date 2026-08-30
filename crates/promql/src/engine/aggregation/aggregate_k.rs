@@ -1,4 +1,4 @@
-use super::*;
+use super::{AggregateExpr, Expr, PromqlError, Result};
 
 pub(crate) fn aggregate_k(aggregate: &AggregateExpr) -> Result<usize> {
     let Some(param) = &aggregate.param else {

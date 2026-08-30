@@ -1,4 +1,4 @@
-use super::*;
+use super::{ClockSyncState, ClockWireError, pb};
 
 pub(crate) fn sync_state(index: usize, value: i32) -> Result<ClockSyncState, ClockWireError> {
     match pb::clocks::SyncState::try_from(value) {

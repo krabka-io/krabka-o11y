@@ -1,4 +1,4 @@
-use super::*;
+use super::{ToPrimitive, pb};
 
 pub(crate) fn v2_zero_count(histogram: &pb::v2::Histogram) -> f64 {
     use pb::v2::histogram::ZeroCount;

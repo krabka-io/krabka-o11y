@@ -1,4 +1,4 @@
-use super::*;
+use super::{HistogramCodecError, TenantBatches, TenantCompactionRows, encode_clock_reading_rows, encode_exemplar_rows, encode_float_samples, encode_metadata_rows, encode_native_histograms};
 
 /// Encodes one tenant's sorted rows into Arrow batches for the block writer.
 /// # Errors

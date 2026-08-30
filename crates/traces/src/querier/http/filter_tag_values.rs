@@ -1,4 +1,4 @@
-use super::*;
+use super::TypedValue;
 
 pub(crate) fn filter_tag_values(values: Vec<TypedValue>, expected: &TypedValue) -> Vec<TypedValue> {
     values

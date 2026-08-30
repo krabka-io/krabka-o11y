@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, AutoOffsetReset, Cli, Consumer, DistributorState, KafkaHaElectionSink, KafkaSink, Producer, ServiceMetrics, TcpListener, distributor_router, run_ha_election_consumer_loop};
 
 pub(crate) async fn run_distributor(
     cli: Cli,

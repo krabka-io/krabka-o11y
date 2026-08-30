@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, AtomicBool, ObjectStore, Ordering, Time, TimeExt, unix_time_ms};
 
 // cargo-mutants: background wall-clock loop is exercised through compactor integration.
 #[cfg_attr(test, mutants::skip)]

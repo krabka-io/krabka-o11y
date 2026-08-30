@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, Value, json, labels_json};
 
 /// Builds the Grafana Mimir `/cardinality/active_series` response.
 ///

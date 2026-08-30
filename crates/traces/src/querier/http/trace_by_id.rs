@@ -1,4 +1,4 @@
-use super::*;
+use super::{AppState, HeaderMap, Path, Response, SpanStore, State, Uri, trace_by_id_inner};
 
 pub(crate) async fn trace_by_id<S>(
     State(state): State<AppState<S>>,

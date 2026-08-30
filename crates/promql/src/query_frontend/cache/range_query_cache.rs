@@ -1,4 +1,4 @@
-use super::*;
+use super::{FrontendRangeQuery, PromqlError, QueryResult, async_trait};
 
 #[async_trait]
 pub trait RangeQueryCache: Send + Sync {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{OtlpEvent, SpanRef, event_unix_nano, otlp_attrs};
 
 pub(crate) fn otlp_event(span: &SpanRef, event: &krabka_traceql::EventRef) -> OtlpEvent {
     OtlpEvent {

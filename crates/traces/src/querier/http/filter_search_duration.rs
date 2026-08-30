@@ -1,4 +1,4 @@
-use super::*;
+use super::{SearchResponse, Time};
 
 pub(crate) fn filter_search_duration(
     mut resp: SearchResponse,

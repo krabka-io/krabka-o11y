@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ByteRateExt, ByteSize, ByteSizeExt, Counter, EncodeLabelSet, Family, FrequencyExt, Gauge, Histogram, Mutex, QueryTypeLabel, RatioExt, Registry, RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, StdDurationExt, Time, TimeExt};
 
 /// Bundle of metric handles that is cheap to clone. Build it one time with
 /// [`ServiceMetrics::new`]. Give a clone, one `Arc::clone` each, to every

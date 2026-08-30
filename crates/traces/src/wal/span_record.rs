@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, Span, TracesError};
 
 /// One span's WAL record: tenant plus the OTLP-derived internal span.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

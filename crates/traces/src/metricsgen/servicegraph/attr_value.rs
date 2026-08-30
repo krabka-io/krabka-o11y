@@ -1,4 +1,4 @@
-use super::*;
+use super::SpanRecord;
 
 pub(crate) fn attr_value<'a>(span: &'a SpanRecord, name: &str) -> Option<&'a str> {
     span.attributes

@@ -1,4 +1,4 @@
-use super::*;
+use super::TypedValueJson;
 
 /// The `/api/v2/search/tag/{tag}/values` body:
 /// `{ tagValues: [{ type, value }], metrics }`.

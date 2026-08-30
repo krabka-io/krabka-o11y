@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, de_u64_lenient};
 
 /// The job-accounting `metrics{}` block. It is additive over completed jobs.
 ///

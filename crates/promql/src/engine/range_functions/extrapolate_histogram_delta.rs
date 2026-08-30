@@ -1,4 +1,4 @@
-use super::*;
+use super::{RangeFn, Time, TimeExt, ToPrimitive};
 
 pub(crate) fn extrapolate_histogram_delta(
     timestamps: &[i64],

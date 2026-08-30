@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, Value, append_custom_histogram_buckets, append_standard_histogram_buckets, json, sample_string};
 
 pub(crate) fn native_histogram_buckets_json(histogram: &NativeHistogram) -> Vec<Value> {
     let mut buckets = Vec::new();

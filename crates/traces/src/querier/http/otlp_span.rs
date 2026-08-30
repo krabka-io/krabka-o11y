@@ -1,4 +1,4 @@
-use super::*;
+use super::{OtlpSpan, SpanRef, otlp_attrs, otlp_event, otlp_link, otlp_status, span_attributes, span_end_unix_nano};
 
 pub(crate) fn otlp_span(trace_id: [u8; 16], span: &SpanRef) -> OtlpSpan {
     OtlpSpan {

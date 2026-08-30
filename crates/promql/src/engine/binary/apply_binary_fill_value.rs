@@ -1,4 +1,4 @@
-use super::*;
+use super::{BinModifier, BinaryOp, InstantSample, Labels, MissingSide, Result, SampleValue, apply_binary_sample_value};
 
 pub(crate) fn apply_binary_fill_value(
     present: &InstantSample,

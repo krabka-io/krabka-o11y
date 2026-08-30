@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, mebibytes};
 
 /// Default decompressed-body cap for a `remote_read` request when the caller
 /// supplies no cap. It mirrors the distributor's ingest default, so a single

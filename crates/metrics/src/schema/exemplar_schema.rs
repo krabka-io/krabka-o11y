@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DataType, Field, Schema, SchemaRef, fingerprint_field, timestamp_field, utf8_map_field};
 
 /// Exemplars whose trace and span identifiers are first-class columns.
 #[must_use]

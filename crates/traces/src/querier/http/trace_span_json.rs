@@ -1,4 +1,4 @@
-use super::*;
+use super::{Map, SpanRef, Value, attrs_json, base64, events_json, json, links_json, span_attributes, span_end_unix_nano, span_kind_json, span_status_json};
 
 pub(crate) fn trace_span_json(trace_id: [u8; 16], span: &SpanRef) -> Value {
     let mut obj = Map::new();

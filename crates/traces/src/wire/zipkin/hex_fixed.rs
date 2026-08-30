@@ -1,4 +1,4 @@
-use super::*;
+use super::WireError;
 
 pub(crate) fn hex_fixed<const N: usize>(hex: &str) -> Result<[u8; N], WireError> {
     if hex.is_empty() || !hex.len().is_multiple_of(2) || hex.len() > N * 2 {

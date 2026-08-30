@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, OtlpSpanJson, Serialize};
 
 /// One OTLP `ScopeSpans` group.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

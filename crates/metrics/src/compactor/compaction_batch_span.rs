@@ -1,4 +1,4 @@
-use super::*;
+use super::{ConsumerRecord, TRACEPARENT, set_remote_parent};
 
 /// Builds the per-poll-batch `metrics_compaction` consumer span and joins it to
 /// the producer trace on a WAL record's `traceparent` header, if there is one.

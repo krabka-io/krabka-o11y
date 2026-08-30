@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromotedSpanAttr, RecordBatch, Span, TracesError, span_batch_for_window};
 
 /// Build one span-block `RecordBatch` from spans of one trace with configured
 /// attributes duplicated into dedicated columns.

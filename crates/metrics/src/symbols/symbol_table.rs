@@ -1,4 +1,4 @@
-use super::*;
+use super::{Entry, HashMap, HashSet, SymbolError};
 
 /// A string-interning table matching `remote_write` v2 semantics.
 #[derive(Debug)]

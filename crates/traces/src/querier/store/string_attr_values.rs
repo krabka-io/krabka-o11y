@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, ListArray, StringArray, TraceqlError, row_attr_values};
 
 pub(crate) fn string_attr_values(
     values: Option<&ListArray>,

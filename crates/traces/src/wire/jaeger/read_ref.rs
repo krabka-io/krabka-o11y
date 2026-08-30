@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactInput, JaegerRef, T_I32, T_I64, WireError};
 
 pub(crate) fn read_ref(input: &mut CompactInput<'_>) -> Result<JaegerRef, WireError> {
     let mut out = JaegerRef::default();

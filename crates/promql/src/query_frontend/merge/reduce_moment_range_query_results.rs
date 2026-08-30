@@ -1,4 +1,4 @@
-use super::*;
+use super::{MomentReduction, PromqlError, QueryResult, RangeSeries, SampleValue, float_samples_by_fingerprint};
 
 pub(crate) fn reduce_moment_range_query_results(
     sums: QueryResult,

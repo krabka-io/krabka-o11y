@@ -1,4 +1,4 @@
-use super::*;
+use super::StatusCode;
 
 pub(crate) fn block_status(status: super::super::StatusCode) -> StatusCode {
     match status {

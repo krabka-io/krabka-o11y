@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, bucket_overlap_fraction, native_histogram_buckets};
 
 pub(crate) fn native_histogram_fraction(lower: f64, upper: f64, hist: &NativeHistogram) -> f64 {
     if lower.is_nan() || upper.is_nan() || hist.count <= 0.0 || hist.count.is_nan() {

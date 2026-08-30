@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteRateExt, ByteSize, ByteSizeExt, ClockWireError, DecodedClockReading, Deserialize, FrequencyExt, Message, RatioExt, Serialize, StdDurationExt, TimeExt, WireError, decode_reading, pb, snappy_block_decode};
 
 /// Decodes a snappy-framed [`ClockReadingBatch`](pb::clocks::ClockReadingBatch)
 /// into validated readings.

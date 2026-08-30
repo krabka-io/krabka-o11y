@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels, LogicalPlan, SeriesFingerprint, SessionContext};
 
 /// The assembled operator plan with the per-series labels.
 ///

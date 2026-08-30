@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, Result, StreamWriter, TraceqlError};
 
 ///
 /// # Errors

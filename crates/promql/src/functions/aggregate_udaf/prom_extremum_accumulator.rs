@@ -1,4 +1,4 @@
-use super::*;
+use super::{Accumulator, ArrayRef, AsArray, DfResult, Extremum, Float64Type, ScalarValue};
 
 /// Prometheus-faithful NaN-ignoring `min`/`max` accumulator over `Float64`
 /// samples.

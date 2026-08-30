@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, header};
 
 pub(crate) fn is_jaeger_binary_thrift(headers: &HeaderMap) -> bool {
     headers

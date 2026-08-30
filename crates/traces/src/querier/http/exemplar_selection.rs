@@ -1,4 +1,4 @@
-use super::*;
+use super::{Uri, query_param};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExemplarSelection {

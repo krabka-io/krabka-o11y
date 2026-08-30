@@ -1,4 +1,4 @@
-use super::*;
+use super::BTreeMap;
 
 /// Rebuildable state for one alert instance.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]

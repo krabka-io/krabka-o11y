@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, EventRef, RecordBatch, SpanMatcher, TraceqlError, event_matcher_matches_event, event_values, is_event_matcher};
 
 pub(crate) fn matching_events_for_scan(
     batch: &RecordBatch,

@@ -1,4 +1,4 @@
-use super::*;
+use super::EncodeLabelSet;
 
 /// Per-tenant label for the accepted-series counter family.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]

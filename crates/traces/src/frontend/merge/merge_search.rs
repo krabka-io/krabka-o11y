@@ -1,4 +1,4 @@
-use super::*;
+use super::{Metrics, SearchPartial, SearchResponseJson, TraceJson, apply_search_limits, merge_trace};
 
 /// Merge search partials.
 ///

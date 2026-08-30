@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanKind, SpanRecord};
 
 pub(crate) type EdgeKey = ([u8; 16], [u8; 8]);
 

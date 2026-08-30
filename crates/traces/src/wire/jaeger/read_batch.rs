@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactInput, JaegerBatch, T_LIST, T_STRUCT, WireError, read_process, read_span};
 
 pub(crate) fn read_batch(input: &mut CompactInput<'_>) -> Result<JaegerBatch, WireError> {
     let mut out = JaegerBatch::default();

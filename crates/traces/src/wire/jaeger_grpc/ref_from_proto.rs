@@ -1,4 +1,4 @@
-use super::*;
+use super::{JaegerRef, WireError, api_v2, span_id_part, trace_id_parts};
 
 pub(crate) fn ref_from_proto(reference: &api_v2::SpanRef) -> Result<JaegerRef, WireError> {
     let (trace_id_high, trace_id_low) = trace_id_parts(&reference.trace_id)?;

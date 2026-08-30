@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 pub(crate) fn labels_without_label(labels: &Labels, drop: &str) -> Labels {
     let mut out = Labels::new();

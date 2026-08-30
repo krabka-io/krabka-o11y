@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 /// One metric sample: `{"timestampMs": "<ms>", "value": <f64>}`.
 ///

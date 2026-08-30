@@ -1,4 +1,4 @@
-use super::*;
+use super::{EventRecord, LinkRecord, Span, TracesData, WireError, fixed16, fixed8, kind_of, kvs, status_of};
 
 /// Decode OTLP `TracesData` into internal spans.
 ///

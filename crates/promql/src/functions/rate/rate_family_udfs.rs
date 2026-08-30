@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScalarUDF, delta_udf, idelta_udf, increase_udf, irate_udf, rate_udf};
 
 /// Every rate-family UDF, ready to register on a [`SessionContext`].
 #[must_use]

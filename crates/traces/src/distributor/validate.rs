@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Span, TenantLimits, TracesError, validate_attrs};
 
 /// Validate decoded spans against per-tenant structural limits.
 ///

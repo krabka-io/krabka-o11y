@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Metrics, Serialize, TraceJson};
 
 /// The `/api/search` response: the matched traces plus the job-accounting
 /// metrics.

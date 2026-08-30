@@ -1,4 +1,4 @@
-use super::*;
+use super::EncodeLabelSet;
 
 /// Per-tenant ingest label, such as `tenant="anonymous"`. It pairs with the
 /// spans-accepted counter family, so accepted-span volume is attributable per

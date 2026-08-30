@@ -1,4 +1,4 @@
-use super::*;
+use super::{ApiError, MAX_RESOLUTION_POINTS, Time, TimeExt};
 
 /// Rejects a range query whose resolution exceeds the per-timeseries point cap.
 ///

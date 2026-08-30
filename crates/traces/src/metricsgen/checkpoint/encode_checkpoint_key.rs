@@ -1,4 +1,4 @@
-use super::*;
+use super::{Bytes, BytesMut, put_bytes};
 
 #[must_use]
 pub fn encode_checkpoint_key(tenant: &str, trace_id: &[u8; 16], edge_id: &[u8]) -> Bytes {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, Bytes, HeaderMap, IntoResponse, MetricStore, Path, PrometheusApiState, Response, State, label_values_inner, parse_discovery_form};
 
 pub(crate) async fn label_values_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

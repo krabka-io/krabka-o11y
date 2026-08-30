@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, ArrayRef, DataFusionError, DfResult, DictionaryArray, Int64Type, RangeArray};
 
 /// Decodes a `Dictionary<Int64, List<_>>` range column into a [`RangeArray`].
 pub(crate) fn decode_range_column(array: &ArrayRef, arg: &str, udf: &str) -> DfResult<RangeArray> {

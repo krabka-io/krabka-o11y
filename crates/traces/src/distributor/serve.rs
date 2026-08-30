@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CancellationToken, DistributorState, SocketAddr, router};
 
 /// Serve the distributor until cancelled.
 ///

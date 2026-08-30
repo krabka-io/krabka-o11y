@@ -1,4 +1,4 @@
-use super::*;
+use super::{MaxOffset, MinOffset, WindowStartNs};
 
 /// Deterministic object key for one block-builder flush window.
 #[must_use]

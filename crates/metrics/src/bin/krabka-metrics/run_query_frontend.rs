@@ -1,4 +1,4 @@
-use super::*;
+use super::{Cli, TcpListener, query_frontend_router};
 
 pub(crate) async fn run_query_frontend(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(cli.listen).await?;

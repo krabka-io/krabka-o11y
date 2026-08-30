@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, PromqlError, Result, VectorSelector, label_matcher_sets};
 
 pub(crate) fn info_data_label_matchers(selector: &VectorSelector) -> Result<Vec<LabelMatcher>> {
     let matcher_sets = label_matcher_sets(selector);

@@ -1,4 +1,4 @@
-use super::*;
+use super::{EventRef, LinkRef, NestedAttrColumn, NestedAttrScope, StringBuilder, attr_typed_value_parts};
 
 pub(crate) fn append_nested_attr(
     event: Option<&EventRef>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CancellationToken, Cli, DistributorState, KafkaSink, Parser, Producer, ServiceMetrics, SocketAddr, distributor, ingest_rate_from_cli};
 
 pub(crate) async fn run_distributor(
     cli: Cli,

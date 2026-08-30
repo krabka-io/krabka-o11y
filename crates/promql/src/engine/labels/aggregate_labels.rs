@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, LabelModifier, Labels};
 
 pub(crate) fn aggregate_labels(input: &Labels, modifier: Option<&LabelModifier>) -> Labels {
     let mut labels = Labels::new();

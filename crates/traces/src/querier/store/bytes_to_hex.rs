@@ -1,4 +1,4 @@
-use super::*;
+use super::Array;
 
 pub(crate) fn bytes_to_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";

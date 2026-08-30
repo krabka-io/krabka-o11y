@@ -1,4 +1,4 @@
-use super::*;
+use super::{HashSet, Labels, WireError, pb};
 
 pub(crate) fn labels_from_v1(labels: &[pb::v1::Label]) -> Result<Labels, WireError> {
     let mut names = HashSet::with_capacity(labels.len());

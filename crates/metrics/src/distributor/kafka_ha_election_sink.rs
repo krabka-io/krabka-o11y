@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, HaElectionRecord, HaElectionSink, ProduceError, Producer, ha_election_compaction_key, keyed_producer_record};
 
 /// Producer-backed compacted HA election sink.
 pub struct KafkaHaElectionSink {

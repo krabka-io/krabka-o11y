@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, Cli, ConfiguredObjectStore, Parser, Url};
 
 pub(crate) fn build_object_store(
     cli: &Cli,

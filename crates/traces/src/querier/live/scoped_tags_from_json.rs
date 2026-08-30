@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, ScopedTag, TraceqlError, tag_scope_from_name};
 
 pub(crate) fn scoped_tags_from_json(json: &serde_json::Value) -> Result<Vec<ScopedTag>> {
     let scopes = json

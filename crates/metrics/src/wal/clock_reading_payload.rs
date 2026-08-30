@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteRateExt, ByteSizeExt, DecodedClockReading, Deserialize, FrequencyExt, RatioExt, Serialize, StdDurationExt, Time, TimeExt, UnixNanos};
 
 /// One clock confidence reading, plus the stamp the ingester wrote on it.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::ApiError;
 
 pub(crate) fn rule_group_name(group: &serde_yaml::Value) -> Result<String, ApiError> {
     group

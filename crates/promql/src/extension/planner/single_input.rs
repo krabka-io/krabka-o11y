@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DfResult, ExecutionPlan};
 
 pub(crate) fn single_input(physical_inputs: &[Arc<dyn ExecutionPlan>]) -> DfResult<Arc<dyn ExecutionPlan>> {
     match physical_inputs {

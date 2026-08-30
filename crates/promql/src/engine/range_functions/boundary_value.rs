@@ -1,4 +1,4 @@
-use super::*;
+use super::{ToPrimitive, interpolate_boundary};
 
 pub(crate) fn boundary_value(timestamps: &[i64], values: &[f64], target_ms: i64) -> Option<f64> {
     // `||` against `&&` is a permanent mutation survivor. Both callers pair the

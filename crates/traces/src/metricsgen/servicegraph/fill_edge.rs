@@ -1,4 +1,4 @@
-use super::*;
+use super::{Edge, SpanRecord};
 
 pub(crate) fn fill_edge(edge: &mut Edge, span: &SpanRecord, is_client: bool, latency_ns: i64) {
     if is_client {

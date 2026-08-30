@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BucketSpan, custom_histogram_bound, spanned_histogram_counts};
 
 pub(crate) fn remap_custom_counts(
     spans: &[BucketSpan],

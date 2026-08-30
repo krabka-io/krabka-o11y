@@ -1,4 +1,4 @@
-use super::*;
+use super::NativeHistogram;
 
 pub(crate) fn scale_native_histogram_values(histogram: &mut NativeHistogram, factor: f64) {
     histogram.zero_count *= factor;

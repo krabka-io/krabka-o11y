@@ -1,4 +1,4 @@
-use super::*;
+use super::{Call, Expr, ExtendedSelectorExpr, range_fold_range_arg_index};
 
 /// Recognizes a residual range-vector fold call, see `range_fold_range_arg_index`.
 ///

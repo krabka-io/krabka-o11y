@@ -1,4 +1,4 @@
-use super::*;
+use super::{ClassicBucket, bucket_overlap_fraction, classic_histogram_buckets, normalized_classic_histogram_buckets};
 
 pub(crate) fn classic_histogram_fraction(lower: f64, upper: f64, buckets: &mut [ClassicBucket]) -> f64 {
     if lower.is_nan() || upper.is_nan() {

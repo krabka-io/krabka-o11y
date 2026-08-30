@@ -1,4 +1,4 @@
-use super::*;
+use super::{OtlpResource, OtlpResourceSpans, OtlpTracesData, TraceSpans, otlp_attrs, otlp_scope_spans, resource_span_groups};
 
 pub(crate) fn trace_traces_data(trace: &TraceSpans, max_trace_spans: usize) -> OtlpTracesData {
     OtlpTracesData {

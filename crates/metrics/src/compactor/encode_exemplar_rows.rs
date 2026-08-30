@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ArrayRef, DataType, ExemplarRow, Field, Float64Builder, HistogramCodecError, Int64Builder, MapBuilder, RecordBatch, StringBuilder, UInt64Builder, exemplar_schema};
 
 pub(crate) fn encode_exemplar_rows(rows: &[ExemplarRow]) -> Result<RecordBatch, HistogramCodecError> {
     let mut fingerprints = UInt64Builder::new();

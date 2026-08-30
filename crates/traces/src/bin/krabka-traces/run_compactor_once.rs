@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockWriter, Cli, TraceIndex, build_object_store, compact_index_window_with_max_bytes};
 
 pub(crate) async fn run_compactor_once(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let configured = build_object_store(&cli)?;

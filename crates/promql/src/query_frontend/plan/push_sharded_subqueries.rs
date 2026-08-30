@@ -1,4 +1,4 @@
-use super::*;
+use super::{FrontendRangeQuery, QueryShard, Time};
 
 pub(crate) fn push_sharded_subqueries(
     subqueries: &mut Vec<FrontendRangeQuery>,

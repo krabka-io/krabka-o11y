@@ -1,4 +1,4 @@
-use super::*;
+use super::{LinkRecord, traceql_attr};
 
 pub(crate) fn link_ref(link: &LinkRecord) -> krabka_traceql::LinkRef {
     krabka_traceql::LinkRef {

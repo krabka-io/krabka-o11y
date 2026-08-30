@@ -1,4 +1,4 @@
-use super::*;
+use super::{CheckpointCodecError, get_bytes};
 
 ///
 /// # Errors

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, InfoContext, InstantSample, info_identifying_key};
 
 /// Joins input series with overlapping `target_info` series.
 pub(crate) fn apply_info(

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, ByteSizeExt, HeaderMap, WAL_TOPIC, tenant_for_span};
 
 /// Builds the per-request ingest span. This function declares
 /// `krabka.ingest.series` empty, and `push_inner` records it after it decodes

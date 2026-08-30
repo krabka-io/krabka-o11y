@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, PushError, validate_request_tenant};
 
 // cargo-mutants: covered through HTTP push-path tenant validation tests.
 #[cfg_attr(test, mutants::skip)]

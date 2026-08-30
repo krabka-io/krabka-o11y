@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, Labels, MatchOp};
 
 pub(crate) fn absent_labels_from_matchers(matchers: &[LabelMatcher]) -> Labels {
     let mut labels = Labels::new();

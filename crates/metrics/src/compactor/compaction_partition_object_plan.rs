@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionObjectPlan, MetricBlockKind, PartitionIndex, compaction_index_key, compaction_partition_object_key};
 
 /// Deterministic block and index object keys for one partition compaction window.
 // cargo-mutants: this is a thin partition-key wrapper over covered key helpers.

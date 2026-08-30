@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstrumentationGroups, SpanRef, Value, instrumentation_attributes, instrumentation_scope_json, json, trace_span_json};
 
 pub(crate) fn scope_spans_json(trace_id: [u8; 16], input_spans: Vec<&SpanRef>) -> Value {
     let mut groups: InstrumentationGroups<'_> = Vec::new();

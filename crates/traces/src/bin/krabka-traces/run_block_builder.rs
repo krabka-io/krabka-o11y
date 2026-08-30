@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, BlockWriter, CancellationToken, Cli, Mutex, ServiceMetrics, TraceIndex, blockbuilder, build_object_store, promoted_attrs_from_cli, wal_consumer};
 
 pub(crate) async fn run_block_builder(
     cli: Cli,

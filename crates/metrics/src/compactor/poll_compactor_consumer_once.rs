@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockWriter, CompactionConsumerCommitMut, CompactionConsumerPoll, CompactionIndexSink, CompactionPollError, CompactionPollResult, Time, compaction_wal_records_from_consumer_records, process_compaction_record_batch_with_consumer};
 
 /// Polls, compacts, and commits once with a single mutable consumer handle.
 /// # Errors

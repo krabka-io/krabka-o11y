@@ -1,4 +1,4 @@
-use super::*;
+use super::Deserialize;
 
 // The Tempo-shaped runtime-overrides keys, in the units an operator writes them
 // (spans/sec, bytes, seconds). This is intentionally partial configuration, not

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, Float64Array, InstantSample, Int64Array, PromqlError, QueryResult, RecordBatch, Result, SampleValue, labels_from_rate_batch, scalar_math};
 
 /// Assembles per-row scalar-math projection output batches into a result.
 ///

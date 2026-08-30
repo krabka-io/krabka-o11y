@@ -1,4 +1,4 @@
-use super::*;
+use super::BTreeMap;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct AlertStateKey {

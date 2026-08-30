@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionObjectPlan, MetricBlockKind, TenantCompactionRows, compaction_object_plan};
 
 /// Deterministic object plan plus row-count evidence for one encoded block kind.
 #[must_use]

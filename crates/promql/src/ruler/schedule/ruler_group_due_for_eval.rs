@@ -1,4 +1,4 @@
-use super::*;
+use super::{RulerGroupState, TimeExt, yaml_duration};
 
 pub(crate) fn ruler_group_due_for_eval(
     tenant: &str,
