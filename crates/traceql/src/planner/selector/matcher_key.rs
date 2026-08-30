@@ -1,4 +1,4 @@
-use super::*;
+use super::{Field, Scope, intrinsic_match_key};
 
 pub(crate) fn matcher_key(field: &Field) -> String {
     match &field.scope {

@@ -1,4 +1,3 @@
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ParsedTemplateDate {
     pub(crate) year: i32,

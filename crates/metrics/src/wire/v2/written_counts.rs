@@ -1,4 +1,3 @@
-use super::*;
 
 /// Written sample tallies for the v2 response headers.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

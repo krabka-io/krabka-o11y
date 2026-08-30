@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, Arc, Mutex, VecDeque, SpanRecord, SpanSource, SinkError};
 
 /// Deterministic source mock that returns scripted batches.
 #[derive(Clone, Default)]

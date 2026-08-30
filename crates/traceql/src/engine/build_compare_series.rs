@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, CompareByAttr, CompareCounts, CompareGroup, CompareTotals, MetricsRange,
+    TraceMetricSeries, compare_total_series, compare_value_series,
+};
 
 /// Builds the compare time series from the accumulated per-bucket counts.
 ///

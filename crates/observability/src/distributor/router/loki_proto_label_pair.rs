@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub(crate) struct LokiProtoLabelPair {
     #[prost(string, tag = "1")]

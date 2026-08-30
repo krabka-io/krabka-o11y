@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompareRegexCache, SpansetExpr, collect_field_expr_regexes};
 
 /// Collects every `=~`/`!~` literal pattern in the selection.
 ///

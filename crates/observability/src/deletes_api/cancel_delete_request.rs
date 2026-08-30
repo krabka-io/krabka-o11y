@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompactorDeleteState, HeaderMap, IntoResponse, RawQuery, Response, State, StatusCode,
+    execute_cancel_delete_request,
+};
 
 pub(crate) async fn cancel_delete_request(
     State(state): State<CompactorDeleteState>,

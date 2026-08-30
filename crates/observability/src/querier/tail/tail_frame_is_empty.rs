@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) fn tail_frame_is_empty(frame: &Value) -> bool {
     frame

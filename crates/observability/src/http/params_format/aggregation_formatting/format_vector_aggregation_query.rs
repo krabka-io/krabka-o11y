@@ -1,4 +1,4 @@
-use super::*;
+use super::{VectorAggregation, VectorAggregationOp, format_vector_grouping};
 
 pub(crate) fn format_vector_aggregation_query(
     aggregation: &VectorAggregation,

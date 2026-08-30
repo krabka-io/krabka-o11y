@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, Value};
 
 pub(crate) fn loki_json_line_parse_error(
     stream_labels: &Labels,

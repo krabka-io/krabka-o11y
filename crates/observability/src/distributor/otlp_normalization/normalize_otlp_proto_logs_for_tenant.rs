@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    DistributorError, ProtoExportLogsServiceRequest, Time, WalLogRecord,
+    discover_service_name_label, proto_attributes_to_labels, proto_log_record_structured_metadata,
+    proto_timestamp_ns, proto_value_to_string, validate_loki_timestamp_window,
+};
 
 pub(crate) fn normalize_otlp_proto_logs_for_tenant(
     tenant: &str,

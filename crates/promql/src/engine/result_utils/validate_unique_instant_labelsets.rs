@@ -1,4 +1,4 @@
-use super::*;
+use super::{QueryResult, Result, BTreeSet, labels_key, PromqlError};
 
 pub(crate) fn validate_unique_instant_labelsets(result: &QueryResult) -> Result<()> {
     let QueryResult::InstantVector(samples) = result else {

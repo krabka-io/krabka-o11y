@@ -69,7 +69,12 @@ pub(crate) fn copying_descriptor_labels_refuses_a_series_the_source_cannot_name(
 
     // A descriptor with no series copies nothing and succeeds.
     let mut target = LabelIndex::default();
-    super::super::prelude::insert_descriptor_labels(&mut target, &source, "tenant", &descriptor(&[]))
-        .expect("an empty descriptor is not an error");
+    super::super::prelude::insert_descriptor_labels(
+        &mut target,
+        &source,
+        "tenant",
+        &descriptor(&[]),
+    )
+    .expect("an empty descriptor is not an error");
     check!(target.labels_for("tenant", known).is_none());
 }

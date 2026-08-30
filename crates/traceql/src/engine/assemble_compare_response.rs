@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompareSpec, HashSet, MetricsRange, RecordBatch, Result, TraceMetricsResponse, TraceqlError,
+    accumulate_compare_counts, build_compare_series,
+};
 
 pub(crate) fn assemble_compare_response(
     batches: &[RecordBatch],

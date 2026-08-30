@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, Labels, leaf, Array, StringArray};
 
 /// Reconstructs a [`Labels`] set from the string label columns of one row of a
 /// planner-path output batch.

@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn column_number(query: &str, position: usize) -> usize {
     let prefix = &query[..position.min(query.len())];
     prefix

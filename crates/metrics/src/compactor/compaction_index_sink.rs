@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, CompactionIndexManifest, CompactionIndexError};
 
 /// Sink for compaction index sidecars.
 #[async_trait]

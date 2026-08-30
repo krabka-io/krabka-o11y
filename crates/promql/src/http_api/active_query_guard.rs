@@ -1,4 +1,4 @@
-use super::*;
+use super::ServiceMetrics;
 
 /// RAII guard that holds the `active_queries` increment while a query runs.
 ///

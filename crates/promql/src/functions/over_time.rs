@@ -543,7 +543,6 @@ use last_value_by_timestamp::last_value_by_timestamp;
 pub use over_time_family::OverTimeFamily;
 pub use over_time_family_udfs::over_time_family_udfs;
 use over_time_mean::over_time_mean;
-use over_time_udf::OverTimeUdf;
 pub use over_time_udf::over_time_udf;
 use over_time_variance::over_time_variance;
 use quantile_value::quantile_value;

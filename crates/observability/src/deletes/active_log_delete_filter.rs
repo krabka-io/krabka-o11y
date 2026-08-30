@@ -1,4 +1,4 @@
-use super::*;
+use super::{StreamQuery, TimeRange};
 
 #[derive(Clone)]
 pub(crate) struct ActiveLogDeleteFilter {

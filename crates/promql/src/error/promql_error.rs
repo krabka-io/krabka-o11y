@@ -1,4 +1,3 @@
-use super::*;
 
 /// Errors the `PromQL` engine raises.
 #[derive(Debug, thiserror::Error)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{PartitionIndex, Offset};
 
 /// Errors raised while adapting Kafka consumer records to compactor WAL records.
 #[derive(Debug, thiserror::Error)]

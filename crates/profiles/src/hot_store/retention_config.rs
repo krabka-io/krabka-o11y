@@ -1,4 +1,4 @@
-use super::*;
+use super::{DEFAULT_MAX_AGE, DEFAULT_MAX_RECORDS, Time};
 
 /// Retention policy for the in-memory WAL tail.
 #[derive(Clone, Copy, Debug)]

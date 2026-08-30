@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Bytes, CompactorDeleteState, HeaderMap, IntoResponse, RawQuery, Response, State, StatusCode,
+    execute_create_delete_request,
+};
 
 pub(crate) async fn create_delete_request(
     State(state): State<CompactorDeleteState>,

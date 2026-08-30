@@ -1,10 +1,17 @@
-use super::*;
+use super::{
+    Array, AttrValue, BLOCK_ATTR_KEYS, BLOCK_ATTR_VALUE, BLOCK_ATTR_VALUE_BOOL,
+    BLOCK_ATTR_VALUE_DOUBLE, BLOCK_ATTR_VALUE_INT, RecordBatch, Result, StringArray, TraceqlError,
+    block_attr_values_for_key, optional_list_column,
+};
 
 /// Like `block_row_attrs`, but keeps the `__resource.`-prefixed keys.
 ///
 /// The caller can then split the span scope from the resource scope. The
 /// search path drops the resource attributes.
-pub(crate) fn block_row_scoped_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<(String, AttrValue)>> {
+pub(crate) fn block_row_scoped_attrs(
+    batch: &RecordBatch,
+    row: usize,
+) -> Result<Vec<(String, AttrValue)>> {
     let Some(keys) = optional_list_column(batch, BLOCK_ATTR_KEYS)? else {
         return Ok(Vec::new());
     };

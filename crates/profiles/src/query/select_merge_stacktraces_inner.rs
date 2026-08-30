@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
+    QuerierState, connect_error, flamegraph_dot, merge_profile_id_selector, pb,
+    stack_trace_call_sites_from_json, tenant_from_headers,
+};
 
 pub(crate) async fn select_merge_stacktraces_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,

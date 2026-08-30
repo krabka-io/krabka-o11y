@@ -1,4 +1,4 @@
-use super::*;
+use super::{LogicalPlan, UserDefinedLogicalNodeCore, Expr, fmt, DfResult, DataFusionError};
 
 /// Logical node: instant-vector selection over a step grid.
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd)]

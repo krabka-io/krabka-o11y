@@ -1,4 +1,4 @@
-use super::*;
+use super::{DetectedFieldType, is_bytes_literal, is_prometheus_duration_literal};
 
 pub(crate) fn field_type_from_str(value: &str) -> DetectedFieldType {
     let normalized = value.to_ascii_lowercase();

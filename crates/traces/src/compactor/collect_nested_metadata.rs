@@ -1,4 +1,4 @@
-use super::*;
+use super::{ListArray, StructArray, TracesError, Array};
 
 pub(crate) fn collect_nested_metadata(
     values: &ListArray,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricStore, Arc, PrometheusApiState, Response, StdDurationExt};
 
 /// Records a query handler outcome from its final response status.
 ///

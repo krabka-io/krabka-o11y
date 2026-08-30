@@ -1,4 +1,4 @@
-use super::*;
+use super::{ANONYMOUS_TENANT, ProfilesError, validate_tenant};
 
 /// Resolve a tenant id from an optional header value.
 ///

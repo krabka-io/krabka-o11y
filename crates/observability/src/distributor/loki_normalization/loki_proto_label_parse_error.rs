@@ -1,4 +1,4 @@
-use super::*;
+use super::is_loki_label_name_char;
 
 pub(crate) fn loki_proto_label_parse_error(labels: &str) -> Option<String> {
     let labels = labels.trim();

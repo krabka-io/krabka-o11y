@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HeaderMap, HttpQueryError, Labels, QuerierState, SeriesParams, authorized_tenant,
+    metadata_index_range, metadata_label_sets,
+};
 
 pub(crate) async fn series_data(
     state: &QuerierState,

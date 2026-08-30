@@ -1,6 +1,10 @@
-use super::*;
+use super::{BTreeSet, InputSpan, bytes_to_hex, nested_attribute_key_matches, typed_value_parts};
 
-pub(crate) fn collect_link_values(span: &InputSpan, tag: &str, values: &mut BTreeSet<(String, String)>) {
+pub(crate) fn collect_link_values(
+    span: &InputSpan,
+    tag: &str,
+    values: &mut BTreeSet<(String, String)>,
+) {
     for link in &span.links {
         match tag {
             "link:traceID" => {

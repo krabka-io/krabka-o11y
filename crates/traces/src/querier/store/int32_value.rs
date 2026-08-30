@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, TraceqlError, Array, Int32Array};
 
 pub(crate) fn int32_value(batch: &RecordBatch, name: &str, row: usize) -> Result<i32, TraceqlError> {
     let col = batch

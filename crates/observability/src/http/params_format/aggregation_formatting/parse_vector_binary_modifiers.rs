@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    FormattedVectorBinaryModifiers, parse_vector_group_modifier, parse_vector_matching_modifier,
+};
 
 pub(crate) fn parse_vector_binary_modifiers(
     query: &str,

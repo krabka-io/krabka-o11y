@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfileType, json};
 
 pub(crate) fn flamebearer_metadata(format: &str, profile_type: &str) -> serde_json::Value {
     match ProfileType::parse(profile_type) {

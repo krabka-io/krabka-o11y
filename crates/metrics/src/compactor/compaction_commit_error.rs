@@ -1,4 +1,3 @@
-use super::*;
 
 /// Errors raised while committing compactor WAL offsets.
 #[derive(Debug, thiserror::Error)]

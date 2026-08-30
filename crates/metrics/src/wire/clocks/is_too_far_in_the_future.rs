@@ -1,4 +1,4 @@
-use super::*;
+use super::{UnixNanos, MAX_SAMPLE_TIMESTAMP_MS};
 
 /// Whether a reading sits beyond the sane future bound the OTLP path already
 /// applies to a sample timestamp.

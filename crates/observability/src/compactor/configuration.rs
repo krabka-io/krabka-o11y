@@ -22,12 +22,13 @@ mod run_compactor_until_idle;
 mod validate_compactor_policy;
 mod validate_distributor_policy;
 
-pub (crate) use build_compactor_configured_object_store::build_compactor_configured_object_store;
+pub(crate) use build_compactor_configured_object_store::build_compactor_configured_object_store;
 pub use build_service_dependencies::build_service_dependencies;
 pub use build_service_dependencies_with_client_resource_policy::build_service_dependencies_with_client_resource_policy;
-pub (crate) use compactor_object_store::compactor_object_store;
-# [cfg_attr (test , mutants :: skip)] pub (crate) use connect_with_startup_retry::connect_with_startup_retry;
+pub(crate) use compactor_object_store::compactor_object_store;
+#[cfg_attr(test, mutants::skip)]
+pub(crate) use connect_with_startup_retry::connect_with_startup_retry;
 pub use run_compactor_once::run_compactor_once;
 pub use run_compactor_until_idle::run_compactor_until_idle;
-pub (crate) use validate_compactor_policy::validate_compactor_policy;
-pub (crate) use validate_distributor_policy::validate_distributor_policy;
+pub(crate) use validate_compactor_policy::validate_compactor_policy;
+pub(crate) use validate_distributor_policy::validate_distributor_policy;

@@ -1,4 +1,3 @@
-use super::*;
 
 /// Leaf-batch column with the per-sample timestamp in epoch milliseconds.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Bytes, HttpQueryError, form_body_query};
 
 /// Merges a POST query's URL query string with its form body, body first.
 ///

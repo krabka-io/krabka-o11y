@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn hex_string(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);

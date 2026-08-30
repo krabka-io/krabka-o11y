@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, DetectedFieldStats, Value, add_detected_field, detected_json_value_string,
+    field_type_from_json,
+};
 
 pub(crate) fn detect_json_fields(fields: &mut BTreeMap<String, DetectedFieldStats>, line: &str) {
     let Ok(Value::Object(object)) = serde_json::from_str::<Value>(line) else {

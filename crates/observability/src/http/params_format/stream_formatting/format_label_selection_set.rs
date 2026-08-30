@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelSelectionMatcher, LabelSelectionSet, quote_logql_string};
 
 pub(crate) fn format_label_selection_set(selections: &LabelSelectionSet) -> String {
     selections

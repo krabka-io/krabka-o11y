@@ -1,4 +1,4 @@
-use super::*;
+use super::{LinkRef, SpanMatcher, MatchScope, attr_values_match, nested_presence_matches, string_matches, bytes_to_hex};
 
 pub(crate) fn link_matcher_matches_link(link: &LinkRef, matcher: &SpanMatcher) -> bool {
     let is_match = match matcher.scope {

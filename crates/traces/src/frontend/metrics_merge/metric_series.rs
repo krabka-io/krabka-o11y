@@ -1,4 +1,4 @@
-use super::*;
+use super::{Serialize, Deserialize, KeyValue, MetricSample, Exemplar};
 
 /// One metric series: a label set, its Prometheus label string, step-aligned
 /// samples, and exemplars.

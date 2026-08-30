@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldExpr, Result, Scope, comparison_to_sql_qualified, qualified_field_ident};
 
 pub(crate) fn parent_field_expr_to_sql_qualified(
     fe: &FieldExpr,

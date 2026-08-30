@@ -1,4 +1,4 @@
-use super::*;
+use super::{ConsumerRecord, BTreeMap, PartitionWindow, TracesError, SpanRecord};
 
 /// Decode Kafka consumer records into per-partition span windows.
 ///

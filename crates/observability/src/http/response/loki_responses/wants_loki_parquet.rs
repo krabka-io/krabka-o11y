@@ -1,4 +1,4 @@
-use super::*;
+use super::{ACCEPT, HeaderMap, accept_part_allows_loki_parquet};
 
 pub(crate) fn wants_loki_parquet(headers: &HeaderMap) -> bool {
     headers

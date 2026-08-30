@@ -1,4 +1,4 @@
-use super::*;
+use super::{RankDirection, RankLimit, TraceMetricSeries, series_rank_score};
 
 pub(crate) fn apply_rank(
     mut series: Vec<TraceMetricSeries>,

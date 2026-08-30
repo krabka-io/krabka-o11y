@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricsRange, f64_from_u64};
 
 pub(crate) fn compare_points(buckets: &[u64], range: MetricsRange) -> Vec<(i64, f64)> {
     buckets

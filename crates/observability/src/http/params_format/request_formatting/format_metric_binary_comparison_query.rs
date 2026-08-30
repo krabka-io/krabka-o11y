@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    format_metric_binary_expression, format_metric_query, format_metric_scalar_comparison_operator,
+    parse_metric_binary_comparison_query, parse_metric_query,
+    split_leading_vector_binary_modifiers, split_top_level_comparison_query,
+};
 
 pub(crate) fn format_metric_binary_comparison_query(query: &str) -> Option<String> {
     let (left_text, _, right_text) = split_top_level_comparison_query(query)?;

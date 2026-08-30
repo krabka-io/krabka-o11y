@@ -1,4 +1,4 @@
-use super::*;
+use super::{ConnectError, ConnectRequest, ConnectResponse, pb};
 
 /// Pyroscope `settings.v1.SettingsService/Get`.
 ///

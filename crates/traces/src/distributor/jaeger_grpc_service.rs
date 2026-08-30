@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DistributorState, CollectorService, GrpcRequest, PostSpansRequest, GrpcResponse, PostSpansResponse, GrpcStatus, decode_jaeger_grpc_batch, tenant_metadata, grpc_status_from_error, produce_spans};
 
 /// Jaeger API v2 gRPC collector backed by the traces WAL.
 pub struct JaegerGrpcService {

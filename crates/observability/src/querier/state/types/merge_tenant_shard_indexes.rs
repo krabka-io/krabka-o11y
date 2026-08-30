@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BlockIndex, LabelIndex};
 
 pub(crate) fn merge_tenant_shard_indexes(
     tenant: &str,

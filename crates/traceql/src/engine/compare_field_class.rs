@@ -1,4 +1,4 @@
-use super::*;
+use super::{Field, Intrinsic, Result, Scope, TraceqlError};
 
 /// A span attribute, a resource attribute, or a selection-evaluable intrinsic.
 ///

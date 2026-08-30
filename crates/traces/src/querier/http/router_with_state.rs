@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanStore, AppState, Router, get, echo, ready, buildinfo, search, search_tags, search_tags_v2, search_tag_values, search_tag_values_v2, query_range, query_instant, trace_by_id, trace_by_id_v1};
 
 pub(crate) fn router_with_state<S>(state: AppState<S>) -> Router
 where

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HeaderMap, HttpQueryError, QuerierState, Response, SeriesParams, label_values_data,
+    loki_sparse_success, loki_success,
+};
 
 pub(crate) async fn execute_label_values_query(
     state: &QuerierState,

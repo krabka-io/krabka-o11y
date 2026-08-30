@@ -1,4 +1,4 @@
-use super::*;
+use super::Intrinsic;
 
 /// Resolves a bare identifier with no scope to a `TraceQL` intrinsic.
 ///

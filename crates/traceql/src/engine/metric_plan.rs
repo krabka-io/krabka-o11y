@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    CompareSpec, Field, MetricFilter, MetricFunction, Query, RankLimit, Result,
+    is_inert_metric_stage, metric_pipeline_parts, metric_plan_for, metric_plan_with_compare,
+    unsupported_metric_pipeline,
+};
 
 pub(crate) struct MetricPlan {
     pub(crate) function: MetricFunction,

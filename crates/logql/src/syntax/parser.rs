@@ -1,4 +1,19 @@
-use super::{StreamQuery, ParseError, MetricQuery, RangeAggregationKind, RangeAggregation, VectorAggregationOp, range_aggregation_supports_grouping, DurationNanos, OffsetNanos, MetricLabelReplace, parse_metric_subexpression, MetricLabelJoin, MetricScalarComparison, MetricScalarArithmetic, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricScalarArithmeticOp, MetricBinarySetOp, is_ident_char, MetricVectorMatching, MetricVectorGroupModifier, VectorAggregation, VectorGrouping, Quantile, gcd_u64, QuantileNumerator, QuantileDenominator, LabelMatcher, duration_unit, MatchOp, PipelineStage, ParserStage, LogfmtParserConfig, PatternParser, RegexpParser, LineFormat, field_filter_expression_to_pipeline_stage, LineFilter, LineFilterOp, LabelFormat, LabelFormatAssignment, UnwrapExpression, JsonParserConfig, JsonExtraction, DestinationLabel, JsonExpressionPath, LogfmtExtraction, SourceLabel, LabelSelectionSet, LabelSelection, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, is_ident_start, ComparisonOp, FieldValue, IpMatcher, parse_prometheus_duration_literal, parse_bytes_literal, decode_quoted_escape, QuotedChar};
+use super::{
+    ComparisonOp, DestinationLabel, DurationNanos, FieldFilter, FieldFilterExpression,
+    FieldFilterLogicOp, FieldValue, IpMatcher, JsonExpressionPath, JsonExtraction,
+    JsonParserConfig, LabelFormat, LabelFormatAssignment, LabelMatcher, LabelSelection,
+    LabelSelectionSet, LineFilter, LineFilterOp, LineFormat, LogfmtExtraction, LogfmtParserConfig,
+    MatchOp, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricBinarySetOp,
+    MetricLabelJoin, MetricLabelReplace, MetricQuery, MetricScalarArithmetic,
+    MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
+    MetricVectorMatching, OffsetNanos, ParseError, ParserStage, PatternParser, PipelineStage,
+    Quantile, QuantileDenominator, QuantileNumerator, QuotedChar, RangeAggregation,
+    RangeAggregationKind, RegexpParser, SourceLabel, StreamQuery, UnwrapExpression,
+    VectorAggregation, VectorAggregationOp, VectorGrouping, decode_quoted_escape, duration_unit,
+    field_filter_expression_to_pipeline_stage, gcd_u64, is_ident_char, is_ident_start,
+    parse_bytes_literal, parse_metric_subexpression, parse_prometheus_duration_literal,
+    range_aggregation_supports_grouping,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 
@@ -253,7 +268,9 @@ impl<'a> Parser<'a> {
         Err(self.error(&message))
     }
 
-    pub(crate) fn parse_metric_scalar_comparison(mut self) -> Result<MetricScalarComparison, ParseError> {
+    pub(crate) fn parse_metric_scalar_comparison(
+        mut self,
+    ) -> Result<MetricScalarComparison, ParseError> {
         self.skip_ws();
         let start = self.pos;
         let comparison = if let Ok(scalar) = self.parse_scalar_literal_text() {
@@ -297,7 +314,9 @@ impl<'a> Parser<'a> {
         Ok(comparison)
     }
 
-    pub(crate) fn parse_metric_scalar_arithmetic(mut self) -> Result<MetricScalarArithmetic, ParseError> {
+    pub(crate) fn parse_metric_scalar_arithmetic(
+        mut self,
+    ) -> Result<MetricScalarArithmetic, ParseError> {
         self.skip_ws();
         let start = self.pos;
         let arithmetic = if let Ok(scalar) = self.parse_scalar_literal_text() {
@@ -336,7 +355,9 @@ impl<'a> Parser<'a> {
         Ok(arithmetic)
     }
 
-    pub(crate) fn parse_metric_binary_arithmetic(mut self) -> Result<MetricBinaryArithmetic, ParseError> {
+    pub(crate) fn parse_metric_binary_arithmetic(
+        mut self,
+    ) -> Result<MetricBinaryArithmetic, ParseError> {
         self.skip_ws();
         let (left_text, op) = self.parse_metric_arithmetic_argument()?;
         let matching = self.parse_metric_vector_matching_modifier(true)?;
@@ -359,7 +380,9 @@ impl<'a> Parser<'a> {
         Ok(arithmetic)
     }
 
-    pub(crate) fn parse_metric_binary_comparison(mut self) -> Result<MetricBinaryComparison, ParseError> {
+    pub(crate) fn parse_metric_binary_comparison(
+        mut self,
+    ) -> Result<MetricBinaryComparison, ParseError> {
         self.skip_ws();
         let left_text = self.parse_metric_expression_argument()?;
         let op = self.parse_comparison_op()?;
@@ -510,7 +533,9 @@ impl<'a> Parser<'a> {
         Err(self.error("expected metric arithmetic operator"))
     }
 
-    pub(crate) fn parse_metric_set_argument(&mut self) -> Result<(String, MetricBinarySetOp), ParseError> {
+    pub(crate) fn parse_metric_set_argument(
+        &mut self,
+    ) -> Result<(String, MetricBinarySetOp), ParseError> {
         let start = self.pos;
         let mut depth = 0usize;
         let mut quote_delimiter: Option<char> = None;
@@ -563,7 +588,10 @@ impl<'a> Parser<'a> {
         Err(self.error("expected metric set operator"))
     }
 
-    pub(crate) fn match_metric_set_op_at(&self, position: usize) -> Option<(usize, MetricBinarySetOp)> {
+    pub(crate) fn match_metric_set_op_at(
+        &self,
+        position: usize,
+    ) -> Option<(usize, MetricBinarySetOp)> {
         for (keyword, op) in [
             ("unless", MetricBinarySetOp::Unless),
             ("and", MetricBinarySetOp::And),
@@ -692,7 +720,9 @@ impl<'a> Parser<'a> {
         Ok(self.input[start..self.pos].to_string())
     }
 
-    pub(crate) fn try_parse_vector_aggregation(&mut self) -> Result<Option<VectorAggregation>, ParseError> {
+    pub(crate) fn try_parse_vector_aggregation(
+        &mut self,
+    ) -> Result<Option<VectorAggregation>, ParseError> {
         let Some(op) = self.try_parse_vector_aggregation_op() else {
             return Ok(None);
         };
@@ -770,7 +800,9 @@ impl<'a> Parser<'a> {
             .map_err(|_| self.error("expected scalar parameter"))
     }
 
-    pub(crate) fn try_parse_vector_grouping(&mut self) -> Result<Option<VectorGrouping>, ParseError> {
+    pub(crate) fn try_parse_vector_grouping(
+        &mut self,
+    ) -> Result<Option<VectorGrouping>, ParseError> {
         if self.consume_keyword("by") {
             Ok(Some(VectorGrouping::By(self.parse_grouping_labels()?)))
         } else if self.consume_keyword("without") {
@@ -943,7 +975,10 @@ impl<'a> Parser<'a> {
         Ok(StreamQuery { matchers, pipeline })
     }
 
-    pub(crate) fn validate_stream_selector(&self, matchers: &[LabelMatcher]) -> Result<(), ParseError> {
+    pub(crate) fn validate_stream_selector(
+        &self,
+        matchers: &[LabelMatcher],
+    ) -> Result<(), ParseError> {
         if matchers
             .iter()
             .any(|matcher| !matcher.matches_empty_value())
@@ -1309,7 +1344,9 @@ impl<'a> Parser<'a> {
         FieldFilter::try_new(name, op, value)
     }
 
-    pub(crate) fn parse_field_filter_primary(&mut self) -> Result<FieldFilterExpression, ParseError> {
+    pub(crate) fn parse_field_filter_primary(
+        &mut self,
+    ) -> Result<FieldFilterExpression, ParseError> {
         self.skip_ws();
         if self.consume("(") {
             let expression = self.parse_field_filter_expression()?;
@@ -1320,7 +1357,9 @@ impl<'a> Parser<'a> {
         self.parse_field_filter().map(FieldFilterExpression::Filter)
     }
 
-    pub(crate) fn parse_field_filter_expression(&mut self) -> Result<FieldFilterExpression, ParseError> {
+    pub(crate) fn parse_field_filter_expression(
+        &mut self,
+    ) -> Result<FieldFilterExpression, ParseError> {
         let first = self.parse_field_filter_primary()?;
         let mut rest = Vec::new();
         loop {

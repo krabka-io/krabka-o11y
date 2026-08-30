@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompareRegexCache, ComparisonOp, FieldExpr, Value};
 
 pub(crate) fn collect_field_expr_regexes(fe: &FieldExpr, cache: &mut CompareRegexCache) {
     match fe {

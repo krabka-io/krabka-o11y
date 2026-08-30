@@ -1,4 +1,3 @@
-
 pub(crate) fn duration_unit(unit: &str) -> Option<(u8, u16, i128)> {
     match unit {
         "y" => Some((0, 0x001, 31_536_000_000_000_000)),

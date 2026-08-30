@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, RwLock, LiveStore, live_i64_param, LiveSource, trace_querier};
 
 pub(crate) async fn live_span_batches(
     axum::extract::State(live_store): axum::extract::State<Arc<RwLock<LiveStore>>>,

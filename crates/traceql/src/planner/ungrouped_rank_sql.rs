@@ -1,4 +1,4 @@
-use super::*;
+use super::RankLimit;
 
 pub(crate) fn ungrouped_rank_sql(spanset_sql: &str, rank: RankLimit) -> String {
     if rank.k == 0 {

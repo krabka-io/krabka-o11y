@@ -1,4 +1,4 @@
-use super::*;
+use super::{TokenType, T_LAND, T_LOR, T_LUNLESS};
 
 #[derive(Clone, Copy)]
 pub(crate) enum SetOp {

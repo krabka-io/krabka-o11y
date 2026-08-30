@@ -1,4 +1,4 @@
-use super::*;
+use super::{Aggregate, ComparisonOp, Field, SpansetExpr, WithBinding};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Pipeline {

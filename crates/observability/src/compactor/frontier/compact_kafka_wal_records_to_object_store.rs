@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BlockDescriptor, BlockIndex, CompactionOffsetCommitter, KafkaWalCompactionError,
+    KafkaWalRecord, LabelIndex, ObjectPath, ObjectStore, compact_wal_records_to_object_store,
+    decode_kafka_wal_record_envelope,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

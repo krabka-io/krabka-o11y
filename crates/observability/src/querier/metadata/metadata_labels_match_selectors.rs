@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 pub(crate) fn metadata_labels_match_selectors(
     labels: &Labels,

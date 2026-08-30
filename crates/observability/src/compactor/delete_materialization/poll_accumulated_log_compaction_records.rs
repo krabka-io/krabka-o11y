@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Instant, KafkaWalRecord, LogWalConsumer, NonZeroUsize, StdDurationExt, Time, TimeExt,
+    WalConsumerError,
+};
 
 pub(crate) async fn poll_accumulated_log_compaction_records(
     consumer: &mut (impl LogWalConsumer + ?Sized),

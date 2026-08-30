@@ -1,4 +1,4 @@
-use super::*;
+use super::Intrinsic;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scope {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Line, Result, NativeHistogram, parse_error, parse_histogram_literal};
 
 pub(crate) fn parse_histogram_expansion(
     token: &str,

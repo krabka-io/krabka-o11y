@@ -1,6 +1,8 @@
-use super::*;
+use super::{Pipeline, UngroupedRankParts};
 
-pub(crate) fn ungrouped_rank_pipeline_parts(pipeline: &[Pipeline]) -> Option<UngroupedRankParts<'_>> {
+pub(crate) fn ungrouped_rank_pipeline_parts(
+    pipeline: &[Pipeline],
+) -> Option<UngroupedRankParts<'_>> {
     match pipeline {
         [
             Pipeline::Aggregate(agg),

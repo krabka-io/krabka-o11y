@@ -1,4 +1,4 @@
-use super::{IpRange, ParseError, parse_ip_addr, IpAddr, ip_candidate_tokens};
+use super::{IpAddr, IpRange, ParseError, ip_candidate_tokens, parse_ip_addr};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IpMatcher {

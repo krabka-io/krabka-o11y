@@ -1,4 +1,4 @@
-use super::*;
+use super::{ListBuilder, Float64Builder};
 
 pub(crate) fn append_f64_list(builder: &mut ListBuilder<Float64Builder>, values: &[f64]) {
     for value in values {

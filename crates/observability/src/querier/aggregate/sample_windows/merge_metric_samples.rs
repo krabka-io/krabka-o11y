@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricSamples;
 
 pub(crate) fn merge_metric_samples(samples: &mut MetricSamples, block_samples: MetricSamples) {
     for (labels, values) in block_samples {

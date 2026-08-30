@@ -168,11 +168,11 @@ mod selected_json_value_to_string;
 mod stream_query;
 mod unpack_json_line;
 
-pub (crate) use anchored_regex_pattern::anchored_regex_pattern;
+pub(crate) use anchored_regex_pattern::anchored_regex_pattern;
 use decolorize_line::decolorize_line;
 use field_value_to_string::field_value_to_string;
 use flatten_json_field::flatten_json_field;
-pub (crate) use insert_extracted_field::insert_extracted_field;
+pub(crate) use insert_extracted_field::insert_extracted_field;
 use insert_json_parser_error::insert_json_parser_error;
 use insert_logfmt_parser_error::insert_logfmt_parser_error;
 use insert_pattern_parser_error::insert_pattern_parser_error;

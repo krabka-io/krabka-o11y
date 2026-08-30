@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanStore, State, Path, AppState, HeaderMap, Uri, Response, trace_by_id_v1_inner};
 
 /// Tempo v1 trace-by-id, at `/api/traces/{id}`.
 ///

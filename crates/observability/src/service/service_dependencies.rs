@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    Arc, ClientResourcePolicy, CompactionFrontier, CompactionFrontierSource,
+    DeferredWalConsumerConnect, HotTailDependency, LogHotTail, LogIngestLimiter,
+    LogQueryAuthorizer, LogWalConsumer, LogWalSink, ServiceMetrics, SharedCompactionFrontier,
+    SharedLogDeleteRequests,
+};
 
 #[derive(Clone, Default)]
 pub struct ServiceDependencies {

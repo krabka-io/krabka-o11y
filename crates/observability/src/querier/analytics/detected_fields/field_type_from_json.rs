@@ -1,4 +1,4 @@
-use super::*;
+use super::{DetectedFieldType, Value, field_type_from_str};
 
 pub(crate) fn field_type_from_json(value: &Value) -> DetectedFieldType {
     match value {

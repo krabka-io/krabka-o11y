@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, Labels, MetricQuery, MetricWindow,
+    RangeAggregation, StreamPlan, TimeRange, Value, WalLogRecord,
+    append_matching_hot_metric_record, consume_hot_metric_sample, eval_times,
+    format_metric_samples, json_object_to_labels, unix_ns_string_to_loki_seconds,
+};
 
 pub(crate) fn count_loki_metric_result_hot_tail_samples(
     value: &Value,

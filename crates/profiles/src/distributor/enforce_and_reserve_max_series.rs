@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, DistributorState, ProfileRecord, ProfilesError, evict_one_tenant};
 
 /// Tests the per-tenant max-series limit and reserves the new fingerprints.
 ///

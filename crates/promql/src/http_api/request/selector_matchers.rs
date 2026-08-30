@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, PromqlError, parse_promql, Expr, label_matcher_sets};
 
 pub(crate) fn selector_matchers(selector: &str) -> Result<Vec<Vec<LabelMatcher>>, PromqlError> {
     match parse_promql(selector)? {

@@ -13,7 +13,9 @@ pub(crate) fn the_loki_ingestion_window_accepts_its_own_boundaries() {
     let now = 1_000_000_000_000_i64;
     let labels = Labels::default();
     let check_at = |timestamp: i64, max_age, grace| {
-        super::super::prelude::validate_loki_timestamp_window_at(timestamp, now, &labels, max_age, grace)
+        super::super::prelude::validate_loki_timestamp_window_at(
+            timestamp, now, &labels, max_age, grace,
+        )
     };
     let hour_ns = hours(1).nanos_i64();
 

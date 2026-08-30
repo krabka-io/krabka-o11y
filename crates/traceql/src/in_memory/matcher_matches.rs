@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    InputSpan, MatchScope, NestedSet, SpanMatcher, StoredTrace, attr_values_match,
+    instrumentation_matches, intrinsic_matches, resource_matches, span_attr_matches,
+};
 
 pub(crate) fn matcher_matches(
     trace: &StoredTrace,

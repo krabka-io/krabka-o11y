@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ObjectPath, ObjectStore};
 
 #[derive(Clone)]
 pub(crate) enum DynamicIndexSource {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionConsumerPoll, CompactionConsumerCommitMut, CompactionIndexSink, CompactionPollResult, BlockWriter, CompactionLoopConfig, CompactionLoopResult, CompactionPollError, run_compactor_consumer_loop_with_clock, SystemCompactionClock};
 
 /// Runs the compactor polling loop with a single consumer handle for poll and
 /// commit. It uses the real monotonic clock for flush-by-age.

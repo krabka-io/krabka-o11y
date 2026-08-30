@@ -1,4 +1,4 @@
-use super::*;
+use super::CancellationToken;
 
 pub(crate) fn role_shutdown_token() -> CancellationToken {
     let token = CancellationToken::new();

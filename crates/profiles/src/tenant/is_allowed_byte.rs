@@ -1,5 +1,3 @@
-use super::*;
-
 /// Returns `true` if `byte` is an allowed tenant character.
 ///
 /// Allowed: `A-Z a-z 0-9` and the punctuation `! _ * ' ( ) - .`.

@@ -1,6 +1,9 @@
 use super::{TemplateRuntimeValue, parse_template_bound};
 
-pub(crate) fn template_slice_bounds(len: usize, bounds: &[TemplateRuntimeValue]) -> Option<(usize, usize)> {
+pub(crate) fn template_slice_bounds(
+    len: usize,
+    bounds: &[TemplateRuntimeValue],
+) -> Option<(usize, usize)> {
     if bounds.len() > 3 {
         return None;
     }

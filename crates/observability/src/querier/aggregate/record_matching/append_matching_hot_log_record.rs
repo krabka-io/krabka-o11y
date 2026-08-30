@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, Labels, StreamPlan, WalLogRecord,
+    is_deleted_log_entry, matching_loki_stream_entry,
+};
 
 pub(crate) fn append_matching_hot_log_record(
     streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,

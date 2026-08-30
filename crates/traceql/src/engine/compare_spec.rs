@@ -1,4 +1,4 @@
-use super::*;
+use super::UnixNano;
 
 /// The parsed `compare({selection}, topN [, start, end])` spec on a `MetricPlan`.
 ///

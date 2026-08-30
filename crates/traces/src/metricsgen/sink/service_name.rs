@@ -1,4 +1,4 @@
-use super::*;
+use super::{KeyValue, AttrValue};
 
 pub(crate) fn service_name(attrs: &[KeyValue]) -> String {
     attrs

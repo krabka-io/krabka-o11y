@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn merge_scope_spans(
     existing: &mut crate::frontend::wire::ResourceSpansJson,

@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Debug)]
 pub(crate) struct DetectedLabelsParams {
     pub(crate) query: Option<String>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ListArray, HistogramSpanView, list_offsets, Array, StructArray, Int32Array, UInt32Array};
 
 pub(crate) fn span_list_value(list: &ListArray, row: usize) -> Option<HistogramSpanView<'_>> {
     let (start, end) = list_offsets(list, row)?;

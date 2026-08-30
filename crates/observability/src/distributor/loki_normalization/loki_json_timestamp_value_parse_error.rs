@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, loki_decode_error_context};
 
 pub(crate) fn loki_json_timestamp_value_parse_error(
     body: &[u8],

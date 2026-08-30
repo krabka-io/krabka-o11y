@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn expected_logql_token(message: &str) -> String {
     match message {
         "expected '\"'" | "expected closing quote" => "STRING".to_string(),

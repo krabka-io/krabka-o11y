@@ -1,4 +1,4 @@
-use super::*;
+use super::{AsArray, RecordBatch, Result, TraceqlError};
 
 pub(crate) fn fixed_16(batch: &RecordBatch, col: &str, row: usize) -> Result<[u8; 16]> {
     batch

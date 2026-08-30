@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    InputSpan, SpanMatcher, event_matcher_matches_absence, event_matcher_matches_event,
+    is_event_matcher,
+};
 
 pub(crate) fn nested_event_matchers_match(span: &InputSpan, matchers: &[SpanMatcher]) -> bool {
     let event_matchers = matchers

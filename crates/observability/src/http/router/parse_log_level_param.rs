@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, decode_form_component};
 
 pub(crate) fn parse_log_level_param(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
     let Some(raw_query) = raw_query else {

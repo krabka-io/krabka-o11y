@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricScalarArithmeticOp;
 
 pub(crate) fn format_metric_scalar_arithmetic_operator(
     op: MetricScalarArithmeticOp,

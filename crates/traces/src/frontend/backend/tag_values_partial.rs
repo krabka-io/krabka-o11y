@@ -1,4 +1,4 @@
-use super::*;
+use super::{TypedValue, Metrics};
 
 /// The partial result of one tag-values job.
 #[derive(Clone, Debug, Default)]

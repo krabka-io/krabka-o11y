@@ -1,4 +1,4 @@
-use super::*;
+use super::TraceSpans;
 
 #[must_use]
 pub fn filter_trace_spans_by_time(mut trace: TraceSpans, start_ns: i64, end_ns: i64) -> TraceSpans {

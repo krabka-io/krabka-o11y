@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, ByteSizeExt, Value, json};
 
 pub(crate) fn populate_loki_query_scan_stats(
     stats: &mut Value,

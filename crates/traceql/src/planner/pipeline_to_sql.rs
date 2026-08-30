@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Aggregate, COL_TRACE_ID, Pipeline, Result, aggregate_filter_sql, aggregate_filter_sql_query,
+    grouped_pipeline_sql, is_inert_pipeline_stage, is_search_preserving_pipeline_stage, selector,
+};
 
 pub(crate) fn pipeline_to_sql(spanset_sql: &str, pipeline: &[Pipeline]) -> Result<String> {
     if !pipeline.is_empty() && pipeline.iter().all(is_search_preserving_pipeline_stage) {

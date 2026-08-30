@@ -1,4 +1,4 @@
-use super::*;
+use super::{MAX_TENANT_LEN, ProfilesError, is_allowed_byte};
 
 /// Validate a raw tenant id against the Mimir/Pyroscope charset.
 ///

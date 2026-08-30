@@ -1,4 +1,4 @@
-use super::*;
+use super::{Field, Intrinsic, MatchCmp, MatchScope, MatchValue, Scope, SpanMatcher};
 
 pub(crate) fn nested_metric_projection_matcher(field: &Field) -> Option<SpanMatcher> {
     let (scope, key) = match &field.scope {

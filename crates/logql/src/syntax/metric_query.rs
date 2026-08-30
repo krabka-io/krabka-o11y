@@ -1,4 +1,6 @@
-use super::{RangeAggregation, VectorAggregation, VectorGrouping, StreamQuery, DurationNanos, OffsetNanos};
+use super::{
+    DurationNanos, OffsetNanos, RangeAggregation, StreamQuery, VectorAggregation, VectorGrouping,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricQuery {

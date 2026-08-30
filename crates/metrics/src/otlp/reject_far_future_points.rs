@@ -1,4 +1,4 @@
-use super::*;
+use super::{metric, OtlpError, MAX_SAMPLE_TIMESTAMP_MS};
 
 /// Rejects any data point whose `time_unix_nano` is beyond the sane future
 /// bound. A clamp of such a value to `i64::MAX` would poison the per-series

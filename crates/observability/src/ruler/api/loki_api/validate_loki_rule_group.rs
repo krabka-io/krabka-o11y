@@ -1,4 +1,4 @@
-use super::*;
+use super::{loki_rule_group_name, loki_yaml_mapping, serde_yaml_key, validate_loki_rule};
 
 pub(crate) fn validate_loki_rule_group(rule_group: &serde_yaml::Value) -> Result<(), ()> {
     let fields = loki_yaml_mapping(rule_group).ok_or(())?;

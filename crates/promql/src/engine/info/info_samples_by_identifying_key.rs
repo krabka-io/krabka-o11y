@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, LabelMatcher, Result, BTreeMap, compile_label_matchers, SampleValue, PromqlError, info_identifying_key};
 
 pub(crate) fn info_samples_by_identifying_key(
     info_samples: Vec<InstantSample>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{HistogramExtrapolation, RangeFn, extrapolated_rate, extrapolate_histogram_delta};
 
 pub(crate) fn extrapolated_histogram_component(
     extrapolation: &HistogramExtrapolation<'_>,

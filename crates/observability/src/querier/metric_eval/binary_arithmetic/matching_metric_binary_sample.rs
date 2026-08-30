@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, metric_binary_sample_timestamps_match};
 
 pub(crate) fn matching_metric_binary_sample<'a>(
     left_sample: &Value,

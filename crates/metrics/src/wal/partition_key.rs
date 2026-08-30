@@ -1,4 +1,4 @@
-use super::*;
+use super::Bytes;
 
 /// Producer key for a tenant and fingerprint pair. The Kafka producer hashes
 /// this byte key to choose a partition, which keeps the per-series order.

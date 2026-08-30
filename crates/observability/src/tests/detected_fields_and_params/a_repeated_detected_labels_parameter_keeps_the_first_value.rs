@@ -8,8 +8,9 @@ use super::*;
 /// one-hour default as well as from each other.
 #[test]
 pub(crate) fn a_repeated_detected_labels_parameter_keeps_the_first_value() {
-    let parse =
-        |q: &str| super::super::prelude::parse_detected_labels_params(Some(q)).expect("a valid query");
+    let parse = |q: &str| {
+        super::super::prelude::parse_detected_labels_params(Some(q)).expect("a valid query")
+    };
 
     let params = parse(
         "query={a=\"b\"}&query={c=\"d\"}&start=100&start=200&end=900&end=800&limit=5&limit=9",

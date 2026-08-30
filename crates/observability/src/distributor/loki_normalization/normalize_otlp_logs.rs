@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    DistributorError, HeaderMap, OtlpLogsRequest, Time, WalLogRecord, discover_service_name_label,
+    otlp_attributes_to_labels, otlp_log_record_structured_metadata, otlp_timestamp_ns,
+    otlp_value_to_string, tenant, validate_loki_timestamp_window,
+};
 
 pub(crate) fn normalize_otlp_logs(
     headers: &HeaderMap,

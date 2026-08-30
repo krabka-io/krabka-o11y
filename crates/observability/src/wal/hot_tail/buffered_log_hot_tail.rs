@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CompactionFrontier, HotTailBuffer, LogHotTail, Mutex, Time, WalLogRecord};
 
 #[derive(Clone, Debug, Default)]
 pub struct BufferedLogHotTail {

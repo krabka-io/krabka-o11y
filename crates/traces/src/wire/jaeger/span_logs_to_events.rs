@@ -1,4 +1,4 @@
-use super::*;
+use super::{JaegerLog, AttrValue};
 
 pub(crate) fn span_logs_to_events(logs: &[JaegerLog]) -> Vec<crate::span::EventRecord> {
     logs.iter()

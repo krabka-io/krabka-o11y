@@ -1,4 +1,3 @@
-
 pub(crate) fn html_escape_template_string(value: &str) -> String {
     let mut escaped = String::new();
     for ch in value.chars() {

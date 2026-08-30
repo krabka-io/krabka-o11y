@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricStore, PrometheusApiState, ScanResult, BTreeMap, SeriesFingerprint, Labels, pb, ApiError, PromqlError, decode_native_histograms, enforce_sample_count, remote_read_series, remote_read_histogram};
 
 pub(crate) async fn append_remote_read_histogram_samples<S: MetricStore>(
     state: &PrometheusApiState<S>,

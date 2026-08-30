@@ -224,7 +224,7 @@ pub use comparison_op::ComparisonOp;
 pub use field_filter::FieldFilter;
 pub use field_filter_chain::FieldFilterChain;
 pub use field_filter_expression::FieldFilterExpression;
-pub (crate) use field_filter_expression_to_pipeline_stage::field_filter_expression_to_pipeline_stage;
+pub(crate) use field_filter_expression_to_pipeline_stage::field_filter_expression_to_pipeline_stage;
 pub use field_filter_logic_op::FieldFilterLogicOp;
 pub use field_value::FieldValue;
 use ip_candidate_tokens::ip_candidate_tokens;

@@ -1,5 +1,3 @@
-use super::*;
-
 /// Generic message that clients get for any server-side (5xx) fault.
 ///
 /// The server logs the detailed error with `tracing` and does not put it in the

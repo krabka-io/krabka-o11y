@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, SearchJobRequest, SearchPartial, BackendError, TraceByIdJobRequest, TracePartial, TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest, TagValuesPartial, MetricsJobRequest, MetricsPartial};
 
 /// A queryable querier backend, a pool that fronts N queriers.
 ///

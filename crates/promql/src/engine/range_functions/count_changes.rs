@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn count_changes(values: &[f64]) -> Option<f64> {
     if values.is_empty() {

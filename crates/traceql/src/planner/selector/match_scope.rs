@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchScope, Scope};
 
 pub(crate) fn match_scope(scope: &Scope) -> MatchScope {
     match scope {

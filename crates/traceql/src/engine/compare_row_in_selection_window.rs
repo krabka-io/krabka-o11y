@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompareRow, CompareSpec};
 
 /// Tells whether the row start time is inside the compare selection window.
 ///

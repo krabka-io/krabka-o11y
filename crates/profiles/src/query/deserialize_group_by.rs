@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Deserializer};
 
 pub(crate) fn deserialize_group_by<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where

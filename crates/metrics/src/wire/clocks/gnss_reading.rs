@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, GnssFix};
 
 /// The GNSS receiver measurements.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

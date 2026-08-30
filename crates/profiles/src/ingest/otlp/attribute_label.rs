@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfilesError, pb};
 
 pub(crate) fn attribute_label(
     index: i32,

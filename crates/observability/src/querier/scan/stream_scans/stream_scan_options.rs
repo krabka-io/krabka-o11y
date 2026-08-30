@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels, LokiDirection, NonZeroUsize, count_stream_map_lines};
 
 #[derive(Clone, Copy)]
 pub(crate) struct StreamScanOptions {

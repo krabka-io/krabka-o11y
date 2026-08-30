@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    CompareFieldClass, CompareRegexCache, CompareRow, ComparisonOp, Field, Value,
+    compare_attr_values_match, compare_field_class, compare_intrinsic_matches,
+    compare_row_attr_values,
+};
 
 pub(crate) fn compare_comparison_matches(
     field: &Field,

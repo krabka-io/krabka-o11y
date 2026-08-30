@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfileError, Time, TimeExt, days, hours, minutes, secs};
 
 /// The `now-<offset>` lookback of Pyroscope's `/render` `from`/`until` params.
 ///

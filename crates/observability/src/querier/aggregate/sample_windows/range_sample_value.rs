@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricQuery, MetricSampleState, MetricValue, RangeAggregation, rate_metric_value};
 
 pub(crate) fn range_sample_value(value: MetricSampleState, query: &MetricQuery) -> MetricValue {
     match query.aggregation {

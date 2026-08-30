@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError};
 
 #[derive(Clone, Copy)]
 pub(crate) struct MetricFilter {

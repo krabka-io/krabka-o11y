@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, WalFlag};
 
 /// A mapping. A false `has_functions` flag marks an unsymbolized mapping.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

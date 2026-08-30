@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, loki_yaml_mapping, serde_yaml_key};
 
 pub(crate) fn yaml_string_template_map_field(
     fields: &serde_yaml::Mapping,

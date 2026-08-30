@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    MetricScalarArithmeticOp, MetricVectorGroupModifier, MetricVectorMatching, Value,
+    apply_metric_binary_arithmetic_group_right_to_results,
+    apply_metric_binary_arithmetic_to_series, include_metric_group_labels, metric_series_labels,
+    metric_vector_group_modifier, metric_vector_matching_key,
+};
 
 pub(crate) fn apply_metric_binary_arithmetic_to_loki_result(
     left: &mut Value,

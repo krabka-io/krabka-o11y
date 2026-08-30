@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, Time, TimeExt, PromqlError};
 
 /// A `PromQL` duration literal as a time extent.
 ///

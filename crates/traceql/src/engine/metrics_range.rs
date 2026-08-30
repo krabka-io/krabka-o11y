@@ -1,4 +1,4 @@
-use super::*;
+use super::{DurationNanos, UnixNano};
 
 #[derive(Clone, Copy)]
 pub(crate) struct MetricsRange {

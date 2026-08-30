@@ -1,6 +1,13 @@
-use super::{Labels, JsonParserConfig, insert_json_parser_error, insert_extracted_field, selected_json_value_to_string};
+use super::{
+    JsonParserConfig, Labels, insert_extracted_field, insert_json_parser_error,
+    selected_json_value_to_string,
+};
 
-pub(crate) fn parse_selected_json_fields(line: &str, fields: &mut Labels, config: &JsonParserConfig) {
+pub(crate) fn parse_selected_json_fields(
+    line: &str,
+    fields: &mut Labels,
+    config: &JsonParserConfig,
+) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         insert_json_parser_error(fields);
         return;

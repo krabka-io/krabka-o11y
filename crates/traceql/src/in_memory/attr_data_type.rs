@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, DataType};
 
 pub(crate) fn attr_data_type(value: &AttrValue) -> DataType {
     match value {

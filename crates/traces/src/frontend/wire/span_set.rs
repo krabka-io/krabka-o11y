@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanSetJson, SpanSet, SpanRef};
 
 impl From<&SpanSetJson> for SpanSet {
     fn from(ss: &SpanSetJson) -> Self {

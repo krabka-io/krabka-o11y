@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, BTreeMap, Mutex, PrometheusAlertKey, PrometheusAlertRuntimeState};
 
 #[derive(Clone, Default)]
 pub(crate) struct SharedPrometheusAlertStates {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricVectorMatching, Value};
 
 pub(crate) fn retain_metric_binary_on_labels(
     value: &mut Value,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{RangeSeries, Time, ExtendedSelectorModifier};
 
 pub(crate) struct RangeEval {
     pub(crate) series: Vec<RangeSeries>,

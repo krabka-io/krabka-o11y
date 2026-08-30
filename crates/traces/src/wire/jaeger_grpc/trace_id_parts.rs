@@ -1,4 +1,4 @@
-use super::*;
+use super::WireError;
 
 pub(crate) fn trace_id_parts(bytes: &[u8]) -> Result<(i64, i64), WireError> {
     if bytes.len() != 16 {

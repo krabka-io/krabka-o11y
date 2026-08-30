@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State, WebSocketUpgrade,
+    parse_query_params, prepare_http_tail, send_tail_stream,
+};
 
 pub(crate) async fn tail(
     State(state): State<QuerierState>,

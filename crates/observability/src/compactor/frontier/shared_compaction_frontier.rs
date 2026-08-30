@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CompactionFrontier, Mutex, WalPosition};
 
 #[derive(Clone, Debug)]
 pub struct SharedCompactionFrontier {

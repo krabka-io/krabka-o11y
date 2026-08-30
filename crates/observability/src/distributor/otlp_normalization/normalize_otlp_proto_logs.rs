@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DistributorError, HeaderMap, ProtoExportLogsServiceRequest, Time, WalLogRecord,
+    normalize_otlp_proto_logs_for_tenant, tenant,
+};
 
 pub(crate) fn normalize_otlp_proto_logs(
     headers: &HeaderMap,

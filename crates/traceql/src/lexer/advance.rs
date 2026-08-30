@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError, no_progress};
 
 pub(crate) fn advance(input: &str, pos: usize, len: usize) -> Result<usize> {
     if len == 0 {

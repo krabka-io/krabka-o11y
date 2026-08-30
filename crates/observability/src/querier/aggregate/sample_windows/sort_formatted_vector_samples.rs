@@ -1,4 +1,4 @@
-use super::*;
+use super::{FormattedMetricSeries, Ordering, VectorAggregationOp, parse_metric_sample_value};
 
 pub(crate) fn sort_formatted_vector_samples(
     series: &mut FormattedMetricSeries,

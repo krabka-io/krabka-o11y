@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, PromotedSpanAttr, IndexSnapshotRetain};
 
 /// Runtime settings for the block-builder loop.
 #[derive(Clone, Debug)]

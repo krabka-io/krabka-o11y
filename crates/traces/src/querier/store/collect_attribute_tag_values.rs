@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, BTreeSet, TraceqlError, attr_values_with_resource, RESOURCE_ATTR_PREFIX, INSTRUMENTATION_ATTR_PREFIX, attr_typed_value_parts, event_values, link_values};
 
 pub(crate) fn collect_attribute_tag_values(
     batch: &RecordBatch,

@@ -19,8 +19,8 @@ mod shared_log_delete_requests;
 
 pub use active_log_delete_filter_error::ActiveLogDeleteFilterError;
 pub use client_resource_policy::ClientResourcePolicy;
-pub (crate) use deferred_wal_consumer_connect::DeferredWalConsumerConnect;
-pub (crate) use hot_tail_dependency::HotTailDependency;
+pub(crate) use deferred_wal_consumer_connect::DeferredWalConsumerConnect;
+pub(crate) use hot_tail_dependency::HotTailDependency;
 pub use log_delete_request_store_error::LogDeleteRequestStoreError;
 pub use loki_rule_store_error::LokiRuleStoreError;
 pub use run::run;

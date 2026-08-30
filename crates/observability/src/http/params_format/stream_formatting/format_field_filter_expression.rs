@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldFilterExpression, FieldFilterLogicOp, format_field_filter};
 
 pub(crate) fn format_field_filter_expression(expression: &FieldFilterExpression) -> String {
     match expression {

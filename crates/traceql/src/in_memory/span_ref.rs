@@ -1,4 +1,4 @@
-use super::*;
+use super::{InputSpan, NestedSet, SpanRef};
 
 pub(crate) fn span_ref(span: &InputSpan, nested: &NestedSet) -> SpanRef {
     SpanRef {

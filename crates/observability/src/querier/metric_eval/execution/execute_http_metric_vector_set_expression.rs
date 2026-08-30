@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    HttpQueryError, MetricVectorSetExpression, QuerierState, QueryKind, TimeRange, Value,
+    apply_metric_binary_set_to_loki_result, execute_http_metric_expression_query,
+    execute_http_scalar_vector_expression_result, merge_loki_query_stats,
+    normalize_loki_vector_sample_timestamps_to_seconds,
+};
 
 pub(crate) async fn execute_http_metric_vector_set_expression(
     state: &QuerierState,

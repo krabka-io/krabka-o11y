@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn heatmap_slot_timestamp(
     start_ms: i64,
     end_ms: i64,

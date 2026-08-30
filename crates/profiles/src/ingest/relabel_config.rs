@@ -1,4 +1,4 @@
-use super::*;
+use super::RelabelAction;
 
 /// A Prometheus-style relabel rule subset.
 #[derive(Debug, Clone, PartialEq, Eq)]

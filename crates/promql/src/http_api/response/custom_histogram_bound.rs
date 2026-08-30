@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn custom_histogram_bound(index: i32, custom_values: &[f64]) -> f64 {
     match index {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{TraceByIdResponseJson, BTreeSet};
 
 /// Record every spanId in `trace` so later unions can dedup against it.
 pub(crate) fn seed_seen(trace: &TraceByIdResponseJson, seen: &mut BTreeSet<String>) {

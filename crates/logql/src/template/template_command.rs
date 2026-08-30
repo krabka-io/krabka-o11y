@@ -1,4 +1,8 @@
-use super::{TemplateValue, ParseError, tokenize_template_command, template_parse_error, is_template_function_name, TemplateRenderContext, TemplateRuntimeValue, evaluate_template_function};
+use super::{
+    ParseError, TemplateRenderContext, TemplateRuntimeValue, TemplateValue,
+    evaluate_template_function, is_template_function_name, template_parse_error,
+    tokenize_template_command,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TemplateCommand {

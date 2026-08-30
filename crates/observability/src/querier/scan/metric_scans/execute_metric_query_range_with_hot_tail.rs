@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompactionFrontier, FsPath, LabelIndex, MetricQuery, QueryError, StreamPlan, TimeRange, Value,
+    WalLogRecord, execute_metric_query_range_with_hot_tail_frontier,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

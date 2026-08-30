@@ -1,4 +1,4 @@
-use super::*;
+use super::{AsArray, RecordBatch, Result, TraceqlError};
 
 pub(crate) fn i32_value(batch: &RecordBatch, col: &str, row: usize) -> Result<i32> {
     Ok(batch

@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, LOKI_CONFIG_TARGET, Response, StatusCode, query_param_value};
 
 pub(crate) fn status_config(raw_query: Option<&str>) -> Response {
     match query_param_value(raw_query, "mode").as_deref() {

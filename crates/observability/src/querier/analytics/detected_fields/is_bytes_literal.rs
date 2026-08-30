@@ -1,4 +1,4 @@
-use super::*;
+use super::detected_bytes_unit;
 
 pub(crate) fn is_bytes_literal(value: &str) -> bool {
     let unit_start = value

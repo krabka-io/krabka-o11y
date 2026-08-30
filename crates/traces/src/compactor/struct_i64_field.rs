@@ -1,4 +1,4 @@
-use super::*;
+use super::{StructArray, Int64Array, TracesError, Array};
 
 pub(crate) fn struct_i64_field(array: &StructArray, idx: usize) -> Result<&Int64Array, TracesError> {
     array

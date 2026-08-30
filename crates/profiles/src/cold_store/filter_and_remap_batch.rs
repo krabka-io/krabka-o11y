@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ArrayRef, AsArray, BTreeMap, Int64Type, ProfileError, RecordBatch, SeriesFingerprint,
+    UInt64Array, UInt64Type, profile_samples_schema,
+};
 
 pub(crate) fn filter_and_remap_batch(
     batch: &RecordBatch,

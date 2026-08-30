@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Result, ScanOptions, ScanResult, ScopedTag, SpanMatcher, TagScope, TraceSpans, TypedValue,
+    filter_trace_spans_by_time,
+};
 
 #[async_trait::async_trait]
 pub trait SpanStore: Send + Sync {

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
+    QuerierState, label_names_inner, pb, timed_query,
+};
 
 pub(crate) async fn label_names_handler<S>(
     state: Extension<Arc<QuerierState<S>>>,

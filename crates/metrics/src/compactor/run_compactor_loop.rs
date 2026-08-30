@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionConsumerPoll, CompactionIndexSink, CompactionOffsetCommitter, CompactionPollResult, BlockWriter, CompactionLoopConfig, CompactionLoopResult, CompactionPollError, run_compactor_loop_with_clock, SystemCompactionClock};
 
 /// Runs the compactor polling loop until `should_stop` returns true. It uses the
 /// real monotonic clock for flush-by-age.

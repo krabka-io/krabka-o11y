@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricFilter;
 
 pub(crate) fn metric_filter_passes(value: f64, filter: MetricFilter) -> bool {
     let ordering = value.total_cmp(&filter.value);

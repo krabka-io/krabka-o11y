@@ -1,4 +1,4 @@
-use super::*;
+use super::{IngestQuery, Labels};
 
 pub(crate) fn query_labels(query: &IngestQuery, extra_labels: Vec<(String, String)>) -> Labels {
     let mut labels = Labels::new();

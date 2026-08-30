@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, loki_decode_error_context};
 
 pub(crate) fn loki_json_push_stream_parse_error(body: &[u8], value: &Value) -> String {
     let body = String::from_utf8_lossy(body);

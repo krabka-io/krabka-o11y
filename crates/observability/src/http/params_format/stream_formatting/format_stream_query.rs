@@ -1,4 +1,4 @@
-use super::*;
+use super::{PipelineStage, StreamQuery, format_label_matcher, format_pipeline_stage};
 
 pub(crate) fn format_stream_query(query: &StreamQuery) -> String {
     let mut formatted = format!(

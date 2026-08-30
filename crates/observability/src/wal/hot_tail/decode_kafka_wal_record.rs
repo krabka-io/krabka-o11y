@@ -1,4 +1,4 @@
-use super::*;
+use super::{Offset, PartitionIndex, WalLogRecord, WalPosition, WalRecordDecodeError};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

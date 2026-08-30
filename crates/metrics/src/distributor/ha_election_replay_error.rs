@@ -1,4 +1,4 @@
-use super::*;
+use super::{PartitionIndex, Offset};
 
 #[derive(Debug, thiserror::Error)]
 pub enum HaElectionReplayError {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, i64};
 
 /// The PTP measurements from `pmc GET TIME_STATUS_NP`, `CURRENT_DATA_SET`, and
 /// `PARENT_DATA_SET`.

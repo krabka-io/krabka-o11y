@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, IngestLimitError};
 
 pub(crate) fn distributor_error_to_grpc_status(error: &DistributorError) -> tonic::Status {
     let message = error.to_string();

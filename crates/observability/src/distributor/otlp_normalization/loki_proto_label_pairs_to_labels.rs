@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, LokiProtoLabelPair};
 
 pub(crate) fn loki_proto_label_pairs_to_labels(labels: &[LokiProtoLabelPair]) -> Labels {
     let mut labels_by_name = Labels::new();

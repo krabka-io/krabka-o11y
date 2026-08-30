@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CompactorDeleteRequests, Mutex, PathBuf};
 
 #[derive(Clone, Default)]
 pub struct SharedLogDeleteRequests {

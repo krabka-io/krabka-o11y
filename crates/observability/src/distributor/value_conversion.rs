@@ -9,10 +9,10 @@ mod proto_any_value_to_string;
 mod proto_value_to_json;
 mod proto_value_to_string;
 
-pub (crate) use hex_string::hex_string;
-pub (crate) use metadata_value_to_string::metadata_value_to_string;
-pub (crate) use otlp_value_to_json::otlp_value_to_json;
-pub (crate) use parse_structured_metadata::parse_structured_metadata;
-pub (crate) use proto_any_value_to_string::proto_any_value_to_string;
-pub (crate) use proto_value_to_json::proto_value_to_json;
-pub (crate) use proto_value_to_string::proto_value_to_string;
+pub(crate) use hex_string::hex_string;
+pub(crate) use metadata_value_to_string::metadata_value_to_string;
+pub(crate) use otlp_value_to_json::otlp_value_to_json;
+pub(crate) use parse_structured_metadata::parse_structured_metadata;
+pub(crate) use proto_any_value_to_string::proto_any_value_to_string;
+pub(crate) use proto_value_to_json::proto_value_to_json;
+pub(crate) use proto_value_to_string::proto_value_to_string;

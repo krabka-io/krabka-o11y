@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, PprofProfile, intern_string};
 
 pub(crate) fn stacks_to_pprof(
     name: &str,

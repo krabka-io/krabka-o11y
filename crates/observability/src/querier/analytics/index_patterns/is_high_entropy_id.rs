@@ -1,5 +1,3 @@
-use super::*;
-
 /// A long opaque identifier, such as a session token, a base62 id, or an api
 /// key. It is purely alphanumeric with both letters and digits. The required
 /// digit keeps long lowercase or mixed-case words out of the templatize path,

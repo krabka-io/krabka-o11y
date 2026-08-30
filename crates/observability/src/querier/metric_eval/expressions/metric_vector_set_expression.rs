@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricBinarySetOp, MetricVectorMatching};
 
 pub(crate) struct MetricVectorSetExpression {
     pub(crate) metric_query: String,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, Labels, PprofProfile, ProfilesError, RawProfile, gunzip, pb};
 
 /// Decode a `push.v1` `PushRequest` into per-(series, sample) `RawProfile`s.
 ///

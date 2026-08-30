@@ -1,4 +1,4 @@
-use super::*;
+use super::{InputSpan, SpanMatcher, span_attr_matches, string_matches};
 
 pub(crate) fn instrumentation_matches(span: &InputSpan, matcher: &SpanMatcher) -> bool {
     match matcher.key.as_str() {

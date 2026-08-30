@@ -1,4 +1,3 @@
-use super::*;
 
 /// Does one Kahan-compensated incremental sum step.
 ///

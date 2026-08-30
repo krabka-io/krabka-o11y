@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    HeaderMap, HttpQueryError, QuerierState, Response, SeriesParams, loki_success, series_data,
+};
 
 pub(crate) async fn execute_series_query(
     state: &QuerierState,

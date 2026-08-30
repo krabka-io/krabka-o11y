@@ -1,4 +1,4 @@
-use super::*;
+use super::{Span, Limits, TracesError, BTreeMap, IngestEnforcer, limit_error_to_traces_error, check_shared_attrs};
 
 pub(crate) fn validate_shared(spans: &[Span], limits: &Limits) -> Result<(), TracesError> {
     let mut spans_per_trace = BTreeMap::new();

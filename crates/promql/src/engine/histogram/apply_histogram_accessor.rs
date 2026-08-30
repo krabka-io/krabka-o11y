@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, HistogramAccessor, SampleValue, labels_without_metric_name};
 
 /// Shared `histogram_quantile(phi, v)` core over an already-evaluated instant
 /// vector.

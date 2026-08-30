@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, HttpQueryError};
 
 pub(crate) fn tenant(headers: &HeaderMap) -> Result<&str, HttpQueryError> {
     headers

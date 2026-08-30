@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ObjectStore, ObjectStoreExt, Path, ProfilesError, SymbolDb};
 
 pub(crate) async fn load_symdb(
     store: &Arc<dyn ObjectStore>,

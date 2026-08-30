@@ -1,4 +1,4 @@
-use super::*;
+use super::{CONTENT_TYPE, HeaderMap};
 
 pub(crate) fn is_protobuf_content_type(headers: &HeaderMap) -> bool {
     let content_type = headers

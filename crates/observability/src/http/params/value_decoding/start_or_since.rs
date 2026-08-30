@@ -1,4 +1,4 @@
-use super::*;
+use super::HttpQueryError;
 
 pub(crate) fn start_or_since(
     start: Option<i64>,

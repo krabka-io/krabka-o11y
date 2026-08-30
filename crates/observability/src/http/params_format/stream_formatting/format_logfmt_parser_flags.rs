@@ -1,4 +1,4 @@
-use super::*;
+use super::LogfmtParserConfig;
 
 pub(crate) fn format_logfmt_parser_flags(config: &LogfmtParserConfig) -> String {
     let mut flags = Vec::new();

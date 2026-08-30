@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldExpr, SpansetExpr, selector};
 
 pub(crate) fn collect_nested_selectors(expr: &SpansetExpr, out: &mut Vec<FieldExpr>) {
     match expr {

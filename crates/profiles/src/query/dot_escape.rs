@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn dot_escape(value: &str) -> String {
     value
         .chars()

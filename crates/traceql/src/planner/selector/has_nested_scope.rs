@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldExpr, Intrinsic, Scope};
 
 pub(crate) fn has_nested_scope(fe: &FieldExpr) -> bool {
     match fe {

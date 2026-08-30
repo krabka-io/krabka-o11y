@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct PrometheusAlertKey {

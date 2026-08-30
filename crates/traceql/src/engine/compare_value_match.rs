@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    AttrValue, CompareRegexCache, ComparisonOp, Value, bool_cmp, float_cmp, num_cmp, string_cmp,
+};
 
 pub(crate) fn compare_value_match(
     value: &AttrValue,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelOpsKind, SortOrder};
 
 /// Maps a `PromQL` function name to its label-rewrite or ordering kind. Returns
 /// `None` for any function outside this set.

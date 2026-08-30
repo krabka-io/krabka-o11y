@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionConsumerPoll, CompactionIndexSink, CompactionOffsetCommitter, BlockWriter, Time, CompactionPollResult, CompactionPollError, compaction_wal_records_from_consumer_records, process_compaction_record_batch};
 
 /// Polls the metrics WAL consumer once, compacts the returned records, and
 /// commits on success.

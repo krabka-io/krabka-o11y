@@ -1,5 +1,3 @@
-use super::*;
-
 /// A long pure-hex string, such as a trace or span id, a digest, or a dash-less
 /// UUID. The length floor keeps short hex-looking words such as `face` and
 /// `cafe` out of the templatize path.

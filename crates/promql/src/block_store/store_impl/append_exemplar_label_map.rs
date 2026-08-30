@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, MapArray, Result, Array, StringArray, PromqlError};
 
 pub(crate) fn append_exemplar_label_map(labels: &mut Labels, label_maps: &MapArray, row: usize) -> Result<()> {
     let entries = label_maps.value(row);

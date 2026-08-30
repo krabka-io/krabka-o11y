@@ -1,4 +1,4 @@
-use super::*;
+use super::{INTERNAL_ERROR_MESSAGE, ProfilesError};
 
 /// Returns the client-facing message for `err`.
 ///

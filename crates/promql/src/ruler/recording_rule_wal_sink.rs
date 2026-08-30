@@ -1,4 +1,4 @@
-use super::*;
+use super::{WalRecord, RulerWalError};
 
 /// Sink for recording-rule output records.
 #[async_trait::async_trait]

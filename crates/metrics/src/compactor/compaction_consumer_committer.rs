@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, CompactionOffsetCommitter, CompactionConsumerCommit, CompactionPartitionOffset, CompactionCommitError};
 
 /// Adapter that commits the underlying consumer after durable compaction writes.
 pub struct CompactionConsumerCommitter<'a, C: ?Sized> {

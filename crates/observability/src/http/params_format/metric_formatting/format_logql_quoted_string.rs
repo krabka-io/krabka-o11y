@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn format_logql_quoted_string(value: &str) -> String {
     let mut formatted = String::from("\"");
     for ch in value.chars() {

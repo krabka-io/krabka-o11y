@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, CompactionConsumerCommitError};
 
 /// Minimal mutable consumer commit surface for service loops that poll and commit
 /// through the same handle.

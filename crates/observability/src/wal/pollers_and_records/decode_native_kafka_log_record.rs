@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    KafkaWalRecord, WalLogRecord, WalPosition, WalRecordDecodeError, is_loki_label_name,
+    kafka_headers_with_prefix, native_timestamp_ms_to_ns, optional_kafka_header_utf8,
+    required_kafka_header_utf8, validate_native_timestamp_ns,
+};
 
 pub(crate) fn decode_native_kafka_log_record(
     record: KafkaWalRecord,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{AclEntry, PermissionType, QueryAuthorizationError, acl_matches_tenant_wal_read};
 
 pub(crate) fn check_tenant_wal_read_acl(
     tenant: &str,

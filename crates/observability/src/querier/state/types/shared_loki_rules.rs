@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, LokiRuleTenants, Mutex, PathBuf};
 
 #[derive(Clone, Default)]
 pub(crate) struct SharedLokiRules {

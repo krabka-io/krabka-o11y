@@ -1,4 +1,4 @@
-use super::*;
+use super::{LOKI_PARQUET_CONTENT_TYPE, accept_parameter_is_zero_quality};
 
 pub(crate) fn accept_part_allows_loki_parquet(part: &str) -> bool {
     let mut pieces = part.trim().split(';');

@@ -1,4 +1,4 @@
-use super::*;
+use super::{NamedTsdbStat, BTreeMap};
 
 pub(crate) fn merge_named_stats(
     left: Vec<NamedTsdbStat>,

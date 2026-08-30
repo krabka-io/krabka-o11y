@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, LokiTypedPushRequest, loki_json_timestamp_value_parse_error};
 
 pub(crate) fn validate_loki_json_push_timestamp_types(
     payload: &LokiTypedPushRequest,

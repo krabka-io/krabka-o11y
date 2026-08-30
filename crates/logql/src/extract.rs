@@ -144,5 +144,5 @@ use json_path::JsonPath;
 use json_path_parser::JsonPathParser;
 use json_path_part::JsonPathPart;
 pub use logfmt_extraction::LogfmtExtraction;
-pub (crate) use logfmt_parser::LogfmtParser;
+pub(crate) use logfmt_parser::LogfmtParser;
 pub use logfmt_parser_config::LogfmtParserConfig;

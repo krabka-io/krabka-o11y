@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) struct PrometheusRuleGroupResponse {
     pub(crate) token: String,

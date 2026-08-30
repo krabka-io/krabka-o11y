@@ -1,6 +1,9 @@
-use super::*;
+use super::{PprofProfile, SampleTypeConfig, intern_profile_string};
 
-pub(crate) fn apply_sample_type_config(profile: PprofProfile, config: &SampleTypeConfig) -> PprofProfile {
+pub(crate) fn apply_sample_type_config(
+    profile: PprofProfile,
+    config: &SampleTypeConfig,
+) -> PprofProfile {
     let mut profile = profile.into_inner();
     let Some(sample_type) = profile.sample_type.first().copied() else {
         return PprofProfile::from(profile);

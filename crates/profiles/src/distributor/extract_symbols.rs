@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HashMap, PprofProfile, ProfilesError, WalFunction, WalLocation, WalMapping, WalSymbolSet,
+    normalize_optional_pprof_id, normalize_required_pprof_id, u32_from_i64,
+};
 
 pub(crate) fn extract_symbols(profile: &PprofProfile) -> Result<WalSymbolSet, ProfilesError> {
     let inner = profile.inner();

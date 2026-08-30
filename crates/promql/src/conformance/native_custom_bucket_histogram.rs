@@ -1,4 +1,4 @@
-use super::*;
+use super::{Line, Result, NativeHistogram, histogram_span, ResetHint};
 
 pub(crate) fn native_custom_bucket_histogram(
     custom_values: &[f64],

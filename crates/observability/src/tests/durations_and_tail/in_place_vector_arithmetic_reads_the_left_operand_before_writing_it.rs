@@ -37,7 +37,8 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
     let right = series(&[(1, "2"), (6, "1")]);
     let apply = |op| {
         let mut left = series(&[(1, "10"), (2, "20"), (3, "20"), (6, "7")]);
-        let kept = super::super::prelude::apply_metric_binary_arithmetic_to_series(&mut left, &right, op);
+        let kept =
+            super::super::prelude::apply_metric_binary_arithmetic_to_series(&mut left, &right, op);
         (kept, pairs(&left))
     };
 
@@ -54,28 +55,34 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
     // Everything dropped reports false so the caller can discard the
     // series rather than emit one with no samples.
     let mut orphan = series(&[(9, "1")]);
-    check!(!super::super::prelude::apply_metric_binary_arithmetic_to_series(
-        &mut orphan,
-        &right,
-        MetricScalarArithmeticOp::Subtract,
-    ));
+    check!(
+        !super::super::prelude::apply_metric_binary_arithmetic_to_series(
+            &mut orphan,
+            &right,
+            MetricScalarArithmeticOp::Subtract,
+        )
+    );
 
     // A right series with no values matches nothing at all.
     let mut left = series(&[(1, "10")]);
-    check!(!super::super::prelude::apply_metric_binary_arithmetic_to_series(
-        &mut left,
-        &serde_json::json!({"metric": {}}),
-        MetricScalarArithmeticOp::Subtract,
-    ));
+    check!(
+        !super::super::prelude::apply_metric_binary_arithmetic_to_series(
+            &mut left,
+            &serde_json::json!({"metric": {}}),
+            MetricScalarArithmeticOp::Subtract,
+        )
+    );
 
     // The instant shape, where the same clone-before-write applies to the
     // single sample.
     let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
     let mut left = instant(1, "10");
-    check!(super::super::prelude::apply_metric_binary_arithmetic_to_series(
-        &mut left,
-        &instant(1, "2"),
-        MetricScalarArithmeticOp::Subtract,
-    ));
+    check!(
+        super::super::prelude::apply_metric_binary_arithmetic_to_series(
+            &mut left,
+            &instant(1, "2"),
+            MetricScalarArithmeticOp::Subtract,
+        )
+    );
     check!(left["value"][1] == "8", "10-2, not 2-10 and not 0");
 }

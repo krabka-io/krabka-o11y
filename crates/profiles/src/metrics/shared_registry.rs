@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, Mutex, Registry};
 
 /// Shared registry that owns every metric the service emits.
 ///

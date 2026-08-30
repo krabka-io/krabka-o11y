@@ -1,4 +1,4 @@
-use super::*;
+use super::{SymbolTable, Labels, WireError};
 
 pub(crate) fn labels_from_refs(table: &SymbolTable, refs: &[u32]) -> Result<Labels, WireError> {
     table

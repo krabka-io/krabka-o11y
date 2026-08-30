@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricScalarArithmeticOp, MetricVectorMatching};
 
 pub(crate) struct MetricVectorArithmeticExpression {
     pub(crate) metric_query: String,

@@ -1,4 +1,4 @@
-use super::*;
+use super::BTreeMap;
 
 pub(crate) fn yaml_string_map(value: &serde_yaml::Value, key: &str) -> BTreeMap<String, String> {
     value

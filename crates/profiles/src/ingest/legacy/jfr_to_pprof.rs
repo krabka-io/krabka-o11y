@@ -1,4 +1,4 @@
-use super::*;
+use super::{PprofProfile, ProfilesError, binary_jfr_to_pprof, folded_to_pprof};
 
 pub(crate) fn jfr_to_pprof(name: &str, raw: &[u8]) -> Result<PprofProfile, ProfilesError> {
     if raw.starts_with(b"FLR\0") {

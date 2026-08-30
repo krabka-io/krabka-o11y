@@ -1,4 +1,4 @@
-use super::*;
+use super::{Extremum, AggregateUDF, PROM_MIN_UDAF_NAME, PROM_MAX_UDAF_NAME, create_udaf, DataType, Arc, Volatility, AccumulatorArgs, PromExtremumAccumulator, Accumulator};
 
 /// Builds the NaN-ignoring `prom_min` or `prom_max` aggregate UDAF.
 #[must_use]

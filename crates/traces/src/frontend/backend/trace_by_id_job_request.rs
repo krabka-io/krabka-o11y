@@ -1,4 +1,3 @@
-use super::*;
 
 /// A by-id job: fetch one trace's spans from one querier.
 ///

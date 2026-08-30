@@ -1,4 +1,4 @@
-use super::*;
+use super::{EndMs, ProfileError, StartMs, Time, TimeExt, millis};
 
 pub(crate) fn heatmap_time_buckets(
     start_ms: StartMs,

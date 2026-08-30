@@ -1,4 +1,4 @@
-use super::*;
+use super::{ChainedResolver, DebuginfodConfig, native_resolver_from_debuginfod_config};
 
 ///
 /// # Errors

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Fields, Field, DataType};
 
 pub(crate) fn span_struct_fields() -> Fields {
     Fields::from(vec![

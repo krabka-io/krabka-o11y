@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, MapArray, MapBuilder, StringBuilder};
 
 pub(crate) fn loki_parquet_label_array(
     label_sets: &[Vec<(String, String)>],

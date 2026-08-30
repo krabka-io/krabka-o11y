@@ -1,4 +1,3 @@
-
 pub(crate) fn line_matches_pattern(line: &str, pattern: &str) -> bool {
     let mut remaining = line;
     let mut matched_any_literal = false;

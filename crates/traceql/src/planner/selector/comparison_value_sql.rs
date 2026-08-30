@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Field, Intrinsic, Result, Scope, TraceqlError, Value, enum_value_sql, fixed_hex_lit,
+    intrinsic_name, value_sql,
+};
 
 pub(crate) fn comparison_value_sql(field: &Field, value: &Value) -> Result<String> {
     if matches!(

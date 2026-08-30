@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, SpanMatcher, TraceqlError, string_matches, string_value, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, batch_attr_matches, INSTRUMENTATION_ATTR_PREFIX};
 
 pub(crate) fn instrumentation_matches(
     batch: &RecordBatch,

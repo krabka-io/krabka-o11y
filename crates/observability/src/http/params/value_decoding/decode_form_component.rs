@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, hex_value};
 
 pub(crate) fn decode_form_component(component: &str) -> Result<String, HttpQueryError> {
     let mut bytes = Vec::with_capacity(component.len());

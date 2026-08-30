@@ -1,4 +1,4 @@
-use super::*;
+use super::SharedLogDeleteRequests;
 
 #[derive(Clone, Default)]
 pub(crate) struct CompactorDeleteState {

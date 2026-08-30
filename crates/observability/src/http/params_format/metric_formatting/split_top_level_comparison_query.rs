@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn split_top_level_comparison_query(query: &str) -> Option<(&str, &'static str, &str)> {
     let mut parens = 0_i32;
     let mut brackets = 0_i32;

@@ -7,8 +7,9 @@ use super::*;
 /// returning an empty string passed the whole suite.
 #[test]
 pub(crate) fn formatting_a_logql_query_canonicalises_by_kind() {
-    let format =
-        |query: &str| super::super::prelude::format_logql_query(query).map_err(|error| error.to_string());
+    let format = |query: &str| {
+        super::super::prelude::format_logql_query(query).map_err(|error| error.to_string())
+    };
 
     // Stream selectors and pipelines come back as they went in.
     check!(format(r#"{app="web"}"#).unwrap() == r#"{app="web"}"#);

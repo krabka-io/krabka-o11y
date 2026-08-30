@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockDescriptor, CompactorRunError, LabelIndex};
 
 pub(crate) fn insert_descriptor_labels(
     target: &mut LabelIndex,

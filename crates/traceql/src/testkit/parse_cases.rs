@@ -1,4 +1,4 @@
-use super::*;
+use super::{Case, parse_field};
 
 pub(crate) fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
     contents

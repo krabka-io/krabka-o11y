@@ -1,4 +1,4 @@
-use super::*;
+use super::{keep_infinite_mean, kahan_sum_inc};
 
 /// Returns the arithmetic mean of a non-empty `values` window.
 ///

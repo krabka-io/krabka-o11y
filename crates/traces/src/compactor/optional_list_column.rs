@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, ListArray, TracesError, Array};
 
 pub(crate) fn optional_list_column<'a>(
     batch: &'a RecordBatch,

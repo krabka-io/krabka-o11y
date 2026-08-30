@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BlockMeta, CompactionJob, ProfileIndex, compacted_key};
 
 #[must_use]
 pub fn plan_compactions(index: &ProfileIndex, max_blocks_per_job: usize) -> Vec<CompactionJob> {

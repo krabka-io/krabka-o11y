@@ -1,4 +1,4 @@
-use super::*;
+use super::{Uri, query_param};
 
 /// The `TraceQL` metrics query string.
 ///

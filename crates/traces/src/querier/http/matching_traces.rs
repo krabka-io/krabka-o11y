@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanStore, TraceqlEngine, ScanOptions, TraceSpans, TraceqlError, SearchOptions, BTreeSet};
 
 pub(crate) async fn matching_traces<S>(
     engine: &TraceqlEngine<S>,

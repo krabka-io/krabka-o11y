@@ -15,8 +15,8 @@ pub(crate) fn missing_loki_rules_are_empty_but_unreadable_ones_are_an_error() {
 
     // Absent: no rules, no error.
     let absent = dir.path().join("absent.json");
-    let tenants =
-        super::super::prelude::read_loki_rule_tenants(&absent).expect("an absent file is not an error");
+    let tenants = super::super::prelude::read_loki_rule_tenants(&absent)
+        .expect("an absent file is not an error");
     check!(tenants.is_empty());
 
     // Present and valid: the rules come back.

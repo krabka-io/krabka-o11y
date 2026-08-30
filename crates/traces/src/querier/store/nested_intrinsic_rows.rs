@@ -1,4 +1,4 @@
-use super::*;
+use super::{UInt32Array, ArrayRef, BTreeMap, RecordBatch, SpanMatcher, NestedAttrColumn, TraceqlError, StringBuilder, Int64Builder, FixedSizeBinaryBuilder, matching_events_for_scan, matching_links_for_scan, append_nested_event, append_nested_link, append_nested_attr, Arc};
 
 pub(crate) struct NestedIntrinsicRows {
     pub(crate) indices: UInt32Array,

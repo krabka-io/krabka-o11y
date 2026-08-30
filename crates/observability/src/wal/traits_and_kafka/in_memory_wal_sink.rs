@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, LogHotTail, LogWalSink, Mutex, WalLogRecord, WalSinkError, async_trait};
 
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryWalSink {

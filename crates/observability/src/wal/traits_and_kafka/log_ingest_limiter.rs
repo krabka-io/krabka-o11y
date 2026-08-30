@@ -1,4 +1,4 @@
-use super::*;
+use super::{IngestLimitError, WalLogRecord, async_trait};
 
 #[async_trait]
 pub trait LogIngestLimiter: Send + Sync + 'static {

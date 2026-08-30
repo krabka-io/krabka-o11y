@@ -1,4 +1,4 @@
-use super::*;
+use super::{LogicalPlan, DfResult, build_extended_range_schema, UserDefinedLogicalNodeCore, Arc, Expr, fmt, DataFusionError};
 
 /// Logical node: materialize range vectors over a step grid.
 ///

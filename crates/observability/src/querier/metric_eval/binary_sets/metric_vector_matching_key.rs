@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, MetricVectorMatching};
 
 pub(crate) fn metric_vector_matching_key(
     labels: &Labels,

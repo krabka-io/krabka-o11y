@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    MetricScalarArithmeticOp, Value, format_metric_value, json,
+    metric_binary_sample_timestamps_match, metric_scalar_arithmetic_value,
+    parse_metric_sample_value,
+};
 
 pub(crate) fn apply_metric_binary_arithmetic_to_sample_operands(
     output_sample: &mut Value,

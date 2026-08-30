@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Arc, LogQueryAuthorizer, QueryAuthorizationError, UnavailableQueryAuthorizer, async_trait,
+};
 
 /// A [`LogQueryAuthorizer`] whose underlying implementation can change after
 /// construction.

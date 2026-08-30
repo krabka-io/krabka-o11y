@@ -1,4 +1,3 @@
-use super::*;
 
 /// Zero-copy view of a native-histogram span list.
 #[derive(Clone, Copy, Debug)]

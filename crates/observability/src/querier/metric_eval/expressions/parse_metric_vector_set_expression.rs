@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    MetricVectorSetExpression, parse_leading_metric_vector_matching_modifier,
+    parse_metric_set_operator, scalar_vector_query_is_vector, split_top_level_set_query,
+};
 
 pub(crate) fn parse_metric_vector_set_expression(query: &str) -> Option<MetricVectorSetExpression> {
     let (left, operator, right) = split_top_level_set_query(query)?;

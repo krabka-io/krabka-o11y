@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    ScalarVectorExpressionResult, Value, json, loki_success_value, unix_ns_string_to_loki_seconds,
+};
 
 pub(crate) fn loki_instant_scalar_or_vector_response(
     timestamp_ns: i64,

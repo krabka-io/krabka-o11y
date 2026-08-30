@@ -1,4 +1,11 @@
-use super::*;
+use super::{
+    BTreeMap, BlockDescriptor, BlockIndex, CompactionError, CompactorRunError, KafkaWalRecord,
+    LabelIndex, LastCompactedPosition, LogCompactionIndexOutput, LogWalConsumer, ObjectPath,
+    ObjectStore, Offset, PartitionIndex, SharedLogDeleteRequests, TenantCompactionIndexCache,
+    WalPosition, active_log_delete_filters_from_requests,
+    compact_wal_records_to_object_store_with_delete_filters_and_index_output,
+    decode_kafka_wal_record_envelope, wal_compaction_chunks, wal_record_time_range,
+};
 
 pub(crate) async fn compact_polled_kafka_wal_records_inner(
     store: &dyn ObjectStore,

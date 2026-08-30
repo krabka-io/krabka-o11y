@@ -1,4 +1,4 @@
-use super::*;
+use super::pb;
 
 pub(crate) fn metadata_type(value: i32) -> String {
     match pb::v1::metric_metadata::MetricType::try_from(value) {

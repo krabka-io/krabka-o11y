@@ -1,4 +1,3 @@
-
 pub(crate) fn field_value_to_string(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Bool(value) => value.to_string(),

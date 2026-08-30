@@ -1,6 +1,9 @@
 use super::TemplateRuntimeValue;
 
-pub(crate) fn template_index_value(value: &TemplateRuntimeValue, index: &str) -> Option<TemplateRuntimeValue> {
+pub(crate) fn template_index_value(
+    value: &TemplateRuntimeValue,
+    index: &str,
+) -> Option<TemplateRuntimeValue> {
     match value {
         TemplateRuntimeValue::Json(serde_json::Value::Object(object)) => {
             object.get(index).cloned().map(TemplateRuntimeValue::Json)

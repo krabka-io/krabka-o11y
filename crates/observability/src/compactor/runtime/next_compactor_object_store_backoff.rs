@@ -1,4 +1,4 @@
-use super::*;
+use super::Time;
 
 /// Doubles the object-store retry backoff, up to a cap.
 ///

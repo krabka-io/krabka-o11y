@@ -1,4 +1,7 @@
-use super::{LineFilter, ParserStage, LineFormat, LabelFormat, LabelSelectionSet, UnwrapExpression, FieldFilter, FieldFilterChain, FieldFilterExpression, Labels, decolorize_line};
+use super::{
+    FieldFilter, FieldFilterChain, FieldFilterExpression, LabelFormat, LabelSelectionSet, Labels,
+    LineFilter, LineFormat, ParserStage, UnwrapExpression, decolorize_line,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PipelineStage {

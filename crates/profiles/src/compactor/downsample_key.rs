@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct DownsampleKey {
     pub(crate) series_fingerprint: u64,

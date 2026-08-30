@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, Result, QueryResult, AGGREGATE_VALUE_COLUMN, Array, Float64Array, PromqlError, labels_from_rate_batch, InstantSample, SampleValue};
 
 /// Assembles simple-aggregation output batches into a result.
 ///

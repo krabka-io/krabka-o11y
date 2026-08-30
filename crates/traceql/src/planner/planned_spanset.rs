@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, LogicalPlan, SessionContext};
 
 pub(crate) struct PlannedSpanset {
     pub ctx: SessionContext,

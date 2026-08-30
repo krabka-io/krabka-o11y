@@ -1,4 +1,4 @@
-use super::*;
+use super::PROFILE_ID_LABEL;
 
 /// Labels that Krabka stores internally for span and exemplar lookups.
 ///

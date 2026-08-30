@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Bytes, Header, PROFILES_WAL_TOPIC, Producer, ProducerRecord, ProfileRecord, ProfilesError,
+    WalSink, partition_key,
+};
 
 pub struct KafkaSink {
     pub(crate) producer: Arc<Producer>,

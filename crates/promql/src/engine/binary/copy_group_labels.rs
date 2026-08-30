@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, is_result_metadata_label};
 
 pub(crate) fn copy_group_labels(labels: &mut Labels, one_side: &Labels, group_labels: &[String]) {
     for name in group_labels {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Pipeline, ScanOptions, pipeline_nested_projection_matchers};
 
 pub(crate) fn scan_options_with_pipeline_projections(
     options: &ScanOptions,

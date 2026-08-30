@@ -1,4 +1,4 @@
-use super::*;
+use super::{Intrinsic, Result, TraceqlError};
 
 pub(crate) fn intrinsic(scope: &str, key: &str) -> Result<Intrinsic> {
     match (scope, key) {

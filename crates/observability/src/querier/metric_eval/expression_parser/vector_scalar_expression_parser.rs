@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, Regex, ScalarComparisonOp, ScalarSample, ScalarSetOp, ScalarVectorExpressionResult,
+    VectorScalarExpressionParser, parse_scalar_sample, scalar_literal_len,
+};
 
 impl<'a> VectorScalarExpressionParser<'a> {
     pub(crate) fn new(input: &'a str) -> Self {

@@ -1,4 +1,4 @@
-use super::*;
+use super::BTreeSet;
 
 #[derive(Default)]
 pub(crate) struct ColdAttributeTagNames {

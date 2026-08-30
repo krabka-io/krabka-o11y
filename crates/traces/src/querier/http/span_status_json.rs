@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, Value, Map};
 
 pub(crate) fn span_status_json(code: i32, message: &str) -> Value {
     // Always emit a status object so the field is never missing (Tempo always

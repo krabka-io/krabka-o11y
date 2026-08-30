@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, pb, ToPrimitive};
 
 pub(crate) fn remote_read_histogram_zero_count(hist: &NativeHistogram) -> pb::v1::histogram::ZeroCount {
     if hist.is_float {

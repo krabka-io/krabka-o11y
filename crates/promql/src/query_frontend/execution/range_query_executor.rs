@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, FrontendRangeQuery, QueryResult, PromqlError};
 
 /// Executes one planned range subquery.
 #[async_trait]

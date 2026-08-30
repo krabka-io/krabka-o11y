@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Debug, Default)]
 pub(crate) struct SeriesParams {
     pub(crate) matchers: Vec<String>,

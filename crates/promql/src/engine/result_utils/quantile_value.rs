@@ -1,4 +1,4 @@
-use super::*;
+use super::ToPrimitive;
 
 pub(crate) fn quantile_value(quantile: f64, values: &mut [f64]) -> Option<f64> {
     if values.is_empty() {

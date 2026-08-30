@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    BlockDescriptor, CompactorRunError, LogWalConsumer, ObjectPath, ObjectStore,
+    SharedLogDeleteRequests, TenantCompactionIndexCache, Time,
+    compact_next_kafka_wal_batch_to_object_store_from_existing_manifest,
+    materialize_log_deletes_before_compaction,
+};
 
 pub(crate) async fn materialize_deletes_then_compact_next_kafka_wal_batch(
     store: &dyn ObjectStore,

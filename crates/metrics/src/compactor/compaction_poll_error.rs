@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionConsumerPollError, CompactionConsumerRecordError, CompactionWindowError};
 
 /// Errors raised by one compactor poll/process pass.
 #[derive(Debug, thiserror::Error)]

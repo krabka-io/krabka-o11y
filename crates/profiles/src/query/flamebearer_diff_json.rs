@@ -1,4 +1,4 @@
-use super::*;
+use super::{flamebearer_metadata, json};
 
 pub(crate) fn flamebearer_diff_json(
     diff: krabka_pprof::FlameGraphDiff,

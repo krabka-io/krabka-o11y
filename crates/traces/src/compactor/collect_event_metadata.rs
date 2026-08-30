@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, BTreeSet, BTreeMap, TracesError, optional_list_column, SCOL_EVENTS, collect_nested_metadata, struct_string_field, struct_i64_field, struct_list_field, Array, insert_tag_value, collect_nested_attrs};
 
 pub(crate) fn collect_event_metadata(
     batch: &RecordBatch,

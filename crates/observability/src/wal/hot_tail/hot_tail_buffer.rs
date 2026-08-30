@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, CompactionFrontier, Time, WalLogRecord, hot_tail_bucket_key, minutes};
 
 /// Buffer holding polled hot-tail records.
 ///

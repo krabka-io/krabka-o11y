@@ -1,4 +1,4 @@
-use super::*;
+use super::{StreamPlan, TimeRange, literal_line_filter_sql_predicates};
 
 pub(crate) fn stream_plan_scan_sql_for_time_range(
     plan: &StreamPlan,

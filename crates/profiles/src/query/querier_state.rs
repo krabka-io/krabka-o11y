@@ -1,4 +1,13 @@
-use super::*;
+use super::{
+    Arc, BTreeMap, DEFAULT_HEATMAP_TIME_BUCKETS_MAX, DEFAULT_HEATMAP_VALUE_BUCKETS, DefaultStore,
+    EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapSpanExemplarsBySeries,
+    InMemoryProfileStore, LabelMatcher, LabeledHeatmap, Limits, MatchOp, OverridesProvider,
+    PROFILE_ID_LABEL, ProfileError, ProfileStats, ProfileStore, QueryExecution, QueryRange,
+    QueryTarget, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs, Time,
+    bin_heatmap, heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan,
+    individual_exemplars_from_scan, parse_label_selector, span_exemplars_from_scan,
+    span_heatmap_points_from_scan, split_inclusive_range,
+};
 
 pub struct QuerierState<S: ProfileStore = DefaultStore> {
     pub(crate) store: Arc<S>,
@@ -52,7 +61,11 @@ impl<S: ProfileStore> QuerierState<S> {
         Self::from_parts(store, QueryExecution::Sharded(config), overrides)
     }
 
-    pub(crate) fn from_parts(store: Arc<S>, execution: QueryExecution, overrides: OverridesProvider) -> Self {
+    pub(crate) fn from_parts(
+        store: Arc<S>,
+        execution: QueryExecution,
+        overrides: OverridesProvider,
+    ) -> Self {
         let engine = FlameEngine::new(Arc::clone(&store), EngineOpts::default());
         Self {
             store,
@@ -104,7 +117,10 @@ impl<S: ProfileStore> QuerierState<S> {
     /// a caller-supplied window. A `[0, 0]`-scoped query always reports "no
     /// data". It then traps Grafana's Profiles Drilldown on its onboarding
     /// screen even when the tenant has data.
-    pub(crate) async fn global_profile_stats(&self, tenant: &str) -> Result<ProfileStats, ProfileError> {
+    pub(crate) async fn global_profile_stats(
+        &self,
+        tenant: &str,
+    ) -> Result<ProfileStats, ProfileError> {
         self.store.stats(tenant, 0, i64::MAX).await
     }
 

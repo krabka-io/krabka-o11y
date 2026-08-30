@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfilesError, pb};
 
 pub(crate) type OtlpSampleLinks = (Vec<Option<u64>>, Vec<Option<Vec<u8>>>);
 

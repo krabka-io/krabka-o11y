@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn parse_logql_string_argument(argument: &str) -> Option<String> {
     if let Some(inner) = argument
         .strip_prefix('`')

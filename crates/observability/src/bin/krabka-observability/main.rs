@@ -149,13 +149,15 @@ mod cli;
 mod parse_dispatch_queue_capacity;
 mod parse_frame_max;
 
-# [cfg (all (unix , feature = "heap-profiling"))] pub (crate) use alloc::ALLOC;
-pub (crate) use cli::Cli;
-pub (crate) use parse_dispatch_queue_capacity::parse_dispatch_queue_capacity;
-pub (crate) use parse_frame_max::parse_frame_max;
+#[cfg(all(unix, feature = "heap-profiling"))]
+pub(crate) use alloc::ALLOC;
+
+pub(crate) use cli::Cli;
+pub(crate) use parse_dispatch_queue_capacity::parse_dispatch_queue_capacity;
+pub(crate) use parse_frame_max::parse_frame_max;
 
 #[tokio::main]
-pub (crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let client_resource_policy = ClientResourcePolicy {
         dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity::new(

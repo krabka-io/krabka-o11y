@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockWriter, TraceIndex, SpanRecord, PromotedSpanAttr, BlockMeta, TracesError, build_blocks_with_options, BlockBuildOptions};
 
 ///
 /// # Errors

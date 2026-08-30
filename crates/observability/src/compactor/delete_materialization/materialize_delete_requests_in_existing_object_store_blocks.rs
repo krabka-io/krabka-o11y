@@ -1,4 +1,12 @@
-use super::*;
+use super::{
+    BTreeMap, BlockDescriptor, BlockStoreError, CompactorRunError, ObjectPath, ObjectStore,
+    SharedLogDeleteRequests, active_log_delete_tenants,
+    materialize_delete_requests_in_object_store_block_index,
+    read_tenant_log_index_manifest_from_object_store,
+    read_tenant_log_index_shard_from_object_store,
+    read_tenant_log_index_shard_ranges_from_object_store,
+    write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shard_to_object_store,
+};
 
 pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
     store: &dyn ObjectStore,

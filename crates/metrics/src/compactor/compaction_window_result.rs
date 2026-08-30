@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactedBlockWrite, CompactionPartitionOffset};
 
 /// Result of processing one partition's compaction window.
 #[derive(Clone, Debug, PartialEq)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, json_value_pattern};
 
 /// Templatizes a single-object JSON log line. Returns `None` for anything that
 /// is not a JSON object, so the caller falls back to whitespace or logfmt

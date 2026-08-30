@@ -1,4 +1,4 @@
-use super::*;
+use super::{Line, Result, NativeHistogram, parse_error, histogram_fields, parse_optional_histogram_i8, parse_optional_histogram_f64, parse_optional_histogram_buckets, parse_optional_histogram_i32, parse_optional_histogram_reset_hint, histogram_span};
 
 pub(crate) fn parse_histogram_literal(src: &str, line: Line<'_>) -> Result<NativeHistogram> {
     let content = src

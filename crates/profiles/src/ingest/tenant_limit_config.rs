@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Deserialize, Serialize, TenantLimits};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct TenantLimitConfig {

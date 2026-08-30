@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfileIndex, STACKTRACE_PARTITION};
 
 pub(crate) fn source_partitions(index: &ProfileIndex, block_key: &str) -> Vec<u64> {
     let mut partitions = index.stacktrace_partitions(block_key);

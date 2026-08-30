@@ -1,4 +1,6 @@
-use super::{LabelSelectionMatcher, ParseError, Labels, Regex, anchored_regex_pattern, template_parse_error};
+use super::{
+    LabelSelectionMatcher, Labels, ParseError, Regex, anchored_regex_pattern, template_parse_error,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LabelSelection {

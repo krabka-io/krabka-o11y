@@ -1,4 +1,4 @@
-use super::*;
+use super::pattern_value_is_variable;
 
 pub(crate) fn log_pattern_token(token: &str) -> String {
     let Some((key, value)) = token.split_once('=') else {

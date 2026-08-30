@@ -1,4 +1,4 @@
-use super::*;
+use super::SpanRef;
 
 /// A matched span set.
 #[derive(Clone, Debug, PartialEq)]

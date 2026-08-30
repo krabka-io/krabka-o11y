@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    format_metric_vector_binary_expression, format_simple_metric_query,
+    format_vector_function_text, parse_metric_query, split_leading_vector_binary_modifiers,
+    split_top_level_set_query,
+};
 
 pub(crate) fn format_metric_vector_set_expression(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_set_query(query)?;

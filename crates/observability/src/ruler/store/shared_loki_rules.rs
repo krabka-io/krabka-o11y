@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, FsPath, LokiRuleStoreError, LokiRuleTenants, Mutex, SharedLokiRules,
+    loki_ruler_rules_path, read_loki_rule_tenants, write_loki_rule_tenants,
+};
 
 impl SharedLokiRules {
     pub(crate) fn from_data_root(root: impl AsRef<FsPath>) -> Result<Self, LokiRuleStoreError> {

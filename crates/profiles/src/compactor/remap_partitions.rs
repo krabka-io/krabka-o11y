@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ArrayRef, AsArray, BTreeMap, PCOL_STACKTRACE_PARTITION, ProfilesError, RecordBatch,
+    UInt64Array, UInt64Type,
+};
 
 pub(crate) fn remap_partitions(
     batch: &RecordBatch,

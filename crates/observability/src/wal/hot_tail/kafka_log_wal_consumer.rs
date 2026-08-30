@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    AutoOffsetReset, ClientResourcePolicy, Consumer, ConsumerError, KafkaWalHeader, KafkaWalRecord,
+    LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError, WalPosition, async_trait,
+};
 
 pub struct KafkaLogWalConsumer {
     pub(crate) consumer: Consumer,

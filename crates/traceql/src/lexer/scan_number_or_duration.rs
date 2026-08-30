@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, Token, TraceqlError, is_ident_continue};
 
 pub(crate) fn scan_number_or_duration(s: &str) -> Result<(Token, usize)> {
     let mut end = 0;

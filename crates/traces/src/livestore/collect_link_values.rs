@@ -1,4 +1,4 @@
-use super::*;
+use super::{Span, BTreeSet, bytes_to_hex, typed_value_parts};
 
 pub(crate) fn collect_link_values(span: &Span, tag: &str, values: &mut BTreeSet<(String, String)>) {
     for link in &span.links {

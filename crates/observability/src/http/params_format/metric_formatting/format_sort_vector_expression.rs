@@ -1,4 +1,4 @@
-use super::*;
+use super::{format_loki_vector_expression, indent_logql_lines, split_logql_function_arguments};
 
 pub(crate) fn format_sort_vector_expression(query: &str) -> Option<String> {
     for function in ["sort", "sort_desc"] {

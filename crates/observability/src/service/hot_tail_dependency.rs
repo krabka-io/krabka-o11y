@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, CompactionFrontierSource, LogHotTail};
 
 #[derive(Clone)]
 pub(crate) struct HotTailDependency {

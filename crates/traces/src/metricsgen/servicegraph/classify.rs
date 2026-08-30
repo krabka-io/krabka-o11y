@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanRecord, ConnectionType, has_attr};
 
 pub(crate) fn classify(span: &SpanRecord) -> ConnectionType {
     if has_attr(span, "db.system") {

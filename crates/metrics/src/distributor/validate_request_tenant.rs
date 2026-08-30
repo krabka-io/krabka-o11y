@@ -1,4 +1,4 @@
-use super::*;
+use super::{PushError, validate_tenant};
 
 // cargo-mutants: shared tenant validation glue is covered by HTTP and gRPC callers.
 #[cfg_attr(test, mutants::skip)]

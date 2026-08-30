@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ObjectStore, Parser};
 
 pub(crate) fn build_object_store(url: &str) -> Result<Arc<dyn ObjectStore>, Box<dyn std::error::Error>> {
     let parsed = url::Url::parse(url)?;

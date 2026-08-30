@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Debug)]
 pub(crate) struct PatternsParams {
     pub(crate) query: String,

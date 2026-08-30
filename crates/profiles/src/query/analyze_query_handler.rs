@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
+    QuerierState, analyze_query_inner, pb, timed_query,
+};
 
 pub(crate) async fn analyze_query_handler<S>(
     state: Extension<Arc<QuerierState<S>>>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedSample, Labels};
 
 /// One series after the multi-value split: a single `__profile_type__`.
 #[derive(Debug, Clone, PartialEq)]

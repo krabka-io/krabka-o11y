@@ -1,4 +1,4 @@
-use super::*;
+use super::LogqlExpr;
 
 pub(crate) fn logql_expression_contains_label_join(expression: &LogqlExpr) -> bool {
     match expression {

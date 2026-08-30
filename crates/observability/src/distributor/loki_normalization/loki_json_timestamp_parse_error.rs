@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn loki_json_timestamp_parse_error(timestamp: &str, line: &str) -> String {
     let found_context = timestamp
         .char_indices()

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompareRegexCache, CompareRow, ComparisonOp, Intrinsic, Value, enum_cmp, kind_enum_value,
+    num_cmp, status_enum_value, string_cmp,
+};
 
 pub(crate) fn compare_intrinsic_matches(
     row: &CompareRow,

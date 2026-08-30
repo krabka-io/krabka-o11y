@@ -1,4 +1,4 @@
-use super::*;
+use super::{QueryFrontendOptions, Arc, RangeQueryCache};
 
 pub(crate) struct QueryFrontendState {
     pub(crate) opts: QueryFrontendOptions,

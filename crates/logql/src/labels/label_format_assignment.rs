@@ -1,4 +1,4 @@
-use super::{LabelFormatValue, ParseError, LineFormat, Labels};
+use super::{LabelFormatValue, Labels, LineFormat, ParseError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LabelFormatAssignment {
@@ -41,7 +41,12 @@ impl LabelFormatAssignment {
         &self.value
     }
 
-    pub(crate) fn apply_with_timestamp(&self, line: &str, fields: &mut Labels, timestamp_ns: Option<i64>) {
+    pub(crate) fn apply_with_timestamp(
+        &self,
+        line: &str,
+        fields: &mut Labels,
+        timestamp_ns: Option<i64>,
+    ) {
         match &self.value {
             LabelFormatValue::Rename(source) => {
                 if let Some(value) = fields.remove(source) {

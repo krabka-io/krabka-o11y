@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn strip_outer_parenthesized_expression(query: &str) -> Option<&str> {
     let trimmed = query.trim();
     if !trimmed.starts_with('(') || !trimmed.ends_with(')') {

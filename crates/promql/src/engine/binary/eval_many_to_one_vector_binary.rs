@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, BinaryOp, BinModifier, Result, BTreeMap, binary_match_key, PromqlError, apply_binary_fill_value, MissingSide, binary_returns_bool, labels_without_metric_name, apply_binary_sample_value, copy_group_labels};
 
 pub(crate) fn eval_many_to_one_vector_binary(
     left: Vec<InstantSample>,

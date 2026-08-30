@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, ProfileError, STACKTRACE_PARTITION};
 
 /// Build the dense per-block partition map that the cold read path uses.
 ///

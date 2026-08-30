@@ -1,4 +1,4 @@
-use super::*;
+use super::Token;
 
 pub(crate) fn keyword_or_ident(s: String) -> Token {
     match s.as_str() {

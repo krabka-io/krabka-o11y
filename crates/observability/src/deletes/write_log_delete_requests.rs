@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactorDeleteRequests, FsPath, LogDeleteRequestStoreError};
 
 pub(crate) fn write_log_delete_requests(
     path: &FsPath,

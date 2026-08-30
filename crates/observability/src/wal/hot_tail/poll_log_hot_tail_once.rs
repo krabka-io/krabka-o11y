@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BufferedLogHotTail, HotTailPollError, LogWalConsumer, Time,
+    poll_log_hot_tail_once_with_frontier,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

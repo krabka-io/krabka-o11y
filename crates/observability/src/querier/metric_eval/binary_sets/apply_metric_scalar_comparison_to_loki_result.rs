@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HttpQueryError, MetricScalarComparison, ParseError, Value,
+    apply_metric_scalar_comparison_to_series, parse_metric_sample_value,
+};
 
 pub(crate) fn apply_metric_scalar_comparison_to_loki_result(
     value: &mut Value,

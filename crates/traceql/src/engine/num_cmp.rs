@@ -1,4 +1,4 @@
-use super::*;
+use super::ComparisonOp;
 
 pub(crate) fn num_cmp(value: i64, op: ComparisonOp, rhs: i64) -> bool {
     match op {

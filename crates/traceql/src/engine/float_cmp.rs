@@ -1,4 +1,4 @@
-use super::*;
+use super::ComparisonOp;
 
 pub(crate) fn float_cmp(value: f64, op: ComparisonOp, rhs: f64) -> bool {
     let ordering = value.partial_cmp(&rhs);

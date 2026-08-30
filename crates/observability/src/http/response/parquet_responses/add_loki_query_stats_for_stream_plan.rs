@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    StreamPlan, Value, count_loki_stream_result_lines, loki_query_stats, planned_block_bytes,
+    populate_loki_query_scan_stats,
+};
 
 pub(crate) fn add_loki_query_stats_for_stream_plan(mut value: Value, plan: &StreamPlan) -> Value {
     let bytes = planned_block_bytes(plan);

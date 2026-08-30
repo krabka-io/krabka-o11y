@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Extension, HeaderMap, ProfileStore, QuerierState, Query, RenderQuery, Response,
+    render_inner, timed_query_response,
+};
 
 pub(crate) async fn render_handler<S>(
     state: Extension<Arc<QuerierState<S>>>,

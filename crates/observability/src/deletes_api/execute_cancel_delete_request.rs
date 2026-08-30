@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    CompactorDeleteState, HeaderMap, HttpQueryError, parse_cancel_delete_request_params, tenant,
+};
 
 pub(crate) fn execute_cancel_delete_request(
     state: &CompactorDeleteState,

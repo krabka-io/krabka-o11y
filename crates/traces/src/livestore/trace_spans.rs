@@ -1,4 +1,4 @@
-use super::*;
+use super::{Span, attr_string, traceql_attr, nested_set, span_ref};
 
 pub(crate) fn trace_spans(trace_id: &[u8; 16], spans: &[Span]) -> krabka_traceql::TraceSpans {
     let root = spans

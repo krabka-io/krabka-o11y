@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Bytes, CompactorDeleteRequest, CompactorDeleteState, HeaderMap, HttpQueryError,
+    current_unix_time_ns, parse_create_delete_request_params, parse_query,
+    request_query_or_form_body, tenant,
+};
 
 pub(crate) fn execute_create_delete_request(
     state: &CompactorDeleteState,

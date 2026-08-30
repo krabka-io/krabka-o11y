@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    HttpQueryError, QuerierState, QueryKind, TimeRange, Value, apply_label_replace_to_loki_result,
+    execute_http_metric_expression_query, execute_http_metric_query,
+    execute_http_scalar_vector_expression_result, parse_label_replace_expression,
+    parse_metric_query, scalar_vector_query_is_vector,
+};
 
 pub(crate) async fn execute_http_metric_binary_operand(
     state: &QuerierState,

@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    HttpQueryError, QuerierState, StreamPlan, read_log_block, read_log_block_from_object_store,
+};
 
 pub(crate) async fn count_index_stats_entries(
     state: &QuerierState,

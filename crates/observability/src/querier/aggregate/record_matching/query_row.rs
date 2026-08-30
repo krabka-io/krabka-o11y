@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, SeriesFingerprint};
 
 #[derive(Clone, Copy)]
 pub(crate) struct QueryRow<'a> {

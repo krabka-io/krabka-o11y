@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
+    QuerierState, pb, select_merge_profile_inner, timed_query,
+};
 
 pub(crate) async fn select_merge_profile_handler<S>(
     state: Extension<Arc<QuerierState<S>>>,

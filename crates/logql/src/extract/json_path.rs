@@ -1,4 +1,4 @@
-use super::{JsonPathPart, ParseError, JsonPathParser};
+use super::{JsonPathParser, JsonPathPart, ParseError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JsonPath {
@@ -11,7 +11,10 @@ impl JsonPath {
         parser.parse()
     }
 
-    pub(crate) fn evaluate<'a>(&self, value: &'a serde_json::Value) -> Option<&'a serde_json::Value> {
+    pub(crate) fn evaluate<'a>(
+        &self,
+        value: &'a serde_json::Value,
+    ) -> Option<&'a serde_json::Value> {
         let mut current = value;
         for part in &self.parts {
             match part {

@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) struct HistogramBucketJson {
     pub(crate) boundary_rule: u8,

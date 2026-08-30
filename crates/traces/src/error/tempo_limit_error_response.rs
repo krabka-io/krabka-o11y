@@ -1,4 +1,4 @@
-use super::*;
+use super::{LimitError, Response, tempo_error_response, StatusCode};
 
 #[must_use]
 pub fn tempo_limit_error_response(err: &LimitError) -> Response {

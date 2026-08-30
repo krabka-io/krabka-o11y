@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BlockMeta, DownsamplePolicy, ObjectStore, ProfileIndex, ProfilesError,
+    compact_blocks_with_policy, plan_compactions,
+};
 
 ///
 /// # Errors

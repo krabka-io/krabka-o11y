@@ -1,4 +1,4 @@
-use super::*;
+use super::{v1, LabelMatcher, RemoteReadError, MatchOp};
 
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, ByteSizeExt};
 
 /// A measured length, as a byte quantity.
 pub(crate) fn measured_size(len: usize) -> ByteSize {

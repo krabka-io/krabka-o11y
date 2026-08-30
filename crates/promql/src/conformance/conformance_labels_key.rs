@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 pub(crate) fn conformance_labels_key(labels: &Labels) -> String {
     let mut key = String::new();

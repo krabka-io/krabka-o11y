@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DistributorError, Labels, ProtoLogRecord, insert_metadata_if_absent,
+    insert_proto_trace_context_metadata, proto_attributes_to_labels,
+};
 
 pub(crate) fn proto_log_record_structured_metadata(
     log_record: &ProtoLogRecord,

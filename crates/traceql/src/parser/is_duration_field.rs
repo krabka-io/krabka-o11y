@@ -1,4 +1,4 @@
-use super::*;
+use super::{Field, Intrinsic, Scope};
 
 pub(crate) fn is_duration_field(field: &Field) -> bool {
     matches!(

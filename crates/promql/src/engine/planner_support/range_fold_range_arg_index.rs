@@ -1,4 +1,4 @@
-use super::*;
+use super::Call;
 
 /// Returns the index of the range-vector argument of a range fold, by name.
 ///

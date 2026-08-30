@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeResolver, NativeSymbol, SymbolizeRequest, build_label};
 
 #[derive(Clone, Debug, Default)]
 pub struct AddressFallbackResolver;

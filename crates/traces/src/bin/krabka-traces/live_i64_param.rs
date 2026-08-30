@@ -1,4 +1,4 @@
-use super::*;
+use super::Parser;
 
 pub(crate) fn live_i64_param(uri: &axum::http::Uri, name: &str) -> Result<i64, String> {
     uri.query()

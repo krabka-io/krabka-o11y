@@ -1,4 +1,4 @@
-use super::*;
+use super::{ActiveLogDeleteFilter, Arc, CompactionFrontierSource, LogHotTail, StreamPlan};
 
 pub(crate) struct TailStream {
     pub(crate) plan: StreamPlan,

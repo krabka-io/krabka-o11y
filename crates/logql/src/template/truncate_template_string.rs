@@ -1,4 +1,3 @@
-
 pub(crate) fn truncate_template_string(value: &str, count: i64) -> String {
     if count >= 0 {
         let count = usize::try_from(count).unwrap_or(usize::MAX);

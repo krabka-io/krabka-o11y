@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldExpr, Result, comparison_to_sql, field_to_column, ident};
 
 pub(crate) fn field_expr_to_sql(fe: &FieldExpr) -> Result<String> {
     match fe {

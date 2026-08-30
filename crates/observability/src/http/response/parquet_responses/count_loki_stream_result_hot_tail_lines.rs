@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, CompactionFrontier, Labels, StreamPlan, Value, WalLogRecord, json_object_to_labels,
+    matching_loki_stream_entry,
+};
 
 pub(crate) fn count_loki_stream_result_hot_tail_lines(
     value: &Value,

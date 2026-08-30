@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldExpr, StructuralOp};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SpansetExpr {

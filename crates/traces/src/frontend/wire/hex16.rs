@@ -1,4 +1,3 @@
-use super::*;
 
 /// Lowercase hex for a 16-byte trace id.
 #[must_use]

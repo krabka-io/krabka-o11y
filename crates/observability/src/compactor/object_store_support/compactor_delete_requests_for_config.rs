@@ -1,4 +1,4 @@
-use super::*;
+use super::{LogDeleteRequestStoreError, ServiceConfig, SharedLogDeleteRequests};
 
 pub(crate) fn compactor_delete_requests_for_config(
     config: &ServiceConfig,

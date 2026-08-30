@@ -1,4 +1,3 @@
-use super::*;
 
 /// Parse a lowercase-hex 8-byte span id, the lossless inverse of [`hex8`].
 #[must_use]

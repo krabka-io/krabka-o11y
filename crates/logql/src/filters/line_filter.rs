@@ -1,4 +1,4 @@
-use super::{LineFilterOp, IpMatcher, ParseError, line_matches_pattern, Regex};
+use super::{IpMatcher, LineFilterOp, ParseError, Regex, line_matches_pattern};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LineFilter {

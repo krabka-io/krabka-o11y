@@ -1,4 +1,7 @@
-use super::{TemplateConditional, ParseError, TemplateControlExpression, find_template_control_action, template_parse_error, parse_template_parts};
+use super::{
+    ParseError, TemplateConditional, TemplateControlExpression, find_template_control_action,
+    parse_template_parts, template_parse_error,
+};
 
 pub(crate) fn parse_template_conditional(
     template: &str,

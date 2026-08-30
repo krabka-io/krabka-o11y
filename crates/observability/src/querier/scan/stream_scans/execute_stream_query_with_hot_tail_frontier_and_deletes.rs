@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, FsPath, LabelIndex, Labels, QueryError,
+    SessionContext, StreamPlan, Value, WalLogRecord, append_matching_hot_log_record,
+    append_matching_log_batches, loki_streams_response, register_log_blocks,
+    sort_loki_stream_values, stream_plan_scan_sql,
+};
 
 pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes(
     root: impl AsRef<FsPath>,

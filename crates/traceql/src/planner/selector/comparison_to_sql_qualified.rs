@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ComparisonOp, Field, Result, TraceqlError, Value, anchored, comparison_value_sql,
+    qualified_field_ident, string_lit,
+};
 
 pub(crate) fn comparison_to_sql_qualified(
     field: &Field,

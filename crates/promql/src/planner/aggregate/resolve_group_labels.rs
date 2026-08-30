@@ -1,4 +1,4 @@
-use super::*;
+use super::{Grouping, BTreeSet};
 
 /// Maps a `PromQL` [`Grouping`] onto the concrete grouping label columns.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScopeMetrics, KeyValue, instrumentation_scope_attributes, string_attribute};
 
 pub(crate) fn scope_attributes(scope_metrics: &ScopeMetrics) -> Vec<KeyValue> {
     let mut attributes = Vec::new();

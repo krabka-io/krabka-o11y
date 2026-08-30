@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, days};
 
 /// `Loki`'s `reject_old_samples_max_age` default: samples older than this are
 /// refused on ingest.

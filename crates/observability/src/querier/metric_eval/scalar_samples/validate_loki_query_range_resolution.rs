@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HttpQueryError, LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS, QueryKind, QueryParams, Time, TimeExt,
+    TimeRange, resolved_range_step,
+};
 
 pub(crate) fn validate_loki_query_range_resolution(
     params: &QueryParams,

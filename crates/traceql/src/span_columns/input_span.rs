@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, EventRef, LinkRef, Time};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputSpan {

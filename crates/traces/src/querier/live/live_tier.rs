@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, LiveSource, Result, RecordBatch, TraceSpans, TagScope, ScopedTag, TypedValue};
 
 pub struct LiveTier {
     pub(crate) source: Arc<dyn LiveSource>,

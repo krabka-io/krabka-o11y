@@ -1,4 +1,4 @@
-use super::*;
+use super::pb;
 
 pub(crate) fn label_pairs(labels: Vec<(String, String)>) -> Vec<pb::querier::v1::LabelPair> {
     labels

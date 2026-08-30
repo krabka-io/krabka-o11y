@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) fn count_loki_metric_result_samples(value: &Value) -> u64 {
     let Some(results) = value.pointer("/data/result").and_then(Value::as_array) else {

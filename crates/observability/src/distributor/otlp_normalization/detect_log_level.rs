@@ -1,4 +1,4 @@
-use super::*;
+use super::contains_log_level_token;
 
 pub(crate) fn detect_log_level(line: &str) -> Option<&'static str> {
     let line = line.to_ascii_lowercase();

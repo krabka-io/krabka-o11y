@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, Arc, Mutex, SeriesPayload, RemoteWriteSink, SinkError};
 
 /// Deterministic sink mock that records successful writes.
 #[derive(Clone, Default)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{RulerStateSink, RulerGroupStateRecord, RulerWalError, RulerAlertStateRecord};
 
 pub(crate) struct NoopRulerStateSink;
 

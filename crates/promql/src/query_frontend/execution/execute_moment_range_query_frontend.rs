@@ -1,4 +1,4 @@
-use super::*;
+use super::{RangeQueryExecutor, RangeQueryCache, FrontendRangeRequest, MomentReduction, QueryResult, PromqlError, plan_range_query, execute_planned_range_queries, merge_range_query_results_with_reducer, QueryShardReducer, reduce_moment_range_query_results};
 
 pub(crate) async fn execute_moment_range_query_frontend<E, C>(
     executor: &E,

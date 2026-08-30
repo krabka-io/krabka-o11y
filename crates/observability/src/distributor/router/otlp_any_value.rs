@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, OtlpArrayValue, OtlpKeyValueList, Value};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

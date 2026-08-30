@@ -1,4 +1,4 @@
-use super::*;
+use super::{Intrinsic, Scope};
 
 pub(crate) fn intrinsic_name(scope: &Scope) -> &'static str {
     match scope {

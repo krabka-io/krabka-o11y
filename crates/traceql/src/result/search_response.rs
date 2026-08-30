@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, TraceResult};
 
 /// Search response.
 #[derive(Clone, Debug, PartialEq)]

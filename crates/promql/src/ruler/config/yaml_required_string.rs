@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromqlError, yaml_optional_string};
 
 pub(crate) fn yaml_required_string(
     value: &serde_yaml::Value,

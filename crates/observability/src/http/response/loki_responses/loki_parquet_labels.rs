@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, Value};
 
 pub(crate) fn loki_parquet_labels(
     labels: Option<&Value>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetadataMap, TENANT_HEADER};
 
 pub(crate) fn tenant_metadata(metadata: &MetadataMap) -> String {
     metadata

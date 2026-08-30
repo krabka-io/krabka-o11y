@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, BTreeSet, TraceqlError, int32_value};
 
 pub(crate) fn insert_i32_value(
     batch: &RecordBatch,

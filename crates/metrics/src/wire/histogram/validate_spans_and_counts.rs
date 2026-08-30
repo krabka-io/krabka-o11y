@@ -1,4 +1,4 @@
-use super::*;
+use super::{BucketSpan, WireError, check_side, span_bucket_total};
 
 /// Strict span and count validation that matches the Prometheus appender. It
 /// runs at the wire edge before the module admits a histogram.

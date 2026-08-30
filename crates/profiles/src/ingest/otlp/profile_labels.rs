@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfilesError, attribute_label, pb};
 
 pub(crate) fn profile_labels(
     profile: &pb::otlp_profiles::Profile,

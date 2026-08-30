@@ -1,4 +1,4 @@
-use super::*;
+use super::AttrValue;
 
 /// One linked span reference attached to a returned span.
 #[derive(Clone, Debug, PartialEq)]

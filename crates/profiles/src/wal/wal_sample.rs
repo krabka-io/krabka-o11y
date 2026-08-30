@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 /// One sample's raw payload.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

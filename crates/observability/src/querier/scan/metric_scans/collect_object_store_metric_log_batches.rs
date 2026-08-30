@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, BlockDescriptor, MetricQuery, ObjectPath, ObjectStore, QueryError, RecordBatch,
+    SessionContext, StreamPlan, TimeRange, metric_plan_scan_sql,
+    register_log_blocks_from_object_store,
+};
 
 pub(crate) async fn collect_object_store_metric_log_batches(
     store: Arc<dyn ObjectStore>,

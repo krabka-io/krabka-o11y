@@ -1,4 +1,3 @@
-
 pub(crate) fn sanitize_logfmt_field_name(name: &str) -> String {
     let mut sanitized = String::new();
     let mut last_was_underscore = false;

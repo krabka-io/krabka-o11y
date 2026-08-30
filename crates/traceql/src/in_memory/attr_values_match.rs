@@ -1,6 +1,10 @@
-use super::*;
+use super::{AttrValue, MatchCmp, MatchValue, attr_matches, nil_matches, present_value_matches};
 
-pub(crate) fn attr_values_match(values: &[&AttrValue], op: MatchCmp, expected: &MatchValue) -> bool {
+pub(crate) fn attr_values_match(
+    values: &[&AttrValue],
+    op: MatchCmp,
+    expected: &MatchValue,
+) -> bool {
     if values.is_empty() {
         return nil_matches(op, expected);
     }

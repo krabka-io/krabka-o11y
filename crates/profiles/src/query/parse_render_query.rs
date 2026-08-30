@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfileError, parse_label_selector};
 
 pub(crate) fn parse_render_query(query: &str) -> Result<(String, String), ProfileError> {
     let trimmed = query.trim();

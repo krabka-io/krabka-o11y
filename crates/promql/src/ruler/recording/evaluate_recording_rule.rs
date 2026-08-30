@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricStore, PromqlEngine, BTreeMap, WalRecord, PromqlError, QueryResult, recording_labels, SampleValue, SamplePayload};
 
 /// Evaluates one recording rule and materializes the result as metrics WAL
 /// records.

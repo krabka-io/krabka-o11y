@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    PROFILES_WAL_TOPIC, ProfilesError, Time, WalTailProfileStore, run_wal_tail_with_topic,
+};
 
 ///
 /// # Errors

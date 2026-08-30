@@ -12,9 +12,10 @@ pub(crate) async fn a_log_level_post_prefers_the_body_over_the_query_string() {
         let query = query.map(str::to_string);
         let body = axum::body::Bytes::from(body.to_string());
         async move {
-            let response = super::super::prelude::log_level_post(axum::extract::RawQuery(query), body)
-                .await
-                .into_response();
+            let response =
+                super::super::prelude::log_level_post(axum::extract::RawQuery(query), body)
+                    .await
+                    .into_response();
             let status = response.status();
             let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
                 .await

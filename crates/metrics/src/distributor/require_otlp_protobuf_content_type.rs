@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, WireError};
 
 pub(crate) fn require_otlp_protobuf_content_type(headers: &HeaderMap) -> Result<(), WireError> {
     let content_type = headers

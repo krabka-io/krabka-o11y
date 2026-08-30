@@ -1,4 +1,4 @@
-use super::*;
+use super::{Cli, PromotedSpanAttr, parse_promoted_attr, RESOURCE_ATTR_PREFIX};
 
 pub(crate) fn promoted_attrs_from_cli(cli: &Cli) -> Result<Vec<PromotedSpanAttr>, String> {
     let mut attrs = Vec::new();

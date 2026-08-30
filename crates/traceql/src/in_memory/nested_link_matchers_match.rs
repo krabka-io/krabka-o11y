@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    InputSpan, SpanMatcher, is_link_matcher, link_matcher_matches_absence,
+    link_matcher_matches_link,
+};
 
 pub(crate) fn nested_link_matchers_match(span: &InputSpan, matchers: &[SpanMatcher]) -> bool {
     let link_matchers = matchers

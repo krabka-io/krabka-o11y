@@ -1,4 +1,4 @@
-use super::*;
+use super::{PrometheusAlertKey, PrometheusRetainedAlertParams};
 
 pub(crate) fn prometheus_alert_key_matches_rule(
     key: &PrometheusAlertKey,

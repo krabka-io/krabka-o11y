@@ -1,4 +1,4 @@
-use super::*;
+use super::HeaderMap;
 
 /// Gives the best-effort tenant label for the ingest tracing span.
 ///

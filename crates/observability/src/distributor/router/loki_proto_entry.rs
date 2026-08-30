@@ -1,4 +1,4 @@
-use super::*;
+use super::{LokiProtoLabelPair, LokiProtoTimestamp};
 
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub(crate) struct LokiProtoEntry {

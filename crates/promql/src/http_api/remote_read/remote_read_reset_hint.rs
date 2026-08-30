@@ -1,4 +1,4 @@
-use super::*;
+use super::{ResetHint, pb};
 
 pub(crate) fn remote_read_reset_hint(reset_hint: ResetHint) -> i32 {
     match reset_hint {

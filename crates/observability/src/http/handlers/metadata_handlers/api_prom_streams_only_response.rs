@@ -1,4 +1,4 @@
-use super::*;
+use super::{Response, StatusCode, Value, json_response, text_response};
 
 pub(crate) fn api_prom_streams_only_response(value: &Value) -> Response {
     if value.pointer("/data/resultType").and_then(Value::as_str) == Some("streams") {

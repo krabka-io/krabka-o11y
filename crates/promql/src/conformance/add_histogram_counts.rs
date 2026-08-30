@@ -1,4 +1,4 @@
-use super::*;
+use super::{BucketSpan, spanned_histogram_counts, compact_spanned_histogram_counts};
 
 pub(crate) fn add_histogram_counts(
     start_spans: &[BucketSpan],

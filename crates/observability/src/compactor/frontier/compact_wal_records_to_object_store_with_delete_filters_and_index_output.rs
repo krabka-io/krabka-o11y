@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, BlockDescriptor, BlockIndex, BlockKey, CompactionError,
+    CompactionOffsetCommitter, LabelIndex, LogCompactionIndexOutput, LogRow, ObjectPath,
+    ObjectStore, TimeRange, WalLogRecord, WalPosition,
+    compact_log_block_to_object_store_with_index_output, is_deleted_log_entry,
+};
 
 pub(crate) async fn compact_wal_records_to_object_store_with_delete_filters_and_index_output(
     store: &dyn ObjectStore,

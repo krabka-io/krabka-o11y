@@ -1,5 +1,3 @@
-use super::*;
-
 /// The `target` that `/config` reports, for every role.
 ///
 /// `Loki` reports the components its process runs. Krabka serves the full `Loki`

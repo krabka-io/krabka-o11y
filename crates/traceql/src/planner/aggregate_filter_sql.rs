@@ -1,4 +1,4 @@
-use super::*;
+use super::{ComparisonOp, Result, TraceqlError};
 
 pub(crate) fn aggregate_filter_sql(expr: &str, op: ComparisonOp, value: f64) -> Result<String> {
     if !value.is_finite() {

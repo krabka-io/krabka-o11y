@@ -1,4 +1,4 @@
-use super::*;
+use super::{Quantile, ScalarSample};
 
 pub(crate) fn format_quantile(quantile: Quantile) -> String {
     ScalarSample::new(

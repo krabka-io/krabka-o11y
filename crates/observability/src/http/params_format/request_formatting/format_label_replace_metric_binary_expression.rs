@@ -1,4 +1,4 @@
-use super::*;
+use super::{format_label_replace_metric_binary_operand, indent_logql_lines};
 
 pub(crate) fn format_label_replace_metric_binary_expression(
     left_text: &str,

@@ -1,4 +1,4 @@
-use super::*;
+use super::JobShard;
 
 /// A `TraceQL`-metrics job over a window with a step.
 ///

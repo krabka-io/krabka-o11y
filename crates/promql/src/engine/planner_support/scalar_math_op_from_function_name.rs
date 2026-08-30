@@ -1,4 +1,4 @@
-use super::*;
+use super::ScalarMathOp;
 
 /// Maps a `PromQL` function name to its per-row scalar-math op.
 ///

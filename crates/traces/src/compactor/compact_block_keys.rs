@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ObjectStore, BlockWriter, TraceIndex, BlockMeta, TracesError, compact_block_keys_with_max_bytes, DEFAULT_BLOCK_READ_MAX};
 
 /// Merge existing span block object keys into one replacement block and one
 /// index entry.

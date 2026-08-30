@@ -1,4 +1,7 @@
-use super::{ComparisonOp, FieldValue, ParseError, Labels, insert_extracted_field, parse_prometheus_duration_literal, parse_bytes_literal, Regex};
+use super::{
+    ComparisonOp, FieldValue, Labels, ParseError, Regex, insert_extracted_field,
+    parse_bytes_literal, parse_prometheus_duration_literal,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldFilter {

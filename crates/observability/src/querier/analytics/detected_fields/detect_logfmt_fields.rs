@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    BTreeMap, DetectedFieldStats, add_detected_field, field_type_from_str, parse_logfmt_pairs,
+};
 
 pub(crate) fn detect_logfmt_fields(fields: &mut BTreeMap<String, DetectedFieldStats>, line: &str) {
     for (name, value) in parse_logfmt_pairs(line) {

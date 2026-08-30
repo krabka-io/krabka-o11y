@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, SpansetExpr, TraceqlError, validate_compare_field_expr};
 
 /// Validates that the per-row evaluator supports a compare selection spanset.
 ///

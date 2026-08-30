@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, PromqlError, TimeExt};
 
 /// Parses a Prometheus duration string into a time extent.
 ///

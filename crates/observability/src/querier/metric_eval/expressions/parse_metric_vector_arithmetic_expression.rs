@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    MetricVectorArithmeticExpression, parse_leading_metric_vector_matching_modifier,
+    parse_metric_arithmetic_operator, scalar_vector_query_is_vector,
+    split_top_level_arithmetic_query,
+};
 
 pub(crate) fn parse_metric_vector_arithmetic_expression(
     query: &str,

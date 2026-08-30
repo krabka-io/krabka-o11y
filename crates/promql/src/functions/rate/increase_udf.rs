@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScalarUDF, RateUdf, RateFamily};
 
 /// The `increase` UDF: counter-reset-corrected, extrapolated total increase.
 #[must_use]

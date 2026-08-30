@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    format_metric_scalar_comparison_operator, format_scalar_text, format_simple_metric_query,
+    parse_metric_scalar_comparison_query,
+};
 
 pub(crate) fn format_metric_scalar_comparison_expression(query: &str) -> Option<String> {
     let comparison = parse_metric_scalar_comparison_query(query).ok()?;

@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, AtomicUsize, Duration, BackendError, Ordering, QuerierBackend, SearchJobRequest, SearchPartial, ns_to_seconds, push_shard_params, build_url, TENANT_HEADER, error_for_status, SearchResponseJson, TraceByIdJobRequest, TracePartial, TraceByIdResponseJson, TagNamesJobRequest, TagNamesPartial, scope_param, TagsBody, TagValuesJobRequest, TagValuesPartial, TagValuesBody, MetricsJobRequest, MetricsPartial, MetricsResponseJson};
 
 /// HTTP querier pool.
 ///

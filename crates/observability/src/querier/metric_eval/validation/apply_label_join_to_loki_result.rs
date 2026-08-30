@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricLabelJoin, Value, json};
 
 pub(crate) fn apply_label_join_to_loki_result(value: &mut Value, label_join: &MetricLabelJoin) {
     let Some(results) = value

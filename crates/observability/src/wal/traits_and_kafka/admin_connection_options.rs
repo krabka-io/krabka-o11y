@@ -1,4 +1,4 @@
-use super::*;
+use super::ClientResourcePolicy;
 
 pub(crate) fn admin_connection_options(
     client_resource_policy: ClientResourcePolicy,

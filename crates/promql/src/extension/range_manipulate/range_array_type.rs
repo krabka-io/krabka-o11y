@@ -1,4 +1,4 @@
-use super::*;
+use super::{DataType, Field, Arc};
 
 /// Returns the Arrow `DataType` of a [`RangeArray`] column with `value_type` samples.
 ///

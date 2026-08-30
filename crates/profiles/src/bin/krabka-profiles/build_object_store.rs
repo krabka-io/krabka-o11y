@@ -1,4 +1,4 @@
-use super::*;
+use super::ConfiguredObjectStore;
 
 pub(crate) fn build_object_store(
     url: &str,

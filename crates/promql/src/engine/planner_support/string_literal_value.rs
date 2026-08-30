@@ -1,4 +1,4 @@
-use super::*;
+use super::{Call, Expr};
 
 /// Returns the value of the string-literal call argument at `index`.
 ///

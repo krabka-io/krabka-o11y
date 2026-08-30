@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    CompactionFrontier, StreamPlan, Value, WalLogRecord, execute_tail_query_with_frontier,
+};
 
 #[must_use]
 pub fn execute_tail_query(

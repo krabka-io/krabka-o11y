@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Case, CaseResult, InMemorySpanStore, TraceqlEngine, run_metrics_case, run_search_case,
+    run_trace_by_id_case,
+};
 
 pub(crate) async fn run_case(engine: &TraceqlEngine<InMemorySpanStore>, case: Case) -> CaseResult {
     match case.kind.as_str() {

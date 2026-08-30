@@ -1,4 +1,4 @@
-use super::*;
+use super::EncodeLabelSet;
 
 /// Per-tenant ingest label (`tenant="…"`). It pairs with the accepted-lines
 /// counter, so the service can attribute ingest volume per tenant.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Aggregate, Pipeline};
 
 pub(crate) fn is_search_preserving_pipeline_stage(stage: &Pipeline) -> bool {
     matches!(

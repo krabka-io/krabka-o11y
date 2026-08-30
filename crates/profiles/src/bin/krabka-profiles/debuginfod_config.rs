@@ -1,4 +1,4 @@
-use super::*;
+use super::{Cli, DebuginfodConfig};
 
 pub(crate) fn debuginfod_config(cli: &Cli) -> Result<DebuginfodConfig, String> {
     let defaults = DebuginfodConfig::default();

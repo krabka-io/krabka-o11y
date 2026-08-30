@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError};
 
 pub(crate) fn usize_from_integer_f64(value: f64) -> Result<usize> {
     // No finiteness clause: `fract()` of an infinity or a NaN is NaN, and

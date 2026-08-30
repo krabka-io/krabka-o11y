@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, SpanRecord, SinkError};
 
 /// Input edge for decoded traces WAL records.
 #[async_trait]

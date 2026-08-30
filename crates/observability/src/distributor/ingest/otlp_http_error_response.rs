@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, IntoResponse, Response, StatusCode, encode_otlp_status_message};
 
 pub(crate) fn otlp_http_error_response(error: DistributorError) -> Response {
     if matches!(

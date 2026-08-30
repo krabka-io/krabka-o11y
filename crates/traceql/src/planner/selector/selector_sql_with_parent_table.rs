@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    COL_NS_LEFT, COL_PARENT_ID, COL_TRACE_ID, FieldExpr, Result, field_expr_to_sql,
+    field_expr_to_sql_qualified, has_nested_scope, has_parent_scope, ident,
+    parent_field_expr_to_sql_qualified,
+};
 
 pub(crate) fn selector_sql_with_parent_table(
     table: &str,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, FixedSizeBinaryArray, TraceqlError, Array};
 
 pub(crate) fn fixed<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a FixedSizeBinaryArray, TraceqlError> {
     batch

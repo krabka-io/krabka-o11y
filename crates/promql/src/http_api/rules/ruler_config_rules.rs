@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricStore, State, Arc, PrometheusApiState, HeaderMap, Response, tenant_from_headers, IntoResponse, ApiError, BTreeMap, yaml_response, StatusCode};
 
 pub(crate) async fn ruler_config_rules<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

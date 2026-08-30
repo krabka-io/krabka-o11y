@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ExternalPartition, Frame, HashMap, LocalPartition, SymbolSource};
 
 #[derive(Default)]
 pub(crate) struct CompositeSymbols {

@@ -1,6 +1,9 @@
 use super::{TemplatePart, TemplateRenderContext};
 
-pub(crate) fn render_template_parts(parts: &[TemplatePart], context: &TemplateRenderContext<'_>) -> String {
+pub(crate) fn render_template_parts(
+    parts: &[TemplatePart],
+    context: &TemplateRenderContext<'_>,
+) -> String {
     let mut context = context.clone();
     let mut rendered = String::new();
     for part in parts {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{InputSpan, LinkRef, SpanMatcher, is_link_matcher, link_matcher_matches_link};
 
 pub(crate) fn matching_links_for_scan<'a>(
     span: &'a InputSpan,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{VectorSelector, LabelMatcher, BTreeSet};
 
 /// Parsed, store-independent context for `info(v [, data_label_selector])`.
 pub(crate) struct InfoContext<'a> {

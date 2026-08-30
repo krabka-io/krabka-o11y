@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, DistributorError, Value};
 
 pub(crate) fn parse_structured_metadata(
     metadata: Option<&Value>,

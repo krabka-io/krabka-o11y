@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    DistributorError, Labels, OtlpKeyValue, normalize_otlp_attribute_name, otlp_value_to_string,
+};
 
 pub(crate) fn otlp_attributes_to_labels(
     attributes: Option<&[OtlpKeyValue]>,

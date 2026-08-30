@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, MetricSamples, VectorGrouping, vector_group_labels};
 
 pub(crate) fn group_range_samples(
     samples: MetricSamples,

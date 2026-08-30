@@ -1,6 +1,9 @@
 use super::{ParseError, scan_top_level};
 
-pub(crate) fn function_args<'a>(input: &'a str, name: &str) -> Result<Option<Vec<&'a str>>, ParseError> {
+pub(crate) fn function_args<'a>(
+    input: &'a str,
+    name: &str,
+) -> Result<Option<Vec<&'a str>>, ParseError> {
     let Some(rest) = input.strip_prefix(name) else {
         return Ok(None);
     };

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ComparisonOp, MetricBinarySetOp, MetricScalarArithmeticOp, MetricVectorMatching};
 
 pub(crate) enum LabelReplaceMetricBinaryExpression {
     Arithmetic {

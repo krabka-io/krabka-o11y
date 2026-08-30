@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    KafkaWalRecord, WalLogRecord, WalRecordDecodeError, decode_kafka_wal_record,
+    decode_native_kafka_log_record, has_native_kafka_log_headers,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

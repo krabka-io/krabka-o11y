@@ -1,4 +1,4 @@
-use super::*;
+use super::{BuiltSample, ProfileSampleRow, ProfilesError, RecordBatch, encode_profile_samples};
 
 ///
 /// # Errors

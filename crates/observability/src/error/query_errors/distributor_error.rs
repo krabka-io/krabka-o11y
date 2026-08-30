@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Error, HttpQueryError, IngestLimitError, IntoResponse, Response, StatusCode, WalSinkError,
+    loki_error, loki_gzip_decode_error_text, rfc3339_seconds, text_response,
+};
 
 #[derive(Debug, Error)]
 pub(crate) enum DistributorError {

@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    AsArray, BTreeMap, COL_SPAN_ID, COL_START, COL_TRACE_ID, CompareCounts, CompareGroup,
+    CompareRegexCache, CompareSpec, CompareTotals, HashMap, HashSet, MetricsRange, RecordBatch,
+    Result, TraceqlError, UnixNano, collect_selection_regexes, compare_group_for_row, compare_row,
+    fixed_8, fixed_16,
+};
 
 /// Scans the batches and accumulates per-bucket span counts.
 ///

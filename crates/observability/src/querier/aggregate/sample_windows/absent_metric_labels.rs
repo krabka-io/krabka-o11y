@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, MatchOp, MetricQuery};
 
 pub(crate) fn absent_metric_labels(query: &MetricQuery) -> Labels {
     query

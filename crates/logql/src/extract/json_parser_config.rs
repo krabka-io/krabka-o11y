@@ -1,4 +1,4 @@
-use super::{JsonExtraction, ParseError, template_parse_error, BTreeSet};
+use super::{BTreeSet, JsonExtraction, ParseError, template_parse_error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsonParserConfig {

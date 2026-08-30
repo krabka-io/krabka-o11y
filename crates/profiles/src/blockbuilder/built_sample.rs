@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BuiltSample {
     pub series_fingerprint: u64,

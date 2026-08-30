@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, escape_label_value};
 
 pub(crate) fn labels_to_metric(labels: &Labels) -> String {
     let name = labels.get("__name__").unwrap_or_default();

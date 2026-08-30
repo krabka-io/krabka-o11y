@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn could_be_scalar_vector_expression(query: &str) -> bool {
     let trimmed = query.trim_start();
     let Some(first) = trimmed.chars().next() else {

@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 /// Returns the canonical `name=value\n…` rendering of a label set.
 ///

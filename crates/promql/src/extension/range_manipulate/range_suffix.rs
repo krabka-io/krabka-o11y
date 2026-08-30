@@ -1,4 +1,3 @@
-use super::*;
 
 /// Suffix for the windowed [`RangeArray`] column names in the extended schema.
 ///

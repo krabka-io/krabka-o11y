@@ -1,4 +1,4 @@
-use super::*;
+use super::{RateUdfKind, OuterRangeFn, RangeFn, IrateFn};
 
 /// Maps a [`RateUdfKind`] to the shared [`OuterRangeFn`] of the same name.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::RangeAggregation;
 
 pub(crate) fn format_range_aggregation_name(
     aggregation: &RangeAggregation,

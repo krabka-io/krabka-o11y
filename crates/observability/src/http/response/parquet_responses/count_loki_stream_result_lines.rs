@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) fn count_loki_stream_result_lines(value: &Value) -> u64 {
     value

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DebuginfodConfig, native_resolver_from_debuginfod_config};
 
 /// Run the symbolizer role with explicit debuginfod resource policy.
 ///

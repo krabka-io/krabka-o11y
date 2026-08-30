@@ -1,4 +1,4 @@
-use super::*;
+use super::{Display, From, Into};
 
 /// The fallback value a render-time parameter takes when absent, in Unix
 /// milliseconds.

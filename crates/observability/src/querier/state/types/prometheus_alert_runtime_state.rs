@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug)]
 pub(crate) struct PrometheusAlertRuntimeState {
     pub(crate) active_at: i64,

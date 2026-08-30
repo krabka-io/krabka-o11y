@@ -1,4 +1,4 @@
-use super::*;
+use super::NativeHistogram;
 
 /// One sorted native histogram row ready for block encoding.
 #[derive(Clone, Debug, PartialEq)]

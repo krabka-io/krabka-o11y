@@ -1,4 +1,4 @@
-use super::*;
+use super::Cli;
 
 pub(crate) fn client_resource_policy(
     cli: &Cli,

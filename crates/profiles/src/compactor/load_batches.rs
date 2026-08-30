@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfilesError,
+    RecordBatch,
+};
 
 pub(crate) async fn load_batches(
     store: &Arc<dyn ObjectStore>,

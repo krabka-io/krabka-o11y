@@ -1,4 +1,4 @@
-use super::*;
+use super::{Field, Scope};
 
 /// The series label key for a `by(<field>)` clause, as in real Tempo.
 ///

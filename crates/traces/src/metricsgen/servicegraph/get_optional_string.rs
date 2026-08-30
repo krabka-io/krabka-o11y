@@ -1,4 +1,4 @@
-use super::*;
+use super::{CheckpointCodecError, get_presence, Buf};
 
 pub(crate) fn get_optional_string(buf: &mut &[u8]) -> Result<Option<String>, CheckpointCodecError> {
     let present = get_presence(buf)?;

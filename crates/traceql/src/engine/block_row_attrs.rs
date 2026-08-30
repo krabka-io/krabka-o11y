@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Array, AttrValue, BLOCK_ATTR_KEYS, BLOCK_ATTR_VALUE, BLOCK_ATTR_VALUE_BOOL,
+    BLOCK_ATTR_VALUE_DOUBLE, BLOCK_ATTR_VALUE_INT, RESOURCE_ATTR_PREFIX, RecordBatch, Result,
+    StringArray, TraceqlError, block_attr_values_for_key, optional_list_column,
+};
 
 pub(crate) fn block_row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<(String, AttrValue)>> {
     let Some(keys) = optional_list_column(batch, BLOCK_ATTR_KEYS)? else {

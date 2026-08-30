@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, LinkRef, TraceqlError, optional_list_column, SCOL_LINKS, Array, StructArray, struct_fixed_field, struct_list_field, fixed_array_value, nested_string_attrs};
 
 pub(crate) fn link_values(batch: &RecordBatch, row: usize) -> Result<Vec<LinkRef>, TraceqlError> {
     let Some(links) = optional_list_column(batch, SCOL_LINKS)? else {

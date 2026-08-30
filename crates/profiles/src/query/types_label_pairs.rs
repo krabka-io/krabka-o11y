@@ -1,4 +1,4 @@
-use super::*;
+use super::pb;
 
 pub(crate) fn types_label_pairs(labels: Vec<(String, String)>) -> Vec<pb::types::v1::LabelPair> {
     labels

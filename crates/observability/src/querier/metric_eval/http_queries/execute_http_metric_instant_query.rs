@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, Arc, HttpQueryError, MetricQuery, QuerierState, QueryHotTail,
+    StreamPlan, Value, execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes,
+    execute_metric_query_with_deletes, execute_metric_query_with_hot_tail_frontier_and_deletes,
+    hot_tail_snapshot, loki_vector_response_from_matrix,
+};
 
 pub(crate) async fn execute_http_metric_instant_query(
     state: &QuerierState,

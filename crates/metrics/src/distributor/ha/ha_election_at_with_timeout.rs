@@ -1,4 +1,4 @@
-use super::*;
+use super::{HaTracker, DecodedSeries, Time, HaElection, decide_election};
 
 /// Timestamped HA election helper with an explicit failover timeout.
 #[must_use]

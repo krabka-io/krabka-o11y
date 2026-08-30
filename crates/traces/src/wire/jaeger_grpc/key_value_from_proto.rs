@@ -1,4 +1,4 @@
-use super::*;
+use super::{api_v2, KeyValue, AttrValue};
 
 pub(crate) fn key_value_from_proto(kv: &api_v2::KeyValue) -> KeyValue {
     let value_type = api_v2::ValueType::try_from(kv.v_type).unwrap_or(api_v2::ValueType::String);

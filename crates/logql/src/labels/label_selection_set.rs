@@ -1,4 +1,4 @@
-use super::{LabelSelection, ParseError, template_parse_error, Labels};
+use super::{LabelSelection, Labels, ParseError, template_parse_error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LabelSelectionSet {

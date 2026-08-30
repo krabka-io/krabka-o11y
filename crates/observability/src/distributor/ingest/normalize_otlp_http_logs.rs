@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    DistributorError, HeaderMap, Message, ProtoExportLogsServiceRequest, Time, WalLogRecord,
+    decode_loki_http_body, is_protobuf_content_type, normalize_otlp_logs,
+    normalize_otlp_proto_logs,
+};
 
 pub(crate) fn normalize_otlp_http_logs(
     headers: &HeaderMap,

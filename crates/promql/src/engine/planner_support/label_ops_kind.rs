@@ -1,4 +1,4 @@
-use super::*;
+use super::SortOrder;
 
 /// The label-rewrite and ordering functions that the operator-path
 /// `PromqlEngine::plan_label_ops_call` handles.

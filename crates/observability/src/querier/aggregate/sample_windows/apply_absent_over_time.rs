@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, MetricQuery, MetricSampleState, MetricSamples, MetricValue, RangeAggregation,
+    absent_metric_labels,
+};
 
 pub(crate) fn apply_absent_over_time(
     samples: &mut MetricSamples,

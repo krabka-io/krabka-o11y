@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, Response, success_data_response};
 
 pub(crate) async fn wal_replay_status() -> Response {
     success_data_response(json!({

@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, parse_decimal_seconds_timestamp, parse_prometheus_duration};
 
 pub(crate) fn parse_loki_duration_query_param(
     name: &'static str,

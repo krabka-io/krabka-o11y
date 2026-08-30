@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, Labels, MetricQuery, MetricSamples, MetricValue, VectorGrouping, format_metric_value,
+    range_sample_value, vector_group_labels,
+};
 
 pub(crate) fn count_values_vector_samples(
     samples: MetricSamples,

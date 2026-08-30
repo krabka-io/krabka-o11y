@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, Labels, StreamPlan, Value, WalLogRecord,
+    append_matching_hot_log_record, json, sort_loki_stream_values,
+};
 
 pub(crate) fn execute_tail_query_with_frontier_and_deletes(
     plan: &StreamPlan,

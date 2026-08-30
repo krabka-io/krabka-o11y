@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 pub(crate) fn labels_with_sample_labels(
     base: &Labels,

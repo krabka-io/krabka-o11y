@@ -1,4 +1,4 @@
-use super::*;
+use super::ProfilesError;
 
 pub(crate) fn split_app_labels(s: &str) -> Result<(String, Vec<(String, String)>), ProfilesError> {
     let Some(open) = s.find('{') else {

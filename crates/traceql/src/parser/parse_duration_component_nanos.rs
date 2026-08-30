@@ -1,6 +1,10 @@
-use super::*;
+use super::{Result, TraceqlError};
 
-pub(crate) fn parse_duration_component_nanos(number: &str, multiplier: i128, original: &str) -> Result<i128> {
+pub(crate) fn parse_duration_component_nanos(
+    number: &str,
+    multiplier: i128,
+    original: &str,
+) -> Result<i128> {
     let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
     if whole.is_empty() && fraction.is_empty() {
         return Err(TraceqlError::Parse(format!(

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BufferedLogHotTail, CompactionFrontierStoreError, ObjectPath, ObjectStore,
+    SharedCompactionFrontier, read_compaction_frontier_from_object_store,
+};
 
 pub(crate) async fn refresh_compaction_frontier_and_prune(
     store: &dyn ObjectStore,

@@ -1,4 +1,3 @@
-use super::*;
 
 /// Tempo service-graph connection classification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

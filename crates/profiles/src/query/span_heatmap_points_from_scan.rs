@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    AsArray, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_SPAN_ID, PCOL_TOTAL_VALUE,
+    ProfileError,
+};
 
 pub(crate) async fn span_heatmap_points_from_scan(
     scan: &krabka_pprof::ProfileScan,

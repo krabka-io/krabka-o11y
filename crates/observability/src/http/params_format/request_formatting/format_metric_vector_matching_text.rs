@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricVectorGroupModifier, format_metric_vector_group_modifier};
 
 pub(crate) fn format_metric_vector_matching_text(
     modifier: &str,

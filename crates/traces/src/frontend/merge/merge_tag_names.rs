@@ -1,4 +1,4 @@
-use super::*;
+use super::{TagNamesPartial, ScopedTag, Metrics, TagScope, BTreeSet, scope_key};
 
 /// Union scoped tag names across jobs, then dedup and sort per scope. This also
 /// accumulates metrics.

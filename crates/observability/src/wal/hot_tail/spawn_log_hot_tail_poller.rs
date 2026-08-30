@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BufferedLogHotTail, CancellationToken, JoinHandle, LogWalConsumer,
+    SharedCompactionFrontier, Time, TimeExt, poll_log_hot_tail_once_with_frontier, sleep,
+};
 
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn spawn_log_hot_tail_poller(

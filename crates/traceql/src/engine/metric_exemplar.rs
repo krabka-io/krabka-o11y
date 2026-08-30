@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    COL_SPAN_ID, COL_TRACE_ID, RecordBatch, Result, TraceMetricExemplar, bytes_to_hex, fixed_8,
+    fixed_16,
+};
 
 pub(crate) fn metric_exemplar(
     batch: &RecordBatch,

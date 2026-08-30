@@ -1,4 +1,4 @@
-use super::*;
+use super::{Expr, MatrixSelector, RateUdfKind};
 
 /// Recognizes a top-level `f(selector[range])` rate-family call.
 ///

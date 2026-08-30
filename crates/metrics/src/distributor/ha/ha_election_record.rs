@@ -1,4 +1,4 @@
-use super::*;
+use super::HaElectionRecordError;
 
 /// A persisted HA election record for the compacted HA-tracker topic.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]

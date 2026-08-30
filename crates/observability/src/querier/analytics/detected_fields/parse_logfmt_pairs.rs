@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn parse_logfmt_pairs(line: &str) -> Vec<(String, String)> {
     let bytes = line.as_bytes();
     let mut pairs = Vec::new();

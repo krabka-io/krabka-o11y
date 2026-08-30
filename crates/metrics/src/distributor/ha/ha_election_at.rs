@@ -1,4 +1,4 @@
-use super::*;
+use super::{HaTracker, DecodedSeries, HaElection, ha_election_at_with_timeout, DEFAULT_HA_FAILOVER_TIMEOUT};
 
 /// Timestamped HA election helper for deterministic tests and injectable clocks.
 #[must_use]

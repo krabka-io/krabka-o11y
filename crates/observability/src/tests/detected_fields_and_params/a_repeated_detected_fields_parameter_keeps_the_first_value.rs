@@ -3,8 +3,9 @@ use super::*;
 /// The detected-fields parser carries the same first-wins contract.
 #[test]
 pub(crate) fn a_repeated_detected_fields_parameter_keeps_the_first_value() {
-    let parse =
-        |q: &str| super::super::prelude::parse_detected_fields_params(Some(q)).expect("valid query");
+    let parse = |q: &str| {
+        super::super::prelude::parse_detected_fields_params(Some(q)).expect("valid query")
+    };
 
     check!(parse("query=a&query=b").query == "a");
     check!(parse("query=a&limit=5&limit=9").limit == 5);

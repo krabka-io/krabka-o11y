@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn prometheus_base_unit_suffix(unit: &str) -> Option<&'static str> {
     match unit {

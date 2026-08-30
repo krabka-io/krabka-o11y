@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, LabelIndex, ObjectPath, ObjectStore, QueryError, QueryHotTail, StreamPlan,
+    StreamScanOptions, Value,
+    execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options,
+};
 
 pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontier(
     store: Arc<dyn ObjectStore>,

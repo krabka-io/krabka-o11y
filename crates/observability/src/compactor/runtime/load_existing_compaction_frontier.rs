@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompactionFrontierStoreError, ObjectPath, ObjectStore, SharedCompactionFrontier,
+    read_compaction_frontier_from_object_store,
+};
 
 pub(crate) async fn load_existing_compaction_frontier(
     store: &dyn ObjectStore,

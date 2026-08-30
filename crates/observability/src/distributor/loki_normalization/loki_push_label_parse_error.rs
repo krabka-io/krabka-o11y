@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, is_loki_label_name_char, loki_label_set};
 
 pub(crate) fn loki_push_label_parse_error(labels: &Labels, invalid_name: &str) -> String {
     let rendered = loki_label_set(labels);

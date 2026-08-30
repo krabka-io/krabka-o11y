@@ -1,4 +1,3 @@
-
 pub(crate) fn format_template_printf_string(
     value: &str,
     width: Option<usize>,

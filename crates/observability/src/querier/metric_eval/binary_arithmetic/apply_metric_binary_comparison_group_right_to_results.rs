@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ComparisonOp, MetricVectorMatching, Value,
+    apply_metric_binary_comparison_to_series_with_left_operand, include_metric_group_labels,
+    metric_series_labels, metric_vector_matching_key,
+};
 
 pub(crate) fn apply_metric_binary_comparison_group_right_to_results(
     left_results: &mut Vec<Value>,

@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    FieldExpr, PlannedSpanset, PlannerContext, Result, SpanStore, field_expr_to_matcher_disjuncts,
+    field_expr_to_matchers, has_nested_scope, has_parent_scope, ident,
+    needs_unfiltered_parent_table, plan_selector_disjuncts, register_unfiltered_parent_table,
+    selector_sql_with_parent_table,
+};
 
 pub(crate) async fn plan_selector<S: SpanStore>(
     store: &S,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{TenantLimits, Limits};
 
 pub(crate) fn tenant_limits_to_limits(limits: &TenantLimits) -> Limits {
     Limits {

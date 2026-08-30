@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HttpQueryError, LokiMetricParquetKind, Response, Value, loki_metrics_parquet_response,
+    loki_streams_parquet_response,
+};
 
 pub(crate) fn loki_parquet_response(value: &Value) -> Result<Response, HttpQueryError> {
     match value.pointer("/data/resultType").and_then(Value::as_str) {

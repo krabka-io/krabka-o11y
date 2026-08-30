@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfilesError, SampleTypeConfig};
 
 pub(crate) fn parse_sample_type_config(raw: &[u8]) -> Result<SampleTypeConfig, ProfilesError> {
     let config: SampleTypeConfig = serde_json::from_slice(raw)

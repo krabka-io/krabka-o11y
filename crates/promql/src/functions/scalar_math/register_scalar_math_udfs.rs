@@ -1,4 +1,4 @@
-use super::*;
+use super::{SessionContext, scalar_math_udfs};
 
 /// Registers every scalar-math UDF on `ctx` so a planner can lower onto them.
 pub fn register_scalar_math_udfs(ctx: &SessionContext) {

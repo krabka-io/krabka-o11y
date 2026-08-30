@@ -1,4 +1,3 @@
-use super::*;
 
 /// Combines the head min-time of two stores with explicit presence flags.
 ///

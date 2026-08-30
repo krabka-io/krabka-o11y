@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, OtlpKeyValue};
 
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct OtlpKeyValueList {

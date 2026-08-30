@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ObjectStore, BlockWriter, TraceIndex, ByteSize, BlockMeta, TracesError, BlockIndex, Array, prefixed_object_key, compacted_object_key, MinOffset, MaxOffset, WindowStartNs, compact_block_keys_with_max_bytes};
 
 /// Compact every tenant using a caller-supplied on-disk block-read limit.
 ///

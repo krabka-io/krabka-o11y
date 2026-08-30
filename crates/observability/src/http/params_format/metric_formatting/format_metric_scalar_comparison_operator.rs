@@ -1,4 +1,4 @@
-use super::*;
+use super::ComparisonOp;
 
 pub(crate) fn format_metric_scalar_comparison_operator(op: ComparisonOp) -> Option<&'static str> {
     match op {

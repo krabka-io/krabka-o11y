@@ -1,4 +1,4 @@
-use super::*;
+use super::{ComparisonOp, MetricVectorMatching};
 
 pub(crate) struct MetricVectorComparisonExpression {
     pub(crate) metric_query: String,

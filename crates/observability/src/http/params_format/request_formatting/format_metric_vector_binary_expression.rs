@@ -1,4 +1,4 @@
-use super::*;
+use super::FormattedVectorBinaryModifiers;
 
 pub(crate) fn format_metric_vector_binary_expression(
     left: &str,

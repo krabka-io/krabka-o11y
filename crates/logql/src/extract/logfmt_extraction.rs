@@ -1,4 +1,4 @@
-use super::{DestinationLabel, SourceLabel, ParseError, template_parse_error};
+use super::{DestinationLabel, ParseError, SourceLabel, template_parse_error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogfmtExtraction {

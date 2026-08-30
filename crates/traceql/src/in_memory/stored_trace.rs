@@ -1,4 +1,4 @@
-use super::*;
+use super::{InputSpan, NestedSet, Time};
 
 pub(crate) struct StoredTrace {
     pub(crate) trace_id: [u8; 16],

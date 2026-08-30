@@ -1,4 +1,4 @@
-use super::*;
+use super::{Pipeline, QueryHints, SpansetExpr};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Query {

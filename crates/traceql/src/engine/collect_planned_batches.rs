@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, Result};
 
 pub(crate) async fn collect_planned_batches(
     planned: crate::planner::PlannedSpanset,

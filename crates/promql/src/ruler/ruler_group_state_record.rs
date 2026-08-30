@@ -1,4 +1,3 @@
-use super::*;
 
 /// Rebuildable state for one ruler group evaluation.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]

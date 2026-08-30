@@ -1,4 +1,3 @@
-use super::*;
 
 /// One named TSDB status statistic.
 #[derive(Clone, Debug, PartialEq, Eq)]

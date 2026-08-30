@@ -1,4 +1,4 @@
-use super::*;
+use super::has_word_boundary;
 
 pub(crate) fn split_top_level_set_query(query: &str) -> Option<(&str, &'static str, &str)> {
     let mut parens = 0_i32;

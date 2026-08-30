@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, MetricValue, Ordering, Quantile};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MetricSampleState {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Limits, KeyValue, TracesError, shared_attr_measured, IngestEnforcer, limit_error_to_traces_error};
 
 pub(crate) fn check_shared_attrs(limits: &Limits, attrs: &[KeyValue]) -> Result<(), TracesError> {
     let flattened = attrs.iter().map(shared_attr_measured).collect::<Vec<_>>();

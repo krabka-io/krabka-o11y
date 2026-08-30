@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Deserialize, Labels, ProfilesError, SerdeCompat, Serialize, WalSample, WalSymbolSet,
+    WincodeDeserialize, WincodeSerialize,
+};
 
 /// A single profiles WAL record: one tenant, one series, one profile type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

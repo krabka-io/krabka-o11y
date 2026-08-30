@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 /// A location: an address plus lines `(function_id, line)`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

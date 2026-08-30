@@ -1,4 +1,4 @@
-use super::*;
+use super::{BucketSpan, pb};
 
 pub(crate) fn remote_read_bucket_spans(spans: &[BucketSpan]) -> Vec<pb::v1::BucketSpan> {
     spans

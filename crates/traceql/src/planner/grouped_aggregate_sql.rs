@@ -1,4 +1,4 @@
-use super::*;
+use super::{ComparisonOp, Field, Result, aggregate_filter_sql, selector};
 
 pub(crate) fn grouped_aggregate_sql(
     spanset_sql: &str,

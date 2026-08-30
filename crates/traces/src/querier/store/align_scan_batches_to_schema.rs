@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, SchemaRef, TraceqlError, align_scan_batch_to_schema};
 
 pub(crate) fn align_scan_batches_to_schema(
     batches: Vec<RecordBatch>,

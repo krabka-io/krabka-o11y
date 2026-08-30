@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Debug, thiserror::Error)]
 pub enum OverridesError {
     #[error("profiles overrides yaml: {0}")]

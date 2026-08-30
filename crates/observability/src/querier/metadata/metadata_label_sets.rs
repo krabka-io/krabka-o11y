@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BTreeSet, HttpQueryError, Labels, QuerierState, SeriesParams,
+    metadata_fingerprints_in_time_range, metadata_labels_match_selectors, metadata_selectors,
+    metadata_time_range, metadata_visible_labels,
+};
 
 pub(crate) async fn metadata_label_sets(
     state: &QuerierState,

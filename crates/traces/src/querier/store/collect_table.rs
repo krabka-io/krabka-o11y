@@ -1,4 +1,4 @@
-use super::*;
+use super::{SessionContext, RecordBatch, TraceqlError};
 
 pub(crate) async fn collect_table(
     ctx: &SessionContext,

@@ -1,4 +1,4 @@
-use super::*;
+use super::EncodeLabelSet;
 
 /// `route` + `status` label set for the query-request counter family.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]

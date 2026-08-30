@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Field, RecordBatch, Result, metric_field_column, metric_label_key, metric_label_value,
+};
 
 pub(crate) fn metric_labels(
     batch: &RecordBatch,

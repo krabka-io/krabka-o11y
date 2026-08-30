@@ -1,4 +1,11 @@
-use super::*;
+use super::{
+    HttpQueryError, MetricScalarComparison, QuerierState, QueryKind, TimeRange, Value,
+    active_log_delete_filters, add_loki_query_stats_for_metric_plan,
+    add_loki_query_stats_for_metric_plan_with_hot_tail,
+    apply_metric_scalar_comparison_to_loki_result, default_metric_range_step,
+    execute_http_metric_instant_query, execute_http_metric_range_query, hot_tail_snapshot,
+    metric_scan_range, plan_stream_query, validate_query_bytes_limit, validate_query_series_limit,
+};
 
 pub(crate) async fn execute_http_metric_scalar_comparison_query(
     state: &QuerierState,

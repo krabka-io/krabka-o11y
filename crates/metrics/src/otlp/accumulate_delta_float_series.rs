@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedSeries, DeltaAccumulator, nanos_to_millis};
 
 pub(crate) fn accumulate_delta_float_series(
     series: &mut [DecodedSeries],

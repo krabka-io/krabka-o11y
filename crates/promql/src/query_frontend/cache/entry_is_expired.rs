@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, TimeExt};
 
 /// Returns `true` if `inserted_epoch_millis` is older than `ttl`.
 ///

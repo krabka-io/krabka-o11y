@@ -1,4 +1,4 @@
-use super::{Error, BlockStoreError};
+use super::{BlockStoreError, Error};
 
 #[derive(Debug, Error)]
 pub enum PlanError {

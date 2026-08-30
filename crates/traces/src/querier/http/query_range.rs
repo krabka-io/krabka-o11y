@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanStore, State, AppState, HeaderMap, Uri, Response, query_range_inner};
 
 pub(crate) async fn query_range<S>(State(state): State<AppState<S>>, headers: HeaderMap, uri: Uri) -> Response
 where

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DebuginfodConfig, run_with_config};
 
 ///
 /// # Errors

@@ -1,4 +1,4 @@
-use super::*;
+use super::SeriesFingerprint;
 
 #[derive(Clone)]
 pub(crate) struct RankCandidate {

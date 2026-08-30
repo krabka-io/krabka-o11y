@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BlockDescriptor, CompactionFrontier, StreamPlan, Value, WalLogRecord,
+    count_loki_stream_result_hot_tail_lines, count_loki_stream_result_lines, loki_query_stats,
+    planned_block_bytes_for_blocks, populate_loki_query_scan_stats,
+};
 
 pub(crate) fn add_loki_query_stats_for_stream_blocks_with_hot_tail(
     mut value: Value,

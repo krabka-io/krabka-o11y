@@ -1,4 +1,4 @@
-use super::{fmt, MetricVectorMatching, MetricVectorGroupModifier, format_labels};
+use super::{MetricVectorGroupModifier, MetricVectorMatching, fmt, format_labels};
 
 pub(crate) fn format_matching(
     f: &mut fmt::Formatter<'_>,

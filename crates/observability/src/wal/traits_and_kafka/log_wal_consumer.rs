@@ -1,4 +1,4 @@
-use super::*;
+use super::{KafkaWalRecord, Time, WalConsumerError, WalPosition, async_trait};
 
 #[async_trait]
 pub trait LogWalConsumer: Send + 'static {

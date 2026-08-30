@@ -1,4 +1,4 @@
-use super::*;
+use super::HeaderMap;
 
 /// Tenant for an ingest request, from `X-Scope-OrgID`. It falls back to
 /// `"unknown"` when the header is missing, non-UTF-8, or empty.

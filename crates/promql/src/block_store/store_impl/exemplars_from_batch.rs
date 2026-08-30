@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, SeriesFingerprint, Labels, Result, ExemplarRecord, Array, UInt64Array, PromqlError, Int64Array, Float64Array, StringArray, MapArray, append_exemplar_label_map};
 
 pub(crate) fn exemplars_from_batch(
     batch: &arrow::record_batch::RecordBatch,

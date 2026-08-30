@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LabelReplaceExpression {
     pub(crate) query: String,

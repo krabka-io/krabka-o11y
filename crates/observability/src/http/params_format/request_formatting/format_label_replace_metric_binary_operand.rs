@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
+    format_metric_label_replace_query, format_simple_metric_query, format_vector_function_text,
+    parse_metric_query,
+};
 
 pub(crate) fn format_label_replace_metric_binary_operand(query: &str) -> Option<(String, bool)> {
     if let Some(formatted) = format_metric_label_replace_query(query) {

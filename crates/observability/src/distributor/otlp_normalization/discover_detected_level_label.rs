@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, detect_log_level};
 
 pub(crate) fn discover_detected_level_label(labels: &mut Labels, line: &str) {
     if labels.contains_key("detected_level")

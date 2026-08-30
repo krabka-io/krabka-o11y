@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, NamedTsdbStat, Value, apply_limit};
 
 pub(crate) fn named_tsdb_stats_json(mut stats: Vec<NamedTsdbStat>, limit: Option<usize>) -> Vec<Value> {
     apply_limit(&mut stats, limit);

@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, Response, success_data_response};
 
 pub(crate) async fn status_config() -> Response {
     success_data_response(json!({

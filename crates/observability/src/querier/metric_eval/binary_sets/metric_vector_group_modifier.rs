@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricVectorGroupModifier, MetricVectorMatching};
 
 pub(crate) fn metric_vector_group_modifier(
     matching: Option<&MetricVectorMatching>,

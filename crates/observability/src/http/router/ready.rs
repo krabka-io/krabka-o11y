@@ -1,4 +1,4 @@
-use super::*;
+use super::{Extension, IntoResponse, Response, ServiceReadiness, StatusCode};
 
 pub(crate) async fn ready(Extension(readiness): Extension<ServiceReadiness>) -> Response {
     if readiness.is_ready() {

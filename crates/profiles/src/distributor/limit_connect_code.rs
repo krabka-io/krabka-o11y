@@ -1,4 +1,4 @@
-use super::*;
+use super::Code;
 
 pub(crate) fn limit_connect_code(err: &crate::limits::LimitError) -> Code {
     match err.connect_code() {

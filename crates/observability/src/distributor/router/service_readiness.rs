@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, AtomicBool, AtomicOrdering};
 
 #[derive(Clone)]
 pub(crate) struct ServiceReadiness {

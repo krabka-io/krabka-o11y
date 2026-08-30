@@ -1,4 +1,4 @@
-use super::*;
+use super::{Serialize, Deserialize, AnyValueJson};
 
 /// OTLP key/value attribute form. It matches the querier's `attrs_json`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

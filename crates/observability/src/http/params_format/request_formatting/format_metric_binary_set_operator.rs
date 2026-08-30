@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricBinarySetOp;
 
 pub(crate) fn format_metric_binary_set_operator(op: MetricBinarySetOp) -> &'static str {
     match op {

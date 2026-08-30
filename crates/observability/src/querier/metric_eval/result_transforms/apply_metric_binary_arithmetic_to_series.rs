@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    MetricScalarArithmeticOp, Value, apply_metric_binary_arithmetic_to_sample,
+    matching_metric_binary_sample,
+};
 
 pub(crate) fn apply_metric_binary_arithmetic_to_series(
     left_series: &mut Value,

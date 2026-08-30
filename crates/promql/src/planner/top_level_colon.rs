@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, PromqlError};
 
 pub(crate) fn top_level_colon(content: &str) -> Result<Option<usize>> {
     let chars = content.chars().collect::<Vec<_>>();

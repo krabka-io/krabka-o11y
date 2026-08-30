@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, Response, StatusCode};
 
 pub(crate) fn text_response(status: StatusCode, value: &str) -> Response {
     (

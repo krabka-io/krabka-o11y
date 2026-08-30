@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn normalize_otlp_attribute_name(name: &str) -> String {
     let mut normalized = name
         .chars()

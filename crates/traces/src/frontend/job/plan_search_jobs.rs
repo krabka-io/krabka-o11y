@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockMetaInfo, ByteSize, JobPlan, JobShard, plan_block_jobs};
 
 /// Plan search jobs for a query window that ends at `query_end_ns`, over the
 /// candidate blocks and the hot/cold frontier.

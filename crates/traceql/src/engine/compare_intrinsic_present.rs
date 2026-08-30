@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompareRow, Intrinsic};
 
 pub(crate) fn compare_intrinsic_present(row: &CompareRow, intrinsic: &Intrinsic) -> bool {
     match intrinsic {

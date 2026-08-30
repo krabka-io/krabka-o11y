@@ -1,4 +1,4 @@
-use super::*;
+use super::{Error, ProducerError};
 
 #[derive(Debug, Error)]
 pub enum WalSinkError {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, TraceSpans, Value, resource_span_groups, attrs_json, scope_spans_json};
 
 pub(crate) fn trace_json(trace: &TraceSpans, max_trace_spans: usize) -> Value {
     let total_spans = trace.spans.len();

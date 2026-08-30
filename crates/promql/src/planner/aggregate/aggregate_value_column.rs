@@ -1,4 +1,4 @@
-use super::*;
+use super::VALUE_COLUMN;
 
 /// Result-value column that the aggregation projection emits.
 ///

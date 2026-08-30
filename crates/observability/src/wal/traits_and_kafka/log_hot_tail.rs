@@ -1,4 +1,4 @@
-use super::*;
+use super::WalLogRecord;
 
 pub trait LogHotTail: Send + Sync + 'static {
     fn records(&self) -> Vec<WalLogRecord>;

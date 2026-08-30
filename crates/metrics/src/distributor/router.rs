@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DistributorState, Router, otlp_metrics_service_server, ByteSizeExt, post, push, DefaultBodyLimit, clocks_push, otlp_push};
 
 /// Builds the distributor HTTP router.
 pub fn router(state: Arc<DistributorState>) -> Router {

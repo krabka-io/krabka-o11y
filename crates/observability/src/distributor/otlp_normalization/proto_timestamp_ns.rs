@@ -1,4 +1,4 @@
-use super::*;
+use super::DistributorError;
 
 pub(crate) fn proto_timestamp_ns(
     time_unix_nano: u64,

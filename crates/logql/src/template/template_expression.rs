@@ -1,4 +1,7 @@
-use super::{TemplateCommand, ParseError, split_template_pipeline, template_parse_error, TemplateRenderContext, TemplateRuntimeValue};
+use super::{
+    ParseError, TemplateCommand, TemplateRenderContext, TemplateRuntimeValue,
+    split_template_pipeline, template_parse_error,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemplateExpression {

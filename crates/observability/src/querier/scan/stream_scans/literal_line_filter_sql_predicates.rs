@@ -1,4 +1,4 @@
-use super::*;
+use super::{LineFilterOp, PipelineStage, sql_like_pattern_literal};
 
 pub(crate) fn literal_line_filter_sql_predicates(pipeline: &[PipelineStage]) -> Vec<String> {
     let mut predicates = Vec::new();

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, TimeExt, extrapolated_rate, RangeKind, instant_delta, InstantKind};
 
 /// Which rate-family function a [`RateUdf`] evaluates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

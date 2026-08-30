@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, minutes};
 
 /// Not `Eq`: [`Time`] stores `f64`. Nothing keys a map on this config.
 #[derive(Clone, Copy, Debug, PartialEq)]

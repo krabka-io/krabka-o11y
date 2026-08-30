@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, ZipkinEndpoint, BTreeMap, ZipkinAnnotation};
 
 #[derive(Deserialize)]
 pub(crate) struct ZipkinSpan {

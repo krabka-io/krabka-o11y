@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompareSpec, MetricFunction, MetricPlan};
 
 /// Builds the `MetricPlan` for a `compare()` stage.
 ///

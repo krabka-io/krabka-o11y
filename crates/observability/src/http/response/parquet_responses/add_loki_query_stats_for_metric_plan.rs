@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    MetricQuery, StreamPlan, Value, count_loki_metric_result_scan_lines, loki_query_stats,
+    planned_block_bytes, populate_loki_query_scan_stats,
+};
 
 pub(crate) fn add_loki_query_stats_for_metric_plan(
     mut value: Value,

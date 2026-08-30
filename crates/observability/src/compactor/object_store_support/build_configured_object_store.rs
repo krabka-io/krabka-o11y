@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ConfiguredObjectStore, LocalFileSystem, ObjectPath, ServiceConfig, ServiceConfigError,
+    Url, parse_url_opts,
+};
 
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn build_configured_object_store(

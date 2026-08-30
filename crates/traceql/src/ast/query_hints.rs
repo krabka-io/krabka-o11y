@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QueryHints {
     pub most_recent: bool,

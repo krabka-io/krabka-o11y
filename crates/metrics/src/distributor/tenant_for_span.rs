@@ -1,4 +1,4 @@
-use super::*;
+use super::HeaderMap;
 
 /// Tenant label for the ingest span. It falls back to `"unknown"` when the
 /// `X-Scope-OrgID` header is absent or non-ASCII. This label is for the span

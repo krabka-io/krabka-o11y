@@ -1,6 +1,13 @@
-use super::{Labels, LogfmtParserConfig, LogfmtParser, insert_extracted_field, sanitize_logfmt_field_name, insert_logfmt_parser_error};
+use super::{
+    Labels, LogfmtParser, LogfmtParserConfig, insert_extracted_field, insert_logfmt_parser_error,
+    sanitize_logfmt_field_name,
+};
 
-pub(crate) fn parse_configured_logfmt_fields(line: &str, fields: &mut Labels, config: &LogfmtParserConfig) {
+pub(crate) fn parse_configured_logfmt_fields(
+    line: &str,
+    fields: &mut Labels,
+    config: &LogfmtParserConfig,
+) {
     let mut parser = LogfmtParser::new(line);
     loop {
         let previous_pos = parser.pos;

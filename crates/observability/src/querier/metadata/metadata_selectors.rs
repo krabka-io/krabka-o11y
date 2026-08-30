@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, SeriesParams, parse_query};
 
 pub(crate) fn metadata_selectors(
     params: &SeriesParams,

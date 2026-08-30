@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ProfileStore, QuerierState, SocketAddr, TcpListener, router};
 
 /// Serve the querier and cancel the role when the HTTP server fails.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, json};
 
 pub(crate) fn include_metric_group_labels(
     output_series: &mut Value,

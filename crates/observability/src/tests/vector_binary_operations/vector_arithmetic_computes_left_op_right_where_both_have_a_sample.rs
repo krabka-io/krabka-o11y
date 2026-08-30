@@ -40,11 +40,12 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
     let right = || series(&[(1, "2"), (2, "1"), (3, "1"), (4, "5"), (5, "5"), (6, "1")]);
     let apply = |op| {
         let mut output = right();
-        let kept = super::super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
-            &mut output,
-            &left,
-            op,
-        );
+        let kept =
+            super::super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
+                &mut output,
+                &left,
+                op,
+            );
         (kept, pairs(&output))
     };
 

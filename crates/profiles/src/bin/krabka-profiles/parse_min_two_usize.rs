@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn parse_min_two_usize(value: &str) -> Result<usize, String> {
     use refined_type::rule::GreaterUsize;
 

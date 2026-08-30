@@ -1,4 +1,3 @@
-use super::*;
 
 /// Kernel timex `maxerror` column (`Int64`).
 ///

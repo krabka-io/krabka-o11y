@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn remap_ref(reference: u32, table: &[u32]) -> u32 {
     usize::try_from(reference)
         .ok()

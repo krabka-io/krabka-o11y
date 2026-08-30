@@ -1,4 +1,4 @@
-use super::*;
+use super::ToPrimitive;
 
 pub(crate) fn interpolate_boundary(
     left_ts: i64,

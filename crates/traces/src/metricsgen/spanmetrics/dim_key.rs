@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanRecord, span_kind_dim, status_dim};
 
 pub(crate) type DimKey = (String, String, String, String, Option<String>);
 

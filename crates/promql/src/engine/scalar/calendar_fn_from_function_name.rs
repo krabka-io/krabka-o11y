@@ -1,4 +1,4 @@
-use super::*;
+use super::CalendarFn;
 
 /// Maps a `PromQL` calendar-function name to its `CalendarFn` variant.
 ///

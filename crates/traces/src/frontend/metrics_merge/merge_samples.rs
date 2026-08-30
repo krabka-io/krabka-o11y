@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricSample;
 
 pub(crate) fn merge_samples(existing: &mut Vec<MetricSample>, incoming: Vec<MetricSample>) {
     for sample in incoming {

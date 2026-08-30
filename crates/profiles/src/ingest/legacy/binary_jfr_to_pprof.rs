@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Cursor, PprofProfile, ProfilesError, jfr_method_name, stacks_to_pprof};
 
 pub(crate) fn binary_jfr_to_pprof(name: &str, raw: &[u8]) -> Result<PprofProfile, ProfilesError> {
     let mut reader = jfrs::reader::JfrReader::new(Cursor::new(raw.to_vec()));

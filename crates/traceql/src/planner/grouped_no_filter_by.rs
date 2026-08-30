@@ -1,4 +1,4 @@
-use super::*;
+use super::{Field, Pipeline, is_search_preserving_aggregate};
 
 pub(crate) fn grouped_no_filter_by(pipeline: &[Pipeline]) -> Option<&[Field]> {
     match pipeline {

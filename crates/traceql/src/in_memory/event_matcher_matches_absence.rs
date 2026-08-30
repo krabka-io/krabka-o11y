@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchScope, SpanMatcher, nested_presence_matches, nil_matches};
 
 pub(crate) fn event_matcher_matches_absence(matcher: &SpanMatcher) -> bool {
     let is_match = match matcher.scope {

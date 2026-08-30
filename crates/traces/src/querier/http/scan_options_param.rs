@@ -1,4 +1,4 @@
-use super::*;
+use super::{Uri, ScanOptions, query_param, optional_usize_param, ScanJob};
 
 pub(crate) fn scan_options_param(uri: &Uri) -> Result<ScanOptions, String> {
     let block = query_param(uri, "block");

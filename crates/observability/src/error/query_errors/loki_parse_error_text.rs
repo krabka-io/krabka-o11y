@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ParseError, column_number, expected_logql_token, line_number, should_omit_expected_logql_token,
+    unexpected_logql_token,
+};
 
 pub(crate) fn loki_parse_error_text(query: &str, source: &ParseError) -> String {
     match source {

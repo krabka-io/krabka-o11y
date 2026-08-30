@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricQuery, VectorAggregationOp};
 
 pub(crate) fn metric_query_uses_approx_topk(query: &MetricQuery) -> bool {
     query

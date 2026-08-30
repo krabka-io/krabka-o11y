@@ -1,4 +1,4 @@
-use super::*;
+use super::{Serialize, Deserialize, KeyValue};
 
 /// One exemplar in Tempo's metrics shape.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

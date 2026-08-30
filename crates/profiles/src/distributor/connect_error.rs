@@ -1,4 +1,4 @@
-use super::*;
+use super::{Code, ConnectError, ProfilesError, client_facing_message, limit_connect_code};
 
 pub(crate) fn connect_error(err: ProfilesError) -> ConnectError {
     if let ProfilesError::Limit(limit) = &err {

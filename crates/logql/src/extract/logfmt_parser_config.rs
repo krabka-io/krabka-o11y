@@ -1,4 +1,4 @@
-use super::{LogfmtExtraction, ParseError, template_parse_error, BTreeSet};
+use super::{BTreeSet, LogfmtExtraction, ParseError, template_parse_error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogfmtParserConfig {

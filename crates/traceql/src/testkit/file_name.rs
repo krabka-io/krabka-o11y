@@ -1,4 +1,4 @@
-use super::*;
+use super::Path;
 
 pub(crate) fn file_name(path: &Path) -> String {
     path.file_name()

@@ -1,4 +1,4 @@
-use super::*;
+use super::WalRecordDecodeError;
 
 pub(crate) fn validate_native_timestamp_ns(
     timestamp_ns: i64,

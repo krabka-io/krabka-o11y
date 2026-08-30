@@ -1,4 +1,3 @@
-use super::*;
 
 /// Prometheus 3.x range/vector selector modifier accepted after selectors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

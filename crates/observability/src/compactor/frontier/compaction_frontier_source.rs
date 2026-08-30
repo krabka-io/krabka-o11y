@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionFrontier, SharedCompactionFrontier};
 
 #[derive(Clone, Debug)]
 pub(crate) enum CompactionFrontierSource {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ServiceConfig, ServiceConfigError};
 
 pub(crate) fn validate_compactor_policy(config: &ServiceConfig) -> Result<(), ServiceConfigError> {
     if config.compactor_accumulation_poll_timeout > config.compactor_accumulation_window {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, Value};
 
 /// One TraceQL-metrics label as Tempo's protojson `commonv1.KeyValue`, which is
 /// `{"key": k, "value": {"stringValue": v}}`.

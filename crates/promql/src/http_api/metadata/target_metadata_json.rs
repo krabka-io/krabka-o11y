@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, MetadataRecord, Value};
 
 pub(crate) fn target_metadata_json(metadata: Vec<MetadataRecord>) -> Vec<Value> {
     metadata

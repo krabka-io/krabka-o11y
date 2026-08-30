@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricPlan, SpanMatcher, nested_metric_projection_matcher};
 
 pub(crate) fn metric_nested_projection_matchers(metric: &MetricPlan) -> Vec<SpanMatcher> {
     let mut out = Vec::new();

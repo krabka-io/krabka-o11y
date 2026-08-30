@@ -1,4 +1,4 @@
-use super::*;
+use super::{WalLogRecord, WalSinkError, async_trait};
 
 #[async_trait]
 pub trait LogWalSink: Send + Sync + 'static {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{EventRef, InputSpan, SpanMatcher, event_matcher_matches_event, is_event_matcher};
 
 pub(crate) fn matching_events_for_scan<'a>(
     span: &'a InputSpan,

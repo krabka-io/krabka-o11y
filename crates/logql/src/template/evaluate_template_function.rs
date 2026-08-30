@@ -1,6 +1,21 @@
-use super::{TemplateRuntimeValue, evaluate_template_value_function, evaluate_common_string_function, format_template_integer_sum, format_template_float_sum, format_template_float_unary, format_template_bytes, format_template_date, format_template_duration_seconds, format_template_integer_binary, format_template_float_fold, format_template_ordering, parse_template_float, indent_template_string, parse_template_integer, format_template_integer_min_max, format_template_float_min_max, format_template_integer_product, format_template_float_product, format_template_printf, Regex, NoExpand, format_template_float_round, truncate_template_string, substring_template_string, title_template_string, format_template_to_date, format_template_to_date_in_zone, epoch_template_timestamp, unix_to_template_timestamp, urlquery_template_string, urlencode_template_string, urldecode_template_string};
+use super::{
+    NoExpand, Regex, TemplateRuntimeValue, epoch_template_timestamp,
+    evaluate_common_string_function, evaluate_template_value_function, format_template_bytes,
+    format_template_date, format_template_duration_seconds, format_template_float_fold,
+    format_template_float_min_max, format_template_float_product, format_template_float_round,
+    format_template_float_sum, format_template_float_unary, format_template_integer_binary,
+    format_template_integer_min_max, format_template_integer_product, format_template_integer_sum,
+    format_template_ordering, format_template_printf, format_template_to_date,
+    format_template_to_date_in_zone, indent_template_string, parse_template_float,
+    parse_template_integer, substring_template_string, title_template_string,
+    truncate_template_string, unix_to_template_timestamp, urldecode_template_string,
+    urlencode_template_string, urlquery_template_string,
+};
 
-pub(crate) fn evaluate_template_function(name: &str, args: &[TemplateRuntimeValue]) -> TemplateRuntimeValue {
+pub(crate) fn evaluate_template_function(
+    name: &str,
+    args: &[TemplateRuntimeValue],
+) -> TemplateRuntimeValue {
     if let Some(value) = evaluate_template_value_function(name, args) {
         return value;
     }

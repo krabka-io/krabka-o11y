@@ -1,4 +1,4 @@
-use super::*;
+use super::{json_log_pattern, log_pattern_token};
 
 pub(crate) fn log_line_pattern(line: &str) -> String {
     // Krabka services (and every JSON-emitting collector) log compact objects

@@ -13,7 +13,10 @@ pub(crate) fn a_vector_aggregation_renders_only_the_groupings_its_operator_allow
     use krabka_logql::{VectorAggregation, VectorAggregationOp, VectorGrouping};
 
     let render = |op, grouping| {
-        super::super::prelude::format_vector_aggregation_query(&VectorAggregation { op, grouping }, "up")
+        super::super::prelude::format_vector_aggregation_query(
+            &VectorAggregation { op, grouping },
+            "up",
+        )
     };
     let by = || {
         Some(VectorGrouping::By(vec![

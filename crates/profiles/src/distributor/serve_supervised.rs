@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DistributorState, SocketAddr, TcpListener, router};
 
 /// Serve the distributor and cancel the role when the HTTP server fails.
 ///

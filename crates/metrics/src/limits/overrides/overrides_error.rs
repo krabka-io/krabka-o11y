@@ -1,4 +1,4 @@
-use super::*;
+use super::Error;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum OverridesError {

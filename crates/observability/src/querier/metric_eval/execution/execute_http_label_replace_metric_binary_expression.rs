@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    HttpQueryError, LabelReplaceMetricBinaryExpression, QuerierState, QueryKind, TimeRange, Value,
+    apply_metric_binary_arithmetic_to_loki_result, apply_metric_binary_comparison_to_loki_result,
+    apply_metric_binary_set_to_loki_result, execute_http_metric_binary_operand,
+    retain_metric_binary_on_labels,
+};
 
 pub(crate) async fn execute_http_label_replace_metric_binary_expression(
     state: &QuerierState,

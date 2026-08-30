@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, BTreeMap, SeriesFingerprint, Labels, Result, QueryResult, rate_range, Array, Float64Array, PromqlError, labels_from_rate_batch, InstantSample, labels_without_metric_name, SampleValue};
 
 /// Assembles rate-family projection output batches into a result.
 ///

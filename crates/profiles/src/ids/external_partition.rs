@@ -1,4 +1,4 @@
-use super::*;
+use super::{Display, From, Into};
 
 /// A partition key in the composite cold-read address space: a per-block base
 /// OR-ed with a dense local id. Symbol resolution routes on this key.

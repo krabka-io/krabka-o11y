@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn jfr_method_name(
     class: Option<jfrs::reader::types::builtin::Class<'_>>,
     method_name: &str,

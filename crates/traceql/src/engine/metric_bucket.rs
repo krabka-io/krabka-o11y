@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceMetricExemplar, f64_from_u64, f64_from_usize, usize_from_integer_f64};
 
 #[derive(Clone, Default)]
 pub(crate) struct MetricBucket {

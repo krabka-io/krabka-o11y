@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Acks, Arc, ClientResourcePolicy, LogWalSink, Producer, ProducerError, WalLogRecord,
+    WalSinkError, async_trait, build_kafka_wal_record,
+};
 
 #[derive(Clone)]
 pub struct KafkaLogWalSink {

@@ -1,4 +1,4 @@
-use super::*;
+use super::TimeRange;
 
 pub(crate) fn eval_times(range: TimeRange, step_ns: i64) -> Vec<i64> {
     let mut times = Vec::new();

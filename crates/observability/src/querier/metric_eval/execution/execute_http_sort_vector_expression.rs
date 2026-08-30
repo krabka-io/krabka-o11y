@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HttpQueryError, QuerierState, QueryKind, SortVectorExpression, TimeRange, Value,
+    execute_http_metric_expression_query, sort_loki_vector_result,
+};
 
 pub(crate) async fn execute_http_sort_vector_expression(
     state: &QuerierState,

@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn find_logql_function_call_end(
     query: &str,
     position: usize,

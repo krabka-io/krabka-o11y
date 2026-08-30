@@ -1,4 +1,4 @@
-use super::*;
+use super::Aggregate;
 
 pub(crate) fn is_search_preserving_aggregate(agg: &Aggregate) -> bool {
     matches!(

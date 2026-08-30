@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
+    QuerierState, connect_error, pb, tenant_from_headers,
+};
 
 pub(crate) async fn get_profile_stats_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,

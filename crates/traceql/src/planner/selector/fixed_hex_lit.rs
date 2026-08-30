@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError};
 
 pub(crate) fn fixed_hex_lit(hex: &str, width: usize) -> Result<String> {
     let expected_len = width * 2;

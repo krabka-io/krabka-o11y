@@ -6,7 +6,8 @@ use super::*;
 /// is simply wrong.
 #[test]
 pub(crate) fn a_loki_vector_sample_reads_its_value_and_not_its_timestamp() {
-    let value = |sample: serde_json::Value| super::super::prelude::loki_vector_sample_value(&sample);
+    let value =
+        |sample: serde_json::Value| super::super::prelude::loki_vector_sample_value(&sample);
     let instant = |timestamp, sample_value| serde_json::json!({"metric": {}, "value": [timestamp, sample_value]});
 
     check!(value(instant(1_700_000_000_i64, "42")) == Some(MetricValue::new(42, 1)));

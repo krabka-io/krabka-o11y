@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DistributorError, LOKI_REJECT_OLD_SAMPLES_MAX_AGE, Labels, Time, TimeExt, current_unix_time_ns,
+    loki_stale_sample_label_set,
+};
 
 pub(crate) fn loki_missing_proto_timestamp_error(
     stream_labels: &Labels,

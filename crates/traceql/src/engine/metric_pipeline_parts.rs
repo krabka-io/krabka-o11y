@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Aggregate, CompareSpec, Field, MetricFilter, Pipeline, RankLimit, Result, UnixNano,
+    metric_filter, rank_limit,
+};
 
 pub(crate) struct MetricPipelineParts<'a> {
     pub(crate) aggregate: Option<&'a Aggregate>,
@@ -8,7 +11,9 @@ pub(crate) struct MetricPipelineParts<'a> {
     pub(crate) compare: Option<CompareSpec>,
 }
 
-pub(crate) fn metric_pipeline_parts(pipeline: &[Pipeline]) -> Result<Option<MetricPipelineParts<'_>>> {
+pub(crate) fn metric_pipeline_parts(
+    pipeline: &[Pipeline],
+) -> Result<Option<MetricPipelineParts<'_>>> {
     let mut aggregate = None;
     let mut by = None;
     let mut filter = None;

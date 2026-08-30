@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScanOptions, UnixNano};
 
 pub(crate) struct PlannerContext {
     pub tenant: String,

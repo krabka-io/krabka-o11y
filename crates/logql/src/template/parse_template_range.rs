@@ -1,4 +1,7 @@
-use super::{TemplateRange, ParseError, parse_template_range_expression, find_template_control_action, template_parse_error, parse_template_parts};
+use super::{
+    ParseError, TemplateRange, find_template_control_action, parse_template_parts,
+    parse_template_range_expression, template_parse_error,
+};
 
 pub(crate) fn parse_template_range(
     template: &str,

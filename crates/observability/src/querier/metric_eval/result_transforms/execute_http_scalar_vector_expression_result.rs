@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    HttpQueryError, ParseError, QueryKind, TimeRange, Value, add_loki_query_stats,
+    loki_instant_scalar_or_vector_response, loki_range_vector_response, resolved_range_step,
+    scalar_vector_expression_result,
+};
 
 pub(crate) fn execute_http_scalar_vector_expression_result(
     query: &str,

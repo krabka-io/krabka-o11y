@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    MetricQuery, format_metric_range_aggregation_query, format_vector_aggregation_query,
+    format_vector_grouping,
+};
 
 pub(crate) fn format_metric_query(query: &MetricQuery) -> Option<String> {
     let mut formatted = format_metric_range_aggregation_query(query)?;

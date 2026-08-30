@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, Result, BTreeMap, Labels, ClassicBucket, SampleValue, labels_without_metric_name, labels_key, record_metric_name, native_histogram_fraction, parse_classic_bucket_bound, float_sample_value, labels_without_metric_and_label, BTreeSet, warn_mixed_histograms, classic_histogram_fraction};
 
 /// Applies `histogram_fraction(lower, upper, v)` to an instant vector `v`.
 ///

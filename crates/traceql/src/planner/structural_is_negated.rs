@@ -1,4 +1,4 @@
-use super::*;
+use super::StructuralOp;
 
 pub(crate) fn structural_is_negated(op: StructuralOp) -> bool {
     matches!(

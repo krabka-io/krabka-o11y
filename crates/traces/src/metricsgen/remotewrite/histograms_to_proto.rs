@@ -1,4 +1,4 @@
-use super::*;
+use super::{WireTimeSeries, Histogram, bucket_spans_to_proto, ResetHint};
 
 pub(crate) fn histograms_to_proto(row: &WireTimeSeries) -> Vec<Histogram> {
     row.native_histogram

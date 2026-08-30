@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricValue, Ordering, VectorAggregationOp};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct VectorAggregationState {

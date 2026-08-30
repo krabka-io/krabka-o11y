@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ConfiguredObjectStore, ObjectStore, ServiceConfig, ServiceConfigError,
+    build_configured_object_store,
+};
 
 pub(crate) fn build_compactor_configured_object_store(
     config: &ServiceConfig,

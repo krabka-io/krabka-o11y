@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, CompareGroup};
 
 /// Upper bound on the distinct values tracked per `(group, attribute)`.
 ///

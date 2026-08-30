@@ -1,4 +1,4 @@
-use super::*;
+use super::{WireError, T_STOP, T_STRUCT, T_BOOL_TRUE, T_BOOL_FALSE, T_BYTE, T_I16, T_I32, T_I64, T_DOUBLE, T_BINARY, T_LIST, T_SET, T_MAP};
 
 pub(crate) struct CompactInput<'a> {
     pub(crate) bytes: &'a [u8],

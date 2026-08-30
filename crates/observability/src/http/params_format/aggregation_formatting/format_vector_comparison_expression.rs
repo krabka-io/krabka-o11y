@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    parse_formatted_vector_function, parse_vector_binary_modifiers,
+    parse_vector_comparison_operator,
+};
 
 pub(crate) fn format_vector_comparison_expression(query: &str) -> Option<String> {
     let (left, position) = parse_formatted_vector_function(query, 0)?;

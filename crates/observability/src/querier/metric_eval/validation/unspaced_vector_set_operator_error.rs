@@ -1,4 +1,4 @@
-use super::*;
+use super::could_be_scalar_vector_expression;
 
 pub(crate) fn unspaced_vector_set_operator_error(query: &str) -> Option<String> {
     if !could_be_scalar_vector_expression(query) {

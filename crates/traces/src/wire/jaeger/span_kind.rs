@@ -1,4 +1,4 @@
-use super::*;
+use super::{KeyValue, SpanKind, AttrValue};
 
 pub(crate) fn span_kind(tags: &[KeyValue]) -> SpanKind {
     tags.iter()

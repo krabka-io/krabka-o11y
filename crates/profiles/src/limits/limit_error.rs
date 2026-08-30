@@ -1,5 +1,3 @@
-use super::*;
-
 /// A profile limit violation with the Connect and HTTP projection Pyroscope clients expect.
 ///
 /// The variant payloads are raw numbers and not quantities. Each one goes

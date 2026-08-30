@@ -1,4 +1,4 @@
-use super::*;
+use super::TraceMetricSeries;
 
 /// `TraceQL` metrics response.
 #[derive(Clone, Debug, PartialEq)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, LogIngestLimiter, LogWalSink, OtlpGrpcLogsService, ServiceMetrics};
 
 pub fn otlp_grpc_logs_service_with_limiter(
     sink: impl LogWalSink,

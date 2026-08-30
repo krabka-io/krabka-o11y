@@ -1,4 +1,4 @@
-use super::*;
+use super::{PROFILE_ID_LABEL, ProfileError, label_matcher_value_escape, merge_label_matcher};
 
 pub(crate) fn merge_profile_id_selector(
     label_selector: &str,

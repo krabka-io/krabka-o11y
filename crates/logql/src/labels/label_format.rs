@@ -1,4 +1,4 @@
-use super::{LabelFormatAssignment, ParseError, BTreeSet, template_parse_error, Labels};
+use super::{BTreeSet, LabelFormatAssignment, Labels, ParseError, template_parse_error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LabelFormat {

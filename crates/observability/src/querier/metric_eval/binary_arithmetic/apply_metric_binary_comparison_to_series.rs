@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    ComparisonOp, Value, apply_metric_binary_comparison_to_sample, matching_metric_binary_sample,
+};
 
 pub(crate) fn apply_metric_binary_comparison_to_series(
     left_series: &mut Value,

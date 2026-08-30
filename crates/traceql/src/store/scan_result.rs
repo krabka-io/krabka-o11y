@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, SessionContext};
 
 pub struct ScanResult {
     pub ctx: SessionContext,

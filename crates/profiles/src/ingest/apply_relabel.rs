@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, RelabelAction, RelabelConfig, regex_anchored, remove_label, replace_label};
 
 /// Apply relabel rules in order. Returns `false` when a rule rejects the series.
 pub fn apply_relabel(labels: &mut Labels, configs: &[RelabelConfig]) -> bool {

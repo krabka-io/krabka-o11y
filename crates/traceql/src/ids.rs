@@ -29,5 +29,5 @@ use derive_more::{Display, From, Into};
 mod duration_nanos;
 mod unix_nano;
 
-pub (crate) use duration_nanos::DurationNanos;
-pub (crate) use unix_nano::UnixNano;
+pub(crate) use duration_nanos::DurationNanos;
+pub(crate) use unix_nano::UnixNano;

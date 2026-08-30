@@ -1,4 +1,4 @@
-use super::*;
+use super::{Bytes, fnv1_32};
 
 /// The Kafka produce key for traces: `hash(trace_id)`.
 #[must_use]

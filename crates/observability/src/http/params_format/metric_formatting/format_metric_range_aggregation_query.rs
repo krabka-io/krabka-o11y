@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    MetricQuery, RangeAggregation, format_metric_range_selector, format_quantile,
+    format_range_aggregation_name,
+};
 
 pub(crate) fn format_metric_range_aggregation_query(query: &MetricQuery) -> Option<String> {
     let range = format_metric_range_selector(query)?;

@@ -1,4 +1,4 @@
-use super::*;
+use super::DistributorState;
 
 /// Undoes a max-series reservation from [`enforce_and_reserve_max_series`].
 ///

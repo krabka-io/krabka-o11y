@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockDescriptor, LokiDirection};
 
 pub(crate) fn object_store_stream_blocks_in_scan_order(
     blocks: &[BlockDescriptor],

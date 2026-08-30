@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, OtlpAnyValue, metadata_value_to_string, otlp_value_to_json};
 
 pub(crate) fn otlp_value_to_string(value: &OtlpAnyValue) -> String {
     match value {

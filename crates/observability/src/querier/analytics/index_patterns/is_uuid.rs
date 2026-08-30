@@ -1,5 +1,3 @@
-use super::*;
-
 /// Canonical `8-4-4-4-12` hex UUID, regardless of leading character.
 pub(crate) fn is_uuid(value: &str) -> bool {
     let mut groups = value.split('-');

@@ -1,4 +1,4 @@
-use super::{parse_prometheus_duration_literal, format_decimal_ratio};
+use super::{format_decimal_ratio, parse_prometheus_duration_literal};
 
 pub(crate) fn format_template_duration_seconds(value: &str) -> String {
     let Some(duration_ns) = parse_prometheus_duration_literal(value) else {

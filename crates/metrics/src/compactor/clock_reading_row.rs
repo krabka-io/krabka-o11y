@@ -1,4 +1,4 @@
-use super::*;
+use super::ClockReadingPayload;
 
 /// One sorted clock confidence row ready for block encoding.
 ///

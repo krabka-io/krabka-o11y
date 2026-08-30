@@ -43,7 +43,7 @@ mod rule_type_filter;
 mod ruler_config_group;
 mod ruler_config_namespace;
 mod ruler_config_rules;
-mod rules;
+mod rules_fn;
 mod set_ruler_config_group;
 mod validate_rule;
 mod validate_rule_group;

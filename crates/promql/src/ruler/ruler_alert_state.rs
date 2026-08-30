@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, AlertStateKey, RulerAlertStateRecord};
 
 /// Pending/firing alert state for ruler evaluations.
 #[derive(Debug, Default)]

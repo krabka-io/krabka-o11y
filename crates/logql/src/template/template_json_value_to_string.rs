@@ -1,4 +1,3 @@
-
 pub(crate) fn template_json_value_to_string(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => String::new(),

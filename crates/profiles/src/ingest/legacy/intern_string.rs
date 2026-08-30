@@ -1,6 +1,10 @@
-use super::*;
+use super::BTreeMap;
 
-pub(crate) fn intern_string(strings: &mut Vec<String>, ids: &mut BTreeMap<String, i64>, value: &str) -> i64 {
+pub(crate) fn intern_string(
+    strings: &mut Vec<String>,
+    ids: &mut BTreeMap<String, i64>,
+    value: &str,
+) -> i64 {
     if let Some(id) = ids.get(value) {
         return *id;
     }

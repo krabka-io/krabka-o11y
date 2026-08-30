@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Pipeline, PlannedSpanset, PlannerContext, Result, SpanStore, SpansetExpr, pipeline_to_sql,
+    register_nested_selector_tables, scan_options_with_pipeline_projections, selector,
+    spanset_to_sql,
+};
 
 pub(crate) async fn plan_spanset_sql<S: SpanStore>(
     store: &S,

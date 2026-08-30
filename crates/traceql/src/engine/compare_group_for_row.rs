@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompareGroup, CompareRegexCache, CompareRow, CompareSpec, compare_row_in_selection_window,
+    spanset_matches_row,
+};
 
 /// Determines the compare group of a span row.
 ///

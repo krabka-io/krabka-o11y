@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, CompareRow, Scope};
 
 pub(crate) fn compare_row_attr_values<'a>(
     row: &'a CompareRow,

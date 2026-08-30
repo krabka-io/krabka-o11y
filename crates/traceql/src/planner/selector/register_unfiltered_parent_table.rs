@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Arc, MemTable, PlannerContext, RecordBatch, Result, SessionContext, SpanStore, collect_table,
+};
 
 pub(crate) async fn register_unfiltered_parent_table<S: SpanStore>(
     store: &S,

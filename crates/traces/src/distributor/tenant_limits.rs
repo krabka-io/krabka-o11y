@@ -1,4 +1,4 @@
-use super::*;
+use super::{Frequency, ByteSize, FrequencyExt, kibibytes, Limits, u64_limit_from_usize};
 
 /// Per-tenant distributor limits enforced before WAL append.
 #[derive(Clone, Debug)]

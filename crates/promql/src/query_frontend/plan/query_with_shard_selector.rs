@@ -1,4 +1,4 @@
-use super::*;
+use super::{QueryShard, PromqlError, parse_promql, inject_shard_into_expr};
 
 pub(crate) fn query_with_shard_selector(
     query: &str,

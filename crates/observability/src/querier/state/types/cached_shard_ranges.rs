@@ -1,4 +1,4 @@
-use super::*;
+use super::{Instant, TimeRange};
 
 #[derive(Clone)]
 pub(crate) struct CachedShardRanges {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, TracesError, fixed_column, SCOL_TRACE_ID, SCOL_SPAN_ID, SCOL_PARENT_SPAN_ID, BTreeMap, Array, HashMap, replace_int32_columns, SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_CHILD_COUNT};
 
 pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, TracesError> {
     enum Frame {

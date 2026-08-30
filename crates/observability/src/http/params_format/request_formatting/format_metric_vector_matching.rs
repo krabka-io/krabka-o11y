@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    FormattedMetricVectorMatching, MetricVectorMatching, format_metric_vector_matching_text,
+};
 
 pub(crate) fn format_metric_vector_matching(
     matching: &MetricVectorMatching,

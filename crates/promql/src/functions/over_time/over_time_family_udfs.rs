@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScalarUDF, OverTimeFamily, over_time_udf};
 
 /// Returns every non-experimental `*_over_time` UDF, ready to register on a
 /// [`SessionContext`].

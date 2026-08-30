@@ -1,6 +1,10 @@
-use super::*;
+use super::ProfilesError;
 
-pub(crate) fn read_tree_varint(body: &[u8], pos: &mut usize, field: &str) -> Result<u64, ProfilesError> {
+pub(crate) fn read_tree_varint(
+    body: &[u8],
+    pos: &mut usize,
+    field: &str,
+) -> Result<u64, ProfilesError> {
     let mut value = 0_u64;
     let mut shift = 0_u32;
     loop {

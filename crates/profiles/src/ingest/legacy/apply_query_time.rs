@@ -1,4 +1,4 @@
-use super::*;
+use super::{IngestQuery, PprofProfile, ProfilesError};
 
 pub(crate) fn apply_query_time(
     profile: PprofProfile,

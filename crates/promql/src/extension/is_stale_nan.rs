@@ -1,4 +1,4 @@
-use super::*;
+use super::STALE_NAN_BITS;
 
 /// True when `value` is exactly Prometheus' stale-NaN marker and not some
 /// genuine NaN. Genuine NaN values must stay as NaN samples.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Serialize, Deserialize, KeyValue};
 
 /// A span event.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

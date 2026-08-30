@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    DistributorError, Labels, ProtoKeyValue, normalize_otlp_attribute_name, proto_value_to_string,
+};
 
 pub(crate) fn proto_attributes_to_labels(
     attributes: Option<&[ProtoKeyValue]>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) fn apply_loki_tail_frame_limit(mut frame: Value, limit: Option<usize>) -> Value {
     let Some(limit) = limit else {

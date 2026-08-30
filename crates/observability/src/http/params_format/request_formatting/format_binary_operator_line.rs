@@ -1,4 +1,4 @@
-use super::*;
+use super::FormattedVectorBinaryModifiers;
 
 pub(crate) fn format_binary_operator_line(
     operator: &str,

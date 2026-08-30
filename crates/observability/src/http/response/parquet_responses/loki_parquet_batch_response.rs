@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ArrowWriter, HttpQueryError, IntoResponse, LOKI_PARQUET_CONTENT_TYPE, RecordBatch, Response,
+    StatusCode,
+};
 
 pub(crate) fn loki_parquet_batch_response(batch: &RecordBatch) -> Result<Response, HttpQueryError> {
     let mut body = Vec::new();

@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, format_logql_query, parse_format_query_param};
 
 pub(crate) fn execute_format_query(raw_query: Option<&str>) -> Result<String, HttpQueryError> {
     let query = parse_format_query_param(raw_query)?;

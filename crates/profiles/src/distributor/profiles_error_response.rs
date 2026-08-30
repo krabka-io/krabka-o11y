@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, ProfilesError, Response, StatusCode, client_facing_message};
 
 pub(crate) fn profiles_error_response(err: ProfilesError) -> Response {
     let status =

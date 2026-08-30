@@ -1,6 +1,12 @@
-use super::*;
+use super::{
+    CompareRegexCache, CompareRow, FieldExpr, compare_comparison_matches, compare_field_present,
+};
 
-pub(crate) fn field_expr_matches_row(fe: &FieldExpr, row: &CompareRow, regexes: &CompareRegexCache) -> bool {
+pub(crate) fn field_expr_matches_row(
+    fe: &FieldExpr,
+    row: &CompareRow,
+    regexes: &CompareRegexCache,
+) -> bool {
     match fe {
         FieldExpr::Const(value) => *value,
         FieldExpr::And(a, b) => {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{CONTENT_TYPE, DistributorError, HeaderMap};
 
 pub(crate) fn is_loki_json_content_type(headers: &HeaderMap) -> Result<bool, DistributorError> {
     let Some(content_type) = headers

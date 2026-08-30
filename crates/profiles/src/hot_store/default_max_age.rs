@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, hours};
 
 /// Default retention horizon for the in-memory WAL tail. The store drops
 /// samples older than this horizon, measured from the newest sample it has

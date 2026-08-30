@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, EVENT_ATTR_PREFIX, EventRef, InputSpan, LINK_ATTR_PREFIX, LinkRef};
 
 pub(crate) fn nested_attr_value<'a>(
     key: &str,

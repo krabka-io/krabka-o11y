@@ -62,9 +62,11 @@ pub(crate) fn a_stale_dynamic_index_entry_is_evicted_rather_than_just_missed() {
     // A key that was never inserted is a miss without disturbing anything.
     check!(
         fresh
-            .get(&super::super::prelude::DynamicIndexCacheKey::TenantManifest {
-                tenant: "other".to_string(),
-            })
+            .get(
+                &super::super::prelude::DynamicIndexCacheKey::TenantManifest {
+                    tenant: "other".to_string(),
+                }
+            )
             .is_none()
     );
     check!(held(&fresh) == (1, 1), "an absent key evicts nothing");

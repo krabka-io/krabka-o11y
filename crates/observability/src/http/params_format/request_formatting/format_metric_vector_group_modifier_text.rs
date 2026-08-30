@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn format_metric_vector_group_modifier_text(
     modifier: &str,
     labels: &[String],

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, Labels, Time, TimeExt, loki_stale_sample_label_set};
 
 /// The window check against a caller-supplied `now`.
 ///

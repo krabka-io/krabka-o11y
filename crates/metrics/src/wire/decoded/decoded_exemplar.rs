@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 /// Exemplar decoded from a `remote_write` request.
 #[derive(Clone, Debug, PartialEq)]

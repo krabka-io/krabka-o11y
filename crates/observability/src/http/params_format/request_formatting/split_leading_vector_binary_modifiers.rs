@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    FormattedVectorBinaryModifiers, split_leading_vector_group_modifier,
+    split_leading_vector_matching_modifier,
+};
 
 pub(crate) fn split_leading_vector_binary_modifiers(
     query: &str,

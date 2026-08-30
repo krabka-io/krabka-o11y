@@ -1,4 +1,4 @@
-use super::*;
+use super::{SharedRegistry, export};
 
 /// Build the `/metrics` router that serves the `OpenMetrics` text exposition of
 /// `registry`. `serve_admin` merges the pprof routes separately.

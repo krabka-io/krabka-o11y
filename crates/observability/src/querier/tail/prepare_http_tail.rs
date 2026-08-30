@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    CompactionFrontier, CompactionFrontierSource, HeaderMap, HttpQueryError,
+    LOKI_DEFAULT_TAIL_LIMIT, QuerierState, QueryParams, TailStream, active_log_delete_filters,
+    authorized_tenant, optional_start_end_range, parse_query, plan_stream_query,
+    validate_loki_tail_delay_for, validate_query_length_limit,
+};
 
 pub(crate) async fn prepare_http_tail(
     state: &QuerierState,

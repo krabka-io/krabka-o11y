@@ -1,4 +1,4 @@
-use super::*;
+use super::pattern_value_is_variable;
 
 /// Templatizes the variable whitespace-delimited tokens inside a free-text
 /// value, for example an embedded request id or timestamp in a `message`

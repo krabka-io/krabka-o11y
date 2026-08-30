@@ -1,4 +1,4 @@
-use super::*;
+use super::{ActiveLogDeleteFilter, MetricQuery};
 
 #[derive(Clone, Copy)]
 pub(crate) struct MetricWindow<'a> {

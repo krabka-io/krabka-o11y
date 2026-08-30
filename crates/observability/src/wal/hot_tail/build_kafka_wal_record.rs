@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Bytes, ProducerHeader, ProducerRecord, WalLogRecord, WalSinkError, series_fingerprint,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

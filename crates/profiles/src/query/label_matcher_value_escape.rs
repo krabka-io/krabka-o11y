@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn label_matcher_value_escape(value: &str) -> String {
     value
         .chars()

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ApiError, yaml_optional_string, parse_promql};
 
 pub(crate) fn validate_rule(rule: &serde_yaml::Value) -> Result<(), ApiError> {
     let has_record = yaml_optional_string(rule, "record").is_some();

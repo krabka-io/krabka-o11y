@@ -1,4 +1,4 @@
-use super::*;
+use super::ClientResourcePolicy;
 
 /// Parameters needed to connect a [`KafkaLogWalConsumer`] in the background.
 #[derive(Clone)]

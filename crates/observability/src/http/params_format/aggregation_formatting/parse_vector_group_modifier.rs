@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn parse_vector_group_modifier(query: &str, position: usize) -> Option<(String, usize)> {
     for modifier in ["group_left", "group_right"] {
         if let Some(rest) = query[position..].strip_prefix(modifier) {

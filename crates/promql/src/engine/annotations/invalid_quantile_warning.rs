@@ -1,4 +1,3 @@
-use super::*;
 
 /// Exact Prometheus `InvalidQuantileWarning` text for a bad phi.
 ///

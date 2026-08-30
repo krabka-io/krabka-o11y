@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum MatchValue {
     Str(String),

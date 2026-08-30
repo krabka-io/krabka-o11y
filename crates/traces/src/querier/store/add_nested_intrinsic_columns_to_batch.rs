@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, SpanMatcher, TraceqlError, COL_EVENT_NAME, COL_EVENT_TIME_SINCE_START, COL_LINK_TRACE_ID, COL_LINK_SPAN_ID, nested_attr_columns, Array, nested_intrinsic_rows, take, Field, DataType, Arc, Schema};
 
 pub(crate) fn add_nested_intrinsic_columns_to_batch(
     batch: &RecordBatch,

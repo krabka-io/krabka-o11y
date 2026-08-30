@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricsData, TranslationStrategy, DecodedSeries, OtlpError, DeltaAccumulator, decode_otlp_inner};
 
 /// Translates OTLP metrics into the common ingest representation.
 /// # Errors

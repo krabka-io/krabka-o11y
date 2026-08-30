@@ -1,3 +1,4 @@
+use futures_util::{StreamExt as _, TryStreamExt as _};
 use krabka_units::convert::StdDurationExt;
 
 use crate::{
@@ -15,12 +16,10 @@ use crate::{
     read_tenant_log_index_shards_from_object_store,
 };
 
-use futures_util::{StreamExt as _, TryStreamExt as _};
-
 // === split-modules: generated submodules ===
 mod build_querier_state;
 mod build_querier_state_with_object_store_prefix;
 mod querier_state;
 
 pub use build_querier_state::build_querier_state;
-pub (crate) use build_querier_state_with_object_store_prefix::build_querier_state_with_object_store_prefix;
+pub(crate) use build_querier_state_with_object_store_prefix::build_querier_state_with_object_store_prefix;

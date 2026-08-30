@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 #[derive(Default)]
 pub(crate) struct PrometheusRulesPage {

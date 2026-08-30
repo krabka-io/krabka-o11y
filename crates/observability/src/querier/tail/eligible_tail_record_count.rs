@@ -1,4 +1,4 @@
-use super::*;
+use super::{WalLogRecord, current_unix_time_ns};
 
 pub(crate) fn eligible_tail_record_count(records: &[WalLogRecord], delay_for: i64) -> usize {
     if delay_for <= 0 {

@@ -1,4 +1,4 @@
-use super::*;
+use super::ProfilesError;
 
 pub(crate) fn parse_unix_time_ms(value: &str) -> Result<i64, ProfilesError> {
     let value = value.trim();

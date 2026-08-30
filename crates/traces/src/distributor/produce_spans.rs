@@ -1,4 +1,4 @@
-use super::*;
+use super::{WalSink, Span, TracesError, SpanRecord};
 
 /// Append decoded spans to the WAL sink.
 ///

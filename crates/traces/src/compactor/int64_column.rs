@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, Int64Array, TracesError, Array};
 
 pub(crate) fn int64_column<'a>(batch: &'a RecordBatch, column: &str) -> Result<&'a Int64Array, TracesError> {
     batch

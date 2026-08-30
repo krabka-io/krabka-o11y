@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, ProfilesError};
 
 /// Resolves and validates the tenant from the `X-Scope-OrgID` header.
 ///

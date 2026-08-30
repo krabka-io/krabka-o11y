@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanMatcher, MatchScope};
 
 pub(crate) fn is_link_matcher(matcher: &SpanMatcher) -> bool {
     matcher.scope == MatchScope::Link

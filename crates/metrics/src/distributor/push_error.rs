@@ -1,4 +1,4 @@
-use super::*;
+use super::{LimitError, WireError, ClockWireError, OtlpError, ProduceError, IntoResponse, Response, StatusCode};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PushError {

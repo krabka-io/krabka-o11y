@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, SERVICE_NAME_DISCOVERY_LABELS};
 
 pub(crate) fn discover_service_name_label(labels: &mut Labels) {
     if labels.contains_key("service_name") {

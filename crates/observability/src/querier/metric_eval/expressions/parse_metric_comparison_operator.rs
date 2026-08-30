@@ -1,4 +1,4 @@
-use super::*;
+use super::ComparisonOp;
 
 pub(crate) fn parse_metric_comparison_operator(operator: &str) -> Option<ComparisonOp> {
     match operator {

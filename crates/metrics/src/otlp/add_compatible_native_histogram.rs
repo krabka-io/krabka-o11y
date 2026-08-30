@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, OtlpError, add_spanned_histogram_counts};
 
 pub(crate) fn add_compatible_native_histogram(
     metric_name: &str,

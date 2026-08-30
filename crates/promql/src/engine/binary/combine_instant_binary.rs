@@ -1,4 +1,4 @@
-use super::*;
+use super::{BinaryExpr, InstantValue, Result, QueryResult, SetOp, validate_set_modifier, PromqlError, eval_vector_set_binary, validate_binary_modifier, BinaryOp, ScalarSide, eval_vector_vector_binary};
 
 /// Combines two already-evaluated instant operands into the binary result.
 ///

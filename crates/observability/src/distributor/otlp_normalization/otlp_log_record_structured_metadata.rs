@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DistributorError, Labels, OtlpLogRecord, insert_metadata_if_absent, otlp_attributes_to_labels,
+    otlp_severity_number_to_string,
+};
 
 pub(crate) fn otlp_log_record_structured_metadata(
     log_record: &OtlpLogRecord,

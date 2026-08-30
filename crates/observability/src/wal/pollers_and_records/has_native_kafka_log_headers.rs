@@ -1,4 +1,4 @@
-use super::*;
+use super::KafkaWalHeader;
 
 pub(crate) fn has_native_kafka_log_headers(headers: &[KafkaWalHeader]) -> bool {
     headers.iter().any(|header| {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, WalLogRecord, measured_size};
 
 pub(crate) fn ingest_quota_bytes(records: &[WalLogRecord]) -> ByteSize {
     measured_size(

@@ -1,4 +1,7 @@
-use super::{StreamQuery, MetricQuery, MetricScalarArithmeticOp, MetricVectorMatching, ComparisonOp, MetricBinarySetOp, fmt, Quoted, arithmetic_text, format_matching, comparison_text, set_text};
+use super::{
+    ComparisonOp, MetricBinarySetOp, MetricQuery, MetricScalarArithmeticOp, MetricVectorMatching,
+    Quoted, StreamQuery, arithmetic_text, comparison_text, fmt, format_matching, set_text,
+};
 
 /// A recursively composable `LogQL` expression.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,7 +100,12 @@ impl LogqlExpr {
             _ => 7,
         }
     }
-    pub(crate) fn format_at(&self, f: &mut fmt::Formatter<'_>, parent: u8, right: bool) -> fmt::Result {
+    pub(crate) fn format_at(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        parent: u8,
+        right: bool,
+    ) -> fmt::Result {
         let precedence = self.precedence();
         let needs_parentheses = precedence < parent
             || (right

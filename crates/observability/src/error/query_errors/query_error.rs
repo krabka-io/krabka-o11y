@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, DataFusionError, Error, SeriesFingerprint};
 
 #[derive(Debug, Error)]
 pub enum QueryError {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchCmp, MatchValue, int_matches, present_value_matches};
 
 pub(crate) fn enum_int_matches(
     value: i64,

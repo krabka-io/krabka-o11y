@@ -1,4 +1,4 @@
-use super::*;
+use super::pb;
 
 pub(crate) fn resolve_service_name(rp: &pb::otlp_profiles::ResourceProfiles) -> String {
     use pb::opentelemetry::proto::common::v1::any_value::Value;

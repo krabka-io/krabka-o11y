@@ -1,4 +1,4 @@
-use super::*;
+use super::{IngestLimitError, LogIngestLimiter, WalLogRecord, async_trait};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AllowAllIngestLimiter;

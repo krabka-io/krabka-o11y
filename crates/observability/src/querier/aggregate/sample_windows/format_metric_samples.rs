@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    FormattedMetricSeries, MetricQuery, MetricSamples, aggregate_vector_samples,
+    format_metric_value, group_range_samples, range_sample_value, sort_formatted_vector_samples,
+};
 
 pub(crate) fn format_metric_samples(
     samples: MetricSamples,

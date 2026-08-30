@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, SpanMatcher, TraceqlError, is_link_matcher, Array, link_values, link_matcher_matches_absence, link_matcher_matches_link};
 
 pub(crate) fn nested_link_matchers_match(
     batch: &RecordBatch,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelReplaceExpression, parse_logql_string_argument, split_logql_function_arguments};
 
 pub(crate) fn parse_label_replace_expression(query: &str) -> Option<LabelReplaceExpression> {
     let arguments = split_logql_function_arguments(query, "label_replace")?;

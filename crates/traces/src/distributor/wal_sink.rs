@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanRecord, TracesError};
 
 /// Append one already-encoded logical span record to the traces WAL.
 #[async_trait::async_trait]

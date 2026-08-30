@@ -1,4 +1,4 @@
-use super::*;
+use super::OffsetDateTime;
 
 pub(crate) fn rfc3339_seconds(timestamp_ns: i64) -> String {
     let seconds = timestamp_ns.div_euclid(1_000_000_000);

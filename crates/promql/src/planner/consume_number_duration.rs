@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn consume_number_duration(chars: &[char], mut index: usize) -> usize {
     while index < chars.len() && (chars[index].is_ascii_digit() || chars[index] == '.') {

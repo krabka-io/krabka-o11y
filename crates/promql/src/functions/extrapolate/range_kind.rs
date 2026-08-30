@@ -1,4 +1,3 @@
-use super::*;
 
 /// The reset-correcting, windowed range functions evaluated over a full
 /// `(t-range, t]` window: `rate`, `increase`, and `delta`.

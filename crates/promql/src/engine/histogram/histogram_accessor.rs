@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, native_histogram_stdvar};
 
 #[derive(Clone, Copy)]
 pub(crate) enum HistogramAccessor {

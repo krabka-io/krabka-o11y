@@ -1,4 +1,4 @@
-use super::*;
+use super::HistogramCodecError;
 
 // cargo-mutants: error formatting is validated through required-column decode tests.
 #[cfg_attr(test, mutants::skip)]

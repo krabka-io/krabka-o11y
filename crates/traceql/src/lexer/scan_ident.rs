@@ -1,4 +1,4 @@
-use super::*;
+use super::is_ident_continue;
 
 pub(crate) fn scan_ident(s: &str, allow_dots: bool) -> (String, usize) {
     let mut end = 0;

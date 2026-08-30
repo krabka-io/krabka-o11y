@@ -1,4 +1,4 @@
-use super::*;
+use super::{parse_formatted_vector_function, parse_vector_binary_modifiers};
 
 pub(crate) fn format_vector_set_expression(query: &str) -> Option<String> {
     let (left, position) = parse_formatted_vector_function(query, 0)?;

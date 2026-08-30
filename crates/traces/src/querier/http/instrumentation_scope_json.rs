@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, AttrValue, Value, Map, attrs_json};
 
 pub(crate) fn instrumentation_scope_json(
     name: &str,

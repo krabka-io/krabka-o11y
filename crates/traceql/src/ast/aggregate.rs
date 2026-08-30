@@ -1,4 +1,4 @@
-use super::*;
+use super::Field;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Aggregate {

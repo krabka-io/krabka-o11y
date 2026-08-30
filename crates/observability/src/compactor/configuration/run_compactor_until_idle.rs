@@ -1,4 +1,11 @@
-use super::*;
+use super::{
+    BlockDescriptor, ObjectStore, ServiceConfig, ServiceConfigError, ServiceDependencies,
+    ServiceRuntimeError, TenantCompactionIndexCache, advance_and_persist_compaction_frontier,
+    build_compactor_configured_object_store, compactor_delete_requests_for_config,
+    compactor_object_store, effective_object_store_prefix, load_existing_compaction_frontier,
+    materialize_delete_requests_in_existing_local_manifest_blocks,
+    materialize_deletes_then_compact_next_kafka_wal_batch, validate_compactor_policy,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BlockStoreError, CompactionFrontierStoreError, Error, LogDeleteRequestStoreError,
+    LokiRuleStoreError, QuerierIndexSource,
+};
 
 #[derive(Debug, Error)]
 pub enum ServiceConfigError {

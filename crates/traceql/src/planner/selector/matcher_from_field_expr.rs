@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    FieldExpr, MatchCmp, MatchValue, SpanMatcher, match_cmp, match_scope, match_value, matcher_key,
+};
 
 pub(crate) fn matcher_from_field_expr(fe: &FieldExpr) -> Option<SpanMatcher> {
     match fe {

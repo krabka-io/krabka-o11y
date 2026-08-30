@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError, Value};
 
 pub(crate) fn arithmetic_type_error(op: &str, lhs: &Value, rhs: &Value) -> Result<Value> {
     Err(TraceqlError::Parse(format!(

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HttpQueryError, MetricScalarArithmetic, ParseError, Value,
+    apply_metric_scalar_arithmetic_to_series, parse_metric_sample_value,
+};
 
 pub(crate) fn apply_metric_scalar_arithmetic_to_loki_result(
     value: &mut Value,

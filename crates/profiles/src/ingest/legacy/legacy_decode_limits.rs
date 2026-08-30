@@ -1,4 +1,4 @@
-use super::*;
+use super::ByteSize;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LegacyDecodeLimits {

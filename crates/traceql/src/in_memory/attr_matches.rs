@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    AttrValue, MatchCmp, MatchValue, bool_matches, float_matches, int_matches,
+    present_value_matches, string_matches,
+};
 
 pub(crate) fn attr_matches(value: &AttrValue, op: MatchCmp, expected: &MatchValue) -> bool {
     if let Some(matches) = present_value_matches(op, expected) {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Pipeline, SpanMatcher, aggregate_projection_field, push_nested_projection_matcher};
 
 pub(crate) fn pipeline_nested_projection_matchers(pipeline: &[Pipeline]) -> Vec<SpanMatcher> {
     let mut out = Vec::new();

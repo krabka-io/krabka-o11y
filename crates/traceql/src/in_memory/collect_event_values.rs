@@ -1,6 +1,10 @@
 use super::*;
 
-pub(crate) fn collect_event_values(span: &InputSpan, tag: &str, values: &mut BTreeSet<(String, String)>) {
+pub(crate) fn collect_event_values(
+    span: &InputSpan,
+    tag: &str,
+    values: &mut BTreeSet<(String, String)>,
+) {
     for event in &span.events {
         match tag {
             "event:name" => {

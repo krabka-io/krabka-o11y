@@ -1,4 +1,4 @@
-use super::*;
+use super::{TokenType, InstantSample, Ordering, float_sample_value, T_TOPK, labels_key};
 
 /// Orders two samples for `topk`/`bottomk` selection.
 ///

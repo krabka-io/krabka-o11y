@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ObjectStore, QuerierState, ServiceConfig, ServiceConfigError,
+    build_querier_state_with_object_store_prefix,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

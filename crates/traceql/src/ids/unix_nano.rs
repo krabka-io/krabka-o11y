@@ -1,4 +1,4 @@
-use super::*;
+use super::{Display, From, Into};
 
 /// An *instant*: an absolute timestamp in Unix epoch nanoseconds.
 ///

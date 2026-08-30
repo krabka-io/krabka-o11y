@@ -1,6 +1,11 @@
-use super::{TemplateAssignment, ParseError, is_template_control_assignment_variable_char, parse_template_variable_name, TemplateExpression};
+use super::{
+    ParseError, TemplateAssignment, TemplateExpression,
+    is_template_control_assignment_variable_char, parse_template_variable_name,
+};
 
-pub(crate) fn parse_template_assignment(expression: &str) -> Result<Option<TemplateAssignment>, ParseError> {
+pub(crate) fn parse_template_assignment(
+    expression: &str,
+) -> Result<Option<TemplateAssignment>, ParseError> {
     if !expression.trim_start().starts_with('$') {
         return Ok(None);
     }

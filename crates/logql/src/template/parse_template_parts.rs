@@ -1,4 +1,9 @@
-use super::{TemplatePart, ParseError, template_action_trim_left, parse_template_action, parse_template_conditional, parse_template_range, parse_template_with, is_template_comment_action, parse_template_assignment, is_unexpected_template_control_action, template_parse_error, TemplateExpression};
+use super::{
+    ParseError, TemplateExpression, TemplatePart, is_template_comment_action,
+    is_unexpected_template_control_action, parse_template_action, parse_template_assignment,
+    parse_template_conditional, parse_template_range, parse_template_with,
+    template_action_trim_left, template_parse_error,
+};
 
 pub(crate) fn parse_template_parts(template: &str) -> Result<Vec<TemplatePart>, ParseError> {
     let mut parts = Vec::new();

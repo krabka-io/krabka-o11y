@@ -1,4 +1,4 @@
-use super::*;
+use super::{OtlpExemplar, DecodedExemplar, otlp_exemplar, ToPrimitive, Labels, insert_attributes, bytes_to_hex, nanos_to_millis};
 
 pub(crate) fn exemplar(exemplar: &OtlpExemplar) -> Option<DecodedExemplar> {
     let value = match exemplar.value {

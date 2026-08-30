@@ -1,4 +1,4 @@
-use super::*;
+use super::WalLogRecord;
 
 pub(crate) fn wal_compaction_chunks(records: Vec<WalLogRecord>) -> Vec<Vec<WalLogRecord>> {
     let mut chunks: Vec<Vec<WalLogRecord>> = Vec::new();

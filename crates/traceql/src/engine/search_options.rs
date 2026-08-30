@@ -1,4 +1,4 @@
-use super::*;
+use super::ScanOptions;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SearchOptions {

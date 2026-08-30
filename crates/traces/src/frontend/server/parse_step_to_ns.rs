@@ -1,4 +1,4 @@
-use super::*;
+use super::{parse_seconds_to_ns, parse_go_duration_ns};
 
 /// `step` may be bare epoch-seconds OR a Go-duration such as `30s`, `5m` or
 /// `100ms`. Grafana's Tempo datasource sends the duration form.

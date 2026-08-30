@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, Deserialize, Serialize, bytes, default_max_label_name, label_byte_limit};
 
 /// Per-tenant ingest limits for structural validation.
 ///

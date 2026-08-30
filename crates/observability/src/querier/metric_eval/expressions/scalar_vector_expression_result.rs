@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, VectorScalarExpressionParser};
 
 #[derive(Clone)]
 pub(crate) enum ScalarVectorExpressionResult {

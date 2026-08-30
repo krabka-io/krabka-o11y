@@ -1,6 +1,9 @@
-use super::*;
+use super::{Case, CaseResult, InMemorySpanStore, TraceqlEngine};
 
-pub(crate) async fn run_metrics_case(engine: &TraceqlEngine<InMemorySpanStore>, case: Case) -> CaseResult {
+pub(crate) async fn run_metrics_case(
+    engine: &TraceqlEngine<InMemorySpanStore>,
+    case: Case,
+) -> CaseResult {
     let mut result = CaseResult {
         name: case.name,
         passed: false,

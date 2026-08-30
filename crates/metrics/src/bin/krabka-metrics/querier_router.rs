@@ -1,4 +1,4 @@
-use super::*;
+use super::{Router, get, querier_build_info};
 
 pub(crate) fn querier_router() -> Router {
     Router::new()

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfileError, ProfileStore, QuerierState};
 
 #[derive(Clone, Copy)]
 pub(crate) struct MetadataRange {

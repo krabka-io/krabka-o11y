@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Case {
     pub(crate) name: String,

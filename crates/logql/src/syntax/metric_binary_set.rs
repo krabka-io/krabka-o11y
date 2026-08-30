@@ -1,4 +1,4 @@
-use super::{MetricQuery, MetricBinarySetOp, MetricVectorMatching};
+use super::{MetricBinarySetOp, MetricQuery, MetricVectorMatching};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricBinarySet {

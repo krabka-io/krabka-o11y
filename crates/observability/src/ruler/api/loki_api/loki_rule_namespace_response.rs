@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, LokiRuleNamespaces};
 
 pub(crate) fn loki_rule_namespace_response(
     namespaces: &LokiRuleNamespaces,

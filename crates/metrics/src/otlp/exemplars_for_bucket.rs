@@ -1,4 +1,4 @@
-use super::*;
+use super::{DecodedExemplar, HistogramDataPoint, exemplar_belongs_to_bucket};
 
 pub(crate) fn exemplars_for_bucket(
     exemplars: &[DecodedExemplar],

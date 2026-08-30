@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn parse_vector_comparison_operator(
     query: &str,
     position: usize,

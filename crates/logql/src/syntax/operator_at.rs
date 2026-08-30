@@ -1,4 +1,7 @@
-use super::{ExprOperator, is_ident_char, MetricBinarySetOp, ComparisonOp, sign_is_unary_or_exponent, MetricScalarArithmeticOp};
+use super::{
+    ComparisonOp, ExprOperator, MetricBinarySetOp, MetricScalarArithmeticOp, is_ident_char,
+    sign_is_unary_or_exponent,
+};
 
 pub(crate) fn operator_at(input: &str, at: usize) -> Option<(usize, ExprOperator, u8)> {
     let rest = &input[at..];

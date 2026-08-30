@@ -158,8 +158,8 @@ mod tests {
 // === split-modules: generated submodules ===
 mod default_max_query_length;
 mod limit_error;
-mod limits;
+mod limits_type;
 
 pub use default_max_query_length::DEFAULT_MAX_QUERY_LENGTH;
 pub use limit_error::LimitError;
-pub use limits::Limits;
+pub use limits_type::Limits;

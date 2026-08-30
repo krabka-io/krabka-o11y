@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Line, Result, parse_error, parse_float};
 
 pub(crate) fn parse_optional_histogram_buckets(
     fields: &BTreeMap<&str, &str>,

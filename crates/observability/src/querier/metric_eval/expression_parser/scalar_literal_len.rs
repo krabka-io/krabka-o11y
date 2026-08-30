@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn scalar_literal_len(input: &str) -> Option<usize> {
     let bytes = input.as_bytes();
     let mut position = 0;

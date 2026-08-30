@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError, parse_duration_component_nanos};
 
 pub(crate) fn parse_duration_nanos(s: &str) -> Result<i64> {
     if s.is_empty() {

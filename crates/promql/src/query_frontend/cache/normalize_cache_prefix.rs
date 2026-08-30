@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn normalize_cache_prefix(prefix: &str) -> String {
     let trimmed = prefix.trim_matches('/');

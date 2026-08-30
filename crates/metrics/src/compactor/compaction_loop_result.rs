@@ -1,4 +1,4 @@
-use super::*;
+use super::CompactionPartitionOffset;
 
 /// Summary returned after a compactor loop exits.
 #[derive(Clone, Debug, Default, PartialEq)]

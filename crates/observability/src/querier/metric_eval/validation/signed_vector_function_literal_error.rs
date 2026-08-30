@@ -1,4 +1,4 @@
-use super::*;
+use super::could_be_scalar_vector_expression;
 
 pub(crate) fn signed_vector_function_literal_error(query: &str) -> Option<String> {
     if !could_be_scalar_vector_expression(query) {

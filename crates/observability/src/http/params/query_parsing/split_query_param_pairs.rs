@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn split_query_param_pairs<'a>(raw_query: &'a str, known_keys: &[&str]) -> Vec<&'a str> {
     let mut pairs = Vec::new();
     let mut pair_start = 0;

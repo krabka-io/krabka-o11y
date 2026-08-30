@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, Consumer, Args, TRACES_WAL_TOPIC, AutoOffsetReset};
 
 pub(crate) async fn wal_consumer(
     bootstrap: String,

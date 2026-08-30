@@ -1,4 +1,4 @@
-use super::*;
+use super::{loki_yaml_mapping, yaml_string_field};
 
 pub(crate) fn validate_loki_rule(rule: &serde_yaml::Value) -> Result<(), ()> {
     let fields = loki_yaml_mapping(rule).ok_or(())?;

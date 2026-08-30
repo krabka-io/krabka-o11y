@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, BTreeMap, Int64Array, LabelIndex, MapArray, MetricQuery, MetricSamples,
+    MetricWindow, QueryError, QueryRow, StreamPlan, StringArray, UInt64Array,
+    append_matching_metric_row, structured_metadata_value,
+};
 
 pub(crate) fn metric_samples_from_batches(
     batches: &[datafusion::arrow::record_batch::RecordBatch],

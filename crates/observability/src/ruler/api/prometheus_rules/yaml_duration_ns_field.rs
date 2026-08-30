@@ -1,4 +1,4 @@
-use super::*;
+use super::{parse_prometheus_duration, yaml_string_field};
 
 pub(crate) fn yaml_duration_ns_field(
     fields: &serde_yaml::Mapping,

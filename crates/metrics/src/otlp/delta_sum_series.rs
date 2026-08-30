@@ -1,4 +1,4 @@
-use super::*;
+use super::{NumberDataPoint, KeyValue, DeltaAccumulator, DecodedMetadata, DecodedSeries, OtlpError, number_value, labels, DecodedSample, nanos_to_millis, exemplars_from_number_point};
 
 pub(crate) fn delta_sum_series(
     name: &str,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ComparisonOp, MatchCmp};
 
 pub(crate) fn match_cmp(op: ComparisonOp) -> MatchCmp {
     match op {

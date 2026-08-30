@@ -1,6 +1,9 @@
-use super::*;
+use super::{ProfileError, parse_label_selector};
 
-pub(crate) fn merge_label_matcher(label_selector: &str, matcher: &str) -> Result<String, ProfileError> {
+pub(crate) fn merge_label_matcher(
+    label_selector: &str,
+    matcher: &str,
+) -> Result<String, ProfileError> {
     let trimmed = label_selector.trim();
     let merged = if trimmed.is_empty() || trimmed == "{}" {
         format!("{{{matcher}}}")

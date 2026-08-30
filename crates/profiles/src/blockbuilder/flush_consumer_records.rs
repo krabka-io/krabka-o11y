@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BlockMeta, ConsumerRecord, ObjectStore, ProfileIndex, ProfilesError,
+    flush_consumer_records_with_index,
+};
 
 ///
 /// # Errors

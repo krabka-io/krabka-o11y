@@ -1,4 +1,7 @@
-use super::{TemplateWith, ParseError, TemplateControlExpression, find_template_control_action, template_parse_error, parse_template_parts, TemplatePart};
+use super::{
+    ParseError, TemplateControlExpression, TemplatePart, TemplateWith,
+    find_template_control_action, parse_template_parts, template_parse_error,
+};
 
 pub(crate) fn parse_template_with(
     template: &str,

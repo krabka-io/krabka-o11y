@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, AttrValue, EngineOpts, InMemorySpanStore, TraceqlEngine, span};
 
 pub(crate) fn engine() -> TraceqlEngine<InMemorySpanStore> {
     let mut store = InMemorySpanStore::new();

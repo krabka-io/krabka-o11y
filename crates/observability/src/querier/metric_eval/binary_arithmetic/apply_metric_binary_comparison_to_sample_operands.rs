@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ComparisonOp, Value, json, metric_binary_sample_timestamps_match,
+    metric_scalar_comparison_matches, parse_metric_sample_value,
+};
 
 pub(crate) fn apply_metric_binary_comparison_to_sample_operands(
     output_sample: &mut Value,

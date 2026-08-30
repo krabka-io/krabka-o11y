@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockDescriptor, Value};
 
 pub(crate) struct ObjectStoreStreamScan {
     pub(crate) value: Value,

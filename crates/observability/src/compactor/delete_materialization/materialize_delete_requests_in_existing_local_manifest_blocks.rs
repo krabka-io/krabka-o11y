@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    BlockIndex, BlockStoreError, CompactorRunError, ErrorKind, FsPath, LabelIndex,
+    SharedLogDeleteRequests, active_log_delete_filters_from_requests, active_log_delete_tenants,
+    insert_descriptor_labels, is_deleted_log_entry, read_log_block, read_log_index_manifest,
+    write_log_block, write_log_index_manifest,
+};
 
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn materialize_delete_requests_in_existing_local_manifest_blocks(

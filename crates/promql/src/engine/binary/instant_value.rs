@@ -1,4 +1,4 @@
-use super::*;
+use super::InstantSample;
 
 pub(crate) enum InstantValue {
     Scalar(f64),

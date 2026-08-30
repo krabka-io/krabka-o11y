@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfilesError, attribute_label, intern_string, pb};
 
 pub(crate) fn sample_labels(
     sample: &pb::otlp_profiles::Sample,

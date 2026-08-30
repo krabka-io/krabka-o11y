@@ -1,4 +1,3 @@
-
 use std::{
     net::SocketAddr,
     path::Path,
@@ -881,7 +880,9 @@ mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
 mod target;
 
-# [cfg (all (unix , feature = "heap-profiling"))] use alloc::ALLOC;
+#[cfg(all(unix, feature = "heap-profiling"))]
+use alloc::ALLOC;
+
 use build_object_store::build_object_store;
 use cli::Cli;
 use client_resource_policy::client_resource_policy;

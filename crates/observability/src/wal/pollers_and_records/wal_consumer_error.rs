@@ -1,4 +1,4 @@
-use super::*;
+use super::{ConsumerError, Error};
 
 #[derive(Debug, Error)]
 pub enum WalConsumerError {

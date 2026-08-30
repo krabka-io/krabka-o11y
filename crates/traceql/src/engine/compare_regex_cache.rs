@@ -1,4 +1,4 @@
-use super::*;
+use super::HashMap;
 
 /// Per-query cache of compiled selection regexes, keyed by the raw pattern.
 ///

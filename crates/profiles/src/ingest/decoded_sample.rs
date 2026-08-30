@@ -1,5 +1,3 @@
-use super::*;
-
 /// One sample's raw payload, still unsymbolized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedSample {

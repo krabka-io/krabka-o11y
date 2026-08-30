@@ -1,4 +1,7 @@
-use super::{Regex, ParseError, regexp_parse_error, Labels, insert_regexp_parser_error, insert_extracted_field};
+use super::{
+    Labels, ParseError, Regex, insert_extracted_field, insert_regexp_parser_error,
+    regexp_parse_error,
+};
 
 #[derive(Clone, Debug)]
 pub struct RegexpParser {

@@ -1,3 +1,3 @@
-use super::*;
+use super::InMemoryProfileStore;
 
 pub type DefaultStore = InMemoryProfileStore;

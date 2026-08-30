@@ -1,4 +1,4 @@
-use super::*;
+use super::{QueryShard, FrontendRangeQuery, TimeExt};
 
 /// The identity of one cached sub-range result.
 ///

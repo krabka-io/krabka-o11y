@@ -1,4 +1,4 @@
-use super::*;
+use super::{ComparisonOp, Value, num_cmp};
 
 pub(crate) fn enum_cmp(
     value: i32,

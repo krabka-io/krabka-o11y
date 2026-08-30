@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) fn detected_json_value_string(value: &Value) -> Option<String> {
     match value {

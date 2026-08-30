@@ -1,4 +1,4 @@
-use super::*;
+use super::{Serialize, Deserialize, ResourceSpansJson};
 
 /// The `trace` envelope: the OTLP `resourceSpans` array.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

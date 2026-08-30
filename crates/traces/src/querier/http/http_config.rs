@@ -1,4 +1,4 @@
-use super::*;
+use super::{Limits, OverridesProvider};
 
 #[derive(Clone, Debug)]
 pub struct HttpConfig {

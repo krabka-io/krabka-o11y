@@ -1,4 +1,4 @@
-use super::*;
+use super::StructuralOp;
 
 pub(crate) fn structural_base_op(op: StructuralOp) -> StructuralOp {
     match op {

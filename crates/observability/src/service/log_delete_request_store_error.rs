@@ -1,4 +1,4 @@
-use super::*;
+use super::{Error, PathBuf};
 
 #[derive(Debug, Error)]
 pub enum LogDeleteRequestStoreError {

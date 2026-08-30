@@ -1,4 +1,4 @@
-use super::*;
+use super::{ServiceConfig, ServiceConfigError};
 
 pub(crate) fn validate_distributor_policy(
     config: &ServiceConfig,

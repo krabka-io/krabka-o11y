@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn split_logql_function_arguments<'a>(
     query: &'a str,
     name: &str,

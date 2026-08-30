@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels};
 
 pub(crate) fn count_stream_map_lines(
     streams: &BTreeMap<Labels, Vec<[String; 2]>>,

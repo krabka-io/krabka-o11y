@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanAttr, AttrValue, block_attr_value, same_block_attr_type, extend_block_attr_value};
 
 pub(crate) fn push_span_attr(attrs: &mut Vec<SpanAttr>, key: String, value: &AttrValue) {
     let value = block_attr_value(value);

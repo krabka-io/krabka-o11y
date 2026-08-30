@@ -1,4 +1,4 @@
-use super::*;
+use super::{RangeQueryExecutor, RangeQueryCache, FrontendRangeQuery, QueryResult, PromqlError};
 
 pub(crate) async fn execute_single_range_query<E, C>(
     executor: &E,

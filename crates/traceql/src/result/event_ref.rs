@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, Time};
 
 /// One span event attached to a returned span.
 #[derive(Clone, Debug, PartialEq)]

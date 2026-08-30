@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, AttrValue, TraceqlError, BTreeSet, ATTR_PREFIX, Array, DataType, string_array_value, int64_array_value, float64_array_value, bool_array_value, block_attr_values};
 
 pub(crate) fn attr_values_with_resource(
     batch: &RecordBatch,

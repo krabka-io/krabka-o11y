@@ -1,4 +1,3 @@
-
 pub(crate) fn format_template_integer_binary(
     args: &[String],
     op: impl FnOnce(i64, i64) -> Option<i64>,

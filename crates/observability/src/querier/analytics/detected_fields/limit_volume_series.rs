@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels};
 
 pub(crate) fn limit_volume_series(
     volumes: BTreeMap<Labels, BTreeMap<i64, u64>>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{OtlpAnyValue, Value};
 
 pub(crate) fn otlp_value_to_json(value: &OtlpAnyValue) -> Value {
     match value {

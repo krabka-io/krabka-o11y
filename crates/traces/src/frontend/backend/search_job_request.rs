@@ -1,4 +1,4 @@
-use super::*;
+use super::JobShard;
 
 /// A single search job: a `TraceQL` search over a window, restricted to one
 /// shard. That shard is the live hot tier, or one cold block narrowed to a

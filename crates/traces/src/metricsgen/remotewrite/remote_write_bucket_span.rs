@@ -1,4 +1,3 @@
-use super::*;
 
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct RemoteWriteBucketSpan {

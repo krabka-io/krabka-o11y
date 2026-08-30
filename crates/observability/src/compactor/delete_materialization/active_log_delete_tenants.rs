@@ -1,4 +1,4 @@
-use super::*;
+use super::{ActiveLogDeleteFilterError, BTreeSet, SharedLogDeleteRequests};
 
 pub(crate) fn active_log_delete_tenants(
     delete_requests: &SharedLogDeleteRequests,

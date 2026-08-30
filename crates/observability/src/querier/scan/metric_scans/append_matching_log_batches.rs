@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, BTreeMap, Int64Array, LabelIndex, Labels, MapArray, QueryError,
+    QueryRow, RecordBatch, StreamPlan, StringArray, UInt64Array, append_matching_log_row,
+    structured_metadata_value,
+};
 
 pub(crate) fn append_matching_log_batches(
     streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,

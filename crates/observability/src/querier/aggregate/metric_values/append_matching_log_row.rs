@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, QueryError, QueryRow, StreamPlan,
+    is_deleted_log_entry, matching_loki_stream_entry,
+};
 
 pub(crate) fn append_matching_log_row(
     streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,

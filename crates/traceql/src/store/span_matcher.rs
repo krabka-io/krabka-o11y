@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchCmp, MatchScope, MatchValue};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpanMatcher {

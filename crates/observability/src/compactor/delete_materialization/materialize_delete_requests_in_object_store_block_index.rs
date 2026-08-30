@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BTreeMap, BlockDescriptor, BlockIndex, CompactorRunError, LabelIndex, ObjectPath, ObjectStore,
+    SharedLogDeleteRequests, active_log_delete_filters_from_requests, insert_descriptor_labels,
+    is_deleted_log_entry, read_log_block_from_object_store, write_log_block_to_object_store,
+};
 
 #[cfg_attr(test, mutants::skip)]
 pub(crate) async fn materialize_delete_requests_in_object_store_block_index(

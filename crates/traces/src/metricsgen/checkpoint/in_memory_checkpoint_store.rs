@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, Mutex, BTreeMap, StoreKey, EdgeCheckpointStore};
 
 #[derive(Clone, Default)]
 pub struct InMemoryCheckpointStore {

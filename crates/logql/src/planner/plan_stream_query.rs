@@ -1,4 +1,6 @@
-use super::{TimeRange, StreamQuery, LabelIndex, BlockIndex, StreamPlan, PlanError, Empty, label_predicate};
+use super::{
+    BlockIndex, Empty, LabelIndex, PlanError, StreamPlan, StreamQuery, TimeRange, label_predicate,
+};
 
 #[tracing::instrument(
     level = "info",

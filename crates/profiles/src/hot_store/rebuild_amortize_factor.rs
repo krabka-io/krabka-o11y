@@ -1,5 +1,3 @@
-use super::*;
-
 /// Rebuild the queryable store only once evictions reach `1 / FACTOR` of the
 /// retained window.
 ///

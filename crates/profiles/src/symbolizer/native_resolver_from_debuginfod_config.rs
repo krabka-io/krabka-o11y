@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    AddressFallbackResolver, Arc, ChainedResolver, DebuginfodConfig, DebuginfodResolver,
+    FileSystemResolver, NativeResolver,
+};
 
 /// Build the native resolver chain with explicit debuginfod resource policy.
 ///

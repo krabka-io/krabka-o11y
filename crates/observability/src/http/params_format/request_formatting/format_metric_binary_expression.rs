@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricVectorMatching, format_metric_vector_matching};
 
 pub(crate) fn format_metric_binary_expression(
     left: &str,

@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap,
+    ProfileStore, QuerierState, SeriesAgg, connect_error, label_pairs, limit, pb,
+    stack_trace_call_sites, step_from_secs, tenant_from_headers,
+};
 
 pub(crate) async fn select_series_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,

@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, BlockIndex, ConfiguredObjectStore, LabelIndex, QuerierIndexSource, QuerierState,
+    ServiceConfig, ServiceConfigError, build_querier_state_with_object_store_prefix,
+    querier_object_store_prefix,
+};
 
 pub(crate) async fn build_configured_querier_state(
     config: &ServiceConfig,

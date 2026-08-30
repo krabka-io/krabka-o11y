@@ -69,7 +69,9 @@ pub(crate) fn a_tail_frame_limit_is_spent_across_streams_in_order() {
 
     // Emptiness is about the streams array, not the values in it.
     check!(super::super::prelude::tail_frame_is_empty(&frame(&[])));
-    check!(super::super::prelude::tail_frame_is_empty(&serde_json::json!({})));
+    check!(super::super::prelude::tail_frame_is_empty(
+        &serde_json::json!({})
+    ));
     check!(
         !super::super::prelude::tail_frame_is_empty(&frame(&[0])),
         "a stream carrying no values is still a stream"

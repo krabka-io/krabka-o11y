@@ -21,12 +21,6 @@ mod service_readiness_requires_wal_and_authorization;
 mod sorting_a_loki_vector_result_orders_only_a_vector;
 mod unavailable_query_authorizer_fails_closed;
 
-pub (crate) use brute_force_in_range::brute_force_in_range;
-pub (crate) use compactor_configured_object_store_builds_when_not_injected::compactor_configured_object_store_builds_when_not_injected;
-pub (crate) use hot_tail_test_record::hot_tail_test_record;
-pub (crate) use ingest_tenant_reads_header_or_falls_back::ingest_tenant_reads_header_or_falls_back;
-pub (crate) use normalize_otlp_http_logs_decodes_gzip_identically_to_identity::normalize_otlp_http_logs_decodes_gzip_identically_to_identity;
-pub (crate) use recording_object_store::RecordingObjectStore;
-pub (crate) use service_readiness_requires_wal_and_authorization::service_readiness_requires_wal_and_authorization;
-pub (crate) use sorting_a_loki_vector_result_orders_only_a_vector::sorting_a_loki_vector_result_orders_only_a_vector;
-pub (crate) use unavailable_query_authorizer_fails_closed::unavailable_query_authorizer_fails_closed;
+pub(crate) use brute_force_in_range::brute_force_in_range;
+pub(crate) use hot_tail_test_record::hot_tail_test_record;
+pub(crate) use recording_object_store::RecordingObjectStore;

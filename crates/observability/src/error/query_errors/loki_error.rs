@@ -1,4 +1,4 @@
-use super::*;
+use super::{Response, StatusCode, json, json_response};
 
 pub(crate) fn loki_error(status: StatusCode, error_type: &'static str, error: &str) -> Response {
     let value = json!({

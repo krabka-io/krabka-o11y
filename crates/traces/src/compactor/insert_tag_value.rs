@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, BTreeMap};
 
 pub(crate) fn insert_tag_value(
     tag_names: &mut BTreeSet<String>,

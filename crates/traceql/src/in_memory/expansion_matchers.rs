@@ -1,4 +1,4 @@
-use super::*;
+use super::SpanMatcher;
 
 pub(crate) fn expansion_matchers(
     matchers: &[SpanMatcher],

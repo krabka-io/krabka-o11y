@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanRef, OtlpScopeSpans, InstrumentationGroups, instrumentation_attributes, InstrumentationScope, otlp_attrs, otlp_span};
 
 pub(crate) fn otlp_scope_spans(trace_id: [u8; 16], input_spans: Vec<&SpanRef>) -> Vec<OtlpScopeSpans> {
     let mut groups: InstrumentationGroups<'_> = Vec::new();

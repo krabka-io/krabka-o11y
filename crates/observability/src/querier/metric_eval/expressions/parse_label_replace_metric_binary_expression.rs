@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    LabelReplaceMetricBinaryExpression, parse_label_replace_expression,
+    parse_leading_metric_vector_matching_modifier, parse_metric_arithmetic_operator,
+    parse_metric_comparison_operator, parse_metric_set_operator, split_top_level_arithmetic_query,
+    split_top_level_comparison_query, split_top_level_set_query,
+};
 
 pub(crate) fn parse_label_replace_metric_binary_expression(
     query: &str,

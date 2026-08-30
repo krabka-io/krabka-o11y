@@ -1,4 +1,4 @@
-use super::*;
+use super::is_loki_label_name_char;
 
 pub(crate) fn is_loki_label_name(name: &str) -> bool {
     let mut chars = name.chars();

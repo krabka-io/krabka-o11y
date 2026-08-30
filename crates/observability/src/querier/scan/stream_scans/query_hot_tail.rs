@@ -1,4 +1,4 @@
-use super::*;
+use super::{ActiveLogDeleteFilter, CompactionFrontier, WalLogRecord};
 
 #[derive(Clone, Copy)]
 pub(crate) struct QueryHotTail<'a> {

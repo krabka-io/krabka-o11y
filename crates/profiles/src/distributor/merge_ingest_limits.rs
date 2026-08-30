@@ -1,4 +1,4 @@
-use super::*;
+use super::{Limits, positive_or};
 
 pub(crate) fn merge_ingest_limits(
     base: &crate::ingest::TenantLimits,

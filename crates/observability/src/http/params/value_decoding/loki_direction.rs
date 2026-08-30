@@ -1,4 +1,4 @@
-use super::*;
+use super::HttpQueryError;
 
 #[derive(Clone, Copy)]
 pub(crate) enum LokiDirection {

@@ -1,4 +1,3 @@
-use super::*;
 
 /// Which extremum a [`PromExtremumAccumulator`] tracks.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

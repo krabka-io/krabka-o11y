@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, Response, StatusCode};
 
 pub(crate) fn ruler_status_page() -> Response {
     (

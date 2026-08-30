@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeSet, BlockStoreError, ErrorKind, HttpQueryError, QuerierState, SeriesFingerprint,
+    TimeRange, read_log_block, read_log_block_from_object_store,
+};
 
 pub(crate) async fn metadata_fingerprints_in_time_range(
     state: &QuerierState,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{SeriesFingerprint, Labels, NativeHistogram};
 
 #[derive(Clone)]
 pub(crate) struct HistRow {

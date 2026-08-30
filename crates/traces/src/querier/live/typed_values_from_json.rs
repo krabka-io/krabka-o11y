@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TypedValue, TraceqlError};
 
 pub(crate) fn typed_values_from_json(json: &serde_json::Value) -> Result<Vec<TypedValue>> {
     let values = json

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Aggregate, Field, Pipeline, RankFilter};
 
 pub(crate) fn grouped_rank_pipeline_parts(
     pipeline: &[Pipeline],

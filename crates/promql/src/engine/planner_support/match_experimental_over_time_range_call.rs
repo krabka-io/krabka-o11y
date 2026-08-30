@@ -1,4 +1,4 @@
-use super::*;
+use super::{Expr, MatrixSelector, OverTimeFn};
 
 /// Matches a top-level EXPERIMENTAL `*_over_time` member range call.
 ///

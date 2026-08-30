@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, CompactionPartitionOffset, CompactionCommitError};
 
 /// Commits compacted WAL offsets after block and index writes are durable.
 #[async_trait]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{HaElectionConsumerPoll, HaElectionConsumerCommit, HaTracker, Time, HaElectionReplayResult, HaElectionConsumerError, HaElectionConsumerRecord, PartitionIndex, Offset, replay_ha_election_records};
 
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.

@@ -1,4 +1,4 @@
-use super::*;
+use super::pb;
 
 pub(crate) fn value_type(value: pb::otlp_profiles::ValueType) -> krabka_pprof::proto::ValueType {
     krabka_pprof::proto::ValueType {

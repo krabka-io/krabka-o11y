@@ -1,4 +1,4 @@
-use super::*;
+use super::{COMPACTION_FRONTIER_MANIFEST_RELATIVE_PATH, ObjectPath};
 
 pub(crate) fn compaction_frontier_manifest_object_path(prefix: &ObjectPath) -> ObjectPath {
     COMPACTION_FRONTIER_MANIFEST_RELATIVE_PATH

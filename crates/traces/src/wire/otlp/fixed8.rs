@@ -1,4 +1,4 @@
-use super::*;
+use super::WireError;
 
 pub(crate) fn fixed8(bytes: &[u8], field: &str) -> Result<[u8; 8], WireError> {
     bytes

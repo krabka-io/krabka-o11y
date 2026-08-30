@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError};
 
 pub(crate) fn scan_string(s: &str) -> Result<(String, usize)> {
     let mut out = String::new();

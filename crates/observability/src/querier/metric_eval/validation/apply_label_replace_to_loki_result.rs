@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, ParseError, Regex, Value, json};
 
 pub(crate) fn apply_label_replace_to_loki_result(
     value: &mut Value,

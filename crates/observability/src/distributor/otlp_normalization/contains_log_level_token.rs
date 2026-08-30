@@ -1,4 +1,4 @@
-use super::*;
+use super::is_log_level_word_byte;
 
 pub(crate) fn contains_log_level_token(line: &str, level: &str) -> bool {
     line.match_indices(level).any(|(start, _)| {

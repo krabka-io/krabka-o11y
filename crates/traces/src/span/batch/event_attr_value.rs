@@ -1,4 +1,4 @@
-use super::*;
+use super::AttrValue;
 
 pub(crate) fn event_attr_value(value: &AttrValue) -> String {
     match value {

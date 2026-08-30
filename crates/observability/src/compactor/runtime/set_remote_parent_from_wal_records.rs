@@ -1,4 +1,4 @@
-use super::*;
+use super::KafkaWalRecord;
 
 /// Re-parents `span` into the trace carried by the first record whose headers
 /// include a `traceparent`.

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, COMPACTION_FRONTIER_MANIFEST_VERSION, CompactionFrontier, Deserialize, Offset,
+    PartitionIndex, Serialize,
+};
 
 #[derive(Deserialize, Serialize)]
 pub(crate) struct CompactionFrontierManifest {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{pb, DecodedClockReading, ClockWireError, UnixNanos, is_too_far_in_the_future, source_kind, sync_state, gnss_fix, ClockSourceKind, NtpReading, PtpReading, TimexReading, GnssReading};
 
 pub(crate) fn decode_reading(
     index: usize,

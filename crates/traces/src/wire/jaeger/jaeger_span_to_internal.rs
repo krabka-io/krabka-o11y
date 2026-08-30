@@ -1,4 +1,4 @@
-use super::*;
+use super::{JaegerSpan, JaegerProcess, Span, KeyValue, AttrValue, i64_bytes, LinkRecord, trace_id, TraceIdHigh, TraceIdLow, ref_type_name, span_kind, span_status, span_logs_to_events};
 
 pub(crate) fn jaeger_span_to_internal(span: &JaegerSpan, process: &JaegerProcess) -> Span {
     let mut resource_attrs = process.tags.clone();

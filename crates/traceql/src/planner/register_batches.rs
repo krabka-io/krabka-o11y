@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, MemTable, RecordBatch, Result, SessionContext};
 
 pub(crate) fn register_batches(
     ctx: &SessionContext,

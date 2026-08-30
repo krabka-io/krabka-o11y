@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, hours};
 
 /// Pyroscope's default `max_query_length` (`721h`).
 ///

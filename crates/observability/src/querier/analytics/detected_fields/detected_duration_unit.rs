@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn detected_duration_unit(unit: &str) -> Option<(u8, u16)> {
     match unit {
         "y" => Some((0, 1 << 0)),

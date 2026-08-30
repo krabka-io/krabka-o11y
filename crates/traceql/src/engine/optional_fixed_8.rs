@@ -1,6 +1,10 @@
-use super::*;
+use super::{Array, AsArray, RecordBatch, Result, TraceqlError};
 
-pub(crate) fn optional_fixed_8(batch: &RecordBatch, col: &str, row: usize) -> Result<Option<[u8; 8]>> {
+pub(crate) fn optional_fixed_8(
+    batch: &RecordBatch,
+    col: &str,
+    row: usize,
+) -> Result<Option<[u8; 8]>> {
     let arr = batch
         .column_by_name(col)
         .ok_or_else(|| TraceqlError::Exec(format!("missing column {col}")))?;

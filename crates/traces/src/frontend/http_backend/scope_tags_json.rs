@@ -1,4 +1,3 @@
-use super::*;
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub(crate) struct ScopeTagsJson {

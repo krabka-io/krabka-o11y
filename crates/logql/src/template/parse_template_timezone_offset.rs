@@ -1,4 +1,4 @@
-use super::{advance_template_pos, parse_fixed_template_digits, match_template_literal};
+use super::{advance_template_pos, match_template_literal, parse_fixed_template_digits};
 
 pub(crate) fn parse_template_timezone_offset(value: &str, pos: &mut usize) -> Option<i32> {
     let rest = value.get(*pos..)?;

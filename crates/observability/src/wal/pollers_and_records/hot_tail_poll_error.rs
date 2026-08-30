@@ -1,4 +1,4 @@
-use super::*;
+use super::{Error, WalConsumerError, WalRecordDecodeError};
 
 #[derive(Debug, Error)]
 pub enum HotTailPollError {

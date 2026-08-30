@@ -1,4 +1,4 @@
-use super::*;
+use super::{BackendError, Response, StatusCode, IntoResponse};
 
 /// Render a propagated backend failure as the client response.
 ///

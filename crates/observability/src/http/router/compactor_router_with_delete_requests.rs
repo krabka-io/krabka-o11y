@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    COMPACTOR_OPS, CompactorDeleteState, Router, ServiceReadiness, SharedLogDeleteRequests,
+    cancel_delete_request, create_delete_request, format_query, format_query_post, get,
+    list_delete_requests, with_role_ops_routes,
+};
 
 pub(crate) fn compactor_router_with_delete_requests(
     delete_requests: SharedLogDeleteRequests,

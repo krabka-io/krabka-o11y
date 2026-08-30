@@ -1,4 +1,4 @@
-use super::*;
+use super::LokiProtoEntry;
 
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub(crate) struct LokiProtoStream {

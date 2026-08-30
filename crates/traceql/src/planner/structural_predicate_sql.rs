@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_SPAN_ID, COL_TRACE_ID, StructuralOp, selector,
+};
 
 pub(crate) fn structural_predicate_sql(op: StructuralOp) -> String {
     let trace = selector::ident(COL_TRACE_ID);

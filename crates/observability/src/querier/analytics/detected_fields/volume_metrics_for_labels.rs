@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels, VolumeAggregateBy, VolumeParams, project_labels};
 
 pub(crate) fn volume_metrics_for_labels(labels: &Labels, params: &VolumeParams) -> Vec<Labels> {
     match params.aggregate_by {

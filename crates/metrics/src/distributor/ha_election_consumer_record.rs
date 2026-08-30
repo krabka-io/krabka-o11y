@@ -1,4 +1,4 @@
-use super::*;
+use super::{PartitionIndex, Offset};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HaElectionConsumerRecord {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, RangeKind, ToPrimitive, TimeExt};
 
 /// Prometheus' extrapolated range estimator, shared by `rate`/`increase`/`delta`.
 ///

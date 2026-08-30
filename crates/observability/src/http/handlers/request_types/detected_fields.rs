@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State, StatusCode,
+    execute_detected_fields_query, json_response,
+};
 
 pub(crate) async fn detected_fields(
     State(state): State<QuerierState>,

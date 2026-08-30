@@ -32,8 +32,12 @@ pub(crate) fn cancelling_a_delete_request_takes_only_that_tenant_s() {
 
     let mut headers = HeaderMap::new();
     headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
-    super::super::prelude::execute_cancel_delete_request(&state, &headers, Some("request_id=delete-1"))
-        .expect("the cancel succeeds");
+    super::super::prelude::execute_cancel_delete_request(
+        &state,
+        &headers,
+        Some("request_id=delete-1"),
+    )
+    .expect("the cancel succeeds");
 
     let left = state
         .delete_requests

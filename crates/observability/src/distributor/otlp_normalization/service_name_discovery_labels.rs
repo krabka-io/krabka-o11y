@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) const SERVICE_NAME_DISCOVERY_LABELS: &[&str] = &[
     "service",
     "app",

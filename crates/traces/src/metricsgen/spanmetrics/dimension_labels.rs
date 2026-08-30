@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanRecord, sorted_labels, span_kind_dim, status_dim};
 
 /// Dimension labels for the Tempo-compatible RED series identity.
 #[must_use]

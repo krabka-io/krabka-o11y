@@ -1,4 +1,4 @@
-use super::*;
+use super::{ActiveLogDeleteFilter, Labels};
 
 pub(crate) fn is_deleted_log_entry(
     delete_filters: &[ActiveLogDeleteFilter],

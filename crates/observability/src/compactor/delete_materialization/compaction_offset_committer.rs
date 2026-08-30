@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionCommitError, WalPosition};
 
 pub trait CompactionOffsetCommitter {
     /// # Errors

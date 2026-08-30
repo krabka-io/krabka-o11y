@@ -1,4 +1,4 @@
-use super::*;
+use super::{HaTracker, DecodedSeries, ha_election, HaElection};
 
 /// Whether a decoded ingest request should append to the WAL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

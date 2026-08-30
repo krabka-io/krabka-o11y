@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, ByteSizeExt};
 
 /// A Pyroscope label cap of zero means "unlimited". Here that means the
 /// function keeps the base tenant limit.

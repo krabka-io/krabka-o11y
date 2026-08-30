@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn grpc_tenant(metadata: &tonic::metadata::MetadataMap) -> Result<&str, tonic::Status> {
     metadata
         .get("x-scope-orgid")

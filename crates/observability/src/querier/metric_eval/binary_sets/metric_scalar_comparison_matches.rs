@@ -1,4 +1,4 @@
-use super::*;
+use super::{ComparisonOp, MetricValue, Ordering};
 
 pub(crate) fn metric_scalar_comparison_matches(
     sample: MetricValue,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, json};
 
 pub(crate) fn add_loki_query_stat_field(target: &mut Value, source: &Value, pointer: &str) {
     let Some(addend) = source.pointer(pointer).and_then(Value::as_u64) else {

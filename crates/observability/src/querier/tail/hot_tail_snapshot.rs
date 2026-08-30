@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionFrontier, QuerierState, TimeRange, WalLogRecord};
 
 /// Snapshots the hot-tail records that overlap `time_range`, plus the
 /// compaction frontier.

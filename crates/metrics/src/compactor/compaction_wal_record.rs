@@ -1,4 +1,4 @@
-use super::*;
+use super::{PartitionIndex, Offset};
 
 /// One encoded WAL record fetched by the compactor for a single topic partition.
 #[derive(Clone, Debug, Eq, PartialEq)]

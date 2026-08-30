@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DistributorError, LokiTypedPushRequest, Value, loki_structured_metadata_object_parse_error,
+    loki_structured_metadata_value_parse_error,
+};
 
 pub(crate) fn validate_loki_json_structured_metadata_value_types(
     payload: &LokiTypedPushRequest,

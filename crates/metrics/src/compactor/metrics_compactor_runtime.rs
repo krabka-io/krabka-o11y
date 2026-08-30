@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockWriter, ObjectStoreCompactionIndexSink, CompactionLoopConfig};
 
 /// Runtime handles assembled for the compactor role.
 pub struct MetricsCompactorRuntime {

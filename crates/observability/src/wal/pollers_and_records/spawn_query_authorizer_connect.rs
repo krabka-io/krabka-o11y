@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, AtomicOrdering, BrokerBackedQueryAuthorizer, CancellationToken, ClientResourcePolicy,
+    JoinHandle, LogQueryAuthorizer, ServiceReadiness, Time, TimeExt, sleep,
+};
 
 /// Spawns a background task that retries `BrokerBackedQueryAuthorizer::connect`
 /// until it succeeds, then swaps the unavailable authorizer for the real

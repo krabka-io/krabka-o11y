@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, COMPACTION_FRONTIER_MANIFEST_VERSION, CompactionFrontierManifest,
+    CompactionFrontierStoreError, Offset, PartitionIndex, WalLogRecord, WalPosition,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompactionFrontier {

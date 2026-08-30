@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldExpr, Scope};
 
 pub(crate) fn has_parent_scope(fe: &FieldExpr) -> bool {
     match fe {

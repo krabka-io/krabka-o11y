@@ -1,4 +1,4 @@
-use super::*;
+use super::{TagValuesPartial, TypedValue, Metrics, BTreeSet};
 
 /// Union typed tag values across jobs, then dedup the `(type, value)` pairs.
 /// This also accumulates metrics.

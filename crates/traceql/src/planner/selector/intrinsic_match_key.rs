@@ -1,4 +1,4 @@
-use super::*;
+use super::Intrinsic;
 
 pub(crate) fn intrinsic_match_key(intrinsic: &Intrinsic) -> &'static str {
     match intrinsic {

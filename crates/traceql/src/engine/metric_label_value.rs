@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Array, AsArray, DataType, RecordBatch, Result, TraceqlError, bytes_to_hex, string_array_value,
+};
 
 pub(crate) fn metric_label_value(batch: &RecordBatch, column: &str, row: usize) -> Result<String> {
     let array = batch

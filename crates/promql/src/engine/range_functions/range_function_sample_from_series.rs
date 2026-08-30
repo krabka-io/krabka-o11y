@@ -1,4 +1,4 @@
-use super::*;
+use super::{RangeSeries, Time, RangeFn, ExtendedSelectorModifier, SampleValue, TimeExt, anchored_float_range_value, smoothed_float_range_value, count_histogram_resets, range_histogram_sample, count_changes, count_resets, extrapolated_rate};
 
 pub(crate) fn range_function_sample_from_series(
     series: &RangeSeries,

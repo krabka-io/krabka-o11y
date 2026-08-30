@@ -1,4 +1,7 @@
-use super::{TemplateRuntimeValue, evaluate_template_index, evaluate_template_slice, format_template_print, html_escape_template_string, js_escape_template_string};
+use super::{
+    TemplateRuntimeValue, evaluate_template_index, evaluate_template_slice, format_template_print,
+    html_escape_template_string, js_escape_template_string,
+};
 
 pub(crate) fn evaluate_template_value_function(
     name: &str,

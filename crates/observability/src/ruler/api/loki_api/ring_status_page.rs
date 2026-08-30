@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, Response, StatusCode};
 
 pub(crate) fn ring_status_page(instance: &'static str) -> Response {
     (

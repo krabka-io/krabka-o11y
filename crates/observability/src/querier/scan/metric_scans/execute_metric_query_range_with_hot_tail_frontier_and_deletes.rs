@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    BTreeMap, FsPath, LabelIndex, MetricQuery, MetricWindow, QueryError, QueryHotTail,
+    SessionContext, StreamPlan, TimeRange, Value, append_matching_hot_metric_record,
+    apply_absent_over_time, eval_times, format_metric_samples, loki_matrix_response,
+    metric_plan_scan_sql, metric_samples_from_batches, register_log_blocks,
+};
 
 pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_deletes(
     root: impl AsRef<FsPath>,

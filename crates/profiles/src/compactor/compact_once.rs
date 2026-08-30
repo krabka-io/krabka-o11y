@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, BlockMeta, ObjectStore, ProfileIndex, ProfilesError, compact_once_with_policy};
 
 ///
 /// # Errors

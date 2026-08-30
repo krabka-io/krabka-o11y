@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NestedSet {
     pub left: i32,

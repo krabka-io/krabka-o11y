@@ -1,4 +1,15 @@
-use super::*;
+use super::{
+    HttpQueryError, QuerierState, QueryKind, QueryParams, Value, add_loki_query_stats,
+    apply_label_join_to_loki_result, apply_label_replace_to_loki_result,
+    execute_http_label_replace_metric_binary_expression, execute_http_metric_expression_query,
+    execute_http_metric_query, execute_http_remaining_query, execute_http_sort_vector_expression,
+    loki_direction, loki_instant_scalar_or_vector_response, loki_range_vector_response,
+    parse_label_replace_expression, parse_label_replace_metric_binary_expression,
+    parse_metric_label_join_query, parse_metric_label_replace_query, parse_sort_vector_expression,
+    reject_signed_vector_function_literal, resolved_range_step, scalar_vector_expression_result,
+    time_range, validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
+    validate_query_length_limit, validate_query_range_limit,
+};
 
 pub(crate) async fn execute_http_query_for_tenant(
     state: &QuerierState,

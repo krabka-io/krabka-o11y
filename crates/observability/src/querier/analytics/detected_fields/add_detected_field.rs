@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, DetectedFieldStats, DetectedFieldType};
 
 pub(crate) fn add_detected_field(
     fields: &mut BTreeMap<String, DetectedFieldStats>,

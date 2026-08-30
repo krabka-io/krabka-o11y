@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn parse_vector_matching_modifier(
     query: &str,
     position: usize,

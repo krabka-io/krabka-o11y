@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError};
 
 pub(crate) fn i64_to_f64(value: i64) -> Result<f64> {
     value

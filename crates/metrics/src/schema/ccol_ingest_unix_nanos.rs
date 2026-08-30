@@ -1,4 +1,3 @@
-use super::*;
 
 /// Ingest clock column in epoch nanoseconds (`Int64`).
 ///

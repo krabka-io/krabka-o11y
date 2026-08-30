@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    AttrValue, COL_DURATION, COL_KIND, COL_NAME, COL_ROOT_SERVICE_NAME, COL_STATUS_CODE,
+    COL_STATUS_MESSAGE, EVENT_ATTR_PREFIX, LINK_ATTR_PREFIX, RESOURCE_ATTR_PREFIX, RecordBatch,
+    Result, UnixNano, block_row_scoped_attrs, i32_value, i64_value, kind_enum_name,
+    push_scoped_attr, row_attrs, status_enum_name, string_value,
+};
 
 /// One scanned span row, projected into the values the compare needs.
 ///

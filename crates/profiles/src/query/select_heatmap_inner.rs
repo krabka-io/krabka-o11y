@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
+    ProfileStore, QuerierState, StartMs, connect_error, heatmap_time_buckets, limit, pb,
+    step_from_secs, tenant_from_headers,
+};
 
 pub(crate) async fn select_heatmap_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,

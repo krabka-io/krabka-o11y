@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Value};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct LokiPushRequest {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{QuerierBackend, BlockCatalog, State, Arc, QueryFrontend, HeaderMap, Uri, Response, tenant, metrics_query_param, IntoResponse, StatusCode, query_param, required_time_bounds, optional_seconds, exemplar_limit, Json, backend_error_response};
 
 pub(crate) async fn query_instant<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,

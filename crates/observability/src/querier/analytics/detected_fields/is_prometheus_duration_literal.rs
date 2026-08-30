@@ -1,4 +1,4 @@
-use super::*;
+use super::detected_duration_unit;
 
 pub(crate) fn is_prometheus_duration_literal(value: &str) -> bool {
     let mut pos = 0;

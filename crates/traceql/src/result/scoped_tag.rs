@@ -1,4 +1,4 @@
-use super::*;
+use super::TagScope;
 
 /// Tag names grouped by scope.
 #[derive(Clone, Debug, PartialEq)]

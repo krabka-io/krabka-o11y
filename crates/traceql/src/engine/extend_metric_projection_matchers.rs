@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricPlan, ScanOptions, metric_nested_projection_matchers};
 
 pub(crate) fn extend_metric_projection_matchers(options: &mut ScanOptions, metric: &MetricPlan) {
     for matcher in metric_nested_projection_matchers(metric) {

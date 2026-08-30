@@ -1,4 +1,4 @@
-use super::*;
+use super::{LatencyHistogram, Exemplar};
 
 #[derive(Clone, Debug)]
 pub(crate) struct DimEntry {

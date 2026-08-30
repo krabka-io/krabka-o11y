@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionCommitError, CompactionOffsetCommitter, WalPosition};
 
 #[derive(Default)]
 pub(crate) struct LastCompactedPosition {

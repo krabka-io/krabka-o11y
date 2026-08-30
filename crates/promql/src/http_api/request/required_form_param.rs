@@ -1,4 +1,4 @@
-use super::*;
+use super::ApiError;
 
 pub(crate) fn required_form_param(value: Option<String>, name: &str) -> Result<String, ApiError> {
     value

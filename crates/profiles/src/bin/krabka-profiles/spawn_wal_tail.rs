@@ -1,4 +1,4 @@
-use super::*;
+use super::{Cli, WalTailProfileStore};
 
 pub(crate) fn spawn_wal_tail(
     cli: &Cli,

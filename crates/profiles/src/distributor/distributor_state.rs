@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BTreeSet, ByteSize, HashMap, LegacyDecodeLimits, Mutex, OverridesProvider, RelabelConfig,
+    ServiceMetrics, TenantLimitConfig, TokenBucket, WalSink,
+};
 
 pub struct DistributorState {
     pub sink: Arc<dyn WalSink>,

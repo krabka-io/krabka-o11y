@@ -8,7 +8,8 @@ use super::*;
 #[test]
 pub(crate) fn duration_units_are_worth_what_they_should_relative_to_each_other() {
     let ns = |name: &str| {
-        let (_, _, nanos) = super::super::prelude::prometheus_duration_unit(name).expect("known unit");
+        let (_, _, nanos) =
+            super::super::prelude::prometheus_duration_unit(name).expect("known unit");
         nanos
     };
 
@@ -38,7 +39,8 @@ pub(crate) fn duration_units_are_worth_what_they_should_relative_to_each_other()
         ("us", 7),
         ("ns", 8),
     ] {
-        let (got, bit, _) = super::super::prelude::prometheus_duration_unit(name).expect("known unit");
+        let (got, bit, _) =
+            super::super::prelude::prometheus_duration_unit(name).expect("known unit");
         check!(got == ordinal, "{name} ordinal");
         check!(bit == 1_u16 << ordinal, "{name} bit");
     }

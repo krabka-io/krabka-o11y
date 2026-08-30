@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeSet, HeaderMap, HttpQueryError, QuerierState, SeriesParams, authorized_tenant,
+    metadata_index_range, metadata_label_sets,
+};
 
 pub(crate) async fn label_names_data(
     state: &QuerierState,

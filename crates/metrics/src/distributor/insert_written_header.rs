@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, HeaderValue};
 
 pub(crate) fn insert_written_header(headers: &mut HeaderMap, name: &'static str, value: u64) {
     headers.insert(

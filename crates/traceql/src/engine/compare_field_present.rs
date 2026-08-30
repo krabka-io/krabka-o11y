@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompareFieldClass, CompareRow, Field, compare_field_class, compare_intrinsic_present,
+    compare_row_attr_values,
+};
 
 pub(crate) fn compare_field_present(field: &Field, row: &CompareRow) -> bool {
     match compare_field_class(field) {

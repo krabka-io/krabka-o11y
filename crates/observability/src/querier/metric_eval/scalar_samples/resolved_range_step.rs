@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, TimeRange, default_metric_range_step};
 
 /// Resolves a range query's step in nanoseconds, defaulting it from the range.
 ///

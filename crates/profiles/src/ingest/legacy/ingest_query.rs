@@ -1,4 +1,4 @@
-use super::*;
+use super::IngestFormat;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IngestQuery {

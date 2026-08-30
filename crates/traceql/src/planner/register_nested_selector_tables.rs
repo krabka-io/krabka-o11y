@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    FieldExpr, PlannerContext, Result, SessionContext, SpanStore, SpansetExpr,
+    collect_nested_selectors, collect_table, register_batches, selector,
+};
 
 pub(crate) async fn register_nested_selector_tables<S: SpanStore>(
     store: &S,

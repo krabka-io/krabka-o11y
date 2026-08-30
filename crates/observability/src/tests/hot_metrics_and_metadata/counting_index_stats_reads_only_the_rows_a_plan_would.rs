@@ -44,8 +44,11 @@ pub(crate) async fn counting_index_stats_reads_only_the_rows_a_plan_would() {
     )
     .expect("the block writes");
 
-    let state =
-        super::super::prelude::QuerierState::new(dir.path(), LabelIndex::default(), BlockIndex::default());
+    let state = super::super::prelude::QuerierState::new(
+        dir.path(),
+        LabelIndex::default(),
+        BlockIndex::default(),
+    );
     let plan = |fingerprints: &[u64], start_ns, end_ns| StreamPlan {
         tenant: "tenant".to_string(),
         time_range: TimeRange::new(start_ns, end_ns).expect("a valid range"),

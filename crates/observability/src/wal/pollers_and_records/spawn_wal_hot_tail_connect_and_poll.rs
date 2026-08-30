@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    AtomicOrdering, BufferedLogHotTail, CancellationToken, DeferredWalConsumerConnect, JoinHandle,
+    KafkaLogWalConsumer, ServiceReadiness, SharedCompactionFrontier, Time, TimeExt,
+    poll_log_hot_tail_once_with_frontier, sleep,
+};
 
 /// Spawns a background task that retries `KafkaLogWalConsumer::connect` until
 /// it succeeds, then runs the hot-tail poll loop.

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeSet, MetricBinarySetOp, MetricVectorMatching, Value, apply_metric_binary_set_to_series,
+    metric_series_labels, metric_vector_matching_key, sort_loki_metric_results_by_labels,
+};
 
 pub(crate) fn apply_metric_binary_set_to_loki_result(
     left: &mut Value,

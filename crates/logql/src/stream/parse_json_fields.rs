@@ -1,4 +1,4 @@
-use super::{Labels, insert_json_parser_error, flatten_json_field, sanitize_json_field_name};
+use super::{Labels, flatten_json_field, insert_json_parser_error, sanitize_json_field_name};
 
 pub(crate) fn parse_json_fields(line: &str, fields: &mut Labels) {
     let Ok(serde_json::Value::Object(object)) = serde_json::from_str(line) else {

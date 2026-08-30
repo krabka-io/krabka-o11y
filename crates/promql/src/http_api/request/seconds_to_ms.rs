@@ -1,4 +1,4 @@
-use super::*;
+use super::ToPrimitive;
 
 pub(crate) fn seconds_to_ms(value: &str) -> Result<i64, ()> {
     let seconds = value.parse::<f64>().map_err(|_| ())?;

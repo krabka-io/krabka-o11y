@@ -1,4 +1,4 @@
-use super::*;
+use super::{Ordering, Value, loki_vector_sample_value};
 
 pub(crate) fn sort_loki_vector_result(value: &mut Value, descending: bool) {
     if value.pointer("/data/resultType").and_then(Value::as_str) != Some("vector") {

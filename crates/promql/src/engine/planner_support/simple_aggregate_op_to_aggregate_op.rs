@@ -1,4 +1,4 @@
-use super::*;
+use super::{SimpleAggregateOp, AggregateOp};
 
 /// Maps the planner [`SimpleAggregateOp`] to the interpreter [`AggregateOp`].
 ///

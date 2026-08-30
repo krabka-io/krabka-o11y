@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, CompactionFrontier, MetricQuery, StreamPlan, TimeRange, Value,
+    WalLogRecord, count_loki_metric_result_hot_tail_samples, count_loki_metric_result_scan_lines,
+    loki_query_stats, planned_block_bytes, populate_loki_query_scan_stats,
+};
 
 pub(crate) fn add_loki_query_stats_for_metric_plan_with_hot_tail(
     mut value: Value,

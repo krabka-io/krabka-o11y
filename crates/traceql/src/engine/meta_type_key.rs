@@ -1,5 +1,3 @@
-use super::*;
-
 /// The reserved label key that Tempo uses to tag a compare series.
 ///
 /// The tag holds the group, `baseline` or `selection`, or the per-group total,

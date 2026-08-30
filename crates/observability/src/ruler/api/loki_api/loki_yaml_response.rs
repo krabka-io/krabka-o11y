@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, Response, Serialize, StatusCode, text_response};
 
 pub(crate) fn loki_yaml_response(status: StatusCode, value: &impl Serialize) -> Response {
     match serde_yaml::to_string(value) {

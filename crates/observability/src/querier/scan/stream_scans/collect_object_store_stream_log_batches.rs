@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BlockDescriptor, ObjectPath, ObjectStore, QueryError, RecordBatch, SessionContext,
+    StreamPlan, register_log_blocks_from_object_store, stream_plan_scan_sql,
+};
 
 pub(crate) async fn collect_object_store_stream_log_batches(
     store: Arc<dyn ObjectStore>,

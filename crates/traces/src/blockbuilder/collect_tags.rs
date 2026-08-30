@@ -1,4 +1,4 @@
-use super::*;
+use super::{Span, BTreeSet, BTreeMap, attr_value_string, insert_tag_value};
 
 pub(crate) fn collect_tags(
     spans: &[Span],

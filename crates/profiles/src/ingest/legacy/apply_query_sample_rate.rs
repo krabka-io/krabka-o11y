@@ -1,4 +1,4 @@
-use super::*;
+use super::PprofProfile;
 
 pub(crate) fn apply_query_sample_rate(profile: PprofProfile, sample_rate: u32) -> PprofProfile {
     let mut profile = profile.into_inner();

@@ -1,4 +1,4 @@
-use super::*;
+use super::{TraceByIdResponseJson, BTreeSet, merge_scope_spans};
 
 /// Union another querier's by-id body into the accumulator, and dedupe spans by
 /// `spanId`. This appends new resourceSpans and scopeSpans only as needed.

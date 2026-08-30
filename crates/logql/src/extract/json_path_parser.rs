@@ -1,4 +1,7 @@
-use super::{JsonPath, ParseError, template_parse_error, JsonPathPart, is_json_path_field_name_char, decode_quoted_escape};
+use super::{
+    JsonPath, JsonPathPart, ParseError, decode_quoted_escape, is_json_path_field_name_char,
+    template_parse_error,
+};
 
 pub(crate) struct JsonPathParser<'a> {
     pub(crate) input: &'a str,

@@ -17,7 +17,10 @@ pub(crate) async fn accumulating_a_wal_batch_stops_when_empty_or_full() {
         async fn poll(
             &mut self,
             _timeout: Time,
-        ) -> Result<Vec<super::super::prelude::KafkaWalRecord>, super::super::prelude::WalConsumerError> {
+        ) -> Result<
+            Vec<super::super::prelude::KafkaWalRecord>,
+            super::super::prelude::WalConsumerError,
+        > {
             Ok(self.batches.pop_front().unwrap_or_default())
         }
         async fn commit_compacted(

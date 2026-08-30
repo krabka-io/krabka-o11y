@@ -1,4 +1,4 @@
-use super::*;
+use super::{Path, TenantLimitConfig};
 
 pub(crate) fn load_tenant_limits_config(
     path: Option<&Path>,

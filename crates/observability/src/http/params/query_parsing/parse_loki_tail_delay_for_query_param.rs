@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, parse_decimal_seconds_timestamp, parse_prometheus_duration};
 
 pub(crate) fn parse_loki_tail_delay_for_query_param(value: &str) -> Result<i64, HttpQueryError> {
     if let Ok(seconds) = value.parse::<i64>() {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{signed_vector_function_literal_error, unspaced_vector_set_operator_error};
 
 pub(crate) fn scalar_vector_plain_parse_error(query: &str) -> Option<String> {
     signed_vector_function_literal_error(query)

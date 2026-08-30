@@ -1,4 +1,3 @@
-use super::*;
 
 /// One compacted TSDB block exposed by `/api/v1/status/tsdb/blocks`.
 #[derive(Clone, Debug, PartialEq, Eq)]

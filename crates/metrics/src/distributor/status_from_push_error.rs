@@ -1,4 +1,4 @@
-use super::*;
+use super::{PushError, Status, status_from_http_status};
 
 /// The gRPC status a push failure reaches the client as.
 ///

@@ -8,7 +8,8 @@ use super::*;
 #[test]
 pub(crate) fn a_posted_query_puts_the_url_first_and_the_body_second() {
     let merge = |raw: Option<&str>, body: &str| {
-        super::super::prelude::post_query_params(raw, &Bytes::from(body.to_owned())).expect("valid body")
+        super::super::prelude::post_query_params(raw, &Bytes::from(body.to_owned()))
+            .expect("valid body")
     };
     let body_first = |raw: Option<&str>, body: &str| {
         super::super::prelude::post_query_params_body_first(raw, &Bytes::from(body.to_owned()))

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScalarUDF, RateUdf, RateFamily};
 
 /// The `idelta` UDF: gauge delta of the last two samples.
 #[must_use]

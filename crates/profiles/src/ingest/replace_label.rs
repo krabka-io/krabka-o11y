@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 pub(crate) fn replace_label(labels: &mut Labels, target: &str, replacement: &str) {
     let mut rebuilt = Labels::new();

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, Labels};
 
 pub(crate) fn insert_metadata_if_absent(
     metadata: &mut Labels,

@@ -36,19 +36,21 @@ mod set_remote_parent_from_wal_records;
 mod shared_compaction_frontier_from_object_store;
 mod spawn_compaction_frontier_refresher;
 
-pub (crate) use advance_and_persist_compaction_frontier::advance_and_persist_compaction_frontier;
-pub (crate) use block_store_error_is_object_store::block_store_error_is_object_store;
-pub (crate) use compact_next_kafka_wal_batch_to_object_store_from_existing_manifest::compact_next_kafka_wal_batch_to_object_store_from_existing_manifest;
-pub (crate) use compact_polled_kafka_wal_records_inner::compact_polled_kafka_wal_records_inner;
-pub (crate) use compact_polled_kafka_wal_records_to_object_store_from_existing_manifest::compact_polled_kafka_wal_records_to_object_store_from_existing_manifest;
-pub (crate) use compaction_error_is_object_store::compaction_error_is_object_store;
-pub (crate) use compactor_run_error_is_object_store::compactor_run_error_is_object_store;
-pub (crate) use load_existing_compaction_frontier::load_existing_compaction_frontier;
-pub (crate) use materialize_deletes_then_compact_next_kafka_wal_batch::materialize_deletes_then_compact_next_kafka_wal_batch;
-pub (crate) use materialize_log_deletes_before_compaction::materialize_log_deletes_before_compaction;
-pub (crate) use next_compactor_object_store_backoff::next_compactor_object_store_backoff;
-pub (crate) use refresh_compaction_frontier_and_prune::refresh_compaction_frontier_and_prune;
-# [cfg_attr (test , mutants :: skip)] pub use run_compactor_until_shutdown::run_compactor_until_shutdown;
-pub (crate) use set_remote_parent_from_wal_records::set_remote_parent_from_wal_records;
-pub (crate) use shared_compaction_frontier_from_object_store::shared_compaction_frontier_from_object_store;
-# [cfg_attr (test , mutants :: skip)] pub (crate) use spawn_compaction_frontier_refresher::spawn_compaction_frontier_refresher;
+pub(crate) use advance_and_persist_compaction_frontier::advance_and_persist_compaction_frontier;
+pub(crate) use block_store_error_is_object_store::block_store_error_is_object_store;
+pub(crate) use compact_next_kafka_wal_batch_to_object_store_from_existing_manifest::compact_next_kafka_wal_batch_to_object_store_from_existing_manifest;
+pub(crate) use compact_polled_kafka_wal_records_inner::compact_polled_kafka_wal_records_inner;
+pub(crate) use compact_polled_kafka_wal_records_to_object_store_from_existing_manifest::compact_polled_kafka_wal_records_to_object_store_from_existing_manifest;
+pub(crate) use compaction_error_is_object_store::compaction_error_is_object_store;
+pub(crate) use compactor_run_error_is_object_store::compactor_run_error_is_object_store;
+pub(crate) use load_existing_compaction_frontier::load_existing_compaction_frontier;
+pub(crate) use materialize_deletes_then_compact_next_kafka_wal_batch::materialize_deletes_then_compact_next_kafka_wal_batch;
+pub(crate) use materialize_log_deletes_before_compaction::materialize_log_deletes_before_compaction;
+pub(crate) use next_compactor_object_store_backoff::next_compactor_object_store_backoff;
+pub(crate) use refresh_compaction_frontier_and_prune::refresh_compaction_frontier_and_prune;
+#[cfg_attr(test, mutants::skip)]
+pub use run_compactor_until_shutdown::run_compactor_until_shutdown;
+pub(crate) use set_remote_parent_from_wal_records::set_remote_parent_from_wal_records;
+pub(crate) use shared_compaction_frontier_from_object_store::shared_compaction_frontier_from_object_store;
+#[cfg_attr(test, mutants::skip)]
+pub(crate) use spawn_compaction_frontier_refresher::spawn_compaction_frontier_refresher;

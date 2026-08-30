@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, Producer, WalSink, Bytes, WalRecord, ProduceError, wal_producer_record, current_trace_headers};
 
 /// Producer-backed metrics WAL sink.
 pub struct KafkaSink {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MaxValue, MinValue, heatmap_y_mins, label_pairs, pb};
 
 impl From<krabka_pprof::Heatmap> for pb::querier::v1::HeatmapSeries {
     fn from(value: krabka_pprof::Heatmap) -> Self {

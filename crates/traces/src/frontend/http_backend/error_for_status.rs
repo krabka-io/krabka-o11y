@@ -1,4 +1,4 @@
-use super::*;
+use super::BackendError;
 
 pub(crate) async fn error_for_status(resp: reqwest::Response) -> Result<reqwest::Response, BackendError> {
     let status = resp.status();

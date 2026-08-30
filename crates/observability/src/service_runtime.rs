@@ -19,8 +19,8 @@ mod serve_service_listener;
 mod shutdown_signal;
 
 pub use build_service_router::build_service_router;
-pub (crate) use build_service_router_with_shutdown::build_service_router_with_shutdown;
-pub (crate) use serve_compactor_service_listener::serve_compactor_service_listener;
+pub(crate) use build_service_router_with_shutdown::build_service_router_with_shutdown;
+pub(crate) use serve_compactor_service_listener::serve_compactor_service_listener;
 pub use serve_service::serve_service;
 pub use serve_service_listener::serve_service_listener;
 pub use shutdown_signal::shutdown_signal;

@@ -1,4 +1,4 @@
-use super::*;
+use super::SymbolizeRequest;
 
 pub(crate) fn build_label(request: &SymbolizeRequest) -> String {
     if request.build_id.is_empty() {

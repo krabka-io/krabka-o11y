@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilter, FsPath, LabelIndex, MetricQuery, QueryError, StreamPlan, TimeRange,
+    Value, execute_metric_query_range_with_deletes,
+};
 
 pub(crate) async fn execute_metric_query_with_deletes(
     root: impl AsRef<FsPath>,

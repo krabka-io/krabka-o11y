@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, quote_logql_string};
 
 pub(crate) fn loki_label_set(labels: &Labels) -> String {
     let values = labels

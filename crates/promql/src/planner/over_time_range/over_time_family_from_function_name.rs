@@ -1,4 +1,4 @@
-use super::*;
+use super::OverTimeFamily;
 
 /// Resolves a matrix-selector `*_over_time` function name to its [`OverTimeFamily`].
 ///

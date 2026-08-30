@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, templatize_text};
 
 /// Replaces variable JSON leaf values with the `<_>` placeholder. It keeps the
 /// object and array structure, and it keeps constant, low-entropy, values.

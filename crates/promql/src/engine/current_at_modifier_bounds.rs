@@ -1,4 +1,4 @@
-use super::*;
+use super::{AtModifierBounds, AT_MODIFIER_BOUNDS};
 
 /// Returns the range bounds in scope for `@ start()` and `@ end()` resolution.
 ///

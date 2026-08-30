@@ -1,4 +1,3 @@
-use super::*;
 
 /// WAL codec errors.
 #[derive(Debug, thiserror::Error)]

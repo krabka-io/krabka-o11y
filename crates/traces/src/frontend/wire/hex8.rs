@@ -1,4 +1,3 @@
-use super::*;
 
 /// Lowercase hex for an 8-byte span id.
 #[must_use]

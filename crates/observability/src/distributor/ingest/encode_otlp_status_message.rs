@@ -1,4 +1,4 @@
-use super::*;
+use super::encode_varint;
 
 pub(crate) fn encode_otlp_status_message(message: &str) -> Vec<u8> {
     let message = message.trim_end_matches('\n').as_bytes();

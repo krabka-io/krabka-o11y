@@ -1,4 +1,3 @@
-
 pub(crate) fn sanitize_json_field_name(name: &str) -> String {
     let mut sanitized = name
         .chars()

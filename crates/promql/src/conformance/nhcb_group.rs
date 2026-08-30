@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, NhcbBucketSeries, SampleSpec};
 
 #[derive(Clone)]
 pub(crate) struct NhcbGroup {

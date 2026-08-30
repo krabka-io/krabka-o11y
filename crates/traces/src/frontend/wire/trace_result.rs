@@ -1,4 +1,4 @@
-use super::*;
+use super::{TraceJson, TraceResult, parse_hex16, SpanSet};
 
 impl From<&TraceJson> for TraceResult {
     fn from(t: &TraceJson) -> Self {

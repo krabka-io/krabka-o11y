@@ -1,4 +1,7 @@
-use super::{ParsedTemplateAction, ParseError, template_action_trim_left, template_parse_error, template_action_trim_right, skip_leading_template_whitespace};
+use super::{
+    ParseError, ParsedTemplateAction, skip_leading_template_whitespace, template_action_trim_left,
+    template_action_trim_right, template_parse_error,
+};
 
 pub(crate) fn parse_template_action(
     template: &str,

@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) fn loki_metric_sample_timestamp_key(sample: &Value) -> Option<String> {
     sample

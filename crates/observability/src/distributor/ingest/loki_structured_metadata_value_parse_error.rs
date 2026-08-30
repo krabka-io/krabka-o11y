@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, loki_decode_error_context, quote_logql_string};
 
 pub(crate) fn loki_structured_metadata_value_parse_error(
     body: &[u8],

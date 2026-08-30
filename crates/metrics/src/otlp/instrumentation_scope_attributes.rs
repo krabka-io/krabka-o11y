@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstrumentationScope, KeyValue, string_attribute, normalize_name, TranslationStrategy};
 
 pub(crate) fn instrumentation_scope_attributes(scope: &InstrumentationScope) -> Vec<KeyValue> {
     let mut attributes = Vec::new();

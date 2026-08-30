@@ -1,4 +1,4 @@
-use super::*;
+use super::{format_logql_quoted_string, format_metric_query, parse_metric_label_replace_query};
 
 pub(crate) fn format_metric_label_replace_query(query: &str) -> Option<String> {
     let label_replace = parse_metric_label_replace_query(query).ok()?;

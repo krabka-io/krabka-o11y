@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanStore, AppState, HeaderMap, Uri, Response, tenant, metrics_query_param, IntoResponse, StatusCode, instant_metric_bounds, exemplar_selection, scan_options_param, Json, trace_metrics_json, filter_metrics_exemplars, instant_metrics_response};
 
 pub(crate) async fn query_instant_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
 where

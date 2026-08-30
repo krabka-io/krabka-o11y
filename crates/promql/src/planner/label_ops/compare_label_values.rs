@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, SortOrder, Ordering};
 
 /// Compares two label sets by the listed `label_names` in `order`.
 ///

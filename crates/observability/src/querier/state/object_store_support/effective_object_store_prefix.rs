@@ -1,4 +1,4 @@
-use super::*;
+use super::ObjectPath;
 
 pub(crate) fn effective_object_store_prefix(
     base: Option<&ObjectPath>,

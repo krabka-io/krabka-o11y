@@ -1,4 +1,4 @@
-use super::*;
+use super::parse_formatted_vector_function;
 
 pub(crate) fn format_vector_function_text(query: &str) -> Option<String> {
     let query = query

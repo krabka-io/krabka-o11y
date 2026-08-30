@@ -1,4 +1,4 @@
-use super::*;
+use super::boundary_value;
 
 pub(crate) fn instant_smoothed_boundary_value(
     timestamps: &[i64],

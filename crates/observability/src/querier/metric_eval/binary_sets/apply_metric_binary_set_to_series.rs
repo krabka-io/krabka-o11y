@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    MetricBinarySetOp, Value, matching_metric_binary_sample, metric_binary_set_keeps_sample,
+    metric_samples_share_timestamp,
+};
 
 pub(crate) fn apply_metric_binary_set_to_series(
     left_series: &mut Value,

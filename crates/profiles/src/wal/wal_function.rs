@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 /// A function entry; string fields are indices into `WalSymbolSet.strings`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

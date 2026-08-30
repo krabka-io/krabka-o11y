@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Duration, TailStream, WebSocket, apply_loki_tail_frame_limit, eligible_tail_record_count,
+    execute_tail_query_with_frontier_and_deletes, json, send_tail_frame, sleep,
+    tail_frame_is_empty,
+};
 
 pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
     let Some(source) = tail.source else {

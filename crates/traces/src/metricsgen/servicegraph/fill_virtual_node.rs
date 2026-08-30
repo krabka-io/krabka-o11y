@@ -1,4 +1,4 @@
-use super::*;
+use super::{Edge, SpanRecord, ConnectionType, attr_value};
 
 pub(crate) fn fill_virtual_node(
     edge: &mut Edge,

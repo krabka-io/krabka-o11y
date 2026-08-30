@@ -1,4 +1,4 @@
-use super::*;
+use super::{HaElectionRecord, ProduceError};
 
 /// Testable sink for compacted HA election records.
 #[async_trait::async_trait]

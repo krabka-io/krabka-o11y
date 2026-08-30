@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, TraceqlError};
 
 pub(crate) fn f64_from_usize(value: usize) -> Result<f64> {
     value

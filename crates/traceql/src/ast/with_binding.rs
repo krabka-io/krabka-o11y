@@ -1,4 +1,4 @@
-use super::*;
+use super::FieldExpr;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WithBinding {

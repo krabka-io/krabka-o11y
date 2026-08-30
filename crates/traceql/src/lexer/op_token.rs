@@ -1,4 +1,4 @@
-use super::*;
+use super::Token;
 
 pub(crate) fn op_token(s: &str) -> Option<(Token, usize)> {
     for (raw, tok) in [

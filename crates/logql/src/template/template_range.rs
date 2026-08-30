@@ -1,4 +1,7 @@
-use super::{TemplateRangeBinding, TemplateExpression, TemplatePart, TemplateRenderContext, TemplateRuntimeValue, render_template_parts};
+use super::{
+    TemplateExpression, TemplatePart, TemplateRangeBinding, TemplateRenderContext,
+    TemplateRuntimeValue, render_template_parts,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemplateRange {

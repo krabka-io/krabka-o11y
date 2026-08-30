@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
+    QuerierState, pb, profile_types_inner, timed_query,
+};
 
 pub(crate) async fn profile_types_handler<S>(
     state: Extension<Arc<QuerierState<S>>>,

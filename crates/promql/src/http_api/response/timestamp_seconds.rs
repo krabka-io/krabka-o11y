@@ -1,4 +1,4 @@
-use super::*;
+use super::format_timestamp_token;
 
 /// Encodes a millisecond timestamp as the JSON number Prometheus emits.
 ///

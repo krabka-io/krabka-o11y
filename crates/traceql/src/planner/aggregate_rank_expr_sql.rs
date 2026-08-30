@@ -1,4 +1,4 @@
-use super::*;
+use super::{Aggregate, Result, TraceqlError, aggregate_expr_sql};
 
 pub(crate) fn aggregate_rank_expr_sql(agg: &Aggregate) -> Result<String> {
     match agg {

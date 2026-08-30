@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    format_logql_quoted_string, format_metric_scalar_vector_expression,
+    parse_logql_string_argument, split_logql_function_arguments,
+};
 
 pub(crate) fn format_label_replace_metric_scalar_expression(query: &str) -> Option<String> {
     let arguments = split_logql_function_arguments(query, "label_replace")?;

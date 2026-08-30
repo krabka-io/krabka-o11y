@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchCmp, MatchValue};
 
 pub(crate) fn nested_presence_matches(has_values: bool, op: MatchCmp, expected: &MatchValue) -> Option<bool> {
     match (op, expected) {

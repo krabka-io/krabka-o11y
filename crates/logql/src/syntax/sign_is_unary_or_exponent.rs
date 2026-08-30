@@ -1,4 +1,3 @@
-
 pub(crate) fn sign_is_unary_or_exponent(input: &str, at: usize) -> bool {
     let before_sign = input[..at].trim_end();
     let Some(last_char) = before_sign.chars().next_back() else {

@@ -1,4 +1,4 @@
-use super::*;
+use super::NestedSet;
 
 pub(crate) fn child_count_for(nested_sets: &[NestedSet], idx: usize) -> i32 {
     let Some(nested) = nested_sets.get(idx) else {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldExpr, Result, compare_field_class};
 
 pub(crate) fn validate_compare_field_expr(fe: &FieldExpr) -> Result<()> {
     match fe {

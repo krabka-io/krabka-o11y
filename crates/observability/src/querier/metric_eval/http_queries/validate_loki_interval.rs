@@ -1,4 +1,4 @@
-use super::*;
+use super::HttpQueryError;
 
 pub(crate) fn validate_loki_interval(interval: Option<i64>) -> Result<(), HttpQueryError> {
     if let Some(interval_ns) = interval

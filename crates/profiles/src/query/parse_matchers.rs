@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfileError, parse_label_selector};
 
 pub(crate) fn parse_matchers(
     matchers: &[String],

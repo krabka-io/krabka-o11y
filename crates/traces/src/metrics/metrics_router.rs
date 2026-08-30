@@ -1,4 +1,4 @@
-use super::*;
+use super::{SharedRegistry, export};
 
 /// `/metrics` router that serves the `OpenMetrics` text encoding of `registry`.
 ///

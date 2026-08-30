@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanRef, Time};
 
 pub(crate) struct TraceAcc {
     pub(crate) root_service_name: String,

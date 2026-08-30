@@ -1,4 +1,4 @@
-use super::*;
+use super::{AutoOffsetReset, Consumer, ProfileRecord, ProfilesError, Time, WalTailProfileStore};
 
 /// Consume the configured profiles WAL topic into the hot query store.
 ///

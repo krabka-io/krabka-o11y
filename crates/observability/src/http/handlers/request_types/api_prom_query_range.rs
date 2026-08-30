@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, QuerierState, RawQuery, Response, State, handle_api_prom_query_range};
 
 pub(crate) async fn api_prom_query_range(
     State(state): State<QuerierState>,

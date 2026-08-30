@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn split_leading_vector_matching_modifier(query: &str) -> Option<(String, &str)> {
     let query = query.trim_start();
     for modifier in ["on", "ignoring"] {

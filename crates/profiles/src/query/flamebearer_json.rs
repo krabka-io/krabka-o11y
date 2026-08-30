@@ -1,6 +1,9 @@
-use super::*;
+use super::{flamebearer_metadata, json};
 
-pub(crate) fn flamebearer_json(flamegraph: krabka_pprof::FlameGraph, profile_type: &str) -> serde_json::Value {
+pub(crate) fn flamebearer_json(
+    flamegraph: krabka_pprof::FlameGraph,
+    profile_type: &str,
+) -> serde_json::Value {
     json!({
         "flamebearer": {
             "names": flamegraph.names,

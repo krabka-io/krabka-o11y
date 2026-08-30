@@ -350,7 +350,12 @@ impl SpanStore for InMemorySpanStore {
 }
 
 impl InMemorySpanStore {
-    pub(crate) fn traces_in_range(&self, tenant: &str, start_ns: i64, end_ns: i64) -> Vec<&StoredTrace> {
+    pub(crate) fn traces_in_range(
+        &self,
+        tenant: &str,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Vec<&StoredTrace> {
         self.traces
             .get(tenant)
             .into_iter()

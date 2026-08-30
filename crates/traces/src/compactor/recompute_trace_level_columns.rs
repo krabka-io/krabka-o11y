@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, TracesError, fixed_column, SCOL_TRACE_ID, SCOL_PARENT_SPAN_ID, int64_column, SCOL_START_NANO, SCOL_DURATION_NANOS, string_column, SCOL_NAME, SCOL_ROOT_SERVICE_NAME, BTreeMap, Array, set_column, SCOL_TRACE_START_NANO, Arc, Int64Array, SCOL_TRACE_DURATION_NANOS, StringArray, SCOL_ROOT_SPAN_NAME};
 
 /// Recompute the trace-level denormalized columns over the FULL merged trace.
 ///

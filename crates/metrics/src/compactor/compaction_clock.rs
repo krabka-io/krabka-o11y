@@ -1,4 +1,3 @@
-use super::*;
 
 /// Monotonic clock used by the compaction loop to age the accumulation buffer.
 ///

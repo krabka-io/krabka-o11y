@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State, StatusCode,
+    execute_patterns_query, json_response,
+};
 
 pub(crate) async fn patterns(
     State(state): State<QuerierState>,

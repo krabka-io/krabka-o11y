@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DistributorError, Labels, MatchOp, discover_service_name_label, loki_proto_label_parse_error,
+    parse_query, quote_logql_string,
+};
 
 pub(crate) fn parse_loki_proto_labels(labels: &str) -> Result<Labels, DistributorError> {
     let labels = labels.trim();

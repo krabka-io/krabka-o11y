@@ -1,4 +1,4 @@
-use super::*;
+use super::{Expr, ValueType, instant_expr_is_plannable};
 
 /// Returns `true` when the operator path can carry one binary operand.
 ///

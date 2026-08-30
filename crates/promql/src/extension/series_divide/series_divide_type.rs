@@ -1,4 +1,4 @@
-use super::*;
+use super::{LogicalPlan, UserDefinedLogicalNodeCore, Expr, fmt, DfResult, DataFusionError};
 
 /// Logical node: partition the input into per-series batches.
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd)]

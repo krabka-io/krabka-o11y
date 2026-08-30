@@ -1,6 +1,11 @@
-use super::*;
+use super::{CompareRegexCache, ComparisonOp};
 
-pub(crate) fn string_cmp(value: &str, op: ComparisonOp, rhs: &str, regexes: &CompareRegexCache) -> bool {
+pub(crate) fn string_cmp(
+    value: &str,
+    op: ComparisonOp,
+    rhs: &str,
+    regexes: &CompareRegexCache,
+) -> bool {
     match op {
         ComparisonOp::Eq => value == rhs,
         ComparisonOp::Neq => value != rhs,

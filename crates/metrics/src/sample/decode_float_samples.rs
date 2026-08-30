@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, HistogramCodecError, typed_column, UInt64Array, COL_FINGERPRINT, Int64Array, COL_TIMESTAMP, Float64Array, COL_VALUE, require_non_null};
 
 /// Decodes a float-sample `RecordBatch` into `(fingerprint, timestamp, value)`
 /// rows.

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockIndex, Instant, LabelIndex};
 
 #[derive(Clone)]
 pub(crate) struct CachedDynamicIndex {

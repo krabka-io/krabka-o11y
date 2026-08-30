@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, CompactionCommitError, Error};
 
 #[derive(Debug, Error)]
 pub enum CompactionError {

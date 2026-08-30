@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 /// A wire-compatible boolean flag that [`WalMapping`] uses.
 #[repr(transparent)]

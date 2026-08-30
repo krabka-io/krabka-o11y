@@ -1,4 +1,4 @@
-use super::*;
+use super::{StdDurationExt, Time, TimeExt, sleep};
 
 #[cfg_attr(test, mutants::skip)]
 pub(crate) async fn connect_with_startup_retry<T, E, F, Fut>(

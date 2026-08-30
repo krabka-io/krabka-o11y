@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, AggregateOp, LabelModifier, apply_simple_aggregate};
 
 /// Shared `stddev(v)` / `stdvar(v)` core over an already-evaluated float-only
 /// instant vector.

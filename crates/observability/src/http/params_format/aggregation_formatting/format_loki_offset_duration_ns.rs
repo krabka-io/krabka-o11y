@@ -1,4 +1,4 @@
-use super::*;
+use super::{format_loki_decimal_unit, format_loki_offset_seconds};
 
 pub(crate) fn format_loki_offset_duration_ns(duration_ns: i64) -> Option<String> {
     const HOUR_NS: i64 = 3_600_000_000_000;

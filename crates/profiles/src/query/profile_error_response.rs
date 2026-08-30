@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, ProfileError, Response, StatusCode};
 
 /// Maps a [`ProfileError`] to a legacy flamebearer HTTP response.
 ///

@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn decode_trace_id(trace_id: &str) -> Result<[u8; 16], hex::FromHexError> {
     let mut out = [0; 16];

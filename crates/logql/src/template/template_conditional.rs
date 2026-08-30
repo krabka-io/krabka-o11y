@@ -1,4 +1,6 @@
-use super::{TemplateControlExpression, TemplatePart, TemplateRenderContext, render_template_parts};
+use super::{
+    TemplateControlExpression, TemplatePart, TemplateRenderContext, render_template_parts,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemplateConditional {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, LokiProtoTimestamp};
 
 pub(crate) fn loki_proto_timestamp_ns(
     timestamp: Option<&LokiProtoTimestamp>,

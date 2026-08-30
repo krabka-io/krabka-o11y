@@ -1,6 +1,8 @@
-use super::*;
+use super::{ProfileError, StackTraceSelectorJson};
 
-pub(crate) fn stack_trace_call_sites_from_json(selector: &str) -> Result<Vec<String>, ProfileError> {
+pub(crate) fn stack_trace_call_sites_from_json(
+    selector: &str,
+) -> Result<Vec<String>, ProfileError> {
     let selector = selector.trim();
     if selector.is_empty() {
         return Ok(Vec::new());

@@ -1,4 +1,7 @@
-use super::{PatternPart, ParseError, parse_pattern_parts, Labels, insert_pattern_parser_error, insert_extracted_field};
+use super::{
+    Labels, ParseError, PatternPart, insert_extracted_field, insert_pattern_parser_error,
+    parse_pattern_parts,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PatternParser {

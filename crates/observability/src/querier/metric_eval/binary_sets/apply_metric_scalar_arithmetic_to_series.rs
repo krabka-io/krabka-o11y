@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    MetricScalarArithmeticOp, MetricValue, Value, apply_metric_scalar_arithmetic_to_sample,
+};
 
 pub(crate) fn apply_metric_scalar_arithmetic_to_series(
     series: &mut Value,

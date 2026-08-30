@@ -1,4 +1,4 @@
-use super::*;
+use super::PromotedSpanAttr;
 
 pub(crate) struct BlockBuildOptions<'a> {
     pub(crate) object_key_prefix: &'a str,

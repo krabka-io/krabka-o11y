@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, AtomicBool, ByteSize, LogIngestLimiter, LogWalSink, ServiceMetrics, Time};
 
 #[derive(Clone)]
 pub struct DistributorState {

@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    AsArray, BTreeSet, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, RecordBatch, UInt64Type,
+};
 
 pub(crate) fn collect_meta(
     batch: &RecordBatch,

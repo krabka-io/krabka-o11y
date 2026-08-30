@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProfilesError, pb};
 
 pub(crate) fn otlp_sample_timestamps(
     profile: &pb::otlp_profiles::Profile,

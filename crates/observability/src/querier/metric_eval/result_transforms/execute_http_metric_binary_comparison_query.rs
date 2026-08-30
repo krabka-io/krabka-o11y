@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HttpQueryError, MetricBinaryComparison, QuerierState, QueryKind, TimeRange, Value,
+    apply_metric_binary_comparison_to_loki_result, execute_http_metric_query,
+};
 
 pub(crate) async fn execute_http_metric_binary_comparison_query(
     state: &QuerierState,

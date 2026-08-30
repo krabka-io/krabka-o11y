@@ -1,4 +1,4 @@
-use super::*;
+use super::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn current_unix_time_ns() -> i64 {
     SystemTime::now()

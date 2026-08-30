@@ -1,4 +1,4 @@
-use super::*;
+use super::{AclEntry, AclOperation, ResourceType, matches_acl_topic_pattern};
 
 pub(crate) fn acl_matches_tenant_wal_write(
     acl: &AclEntry,

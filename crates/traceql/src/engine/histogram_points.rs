@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricBucket, Result};
 
 pub(crate) fn histogram_points(
     buckets: &[MetricBucket],

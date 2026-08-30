@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaseResult {
     pub name: String,

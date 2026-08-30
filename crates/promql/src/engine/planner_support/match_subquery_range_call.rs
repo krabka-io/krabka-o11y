@@ -1,4 +1,4 @@
-use super::*;
+use super::{Call, SubqueryExpr, SubqueryOuterFn, no_param_outer_range_fn, Expr};
 
 /// Recognizes a `f(inner[range:resolution] ...)` call over a subquery.
 ///

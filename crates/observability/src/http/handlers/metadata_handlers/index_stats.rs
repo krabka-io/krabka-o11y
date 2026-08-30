@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HeaderMap, Instant, IntoResponse, QuerierState, RawQuery, Response, State, StatusCode,
+    execute_index_stats_query, json_response,
+};
 
 pub(crate) async fn index_stats(
     State(state): State<QuerierState>,

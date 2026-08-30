@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ActiveLogDeleteFilterError, BlockStoreError, Error, LogDeleteRequestStoreError,
+    LokiRuleStoreError, ParseError, PlanError, QueryAuthorizationError, QueryError,
+};
 
 #[derive(Debug, Error)]
 pub(crate) enum HttpQueryError {

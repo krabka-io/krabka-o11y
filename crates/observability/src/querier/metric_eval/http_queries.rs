@@ -16,6 +16,6 @@ mod execute_http_metric_instant_query;
 mod execute_http_stream_query;
 mod validate_loki_interval;
 
-pub (crate) use execute_http_metric_instant_query::execute_http_metric_instant_query;
-pub (crate) use execute_http_stream_query::execute_http_stream_query;
-pub (crate) use validate_loki_interval::validate_loki_interval;
+pub(crate) use execute_http_metric_instant_query::execute_http_metric_instant_query;
+pub(crate) use execute_http_stream_query::execute_http_stream_query;
+pub(crate) use validate_loki_interval::validate_loki_interval;

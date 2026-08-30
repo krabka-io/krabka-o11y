@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, WalFunction, WalLocation, WalMapping};
 
 /// The profile's symbol tables, index-encoded in pprof shape.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    format_logql_quoted_string, format_vector_only_expression, parse_logql_string_argument,
+    split_logql_function_arguments,
+};
 
 pub(crate) fn format_vector_label_replace_function(query: &str) -> Option<String> {
     let arguments = split_logql_function_arguments(query, "label_replace")?;

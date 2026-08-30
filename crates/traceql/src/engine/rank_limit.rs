@@ -1,4 +1,4 @@
-use super::*;
+use super::{Pipeline, RankDirection, Result, TraceqlError};
 
 #[derive(Clone, Copy)]
 pub(crate) struct RankLimit {

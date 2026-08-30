@@ -1,4 +1,4 @@
-use super::*;
+use super::{MappingRec, MappingSymbolization, WalMapping, remap_ref};
 
 pub(crate) fn mapping_rec(mapping: &WalMapping, strings: &[u32]) -> MappingRec {
     MappingRec {

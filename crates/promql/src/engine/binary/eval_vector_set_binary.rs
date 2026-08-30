@@ -1,4 +1,4 @@
-use super::*;
+use super::{InstantSample, SetOp, BinModifier, BTreeSet, binary_match_key};
 
 pub(crate) fn eval_vector_set_binary(
     left: Vec<InstantSample>,

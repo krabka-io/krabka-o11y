@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, i64};
 
 /// The NTP measurements from RFC 5905.
 ///

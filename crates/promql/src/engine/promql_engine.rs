@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricStore, Arc, EngineOpts};
 
 /// `PromQL` evaluator over a concrete metric store.
 pub struct PromqlEngine<S: MetricStore> {

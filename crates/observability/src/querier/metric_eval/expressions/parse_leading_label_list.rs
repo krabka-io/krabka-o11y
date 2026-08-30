@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn parse_leading_label_list(query: &str) -> Option<(Vec<String>, &str)> {
     let inner = query.strip_prefix('(')?;
     let labels_end = inner.find(')')?;

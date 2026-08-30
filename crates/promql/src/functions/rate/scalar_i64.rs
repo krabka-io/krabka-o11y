@@ -1,4 +1,4 @@
-use super::*;
+use super::{ColumnarValue, DfResult, DataFusionError, Array, Int64Array};
 
 /// Reads a scalar `Int64` argument, with a single-row array as a fallback.
 pub(crate) fn scalar_i64(value: &ColumnarValue, arg: &str, udf: &str) -> DfResult<i64> {

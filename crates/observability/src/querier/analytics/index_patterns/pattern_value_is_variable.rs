@@ -1,4 +1,4 @@
-use super::*;
+use super::{is_hex_id, is_high_entropy_id, is_uuid};
 
 /// Whether a token looks like variable data, that is data that varies per line,
 /// which the pattern should templatize to `<_>` instead of keeping as a

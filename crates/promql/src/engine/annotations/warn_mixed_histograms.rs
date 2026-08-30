@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, BTreeMap, emit_warning, mixed_classic_native_warning};
 
 /// Emits one `MixedClassicNativeHistogramsWarning` per mixed group key.
 ///

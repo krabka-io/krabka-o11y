@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 pub(crate) fn expand_prometheus_alert_template(
     template: &str,

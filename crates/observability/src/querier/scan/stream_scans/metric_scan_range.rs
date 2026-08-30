@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricQuery, QueryError, TimeRange};
 
 pub(crate) fn metric_scan_range(
     query: &MetricQuery,

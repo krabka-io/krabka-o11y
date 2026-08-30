@@ -1,4 +1,7 @@
-use super::{TemplateExpression, ParseError, parse_template_control_assignment, TemplateRenderContext, TemplateRuntimeValue};
+use super::{
+    ParseError, TemplateExpression, TemplateRenderContext, TemplateRuntimeValue,
+    parse_template_control_assignment,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemplateControlExpression {

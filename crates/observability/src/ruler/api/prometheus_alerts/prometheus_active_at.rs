@@ -1,4 +1,4 @@
-use super::*;
+use super::{OffsetDateTime, Rfc3339};
 
 pub(crate) fn prometheus_active_at(timestamp_ns: i64) -> String {
     OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ns))

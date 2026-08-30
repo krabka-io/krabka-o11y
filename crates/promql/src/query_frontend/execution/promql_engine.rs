@@ -1,4 +1,4 @@
-use super::*;
+use super::{async_trait, RangeQueryExecutor, PromqlEngine, MetricStore, FrontendRangeQuery, QueryResult, PromqlError, query_with_shard_selector};
 
 #[async_trait]
 impl<S: MetricStore> RangeQueryExecutor for PromqlEngine<S> {

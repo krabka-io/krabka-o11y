@@ -1,4 +1,4 @@
-use super::*;
+use super::{ErrorKind, FsPath, LokiRuleStoreError, LokiRuleTenants};
 
 pub(crate) fn read_loki_rule_tenants(path: &FsPath) -> Result<LokiRuleTenants, LokiRuleStoreError> {
     let bytes = match std::fs::read(path) {

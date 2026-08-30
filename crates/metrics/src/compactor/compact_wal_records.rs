@@ -1,4 +1,4 @@
-use super::*;
+use super::{WalRecord, TenantCompactionRows, BTreeMap, SamplePayload, FloatRow, NativeHistogramRow, MetadataRow, ClockReadingRow, exemplar_row};
 
 /// Groups WAL records by tenant and sorts the rows by `(fingerprint, timestamp)`.
 #[must_use]

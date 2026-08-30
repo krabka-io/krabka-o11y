@@ -1,4 +1,3 @@
-use super::*;
 
 /// One span's nested-set assignment, aligned by index with the input spans.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

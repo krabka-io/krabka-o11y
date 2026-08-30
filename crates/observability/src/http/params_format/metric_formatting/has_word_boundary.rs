@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn has_word_boundary(query: &str, index: usize, len: usize) -> bool {
     query[..index]
         .chars()

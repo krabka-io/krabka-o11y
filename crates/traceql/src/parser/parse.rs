@@ -1,4 +1,4 @@
-use super::*;
+use super::{Parser, Query, Result, lex};
 
 /// # Errors
 /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.

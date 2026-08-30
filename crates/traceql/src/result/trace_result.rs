@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanSet, Time};
 
 /// One trace in a search response.
 #[derive(Clone, Debug, PartialEq)]

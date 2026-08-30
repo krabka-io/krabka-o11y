@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    ObjectPath, ObjectStore, ServiceConfig, ServiceConfigError, querier_object_store_prefix,
+};
 
 pub(crate) fn querier_object_store_inputs<'a>(
     config: &'a ServiceConfig,

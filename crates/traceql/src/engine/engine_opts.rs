@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, millis};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EngineOpts {

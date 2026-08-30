@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, TimeExt};
 
 /// Parses a duration with an `s`, `m`, or `h` suffix, the suffixes this surface
 /// accepts. A bare number is a count of seconds. The amount parses as `u64`, so

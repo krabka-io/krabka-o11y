@@ -1,4 +1,3 @@
-use super::*;
 
 /// Metric name of the clock reading series itself.
 ///

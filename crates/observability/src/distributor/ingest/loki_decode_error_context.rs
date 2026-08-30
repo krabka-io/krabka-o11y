@@ -1,4 +1,4 @@
-use super::*;
+use super::previous_char_boundary;
 
 pub(crate) fn loki_decode_error_context(body: &str, start: usize) -> &str {
     let start = previous_char_boundary(body, start.min(body.len()));

@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricValue;
 
 pub(crate) fn format_metric_value(value: MetricValue) -> String {
     let negative = value.numerator < 0;

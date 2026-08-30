@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ByteSize, ByteSizeExt, MemTable, PlannedSpanset, PlannerContext, RecordBatch, Result,
+    SessionContext, SpanMatcher, SpanStore, collect_table,
+};
 
 pub(crate) async fn plan_selector_disjuncts<S: SpanStore>(
     store: &S,

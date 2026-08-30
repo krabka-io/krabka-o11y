@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
+    QuerierState, pb, select_series_inner, timed_query,
+};
 
 pub(crate) async fn select_series_handler<S>(
     state: Extension<Arc<QuerierState<S>>>,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, TimeExt};
 
 /// Renders an extent the way `Loki` spells a query length in its own error text.
 ///

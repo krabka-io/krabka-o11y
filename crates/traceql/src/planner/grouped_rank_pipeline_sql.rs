@@ -1,6 +1,12 @@
-use super::*;
+use super::{
+    Pipeline, Result, aggregate_rank_expr_sql, grouped_rank_pipeline_parts, grouped_rank_sql,
+    is_search_preserving_aggregate, rank_limit,
+};
 
-pub(crate) fn grouped_rank_pipeline_sql(spanset_sql: &str, pipeline: &[Pipeline]) -> Result<Option<String>> {
+pub(crate) fn grouped_rank_pipeline_sql(
+    spanset_sql: &str,
+    pipeline: &[Pipeline],
+) -> Result<Option<String>> {
     let Some((agg, by, rank, pre_filter, post_filter)) = grouped_rank_pipeline_parts(pipeline)
     else {
         return Ok(None);

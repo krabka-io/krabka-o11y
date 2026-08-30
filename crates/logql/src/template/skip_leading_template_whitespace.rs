@@ -1,4 +1,3 @@
-
 pub(crate) fn skip_leading_template_whitespace(template: &str, mut pos: usize) -> usize {
     let Some(rest) = template.get(pos..) else {
         return template.len();

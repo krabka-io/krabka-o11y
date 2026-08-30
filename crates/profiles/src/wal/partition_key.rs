@@ -1,4 +1,4 @@
-use super::*;
+use super::Bytes;
 
 /// Produce key for a WAL record: deterministic `(tenant, fingerprint)` bytes.
 #[must_use]

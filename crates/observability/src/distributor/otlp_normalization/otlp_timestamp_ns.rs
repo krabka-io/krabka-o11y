@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, Value, validate_ingest_timestamp_ns};
 
 pub(crate) fn otlp_timestamp_ns(timestamp: &Value) -> Result<i64, DistributorError> {
     let timestamp_ns = match timestamp {

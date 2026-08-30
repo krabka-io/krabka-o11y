@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    Array, AsArray, BTreeMap, BinaryArray, COL_FINGERPRINT, COL_TIMESTAMP, DownsampleKey,
+    DownsamplePolicy, Int32Type, Int64Type, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
+    PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, ProfileSampleRow,
+    ProfilesError, RecordBatch, UInt64Type, encode_profile_samples,
+};
 
 pub(crate) fn downsample_batches(
     batches: &[RecordBatch],

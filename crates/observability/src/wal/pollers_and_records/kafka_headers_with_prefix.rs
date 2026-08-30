@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, KafkaWalHeader, WalRecordDecodeError};
 
 pub(crate) fn kafka_headers_with_prefix(
     headers: &[KafkaWalHeader],

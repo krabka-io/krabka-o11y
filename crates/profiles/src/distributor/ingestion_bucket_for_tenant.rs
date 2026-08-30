@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DistributorState, Frequency, ProfilesError, TokenBucket, evict_one_tenant};
 
 pub(crate) fn ingestion_bucket_for_tenant(
     state: &DistributorState,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct CompactorDeleteRequest {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockMeta, fnv1a};
 
 pub(crate) fn compacted_key(tenant: &str, blocks: &[BlockMeta], input_keys: &[String]) -> String {
     let min_ts = blocks

@@ -1,4 +1,4 @@
-use super::{MetricQuery, ComparisonOp};
+use super::{ComparisonOp, MetricQuery};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricScalarComparison {

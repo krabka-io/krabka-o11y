@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BlockDescriptor, BlockIndex, BlockKey, BlockStoreError, LabelIndex, LogCompactionIndexOutput,
+    LogRow, ObjectPath, ObjectStore, compact_log_block_to_object_store_with_index_output,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BufferedLogHotTail, CancellationToken, ObjectPath, ObjectStore, SharedCompactionFrontier,
+    Time, TimeExt, refresh_compaction_frontier_and_prune, sleep,
+};
 
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn spawn_compaction_frontier_refresher(

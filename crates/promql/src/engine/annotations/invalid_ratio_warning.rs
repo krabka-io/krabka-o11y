@@ -1,4 +1,3 @@
-use super::*;
 
 /// Exact Prometheus `InvalidRatioWarning` text.
 ///

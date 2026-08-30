@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, HttpQueryError};
 
 pub(crate) fn loki_ruler_tenant(headers: &HeaderMap) -> Result<String, HttpQueryError> {
     match headers.get("X-Scope-OrgID") {

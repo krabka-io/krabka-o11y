@@ -1,4 +1,4 @@
-use super::*;
+use super::{KafkaWalHeader, WalRecordDecodeError};
 
 pub(crate) fn optional_kafka_header_utf8(
     headers: &[KafkaWalHeader],

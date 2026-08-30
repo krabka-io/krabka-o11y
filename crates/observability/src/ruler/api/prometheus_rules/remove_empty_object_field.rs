@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) fn remove_empty_object_field(value: &mut Value, field: &'static str) {
     let Some(fields) = value.as_object_mut() else {

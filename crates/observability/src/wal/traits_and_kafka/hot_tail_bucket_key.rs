@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, TimeExt};
 
 /// Maps a record timestamp to its bucket key.
 ///

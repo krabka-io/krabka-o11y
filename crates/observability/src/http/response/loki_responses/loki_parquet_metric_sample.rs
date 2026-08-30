@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HttpQueryError, LokiMetricParquetKind, MetricValue, Value, loki_parquet_metric_timestamp_ns,
+    parse_metric_sample_value,
+};
 
 pub(crate) fn loki_parquet_metric_sample(
     sample: &Value,

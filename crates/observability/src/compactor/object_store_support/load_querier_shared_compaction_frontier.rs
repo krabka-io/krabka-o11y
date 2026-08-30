@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    CompactionFrontierRefreshSource, ConfiguredObjectStore, ObjectStore, ServiceConfig,
+    ServiceConfigError, SharedCompactionFrontier, querier_object_store_prefix,
+    shared_compaction_frontier_from_object_store,
+};
 
 pub(crate) async fn load_querier_shared_compaction_frontier(
     config: &ServiceConfig,

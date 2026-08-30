@@ -1,4 +1,4 @@
-use super::*;
+use super::Error;
 
 /// Per-surface limit failures with Prometheus and Mimir status metadata.
 #[derive(Clone, Debug, Error, PartialEq)]

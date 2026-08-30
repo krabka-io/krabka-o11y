@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, add_loki_query_stat_field};
 
 pub(crate) fn merge_loki_query_stats(target: &mut Value, source: &Value) {
     for pointer in [

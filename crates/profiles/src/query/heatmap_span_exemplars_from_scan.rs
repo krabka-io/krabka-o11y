@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Array, AsArray, BTreeMap, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_SPAN_ID,
+    PCOL_TOTAL_VALUE, ProfileError, UInt64Type, heatmap_slot_timestamp, label_pairs, pb,
+};
 
 pub(crate) async fn heatmap_span_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,

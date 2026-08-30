@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BlockDescriptor, BlockIndex, BlockKey, BlockStoreError, LabelIndex, LogCompactionIndexOutput,
+    LogRow, ObjectPath, ObjectStore, write_log_block_to_object_store,
+    write_tenant_compaction_indexes_to_object_store,
+};
 
 pub(crate) async fn compact_log_block_to_object_store_with_index_output(
     store: &dyn ObjectStore,

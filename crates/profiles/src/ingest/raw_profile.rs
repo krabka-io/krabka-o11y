@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, PprofProfile};
 
 /// One decoded pprof plus its series labels, before the multi-value split.
 #[derive(Debug, Clone)]

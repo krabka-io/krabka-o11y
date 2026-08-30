@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, SpanRef};
 
 /// Full span set for one trace.
 #[derive(Clone, Debug, PartialEq)]

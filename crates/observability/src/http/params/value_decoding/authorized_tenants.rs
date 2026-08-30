@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, HttpQueryError, QuerierState, tenant};
 
 pub(crate) async fn authorized_tenants(
     state: &QuerierState,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSizeExt, ComparisonOp, FieldFilter, FieldValue, quote_logql_string};
 
 pub(crate) fn format_field_filter(filter: &FieldFilter) -> String {
     format!(

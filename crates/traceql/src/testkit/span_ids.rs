@@ -1,4 +1,4 @@
-use super::*;
+use super::SearchResponse;
 
 pub(crate) fn span_ids(resp: &SearchResponse) -> Vec<u8> {
     let mut ids = resp

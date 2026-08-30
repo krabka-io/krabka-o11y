@@ -1,4 +1,4 @@
-use super::*;
+use super::{Retained, VecDeque};
 
 /// Retained source records plus the count of records evicted since the last
 /// rebuild. The store uses that count to amortize rebuilds. See

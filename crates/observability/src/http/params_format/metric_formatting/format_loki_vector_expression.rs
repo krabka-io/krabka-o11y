@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
+    format_metric_query, format_metric_scalar_arithmetic_expression,
+    format_metric_scalar_comparison_expression, format_metric_vector_arithmetic_expression,
+    format_metric_vector_comparison_expression, format_metric_vector_set_expression,
+    format_scalar_vector_expression, format_vector_label_replace_function, parse_metric_query,
+};
 
 pub(crate) fn format_loki_vector_expression(query: &str) -> Option<String> {
     if let Some(formatted) = format_metric_vector_arithmetic_expression(query) {

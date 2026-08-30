@@ -1,4 +1,4 @@
-use super::*;
+use super::HttpQueryError;
 
 pub(crate) fn parse_usize_query_param(
     name: &'static str,

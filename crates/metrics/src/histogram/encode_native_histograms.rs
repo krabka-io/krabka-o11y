@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, RecordBatch, HistogramCodecError, validate_span_count_consistency, UInt64Builder, Int64Builder, Int8Builder, BooleanBuilder, Float64Builder, new_span_list_builder, new_f64_list_builder, append_spans, append_f64_list, ArrayRef, Arc, native_histogram_schema};
 
 /// Encodes `(fingerprint, timestamp, NativeHistogram)` rows into a
 /// `RecordBatch` that matches [`native_histogram_schema`].

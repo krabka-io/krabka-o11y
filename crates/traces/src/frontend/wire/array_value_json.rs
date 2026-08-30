@@ -1,4 +1,4 @@
-use super::*;
+use super::{Serialize, Deserialize, AnyValueJson};
 
 /// OTLP `ArrayValue` body.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

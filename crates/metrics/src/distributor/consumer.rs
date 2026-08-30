@@ -1,4 +1,4 @@
-use super::*;
+use super::{HaElectionConsumerPoll, Consumer, Time, ConsumerRecord, HaElectionConsumerError, HaElectionConsumerCommit};
 
 #[async_trait::async_trait]
 impl HaElectionConsumerPoll for Consumer {

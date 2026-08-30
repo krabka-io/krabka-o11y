@@ -1,4 +1,4 @@
-use super::*;
+use super::{Expr, ExtendedSelectorModifier, Extension, Arc, ExtendedSelectorExpr};
 
 pub(crate) fn wrap_extended_selectors(expr: Expr, modifier: ExtendedSelectorModifier) -> Expr {
     match expr {

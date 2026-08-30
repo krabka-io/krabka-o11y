@@ -1,4 +1,7 @@
-use super::{LogqlExpr, ParseError, syntax_error, parse_query, scan_top_level, operator_at, Parser, ExprOperator, parse_expr_primary};
+use super::{
+    ExprOperator, LogqlExpr, ParseError, Parser, operator_at, parse_expr_primary, parse_query,
+    scan_top_level, syntax_error,
+};
 
 pub(crate) fn parse_expr(input: &str) -> Result<LogqlExpr, ParseError> {
     let input = input.trim();

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricStore, AlertmanagerSink, PromqlEngine, PromqlError, RulerAlertState, evaluate_and_dispatch_alerting_rule_with_state};
 
 /// Evaluates one alerting rule and dispatches the active alerts to Alertmanager.
 ///

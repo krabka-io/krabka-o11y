@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
+    QuerierState, connect_error, parse_span_selectors, pb, tenant_from_headers,
+};
 
 pub(crate) async fn select_merge_span_profile_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,

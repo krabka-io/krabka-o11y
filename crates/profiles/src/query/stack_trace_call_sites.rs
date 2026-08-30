@@ -1,6 +1,8 @@
-use super::*;
+use super::pb;
 
-pub(crate) fn stack_trace_call_sites(selector: Option<&pb::types::v1::StackTraceSelector>) -> Vec<String> {
+pub(crate) fn stack_trace_call_sites(
+    selector: Option<&pb::types::v1::StackTraceSelector>,
+) -> Vec<String> {
     selector
         .map(|selector| {
             selector

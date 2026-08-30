@@ -1,4 +1,4 @@
-use super::*;
+use super::{PromqlError, parse_promql, avg_partial_queries, moment_partial_queries, rank_reduction, expr_supports_frontend_sharding};
 
 pub(crate) fn query_supports_frontend_sharding(query: &str) -> Result<bool, PromqlError> {
     let expr = parse_promql(query)?;

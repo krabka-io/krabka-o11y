@@ -1,4 +1,4 @@
-use super::*;
+use super::{Span, BTreeSet, root_span, attr_string};
 
 pub(crate) fn collect_trace_intrinsic_values(
     spans: &[&Span],

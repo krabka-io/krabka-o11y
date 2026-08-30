@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BlockDescriptor, BlockIndex, CompactionError, CompactionOffsetCommitter, LabelIndex,
+    LogCompactionIndexOutput, ObjectPath, ObjectStore, WalLogRecord,
+    compact_wal_records_to_object_store_with_delete_filters_and_index_output,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

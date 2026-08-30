@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    FsPath, LabelIndex, MetricQuery, QueryError, StreamPlan, Value,
+    execute_metric_query_with_deletes,
+};
 
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

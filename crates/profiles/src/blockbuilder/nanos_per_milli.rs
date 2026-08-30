@@ -1,5 +1,3 @@
-use super::*;
-
 /// Scale between the epoch-nanosecond timestamps that the WAL carries and the
 /// epoch-millisecond timestamps that index blocks.
 ///

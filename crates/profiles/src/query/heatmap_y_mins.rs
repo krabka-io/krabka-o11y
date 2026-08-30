@@ -1,6 +1,10 @@
 use super::*;
 
-pub(crate) fn heatmap_y_mins(min_value: MinValue, max_value: MaxValue, value_buckets: usize) -> Vec<f64> {
+pub(crate) fn heatmap_y_mins(
+    min_value: MinValue,
+    max_value: MaxValue,
+    value_buckets: usize,
+) -> Vec<f64> {
     if value_buckets == 0 {
         return Vec::new();
     }

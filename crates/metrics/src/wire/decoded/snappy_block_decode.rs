@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, WireError, snappy_block_decode_raw, ByteSizeExt};
 
 /// Decodes a plain snappy block. Prometheus `remote_write` does not use the
 /// Xerial framed snappy format that Kafka uses.

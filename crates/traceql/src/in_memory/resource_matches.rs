@@ -1,4 +1,4 @@
-use super::*;
+use super::{SpanMatcher, StoredTrace, nil_matches, string_matches};
 
 pub(crate) fn resource_matches(trace: &StoredTrace, matcher: &SpanMatcher) -> bool {
     match matcher.key.as_str() {

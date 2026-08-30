@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, Value};
 
 pub(crate) fn json_object_to_labels(value: &Value) -> Option<Labels> {
     value.as_object().map(|object| {

@@ -1,4 +1,3 @@
-use super::*;
 
 /// NTP root dispersion column (`Int64`).
 ///

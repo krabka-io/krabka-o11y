@@ -1,4 +1,4 @@
-use super::*;
+use super::{HashMap, ProfilesError, normalize_required_pprof_id};
 
 pub(crate) fn normalize_optional_pprof_id(
     id: u64,

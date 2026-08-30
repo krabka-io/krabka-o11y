@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, MetadataRecord, Array, StringArray, PromqlError};
 
 pub(crate) fn metadata_from_batch(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<MetadataRecord>> {
     let names = batch

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ExpectLine, AnnotationExpect, RangeExpect};
 
 pub(crate) struct ExpectBlock {
     pub(crate) lines: Vec<ExpectLine>,

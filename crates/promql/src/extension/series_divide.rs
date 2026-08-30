@@ -149,8 +149,8 @@ mod tests {
 }
 
 // === split-modules: generated submodules ===
-mod series_divide;
+mod series_divide_type;
 mod series_divide_exec;
 
-pub use series_divide::SeriesDivide;
+pub use series_divide_type::SeriesDivide;
 pub use series_divide_exec::SeriesDivideExec;

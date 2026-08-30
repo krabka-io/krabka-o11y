@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    format_binary_operator_line, format_label_replace_metric_binary_expression,
+    split_leading_vector_binary_modifiers, split_top_level_arithmetic_query,
+};
 
 pub(crate) fn format_label_replace_metric_binary_arithmetic(query: &str) -> Option<String> {
     let (left_text, operator, right_text) = split_top_level_arithmetic_query(query)?;

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompactionFrontierStoreError, CompactorRunError, KafkaWalCompactionError,
+    block_store_error_is_object_store, compaction_error_is_object_store,
+};
 
 pub(crate) fn compactor_run_error_is_object_store(error: &CompactorRunError) -> bool {
     match error {

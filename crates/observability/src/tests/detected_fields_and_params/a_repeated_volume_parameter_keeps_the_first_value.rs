@@ -43,5 +43,7 @@ pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
     check!(super::super::prelude::parse_volume_params(Some("limit=5")).is_err());
     check!(super::super::prelude::parse_volume_params(None).is_err());
     // An unknown aggregation is rejected rather than falling back.
-    check!(super::super::prelude::parse_volume_params(Some("query=a&aggregateBy=nonsense")).is_err());
+    check!(
+        super::super::prelude::parse_volume_params(Some("query=a&aggregateBy=nonsense")).is_err()
+    );
 }

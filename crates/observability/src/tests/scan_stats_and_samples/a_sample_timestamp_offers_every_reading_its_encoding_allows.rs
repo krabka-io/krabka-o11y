@@ -41,7 +41,9 @@ pub(crate) fn a_sample_timestamp_offers_every_reading_its_encoding_allows() {
             .is_none()
     );
     check!(
-        super::super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!("bare"))
-            .is_none()
+        super::super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!(
+            "bare"
+        ))
+        .is_none()
     );
 }

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    format_metric_scalar_arithmetic_operator, format_scalar_text, format_simple_metric_query,
+    parse_metric_scalar_arithmetic_query,
+};
 
 pub(crate) fn format_metric_scalar_arithmetic_expression(query: &str) -> Option<String> {
     let arithmetic = parse_metric_scalar_arithmetic_query(query).ok()?;

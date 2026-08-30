@@ -1,4 +1,4 @@
-use super::{NaiveDateTime, Utc, FixedOffset, TimeZone, Tz, LocalResult};
+use super::{FixedOffset, LocalResult, NaiveDateTime, TimeZone, Tz, Utc};
 
 pub(crate) fn resolve_template_datetime(
     datetime: NaiveDateTime,

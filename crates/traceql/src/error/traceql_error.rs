@@ -1,5 +1,3 @@
-use super::*;
-
 /// Errors that the `TraceQL` engine raises.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum TraceqlError {

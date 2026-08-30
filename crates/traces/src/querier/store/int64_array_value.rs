@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, TraceqlError, Int64Array};
 
 pub(crate) fn int64_array_value(col: &dyn Array, row: usize) -> Result<i64, TraceqlError> {
     col.as_any()

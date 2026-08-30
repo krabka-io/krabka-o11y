@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, ClockWireError, pb};
 
 /// The quality of a GNSS position solution.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, ToPrimitive, PromqlError, Duration, display_duration};
 
 /// Largest duration the engine represents: `i64::MAX` milliseconds in seconds.
 ///

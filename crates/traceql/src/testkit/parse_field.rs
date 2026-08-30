@@ -1,5 +1,3 @@
-use super::*;
-
 /// Parses one numeric field of a corpus case, failing loudly rather than
 /// leaving it unset. A field that will not parse is a mistake in the case
 /// file, and treating it as absent removes the assertion it was written to

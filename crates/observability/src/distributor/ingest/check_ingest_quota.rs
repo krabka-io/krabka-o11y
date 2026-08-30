@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, LogIngestLimiter, WalLogRecord};
 
 pub(crate) async fn check_ingest_quota(
     limiter: &dyn LogIngestLimiter,

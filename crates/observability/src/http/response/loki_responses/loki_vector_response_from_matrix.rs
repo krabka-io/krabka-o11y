@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, json};
 
 pub(crate) fn loki_vector_response_from_matrix(mut value: Value) -> Value {
     if value.pointer("/data/resultType").and_then(Value::as_str) != Some("matrix") {

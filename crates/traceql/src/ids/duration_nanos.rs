@@ -1,4 +1,4 @@
-use super::*;
+use super::{Display, From, Into};
 
 /// A duration in nanoseconds: a *span of time*, not an instant.
 ///

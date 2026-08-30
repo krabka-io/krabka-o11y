@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels, Value, loki_metric_sample_timestamp_key};
 
 pub(crate) fn consume_hot_metric_sample(
     hot_counts: &mut BTreeMap<(Labels, String), u64>,

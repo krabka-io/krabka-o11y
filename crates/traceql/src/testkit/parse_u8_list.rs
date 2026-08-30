@@ -1,5 +1,3 @@
-use super::*;
-
 /// Parses a comma-separated id list. Empty entries are allowed so a trailing
 /// comma is harmless, but an entry that is not a number is a mistake in the
 /// case file and stops the run: dropping it would silently shorten the list

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DistributorError, DistributorState, TimeExt, WalLogRecord, append_wal_records,
+    check_ingest_quota,
+};
 
 pub(crate) async fn append_distributor_wal_records(
     state: &DistributorState,

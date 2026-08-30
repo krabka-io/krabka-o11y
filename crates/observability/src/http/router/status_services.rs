@@ -1,4 +1,4 @@
-use super::*;
+use super::{Response, StatusCode, text_response};
 
 pub(crate) fn status_services(_name: &'static str) -> Response {
     text_response(

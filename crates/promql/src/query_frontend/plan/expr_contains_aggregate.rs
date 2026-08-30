@@ -1,4 +1,4 @@
-use super::*;
+use super::Expr;
 
 pub(crate) fn expr_contains_aggregate(expr: &Expr) -> bool {
     match expr {

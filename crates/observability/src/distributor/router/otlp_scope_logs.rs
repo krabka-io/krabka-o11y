@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, OtlpLogRecord, OtlpScope};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

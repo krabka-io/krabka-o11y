@@ -1,4 +1,4 @@
-use super::{MetricQuery, ComparisonOp, MetricVectorMatching};
+use super::{ComparisonOp, MetricQuery, MetricVectorMatching};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricBinaryComparison {

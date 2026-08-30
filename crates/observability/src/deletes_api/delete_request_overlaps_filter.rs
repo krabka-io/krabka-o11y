@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactorDeleteRequest, ListDeleteRequestsParams};
 
 pub(crate) fn delete_request_overlaps_filter(
     request: &CompactorDeleteRequest,

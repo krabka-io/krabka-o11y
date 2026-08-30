@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionIndexSink, BlockWriter, TenantCompactionRows, PartitionIndex, CompactedBlockWrite, CompactionWriteError, encode_tenant_batches, write_compacted_block, CompactedBlockRequest, MetricBlockKind, series_labels_for_kind};
 
 pub(crate) async fn write_compacted_tenant_blocks_with_partition<S>(
     block_writer: &BlockWriter,

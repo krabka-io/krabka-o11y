@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, json, merge_loki_query_stats};
 
 pub(crate) fn merge_loki_query_response(target: &mut Value, source: &Value) {
     if let Some(source_result) = source

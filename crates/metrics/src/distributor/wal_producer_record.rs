@@ -1,4 +1,4 @@
-use super::*;
+use super::{Bytes, ProducerRecord, WAL_TOPIC, ProducerHeader};
 
 /// Builds the WAL producer record for a serialized entry.
 ///

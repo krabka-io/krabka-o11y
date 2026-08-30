@@ -1,4 +1,4 @@
-use super::*;
+use super::{IntoResponse, Response, StatusCode};
 
 pub(crate) fn status_metrics(component: &'static str) -> Response {
     let compactor_running = usize::from(component == "compactor");

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Deserialize, Labels, Serialize, WalPosition};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WalLogRecord {

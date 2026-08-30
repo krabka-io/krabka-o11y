@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, Scope, TraceqlError};
 
 pub(crate) fn scope(s: &str) -> Result<Scope> {
     match s {

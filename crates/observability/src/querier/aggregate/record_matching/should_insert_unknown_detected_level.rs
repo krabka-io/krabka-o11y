@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 pub(crate) fn should_insert_unknown_detected_level(labels: &Labels) -> bool {
     !labels.contains_key("detected_level")

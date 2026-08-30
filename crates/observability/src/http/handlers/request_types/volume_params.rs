@@ -1,4 +1,4 @@
-use super::*;
+use super::VolumeAggregateBy;
 
 #[derive(Debug)]
 pub(crate) struct VolumeParams {

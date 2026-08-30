@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricFilter, TraceMetricSeries, metric_filter_passes};
 
 pub(crate) fn apply_metric_filter(
     series: Vec<TraceMetricSeries>,

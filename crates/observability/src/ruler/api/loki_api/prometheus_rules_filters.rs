@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, StreamQuery};
 
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct PrometheusRulesFilters {

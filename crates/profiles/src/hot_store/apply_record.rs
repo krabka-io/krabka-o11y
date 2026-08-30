@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    InMemoryProfileStore, ProfileRecord, ProfilesError, intern_record, profile_timestamp_ms,
+};
 
 /// Intern and push every sample of `record` into `store`.
 pub(crate) fn apply_record(

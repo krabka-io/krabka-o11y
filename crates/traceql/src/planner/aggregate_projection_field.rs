@@ -1,4 +1,4 @@
-use super::*;
+use super::{Aggregate, Field};
 
 pub(crate) fn aggregate_projection_field(agg: &Aggregate) -> Option<&Field> {
     match agg {

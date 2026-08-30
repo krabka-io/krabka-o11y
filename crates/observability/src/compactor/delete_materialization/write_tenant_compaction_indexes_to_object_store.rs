@@ -1,4 +1,10 @@
-use super::*;
+use super::{
+    BlockDescriptor, BlockIndex, BlockStoreError, LabelIndex, LogCompactionIndexOutput, ObjectPath,
+    ObjectStore, read_tenant_log_index_shard_ranges_from_object_store,
+    write_tenant_log_index_manifest_to_object_store,
+    write_tenant_log_index_shard_catalog_to_object_store,
+    write_tenant_log_index_shard_to_object_store,
+};
 
 pub(crate) async fn write_tenant_compaction_indexes_to_object_store(
     store: &dyn ObjectStore,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ComparisonOp, Field, Value};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FieldExpr {

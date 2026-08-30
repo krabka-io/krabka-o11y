@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    LokiDirection, Value, apply_loki_stream_end_bound, apply_loki_stream_interval,
+    apply_loki_stream_limit,
+};
 
 pub(crate) fn apply_loki_stream_options(
     mut value: Value,

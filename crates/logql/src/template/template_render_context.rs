@@ -1,4 +1,4 @@
-use super::{Labels, BTreeMap, TemplateRuntimeValue};
+use super::{BTreeMap, Labels, TemplateRuntimeValue};
 
 #[derive(Clone, Debug)]
 pub(crate) struct TemplateRenderContext<'a> {

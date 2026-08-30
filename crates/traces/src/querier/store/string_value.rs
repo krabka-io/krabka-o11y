@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, TraceqlError, Array, string_array_value};
 
 pub(crate) fn string_value(batch: &RecordBatch, name: &str, row: usize) -> Result<String, TraceqlError> {
     let col = batch

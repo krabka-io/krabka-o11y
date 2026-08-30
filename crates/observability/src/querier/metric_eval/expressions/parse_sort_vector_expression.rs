@@ -1,4 +1,4 @@
-use super::*;
+use super::{SortVectorExpression, split_logql_function_arguments};
 
 pub(crate) fn parse_sort_vector_expression(query: &str) -> Option<SortVectorExpression> {
     for (function_name, descending) in [("sort", false), ("sort_desc", true)] {

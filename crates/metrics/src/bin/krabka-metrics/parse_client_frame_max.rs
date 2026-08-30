@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, parse, ClientFrameMax};
 
 pub(crate) fn parse_client_frame_max(value: &str) -> Result<ByteSize, String> {
     let value = parse::positive_byte_size(value).map_err(|error| error.to_string())?;

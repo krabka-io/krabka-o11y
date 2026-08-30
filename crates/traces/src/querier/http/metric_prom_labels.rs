@@ -1,4 +1,3 @@
-use super::*;
 
 /// Prometheus-style label string for `TimeSeries.promLabels`, which is
 /// Grafana's legend. An example is `{resource_service_name="api"}`. An empty

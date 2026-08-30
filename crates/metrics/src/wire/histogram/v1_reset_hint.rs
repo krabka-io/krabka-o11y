@@ -1,4 +1,4 @@
-use super::*;
+use super::{ResetHint, pb};
 
 pub(crate) fn v1_reset_hint(value: i32) -> ResetHint {
     match pb::v1::histogram::ResetHint::try_from(value) {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{OuterRangeFn, RangeFn, IrateFn, OverTimeFn};
 
 /// Maps a range or `*_over_time` function name to its [`OuterRangeFn`].
 ///

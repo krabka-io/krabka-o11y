@@ -1,5 +1,3 @@
-use super::*;
-
 /// A typed attribute value.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttrValue {

@@ -1,4 +1,4 @@
-use super::*;
+use super::ProfileError;
 
 pub(crate) fn parse_span_selectors(selectors: &[String]) -> Result<Vec<u64>, ProfileError> {
     selectors

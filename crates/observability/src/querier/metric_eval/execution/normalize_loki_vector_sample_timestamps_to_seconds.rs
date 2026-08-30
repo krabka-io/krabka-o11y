@@ -1,4 +1,4 @@
-use super::*;
+use super::{Value, json, unix_ns_string_to_loki_seconds};
 
 pub(crate) fn normalize_loki_vector_sample_timestamps_to_seconds(value: &mut Value) {
     let Some(results) = value

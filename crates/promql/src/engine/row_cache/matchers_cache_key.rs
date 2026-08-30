@@ -1,4 +1,4 @@
-use super::*;
+use super::LabelMatcher;
 
 /// Deterministic cache key for a matcher set. `LabelMatcher` is not `Hash`, but
 /// its `Debug` output is stable and uniquely identifies the (name, op, value)

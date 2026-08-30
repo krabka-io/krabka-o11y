@@ -1,4 +1,4 @@
-use super::*;
+use super::{HttpQueryError, QuerierState, StreamPlan};
 
 pub(crate) fn validate_query_series_limit(
     state: &QuerierState,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ActiveLogDeleteFilterError, BlockStoreError, CompactorDeleteRequest, TimeRange};
 
 pub(crate) fn delete_request_time_range(
     request: &CompactorDeleteRequest,

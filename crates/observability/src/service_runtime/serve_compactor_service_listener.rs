@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ObjectStore, ServiceConfig, ServiceDependencies, ServiceRuntimeError, TcpListener,
+    compactor_delete_requests_for_config, compactor_router_with_delete_requests, pending,
+    run_compactor_until_shutdown,
+};
 
 pub(crate) async fn serve_compactor_service_listener(
     listener: TcpListener,

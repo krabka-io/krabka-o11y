@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricStore, Arc, PrometheusApiState, HeaderMap, ExemplarsQueryParams, Response, tenant_from_headers, IntoResponse, selector_matchers, ApiError, timestamp_ms, validate_timestamp_range, BTreeMap, exemplar_key, success_data_response, exemplars_json};
 
 pub(crate) async fn query_exemplars_inner<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,

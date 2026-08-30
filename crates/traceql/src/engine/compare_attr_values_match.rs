@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, CompareRegexCache, ComparisonOp, Value, compare_value_match};
 
 /// Applies Tempo array-attribute semantics to one attribute.
 ///

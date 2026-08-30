@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompareGroup, META_TYPE_KEY, MetricsRange, TraceMetricSeries, compare_points};
 
 pub(crate) fn compare_total_series(
     group: CompareGroup,

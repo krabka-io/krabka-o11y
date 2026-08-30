@@ -7,7 +7,8 @@ use super::*;
 /// fixed-shape field a client parses positionally.
 #[test]
 pub(crate) fn a_loki_query_length_always_writes_all_three_units() {
-    let format = |seconds: i64| super::super::prelude::format_loki_query_length(Time::from_nanos(seconds));
+    let format =
+        |seconds: i64| super::super::prelude::format_loki_query_length(Time::from_nanos(seconds));
     let secs = 1_000_000_000_i64;
 
     check!(format(0) == "0h0m0s", "every unit, even at zero");

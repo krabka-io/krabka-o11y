@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Labels, Value, json, limit_volume_series, loki_success_value};
 
 pub(crate) fn loki_volume_vector_response(
     volumes: BTreeMap<Labels, BTreeMap<i64, u64>>,

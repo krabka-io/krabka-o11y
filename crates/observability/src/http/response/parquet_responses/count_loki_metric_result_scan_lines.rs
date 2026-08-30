@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricQuery, RangeAggregation, Value, count_loki_metric_result_samples};
 
 pub(crate) fn count_loki_metric_result_scan_lines(value: &Value, query: &MetricQuery) -> u64 {
     if matches!(query.aggregation, RangeAggregation::AbsentOverTime) {

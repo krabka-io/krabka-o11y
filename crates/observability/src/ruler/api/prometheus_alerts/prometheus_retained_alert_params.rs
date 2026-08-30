@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, Labels, PrometheusAlertKey};
 
 pub(crate) struct PrometheusRetainedAlertParams<'a> {
     pub(crate) tenant: &'a str,

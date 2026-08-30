@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, Value, expand_prometheus_alert_template, json};
 
 pub(crate) fn prometheus_alert_template_map(
     templates: &Labels,

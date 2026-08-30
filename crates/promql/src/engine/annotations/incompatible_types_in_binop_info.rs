@@ -1,4 +1,3 @@
-use super::*;
 
 /// Exact Prometheus `IncompatibleTypesInBinOpInfo` text for incompatible operands.
 ///

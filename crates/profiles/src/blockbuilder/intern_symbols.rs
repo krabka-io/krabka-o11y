@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    FunctionRec, LineRec, LocationRec, ProfilesError, SymbolDb, SymbolRefs, WalSymbolSet,
+    mapping_rec, remap_ref,
+};
 
 pub(crate) fn intern_symbols(
     symdb: &mut SymbolDb,

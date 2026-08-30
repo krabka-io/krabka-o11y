@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, Result, TimeExt, PromqlError};
 
 pub(crate) fn apply_offset_delta(time_ms: i64, offset: Time) -> Result<i64> {
     time_ms

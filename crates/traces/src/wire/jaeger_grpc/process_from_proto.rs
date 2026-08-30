@@ -1,4 +1,4 @@
-use super::*;
+use super::{api_v2, JaegerProcess, key_value_from_proto};
 
 pub(crate) fn process_from_proto(process: &api_v2::Process) -> JaegerProcess {
     JaegerProcess {

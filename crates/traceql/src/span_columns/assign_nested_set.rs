@@ -1,4 +1,4 @@
-use super::*;
+use super::{HashMap, InputSpan, NestedSet};
 
 #[must_use]
 pub fn assign_nested_set(spans: &[InputSpan]) -> Vec<NestedSet> {

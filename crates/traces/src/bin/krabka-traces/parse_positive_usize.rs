@@ -1,4 +1,4 @@
-use super::*;
+use super::Parser;
 
 pub(crate) fn parse_positive_usize(value: &str) -> Result<usize, String> {
     use refined_type::rule::GreaterUsize;

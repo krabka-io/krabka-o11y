@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricBinarySetOp;
 
 pub(crate) fn metric_binary_set_keeps_sample(op: MetricBinarySetOp, matched: bool) -> bool {
     match op {

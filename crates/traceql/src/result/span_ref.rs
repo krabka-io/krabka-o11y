@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, EventRef, LinkRef, Time};
 
 /// One matched span in a result span set.
 #[derive(Clone, Debug, PartialEq)]

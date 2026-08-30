@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    HeaderMap, Instant, IntoResponse, Path, QuerierState, RawQuery, Response, State,
+    execute_label_values_query, parse_series_params,
+};
 
 pub(crate) async fn label_values(
     State(state): State<QuerierState>,

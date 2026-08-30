@@ -1,4 +1,4 @@
-use super::*;
+use super::{Array, HistogramCodecError, null_required_column};
 
 // cargo-mutants: exercised through the sample and histogram codec null-column tests.
 #[cfg_attr(test, mutants::skip)]

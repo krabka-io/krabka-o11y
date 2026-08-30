@@ -1,3 +1,5 @@
+use std::io::Read as _;
+
 use axum::response::IntoResponse;
 use krabka_units::convert::{ByteSizeExt, StdDurationExt, TimeExt};
 use prost::Message;
@@ -10,8 +12,6 @@ use crate::{
     loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
     normalize_otlp_logs, normalize_otlp_proto_logs, quote_logql_string,
 };
-
-use std::io::Read as _;
 
 // === split-modules: generated submodules ===
 mod append_distributor_wal_records;
@@ -41,29 +41,29 @@ mod validate_loki_json_push_timestamp_types;
 mod validate_loki_json_push_value_arrays;
 mod validate_loki_json_structured_metadata_value_types;
 
-pub (crate) use append_distributor_wal_records::append_distributor_wal_records;
-pub (crate) use append_wal_records::append_wal_records;
-pub (crate) use check_ingest_quota::check_ingest_quota;
-pub (crate) use decode_loki_http_body::decode_loki_http_body;
-pub (crate) use encode_otlp_status_message::encode_otlp_status_message;
-pub (crate) use encode_varint::encode_varint;
-pub (crate) use loki_decode_error_context::loki_decode_error_context;
-pub (crate) use loki_json_push_labels_field_parse_error::loki_json_push_labels_field_parse_error;
-pub (crate) use loki_json_push_payload_parse_error::loki_json_push_payload_parse_error;
-pub (crate) use loki_json_push_stream_parse_error::loki_json_push_stream_parse_error;
-pub (crate) use loki_json_push_streams_parse_error::loki_json_push_streams_parse_error;
-pub (crate) use loki_json_push_value_parse_error::loki_json_push_value_parse_error;
-pub (crate) use loki_json_push_values_field_parse_error::loki_json_push_values_field_parse_error;
-pub (crate) use loki_structured_metadata_object_parse_error::loki_structured_metadata_object_parse_error;
-pub (crate) use loki_structured_metadata_value_parse_error::loki_structured_metadata_value_parse_error;
-pub (crate) use measured_size::measured_size;
-pub (crate) use normalize_loki_http_push::normalize_loki_http_push;
-pub (crate) use normalize_otlp_http_logs::normalize_otlp_http_logs;
-pub (crate) use otlp_http_error_response::otlp_http_error_response;
-pub (crate) use previous_char_boundary::previous_char_boundary;
-pub (crate) use record_ingest_response::record_ingest_response;
-pub (crate) use validate_ingest_body_limit::validate_ingest_body_limit;
-pub (crate) use validate_loki_json_push_stream_objects::validate_loki_json_push_stream_objects;
-pub (crate) use validate_loki_json_push_timestamp_types::validate_loki_json_push_timestamp_types;
-pub (crate) use validate_loki_json_push_value_arrays::validate_loki_json_push_value_arrays;
-pub (crate) use validate_loki_json_structured_metadata_value_types::validate_loki_json_structured_metadata_value_types;
+pub(crate) use append_distributor_wal_records::append_distributor_wal_records;
+pub(crate) use append_wal_records::append_wal_records;
+pub(crate) use check_ingest_quota::check_ingest_quota;
+pub(crate) use decode_loki_http_body::decode_loki_http_body;
+pub(crate) use encode_otlp_status_message::encode_otlp_status_message;
+pub(crate) use encode_varint::encode_varint;
+pub(crate) use loki_decode_error_context::loki_decode_error_context;
+pub(crate) use loki_json_push_labels_field_parse_error::loki_json_push_labels_field_parse_error;
+pub(crate) use loki_json_push_payload_parse_error::loki_json_push_payload_parse_error;
+pub(crate) use loki_json_push_stream_parse_error::loki_json_push_stream_parse_error;
+pub(crate) use loki_json_push_streams_parse_error::loki_json_push_streams_parse_error;
+pub(crate) use loki_json_push_value_parse_error::loki_json_push_value_parse_error;
+pub(crate) use loki_json_push_values_field_parse_error::loki_json_push_values_field_parse_error;
+pub(crate) use loki_structured_metadata_object_parse_error::loki_structured_metadata_object_parse_error;
+pub(crate) use loki_structured_metadata_value_parse_error::loki_structured_metadata_value_parse_error;
+pub(crate) use measured_size::measured_size;
+pub(crate) use normalize_loki_http_push::normalize_loki_http_push;
+pub(crate) use normalize_otlp_http_logs::normalize_otlp_http_logs;
+pub(crate) use otlp_http_error_response::otlp_http_error_response;
+pub(crate) use previous_char_boundary::previous_char_boundary;
+pub(crate) use record_ingest_response::record_ingest_response;
+pub(crate) use validate_ingest_body_limit::validate_ingest_body_limit;
+pub(crate) use validate_loki_json_push_stream_objects::validate_loki_json_push_stream_objects;
+pub(crate) use validate_loki_json_push_timestamp_types::validate_loki_json_push_timestamp_types;
+pub(crate) use validate_loki_json_push_value_arrays::validate_loki_json_push_value_arrays;
+pub(crate) use validate_loki_json_structured_metadata_value_types::validate_loki_json_structured_metadata_value_types;

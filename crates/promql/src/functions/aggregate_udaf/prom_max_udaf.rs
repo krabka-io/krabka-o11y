@@ -1,4 +1,4 @@
-use super::*;
+use super::{AggregateUDF, extremum_udaf, Extremum};
 
 /// The NaN-ignoring `max` aggregate UDAF.
 #[must_use]

@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ScalarVectorExpressionResult, format_vector_arithmetic_expression,
+    format_vector_comparison_expression, format_vector_label_replace_function,
+    format_vector_set_expression, parse_scalar_sample, scalar_vector_expression_result,
+};
 
 pub(crate) fn format_scalar_vector_expression(query: &str) -> Option<String> {
     if let Some(formatted) = format_vector_label_replace_function(query) {

@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Array, AsArray, BTreeMap, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_SPAN_ID,
+    PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_VALUE, ProfileError, Time, UInt64Type,
+    frames_match_call_sites, pb, span_exemplars_from_totals, step_bucket_ms, types_label_pairs,
+};
 
 pub(crate) async fn span_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,

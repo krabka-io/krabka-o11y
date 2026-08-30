@@ -1,4 +1,4 @@
-use super::*;
+use super::ProfileRecord;
 
 /// A source record that the store retains for retention bookkeeping and
 /// rebuilds.

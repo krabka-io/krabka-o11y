@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DistributorState, MetricsServiceServer, OtlpMetricsService, otlp_metrics_service};
 
 /// Builds a tonic server for OTLP metrics export.
 #[must_use]

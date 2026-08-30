@@ -1,4 +1,4 @@
-use super::*;
+use super::EncodeLabelSet;
 
 /// Query-shape label: `type="instant"` or `type="range"`.
 ///

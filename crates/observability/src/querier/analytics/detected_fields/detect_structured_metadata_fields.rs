@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, DetectedFieldStats, Labels, add_detected_field, field_type_from_str};
 
 pub(crate) fn detect_structured_metadata_fields(
     fields: &mut BTreeMap<String, DetectedFieldStats>,

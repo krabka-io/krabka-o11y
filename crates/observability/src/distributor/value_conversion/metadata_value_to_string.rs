@@ -1,4 +1,4 @@
-use super::*;
+use super::Value;
 
 pub(crate) fn metadata_value_to_string(value: &Value) -> String {
     match value {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{TraceJson, parse_nanos, merge_span_sets};
 
 /// Fold one trace into the merged set. This appends the trace when it is new.
 /// Otherwise it reunions the trace's spanSets into the existing trace with the

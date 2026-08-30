@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CompareGroup {
     Baseline,

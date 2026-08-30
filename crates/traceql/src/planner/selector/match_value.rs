@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchValue, Value};
 
 pub(crate) fn match_value(value: &Value) -> MatchValue {
     match value {

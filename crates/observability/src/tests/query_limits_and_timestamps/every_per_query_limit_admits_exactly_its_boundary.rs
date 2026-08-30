@@ -40,8 +40,9 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
             })
             .collect(),
     };
-    let base =
-        || super::super::prelude::QuerierState::new(".", LabelIndex::default(), BlockIndex::default());
+    let base = || {
+        super::super::prelude::QuerierState::new(".", LabelIndex::default(), BlockIndex::default())
+    };
 
     // Series: three fingerprints against a limit of three, then two.
     check!(

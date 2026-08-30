@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Copy)]
 pub(crate) struct RoleOps {
     pub(crate) target: &'static str,

@@ -1,4 +1,7 @@
-use super::{TemplateRangeBinding, TemplateExpression, ParseError, parse_template_variable_name, template_parse_error};
+use super::{
+    ParseError, TemplateExpression, TemplateRangeBinding, parse_template_variable_name,
+    template_parse_error,
+};
 
 pub(crate) fn parse_template_range_expression(
     range_expression: &str,

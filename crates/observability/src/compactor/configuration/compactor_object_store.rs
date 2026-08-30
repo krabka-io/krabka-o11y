@@ -1,4 +1,4 @@
-use super::*;
+use super::{ConfiguredObjectStore, ObjectPath, ObjectStore, ServiceConfigError};
 
 pub(crate) fn compactor_object_store<'a>(
     object_store: Option<&'a dyn ObjectStore>,

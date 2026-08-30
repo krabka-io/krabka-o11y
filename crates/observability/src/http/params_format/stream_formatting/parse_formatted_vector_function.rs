@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    find_logql_function_call_end, format_vector_label_replace_function, parse_scalar_sample,
+};
 
 pub(crate) fn parse_formatted_vector_function(
     query: &str,

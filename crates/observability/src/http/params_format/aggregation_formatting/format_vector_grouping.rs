@@ -1,4 +1,4 @@
-use super::*;
+use super::VectorGrouping;
 
 pub(crate) fn format_vector_grouping(grouping: &VectorGrouping) -> String {
     match grouping {

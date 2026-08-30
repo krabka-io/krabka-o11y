@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    MetricVectorComparisonExpression, parse_leading_metric_vector_matching_modifier,
+    parse_metric_comparison_operator, scalar_vector_query_is_vector,
+    split_top_level_comparison_query,
+};
 
 pub(crate) fn parse_metric_vector_comparison_expression(
     query: &str,

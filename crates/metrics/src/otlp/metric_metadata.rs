@@ -1,4 +1,4 @@
-use super::*;
+use super::{Metric, DecodedMetadata};
 
 pub(crate) fn metric_metadata(
     metric: &Metric,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Serialize, Deserialize, KeyValue};
 
 /// A linked span reference.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

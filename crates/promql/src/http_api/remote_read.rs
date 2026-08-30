@@ -32,7 +32,7 @@ mod append_remote_read_exemplars;
 mod append_remote_read_float_samples;
 mod append_remote_read_histogram_samples;
 mod header_list_includes;
-mod remote_read;
+mod remote_read_fn;
 mod remote_read_bucket_spans;
 mod remote_read_exemplar;
 mod remote_read_histogram;

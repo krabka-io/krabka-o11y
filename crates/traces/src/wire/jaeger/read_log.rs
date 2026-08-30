@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactInput, JaegerLog, WireError, T_I64, T_LIST, read_key_value};
 
 pub(crate) fn read_log(input: &mut CompactInput<'_>) -> Result<JaegerLog, WireError> {
     let mut out = JaegerLog::default();

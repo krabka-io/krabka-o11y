@@ -1,4 +1,4 @@
-use super::*;
+use super::EncodeLabelSet;
 
 /// Ingest request outcome label (`status="ok"|"error"`).
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]

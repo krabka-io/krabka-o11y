@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ArrowWriter, Cursor, ObjectStore, ObjectStoreExt, Path, ProfilesError, PutPayload,
+    RecordBatch,
+};
 
 pub(crate) async fn write_batches(
     store: &Arc<dyn ObjectStore>,

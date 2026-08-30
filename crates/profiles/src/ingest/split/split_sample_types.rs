@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, DecodedProfile, DecodedSample, HashMap, Labels, ProfileType, ProfilesError,
+    RawProfile, labels_key, labels_with_sample_labels,
+};
 
 /// Split one multi-value pprof into one `DecodedProfile` per `sample_type[]`.
 ///

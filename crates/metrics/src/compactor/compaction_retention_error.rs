@@ -1,4 +1,4 @@
-use super::*;
+use super::CompactionIndexError;
 
 /// Errors raised while deleting compacted metric objects outside retention.
 #[derive(Debug, thiserror::Error)]

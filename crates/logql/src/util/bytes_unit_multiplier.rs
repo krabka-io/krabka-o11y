@@ -1,4 +1,3 @@
-
 /// The size units that the `LogQL` grammar itself admits.
 ///
 /// The table is here and not in `krabka_units::parse::byte_size` because Loki

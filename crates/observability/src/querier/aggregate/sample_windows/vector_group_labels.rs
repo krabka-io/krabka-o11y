@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, VectorGrouping};
 
 pub(crate) fn vector_group_labels(labels: &Labels, grouping: Option<&VectorGrouping>) -> Labels {
     match grouping {

@@ -1,4 +1,7 @@
-use super::{TemplatePart, ParseError, parse_template_parts, Labels, TemplateRenderContext, render_template_parts};
+use super::{
+    Labels, ParseError, TemplatePart, TemplateRenderContext, parse_template_parts,
+    render_template_parts,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LineFormat {

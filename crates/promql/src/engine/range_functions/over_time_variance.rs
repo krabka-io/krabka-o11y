@@ -1,4 +1,4 @@
-use super::*;
+use super::kahan_sum_inc;
 
 /// Returns the population variance of a sample window.
 ///

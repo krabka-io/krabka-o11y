@@ -1,4 +1,4 @@
-use super::*;
+use super::{Response, StatusCode, text_response};
 
 pub(crate) fn missing_loki_rule_directory_response(tenant: &str) -> Response {
     text_response(

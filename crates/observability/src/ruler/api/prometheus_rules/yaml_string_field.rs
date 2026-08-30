@@ -1,4 +1,4 @@
-use super::*;
+use super::serde_yaml_key;
 
 pub(crate) fn yaml_string_field<'a>(
     fields: &'a serde_yaml::Mapping,

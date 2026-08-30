@@ -1,4 +1,4 @@
-use super::*;
+use super::{Expr, MatrixSelector, OverTimeFamily, over_time_family_from_function_name};
 
 /// Matches a top-level `*_over_time` range call eligible for the operator path.
 ///

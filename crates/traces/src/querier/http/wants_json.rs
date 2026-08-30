@@ -1,4 +1,4 @@
-use super::*;
+use super::{HeaderMap, header};
 
 pub(crate) fn wants_json(headers: &HeaderMap) -> bool {
     headers

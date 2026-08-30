@@ -1,6 +1,10 @@
 use super::advance_template_pos;
 
-pub(crate) fn parse_variable_template_digits(value: &str, pos: &mut usize, max_count: usize) -> Option<u32> {
+pub(crate) fn parse_variable_template_digits(
+    value: &str,
+    pos: &mut usize,
+    max_count: usize,
+) -> Option<u32> {
     let start = *pos;
     let rest = value.get(start..)?;
     let digits_len = rest

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Time, secs};
 
 /// Widest window `/loki/api/v1/index/volume` and the range endpoints accept
 /// (`Loki`'s 30d 1h default, to the nanosecond).

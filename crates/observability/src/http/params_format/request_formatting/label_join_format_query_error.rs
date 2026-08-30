@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn label_join_format_query_error(query: &str) -> Option<String> {
     query
         .trim_start()

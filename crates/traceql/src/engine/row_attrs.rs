@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ATTR_PREFIX, Array, AsArray, AttrValue, DataType, RecordBatch, Result, TraceqlError,
+    block_row_attrs, string_array_value,
+};
 
 pub(crate) fn row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<(String, AttrValue)>> {
     let schema = batch.schema();

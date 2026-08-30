@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    PlannedSpanset, PlannerContext, Query, Result, SpanStore, SpansetExpr, plan_spanset_sql,
+    selector,
+};
 
 pub(crate) async fn plan_query<S: SpanStore>(
     store: &S,

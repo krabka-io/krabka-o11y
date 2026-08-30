@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, PprofProfile, ProfilesError, stacks_to_pprof};
 
 pub(crate) fn lines_to_pprof(
     name: &str,

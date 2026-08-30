@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 /// One already-evaluated inner instant-vector sample.
 ///

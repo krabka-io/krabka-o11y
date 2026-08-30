@@ -1,4 +1,3 @@
-use super::*;
 
 /// Apply an optional object-store prefix to a raw traces object key.
 #[must_use]

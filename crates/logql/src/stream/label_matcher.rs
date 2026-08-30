@@ -1,4 +1,4 @@
-use super::{MatchOp, ParseError, Labels, Regex, anchored_regex_pattern};
+use super::{Labels, MatchOp, ParseError, Regex, anchored_regex_pattern};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LabelMatcher {

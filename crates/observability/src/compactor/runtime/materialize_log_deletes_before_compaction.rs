@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    CompactorRunError, ObjectPath, ObjectStore, SharedLogDeleteRequests,
+    TenantCompactionIndexCache, active_log_delete_tenants,
+    materialize_delete_requests_in_existing_object_store_blocks,
+};
 
 pub(crate) async fn materialize_log_deletes_before_compaction(
     store: &dyn ObjectStore,

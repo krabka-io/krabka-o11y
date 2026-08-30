@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ObjectPath, QuerierIndexSource, ServiceConfig, ServiceConfigError,
+    effective_object_store_prefix,
+};
 
 pub(crate) fn querier_object_store_prefix(
     config: &ServiceConfig,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Metric, ExponentialHistogram, KeyValue, TranslationStrategy, DeltaAccumulator, DecodedSeries, OtlpError, translated_metric_name, metric_metadata, labels, exponential_histogram_to_native, AggregationTemporality, nanos_to_millis, exemplars_from_exponential_histogram_point};
 
 pub(crate) fn exponential_histogram_series(
     metric: &Metric,

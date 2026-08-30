@@ -1,6 +1,11 @@
-use super::*;
+use super::{
+    FieldExpr, SpanMatcher, field_expr_to_matcher_disjuncts, matcher_from_field_expr,
+    negate_matcher,
+};
 
-pub(crate) fn field_expr_to_negated_matcher_disjuncts(fe: &FieldExpr) -> Option<Vec<Vec<SpanMatcher>>> {
+pub(crate) fn field_expr_to_negated_matcher_disjuncts(
+    fe: &FieldExpr,
+) -> Option<Vec<Vec<SpanMatcher>>> {
     match fe {
         FieldExpr::Comparison { .. } | FieldExpr::Field(_) => {
             matcher_from_field_expr(fe).map(|matcher| vec![vec![negate_matcher(matcher)]])

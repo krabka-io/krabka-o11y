@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BufferedLogHotTail, HotTailPollError, LogWalConsumer, SharedCompactionFrontier, Time,
+    decode_kafka_wal_record_envelope,
+};
 
 pub(crate) async fn poll_log_hot_tail_once_with_frontier(
     consumer: &mut (impl LogWalConsumer + ?Sized),

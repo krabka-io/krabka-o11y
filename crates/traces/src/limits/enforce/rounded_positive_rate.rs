@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn rounded_positive_rate(rate: f64) -> u64 {
     if !rate.is_finite() || rate <= 0.0 {

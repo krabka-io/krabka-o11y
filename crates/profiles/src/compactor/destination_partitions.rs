@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, ProfilesError};
 
 /// Build the source-partition to destination-partition map for one input block.
 ///

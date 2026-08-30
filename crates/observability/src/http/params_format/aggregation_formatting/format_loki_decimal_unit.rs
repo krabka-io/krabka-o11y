@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn format_loki_decimal_unit(
     duration_ns: i64,
     unit_ns: i64,

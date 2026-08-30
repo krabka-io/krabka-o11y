@@ -1,5 +1,3 @@
-use super::*;
-
 /// Waits for an operating-system signal requesting graceful shutdown.
 ///
 /// On Unix, either `SIGINT` (usually sent by Ctrl+C) or `SIGTERM` resolves the

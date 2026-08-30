@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    CompactorDeleteRequestResponse, CompactorDeleteState, HeaderMap, HttpQueryError,
+    delete_request_overlaps_filter, parse_list_delete_requests_params, tenant,
+};
 
 pub(crate) fn execute_list_delete_requests(
     state: &CompactorDeleteState,

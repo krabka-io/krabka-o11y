@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BlockDescriptor, CompactorRunError, ObjectPath, ObjectStore, Offset, PartitionIndex,
+    SharedCompactionFrontier, WalPosition, write_compaction_frontier_to_object_store,
+};
 
 pub(crate) async fn advance_and_persist_compaction_frontier(
     store: &dyn ObjectStore,

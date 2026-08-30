@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompactionError, TimeRange, WalLogRecord};
 
 pub(crate) fn wal_record_time_range(
     records: &[WalLogRecord],

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    PprofProfile, ProfilesError, pb, sample_labels, string_table, table_ref, table_ref_checked,
+    value_type,
+};
 
 pub(crate) fn otlp_profile_to_pprof(
     profile: &pb::otlp_profiles::Profile,

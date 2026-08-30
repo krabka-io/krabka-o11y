@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricScalarArithmeticOp;
 
 pub(crate) fn parse_metric_arithmetic_operator(operator: &str) -> Option<MetricScalarArithmeticOp> {
     match operator {

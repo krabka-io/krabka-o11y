@@ -1,4 +1,4 @@
-use super::*;
+use super::{CompareRegexCache, CompareRow, SpansetExpr, field_expr_matches_row};
 
 pub(crate) fn spanset_matches_row(
     selection: &SpansetExpr,

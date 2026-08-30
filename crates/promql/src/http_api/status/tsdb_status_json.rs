@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, TsdbStats, Value, named_tsdb_stats_json};
 
 pub(crate) fn tsdb_status_json(stats: TsdbStats, limit: Option<usize>) -> Value {
     json!({

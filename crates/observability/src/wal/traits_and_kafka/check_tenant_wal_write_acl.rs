@@ -1,4 +1,4 @@
-use super::*;
+use super::{AclEntry, IngestLimitError, PermissionType, acl_matches_tenant_wal_write};
 
 pub(crate) fn check_tenant_wal_write_acl(
     tenant: &str,

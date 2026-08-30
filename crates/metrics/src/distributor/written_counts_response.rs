@@ -1,4 +1,4 @@
-use super::*;
+use super::{StatusCode, WrittenCounts, Response, IntoResponse, insert_written_header};
 
 pub(crate) fn written_counts_response(status: StatusCode, counts: WrittenCounts) -> Response {
     let mut response = status.into_response();

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BytesMut, BufMut};
 
 pub(crate) fn put_optional_i64(buf: &mut BytesMut, value: Option<i64>) {
     match value {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{AclEntry, PatternType};
 
 pub(crate) fn matches_acl_topic_pattern(acl: &AclEntry, wal_topic: &str) -> bool {
     match acl.pattern_type {

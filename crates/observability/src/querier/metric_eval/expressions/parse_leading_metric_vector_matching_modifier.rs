@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    MetricVectorMatching, parse_leading_label_list, parse_leading_metric_vector_group_modifier,
+};
 
 pub(crate) fn parse_leading_metric_vector_matching_modifier(
     query: &str,

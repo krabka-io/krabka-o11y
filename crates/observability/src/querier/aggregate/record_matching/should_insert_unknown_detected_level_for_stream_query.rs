@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, PipelineStage, StreamQuery, should_insert_unknown_detected_level};
 
 pub(crate) fn should_insert_unknown_detected_level_for_stream_query(
     query: &StreamQuery,

@@ -1,4 +1,4 @@
-use super::*;
+use super::pb;
 
 impl From<krabka_pprof::FlameGraph> for pb::querier::v1::FlameGraph {
     fn from(value: krabka_pprof::FlameGraph) -> Self {

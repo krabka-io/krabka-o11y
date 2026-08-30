@@ -1,4 +1,4 @@
-use super::*;
+use super::RoleOps;
 
 pub(crate) const COMPACTOR_OPS: RoleOps = RoleOps {
     target: "compactor",

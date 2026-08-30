@@ -1,4 +1,4 @@
-use super::*;
+use super::{Call, Result, InfoContext, PromqlError, Expr, info_data_label_matchers, labels_match, Labels, BTreeSet};
 
 /// Parses and validates an `info(v [, data_label_selector])` call.
 pub(crate) fn parse_info_call(call: &Call) -> Result<InfoContext<'_>> {

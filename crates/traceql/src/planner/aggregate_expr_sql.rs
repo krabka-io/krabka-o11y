@@ -1,4 +1,4 @@
-use super::*;
+use super::{Aggregate, Result, TraceqlError, selector};
 
 pub(crate) fn aggregate_expr_sql(agg: &Aggregate) -> Result<String> {
     let (func, field) = match agg {

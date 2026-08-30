@@ -1,4 +1,4 @@
-use super::*;
+use super::{ExtendedSelectorModifier, Expr, ExtensionExpr, Any, ValueType, Arc};
 
 #[derive(Debug, Clone)]
 pub struct ExtendedSelectorExpr {

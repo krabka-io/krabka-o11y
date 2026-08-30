@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BlockDescriptor, CompactorRunError, Instrument, KafkaWalRecord, LogWalConsumer, ObjectPath,
+    ObjectStore, SharedLogDeleteRequests, TenantCompactionIndexCache,
+    compact_polled_kafka_wal_records_inner, set_remote_parent_from_wal_records,
+};
 
 pub(crate) async fn compact_polled_kafka_wal_records_to_object_store_from_existing_manifest(
     store: &dyn ObjectStore,

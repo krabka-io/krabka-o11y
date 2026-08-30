@@ -1,4 +1,4 @@
-use super::*;
+use super::{LogWalSink, WalLogRecord, WalSinkError};
 
 pub(crate) async fn append_wal_records(
     sink: &dyn LogWalSink,

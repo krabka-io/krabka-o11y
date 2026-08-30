@@ -1,4 +1,4 @@
-use super::*;
+use super::{ScopedTag, TagScope, BTreeSet};
 
 pub(crate) fn merge_static_scope(tags: &mut Vec<ScopedTag>, scope: TagScope, static_tags: &[&str]) {
     let existing = tags

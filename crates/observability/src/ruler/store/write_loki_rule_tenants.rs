@@ -1,4 +1,4 @@
-use super::*;
+use super::{FsPath, LokiRuleStoreError, LokiRuleTenants};
 
 pub(crate) fn write_loki_rule_tenants(
     path: &FsPath,

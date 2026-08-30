@@ -1,4 +1,4 @@
-use super::*;
+use super::{Line, Result, SampleSpec, parse_histogram_expansion, add_histogram_step, parse_histogram_repetition, parse_histogram_literal, parse_error, parse_float};
 
 pub(crate) fn parse_sample_token(token: &str, line: Line<'_>) -> Result<Vec<SampleSpec>> {
     if token == "_" {

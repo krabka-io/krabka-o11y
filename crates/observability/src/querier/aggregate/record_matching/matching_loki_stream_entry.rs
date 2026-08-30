@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Labels, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL,
+    should_insert_unknown_detected_level_for_stream_query,
+};
 
 pub(crate) fn matching_loki_stream_entry(
     query: &StreamQuery,

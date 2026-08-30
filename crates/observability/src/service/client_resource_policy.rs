@@ -1,5 +1,3 @@
-use super::*;
-
 /// Validated Kafka connection resource limits shared by this process.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ClientResourcePolicy {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{BucketSpan, BTreeMap};
 
 pub(crate) fn spanned_histogram_counts(spans: &[BucketSpan], counts: &[f64]) -> BTreeMap<i32, f64> {
     let mut buckets = BTreeMap::new();

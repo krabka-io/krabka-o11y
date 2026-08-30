@@ -1,4 +1,4 @@
-use super::*;
+use super::{MatchOp, quote_logql_string};
 
 pub(crate) fn format_label_matcher(matcher: &krabka_logql::LabelMatcher) -> String {
     format!(

@@ -1,4 +1,4 @@
-use super::*;
+use super::{DistributorError, Value};
 
 pub(crate) fn otlp_severity_number_to_string(value: &Value) -> Result<String, DistributorError> {
     match value {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{NativeHistogram, Result, PromqlError, combined_reset_hint, add_custom_histogram, add_exponential_histogram};
 
 pub(crate) fn add_compatible_native_histogram(
     left: &mut NativeHistogram,

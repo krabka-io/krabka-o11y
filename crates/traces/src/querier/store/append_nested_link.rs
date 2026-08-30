@@ -1,4 +1,4 @@
-use super::*;
+use super::{LinkRef, FixedSizeBinaryBuilder, TraceqlError};
 
 pub(crate) fn append_nested_link(
     link: Option<&LinkRef>,

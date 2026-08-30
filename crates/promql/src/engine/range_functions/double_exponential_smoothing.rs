@@ -1,4 +1,3 @@
-use super::*;
 
 #[cfg(feature = "experimental-functions")]
 pub(crate) fn double_exponential_smoothing(

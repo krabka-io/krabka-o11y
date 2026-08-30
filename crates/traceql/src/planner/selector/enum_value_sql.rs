@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Intrinsic, Result, Scope, TraceqlError, intrinsic_name, kind_enum_value, status_enum_value,
+};
 
 pub(crate) fn enum_value_sql(scope: &Scope, name: &str) -> Result<String> {
     let normalized = name.to_ascii_lowercase();

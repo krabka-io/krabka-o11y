@@ -1,4 +1,4 @@
-use super::*;
+use super::ProfilesError;
 
 pub(crate) fn parse_labels_part(raw: &[u8]) -> Result<Vec<(String, String)>, ProfilesError> {
     if raw.is_empty() {

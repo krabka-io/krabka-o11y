@@ -1,4 +1,4 @@
-use super::*;
+use super::NANOS_PER_MILLI;
 
 #[must_use]
 pub fn profile_timestamp_ms(timestamp_ns: i64) -> i64 {

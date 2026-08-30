@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn urldecode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut bytes = s.bytes();

@@ -502,6 +502,5 @@ use struct_fixed_field::struct_fixed_field;
 use struct_i64_field::struct_i64_field;
 use struct_list_field::struct_list_field;
 use struct_string_field::struct_string_field;
-use tag_metadata::TagMetadata;
 use tag_metadata::tag_metadata;
 use trace_bloom::trace_bloom;

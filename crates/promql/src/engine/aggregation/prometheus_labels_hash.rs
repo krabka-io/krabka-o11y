@@ -1,4 +1,3 @@
-use super::*;
 
 /// Hashes labels exactly like Prometheus' `labels.Labels.Hash`.
 ///

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricScalarArithmeticOp, MetricValue};
 
 pub(crate) fn metric_scalar_arithmetic_value(
     sample: MetricValue,

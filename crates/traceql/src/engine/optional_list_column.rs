@@ -1,6 +1,9 @@
-use super::*;
+use super::{Array, ListArray, RecordBatch, Result, TraceqlError};
 
-pub(crate) fn optional_list_column<'a>(batch: &'a RecordBatch, name: &str) -> Result<Option<&'a ListArray>> {
+pub(crate) fn optional_list_column<'a>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Result<Option<&'a ListArray>> {
     batch
         .column_by_name(name)
         .map(|col| {

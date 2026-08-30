@@ -1,4 +1,4 @@
-use super::*;
+use super::{json, SpanRef, Value, event_unix_nano, attrs_json};
 
 pub(crate) fn events_json(span: &SpanRef) -> Value {
     Value::Array(

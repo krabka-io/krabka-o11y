@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, QUERY_SHARD_LABEL, MatchOp};
 
 /// One Mimir-compatible query shard.
 ///
