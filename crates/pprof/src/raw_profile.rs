@@ -7,154 +7,6 @@ use crate::{
     proto::{Function, Line, Location, Profile, Sample, ValueType},
 };
 
-#[must_use]
-pub fn tree_to_pprof(tree: &Tree, profile_type: &ProfileType) -> PprofProfile {
-    let mut builder = PprofBuilder::new(profile_type);
-    let (root, nodes) = tree.snapshot();
-    let mut path = Vec::new();
-    collect_samples(root, root, &nodes, &mut path, &mut builder);
-    builder.finish()
-}
-
-#[must_use]
-pub fn tree_to_pprof_with_max_nodes(
-    tree: &Tree,
-    profile_type: &ProfileType,
-    max_nodes: i64,
-) -> PprofProfile {
-    let mut builder = PprofBuilder::new(profile_type);
-    for (path, value) in tree.sample_paths(max_nodes) {
-        builder.add_sample(&path, value);
-    }
-    builder.finish()
-}
-
-fn collect_samples(
-    root: usize,
-    node_idx: usize,
-    nodes: &[crate::tree::TreeSnapshotNode],
-    path: &mut Vec<String>,
-    builder: &mut PprofBuilder,
-) {
-    if node_idx != root {
-        path.push(nodes[node_idx].name.clone());
-    }
-    if nodes[node_idx].self_ != 0 && !path.is_empty() {
-        builder.add_sample(path, nodes[node_idx].self_);
-    }
-    for child in &nodes[node_idx].children {
-        collect_samples(root, *child, nodes, path, builder);
-    }
-    if node_idx != root {
-        path.pop();
-    }
-}
-
-struct PprofBuilder {
-    profile: Profile,
-    strings: HashMap<String, i64>,
-    locations: HashMap<String, u64>,
-}
-
-impl PprofBuilder {
-    fn new(profile_type: &ProfileType) -> Self {
-        let mut profile = Profile {
-            string_table: vec![String::new()],
-            ..Default::default()
-        };
-        let mut strings = HashMap::from([(String::new(), 0)]);
-        let sample_type = intern_string(
-            &mut profile.string_table,
-            &mut strings,
-            &profile_type.sample_type,
-        );
-        let sample_unit = intern_string(
-            &mut profile.string_table,
-            &mut strings,
-            &profile_type.sample_unit,
-        );
-        let period_type = intern_string(
-            &mut profile.string_table,
-            &mut strings,
-            &profile_type.period_type,
-        );
-        let period_unit = intern_string(
-            &mut profile.string_table,
-            &mut strings,
-            &profile_type.period_unit,
-        );
-        profile.sample_type.push(ValueType {
-            r#type: sample_type,
-            unit: sample_unit,
-        });
-        profile.period_type = Some(ValueType {
-            r#type: period_type,
-            unit: period_unit,
-        });
-        profile.default_sample_type = sample_type;
-        Self {
-            profile,
-            strings,
-            locations: HashMap::new(),
-        }
-    }
-
-    fn add_sample(&mut self, root_to_leaf: &[String], value: i64) {
-        let location_id = root_to_leaf
-            .iter()
-            .rev()
-            .map(|name| self.location_id(name))
-            .collect();
-        self.profile.sample.push(Sample {
-            location_id,
-            value: vec![value],
-            label: Vec::new(),
-        });
-    }
-
-    fn location_id(&mut self, name: &str) -> u64 {
-        if let Some(id) = self.locations.get(name) {
-            return *id;
-        }
-        let name_ref = intern_string(&mut self.profile.string_table, &mut self.strings, name);
-        let id = u64::try_from(self.profile.function.len() + 1).expect("function id fits u64");
-        self.profile.function.push(Function {
-            id,
-            name: name_ref,
-            system_name: name_ref,
-            filename: 0,
-            start_line: 0,
-        });
-        self.profile.location.push(Location {
-            id,
-            mapping_id: 0,
-            address: 0,
-            line: vec![Line {
-                function_id: id,
-                line: 0,
-                column: 0,
-            }],
-            is_folded: false,
-        });
-        self.locations.insert(name.to_string(), id);
-        id
-    }
-
-    fn finish(self) -> PprofProfile {
-        self.profile.into()
-    }
-}
-
-fn intern_string(strings: &mut Vec<String>, index: &mut HashMap<String, i64>, value: &str) -> i64 {
-    if let Some(slot) = index.get(value) {
-        return *slot;
-    }
-    let slot = i64::try_from(strings.len()).expect("string index fits i64");
-    strings.push(value.to_string());
-    index.insert(value.to_string(), slot);
-    slot
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -262,3 +114,15 @@ mod tests {
         paths
     }
 }
+
+mod collect_samples;
+mod intern_string;
+mod pprof_builder;
+mod tree_to_pprof;
+mod tree_to_pprof_with_max_nodes;
+
+use collect_samples::collect_samples;
+use intern_string::intern_string;
+use pprof_builder::PprofBuilder;
+pub use tree_to_pprof::tree_to_pprof;
+pub use tree_to_pprof_with_max_nodes::tree_to_pprof_with_max_nodes;

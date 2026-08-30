@@ -1,0 +1,43 @@
+use super::{
+    HeaderMap, HttpQueryError, IntoResponse, Path, QuerierState, Response, State, StatusCode, json,
+    json_response, loki_ruler_tenant, text_response,
+};
+
+pub(crate) async fn delete_loki_rule_group(
+    State(state): State<QuerierState>,
+    Path((namespace, group_name)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let tenant = match loki_ruler_tenant(&headers) {
+        Ok(tenant) => tenant,
+        Err(error) => return error.into_response(),
+    };
+    let snapshot = {
+        let mut rules = state
+            .rules
+            .tenants
+            .lock()
+            .expect("Loki rule store lock poisoned");
+        let Some(namespaces) = rules.get_mut(&tenant) else {
+            return text_response(StatusCode::NOT_FOUND, "group does not exist\n");
+        };
+        let Some(groups) = namespaces.get_mut(&namespace) else {
+            return text_response(StatusCode::NOT_FOUND, "group does not exist\n");
+        };
+        if groups.remove(&group_name).is_none() {
+            return text_response(StatusCode::NOT_FOUND, "group does not exist\n");
+        }
+        if groups.is_empty() {
+            namespaces.remove(&namespace);
+        }
+        if namespaces.is_empty() {
+            rules.remove(&tenant);
+        }
+        rules.clone()
+    };
+    if let Err(error) = state.rules.persist_snapshot(&snapshot) {
+        return HttpQueryError::from(error).into_response();
+    }
+    state.alert_states.clear_tenant(&tenant);
+    json_response(StatusCode::ACCEPTED, &json!({ "status": "success" }))
+}

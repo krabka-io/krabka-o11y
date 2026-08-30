@@ -8,178 +8,6 @@ use serde::Deserialize;
 
 use super::Limits;
 
-/// Pyroscope-style runtime overrides resolved into full per-tenant limits.
-#[derive(Clone, Debug)]
-pub struct OverridesProvider {
-    defaults: Limits,
-    per_tenant: HashMap<String, Limits>,
-}
-
-impl OverridesProvider {
-    #[must_use]
-    pub fn new(defaults: Limits) -> Self {
-        Self {
-            defaults,
-            per_tenant: HashMap::new(),
-        }
-    }
-
-    ///
-    /// # Errors
-    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-    pub fn from_yaml(yaml: &str) -> Result<Self, OverridesError> {
-        Self::from_yaml_with_defaults(yaml, Limits::default())
-    }
-
-    ///
-    /// # Errors
-    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-    pub fn from_yaml_with_defaults(yaml: &str, defaults: Limits) -> Result<Self, OverridesError> {
-        let parsed: RuntimeFile =
-            serde_yaml::from_str(yaml).map_err(|err| OverridesError::Yaml(err.to_string()))?;
-        let mut per_tenant = HashMap::new();
-        for (tenant, partial) in parsed.overrides {
-            partial.validate(&tenant)?;
-            per_tenant.insert(tenant, partial.merge_over(&defaults));
-        }
-        Ok(Self {
-            defaults,
-            per_tenant,
-        })
-    }
-
-    #[must_use]
-    pub fn for_tenant(&self, tenant: &str) -> &Limits {
-        self.per_tenant.get(tenant).unwrap_or(&self.defaults)
-    }
-
-    #[must_use]
-    pub fn has_tenant_override(&self, tenant: &str) -> bool {
-        self.per_tenant.contains_key(tenant)
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum OverridesError {
-    #[error("profiles overrides yaml: {0}")]
-    Yaml(String),
-    #[error("profiles overrides for tenant {tenant:?}: {reason}")]
-    Invalid { tenant: String, reason: String },
-}
-
-// `deny_unknown_fields` rejects typo'd / unsupported keys at load instead of
-// silently ignoring them (a footgun where an operator's intended limit never
-// takes effect).
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeFile {
-    #[serde(default)]
-    overrides: HashMap<String, PartialLimits>,
-}
-
-// The Pyroscope-shaped runtime-overrides keys, in the units an operator writes
-// them (profiles/sec, bytes, seconds). Tenant entries are intentionally partial:
-// this is partial configuration, not old-schema compatibility — each entry
-// overrides only the limit fields it names, `merge_over` lifts them into the
-// dimensioned `Limits`, and unknown keys are rejected (see `RuntimeFile`).
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartialLimits {
-    #[serde(default)]
-    ingestion_rate_profiles_per_sec: Option<f64>,
-    #[serde(default)]
-    ingestion_burst_profiles: Option<u64>,
-    #[serde(default)]
-    max_series: Option<u64>,
-    #[serde(default)]
-    max_label_name_length: Option<u64>,
-    #[serde(default)]
-    max_label_value_length: Option<u64>,
-    #[serde(default)]
-    max_label_names_per_series: Option<u64>,
-    #[serde(default)]
-    max_flamegraph_nodes_default: Option<i64>,
-    #[serde(default)]
-    max_flamegraph_nodes_max: Option<i64>,
-    #[serde(default)]
-    max_query_length_secs: Option<u64>,
-    #[serde(default)]
-    max_session_id_cardinality: Option<u64>,
-}
-
-impl PartialLimits {
-    /// Validate numeric ranges before the merge of the partial into full limits.
-    ///
-    /// Rejects the following, each with [`OverridesError::Invalid`]:
-    /// - a non-finite (`NaN` or `inf`) or negative
-    ///   `ingestion_rate_profiles_per_sec`,
-    /// - a negative flamegraph node cap, either `max_flamegraph_nodes_default`
-    ///   or `max_flamegraph_nodes_max`.
-    ///
-    /// The remaining caps are `u64` and therefore cannot be negative. Serde
-    /// already rejects an out-of-range YAML literal for them at
-    /// deserialization.
-    fn validate(&self, tenant: &str) -> Result<(), OverridesError> {
-        let invalid = |reason: &str| OverridesError::Invalid {
-            tenant: tenant.to_string(),
-            reason: reason.to_string(),
-        };
-        if let Some(rate) = self.ingestion_rate_profiles_per_sec
-            && (!rate.is_finite() || rate < 0.0)
-        {
-            return Err(invalid(
-                "ingestion_rate_profiles_per_sec must be finite and >= 0",
-            ));
-        }
-        if let Some(nodes) = self.max_flamegraph_nodes_default
-            && nodes < 0
-        {
-            return Err(invalid("max_flamegraph_nodes_default must be >= 0"));
-        }
-        if let Some(nodes) = self.max_flamegraph_nodes_max
-            && nodes < 0
-        {
-            return Err(invalid("max_flamegraph_nodes_max must be >= 0"));
-        }
-        Ok(())
-    }
-
-    fn merge_over(self, defaults: &Limits) -> Limits {
-        Limits {
-            ingestion_rate: self
-                .ingestion_rate_profiles_per_sec
-                .map_or(defaults.ingestion_rate, Frequency::from_per_sec),
-            ingestion_burst_profiles: self
-                .ingestion_burst_profiles
-                .unwrap_or(defaults.ingestion_burst_profiles),
-            max_series: self.max_series.unwrap_or(defaults.max_series),
-            max_label_name: self
-                .max_label_name_length
-                .map_or(defaults.max_label_name, ByteSize::from_bytes),
-            max_label_value: self
-                .max_label_value_length
-                .map_or(defaults.max_label_value, ByteSize::from_bytes),
-            max_label_names_per_series: self
-                .max_label_names_per_series
-                .unwrap_or(defaults.max_label_names_per_series),
-            max_flamegraph_nodes_default: self
-                .max_flamegraph_nodes_default
-                .unwrap_or(defaults.max_flamegraph_nodes_default),
-            max_flamegraph_nodes_max: self
-                .max_flamegraph_nodes_max
-                .unwrap_or(defaults.max_flamegraph_nodes_max),
-            max_query_length: self
-                .max_query_length_secs
-                .map_or(defaults.max_query_length, |secs| {
-                    Time::from_secs(i64::try_from(secs).unwrap_or(i64::MAX))
-                }),
-            max_session_id_cardinality: self
-                .max_session_id_cardinality
-                .unwrap_or(defaults.max_session_id_cardinality),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -341,3 +169,13 @@ overrides:
         );
     }
 }
+
+mod overrides_error;
+mod overrides_provider;
+mod partial_limits;
+mod runtime_file;
+
+pub use overrides_error::OverridesError;
+pub use overrides_provider::OverridesProvider;
+use partial_limits::PartialLimits;
+use runtime_file::RuntimeFile;

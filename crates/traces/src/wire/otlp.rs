@@ -8,189 +8,6 @@ use opentelemetry_proto::tonic::{
 use super::WireError;
 use crate::span::{AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode};
 
-fn fixed16(bytes: &[u8], field: &str) -> Result<[u8; 16], WireError> {
-    bytes
-        .try_into()
-        .map_err(|_| WireError::Invalid(format!("{field} must be 16 bytes, got {}", bytes.len())))
-}
-
-fn fixed8(bytes: &[u8], field: &str) -> Result<[u8; 8], WireError> {
-    bytes
-        .try_into()
-        .map_err(|_| WireError::Invalid(format!("{field} must be 8 bytes, got {}", bytes.len())))
-}
-
-fn any_to_attr(value: &AnyValue) -> Option<AttrValue> {
-    match value.value.as_ref()? {
-        Value::StringValue(value) => Some(AttrValue::Str(value.clone())),
-        Value::StringValueStrindex(value) => Some(AttrValue::Str(format!("strindex:{value}"))),
-        Value::IntValue(value) => Some(AttrValue::Int(*value)),
-        Value::DoubleValue(value) => Some(AttrValue::Double(*value)),
-        Value::BoolValue(value) => Some(AttrValue::Bool(*value)),
-        Value::BytesValue(value) => Some(AttrValue::Bytes(value.clone())),
-        Value::ArrayValue(_) => None,
-        Value::KvlistValue(value) => Some(AttrValue::Str(format!(
-            "{{{}}}",
-            value
-                .values
-                .iter()
-                .filter_map(|kv| Some(format!("{}:{}", kv.key, any_to_text(kv.value.as_ref()?)?)))
-                .collect::<Vec<_>>()
-                .join(",")
-        ))),
-    }
-}
-
-fn any_to_text(value: &AnyValue) -> Option<String> {
-    match any_to_attr(value)? {
-        AttrValue::Str(value) => Some(value),
-        AttrValue::Int(value) => Some(value.to_string()),
-        AttrValue::Double(value) => Some(value.to_string()),
-        AttrValue::Bool(value) => Some(value.to_string()),
-        AttrValue::Bytes(value) => Some(hex::encode(value)),
-    }
-}
-
-fn kv_to_attrs(attr: &OtlpKv) -> Vec<KeyValue> {
-    let Some(value) = attr.value.as_ref() else {
-        return Vec::new();
-    };
-    match value.value.as_ref() {
-        Some(Value::ArrayValue(array)) => array
-            .values
-            .iter()
-            .filter_map(|value| {
-                Some(KeyValue {
-                    key: attr.key.clone(),
-                    value: any_to_attr(value)?,
-                })
-            })
-            .collect(),
-        _ => any_to_attr(value)
-            .map(|value| {
-                vec![KeyValue {
-                    key: attr.key.clone(),
-                    value,
-                }]
-            })
-            .unwrap_or_default(),
-    }
-}
-
-fn kvs(attrs: &[OtlpKv]) -> Vec<KeyValue> {
-    attrs.iter().flat_map(kv_to_attrs).collect()
-}
-
-fn status_of(status: Option<&Status>) -> (StatusCode, String) {
-    match status {
-        Some(status) => (StatusCode::from_i32(status.code), status.message.clone()),
-        None => (StatusCode::Unset, String::new()),
-    }
-}
-
-fn kind_of(kind: i32) -> SpanKind {
-    if kind == OtlpKind::Unspecified as i32 {
-        SpanKind::Unspecified
-    } else {
-        SpanKind::from_i32(kind)
-    }
-}
-
-/// Decode OTLP `TracesData` into internal spans.
-///
-/// # Errors
-/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
-pub fn decode_otlp(data: &TracesData) -> Result<Vec<Span>, WireError> {
-    let mut out = Vec::new();
-    for resource_spans in &data.resource_spans {
-        let resource_attrs = resource_spans
-            .resource
-            .as_ref()
-            .map(|resource| kvs(&resource.attributes))
-            .unwrap_or_default();
-
-        for scope_spans in &resource_spans.scope_spans {
-            let scope_name = scope_spans
-                .scope
-                .as_ref()
-                .map(|scope| scope.name.clone())
-                .unwrap_or_default();
-            let scope_version = scope_spans
-                .scope
-                .as_ref()
-                .map(|scope| scope.version.clone())
-                .unwrap_or_default();
-            let instrumentation_attrs = scope_spans.scope.as_ref().map_or_else(Vec::new, |scope| {
-                kvs(&scope.attributes)
-                    .into_iter()
-                    .map(|mut attribute| {
-                        attribute.key = format!(
-                            "{}{}",
-                            krabka_traceql::INSTRUMENTATION_ATTR_PREFIX,
-                            attribute.key
-                        );
-                        attribute
-                    })
-                    .collect::<Vec<_>>()
-            });
-
-            for span in &scope_spans.spans {
-                let parent_span_id = if span.parent_span_id.is_empty() {
-                    None
-                } else {
-                    Some(fixed8(&span.parent_span_id, "parent_span_id")?)
-                };
-                let (status, status_message) = status_of(span.status.as_ref());
-                let events = span
-                    .events
-                    .iter()
-                    .map(|event| EventRecord {
-                        time_unix_nano: i64::try_from(event.time_unix_nano).unwrap_or(i64::MAX),
-                        name: event.name.clone(),
-                        attrs: kvs(&event.attributes),
-                    })
-                    .collect();
-                let links = span
-                    .links
-                    .iter()
-                    .map(|link| {
-                        Ok(LinkRecord {
-                            trace_id: fixed16(&link.trace_id, "link.trace_id")?,
-                            span_id: fixed8(&link.span_id, "link.span_id")?,
-                            attrs: kvs(&link.attributes),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, WireError>>()?;
-
-                let mut span_attrs = kvs(&span.attributes);
-                span_attrs.extend(instrumentation_attrs.clone());
-                out.push(Span {
-                    trace_id: fixed16(&span.trace_id, "trace_id")?,
-                    span_id: fixed8(&span.span_id, "span_id")?,
-                    parent_span_id,
-                    name: span.name.clone(),
-                    kind: kind_of(span.kind),
-                    start_ns: i64::try_from(span.start_time_unix_nano).unwrap_or(i64::MAX),
-                    duration_ns: i64::try_from(
-                        span.end_time_unix_nano
-                            .saturating_sub(span.start_time_unix_nano),
-                    )
-                    .unwrap_or(i64::MAX),
-                    status,
-                    status_message,
-                    resource_attrs: resource_attrs.clone(),
-                    span_attrs,
-                    events,
-                    links,
-                    instrumentation_scope: scope_name.clone(),
-                    instrumentation_version: scope_version.clone(),
-                });
-            }
-        }
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -376,3 +193,23 @@ mod tests {
         assert2::assert!(decode_otlp(&data).is_err());
     }
 }
+
+mod any_to_attr;
+mod any_to_text;
+mod decode_otlp;
+mod fixed16;
+mod fixed8;
+mod kind_of;
+mod kv_to_attrs;
+mod kvs;
+mod status_of;
+
+use any_to_attr::any_to_attr;
+use any_to_text::any_to_text;
+pub use decode_otlp::decode_otlp;
+use fixed8::fixed8;
+use fixed16::fixed16;
+use kind_of::kind_of;
+use kv_to_attrs::kv_to_attrs;
+use kvs::kvs;
+use status_of::status_of;

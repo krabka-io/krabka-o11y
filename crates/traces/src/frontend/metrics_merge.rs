@@ -15,120 +15,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// One label as Tempo's `commonv1.KeyValue`: `{"key": k, "value": <AnyValue>}`.
-///
-/// The value, such as `{"stringValue": "api"}`, stays raw JSON. The merge only
-/// compares label sets, and never interprets values.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeyValue {
-    pub key: String,
-    pub value: serde_json::Value,
-}
-
-/// One metric sample: `{"timestampMs": "<ms>", "value": <f64>}`.
-///
-/// Tempo's protojson renders the int64 millisecond timestamp as a string, so it
-/// stays a string here. The merge compares and orders it numerically.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MetricSample {
-    #[serde(rename = "timestampMs")]
-    pub timestamp_ms: String,
-    pub value: f64,
-}
-
-/// One exemplar in Tempo's metrics shape.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Exemplar {
-    #[serde(default)]
-    pub labels: Vec<KeyValue>,
-    pub value: f64,
-    #[serde(rename = "timestampMs", default)]
-    pub timestamp_ms: String,
-}
-
-/// One metric series: a label set, its Prometheus label string, step-aligned
-/// samples, and exemplars.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct MetricSeries {
-    #[serde(default)]
-    pub labels: Vec<KeyValue>,
-    #[serde(rename = "promLabels", default)]
-    pub prom_labels: String,
-    #[serde(default)]
-    pub samples: Vec<MetricSample>,
-    #[serde(default)]
-    pub exemplars: Vec<Exemplar>,
-}
-
-/// The response body for `/api/metrics/query_range` and
-/// `/api/metrics/query`.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct MetricsResponseJson {
-    #[serde(default)]
-    pub series: Vec<MetricSeries>,
-}
-
-/// Merge a series into the accumulator.
-///
-/// This unions by label set, sums samples at equal timestamps, and
-/// concatenates exemplars. The querier emits a series' labels in a
-/// deterministic order for a given group, so equal label sets across shards
-/// compare equal as vectors.
-pub fn merge_metric_series(acc: &mut Vec<MetricSeries>, incoming: MetricSeries) {
-    let Some(existing) = acc.iter_mut().find(|s| s.labels == incoming.labels) else {
-        acc.push(incoming);
-        return;
-    };
-    merge_samples(&mut existing.samples, incoming.samples);
-    existing.exemplars.extend(incoming.exemplars);
-    // `prom_labels` is derived from the (matching) label set, so the existing
-    // series already carries the correct value.
-}
-
-fn merge_samples(existing: &mut Vec<MetricSample>, incoming: Vec<MetricSample>) {
-    for sample in incoming {
-        if let Some(found) = existing
-            .iter_mut()
-            .find(|s| s.timestamp_ms == sample.timestamp_ms)
-        {
-            found.value += sample.value;
-        } else {
-            existing.push(sample);
-        }
-    }
-    existing.sort_by(|a, b| {
-        let ka = a.timestamp_ms.parse::<i128>().unwrap_or(i128::MAX);
-        let kb = b.timestamp_ms.parse::<i128>().unwrap_or(i128::MAX);
-        ka.cmp(&kb)
-            .then_with(|| a.timestamp_ms.cmp(&b.timestamp_ms))
-    });
-}
-
-/// Truncate each series' exemplars to `limit`. `None` disables limiting.
-pub fn limit_exemplars(series: &mut [MetricSeries], limit: Option<usize>) {
-    let Some(limit) = limit else { return };
-    for s in series {
-        s.exemplars.truncate(limit);
-    }
-}
-
-/// Merge all metric partials' series into one response, then apply exemplar
-/// limiting.
-#[must_use]
-pub fn merge_metrics(
-    partials: Vec<MetricsResponseJson>,
-    exemplar_limit: Option<usize>,
-) -> MetricsResponseJson {
-    let mut merged: Vec<MetricSeries> = Vec::new();
-    for p in partials {
-        for s in p.series {
-            merge_metric_series(&mut merged, s);
-        }
-    }
-    limit_exemplars(&mut merged, exemplar_limit);
-    MetricsResponseJson { series: merged }
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -303,3 +189,23 @@ mod tests {
         assert2::assert!(serde_json::to_value(&resp).unwrap() == body);
     }
 }
+
+mod exemplar;
+mod key_value;
+mod limit_exemplars;
+mod merge_metric_series;
+mod merge_metrics;
+mod merge_samples;
+mod metric_sample;
+mod metric_series;
+mod metrics_response_json;
+
+pub use exemplar::Exemplar;
+pub use key_value::KeyValue;
+pub use limit_exemplars::limit_exemplars;
+pub use merge_metric_series::merge_metric_series;
+pub use merge_metrics::merge_metrics;
+use merge_samples::merge_samples;
+pub use metric_sample::MetricSample;
+pub use metric_series::MetricSeries;
+pub use metrics_response_json::MetricsResponseJson;

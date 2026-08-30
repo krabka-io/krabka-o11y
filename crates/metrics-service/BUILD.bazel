@@ -10,7 +10,7 @@ crate_library(name = "metrics-service")
 # `bazel run //crates/metrics-service:krabka-metrics-service -- --help`.
 crate_binary(
     name = "krabka-metrics-service",
-    crate_root = "src/main.rs",
+    crate_root = "src/bin/krabka-metrics-service/main.rs",
     lib = ":metrics-service",
 )
 

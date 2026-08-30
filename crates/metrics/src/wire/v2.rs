@@ -10,121 +10,6 @@ use super::{
 };
 use crate::SymbolTable;
 
-/// Written sample tallies for the v2 response headers.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct WrittenCounts {
-    pub samples: u64,
-    pub histograms: u64,
-    pub exemplars: u64,
-}
-
-/// # Errors
-/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn decode_v2(
-    body: &[u8],
-    max_decompressed: ByteSize,
-) -> Result<(Vec<DecodedSeries>, WrittenCounts), WireError> {
-    let raw = snappy_block_decode(body, max_decompressed)?;
-    let req = pb::v2::Request::decode(raw.as_slice())
-        .map_err(|error| WireError::ProtobufDecode(error.to_string()))?;
-    let table = SymbolTable::from_symbols(req.symbols)
-        .map_err(|error| WireError::Invalid(error.to_string()))?;
-
-    let mut out = Vec::with_capacity(req.timeseries.len());
-    let mut counts = WrittenCounts::default();
-    for series in req.timeseries {
-        let labels = labels_from_refs(&table, &series.labels_refs)?;
-        let metadata = series
-            .metadata
-            .as_ref()
-            .map(|metadata| metadata_from_v2(&table, &labels, metadata))
-            .transpose()?;
-        let samples = series
-            .samples
-            .into_iter()
-            .map(|sample| {
-                DecodedSample::with_start_timestamp(
-                    sample.timestamp,
-                    sample.value,
-                    (sample.start_timestamp != 0).then_some(sample.start_timestamp),
-                )
-            })
-            .collect::<Vec<_>>();
-        counts.samples += samples.len() as u64;
-
-        let histograms = series
-            .histograms
-            .iter()
-            .map(|histogram| Ok((histogram.timestamp, v2_histogram_to_native(histogram)?)))
-            .collect::<Result<Vec<_>, WireError>>()?;
-        counts.histograms += histograms.len() as u64;
-
-        let exemplars = series
-            .exemplars
-            .iter()
-            .map(|exemplar| {
-                Ok(DecodedExemplar {
-                    labels: labels_from_refs(&table, &exemplar.labels_refs)?,
-                    timestamp_ms: exemplar.timestamp,
-                    value: exemplar.value,
-                })
-            })
-            .collect::<Result<Vec<_>, WireError>>()?;
-        counts.exemplars += exemplars.len() as u64;
-
-        out.push(DecodedSeries {
-            labels,
-            samples,
-            histograms,
-            exemplars,
-            metadata,
-        });
-    }
-
-    Ok((out, counts))
-}
-
-fn labels_from_refs(table: &SymbolTable, refs: &[u32]) -> Result<Labels, WireError> {
-    table
-        .resolve_label_refs(refs)
-        .map(Labels::from_iter)
-        .map_err(|error| WireError::Invalid(error.to_string()))
-}
-
-fn metadata_from_v2(
-    table: &SymbolTable,
-    labels: &Labels,
-    metadata: &pb::v2::Metadata,
-) -> Result<DecodedMetadata, WireError> {
-    Ok(DecodedMetadata {
-        metric_family_name: labels.get("__name__").unwrap_or_default().to_string(),
-        metric_type: metadata_type(metadata.r#type),
-        help: symbol_ref(table, metadata.help_ref)?,
-        unit: symbol_ref(table, metadata.unit_ref)?,
-    })
-}
-
-fn symbol_ref(table: &SymbolTable, index: u32) -> Result<String, WireError> {
-    table
-        .resolve(index)
-        .map(str::to_string)
-        .ok_or_else(|| WireError::Invalid(format!("symbol ref {index} out of range")))
-}
-
-fn metadata_type(value: i32) -> String {
-    match pb::v2::metadata::MetricType::try_from(value) {
-        Ok(pb::v2::metadata::MetricType::Counter) => "counter",
-        Ok(pb::v2::metadata::MetricType::Gauge) => "gauge",
-        Ok(pb::v2::metadata::MetricType::Histogram) => "histogram",
-        Ok(pb::v2::metadata::MetricType::Gaugehistogram) => "gaugehistogram",
-        Ok(pb::v2::metadata::MetricType::Summary) => "summary",
-        Ok(pb::v2::metadata::MetricType::Info) => "info",
-        Ok(pb::v2::metadata::MetricType::Stateset) => "stateset",
-        Ok(pb::v2::metadata::MetricType::Unspecified) | Err(_) => "unknown",
-    }
-    .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -265,3 +150,17 @@ mod tests {
         );
     }
 }
+
+mod decode_v2;
+mod labels_from_refs;
+mod metadata_from_v2;
+mod metadata_type;
+mod symbol_ref;
+mod written_counts;
+
+pub use decode_v2::decode_v2;
+use labels_from_refs::labels_from_refs;
+use metadata_from_v2::metadata_from_v2;
+use metadata_type::metadata_type;
+use symbol_ref::symbol_ref;
+pub use written_counts::WrittenCounts;

@@ -12,272 +12,6 @@ use krabka_units::prelude::*;
 use super::{AttrValue, KeyValue, Span, nested_set::assign_nested_set};
 use crate::error::TracesError;
 
-pub const RESOURCE_ATTR_PREFIX: &str = "__resource.";
-
-/// Build one span-block `RecordBatch` from spans of one trace.
-///
-/// # Errors
-/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
-pub fn span_batch(spans: &[Span]) -> Result<RecordBatch, TracesError> {
-    span_batch_with_promoted_attrs(spans, &[])
-}
-
-/// Build one span-block `RecordBatch` from spans of one trace with configured
-/// attributes duplicated into dedicated columns.
-///
-/// `spans` must be the complete per-trace span set. The trace-level columns,
-/// which are the root service and name, the start and the duration, are
-/// computed over exactly these spans.
-///
-/// # Errors
-/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
-pub fn span_batch_with_promoted_attrs(
-    spans: &[Span],
-    promoted_attrs: &[PromotedSpanAttr],
-) -> Result<RecordBatch, TracesError> {
-    span_batch_for_window(spans, spans, promoted_attrs)
-}
-
-/// Build one span-block `RecordBatch` whose rows are `row_spans` but whose
-/// trace-level columns are computed over `trace_spans`.
-///
-/// Use this when a query window clips a trace. `row_spans` is the in-window
-/// subset. `trace_spans` is the trace's full span set, so that
-/// `root_service_name`, `root_span_name`, `trace_start_unix_nano` and
-/// `trace_duration_nanos` reflect the whole trace rather than only the window.
-/// Pass the same slice for both to materialize a complete trace.
-///
-/// # Errors
-/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
-pub fn span_batch_for_window(
-    row_spans: &[Span],
-    trace_spans: &[Span],
-    promoted_attrs: &[PromotedSpanAttr],
-) -> Result<RecordBatch, TracesError> {
-    // Nested-set intervals and child counts describe the rows themselves, so
-    // they are computed over `row_spans`. Trace-level columns describe the
-    // whole trace, so they come from `trace_spans`.
-    let nested = assign_nested_set(row_spans);
-    let child_counts = child_counts(&nested);
-    let (root_service_name, root_span_name, trace_start, trace_duration) = root_info(trace_spans);
-    let spans = row_spans;
-    let rows = spans
-        .iter()
-        .zip(nested)
-        .zip(child_counts)
-        .map(|((span, nested_set), child_count)| SpanRow {
-            trace_id: span.trace_id,
-            span_id: span.span_id,
-            parent_span_id: span.parent_span_id,
-            nested_set: BlockNestedSet {
-                nested_set_left: nested_set.left,
-                nested_set_right: nested_set.right,
-                parent_id: nested_set.parent_id,
-            },
-            child_count,
-            root_service_name: Some(root_service_name.clone()),
-            root_span_name: Some(root_span_name.clone()),
-            trace_start_unix_nano: trace_start,
-            trace_duration,
-            name: Some(span.name.clone()),
-            kind: block_kind(span.kind),
-            start_unix_nano: span.start_ns,
-            duration: Time::from_nanos(span.duration_ns),
-            status_code: block_status(span.status),
-            status_message: Some(span.status_message.clone()),
-            instrumentation_name: Some(span.instrumentation_scope.clone()),
-            instrumentation_version: Some(span.instrumentation_version.clone()),
-            attrs: span_attrs(span),
-            events: span_events(span),
-            links: span_links(span),
-        })
-        .collect::<Vec<_>>();
-
-    encode_span_rows_with_promoted_attrs(&rows, promoted_attrs)
-        .map_err(|err| TracesError::Block(err.to_string()))
-}
-
-fn child_counts(nested: &[crate::span::nested_set::NestedSet]) -> Vec<i32> {
-    // Single O(n) pass: tally how many nodes name each `parent_id`, then each
-    // node's child count is the tally for its own `left` interval.
-    let mut counts: HashMap<i32, i32> = HashMap::with_capacity(nested.len());
-    for node in nested {
-        let count = counts.entry(node.parent_id).or_insert(0);
-        *count = count.saturating_add(1);
-    }
-    nested
-        .iter()
-        .map(|node| counts.get(&node.left).copied().unwrap_or(0))
-        .collect()
-}
-
-/// Compute the trace-level columns for one trace: the root service and name,
-/// the trace start, and the trace duration.
-///
-/// CONTRACT: `spans` must be the COMPLETE per-trace span set. A time-windowed
-/// or otherwise filtered subset yields trace-level values that reflect only the
-/// subset, not the trace. Callers that materialize rows from a clipped window
-/// must use [`span_batch_for_window`] and pass the full trace's spans here.
-fn root_info(spans: &[Span]) -> (String, String, i64, Time) {
-    let root = spans
-        .iter()
-        .find(|span| span.is_root())
-        .or_else(|| spans.iter().min_by_key(|span| span.start_ns));
-    let service = root
-        .and_then(|span| service_name(&span.resource_attrs))
-        .unwrap_or_default();
-    let name = root.map(|span| span.name.clone()).unwrap_or_default();
-    let start = spans.iter().map(|span| span.start_ns).min().unwrap_or(0);
-    let end = spans
-        .iter()
-        .map(|span| span.start_ns.saturating_add(span.duration_ns))
-        .max()
-        .unwrap_or(start);
-    (
-        service,
-        name,
-        start,
-        Time::from_nanos(end.saturating_sub(start)),
-    )
-}
-
-fn service_name(attrs: &[KeyValue]) -> Option<String> {
-    attrs.iter().find_map(|attr| {
-        (attr.key == "service.name").then(|| match &attr.value {
-            AttrValue::Str(value) => Some(value.clone()),
-            _ => None,
-        })?
-    })
-}
-
-fn span_attrs(span: &Span) -> Vec<SpanAttr> {
-    let mut attrs = Vec::new();
-    for attr in &span.resource_attrs {
-        push_span_attr(
-            &mut attrs,
-            format!("{RESOURCE_ATTR_PREFIX}{}", attr.key),
-            &attr.value,
-        );
-    }
-    for attr in &span.span_attrs {
-        // Reserve the `__resource.` namespace for true resource attributes. A
-        // client span attribute keyed under this prefix would otherwise be
-        // indistinguishable downstream from a resource-scoped attribute,
-        // letting a client spoof `resource.`-scoped values (TraceQL scope
-        // bypass / tenant data-integrity). Drop such span attributes.
-        if attr.key.starts_with(RESOURCE_ATTR_PREFIX) {
-            continue;
-        }
-        push_span_attr(&mut attrs, attr.key.clone(), &attr.value);
-    }
-    attrs
-}
-
-fn push_span_attr(attrs: &mut Vec<SpanAttr>, key: String, value: &AttrValue) {
-    let value = block_attr_value(value);
-    if let Some(existing) = attrs
-        .iter_mut()
-        .find(|attr| attr.key == key && same_block_attr_type(&attr.value, &value))
-    {
-        extend_block_attr_value(&mut existing.value, value);
-        existing.is_array = true;
-        return;
-    }
-    attrs.push(SpanAttr {
-        key,
-        is_array: false,
-        value,
-    });
-}
-
-fn block_attr_value(value: &AttrValue) -> BlockAttrValue {
-    match value {
-        AttrValue::Str(value) => BlockAttrValue::Str(vec![value.clone()]),
-        AttrValue::Int(value) => BlockAttrValue::Int(vec![*value]),
-        AttrValue::Double(value) => BlockAttrValue::Double(vec![*value]),
-        AttrValue::Bool(value) => BlockAttrValue::Bool(vec![*value]),
-        AttrValue::Bytes(value) => BlockAttrValue::Str(vec![hex::encode(value)]),
-    }
-}
-
-fn same_block_attr_type(lhs: &BlockAttrValue, rhs: &BlockAttrValue) -> bool {
-    matches!(
-        (lhs, rhs),
-        (BlockAttrValue::Str(_), BlockAttrValue::Str(_))
-            | (BlockAttrValue::Int(_), BlockAttrValue::Int(_))
-            | (BlockAttrValue::Double(_), BlockAttrValue::Double(_))
-            | (BlockAttrValue::Bool(_), BlockAttrValue::Bool(_))
-    )
-}
-
-fn extend_block_attr_value(existing: &mut BlockAttrValue, next: BlockAttrValue) {
-    match (existing, next) {
-        (BlockAttrValue::Str(existing), BlockAttrValue::Str(next)) => existing.extend(next),
-        (BlockAttrValue::Int(existing), BlockAttrValue::Int(next)) => existing.extend(next),
-        (BlockAttrValue::Double(existing), BlockAttrValue::Double(next)) => existing.extend(next),
-        (BlockAttrValue::Bool(existing), BlockAttrValue::Bool(next)) => existing.extend(next),
-        _ => unreachable!("same_block_attr_type guards extension"),
-    }
-}
-
-fn event_attr_value(value: &AttrValue) -> String {
-    match value {
-        AttrValue::Str(value) => value.clone(),
-        AttrValue::Int(value) => value.to_string(),
-        AttrValue::Double(value) => value.to_string(),
-        AttrValue::Bool(value) => value.to_string(),
-        AttrValue::Bytes(value) => hex::encode(value),
-    }
-}
-
-fn event_attrs(attrs: &[KeyValue]) -> Vec<(String, String)> {
-    attrs
-        .iter()
-        .map(|attr| (attr.key.clone(), event_attr_value(&attr.value)))
-        .collect()
-}
-
-fn span_events(span: &Span) -> Vec<SpanEvent> {
-    span.events
-        .iter()
-        .map(|event| SpanEvent {
-            name: event.name.clone(),
-            time_since_start: Time::from_nanos(event.time_unix_nano.saturating_sub(span.start_ns)),
-            attrs: event_attrs(&event.attrs),
-        })
-        .collect()
-}
-
-fn span_links(span: &Span) -> Vec<SpanLink> {
-    span.links
-        .iter()
-        .map(|link| SpanLink {
-            linked_trace_id: link.trace_id,
-            linked_span_id: link.span_id,
-            attrs: event_attrs(&link.attrs),
-        })
-        .collect()
-}
-
-fn block_kind(kind: super::SpanKind) -> SpanKind {
-    match kind {
-        super::SpanKind::Unspecified => SpanKind::Unspecified,
-        super::SpanKind::Internal => SpanKind::Internal,
-        super::SpanKind::Server => SpanKind::Server,
-        super::SpanKind::Client => SpanKind::Client,
-        super::SpanKind::Producer => SpanKind::Producer,
-        super::SpanKind::Consumer => SpanKind::Consumer,
-    }
-}
-
-fn block_status(status: super::StatusCode) -> StatusCode {
-    match status {
-        super::StatusCode::Unset => StatusCode::Unset,
-        super::StatusCode::Ok => StatusCode::Ok,
-        super::StatusCode::Error => StatusCode::Error,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use arrow::array::{
@@ -555,3 +289,41 @@ mod tests {
         );
     }
 }
+
+mod block_attr_value;
+mod block_kind;
+mod block_status;
+mod child_counts;
+mod event_attr_value;
+mod event_attrs;
+mod extend_block_attr_value;
+mod push_span_attr;
+mod resource_attr_prefix;
+mod root_info;
+mod same_block_attr_type;
+mod service_name;
+mod span_attrs;
+mod span_batch;
+mod span_batch_for_window;
+mod span_batch_with_promoted_attrs;
+mod span_events;
+mod span_links;
+
+use block_attr_value::block_attr_value;
+use block_kind::block_kind;
+use block_status::block_status;
+use child_counts::child_counts;
+use event_attr_value::event_attr_value;
+use event_attrs::event_attrs;
+use extend_block_attr_value::extend_block_attr_value;
+use push_span_attr::push_span_attr;
+pub use resource_attr_prefix::RESOURCE_ATTR_PREFIX;
+use root_info::root_info;
+use same_block_attr_type::same_block_attr_type;
+use service_name::service_name;
+use span_attrs::span_attrs;
+pub use span_batch::span_batch;
+pub use span_batch_for_window::span_batch_for_window;
+pub use span_batch_with_promoted_attrs::span_batch_with_promoted_attrs;
+use span_events::span_events;
+use span_links::span_links;

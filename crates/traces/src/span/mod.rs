@@ -5,121 +5,6 @@ use serde::{Deserialize, Serialize};
 pub mod batch;
 pub mod nested_set;
 
-/// OTLP span kind.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SpanKind {
-    Unspecified,
-    Internal,
-    Server,
-    Client,
-    Producer,
-    Consumer,
-}
-
-impl SpanKind {
-    #[must_use]
-    pub fn as_i32(self) -> i32 {
-        self as i32
-    }
-
-    #[must_use]
-    pub fn from_i32(v: i32) -> Self {
-        match v {
-            1 => Self::Internal,
-            2 => Self::Server,
-            3 => Self::Client,
-            4 => Self::Producer,
-            5 => Self::Consumer,
-            _ => Self::Unspecified,
-        }
-    }
-}
-
-/// OTLP status code.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StatusCode {
-    Unset,
-    Ok,
-    Error,
-}
-
-impl StatusCode {
-    #[must_use]
-    pub fn as_i32(self) -> i32 {
-        self as i32
-    }
-
-    #[must_use]
-    pub fn from_i32(v: i32) -> Self {
-        match v {
-            1 => Self::Ok,
-            2 => Self::Error,
-            _ => Self::Unset,
-        }
-    }
-}
-
-/// A typed attribute value. Block encoding preserves arrays.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum AttrValue {
-    Str(String),
-    Int(i64),
-    Double(f64),
-    Bool(bool),
-    Bytes(Vec<u8>),
-}
-
-/// One attribute key/value pair.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeyValue {
-    pub key: String,
-    pub value: AttrValue,
-}
-
-/// A span event.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EventRecord {
-    pub time_unix_nano: i64,
-    pub name: String,
-    pub attrs: Vec<KeyValue>,
-}
-
-/// A linked span reference.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LinkRecord {
-    pub trace_id: [u8; 16],
-    pub span_id: [u8; 8],
-    pub attrs: Vec<KeyValue>,
-}
-
-/// One internal span. The WAL carries one record per span.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Span {
-    pub trace_id: [u8; 16],
-    pub span_id: [u8; 8],
-    pub parent_span_id: Option<[u8; 8]>,
-    pub name: String,
-    pub kind: SpanKind,
-    pub start_ns: i64,
-    pub duration_ns: i64,
-    pub status: StatusCode,
-    pub status_message: String,
-    pub resource_attrs: Vec<KeyValue>,
-    pub span_attrs: Vec<KeyValue>,
-    pub events: Vec<EventRecord>,
-    pub links: Vec<LinkRecord>,
-    pub instrumentation_scope: String,
-    pub instrumentation_version: String,
-}
-
-impl Span {
-    /// Root spans have no raw semantic parent span id.
-    #[must_use]
-    pub fn is_root(&self) -> bool {
-        self.parent_span_id.is_none()
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -178,3 +63,19 @@ mod tests {
         }
     }
 }
+
+mod attr_value;
+mod event_record;
+mod key_value;
+mod link_record;
+mod span_kind;
+mod span_type;
+mod status_code;
+
+pub use attr_value::AttrValue;
+pub use event_record::EventRecord;
+pub use key_value::KeyValue;
+pub use link_record::LinkRecord;
+pub use span_kind::SpanKind;
+pub use span_type::Span;
+pub use status_code::StatusCode;

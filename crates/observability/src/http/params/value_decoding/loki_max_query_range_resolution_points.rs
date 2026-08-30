@@ -1,0 +1,1 @@
+pub(crate) const LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS: i64 = 11_000;

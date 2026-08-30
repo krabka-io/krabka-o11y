@@ -4,131 +4,6 @@
 
 use std::collections::{HashMap, HashSet, hash_map::Entry};
 
-/// Errors raised by symbol-table operations.
-#[derive(Debug, thiserror::Error)]
-pub enum SymbolError {
-    #[error("symbols[0] must be the empty string")]
-    FirstNotEmpty,
-
-    #[error("duplicate symbol `{0}`")]
-    DuplicateSymbol(String),
-
-    #[error("label_refs length {0} is not even")]
-    OddRefs(usize),
-
-    #[error("symbol ref {0} out of range (len {1})")]
-    OutOfRange(u32, usize),
-
-    #[error("duplicate label `{0}`")]
-    DuplicateLabel(String),
-
-    #[error("symbol table length {0} exceeds u32 refs")]
-    TooManySymbols(usize),
-}
-
-/// A string-interning table matching `remote_write` v2 semantics.
-#[derive(Debug)]
-pub struct SymbolTable {
-    symbols: Vec<String>,
-    index: HashMap<String, u32>,
-}
-
-impl Default for SymbolTable {
-    fn default() -> Self {
-        let mut index = HashMap::new();
-        index.insert(String::new(), 0);
-        Self {
-            symbols: vec![String::new()],
-            index,
-        }
-    }
-}
-
-impl SymbolTable {
-    /// Creates a symbol table that holds the required empty zero symbol.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Builds from an existing symbol list, such as a received v2 request.
-    ///
-    /// The first symbol must be the empty string.
-    /// # Errors
-    /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-    pub fn from_symbols(symbols: Vec<String>) -> Result<Self, SymbolError> {
-        if symbols.first().map(String::as_str) != Some("") {
-            return Err(SymbolError::FirstNotEmpty);
-        }
-
-        let mut index = HashMap::with_capacity(symbols.len());
-        for (i, symbol) in symbols.iter().enumerate() {
-            let ref_ = u32::try_from(i).map_err(|_| SymbolError::TooManySymbols(symbols.len()))?;
-            match index.entry(symbol.clone()) {
-                Entry::Vacant(entry) => {
-                    entry.insert(ref_);
-                }
-                Entry::Occupied(_) => return Err(SymbolError::DuplicateSymbol(symbol.clone())),
-            }
-        }
-
-        Ok(Self { symbols, index })
-    }
-
-    /// Interns `s` and returns its stable ref.
-    /// # Panics
-    /// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
-    pub fn intern(&mut self, s: &str) -> u32 {
-        if let Some(&ref_) = self.index.get(s) {
-            return ref_;
-        }
-
-        let ref_ = u32::try_from(self.symbols.len()).expect("symbol table overflow");
-        let symbol = s.to_string();
-        self.symbols.push(symbol.clone());
-        self.index.insert(symbol, ref_);
-        ref_
-    }
-
-    /// Resolves a symbol ref to a string.
-    #[must_use]
-    pub fn resolve(&self, ref_: u32) -> Option<&str> {
-        self.symbols.get(ref_ as usize).map(String::as_str)
-    }
-
-    /// Returns all symbols in ref order.
-    #[must_use]
-    pub fn symbols(&self) -> &[String] {
-        &self.symbols
-    }
-
-    /// Resolves even-length `(name_ref, value_ref)` pairs into label pairs.
-    /// # Errors
-    /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-    pub fn resolve_label_refs(&self, refs: &[u32]) -> Result<Vec<(String, String)>, SymbolError> {
-        if !refs.len().is_multiple_of(2) {
-            return Err(SymbolError::OddRefs(refs.len()));
-        }
-
-        let mut labels = Vec::with_capacity(refs.len() / 2);
-        let mut names = HashSet::with_capacity(refs.len() / 2);
-        for pair in refs.as_chunks::<2>().0 {
-            let name = self
-                .resolve(pair[0])
-                .ok_or(SymbolError::OutOfRange(pair[0], self.symbols.len()))?;
-            let value = self
-                .resolve(pair[1])
-                .ok_or(SymbolError::OutOfRange(pair[1], self.symbols.len()))?;
-            if !names.insert(name) {
-                return Err(SymbolError::DuplicateLabel(name.to_string()));
-            }
-            labels.push((name.to_string(), value.to_string()));
-        }
-
-        Ok(labels)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -220,3 +95,9 @@ mod tests {
         assert!(matches!(err, SymbolError::DuplicateLabel(name) if name == "job"));
     }
 }
+
+mod symbol_error;
+mod symbol_table;
+
+pub use symbol_error::SymbolError;
+pub use symbol_table::SymbolTable;

@@ -17,7 +17,7 @@ crate_library(
 # `bazel run //crates/profiles:krabka-profiles -- --help`.
 crate_binary(
     name = "krabka-profiles",
-    crate_root = "src/bin/krabka-profiles.rs",
+    crate_root = "src/bin/krabka-profiles/main.rs",
     lib = ":profiles",
 )
 

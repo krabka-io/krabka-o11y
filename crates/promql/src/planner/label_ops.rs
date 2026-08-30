@@ -31,188 +31,6 @@ use crate::{
     result::{InstantSample, SampleValue},
 };
 
-/// Sort order for the `sort` / `sort_desc` functions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SortOrder {
-    Ascending,
-    Descending,
-}
-
-impl SortOrder {
-    /// Compares two sample values in this order with `total_cmp`.
-    ///
-    /// This matches the interpreter's `SortDirection::compare`. `total_cmp`
-    /// places a positive `NaN` above every finite value, so ascending order
-    /// sends `NaN` to the end. Descending order is the reverse and sends `NaN`
-    /// to the front.
-    fn compare(self, left: f64, right: f64) -> Ordering {
-        match self {
-            Self::Ascending => left.total_cmp(&right),
-            Self::Descending => right.total_cmp(&left),
-        }
-    }
-}
-
-/// Returns the canonical `name=value\n…` rendering of a label set.
-///
-/// This rendering is the sort tiebreak and the collision key. It matches the
-/// interpreter's `labels_key`.
-fn labels_key(labels: &Labels) -> String {
-    let mut key = String::new();
-    for (name, value) in labels.iter() {
-        key.push_str(name);
-        key.push('=');
-        key.push_str(value);
-        key.push('\n');
-    }
-    key
-}
-
-/// Returns the float value of a sample, or `NaN` for a histogram sample.
-///
-/// This matches the interpreter's `float_sample_value(...).unwrap_or(f64::NAN)`
-/// in the sort comparator.
-fn sort_value(sample: &InstantSample) -> f64 {
-    match sample.value {
-        SampleValue::Float(value) => value,
-        SampleValue::Histogram(_) => f64::NAN,
-    }
-}
-
-/// Applies `label_replace(v, dst_label, replacement, src_label, regex)` to an
-/// already-assembled instant vector.
-///
-/// `regex` is fully anchored as `^(?:<regex>)$`, as in Prometheus. For each
-/// series whose `src_label` value matches `regex` in full, this function sets
-/// the destination label to `replacement` with `$1` and `${name}` capture-group
-/// expansion. A series that does not match passes through unchanged. This
-/// function keeps `__name__` unless `dst_label == "__name__"`; these functions
-/// never drop the metric name themselves. An empty expansion writes
-/// `dst_label=""`, because the interpreter's `Labels::insert` keeps
-/// empty-valued labels. The empty entry then takes part in later collision
-/// checks exactly as the interpreter sees it.
-///
-/// # Errors
-///
-/// Returns [`PromqlError::Plan`] when `regex` is not a valid regular expression.
-/// The error text matches the interpreter's error text.
-pub fn apply_label_replace(
-    samples: Vec<InstantSample>,
-    dst_label: &str,
-    replacement: &str,
-    src_label: &str,
-    regex: &str,
-) -> Result<Vec<InstantSample>> {
-    // Prometheus FULLY anchors `label_replace`'s regex (`^(?:<regex>)$`), so it
-    // must match the *entire* source-label value — `regexp.MatchString` on a
-    // `^(?:...)$`-wrapped pattern, the same anchoring `krabka-blockstore`'s
-    // `anchored_regex` applies to label matchers. A raw unanchored `Regex` would
-    // wrongly match a substring (e.g. `foo` inside `xfooy`).
-    let regex = Regex::new(&format!("^(?:{regex})$"))
-        .map_err(|err| PromqlError::Plan(format!("invalid label_replace regex: {err}")))?;
-    Ok(samples
-        .into_iter()
-        .map(|mut sample| {
-            if let Some(captures) = regex.captures(sample.labels.get(src_label).unwrap_or("")) {
-                let mut value = String::new();
-                captures.expand(replacement, &mut value);
-                sample.labels.insert(dst_label, value);
-            }
-            sample
-        })
-        .collect())
-}
-
-/// Applies `label_join(v, dst_label, separator, src_label_1, …)` to an
-/// already-assembled instant vector.
-///
-/// For every series, this function sets `dst_label` to the `separator`-joined
-/// values of the listed source labels. A missing label contributes the empty
-/// string. This mirrors the interpreter's `eval_label_join_call`.
-#[must_use]
-pub fn apply_label_join(
-    samples: Vec<InstantSample>,
-    dst_label: &str,
-    separator: &str,
-    src_labels: &[String],
-) -> Vec<InstantSample> {
-    samples
-        .into_iter()
-        .map(|mut sample| {
-            let value = src_labels
-                .iter()
-                .map(|label| sample.labels.get(label).unwrap_or(""))
-                .collect::<Vec<_>>()
-                .join(separator);
-            sample.labels.insert(dst_label, value);
-            sample
-        })
-        .collect()
-}
-
-/// Sorts an already-assembled instant vector by sample value in `order`.
-///
-/// Ties break by canonical label key. This mirrors the interpreter's
-/// `eval_sort_call`.
-#[must_use]
-pub fn apply_sort(mut samples: Vec<InstantSample>, order: SortOrder) -> Vec<InstantSample> {
-    samples.sort_by(|left, right| {
-        order
-            .compare(sort_value(left), sort_value(right))
-            .then_with(|| labels_key(&left.labels).cmp(&labels_key(&right.labels)))
-    });
-    samples
-}
-
-/// Compares two label sets by the listed `label_names` in `order`.
-///
-/// This function returns the first non-equal label-value comparison, or
-/// [`Ordering::Equal`] when every listed label is equal. A missing label
-/// compares as the empty string. This mirrors the interpreter's
-/// `SortDirection::compare_label_values`.
-fn compare_label_values(
-    left: &Labels,
-    right: &Labels,
-    label_names: &[String],
-    order: SortOrder,
-) -> Ordering {
-    for label_name in label_names {
-        let ordering = left
-            .get(label_name.as_str())
-            .unwrap_or("")
-            .cmp(right.get(label_name.as_str()).unwrap_or(""));
-        let ordering = match order {
-            SortOrder::Ascending => ordering,
-            SortOrder::Descending => ordering.reverse(),
-        };
-        if !ordering.is_eq() {
-            return ordering;
-        }
-    }
-    Ordering::Equal
-}
-
-/// Sorts an already-assembled instant vector by the values of the named labels
-/// in `order`.
-///
-/// Ties break by canonical label key. This mirrors the interpreter's
-/// `eval_sort_by_label_call`. The sort is over the listed labels first, in the
-/// given order, and then over the full canonical label key. A `_desc` sort
-/// therefore still tiebreaks by the ascending label key, exactly as the
-/// interpreter's `labels_key` tiebreak does.
-#[must_use]
-pub fn apply_sort_by_label(
-    mut samples: Vec<InstantSample>,
-    label_names: &[String],
-    order: SortOrder,
-) -> Vec<InstantSample> {
-    samples.sort_by(|left, right| {
-        compare_label_values(&left.labels, &right.labels, label_names, order)
-            .then_with(|| labels_key(&left.labels).cmp(&labels_key(&right.labels)))
-    });
-    samples
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -364,3 +182,21 @@ mod tests {
         assert2::assert!(out[1].labels.get("l") == Some("z"));
     }
 }
+
+mod apply_label_join;
+mod apply_label_replace;
+mod apply_sort;
+mod apply_sort_by_label;
+mod compare_label_values;
+mod labels_key;
+mod sort_order;
+mod sort_value;
+
+pub use apply_label_join::apply_label_join;
+pub use apply_label_replace::apply_label_replace;
+pub use apply_sort::apply_sort;
+pub use apply_sort_by_label::apply_sort_by_label;
+use compare_label_values::compare_label_values;
+use labels_key::labels_key;
+pub use sort_order::SortOrder;
+use sort_value::sort_value;

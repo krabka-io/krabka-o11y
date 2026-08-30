@@ -49,290 +49,6 @@ use krabka_units::prelude::*;
 use super::extrapolate::{InstantKind, RangeKind, extrapolated_rate, instant_delta};
 use crate::range_array::RangeArray;
 
-/// Which rate-family function a [`RateUdf`] evaluates.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-enum RateFamily {
-    /// Windowed, reset-corrected, per-second rate.
-    Rate,
-    /// Windowed, reset-corrected total increase.
-    Increase,
-    /// Windowed gauge delta (first..last, no reset correction).
-    Delta,
-    /// Instant per-second rate from the last two samples.
-    Irate,
-    /// Instant gauge delta from the last two samples.
-    Idelta,
-}
-
-impl RateFamily {
-    fn udf_name(self) -> &'static str {
-        match self {
-            Self::Rate => "prom_rate",
-            Self::Increase => "prom_increase",
-            Self::Delta => "prom_delta",
-            Self::Irate => "prom_irate",
-            Self::Idelta => "prom_idelta",
-        }
-    }
-
-    /// Evaluates one window and returns `None` where Prometheus has no value.
-    ///
-    /// `eval_ts` is `range_end_ms`. `range` is the selector width.
-    fn eval_window(
-        self,
-        timestamps: &[i64],
-        values: &[f64],
-        eval_ts: i64,
-        range: Time,
-    ) -> Option<f64> {
-        let range_ms = range.millis_i64();
-        match self {
-            Self::Rate => extrapolated_rate(
-                timestamps,
-                values,
-                eval_ts - range_ms,
-                eval_ts,
-                range,
-                RangeKind::Rate,
-            ),
-            Self::Increase => extrapolated_rate(
-                timestamps,
-                values,
-                eval_ts - range_ms,
-                eval_ts,
-                range,
-                RangeKind::Increase,
-            ),
-            Self::Delta => extrapolated_rate(
-                timestamps,
-                values,
-                eval_ts - range_ms,
-                eval_ts,
-                range,
-                RangeKind::Delta,
-            ),
-            Self::Irate => instant_delta(timestamps, values, InstantKind::Irate),
-            Self::Idelta => instant_delta(timestamps, values, InstantKind::Idelta),
-        }
-    }
-}
-
-/// A `ScalarUDFImpl` over `RangeManipulate`'s windowed columns.
-///
-/// There is one instance per [`RateFamily`] member, and the family selects the
-/// math.
-///
-/// `ScalarUDFImpl` needs `Eq` and `Hash` through `DynEq` and `DynHash` so that
-/// the planner can deduplicate and key on UDF identity. Both fields derive them.
-#[derive(Debug, PartialEq, Eq, Hash)]
-struct RateUdf {
-    family: RateFamily,
-    signature: Signature,
-}
-
-impl RateUdf {
-    fn new(family: RateFamily) -> Self {
-        Self {
-            family,
-            // Args mix Int64 scalars and Dictionary range columns, so type
-            // coercion is bespoke: accept whatever the planner supplies and
-            // validate shapes at invoke time.
-            signature: Signature::user_defined(Volatility::Immutable),
-        }
-    }
-}
-
-/// Decodes a `Dictionary<Int64, List<_>>` range column into a [`RangeArray`].
-fn decode_range_column(array: &ArrayRef, arg: &str, udf: &str) -> DfResult<RangeArray> {
-    let dict = array
-        .as_any()
-        .downcast_ref::<DictionaryArray<Int64Type>>()
-        .ok_or_else(|| {
-            DataFusionError::Execution(format!(
-                "{udf}: `{arg}` must be a RangeArray dictionary column, got {:?}",
-                array.data_type()
-            ))
-        })?;
-    RangeArray::try_from_dict_array(dict)
-        .map_err(|error| DataFusionError::Execution(format!("{udf}: decoding `{arg}`: {error}")))
-}
-
-impl ScalarUDFImpl for RateUdf {
-    fn name(&self) -> &str {
-        self.family.udf_name()
-    }
-
-    fn signature(&self) -> &Signature {
-        &self.signature
-    }
-
-    fn return_type(&self, _arg_types: &[DataType]) -> DfResult<DataType> {
-        Ok(DataType::Float64)
-    }
-
-    /// `Signature::user_defined` needs its own type coercion.
-    ///
-    /// The rate UDFs accept their arguments unchanged. The `RangeArray`
-    /// dictionary columns and the Int64 scalar are already the exact types that
-    /// `RangeManipulate` makes, so no cast is wanted, and a cast of a
-    /// `Dictionary<Int64, List<_>>` has no meaning. This method checks the arity
-    /// and returns the types unchanged.
-    fn coerce_types(&self, arg_types: &[DataType]) -> DfResult<Vec<DataType>> {
-        if arg_types.len() != 4 {
-            return Err(DataFusionError::Plan(format!(
-                "{} expects 4 arguments (eval_timestamp, timestamp_range, value_range, range_ms), got {}",
-                self.name(),
-                arg_types.len()
-            )));
-        }
-        Ok(arg_types.to_vec())
-    }
-
-    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> DfResult<ColumnarValue> {
-        let name = self.name();
-        if args.args.len() != 4 {
-            return Err(DataFusionError::Execution(format!(
-                "{name} expects 4 arguments (eval_timestamp, timestamp_range, value_range, range_ms), got {}",
-                args.args.len()
-            )));
-        }
-        let rows = args.number_rows;
-
-        // 1. eval_timestamp column (Int64): range_end_ms per step.
-        let eval_ts = args.args[0].clone().into_array(rows)?;
-        let eval_ts = eval_ts
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "{name}: `eval_timestamp` must be Int64, got {:?}",
-                    eval_ts.data_type()
-                ))
-            })?;
-
-        // 2 & 3. The windowed timestamp and value RangeArrays.
-        let timestamp_range = args.args[1].clone().into_array(rows)?;
-        let timestamp_range = decode_range_column(&timestamp_range, "timestamp_range", name)?;
-        let value_range = args.args[2].clone().into_array(rows)?;
-        let value_range = decode_range_column(&value_range, "value_range", name)?;
-
-        // 4. range_ms scalar (the range-selector width).
-        let range = Time::from_millis(scalar_i64(&args.args[3], "range_ms", name)?);
-
-        if timestamp_range.len() != rows || value_range.len() != rows || eval_ts.len() != rows {
-            return Err(DataFusionError::Execution(format!(
-                "{name}: row-count mismatch (eval_ts={}, timestamp_range={}, value_range={}, rows={rows})",
-                eval_ts.len(),
-                timestamp_range.len(),
-                value_range.len()
-            )));
-        }
-
-        let mut builder = Float64Builder::with_capacity(rows);
-        for row in 0..rows {
-            let timestamps = timestamp_range.timestamp_slice(row).ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "{name}: `timestamp_range` cell {row} is not Int64"
-                ))
-            })?;
-            let values = value_range.value_slice(row).ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "{name}: `value_range` cell {row} is not Float64"
-                ))
-            })?;
-            let eval = eval_ts.value(row);
-            match self.family.eval_window(timestamps, values, eval, range) {
-                // A genuinely-computed value (including a legitimately-NaN result)
-                // is kept as a non-null float so it propagates through downstream
-                // aggregates exactly as the interpreter propagates it.
-                Some(value) => builder.append_value(value),
-                // Prometheus has no value for this window (fewer than two samples,
-                // zero-width interval). Emit NULL — not a NaN sentinel — so the
-                // assembler drops the series and aggregates skip it, matching the
-                // interpreter, which omits no-value series before aggregating.
-                None => builder.append_null(),
-            }
-        }
-
-        Ok(ColumnarValue::Array(Arc::new(builder.finish()) as ArrayRef))
-    }
-}
-
-/// Reads a scalar `Int64` argument, with a single-row array as a fallback.
-fn scalar_i64(value: &ColumnarValue, arg: &str, udf: &str) -> DfResult<i64> {
-    match value {
-        ColumnarValue::Scalar(scalar) => match scalar {
-            datafusion::common::ScalarValue::Int64(Some(v)) => Ok(*v),
-            other => Err(DataFusionError::Execution(format!(
-                "{udf}: `{arg}` must be a non-null Int64 scalar, got {other:?}"
-            ))),
-        },
-        ColumnarValue::Array(array) => {
-            let ints = array.as_any().downcast_ref::<Int64Array>().ok_or_else(|| {
-                DataFusionError::Execution(format!(
-                    "{udf}: `{arg}` must be Int64, got {:?}",
-                    array.data_type()
-                ))
-            })?;
-            if ints.is_empty() || ints.is_null(0) {
-                return Err(DataFusionError::Execution(format!(
-                    "{udf}: `{arg}` must be a non-null Int64"
-                )));
-            }
-            Ok(ints.value(0))
-        }
-    }
-}
-
-/// The `rate` UDF: per-second, counter-reset-corrected, extrapolated rate.
-#[must_use]
-pub fn rate_udf() -> ScalarUDF {
-    ScalarUDF::from(RateUdf::new(RateFamily::Rate))
-}
-
-/// The `increase` UDF: counter-reset-corrected, extrapolated total increase.
-#[must_use]
-pub fn increase_udf() -> ScalarUDF {
-    ScalarUDF::from(RateUdf::new(RateFamily::Increase))
-}
-
-/// The `delta` UDF: gauge first..last delta with boundary extrapolation.
-#[must_use]
-pub fn delta_udf() -> ScalarUDF {
-    ScalarUDF::from(RateUdf::new(RateFamily::Delta))
-}
-
-/// The `irate` UDF: per-second instant rate from the last two samples.
-#[must_use]
-pub fn irate_udf() -> ScalarUDF {
-    ScalarUDF::from(RateUdf::new(RateFamily::Irate))
-}
-
-/// The `idelta` UDF: gauge delta of the last two samples.
-#[must_use]
-pub fn idelta_udf() -> ScalarUDF {
-    ScalarUDF::from(RateUdf::new(RateFamily::Idelta))
-}
-
-/// Every rate-family UDF, ready to register on a [`SessionContext`].
-#[must_use]
-pub fn rate_family_udfs() -> Vec<ScalarUDF> {
-    vec![
-        rate_udf(),
-        increase_udf(),
-        delta_udf(),
-        irate_udf(),
-        idelta_udf(),
-    ]
-}
-
-/// Registers every rate-family UDF on `ctx` so a planner can lower onto them.
-pub fn register_rate_udfs(ctx: &SessionContext) {
-    for udf in rate_family_udfs() {
-        ctx.register_udf(udf);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use arrow::{
@@ -768,3 +484,26 @@ mod tests {
         check!(decode_range_column(&plain, "value_range", "prom_rate").is_err());
     }
 }
+
+mod decode_range_column;
+mod delta_udf;
+mod idelta_udf;
+mod increase_udf;
+mod irate_udf;
+mod rate_family;
+mod rate_family_udfs;
+mod rate_udf;
+mod register_rate_udfs;
+mod scalar_i64;
+
+use decode_range_column::decode_range_column;
+pub use delta_udf::delta_udf;
+pub use idelta_udf::idelta_udf;
+pub use increase_udf::increase_udf;
+pub use irate_udf::irate_udf;
+use rate_family::RateFamily;
+pub use rate_family_udfs::rate_family_udfs;
+use rate_udf::RateUdf;
+pub use rate_udf::rate_udf;
+pub use register_rate_udfs::register_rate_udfs;
+use scalar_i64::scalar_i64;

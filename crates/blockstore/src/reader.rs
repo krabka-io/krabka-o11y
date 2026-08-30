@@ -20,248 +20,6 @@ use tracing::instrument;
 
 use crate::error::{BlockStoreError, Result};
 
-/// Maximum on-disk byte size of a Parquet block accepted by [`read_block`].
-///
-/// Blocks come from shared object storage and, per the threat model, may be
-/// corrupt or maliciously oversized. A stream of an unbounded Parquet file
-/// could OOM the process. The reader `head()`s the block first and rejects it
-/// above this cap. This mirrors the profiles gunzip `max_decompressed` output
-/// cap. The default is 1 GiB, well above a realistic compacted block.
-pub const DEFAULT_BLOCK_READ_MAX: ByteSize = gibibytes(1);
-
-/// Minimal row-group metadata used by query frontends to shard block scans.
-///
-/// There is no `Eq`. [`ByteSize`] stores `f64`, so it is only `PartialEq`.
-/// Nothing keys a map or a set on row-group metadata, so the derive is
-/// unused.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RowGroupMeta {
-    pub index: usize,
-    pub compressed: ByteSize,
-}
-
-/// Reads every `RecordBatch` from the Parquet block at `object_key`.
-///
-/// The reader rejects the block with an error when its on-disk size exceeds
-/// [`DEFAULT_BLOCK_READ_MAX`], before it streams any bytes.
-///
-/// # Errors
-/// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-pub async fn read_block(store: Arc<dyn ObjectStore>, object_key: &str) -> Result<Vec<RecordBatch>> {
-    read_block_with_max_bytes(store, object_key, DEFAULT_BLOCK_READ_MAX).await
-}
-
-/// Reads every `RecordBatch` with a caller-supplied on-disk size limit.
-///
-/// # Errors
-/// Returns an error when object-store I/O fails, the block exceeds
-/// `max_bytes`, persisted metadata is malformed, or the block cannot be
-/// decoded.
-#[instrument(
-    level = "debug",
-    skip_all,
-    fields(object_key = %object_key, size = tracing::field::Empty),
-    err
-)]
-pub async fn read_block_with_max_bytes(
-    store: Arc<dyn ObjectStore>,
-    object_key: &str,
-    max_bytes: ByteSize,
-) -> Result<Vec<RecordBatch>> {
-    let path = Path::from(object_key);
-    head_within_cap(&store, &path, object_key, max_bytes).await?;
-    let reader = ObjectStoreReader::new(store, path);
-    let stream = ParquetRecordBatchStreamBuilder::new(reader)
-        .await?
-        .build()?;
-    Ok(stream.try_collect::<Vec<_>>().await?)
-}
-
-/// `head`s the block, rejects it above `max_bytes`, and hands back its on-disk
-/// size for the Parquet reader.
-///
-/// The object store reports a raw `u64`, so the comparison is the one place
-/// that lifts the size into a [`ByteSize`]. The rejection message still prints
-/// whole bytes, so it reads the same for a caller-supplied cap and for the
-/// default cap.
-async fn head_within_cap(
-    store: &Arc<dyn ObjectStore>,
-    path: &Path,
-    object_key: &str,
-    max_bytes: ByteSize,
-) -> Result<u64> {
-    let meta = store.head(path).await?;
-    tracing::Span::current().record("size", meta.size);
-    if ByteSize::from_bytes(meta.size) > max_bytes {
-        return Err(BlockStoreError::InvalidBlock(format!(
-            "block `{object_key}` is {} bytes, exceeds cap of {} bytes",
-            meta.size,
-            max_bytes.bytes_u64()
-        )));
-    }
-    Ok(meta.size)
-}
-
-/// Reads row-group sizes from Parquet metadata and does not scan row data.
-///
-/// # Errors
-/// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-pub async fn read_row_group_metadata(
-    store: Arc<dyn ObjectStore>,
-    object_key: &str,
-) -> Result<Vec<RowGroupMeta>> {
-    read_row_group_metadata_with_max_bytes(store, object_key, DEFAULT_BLOCK_READ_MAX).await
-}
-
-/// Reads row-group sizes with a caller-supplied on-disk size limit.
-///
-/// # Errors
-/// Returns an error when object-store I/O fails, the block exceeds
-/// `max_bytes`, or persisted metadata is malformed.
-#[instrument(
-    level = "debug",
-    skip_all,
-    fields(object_key = %object_key, size = tracing::field::Empty),
-    err
-)]
-pub async fn read_row_group_metadata_with_max_bytes(
-    store: Arc<dyn ObjectStore>,
-    object_key: &str,
-    max_bytes: ByteSize,
-) -> Result<Vec<RowGroupMeta>> {
-    let path = Path::from(object_key);
-    head_within_cap(&store, &path, object_key, max_bytes).await?;
-    let reader = ObjectStoreReader::new(store, path);
-    let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
-    Ok(builder
-        .metadata()
-        .row_groups()
-        .iter()
-        .enumerate()
-        .map(|(index, row_group)| RowGroupMeta {
-            index,
-            compressed: ByteSize::from_bytes(
-                u64::try_from(row_group.compressed_size()).unwrap_or(0),
-            ),
-        })
-        .collect())
-}
-
-/// Reads selected row groups from a Parquet block.
-///
-/// As with [`read_block`], the reader rejects the block when its on-disk size
-/// exceeds [`DEFAULT_BLOCK_READ_MAX`], before it streams any bytes.
-///
-/// # Errors
-/// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-pub async fn read_block_row_groups(
-    store: Arc<dyn ObjectStore>,
-    object_key: &str,
-    row_groups: &[usize],
-) -> Result<Vec<RecordBatch>> {
-    read_block_row_groups_with_max_bytes(store, object_key, row_groups, DEFAULT_BLOCK_READ_MAX)
-        .await
-}
-
-/// Reads selected row groups with a caller-supplied on-disk size limit.
-///
-/// # Errors
-/// Returns an error when object-store I/O fails, the block exceeds
-/// `max_bytes`, persisted metadata is malformed, or the block cannot be
-/// decoded.
-#[instrument(
-    level = "debug",
-    skip_all,
-    fields(object_key = %object_key, row_groups = row_groups.len(), size = tracing::field::Empty),
-    err
-)]
-pub async fn read_block_row_groups_with_max_bytes(
-    store: Arc<dyn ObjectStore>,
-    object_key: &str,
-    row_groups: &[usize],
-    max_bytes: ByteSize,
-) -> Result<Vec<RecordBatch>> {
-    let path = Path::from(object_key);
-    head_within_cap(&store, &path, object_key, max_bytes).await?;
-    let reader = ObjectStoreReader::new(store, path);
-    let stream = ParquetRecordBatchStreamBuilder::new(reader)
-        .await?
-        .with_row_groups(row_groups.to_vec())
-        .build()?;
-    let batches = stream.try_collect::<Vec<_>>().await?;
-    Ok(batches)
-}
-
-#[derive(Clone, Debug)]
-struct ObjectStoreReader {
-    store: Arc<dyn ObjectStore>,
-    path: Path,
-}
-
-impl ObjectStoreReader {
-    fn new(store: Arc<dyn ObjectStore>, path: Path) -> Self {
-        Self { store, path }
-    }
-}
-
-impl AsyncFileReader for ObjectStoreReader {
-    fn get_bytes(&mut self, range: Range<u64>) -> BoxFuture<'_, parquet::errors::Result<Bytes>> {
-        self.store
-            .get_range(&self.path, range)
-            .map_err(to_parquet_error)
-            .boxed()
-    }
-
-    fn get_byte_ranges(
-        &mut self,
-        ranges: Vec<Range<u64>>,
-    ) -> BoxFuture<'_, parquet::errors::Result<Vec<Bytes>>> {
-        async move {
-            self.store
-                .get_ranges(&self.path, &ranges)
-                .await
-                .map_err(to_parquet_error)
-        }
-        .boxed()
-    }
-
-    fn get_metadata<'a>(
-        &'a mut self,
-        options: Option<&'a ArrowReaderOptions>,
-    ) -> BoxFuture<'a, parquet::errors::Result<Arc<ParquetMetaData>>> {
-        async move {
-            let metadata = ParquetMetaDataReader::new()
-                .with_arrow_reader_options(options)
-                .load_via_suffix_and_finish(self)
-                .await?;
-            Ok(Arc::new(metadata))
-        }
-        .boxed()
-    }
-}
-
-impl MetadataSuffixFetch for &mut ObjectStoreReader {
-    fn fetch_suffix(&mut self, suffix: usize) -> BoxFuture<'_, parquet::errors::Result<Bytes>> {
-        let options = GetOptions {
-            range: Some(GetRange::Suffix(suffix as u64)),
-            ..Default::default()
-        };
-        async move {
-            let result = self
-                .store
-                .get_opts(&self.path, options)
-                .await
-                .map_err(to_parquet_error)?;
-            result.bytes().await.map_err(to_parquet_error)
-        }
-        .boxed()
-    }
-}
-
-fn to_parquet_error(error: object_store::Error) -> ParquetError {
-    ParquetError::External(Box::new(error))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -534,3 +292,27 @@ mod tests {
         assert2::assert!(lines.value(0) == "second");
     }
 }
+
+mod default_block_read_max;
+mod head_within_cap;
+mod object_store_reader;
+mod read_block;
+mod read_block_row_groups;
+mod read_block_row_groups_with_max_bytes;
+mod read_block_with_max_bytes;
+mod read_row_group_metadata;
+mod read_row_group_metadata_with_max_bytes;
+mod row_group_meta;
+mod to_parquet_error;
+
+pub use default_block_read_max::DEFAULT_BLOCK_READ_MAX;
+use head_within_cap::head_within_cap;
+use object_store_reader::ObjectStoreReader;
+pub use read_block::read_block;
+pub use read_block_row_groups::read_block_row_groups;
+pub use read_block_row_groups_with_max_bytes::read_block_row_groups_with_max_bytes;
+pub use read_block_with_max_bytes::read_block_with_max_bytes;
+pub use read_row_group_metadata::read_row_group_metadata;
+pub use read_row_group_metadata_with_max_bytes::read_row_group_metadata_with_max_bytes;
+pub use row_group_meta::RowGroupMeta;
+use to_parquet_error::to_parquet_error;

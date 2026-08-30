@@ -9,98 +9,6 @@ use thiserror::Error;
 
 use super::Limits;
 
-#[derive(Clone, Debug)]
-pub struct OverridesProvider {
-    defaults: Limits,
-    per_tenant: HashMap<String, Limits>,
-}
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum OverridesError {
-    #[error("failed to parse overrides yaml: {0}")]
-    Yaml(String),
-}
-
-impl OverridesProvider {
-    #[must_use]
-    pub fn new(defaults: Limits) -> Self {
-        Self {
-            defaults,
-            per_tenant: HashMap::new(),
-        }
-    }
-
-    ///
-    /// # Errors
-    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
-    pub fn from_yaml(yaml: &str) -> Result<Self, OverridesError> {
-        let defaults = Limits::default();
-        let file = serde_yaml::from_str::<RuntimeFile>(yaml)
-            .map_err(|err| OverridesError::Yaml(err.to_string()))?;
-        let per_tenant = file
-            .overrides
-            .into_iter()
-            .map(|(tenant, limits)| (tenant, merge_limits(&defaults, &limits)))
-            .collect();
-
-        Ok(Self {
-            defaults,
-            per_tenant,
-        })
-    }
-
-    #[must_use]
-    pub fn for_tenant(&self, tenant: &str) -> &Limits {
-        self.per_tenant.get(tenant).unwrap_or(&self.defaults)
-    }
-}
-
-#[derive(Deserialize)]
-struct RuntimeFile {
-    #[serde(default)]
-    overrides: HashMap<String, PartialLimits>,
-}
-
-// The Tempo-shaped runtime-overrides keys, in the units an operator writes them
-// (spans/sec, bytes, seconds). This is intentionally partial configuration, not
-// old-schema compatibility: each tenant entry overrides only the limit fields it
-// names, and `merge_limits` lifts them into the dimensioned `Limits`.
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct PartialLimits {
-    ingestion_rate_spans_per_sec: Option<f64>,
-    ingestion_burst_spans: Option<u64>,
-    max_traces_per_search: Option<u64>,
-    max_spans_per_trace: Option<u64>,
-    max_attribute_bytes: Option<u64>,
-    max_search_duration_secs: Option<u64>,
-}
-
-fn merge_limits(defaults: &Limits, partial: &PartialLimits) -> Limits {
-    Limits {
-        ingestion_rate: partial
-            .ingestion_rate_spans_per_sec
-            .map_or(defaults.ingestion_rate, Frequency::from_per_sec),
-        ingestion_burst_spans: partial
-            .ingestion_burst_spans
-            .unwrap_or(defaults.ingestion_burst_spans),
-        max_traces_per_search: partial
-            .max_traces_per_search
-            .unwrap_or(defaults.max_traces_per_search),
-        max_spans_per_trace: partial
-            .max_spans_per_trace
-            .unwrap_or(defaults.max_spans_per_trace),
-        max_attribute: partial
-            .max_attribute_bytes
-            .map_or(defaults.max_attribute, ByteSize::from_bytes),
-        max_search_duration: partial
-            .max_search_duration_secs
-            .map_or(defaults.max_search_duration, |secs| {
-                Time::from_secs(i64::try_from(secs).unwrap_or(i64::MAX))
-            }),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use krabka_units::{bytes, per_sec};
@@ -152,3 +60,15 @@ overrides:
         assert2::assert!(*provider.for_tenant("tenant-z") == Limits::default());
     }
 }
+
+mod merge_limits;
+mod overrides_error;
+mod overrides_provider;
+mod partial_limits;
+mod runtime_file;
+
+use merge_limits::merge_limits;
+pub use overrides_error::OverridesError;
+pub use overrides_provider::OverridesProvider;
+use partial_limits::PartialLimits;
+use runtime_file::RuntimeFile;

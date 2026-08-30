@@ -21,29 +21,16 @@
 
 use derive_more::{Display, From, Into};
 
-/// A wall-clock timestamp in nanoseconds since the Unix epoch.
-///
-/// This carries the `start` and `end` bounds of a time range. They are adjacent
-/// `i64`s at every call site that filters or steps over a window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
-pub struct UnixNano(pub i64);
+mod max_offset;
+mod min_offset;
+mod trace_id_high;
+mod trace_id_low;
+mod unix_nano;
+mod window_start_ns;
 
-/// The high 64 bits of a 128-bit Jaeger trace id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
-pub struct TraceIdHigh(pub i64);
-
-/// The low 64 bits of a 128-bit Jaeger trace id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
-pub struct TraceIdLow(pub i64);
-
-/// The smallest Kafka log offset covered by a flushed block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
-pub struct MinOffset(pub i64);
-
-/// The largest Kafka log offset covered by a flushed block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
-pub struct MaxOffset(pub i64);
-
-/// The earliest span `start_ns` in a flushed block-builder window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
-pub struct WindowStartNs(pub i64);
+pub use max_offset::MaxOffset;
+pub use min_offset::MinOffset;
+pub use trace_id_high::TraceIdHigh;
+pub use trace_id_low::TraceIdLow;
+pub use unix_nano::UnixNano;
+pub use window_start_ns::WindowStartNs;

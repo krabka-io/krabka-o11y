@@ -16,256 +16,6 @@ use crate::{
     wal,
 };
 
-/// Errors that cross the metrics-generator source and sink boundaries.
-#[derive(Debug, thiserror::Error)]
-pub enum SinkError {
-    #[error("transport error: {0}")]
-    Transport(String),
-    #[error("decode error: {0}")]
-    Decode(String),
-    #[error("source error: {0}")]
-    Source(String),
-}
-
-/// Output edge for Prometheus `remote_write` payloads.
-#[async_trait]
-pub trait RemoteWriteSink: Send + Sync {
-    async fn write(&self, payload: &SeriesPayload) -> Result<(), SinkError>;
-}
-
-/// Input edge for decoded traces WAL records.
-#[async_trait]
-pub trait SpanSource: Send + Sync {
-    async fn poll(&self, max: usize) -> Result<Vec<SpanRecord>, SinkError>;
-    async fn commit(&self) -> Result<(), SinkError>;
-}
-
-/// Kafka-backed source for the traces WAL consumer group.
-pub struct KafkaSpanSource {
-    consumer: AsyncMutex<Consumer>,
-    poll_timeout: Time,
-}
-
-impl KafkaSpanSource {
-    #[must_use]
-    pub fn new(consumer: Consumer) -> Self {
-        Self {
-            consumer: AsyncMutex::new(consumer),
-            poll_timeout: millis(500),
-        }
-    }
-
-    #[must_use]
-    pub fn with_poll_timeout(mut self, poll_timeout: Time) -> Self {
-        self.poll_timeout = poll_timeout;
-        self
-    }
-}
-
-#[async_trait]
-impl SpanSource for KafkaSpanSource {
-    async fn poll(&self, _max: usize) -> Result<Vec<SpanRecord>, SinkError> {
-        let mut consumer = self.consumer.lock().await;
-        let records = consumer
-            .poll(self.poll_timeout)
-            .await
-            .map_err(|err| SinkError::Source(err.to_string()))?;
-        decode_consumer_records(records)
-    }
-
-    async fn commit(&self) -> Result<(), SinkError> {
-        self.consumer
-            .lock()
-            .await
-            .commit_sync()
-            .await
-            .map_err(|err| SinkError::Source(err.to_string()))
-    }
-}
-
-///
-/// # Errors
-/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
-pub fn decode_consumer_records(records: Vec<ConsumerRecord>) -> Result<Vec<SpanRecord>, SinkError> {
-    records
-        .into_iter()
-        .filter_map(|record| {
-            record.value.map(|value| {
-                let size = ByteSize::from_bytes(u64::try_from(value.len()).unwrap_or(u64::MAX));
-                wal::SpanRecord::decode(&value)
-                    .map(|wal| project_wal_record(wal, size))
-                    .map_err(|err| SinkError::Decode(err.to_string()))
-            })
-        })
-        .collect()
-}
-
-#[must_use]
-pub fn project_wal_record(record: wal::SpanRecord, size: ByteSize) -> SpanRecord {
-    let service_name = service_name(&record.span.resource_attrs);
-    let attributes = record
-        .span
-        .span_attrs
-        .iter()
-        .chain(record.span.resource_attrs.iter())
-        .filter(|kv| kv.key != "service.name")
-        .map(|kv| (kv.key.clone(), attr_value_to_string(&kv.value)))
-        .collect();
-
-    SpanRecord {
-        tenant: record.tenant,
-        trace_id: record.span.trace_id,
-        span_id: record.span.span_id,
-        parent_span_id: record.span.parent_span_id.unwrap_or([0; 8]),
-        name: record.span.name,
-        kind: record.span.kind,
-        start_ns: record.span.start_ns,
-        duration_ns: record.span.duration_ns,
-        status: record.span.status,
-        status_message: record.span.status_message,
-        service_name,
-        attributes,
-        size,
-    }
-}
-
-fn service_name(attrs: &[KeyValue]) -> String {
-    attrs
-        .iter()
-        .find_map(|kv| match (&*kv.key, &kv.value) {
-            ("service.name", AttrValue::Str(value)) if !value.is_empty() => Some(value.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "unknown_service".to_string())
-}
-
-fn attr_value_to_string(value: &AttrValue) -> String {
-    match value {
-        AttrValue::Str(value) => value.clone(),
-        AttrValue::Int(value) => value.to_string(),
-        AttrValue::Double(value) => value.to_string(),
-        AttrValue::Bool(value) => value.to_string(),
-        AttrValue::Bytes(value) => hex::encode(value),
-    }
-}
-
-/// Deterministic sink mock that records successful writes.
-#[derive(Clone, Default)]
-pub struct MockRemoteWriteSink {
-    writes: Arc<Mutex<Vec<SeriesPayload>>>,
-    fail_next: Arc<Mutex<bool>>,
-    fail_after_successes: Arc<Mutex<Option<usize>>>,
-}
-
-impl MockRemoteWriteSink {
-    /// Configure the next write to fail.
-    ///
-    /// # Panics
-    /// Panics if the mock sink mutex is poisoned.
-    pub fn fail_next(&self) {
-        *self.fail_next.lock().expect("mock sink mutex poisoned") = true;
-    }
-
-    /// Configure the sink to fail after the requested successful writes.
-    ///
-    /// # Panics
-    /// Panics if the mock sink mutex is poisoned.
-    pub fn fail_after_successes(&self, successes: usize) {
-        *self
-            .fail_after_successes
-            .lock()
-            .expect("mock sink mutex poisoned") = Some(successes);
-    }
-
-    /// Return all recorded writes.
-    ///
-    /// # Panics
-    /// Panics if the mock sink mutex is poisoned.
-    #[must_use]
-    pub fn writes(&self) -> Vec<SeriesPayload> {
-        self.writes
-            .lock()
-            .expect("mock sink mutex poisoned")
-            .clone()
-    }
-}
-
-#[async_trait]
-impl RemoteWriteSink for MockRemoteWriteSink {
-    async fn write(&self, payload: &SeriesPayload) -> Result<(), SinkError> {
-        {
-            let mut fail_next = self.fail_next.lock().expect("mock sink mutex poisoned");
-            if *fail_next {
-                *fail_next = false;
-                return Err(SinkError::Transport("forced mock failure".into()));
-            }
-        }
-        {
-            let successful_writes = self.writes.lock().expect("mock sink mutex poisoned").len();
-            let mut fail_after = self
-                .fail_after_successes
-                .lock()
-                .expect("mock sink mutex poisoned");
-            if fail_after.is_some_and(|limit| successful_writes >= limit) {
-                *fail_after = None;
-                return Err(SinkError::Transport("forced mock failure".into()));
-            }
-        }
-
-        self.writes
-            .lock()
-            .expect("mock sink mutex poisoned")
-            .push(payload.clone());
-        Ok(())
-    }
-}
-
-/// Deterministic source mock that returns scripted batches.
-#[derive(Clone, Default)]
-pub struct MockSpanSource {
-    batches: Arc<Mutex<VecDeque<Vec<SpanRecord>>>>,
-    commits: Arc<Mutex<usize>>,
-}
-
-impl MockSpanSource {
-    /// Queue a batch for the next poll.
-    ///
-    /// # Panics
-    /// Panics if the mock source mutex is poisoned.
-    pub fn push_batch(&self, batch: Vec<SpanRecord>) {
-        self.batches
-            .lock()
-            .expect("mock source mutex poisoned")
-            .push_back(batch);
-    }
-
-    /// Return the number of committed batches.
-    ///
-    /// # Panics
-    /// Panics if the mock source mutex is poisoned.
-    #[must_use]
-    pub fn commits(&self) -> usize {
-        *self.commits.lock().expect("mock source mutex poisoned")
-    }
-}
-
-#[async_trait]
-impl SpanSource for MockSpanSource {
-    async fn poll(&self, _max: usize) -> Result<Vec<SpanRecord>, SinkError> {
-        Ok(self
-            .batches
-            .lock()
-            .expect("mock source mutex poisoned")
-            .pop_front()
-            .unwrap_or_default())
-    }
-
-    async fn commit(&self) -> Result<(), SinkError> {
-        *self.commits.lock().expect("mock source mutex poisoned") += 1;
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -432,3 +182,25 @@ mod tests {
         check!(projected[0].size.bytes_usize() == encoded.len());
     }
 }
+
+mod attr_value_to_string;
+mod decode_consumer_records;
+mod kafka_span_source;
+mod mock_remote_write_sink;
+mod mock_span_source;
+mod project_wal_record;
+mod remote_write_sink;
+mod service_name;
+mod sink_error;
+mod span_source;
+
+use attr_value_to_string::attr_value_to_string;
+pub use decode_consumer_records::decode_consumer_records;
+pub use kafka_span_source::KafkaSpanSource;
+pub use mock_remote_write_sink::MockRemoteWriteSink;
+pub use mock_span_source::MockSpanSource;
+pub use project_wal_record::project_wal_record;
+pub use remote_write_sink::RemoteWriteSink;
+use service_name::service_name;
+pub use sink_error::SinkError;
+pub use span_source::SpanSource;

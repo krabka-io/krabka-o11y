@@ -1,192 +1,5 @@
 //! `TraceQL` abstract syntax tree.
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Query {
-    pub root: SpansetExpr,
-    pub pipeline: Vec<Pipeline>,
-    pub hints: QueryHints,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct QueryHints {
-    pub most_recent: bool,
-    pub exemplars: Option<bool>,
-    /// `with(sample=...)`: Tempo's probabilistic metrics-sampling hint.
-    ///
-    /// Grafana's Traces Drilldown sends `sample=true`. The parser accepts the
-    /// hint and records it here, but Krabka computes exact metrics. Sampling is
-    /// a performance hint, so Krabka stays correct when it ignores the hint.
-    pub sample: Option<bool>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum SpansetExpr {
-    Selector(Box<FieldExpr>),
-    And(Box<SpansetExpr>, Box<SpansetExpr>),
-    Or(Box<SpansetExpr>, Box<SpansetExpr>),
-    Structural {
-        op: StructuralOp,
-        lhs: Box<SpansetExpr>,
-        rhs: Box<SpansetExpr>,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum FieldExpr {
-    Comparison {
-        lhs: Field,
-        op: ComparisonOp,
-        rhs: Value,
-    },
-    And(Box<FieldExpr>, Box<FieldExpr>),
-    Or(Box<FieldExpr>, Box<FieldExpr>),
-    Not(Box<FieldExpr>),
-    Field(Field),
-    /// A constant boolean filter.
-    ///
-    /// The empty spanset `{}` and the scalar-boolean spanset `{ true }` lower
-    /// to `Const(true)`, which matches every span. The spanset `{ false }`
-    /// lowers to `Const(false)`, which matches no span. This mirrors Grafana
-    /// Tempo, whose Explore "Search" tab and TraceQL-metrics default to `{}`.
-    Const(bool),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Field {
-    pub scope: Scope,
-    pub key: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Scope {
-    Both,
-    Span,
-    Resource,
-    Parent,
-    Event,
-    Link,
-    Instrumentation,
-    Intrinsic(Intrinsic),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Intrinsic {
-    Name,
-    Duration,
-    Kind,
-    Status,
-    StatusMessage,
-    Id,
-    ParentId,
-    ChildCount,
-    TraceDuration,
-    TraceRootName,
-    TraceRootService,
-    TraceId,
-    EventName,
-    EventTimeSinceStart,
-    LinkTraceId,
-    LinkSpanId,
-    InstrumentationName,
-    InstrumentationVersion,
-    NestedSetLeft,
-    NestedSetRight,
-    NestedSetParent,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ComparisonOp {
-    Eq,
-    Neq,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-    Re,
-    Nre,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Value {
-    Str(String),
-    Int(i64),
-    Float(f64),
-    Duration(i64),
-    Bool(bool),
-    Nil,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StructuralOp {
-    Descendant,
-    Ancestor,
-    Child,
-    Parent,
-    Sibling,
-    NegDescendant,
-    NegAncestor,
-    NegChild,
-    NegParent,
-    UnionDescendant,
-    UnionAncestor,
-    UnionChild,
-    UnionParent,
-    UnionSibling,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Pipeline {
-    Aggregate(Aggregate),
-    Filter {
-        op: ComparisonOp,
-        value: f64,
-    },
-    By(Vec<Field>),
-    TopK(usize),
-    BottomK(usize),
-    /// Tempo attribute-comparison metric: `compare({selection}, topN [, start_ns,
-    /// end_ns])`.
-    ///
-    /// This metric splits the spans that match the outer spanset into two
-    /// groups. The `selection` group holds the spans that also match
-    /// `selection`. The `baseline` group holds the rest. The metric then emits
-    /// per-attribute value-distribution series for each group. `top_n` keeps
-    /// the most frequent values per attribute, and defaults to 10. The optional
-    /// `start` and `end` nanosecond bounds narrow the selection sub-window.
-    Compare {
-        selection: Box<SpansetExpr>,
-        top_n: usize,
-        start: Option<i64>,
-        end: Option<i64>,
-    },
-    Select(Vec<Field>),
-    Coalesce,
-    With(Vec<WithBinding>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct WithBinding {
-    pub name: String,
-    pub expr: FieldExpr,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Aggregate {
-    Count,
-    Rate,
-    CountOverTime,
-    SumOverTime(Field),
-    AvgOverTime(Field),
-    MinOverTime(Field),
-    MaxOverTime(Field),
-    HistogramOverTime(Field),
-    QuantileOverTime { field: Field, quantiles: Vec<f64> },
-    Sum(Field),
-    Avg(Field),
-    Max(Field),
-    Min(Field),
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::assert;
@@ -211,3 +24,31 @@ mod tests {
         assert!(q.pipeline == vec![Pipeline::Aggregate(Aggregate::Count)]);
     }
 }
+
+mod aggregate;
+mod comparison_op;
+mod field;
+mod field_expr;
+mod intrinsic;
+mod pipeline;
+mod query;
+mod query_hints;
+mod scope;
+mod spanset_expr;
+mod structural_op;
+mod value;
+mod with_binding;
+
+pub use aggregate::Aggregate;
+pub use comparison_op::ComparisonOp;
+pub use field::Field;
+pub use field_expr::FieldExpr;
+pub use intrinsic::Intrinsic;
+pub use pipeline::Pipeline;
+pub use query::Query;
+pub use query_hints::QueryHints;
+pub use scope::Scope;
+pub use spanset_expr::SpansetExpr;
+pub use structural_op::StructuralOp;
+pub use value::Value;
+pub use with_binding::WithBinding;

@@ -14,7 +14,7 @@ crate_library(
 # `bazel run //crates/traces:krabka-traces -- --help`.
 crate_binary(
     name = "krabka-traces",
-    crate_root = "src/bin/krabka-traces.rs",
+    crate_root = "src/bin/krabka-traces/main.rs",
     lib = ":traces",
 )
 

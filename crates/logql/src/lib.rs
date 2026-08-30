@@ -50,5 +50,8 @@ pub use types::{
     QuantileNumerator, SourceLabel,
 };
 
-pub type Labels = BTreeMap<String, String>;
-pub const UNWRAP_SAMPLE_VALUE_LABEL: &str = "__krabka_unwrap_sample_value__";
+mod labels_2;
+mod unwrap_sample_value_label;
+
+pub use labels_2::Labels;
+pub use unwrap_sample_value_label::UNWRAP_SAMPLE_VALUE_LABEL;

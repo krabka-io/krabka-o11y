@@ -1,0 +1,9 @@
+use super::{Labels, SeriesFingerprint};
+
+#[derive(Clone)]
+pub(crate) struct FloatRow {
+    pub(crate) fp: SeriesFingerprint,
+    pub(crate) labels: Labels,
+    pub(crate) ts_ms: i64,
+    pub(crate) value: f64,
+}

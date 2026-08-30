@@ -7,205 +7,6 @@ use krabka_units::Time;
 
 use crate::result::{AttrValue, EventRef, LinkRef};
 
-pub const COL_TRACE_ID: &str = "trace_id";
-pub const COL_SPAN_ID: &str = "span_id";
-pub const COL_PARENT_SPAN_ID: &str = "parent_span_id";
-pub const COL_NS_LEFT: &str = "nested_set_left";
-pub const COL_NS_RIGHT: &str = "nested_set_right";
-pub const COL_PARENT_ID: &str = "parent_id";
-pub const COL_CHILD_COUNT: &str = "child_count";
-pub const COL_ROOT_SERVICE_NAME: &str = "root_service_name";
-pub const COL_ROOT_SPAN_NAME: &str = "root_span_name";
-pub const COL_TRACE_START: &str = "trace_start_unix_nano";
-pub const COL_TRACE_DURATION: &str = "trace_duration_nanos";
-pub const COL_NAME: &str = "name";
-pub const COL_KIND: &str = "kind";
-pub const COL_START: &str = "start_unix_nano";
-pub const COL_DURATION: &str = "duration_nanos";
-pub const COL_STATUS_CODE: &str = "status_code";
-pub const COL_STATUS_MESSAGE: &str = "status_message";
-pub const COL_INSTRUMENTATION_NAME: &str = "instrumentation_name";
-pub const COL_INSTRUMENTATION_VERSION: &str = "instrumentation_version";
-pub const COL_EVENT_NAME: &str = "event_name";
-pub const COL_EVENT_TIME_SINCE_START: &str = "event_time_since_start_nanos";
-pub const COL_LINK_TRACE_ID: &str = "link_trace_id";
-pub const COL_LINK_SPAN_ID: &str = "link_span_id";
-pub const ATTR_PREFIX: &str = "attr.";
-pub const EVENT_ATTR_PREFIX: &str = "__event.";
-pub const LINK_ATTR_PREFIX: &str = "__link.";
-pub const INSTRUMENTATION_ATTR_PREFIX: &str = "__instrumentation.";
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct InputSpan {
-    pub trace_id: [u8; 16],
-    pub span_id: [u8; 8],
-    pub parent_span_id: Option<[u8; 8]>,
-    pub name: String,
-    pub kind: i32,
-    pub start_unix_nano: i64,
-    /// How long the span ran.
-    pub duration: Time,
-    pub status_code: i32,
-    pub status_message: String,
-    pub instrumentation_name: String,
-    pub instrumentation_version: String,
-    pub attrs: Vec<(String, AttrValue)>,
-    pub events: Vec<EventRef>,
-    pub links: Vec<LinkRef>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NestedSet {
-    pub left: i32,
-    pub right: i32,
-    pub parent_id: i32,
-}
-
-#[must_use]
-pub fn span_schema() -> SchemaRef {
-    span_schema_with_attrs(&[])
-}
-
-#[must_use]
-pub fn span_schema_with_attrs(attr_cols: &[(String, DataType)]) -> SchemaRef {
-    let mut fields = vec![
-        Field::new(COL_TRACE_ID, DataType::FixedSizeBinary(16), false),
-        Field::new(COL_SPAN_ID, DataType::FixedSizeBinary(8), false),
-        Field::new(COL_PARENT_SPAN_ID, DataType::FixedSizeBinary(8), true),
-        Field::new(COL_NS_LEFT, DataType::Int32, false),
-        Field::new(COL_NS_RIGHT, DataType::Int32, false),
-        Field::new(COL_PARENT_ID, DataType::Int32, false),
-        Field::new(COL_CHILD_COUNT, DataType::Int32, false),
-        Field::new(COL_ROOT_SERVICE_NAME, DataType::Utf8, true),
-        Field::new(COL_ROOT_SPAN_NAME, DataType::Utf8, true),
-        Field::new(COL_TRACE_START, DataType::Int64, false),
-        Field::new(COL_TRACE_DURATION, DataType::Int64, false),
-        Field::new(COL_NAME, DataType::Utf8, true),
-        Field::new(COL_KIND, DataType::Int32, false),
-        Field::new(COL_START, DataType::Int64, false),
-        Field::new(COL_DURATION, DataType::Int64, false),
-        Field::new(COL_STATUS_CODE, DataType::Int32, false),
-        Field::new(COL_STATUS_MESSAGE, DataType::Utf8, true),
-        Field::new(COL_INSTRUMENTATION_NAME, DataType::Utf8, true),
-        Field::new(COL_INSTRUMENTATION_VERSION, DataType::Utf8, true),
-        Field::new(COL_EVENT_NAME, DataType::Utf8, true),
-        Field::new(COL_EVENT_TIME_SINCE_START, DataType::Int64, true),
-        Field::new(COL_LINK_TRACE_ID, DataType::FixedSizeBinary(16), true),
-        Field::new(COL_LINK_SPAN_ID, DataType::FixedSizeBinary(8), true),
-    ];
-
-    fields.extend(
-        attr_cols
-            .iter()
-            .map(|(key, dt)| Field::new(format!("{ATTR_PREFIX}{key}"), dt.clone(), true)),
-    );
-
-    Arc::new(Schema::new(fields))
-}
-
-#[must_use]
-pub fn assign_nested_set(spans: &[InputSpan]) -> Vec<NestedSet> {
-    enum Frame {
-        Enter { idx: usize, parent_left: i32 },
-        Exit { idx: usize },
-    }
-
-    let pos: HashMap<[u8; 8], usize> = spans
-        .iter()
-        .enumerate()
-        .map(|(i, span)| (span.span_id, i))
-        .collect();
-    let mut children = vec![Vec::new(); spans.len()];
-    let mut roots = Vec::new();
-
-    for (i, span) in spans.iter().enumerate() {
-        match span.parent_span_id.and_then(|p| pos.get(&p).copied()) {
-            Some(parent_idx) if parent_idx != i => children[parent_idx].push(i),
-            _ => roots.push(i),
-        }
-    }
-
-    let mut out = vec![
-        NestedSet {
-            left: 0,
-            right: 0,
-            parent_id: 0,
-        };
-        spans.len()
-    ];
-    let mut counter = 1_i32;
-    let mut stack = Vec::new();
-
-    for &root in roots.iter().rev() {
-        stack.push(Frame::Enter {
-            idx: root,
-            // Root spans encode nestedSetParent = -1 (Tempo's no-parent
-            // sentinel; left values start at 1 so -1 never collides). Grafana's
-            // Traces Drilldown selects roots with `nestedSetParent < 0`.
-            parent_left: -1,
-        });
-    }
-
-    while let Some(frame) = stack.pop() {
-        match frame {
-            Frame::Enter { idx, parent_left } => {
-                let left = counter;
-                counter += 1;
-                out[idx].left = left;
-                out[idx].parent_id = parent_left;
-                stack.push(Frame::Exit { idx });
-                for &child in children[idx].iter().rev() {
-                    stack.push(Frame::Enter {
-                        idx: child,
-                        parent_left: left,
-                    });
-                }
-            }
-            Frame::Exit { idx } => {
-                out[idx].right = counter;
-                counter += 1;
-            }
-        }
-    }
-
-    // Spans caught in a parent cycle are excluded from `roots` (neither absent
-    // nor self-parented), so the root-seeded DFS never reaches them and leaves
-    // them at {left:0,right:0}, which would collide with real roots. Sweep for
-    // any still-unassigned span and seed it as an additional root.
-    while let Some(start) = out.iter().position(|bounds| bounds.left == 0) {
-        stack.push(Frame::Enter {
-            idx: start,
-            // Cycle-orphaned spans become additional roots: same -1 sentinel.
-            parent_left: -1,
-        });
-        while let Some(frame) = stack.pop() {
-            match frame {
-                Frame::Enter { idx, parent_left } => {
-                    let left = counter;
-                    counter += 1;
-                    out[idx].left = left;
-                    out[idx].parent_id = parent_left;
-                    stack.push(Frame::Exit { idx });
-                    for &child in children[idx].iter().rev() {
-                        if out[child].left == 0 {
-                            stack.push(Frame::Enter {
-                                idx: child,
-                                parent_left: left,
-                            });
-                        }
-                    }
-                }
-                Frame::Exit { idx } => {
-                    out[idx].right = counter;
-                    counter += 1;
-                }
-            }
-        }
-    }
-
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use arrow::datatypes::DataType;
@@ -370,3 +171,69 @@ mod tests {
         }
     }
 }
+
+mod assign_nested_set;
+mod attr_prefix;
+mod col_child_count;
+mod col_duration;
+mod col_event_name;
+mod col_event_time_since_start;
+mod col_instrumentation_name;
+mod col_instrumentation_version;
+mod col_kind;
+mod col_link_span_id;
+mod col_link_trace_id;
+mod col_name;
+mod col_ns_left;
+mod col_ns_right;
+mod col_parent_id;
+mod col_parent_span_id;
+mod col_root_service_name;
+mod col_root_span_name;
+mod col_span_id;
+mod col_start;
+mod col_status_code;
+mod col_status_message;
+mod col_trace_duration;
+mod col_trace_id;
+mod col_trace_start;
+mod event_attr_prefix;
+mod input_span;
+mod instrumentation_attr_prefix;
+mod link_attr_prefix;
+mod nested_set;
+mod span_schema;
+mod span_schema_with_attrs;
+
+pub use assign_nested_set::assign_nested_set;
+pub use attr_prefix::ATTR_PREFIX;
+pub use col_child_count::COL_CHILD_COUNT;
+pub use col_duration::COL_DURATION;
+pub use col_event_name::COL_EVENT_NAME;
+pub use col_event_time_since_start::COL_EVENT_TIME_SINCE_START;
+pub use col_instrumentation_name::COL_INSTRUMENTATION_NAME;
+pub use col_instrumentation_version::COL_INSTRUMENTATION_VERSION;
+pub use col_kind::COL_KIND;
+pub use col_link_span_id::COL_LINK_SPAN_ID;
+pub use col_link_trace_id::COL_LINK_TRACE_ID;
+pub use col_name::COL_NAME;
+pub use col_ns_left::COL_NS_LEFT;
+pub use col_ns_right::COL_NS_RIGHT;
+pub use col_parent_id::COL_PARENT_ID;
+pub use col_parent_span_id::COL_PARENT_SPAN_ID;
+pub use col_root_service_name::COL_ROOT_SERVICE_NAME;
+pub use col_root_span_name::COL_ROOT_SPAN_NAME;
+pub use col_span_id::COL_SPAN_ID;
+pub use col_start::COL_START;
+pub use col_status_code::COL_STATUS_CODE;
+pub use col_status_message::COL_STATUS_MESSAGE;
+pub use col_trace_duration::COL_TRACE_DURATION;
+pub use col_trace_id::COL_TRACE_ID;
+pub use col_trace_start::COL_TRACE_START;
+pub use event_attr_prefix::EVENT_ATTR_PREFIX;
+pub use input_span::InputSpan;
+pub use instrumentation_attr_prefix::INSTRUMENTATION_ATTR_PREFIX;
+pub use link_attr_prefix::LINK_ATTR_PREFIX;
+pub use nested_set::NestedSet;
+pub use span_schema::span_schema;
+pub use span_schema_with_attrs::span_schema_with_attrs;

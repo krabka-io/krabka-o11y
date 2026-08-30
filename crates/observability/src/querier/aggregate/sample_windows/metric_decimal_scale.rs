@@ -1,0 +1,1 @@
+pub(crate) const METRIC_DECIMAL_SCALE: u128 = 1_000_000_000;

@@ -1,90 +1,5 @@
 //! Profile heatmap binning.
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Heatmap {
-    pub start_ms: i64,
-    pub end_ms: i64,
-    pub time_buckets: usize,
-    pub value_buckets: usize,
-    pub min_value: i64,
-    pub max_value: i64,
-    pub counts: Vec<Vec<u64>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LabeledHeatmap {
-    pub labels: Vec<(String, String)>,
-    pub heatmap: Heatmap,
-}
-
-#[must_use]
-pub fn bin_heatmap(
-    points: &[(i64, i64)],
-    start_ms: i64,
-    end_ms: i64,
-    time_buckets: usize,
-    value_buckets: usize,
-) -> Heatmap {
-    let (min_value, max_value) = value_bounds(points);
-    let mut counts = vec![vec![0; value_buckets]; time_buckets];
-    if start_ms >= end_ms || time_buckets == 0 || value_buckets == 0 {
-        return Heatmap {
-            start_ms,
-            end_ms,
-            time_buckets,
-            value_buckets,
-            min_value,
-            max_value,
-            counts,
-        };
-    }
-
-    let time_span = i128::from(end_ms - start_ms);
-    let value_span = i128::from(max_value - min_value);
-    for (timestamp, value) in points {
-        if *timestamp < start_ms || *timestamp >= end_ms {
-            continue;
-        }
-        let time_idx = bucket_index(i128::from(*timestamp - start_ms), time_span, time_buckets);
-        let value_idx = if value_span == 0 {
-            0
-        } else {
-            bucket_index(i128::from(*value - min_value), value_span, value_buckets)
-        };
-        counts[time_idx][value_idx] += 1;
-    }
-
-    Heatmap {
-        start_ms,
-        end_ms,
-        time_buckets,
-        value_buckets,
-        min_value,
-        max_value,
-        counts,
-    }
-}
-
-fn value_bounds(points: &[(i64, i64)]) -> (i64, i64) {
-    let Some((_, first)) = points.first() else {
-        return (0, 0);
-    };
-    points
-        .iter()
-        .fold((*first, *first), |(min, max), (_, value)| {
-            (min.min(*value), max.max(*value))
-        })
-}
-
-fn bucket_index(offset: i128, span: i128, buckets: usize) -> usize {
-    let raw = offset * i128::try_from(buckets).expect("bucket count fits i128") / span;
-    let clamped = raw.clamp(
-        0,
-        i128::try_from(buckets - 1).expect("bucket count fits i128"),
-    );
-    usize::try_from(clamped).expect("bucket index fits usize")
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::assert;
@@ -140,3 +55,15 @@ mod tests {
         assert!(heatmap.counts == vec![vec![1, 1], vec![0, 2]]);
     }
 }
+
+mod bin_heatmap;
+mod bucket_index;
+mod heatmap_type;
+mod labeled_heatmap;
+mod value_bounds;
+
+pub use bin_heatmap::bin_heatmap;
+use bucket_index::bucket_index;
+pub use heatmap_type::Heatmap;
+pub use labeled_heatmap::LabeledHeatmap;
+use value_bounds::value_bounds;

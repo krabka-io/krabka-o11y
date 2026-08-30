@@ -10,155 +10,6 @@ use crate::{
     wire::{DecodedClockReading, UnixNanos},
 };
 
-/// The metrics WAL topic name.
-pub const WAL_TOPIC: &str = "__krabka_metrics_wal";
-
-/// WAL codec errors.
-#[derive(Debug, thiserror::Error)]
-pub enum WalError {
-    #[error("wal encode failed: {0}")]
-    Encode(String),
-
-    #[error("wal decode failed: {0}")]
-    Decode(String),
-}
-
-/// One clock confidence reading, plus the stamp the ingester wrote on it.
-///
-/// The host reports the reading. The ingester stamps [`Self::ingest_unix_nanos`]
-/// from its own clock the moment the request arrives, and the difference
-/// between the two is a measured skew between two named hosts. No single
-/// exporter can compute that number, which is why the stamp lives here and not
-/// on the wire.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClockReadingPayload {
-    /// What the host reported.
-    pub reading: DecodedClockReading,
-    /// When this process received the reading, by its own clock.
-    pub ingest_unix_nanos: UnixNanos,
-}
-
-impl ClockReadingPayload {
-    /// The block timestamp for this reading, in epoch milliseconds.
-    #[must_use]
-    pub const fn timestamp_ms(&self) -> i64 {
-        self.reading.timestamp_ms()
-    }
-
-    /// The skew between the host's clock and this ingester's clock.
-    ///
-    /// A positive extent means the host reads behind the ingester.
-    #[must_use]
-    pub fn ingest_skew(&self) -> Time {
-        self.reading
-            .reading_unix_nanos
-            .extent_to(self.ingest_unix_nanos)
-    }
-}
-
-/// One sample's WAL payload.
-///
-/// A clock reading carries far more fields than any other payload, so it lives
-/// behind a box. Without one the enum would be as wide as its widest variant,
-/// and every float sample in the WAL would pay for the clock fields it does not
-/// hold.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum SamplePayload {
-    Float {
-        timestamp_ms: i64,
-        value: f64,
-        start_timestamp_ms: Option<i64>,
-    },
-    Hist {
-        timestamp_ms: i64,
-        hist: NativeHistogram,
-    },
-    ClockReading(Box<ClockReadingPayload>),
-    Metadata {
-        metric_family_name: String,
-        metric_type: String,
-        help: String,
-        unit: String,
-    },
-    Exemplars,
-}
-
-impl SamplePayload {
-    /// The block timestamp this payload sorts and indexes by, in epoch
-    /// milliseconds. A payload that carries no sample, such as metadata, has
-    /// none.
-    #[must_use]
-    pub fn timestamp_ms(&self) -> Option<i64> {
-        match self {
-            Self::Float { timestamp_ms, .. } | Self::Hist { timestamp_ms, .. } => {
-                Some(*timestamp_ms)
-            }
-            Self::ClockReading(payload) => Some(payload.timestamp_ms()),
-            Self::Metadata { .. } | Self::Exemplars => None,
-        }
-    }
-}
-
-/// An exemplar carried alongside a sample.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WalExemplar {
-    pub labels: Vec<(String, String)>,
-    pub value: f64,
-    pub timestamp_ms: i64,
-}
-
-/// A single metrics WAL record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WalRecord {
-    pub tenant: String,
-    pub labels: Vec<(String, String)>,
-    pub payload: SamplePayload,
-    pub exemplars: Vec<WalExemplar>,
-}
-
-impl WalRecord {
-    /// Encodes with `serde-wincode`, which matches the codebase
-    /// metadata-record codec.
-    /// # Errors
-    /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-    pub fn encode(&self) -> Result<Vec<u8>, WalError> {
-        <serde_wincode::SerdeCompat<WalRecord> as wincode::Serialize>::serialize(self)
-            .map_err(|error| WalError::Encode(error.to_string()))
-    }
-
-    /// Decodes a [`WalRecord`] from its `serde-wincode` bytes.
-    /// # Errors
-    /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-    pub fn decode(bytes: &[u8]) -> Result<Self, WalError> {
-        <serde_wincode::SerdeCompat<WalRecord> as wincode::Deserialize>::deserialize(bytes)
-            .map_err(|error| WalError::Decode(error.to_string()))
-    }
-
-    /// Series fingerprint from the blockstore's order-independent [`Labels`]
-    /// hash.
-    #[must_use]
-    pub fn series_fingerprint(&self) -> u64 {
-        self.labels().fingerprint()
-    }
-
-    /// Builds the blockstore label set for this record.
-    #[must_use]
-    pub fn labels(&self) -> Labels {
-        self.labels.iter().cloned().collect()
-    }
-}
-
-/// Producer key for a tenant and fingerprint pair. The Kafka producer hashes
-/// this byte key to choose a partition, which keeps the per-series order.
-#[must_use]
-pub fn partition_key(tenant: &str, fp: u64) -> Bytes {
-    let mut bytes = Vec::with_capacity(tenant.len() + 1 + std::mem::size_of::<u64>());
-    bytes.extend_from_slice(tenant.as_bytes());
-    bytes.push(0);
-    bytes.extend_from_slice(&fp.to_be_bytes());
-    Bytes::from(bytes)
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::assert;
@@ -326,3 +177,19 @@ mod tests {
         assert!(k1 != k3);
     }
 }
+
+mod clock_reading_payload;
+mod partition_key;
+mod sample_payload;
+mod wal_error;
+mod wal_exemplar;
+mod wal_record;
+mod wal_topic;
+
+pub use clock_reading_payload::ClockReadingPayload;
+pub use partition_key::partition_key;
+pub use sample_payload::SamplePayload;
+pub use wal_error::WalError;
+pub use wal_exemplar::WalExemplar;
+pub use wal_record::WalRecord;
+pub use wal_topic::WAL_TOPIC;
