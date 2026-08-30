@@ -1,4 +1,3 @@
-
 /// Metric name of the clock reading series itself.
 ///
 /// The columnar clock block is the source of truth for a reading. This series

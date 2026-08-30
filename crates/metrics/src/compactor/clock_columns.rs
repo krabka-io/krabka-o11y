@@ -6,7 +6,8 @@ use super::{
     CCOL_REFERENCE_ID, CCOL_ROOT_DELAY_NANOS, CCOL_ROOT_DISPERSION_NANOS, CCOL_SATELLITES_USED,
     CCOL_SOURCE_KIND, CCOL_STEPS_REMOVED, CCOL_STRATUM, CCOL_SYNC_STATE, CCOL_UNCERTAINTY_NANOS,
     CCOL_UNSYNCHRONIZED, COL_FINGERPRINT, COL_TIMESTAMP, ClockReadingRow, GnssFix, Int32Type,
-    Int64Builder, StringDictionaryBuilder, UInt32Builder, UInt64Builder, UnixNanos};
+    Int64Builder, StringDictionaryBuilder, UInt32Builder, UInt64Builder, UnixNanos,
+};
 
 /// Column builders for one clock reading block.
 ///

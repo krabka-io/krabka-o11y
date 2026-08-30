@@ -1,4 +1,3 @@
-
 /// Errors raised by a consumer offset commit.
 #[derive(Debug, thiserror::Error)]
 pub enum CompactionConsumerCommitError {

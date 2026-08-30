@@ -1,4 +1,4 @@
-use super::{ DecodedClockReading, Deserialize, Serialize, Time, UnixNanos};
+use super::{DecodedClockReading, Deserialize, Serialize, Time, UnixNanos};
 
 /// One clock confidence reading, plus the stamp the ingester wrote on it.
 ///

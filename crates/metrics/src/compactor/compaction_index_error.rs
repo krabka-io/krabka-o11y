@@ -1,4 +1,3 @@
-
 /// Compaction index sidecar codec errors.
 #[derive(Debug, thiserror::Error)]
 pub enum CompactionIndexError {

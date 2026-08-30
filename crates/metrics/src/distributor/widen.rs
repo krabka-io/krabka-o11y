@@ -1,4 +1,3 @@
-
 /// Widens a signed count for a projected sample value.
 ///
 /// `i64::to_f64` never fails, so the fallback is unreachable. It keeps the

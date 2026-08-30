@@ -1,4 +1,3 @@
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct IngestRateBucketCap(pub(crate) usize);
 

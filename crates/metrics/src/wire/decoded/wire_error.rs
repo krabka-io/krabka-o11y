@@ -1,4 +1,3 @@
-
 /// Errors raised at the `remote_write` ingest edge.
 #[derive(Debug, thiserror::Error)]
 pub enum WireError {

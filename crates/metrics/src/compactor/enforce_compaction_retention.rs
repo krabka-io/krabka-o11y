@@ -1,7 +1,8 @@
 use super::{
-    Arc, COMPACTION_OBJECT_PREFIX, CompactionIndexManifest,
-    CompactionRetentionError, CompactionRetentionStats, ObjectStore, ObjectStoreExt,
-    Path, Time, TimeExt, TryStreamExt, delete_if_exists};
+    Arc, COMPACTION_OBJECT_PREFIX, CompactionIndexManifest, CompactionRetentionError,
+    CompactionRetentionStats, ObjectStore, ObjectStoreExt, Path, Time, TimeExt, TryStreamExt,
+    delete_if_exists,
+};
 
 /// Deletes compacted metric blocks whose index manifest ends before the
 /// retention cutoff.

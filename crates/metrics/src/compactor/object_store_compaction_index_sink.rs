@@ -1,6 +1,7 @@
 use super::{
     Arc, CompactionIndexError, CompactionIndexManifest, CompactionIndexSink, ObjectStore,
-    ObjectStoreExt, Path, PutPayload, async_trait};
+    ObjectStoreExt, Path, PutPayload, async_trait,
+};
 
 /// Object-store backed compaction index sidecar sink.
 pub struct ObjectStoreCompactionIndexSink {

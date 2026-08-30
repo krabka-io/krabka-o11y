@@ -1,4 +1,3 @@
-
 /// Errors raised by OTLP metrics translation.
 #[derive(Debug, thiserror::Error)]
 pub enum OtlpError {

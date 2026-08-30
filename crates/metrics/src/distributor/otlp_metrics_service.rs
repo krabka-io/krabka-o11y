@@ -1,6 +1,8 @@
 use super::{
     Arc, ByteSize, ByteSizeExt, DistributorState, ExportMetricsServiceRequest,
-    ExportMetricsServiceResponse, MetricsService, Status, StdDurationExt, TonicRequest, TonicResponse, otlp_grpc_export_inner, status_from_push_error};
+    ExportMetricsServiceResponse, MetricsService, Status, StdDurationExt, TonicRequest,
+    TonicResponse, otlp_grpc_export_inner, status_from_push_error,
+};
 
 /// Builds the OTLP gRPC metrics service implementation.
 #[must_use]

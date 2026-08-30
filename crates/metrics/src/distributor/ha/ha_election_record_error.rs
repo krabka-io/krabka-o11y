@@ -1,4 +1,3 @@
-
 #[derive(Debug, thiserror::Error)]
 pub enum HaElectionRecordError {
     #[error("HA election record encode failed: {0}")]

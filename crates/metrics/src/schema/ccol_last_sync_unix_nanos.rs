@@ -1,4 +1,3 @@
-
 /// Clock reading last-valid-reference column in epoch nanoseconds (`Int64`).
 ///
 /// A `PromQL` query computes the holdover duration from this column alone.

@@ -1,7 +1,7 @@
 use super::{
-    Arc, ByteSize, ByteSizeExt, Counter, Family,
-    Histogram, Mutex, Registry, SharedRegistry, StatusLabel, TenantLabel,
-    Time, TimeExt};
+    Arc, ByteSize, ByteSizeExt, Counter, Family, Histogram, Mutex, Registry, SharedRegistry,
+    StatusLabel, TenantLabel, Time, TimeExt,
+};
 
 /// Cheaply-clonable bundle of metric handles. Construct it once with
 /// [`ServiceMetrics::new`], then hand out clones to the handlers that emit.

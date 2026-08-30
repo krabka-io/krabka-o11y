@@ -1,3 +1,9 @@
+// Constants, so `try_from_token` matches on them rather than binding them.
+#[cfg(test)]
+use promql_parser::parser::token::{
+    T_AVG, T_COUNT, T_GROUP, T_MAX, T_MIN, T_STDDEV, T_STDVAR, T_SUM,
+};
+
 use super::{AggregateState, SampleValue, scaled_native_histogram};
 #[cfg(test)]
 use super::{PromqlError, Result, TokenType};

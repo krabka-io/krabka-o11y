@@ -1,4 +1,3 @@
-
 /// Errors raised while configuring the metrics compactor role.
 #[derive(Debug, thiserror::Error)]
 pub enum MetricsCompactorConfigError {

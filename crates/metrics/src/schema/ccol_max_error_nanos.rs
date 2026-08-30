@@ -1,4 +1,3 @@
-
 /// Kernel timex `maxerror` column (`Int64`).
 ///
 /// `adjtimex(2)` grows `maxerror` at 500 ppm between updates and sets the

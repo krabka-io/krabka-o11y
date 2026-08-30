@@ -1,4 +1,3 @@
-
 pub(crate) fn header_list_includes(value: &str, expected: &str) -> bool {
     value
         .split(',')

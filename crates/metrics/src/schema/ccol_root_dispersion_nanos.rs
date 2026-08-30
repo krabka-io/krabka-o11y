@@ -1,4 +1,3 @@
-
 /// NTP root dispersion column (`Int64`).
 ///
 /// RFC 5905 names the sum of half the root delay and the root dispersion the

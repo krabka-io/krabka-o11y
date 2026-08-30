@@ -1,4 +1,3 @@
-
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DeltaState {
     pub(crate) start_time_unix_nano: u64,

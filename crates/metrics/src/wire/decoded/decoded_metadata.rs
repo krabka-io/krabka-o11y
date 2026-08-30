@@ -1,4 +1,3 @@
-
 /// Metric metadata decoded from an ingest request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodedMetadata {

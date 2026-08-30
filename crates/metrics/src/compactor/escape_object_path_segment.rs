@@ -1,4 +1,3 @@
-
 /// Percent-escapes a tenant id for use as a single object-store path segment.
 ///
 /// An interior `.` is allowed, because tenant ids legitimately contain dots. A

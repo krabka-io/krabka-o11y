@@ -1,4 +1,3 @@
-
 /// Metric metadata entry served by Prometheus-compatible metadata APIs.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MetricMetadata {

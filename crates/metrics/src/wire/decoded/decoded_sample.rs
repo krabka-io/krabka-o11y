@@ -1,4 +1,3 @@
-
 /// One decoded float sample from an ingest request.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DecodedSample {

@@ -1,4 +1,3 @@
-
 /// Ingest clock column in epoch nanoseconds (`Int64`).
 ///
 /// The ingester stamps this column from its own clock when the row arrives.

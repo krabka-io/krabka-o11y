@@ -1,7 +1,8 @@
 use super::{
-    DecodedSeries, DistributorState, HaElection, PushError,
-    enforce_and_record_active_series, enforce_ingestion_rate, enforce_label_limits,
-    enforce_out_of_order_window, strip_replica_label, validate};
+    DecodedSeries, DistributorState, HaElection, PushError, enforce_and_record_active_series,
+    enforce_ingestion_rate, enforce_label_limits, enforce_out_of_order_window, strip_replica_label,
+    validate,
+};
 
 /// Applies every per-tenant ingest gate to `series`, in the order the push path
 /// needs them.

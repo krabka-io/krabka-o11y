@@ -1,4 +1,3 @@
-
 /// WAL codec errors.
 #[derive(Debug, thiserror::Error)]
 pub enum WalError {

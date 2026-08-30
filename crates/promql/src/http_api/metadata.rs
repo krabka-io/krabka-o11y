@@ -16,14 +16,14 @@ use super::{
 use crate::{MetricStore, store::MetadataRecord};
 
 // === split-modules: generated submodules ===
-mod metadata;
+mod metadata_fn;
 mod metadata_json;
 mod metadata_params;
 mod parse_metadata_params;
 mod target_metadata;
 mod target_metadata_json;
 
-pub(super) use metadata::metadata;
+pub(super) use metadata_fn::metadata;
 use metadata_json::metadata_json;
 use metadata_params::MetadataParams;
 use parse_metadata_params::parse_metadata_params;

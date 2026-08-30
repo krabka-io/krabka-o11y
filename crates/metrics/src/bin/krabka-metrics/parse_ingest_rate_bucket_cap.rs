@@ -1,4 +1,4 @@
-use super::{IngestRateBucketCap};
+use super::IngestRateBucketCap;
 
 pub(crate) fn parse_ingest_rate_bucket_cap(value: &str) -> Result<usize, String> {
     value

@@ -1,4 +1,3 @@
-
 /// Errors raised by symbol-table operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SymbolError {
