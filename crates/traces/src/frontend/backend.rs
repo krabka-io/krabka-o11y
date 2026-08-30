@@ -103,7 +103,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod backend_error;
 mod metrics_job_request;
 mod metrics_partial;

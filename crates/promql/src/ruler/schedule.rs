@@ -8,7 +8,6 @@ use super::{
 };
 use crate::PromqlError;
 
-// === split-modules: generated submodules ===
 mod filter_ruler_rule_set_due_for_eval;
 mod filter_ruler_rule_set_for_shard;
 mod filter_ruler_rule_set_for_shard_due_for_eval;

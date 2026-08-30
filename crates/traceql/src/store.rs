@@ -72,7 +72,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod filter_trace_spans_by_time;
 mod match_cmp;
 mod match_scope;

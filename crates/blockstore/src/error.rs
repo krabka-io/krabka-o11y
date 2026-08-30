@@ -1,6 +1,5 @@
 //! Error type for the block store.
 
-// === split-modules: generated submodules ===
 mod block_store_error;
 mod result;
 

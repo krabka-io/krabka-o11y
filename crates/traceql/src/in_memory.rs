@@ -1928,7 +1928,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attr_builder;
 mod attr_data_type;
 mod attr_matches;

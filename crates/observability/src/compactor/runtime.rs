@@ -18,7 +18,6 @@ use crate::{
     write_compaction_frontier_to_object_store,
 };
 
-// === split-modules: generated submodules ===
 mod advance_and_persist_compaction_frontier;
 mod block_store_error_is_object_store;
 mod compact_next_kafka_wal_batch_to_object_store_from_existing_manifest;

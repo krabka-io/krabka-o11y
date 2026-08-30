@@ -6,7 +6,6 @@ use crate::{
     split_top_level_comparison_query, split_top_level_set_query, unix_ns_string_to_loki_seconds,
 };
 
-// === split-modules: generated submodules ===
 mod label_replace_expression;
 mod label_replace_metric_binary_expression;
 mod loki_instant_scalar_or_vector_response;

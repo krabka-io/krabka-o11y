@@ -14,7 +14,6 @@ tokio::task_local! {
     pub(crate) static ANNOTATIONS: RefCell<Annotations>;
 }
 
-// === split-modules: generated submodules ===
 mod emit_info;
 mod emit_warning;
 mod incompatible_types_in_binop_info;

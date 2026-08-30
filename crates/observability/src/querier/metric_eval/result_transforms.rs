@@ -17,7 +17,6 @@ use crate::{
     validate_query_bytes_limit, validate_query_series_limit,
 };
 
-// === split-modules: generated submodules ===
 mod apply_metric_binary_arithmetic_group_right_to_results;
 mod apply_metric_binary_arithmetic_to_loki_result;
 mod apply_metric_binary_arithmetic_to_series;

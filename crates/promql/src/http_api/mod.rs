@@ -76,7 +76,6 @@ use status::{
 #[cfg(test)]
 mod tests;
 
-// === split-modules: generated submodules ===
 mod acquire_query_permit;
 mod active_query_guard;
 mod alert_state_key;

@@ -2,7 +2,6 @@ use crate::{
     Arc, ErrorKind, FsPath, LokiRuleStoreError, LokiRuleTenants, Mutex, PathBuf, SharedLokiRules,
 };
 
-// === split-modules: generated submodules ===
 mod loki_ruler_rules_path;
 mod read_loki_rule_tenants;
 mod shared_loki_rules;

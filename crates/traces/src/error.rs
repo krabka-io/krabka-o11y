@@ -32,7 +32,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod tempo_error_response;
 mod tempo_limit_error_response;
 mod traces_error;

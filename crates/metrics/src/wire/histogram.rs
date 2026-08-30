@@ -493,7 +493,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod check_side;
 mod counts;
 mod is_v1_float;

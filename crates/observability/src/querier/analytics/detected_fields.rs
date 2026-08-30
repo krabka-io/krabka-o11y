@@ -12,7 +12,6 @@ use crate::{
     validate_query_series_limit,
 };
 
-// === split-modules: generated submodules ===
 mod add_detected_field;
 mod add_generated_detected_field;
 mod collect_detected_fields;

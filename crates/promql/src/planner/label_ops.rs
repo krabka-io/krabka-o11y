@@ -183,7 +183,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod apply_label_join;
 mod apply_label_replace;
 mod apply_sort;

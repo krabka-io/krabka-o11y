@@ -254,7 +254,6 @@ mod orch_tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod catalog_error;
 mod query_frontend;
 

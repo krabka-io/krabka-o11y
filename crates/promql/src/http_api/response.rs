@@ -14,7 +14,6 @@ use serde_json::{Map, Value, json};
 use super::apply_limit;
 use crate::{QueryResult, RangeSeries, SampleValue, store::ExemplarRecord};
 
-// === split-modules: generated submodules ===
 mod active_series_response;
 mod append_custom_histogram_buckets;
 mod append_spanned_buckets;

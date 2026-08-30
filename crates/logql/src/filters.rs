@@ -202,7 +202,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod comparison_op;
 mod field_filter;
 mod field_filter_chain;

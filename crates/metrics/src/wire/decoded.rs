@@ -132,7 +132,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decoded_exemplar;
 mod decoded_metadata;
 mod decoded_sample;

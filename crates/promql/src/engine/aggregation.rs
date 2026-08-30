@@ -39,7 +39,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod aggregate_k;
 mod aggregate_op;
 mod aggregate_quantile;

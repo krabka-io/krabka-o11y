@@ -16,7 +16,6 @@ pub mod planner;
 pub mod range_manipulate;
 pub mod series_divide;
 
-// === split-modules: generated submodules ===
 mod is_stale_nan;
 mod stale_nan_bits;
 

@@ -5,7 +5,6 @@ use super::prelude::{
     log_line_pattern, parse_metric_query, pattern_value_is_variable,
 };
 
-// === split-modules: generated submodules ===
 mod a_patterns_scan_keeps_the_window_half_open;
 mod count_loki_metric_result_hot_tail_samples_returns_zero_when_nothing_matches;
 mod format_metric_range_selector_signs_negative_offset;

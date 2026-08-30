@@ -10,7 +10,6 @@ use super::prelude::{
     validate_distributor_policy,
 };
 
-// === split-modules: generated submodules ===
 mod compactor_policy_rejects_zero_and_invalid_bounds;
 mod compactor_policy_uses_defaults_and_cli_overrides;
 mod distributor_dependency_startup_rejects_invalid_policy_before_connecting;

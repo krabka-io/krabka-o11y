@@ -20,7 +20,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod result;
 mod traceql_error;
 

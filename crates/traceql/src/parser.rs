@@ -1183,7 +1183,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod arithmetic_type_error;
 mod default_compare_top_n;
 mod i64_to_f64;

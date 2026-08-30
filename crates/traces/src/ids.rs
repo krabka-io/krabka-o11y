@@ -21,7 +21,6 @@
 
 use derive_more::{Display, From, Into};
 
-// === split-modules: generated submodules ===
 mod max_offset;
 mod min_offset;
 mod trace_id_high;

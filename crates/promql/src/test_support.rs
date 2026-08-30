@@ -24,7 +24,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod empty_store;
 mod eval_instant;
 mod eval_instant_err;

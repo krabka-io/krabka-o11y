@@ -10,7 +10,6 @@ use crate::{
     split_query_param_pairs, tenant,
 };
 
-// === split-modules: generated submodules ===
 mod active_log_delete_filters;
 mod active_log_delete_filters_from_requests;
 mod cancel_delete_request;

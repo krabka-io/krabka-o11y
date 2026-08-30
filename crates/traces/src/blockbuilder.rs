@@ -301,7 +301,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attr_value_string;
 mod block_build_options;
 mod block_builder_config;

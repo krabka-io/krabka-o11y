@@ -930,7 +930,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod anchored;
 mod collect_table;
 mod comparison_to_sql;

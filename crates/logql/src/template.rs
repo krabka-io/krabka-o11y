@@ -514,7 +514,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod advance_template_pos;
 mod align_left_template_string;
 mod align_right_template_string;

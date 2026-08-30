@@ -113,7 +113,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decode_read_request;
 mod default_max_read_decompressed;
 mod encode_read_response;

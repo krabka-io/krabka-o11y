@@ -50,7 +50,6 @@ pub use types::{
     QuantileNumerator, SourceLabel,
 };
 
-// === split-modules: generated submodules ===
 mod labels_2;
 mod unwrap_sample_value_label;
 

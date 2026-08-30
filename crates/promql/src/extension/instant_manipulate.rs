@@ -289,7 +289,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod instant_manipulate_exec;
 mod instant_manipulate_type;
 

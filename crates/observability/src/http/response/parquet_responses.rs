@@ -10,7 +10,6 @@ use crate::{
     unix_ns_string_to_loki_seconds,
 };
 
-// === split-modules: generated submodules ===
 mod add_loki_query_stat_field;
 mod add_loki_query_stats;
 mod add_loki_query_stats_for_metric_plan;

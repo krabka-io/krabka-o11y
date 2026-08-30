@@ -5,7 +5,6 @@ use serde_json::{Map, Value};
 
 use super::format_sample_value;
 
-// === split-modules: generated submodules ===
 mod expand_alert_action;
 mod expand_alert_mapping_json;
 mod expand_alert_template;

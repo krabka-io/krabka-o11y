@@ -22,7 +22,6 @@ use crate::{
     store::{NamedTsdbStat, TsdbBlock, TsdbStats},
 };
 
-// === split-modules: generated submodules ===
 mod alertmanagers;
 mod build_info;
 mod named_tsdb_stats_json;

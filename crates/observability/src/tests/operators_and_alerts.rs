@@ -1,6 +1,5 @@
 use super::prelude::{MetricScalarArithmeticOp, check};
 
-// === split-modules: generated submodules ===
 mod a_leading_vector_group_modifier_is_peeled_with_its_labels;
 mod a_signed_vector_literal_is_reported_at_the_sign;
 mod a_vector_aggregation_renders_only_the_groupings_its_operator_allows;

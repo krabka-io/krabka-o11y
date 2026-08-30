@@ -297,7 +297,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod add_bucket_maps;
 mod add_compatible_native_histogram;
 mod add_custom_histogram;

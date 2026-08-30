@@ -3499,7 +3499,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod add_nested_intrinsic_columns;
 mod add_nested_intrinsic_columns_to_batch;
 mod add_span_attr_columns;

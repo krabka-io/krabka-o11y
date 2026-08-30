@@ -17,7 +17,6 @@ use super::{
 };
 use crate::MetricStore;
 
-// === split-modules: generated submodules ===
 mod cardinality_active_series;
 mod cardinality_active_series_inner;
 mod cardinality_active_series_post;

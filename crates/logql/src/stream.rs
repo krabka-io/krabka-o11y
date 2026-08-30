@@ -136,7 +136,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod anchored_regex_pattern;
 mod decolorize_line;
 mod field_value_to_string;

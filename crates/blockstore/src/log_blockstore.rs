@@ -860,7 +860,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod anchored_regex_pattern;
 mod append_len_prefixed;
 mod batch_to_rows;

@@ -12,7 +12,6 @@ use krabka_metrics::{
 
 use super::RangeArray;
 
-// === split-modules: generated submodules ===
 mod basic_accessors_report_empty_state_and_exact_ranges;
 mod cell_len_and_empty_cells;
 mod dict_array_round_trips_through_recordbatch_column;

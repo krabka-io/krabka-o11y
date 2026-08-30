@@ -1377,7 +1377,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod aggregate_expr_sql;
 mod aggregate_filter_sql;
 mod aggregate_filter_sql_query;

@@ -10,7 +10,6 @@ use crate::{
     validate_loki_volume_query_range_limit,
 };
 
-// === split-modules: generated submodules ===
 mod execute_api_prom_label_names_query;
 mod execute_api_prom_series_query;
 mod execute_label_names_query;

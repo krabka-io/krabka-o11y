@@ -5,7 +5,6 @@ use crate::{
     rfc3339_seconds,
 };
 
-// === split-modules: generated submodules ===
 mod column_number;
 mod distributor_error;
 mod distributor_error_to_grpc_status;

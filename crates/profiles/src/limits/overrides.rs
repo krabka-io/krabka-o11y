@@ -170,7 +170,6 @@ overrides:
     }
 }
 
-// === split-modules: generated submodules ===
 mod overrides_error;
 mod overrides_provider;
 mod partial_limits;

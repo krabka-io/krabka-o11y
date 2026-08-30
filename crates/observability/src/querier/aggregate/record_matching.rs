@@ -7,7 +7,6 @@ use crate::{
     WalLogRecord, is_unwrapped_metric_query,
 };
 
-// === split-modules: generated submodules ===
 mod append_matching_hot_log_record;
 mod append_matching_hot_metric_record;
 mod append_matching_metric_row;

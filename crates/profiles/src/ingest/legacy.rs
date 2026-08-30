@@ -1158,7 +1158,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod apply_query_sample_rate;
 mod apply_query_time;
 mod apply_sample_type_config;

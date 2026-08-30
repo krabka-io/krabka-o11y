@@ -11,7 +11,6 @@ use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use super::{FrontendRangeQuery, QueryShard};
 use crate::{PromqlError, QueryResult};
 
-// === split-modules: generated submodules ===
 mod append_hex_component;
 mod cache_store_error;
 mod clock;

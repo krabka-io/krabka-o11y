@@ -8,7 +8,6 @@ mod store_impl;
 #[cfg(test)]
 mod tests;
 
-// === split-modules: generated submodules ===
 mod apply_manifest_to_blockstore;
 mod metric_block_store;
 

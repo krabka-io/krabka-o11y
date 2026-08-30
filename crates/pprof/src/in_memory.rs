@@ -298,7 +298,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod compile_matchers;
 mod compiled_matcher;
 mod encode_rows;

@@ -178,7 +178,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod build_leaf_batch;
 mod labeled_sample;
 mod leaf_schema;

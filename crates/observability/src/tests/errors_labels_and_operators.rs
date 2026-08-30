@@ -11,7 +11,6 @@ use super::prelude::{
     previous_char_boundary, proto_any_value, proto_value_to_json, ranges_overlap,
 };
 
-// === split-modules: generated submodules ===
 mod an_empty_object_field_is_removed_and_nothing_else_is;
 mod cancelling_a_delete_request_takes_only_that_tenant_s;
 mod delete_request_query_parsing_and_overlap_boundaries;

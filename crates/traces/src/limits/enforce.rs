@@ -255,7 +255,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod f64_from_u64;
 mod ingest_enforcer;
 mod query_enforcer;

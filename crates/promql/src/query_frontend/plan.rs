@@ -17,7 +17,6 @@ use super::{
 };
 use crate::{PromqlError, engine::MAX_RESOLUTION_POINTS, parse_promql};
 
-// === split-modules: generated submodules ===
 mod absolute_split_window;
 mod aggregate_k;
 mod avg_partial_queries;

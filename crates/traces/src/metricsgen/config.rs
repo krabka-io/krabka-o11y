@@ -46,7 +46,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod default_latency_buckets_ns;
 mod metrics_gen_config;
 

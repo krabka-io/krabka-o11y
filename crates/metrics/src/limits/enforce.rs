@@ -460,7 +460,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod default_max_rate_buckets;
 mod extent_between;
 mod ingest_enforcer;

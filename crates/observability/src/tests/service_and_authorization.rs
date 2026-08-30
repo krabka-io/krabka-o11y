@@ -10,7 +10,6 @@ use super::prelude::{
 };
 use crate::LogQueryAuthorizer as _;
 
-// === split-modules: generated submodules ===
 mod brute_force_in_range;
 mod compactor_configured_object_store_builds_when_not_injected;
 mod hot_tail_test_record;

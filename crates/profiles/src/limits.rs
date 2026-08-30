@@ -155,7 +155,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod default_max_query_length;
 mod limit_error;
 mod limits_type;

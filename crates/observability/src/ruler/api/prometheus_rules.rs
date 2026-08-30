@@ -7,7 +7,6 @@ use crate::{
     parse_prometheus_duration, parse_query, parse_usize_query_param,
 };
 
-// === split-modules: generated submodules ===
 mod expand_prometheus_alert_template;
 mod loki_yaml_mapping;
 mod prometheus_alert_template_map;

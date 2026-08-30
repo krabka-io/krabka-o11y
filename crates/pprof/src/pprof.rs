@@ -79,7 +79,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod pprof_profile;
 mod profile;
 

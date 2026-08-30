@@ -246,7 +246,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decide_election;
 mod default_ha_failover_timeout;
 mod ha_decision;

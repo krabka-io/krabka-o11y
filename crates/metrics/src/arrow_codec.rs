@@ -4,7 +4,6 @@ use arrow::{array::Array, record_batch::RecordBatch};
 
 use crate::histogram::HistogramCodecError;
 
-// === split-modules: generated submodules ===
 mod null_required_column;
 mod require_non_null;
 mod schema_mismatch;

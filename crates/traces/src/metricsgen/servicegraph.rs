@@ -910,7 +910,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attr_value;
 mod classify;
 mod connection_type;

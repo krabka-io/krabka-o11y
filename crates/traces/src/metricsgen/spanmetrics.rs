@@ -363,7 +363,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod dim_entry;
 mod dim_key;
 mod dimension_labels;

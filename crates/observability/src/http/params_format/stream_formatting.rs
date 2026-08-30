@@ -8,7 +8,6 @@ use crate::{
     planned_block_bytes,
 };
 
-// === split-modules: generated submodules ===
 mod find_logql_function_call_end;
 mod format_field_filter;
 mod format_field_filter_expression;

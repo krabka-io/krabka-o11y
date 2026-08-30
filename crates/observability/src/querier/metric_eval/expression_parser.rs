@@ -3,7 +3,6 @@ use crate::{
     parse_scalar_sample,
 };
 
-// === split-modules: generated submodules ===
 mod scalar_comparison_op;
 mod scalar_literal_len;
 mod scalar_set_op;

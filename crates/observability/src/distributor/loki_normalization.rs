@@ -10,7 +10,6 @@ use crate::{
     quote_logql_string, tenant, validate_ingest_timestamp_ns, validate_loki_timestamp_window,
 };
 
-// === split-modules: generated submodules ===
 mod is_loki_json_content_type;
 mod is_loki_label_name;
 mod is_loki_label_name_char;

@@ -134,7 +134,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod block_catalog;
 mod block_meta_info;
 mod blocks_for_tenant;

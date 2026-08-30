@@ -28,7 +28,6 @@ use crate::{
     },
 };
 
-// === split-modules: generated submodules ===
 mod aggregate_grouping;
 mod binary_operand_is_plannable;
 mod instant_expr_is_plannable;

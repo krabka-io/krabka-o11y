@@ -2894,7 +2894,6 @@ overrides:
     }
 }
 
-// === split-modules: generated submodules ===
 mod append_clock_readings;
 mod append_decoded_series;
 mod append_wal_records;

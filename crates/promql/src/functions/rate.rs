@@ -485,7 +485,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decode_range_column;
 mod delta_udf;
 mod idelta_udf;

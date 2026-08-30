@@ -89,7 +89,6 @@ overrides:
     }
 }
 
-// === split-modules: generated submodules ===
 mod merge_limits;
 mod overrides_error;
 mod overrides_provider;

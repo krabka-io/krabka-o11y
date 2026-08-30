@@ -5,7 +5,6 @@ use crate::{
     querier_object_store_prefix, shared_compaction_frontier_from_object_store,
 };
 
-// === split-modules: generated submodules ===
 mod build_configured_object_store;
 mod compactor_delete_requests_for_config;
 mod load_querier_shared_compaction_frontier;

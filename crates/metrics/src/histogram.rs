@@ -242,7 +242,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod append_f64_list;
 mod append_spans;
 mod bucket_span;

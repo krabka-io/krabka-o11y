@@ -494,7 +494,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod collect_meta;
 mod compact_blocks;
 mod compact_blocks_with_policy;

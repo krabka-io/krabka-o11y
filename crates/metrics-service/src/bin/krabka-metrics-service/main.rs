@@ -541,7 +541,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod alloc;
 mod cli;
 mod load_runtime_overrides;

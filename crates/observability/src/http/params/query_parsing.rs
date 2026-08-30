@@ -7,7 +7,6 @@ use crate::{
     parse_usize_query_param, start_or_since,
 };
 
-// === split-modules: generated submodules ===
 mod parse_detected_fields_params;
 mod parse_detected_labels_params;
 mod parse_loki_duration_query_param;

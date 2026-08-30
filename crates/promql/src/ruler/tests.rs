@@ -10,7 +10,6 @@ use krabka_units::prelude::*;
 
 use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine};
 
-// === split-modules: generated submodules ===
 mod alerting_rule_dispatch_expands_value_and_labels_templates;
 mod alerting_rule_dispatch_sends_firing_alerts_to_alertmanager_sink;
 mod alerting_rule_dispatch_waits_for_for_duration_before_sending;

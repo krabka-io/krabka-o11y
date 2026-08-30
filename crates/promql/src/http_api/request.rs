@@ -16,7 +16,6 @@ use crate::{
     parse_promql,
 };
 
-// === split-modules: generated submodules ===
 mod apply_limit;
 mod apply_result_limit;
 mod cardinality_params;

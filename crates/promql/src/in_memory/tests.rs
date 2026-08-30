@@ -14,7 +14,6 @@ use crate::{
     },
 };
 
-// === split-modules: generated submodules ===
 mod bulk_wal_replay_and_retention_are_observable;
 mod cloned_wal_head_sees_records_replayed_through_original_handle;
 mod count_rows;

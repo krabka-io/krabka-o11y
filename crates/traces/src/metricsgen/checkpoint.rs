@@ -51,7 +51,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod checkpoint_codec_error;
 mod edge_checkpoint_store;
 mod encode_checkpoint_key;

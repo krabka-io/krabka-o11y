@@ -291,7 +291,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod block_builder_config;
 mod build_block;
 mod built_sample;

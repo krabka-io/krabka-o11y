@@ -208,7 +208,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod ccol_clock;
 mod ccol_est_error_nanos;
 mod ccol_frequency_ppb;

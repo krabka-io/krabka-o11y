@@ -16,7 +16,6 @@ use crate::{
     read_tenant_log_index_shards_from_object_store,
 };
 
-// === split-modules: generated submodules ===
 mod build_querier_state;
 mod build_querier_state_with_object_store_prefix;
 mod querier_state;

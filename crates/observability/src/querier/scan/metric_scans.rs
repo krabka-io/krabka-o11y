@@ -11,7 +11,6 @@ use crate::{
     sort_loki_stream_values, structured_metadata_value,
 };
 
-// === split-modules: generated submodules ===
 mod append_matching_log_batches;
 mod collect_object_store_metric_log_batches;
 mod execute_metric_query;

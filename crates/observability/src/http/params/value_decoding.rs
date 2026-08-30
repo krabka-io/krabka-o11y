@@ -5,7 +5,6 @@ use crate::{
     hours, secs,
 };
 
-// === split-modules: generated submodules ===
 mod authorized_tenant;
 mod authorized_tenants;
 mod current_unix_time_ns;

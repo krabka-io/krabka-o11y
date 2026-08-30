@@ -100,7 +100,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod event_struct;
 mod link_struct;
 mod list_list_of;

@@ -1,6 +1,5 @@
 use super::prelude::{Bytes, check};
 
-// === split-modules: generated submodules ===
 mod a_posted_query_puts_the_url_first_and_the_body_second;
 mod a_sample_state_has_samples_from_the_first_one;
 mod a_scalar_sample_formats_its_sign_and_stops_at_nine_decimals;

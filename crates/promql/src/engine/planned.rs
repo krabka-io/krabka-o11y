@@ -5,7 +5,6 @@ use krabka_blockstore::{Labels, SeriesFingerprint};
 
 use crate::result::{InstantSample, RangeSeries};
 
-// === split-modules: generated submodules ===
 mod instant_shape;
 mod operator_instant;
 mod planned_instant;

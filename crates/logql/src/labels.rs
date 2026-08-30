@@ -143,7 +143,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod label_format;
 mod label_format_assignment;
 mod label_format_value;

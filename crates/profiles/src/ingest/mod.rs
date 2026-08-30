@@ -471,7 +471,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod apply_relabel;
 mod cap_session_id;
 mod decoded_profile;

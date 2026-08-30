@@ -29,7 +29,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod frontend_config;
 mod split_inclusive_range;
 

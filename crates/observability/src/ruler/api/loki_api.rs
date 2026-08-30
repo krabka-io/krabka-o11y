@@ -10,7 +10,6 @@ use crate::{
     json_response, text_response,
 };
 
-// === split-modules: generated submodules ===
 mod create_loki_rule_group;
 mod delete_loki_rule_group;
 mod delete_loki_rule_namespace;

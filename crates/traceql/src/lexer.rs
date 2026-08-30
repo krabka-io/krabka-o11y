@@ -188,7 +188,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod advance;
 mod is_ident_continue;
 mod is_ident_start;

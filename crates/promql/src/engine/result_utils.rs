@@ -5,7 +5,6 @@ use num_traits::ToPrimitive;
 use super::labels::labels_key;
 use crate::{PromqlError, error::Result, result::QueryResult};
 
-// === split-modules: generated submodules ===
 mod quantile_value;
 mod validate_unique_instant_labelsets;
 

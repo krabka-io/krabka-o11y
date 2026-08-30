@@ -438,7 +438,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod tenant_trace_index;
 mod trace_block_stats;
 mod trace_index_type;

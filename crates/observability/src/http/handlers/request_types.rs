@@ -9,7 +9,6 @@ use crate::{
     post_query_params_body_first,
 };
 
-// === split-modules: generated submodules ===
 mod api_prom_query;
 mod api_prom_query_post;
 mod api_prom_query_range;

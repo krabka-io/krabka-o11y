@@ -6,7 +6,6 @@ use crate::{
     ServiceMetrics, SharedLogDeleteRequests, Time, TimeRange, minutes, secs,
 };
 
-// === split-modules: generated submodules ===
 mod cached_dynamic_index;
 mod cached_shard_ranges;
 mod cold_object_store_state;

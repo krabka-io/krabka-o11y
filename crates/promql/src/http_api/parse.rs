@@ -9,7 +9,6 @@ use url::form_urlencoded;
 use super::{ApiError, required_form_param, success_data_response};
 use crate::parse_promql;
 
-// === split-modules: generated submodules ===
 mod format_query;
 mod format_query_inner;
 mod format_query_post;

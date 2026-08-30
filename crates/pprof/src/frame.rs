@@ -27,7 +27,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod frame_type;
 mod symbol_source;
 

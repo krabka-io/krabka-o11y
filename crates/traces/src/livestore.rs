@@ -276,7 +276,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attr_string;
 mod bytes_to_hex;
 mod collect_event_values;

@@ -115,7 +115,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod collect_samples;
 mod intern_string;
 mod pprof_builder;

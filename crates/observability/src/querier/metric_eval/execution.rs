@@ -19,7 +19,6 @@ use crate::{
     unix_ns_string_to_loki_seconds,
 };
 
-// === split-modules: generated submodules ===
 mod execute_http_label_replace_metric_binary_expression;
 mod execute_http_metric_binary_operand;
 mod execute_http_metric_expression_query;

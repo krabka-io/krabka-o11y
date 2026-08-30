@@ -56,7 +56,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod bin_heatmap;
 mod bucket_index;
 mod heatmap_type;

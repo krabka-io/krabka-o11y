@@ -141,7 +141,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod prom_extension_planner;
 mod prom_query_planner;
 mod prom_session_context;

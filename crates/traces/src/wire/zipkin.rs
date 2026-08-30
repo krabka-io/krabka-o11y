@@ -164,7 +164,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decode_zipkin;
 mod hex_fixed;
 mod zipkin_annotation;

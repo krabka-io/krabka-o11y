@@ -43,7 +43,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod is_allowed_tenant_byte;
 mod max_tenant_id_len;
 mod validate_tenant;

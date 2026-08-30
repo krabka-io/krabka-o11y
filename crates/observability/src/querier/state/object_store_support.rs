@@ -4,7 +4,6 @@ use crate::{
     build_querier_state_with_object_store_prefix,
 };
 
-// === split-modules: generated submodules ===
 mod build_configured_querier_state;
 mod effective_object_store_prefix;
 mod querier_object_store_inputs;

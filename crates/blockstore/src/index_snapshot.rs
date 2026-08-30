@@ -52,7 +52,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod default_index_snapshot_max;
 mod default_index_snapshot_retain;
 mod index_snapshot_prefix_for_key;

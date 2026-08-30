@@ -29,7 +29,6 @@ use crate::PromqlError;
 #[cfg(test)]
 mod tests;
 
-// === split-modules: generated submodules ===
 mod frontend_range_query;
 mod frontend_range_request;
 mod moment_reduction;

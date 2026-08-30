@@ -1751,7 +1751,6 @@ eval instant at 1m up{job="api"}
     }
 }
 
-// === split-modules: generated submodules ===
 mod add_histogram_counts;
 mod add_histogram_step;
 mod annotation_expect;

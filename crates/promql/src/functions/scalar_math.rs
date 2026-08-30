@@ -206,7 +206,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod clamp_float;
 mod register_scalar_math_udfs;
 mod round_to_nearest;

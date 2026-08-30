@@ -10,7 +10,6 @@ use crate::{
     result::{InstantSample, SampleValue},
 };
 
-// === split-modules: generated submodules ===
 mod apply_info;
 mod info_context;
 mod info_identifying_key;

@@ -605,7 +605,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod label_profile_type;
 mod max_profile_index_snapshot_bytes;
 mod profile_index_type;

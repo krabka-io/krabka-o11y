@@ -3,7 +3,6 @@ use crate::{
     scalar_vector_expression_result,
 };
 
-// === split-modules: generated submodules ===
 mod apply_label_join_to_loki_result;
 mod apply_label_replace_to_loki_result;
 mod could_be_scalar_vector_expression;

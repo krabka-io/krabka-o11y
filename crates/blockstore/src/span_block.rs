@@ -386,7 +386,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod append_attrs;
 mod append_events;
 mod append_kv;

@@ -12,7 +12,6 @@ use crate::{
     validate_query_series_limit,
 };
 
-// === split-modules: generated submodules ===
 mod execute_http_metric_query;
 mod format_loki_query_length;
 mod gcd_signed;

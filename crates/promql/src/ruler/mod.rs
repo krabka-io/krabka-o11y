@@ -36,7 +36,6 @@ pub use schedule::{
 #[cfg(test)]
 mod tests;
 
-// === split-modules: generated submodules ===
 mod alert_state_key;
 mod alertmanager_alert;
 mod alertmanager_sink;

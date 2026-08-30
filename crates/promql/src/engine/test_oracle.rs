@@ -36,7 +36,6 @@ use crate::{
     store::MetricStore,
 };
 
-// === split-modules: generated submodules ===
 mod calendar_function;
 mod over_time_function;
 mod promql_engine;

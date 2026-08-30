@@ -197,7 +197,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod export;
 mod metrics_router;
 mod route_label;

@@ -6,7 +6,6 @@ use crate::{
     metric_samples_from_batches,
 };
 
-// === split-modules: generated submodules ===
 mod execute_metric_query_range_from_object_store_with_hot_tail_frontier;
 mod execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes;
 

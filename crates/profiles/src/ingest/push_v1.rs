@@ -93,7 +93,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decode_push;
 mod gunzip;
 

@@ -24,7 +24,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod clock_type;
 mod mock_clock;
 mod system_clock;

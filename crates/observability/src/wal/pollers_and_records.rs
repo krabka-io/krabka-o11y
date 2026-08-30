@@ -8,7 +8,6 @@ use crate::{
     is_loki_label_name, poll_log_hot_tail_once_with_frontier, sleep,
 };
 
-// === split-modules: generated submodules ===
 mod decode_native_kafka_log_record;
 mod has_native_kafka_log_headers;
 mod hot_tail_poll_error;

@@ -122,7 +122,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod pcol_profile_type;
 mod pcol_span_id;
 mod pcol_stacktrace_id;

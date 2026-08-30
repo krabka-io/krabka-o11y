@@ -16,7 +16,6 @@ use crate::{
     write_tenant_log_index_shard_to_object_store,
 };
 
-// === split-modules: generated submodules ===
 mod active_log_delete_tenants;
 mod compact_log_block_to_object_store;
 mod compact_log_block_to_object_store_with_index_output;

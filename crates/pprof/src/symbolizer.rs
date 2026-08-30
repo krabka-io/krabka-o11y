@@ -614,7 +614,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod chained_resolver;
 mod content_length_within_cap;
 mod debuginfod_config;

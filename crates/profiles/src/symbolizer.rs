@@ -58,7 +58,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod address_fallback_resolver;
 mod build_label;
 mod native_resolver_from_debuginfod_config;

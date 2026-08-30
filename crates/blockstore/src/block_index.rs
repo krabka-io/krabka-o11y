@@ -48,7 +48,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod block_index_type;
 mod block_schema;
 mod required_column;

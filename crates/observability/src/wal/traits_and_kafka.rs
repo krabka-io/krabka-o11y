@@ -8,7 +8,6 @@ use crate::{
     WalSinkError, async_trait, measured_size,
 };
 
-// === split-modules: generated submodules ===
 mod acl_matches_tenant_wal_read;
 mod acl_matches_tenant_wal_write;
 mod admin_connection_options;

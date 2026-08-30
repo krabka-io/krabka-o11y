@@ -14,7 +14,6 @@ use super::prelude::{
 
 // --- FIX B1 tests ---
 
-// === split-modules: generated submodules ===
 mod appending_log_index_shard_does_not_rewrite_historical_shards_or_full_manifest;
 mod compaction_frontier_refresh_prunes_hot_tail_from_object_store;
 mod compaction_frontier_refresh_treats_absent_manifest_as_empty;

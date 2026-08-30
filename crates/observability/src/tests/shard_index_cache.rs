@@ -13,7 +13,6 @@ use super::prelude::{
 
 // --- FIX B3 tests ---
 
-// === split-modules: generated submodules ===
 mod acl_entry;
 mod connect_with_startup_retry_gives_up_after_deadline;
 mod connect_with_startup_retry_retries_then_succeeds;

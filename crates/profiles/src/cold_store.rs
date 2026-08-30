@@ -686,7 +686,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod batch_fingerprints_overlap;
 mod block_partition_map;
 mod cold_profile_store;

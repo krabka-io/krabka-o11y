@@ -27,7 +27,6 @@ use crate::{
     store::{ExemplarRecord, ScanResult},
 };
 
-// === split-modules: generated submodules ===
 mod append_remote_read_exemplars;
 mod append_remote_read_float_samples;
 mod append_remote_read_histogram_samples;

@@ -11,7 +11,6 @@ use crate::{
     validate_query_length_limit, validate_query_range_limit, validate_query_series_limit,
 };
 
-// === split-modules: generated submodules ===
 mod count_index_stats_entries;
 mod execute_detected_field_values_query;
 mod execute_detected_fields_query;

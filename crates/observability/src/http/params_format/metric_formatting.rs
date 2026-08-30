@@ -9,7 +9,6 @@ use crate::{
     parse_scalar_sample, split_leading_vector_binary_modifiers, split_logql_function_arguments,
 };
 
-// === split-modules: generated submodules ===
 mod format_label_replace_metric_scalar_expression;
 mod format_label_replace_metric_vector_expression;
 mod format_logql_quoted_string;

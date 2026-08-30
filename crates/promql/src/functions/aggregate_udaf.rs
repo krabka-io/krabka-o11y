@@ -222,7 +222,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod extremum;
 mod extremum_udaf;
 mod prom_extremum_accumulator;

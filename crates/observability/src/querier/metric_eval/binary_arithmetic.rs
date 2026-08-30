@@ -7,7 +7,6 @@ use crate::{
     metric_vector_matching_key, parse_decimal_seconds_timestamp, parse_metric_sample_value,
 };
 
-// === split-modules: generated submodules ===
 mod apply_metric_binary_arithmetic_to_sample;
 mod apply_metric_binary_arithmetic_to_sample_operands;
 mod apply_metric_binary_arithmetic_to_series_with_left_operand;

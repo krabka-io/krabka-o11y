@@ -18,7 +18,6 @@ use super::prelude::{
     write_tenant_log_index_manifest_to_object_store,
 };
 
-// === split-modules: generated submodules ===
 mod a_compaction_batch_is_reparented_into_the_producers_trace;
 mod a_created_delete_request_is_stamped_in_whole_seconds;
 mod a_dynamic_tenant_index_needs_both_no_tenant_and_a_tenant_index_source;

@@ -8,7 +8,6 @@ use super::{
 };
 use crate::{MetricStore, PromqlEngine, PromqlError};
 
-// === split-modules: generated submodules ===
 mod evaluate_and_persist_ruler_rule_group;
 mod evaluate_and_persist_ruler_rule_set;
 mod evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval;

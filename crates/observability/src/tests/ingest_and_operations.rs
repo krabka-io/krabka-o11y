@@ -4,7 +4,6 @@ use super::prelude::{
     BlockIndex, DistributorError, HttpQueryError, LabelIndex, Labels, Time, check,
 };
 
-// === split-modules: generated submodules ===
 mod a_decimal_sample_literal_parses_to_an_exact_rational;
 mod a_log_level_parameter_names_why_it_was_refused;
 mod a_log_level_post_prefers_the_body_over_the_query_string;

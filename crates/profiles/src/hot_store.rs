@@ -403,7 +403,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod apply_record;
 mod default_max_age;
 mod default_max_records;

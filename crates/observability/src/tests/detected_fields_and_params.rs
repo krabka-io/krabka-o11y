@@ -1,6 +1,5 @@
 use super::prelude::check;
 
-// === split-modules: generated submodules ===
 mod a_repeated_detected_fields_parameter_keeps_the_first_value;
 mod a_repeated_detected_labels_parameter_keeps_the_first_value;
 mod a_repeated_log_query_parameter_keeps_the_first_value;

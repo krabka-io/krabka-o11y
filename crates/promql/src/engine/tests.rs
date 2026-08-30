@@ -8,7 +8,6 @@ use krabka_units::prelude::*;
 use super::{MAX_RESOLUTION_POINTS, check_resolution_points, match_rate_range_call};
 use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue};
 
-// === split-modules: generated submodules ===
 mod a_classic_histogram_answers_beside_a_native_sibling;
 mod a_comparison_keeps_the_metric_name_that_arithmetic_drops;
 mod a_fill_modifier_is_refused_on_a_set_operator;

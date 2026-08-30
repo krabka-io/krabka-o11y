@@ -219,7 +219,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod labels_key;
 mod labels_with_sample_labels;
 mod split_sample_types;

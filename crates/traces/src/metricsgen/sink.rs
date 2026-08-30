@@ -183,7 +183,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attr_value_to_string;
 mod decode_consumer_records;
 mod kafka_span_source;

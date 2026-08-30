@@ -39,7 +39,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod negotiate;
 mod wire_error;
 mod wire_format;

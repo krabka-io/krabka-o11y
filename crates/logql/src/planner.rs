@@ -10,7 +10,6 @@ use tracing::field::Empty;
 
 use crate::{LabelMatcher, MatchOp, StreamQuery};
 
-// === split-modules: generated submodules ===
 mod label_predicate;
 mod plan_error;
 mod plan_stream_query;

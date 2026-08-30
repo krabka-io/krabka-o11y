@@ -15,7 +15,6 @@ use crate::{
     set_prepare_shutdown, shutdown_ingester, unset_prepare_shutdown, validate_ingest_body_limit,
 };
 
-// === split-modules: generated submodules ===
 mod compactor_ops;
 mod distributor_ops;
 mod distributor_router;

@@ -14,7 +14,6 @@ use super::{
 };
 use crate::MetricStore;
 
-// === split-modules: generated submodules ===
 mod label_values;
 mod label_values_dispatch;
 mod label_values_inner;

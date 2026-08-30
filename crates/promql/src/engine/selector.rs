@@ -11,7 +11,6 @@ use regex::Regex;
 
 use crate::{PromqlError, error::Result};
 
-// === split-modules: generated submodules ===
 mod apply_offset_delta;
 mod apply_selector_time_modifier;
 mod at_modifier_bounds;

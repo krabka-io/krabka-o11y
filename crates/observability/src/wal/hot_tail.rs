@@ -10,7 +10,6 @@ use crate::{
     series_fingerprint, sleep,
 };
 
-// === split-modules: generated submodules ===
 mod buffered_log_hot_tail;
 mod build_kafka_wal_record;
 mod decode_kafka_wal_record;

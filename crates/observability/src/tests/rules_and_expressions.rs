@@ -2,7 +2,6 @@ use krabka_units::convert::TimeExt as _;
 
 use super::prelude::{HttpQueryError, Time, check};
 
-// === split-modules: generated submodules ===
 mod a_loki_interval_is_refused_only_when_negative;
 mod a_loki_query_length_always_writes_all_three_units;
 mod a_query_string_splits_only_before_a_known_key;

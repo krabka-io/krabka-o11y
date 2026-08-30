@@ -188,7 +188,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod assign_nested_set;
 mod nested_set_type;
 mod span_node;

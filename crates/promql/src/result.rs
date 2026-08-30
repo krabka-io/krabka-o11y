@@ -92,7 +92,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod annotations;
 mod instant_sample;
 mod query_result;

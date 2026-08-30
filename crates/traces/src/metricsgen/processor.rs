@@ -99,7 +99,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod edge_checkpoint_entry;
 mod metrics_generator;
 mod tenant_edge_checkpoints;

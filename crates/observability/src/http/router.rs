@@ -21,7 +21,6 @@ use crate::{
     series, series_post, status_metrics, tail, text_response, with_role_ops_routes,
 };
 
-// === split-modules: generated submodules ===
 mod compactor_router_with_delete_requests;
 mod flush_ingester_chunks;
 mod get_prepare_shutdown;

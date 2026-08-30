@@ -293,7 +293,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod default_block_read_max;
 mod head_within_cap;
 mod object_store_reader;

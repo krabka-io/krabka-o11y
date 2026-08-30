@@ -2242,7 +2242,6 @@ rules:
     }
 }
 
-// === split-modules: generated submodules ===
 mod alertmanager_http_sink;
 mod alertmanager_payload;
 mod apply_ruler_state_record;

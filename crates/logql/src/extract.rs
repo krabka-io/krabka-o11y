@@ -126,7 +126,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod is_json_path_field_name_char;
 mod json_extraction;
 mod json_parser_config;

@@ -6,7 +6,6 @@ use crate::{
     parse_metric_sample_value, rate_metric_value, structured_metadata_value,
 };
 
-// === split-modules: generated submodules ===
 mod absent_metric_labels;
 mod aggregate_vector_samples;
 mod apply_absent_over_time;

@@ -181,7 +181,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod series_normalize;
 mod series_normalize_exec;
 

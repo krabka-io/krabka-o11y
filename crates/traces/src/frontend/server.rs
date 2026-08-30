@@ -312,7 +312,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod backend_error_response;
 mod bounded_count;
 mod echo;

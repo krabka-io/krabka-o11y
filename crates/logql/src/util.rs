@@ -96,7 +96,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod bytes_unit_multiplier;
 mod decode_quoted_escape;
 mod duration_unit;

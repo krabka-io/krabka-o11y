@@ -69,7 +69,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attr_value;
 mod event_ref;
 mod link_ref;

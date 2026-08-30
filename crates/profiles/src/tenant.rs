@@ -75,7 +75,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod anonymous_tenant;
 mod is_allowed_byte;
 mod max_tenant_len;

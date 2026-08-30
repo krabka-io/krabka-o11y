@@ -25,7 +25,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod aggregate;
 mod comparison_op;
 mod field;

@@ -15,7 +15,6 @@ use super::{
 };
 use crate::{MetricStore, store::MetadataRecord};
 
-// === split-modules: generated submodules ===
 mod metadata_fn;
 mod metadata_json;
 mod metadata_params;

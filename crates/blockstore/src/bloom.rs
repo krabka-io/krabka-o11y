@@ -168,7 +168,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod bloom_shard;
 mod fnv1_32;
 mod fnv1a_32;

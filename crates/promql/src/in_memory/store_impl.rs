@@ -22,7 +22,6 @@ use crate::{
     },
 };
 
-// === split-modules: generated submodules ===
 mod in_memory_metric_store;
 mod named_stats;
 

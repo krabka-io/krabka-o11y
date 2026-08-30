@@ -4,7 +4,6 @@ use crate::{
     PathBuf, ProducerError, SocketAddr, Time, ValueEnum, days, millis, minutes, secs,
 };
 
-// === split-modules: generated submodules ===
 mod loki_reject_old_samples_max_age;
 mod querier_index_source;
 mod role;

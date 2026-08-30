@@ -172,7 +172,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod assign_nested_set;
 mod attr_prefix;
 mod col_child_count;

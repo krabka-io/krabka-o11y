@@ -9,7 +9,6 @@ use crate::{
     parse_metric_sample_value,
 };
 
-// === split-modules: generated submodules ===
 mod accept_parameter_is_zero_quality;
 mod accept_part_allows_loki_parquet;
 mod apply_loki_stream_end_bound;

@@ -392,7 +392,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod alloc;
 mod build_object_store;
 mod cli;

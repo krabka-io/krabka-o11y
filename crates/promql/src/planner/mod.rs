@@ -90,7 +90,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod consume_ident;
 mod consume_number_duration;
 mod duration_expr_context;

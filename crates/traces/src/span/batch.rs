@@ -290,7 +290,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod block_attr_value;
 mod block_kind;
 mod block_status;

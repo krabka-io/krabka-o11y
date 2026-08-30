@@ -13,7 +13,6 @@ use super::{
 };
 use crate::{MetricStore, PromqlEngine, PromqlError, QueryResult};
 
-// === split-modules: generated submodules ===
 mod execute_avg_range_query_frontend;
 mod execute_moment_range_query_frontend;
 mod execute_planned_range_queries;

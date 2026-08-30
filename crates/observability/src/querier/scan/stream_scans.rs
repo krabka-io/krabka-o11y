@@ -7,7 +7,6 @@ use crate::{
     register_log_blocks_from_object_store, sort_loki_stream_values,
 };
 
-// === split-modules: generated submodules ===
 mod collect_object_store_stream_log_batches;
 mod count_stream_map_lines;
 mod execute_stream_query;

@@ -3,7 +3,6 @@ use crate::{
     SharedLogDeleteRequests, StreamQuery, TimeRange,
 };
 
-// === split-modules: generated submodules ===
 mod active_log_delete_filter;
 mod compactor_delete_request;
 mod compactor_delete_request_response;

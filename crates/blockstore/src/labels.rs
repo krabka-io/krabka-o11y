@@ -99,7 +99,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod labels_type;
 mod series_fingerprint;
 

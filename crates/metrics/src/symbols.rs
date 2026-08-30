@@ -96,7 +96,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod symbol_error;
 mod symbol_table;
 

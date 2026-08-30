@@ -10,7 +10,6 @@ use crate::{
     result::{InstantSample, SampleValue},
 };
 
-// === split-modules: generated submodules ===
 mod absent_labels;
 mod absent_labels_from_matchers;
 mod absent_labels_from_selector;

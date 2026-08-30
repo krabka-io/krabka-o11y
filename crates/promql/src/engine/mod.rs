@@ -106,7 +106,6 @@ tokio::task_local! {
 #[cfg(test)]
 mod tests;
 
-// === split-modules: generated submodules ===
 mod check_resolution_points;
 mod current_at_modifier_bounds;
 mod engine_opts;

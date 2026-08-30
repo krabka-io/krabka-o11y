@@ -148,7 +148,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod series_divide_exec;
 mod series_divide_type;
 

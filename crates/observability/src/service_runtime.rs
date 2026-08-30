@@ -10,7 +10,6 @@ use crate::{
     spawn_log_hot_tail_poller, spawn_query_authorizer_connect, spawn_wal_hot_tail_connect_and_poll,
 };
 
-// === split-modules: generated submodules ===
 mod build_service_router;
 mod build_service_router_with_shutdown;
 mod serve_compactor_service_listener;

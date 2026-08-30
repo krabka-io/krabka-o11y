@@ -5,7 +5,6 @@ use crate::{
     SharedCompactionFrontier,
 };
 
-// === split-modules: generated submodules ===
 mod active_log_delete_filter_error;
 mod client_resource_policy;
 mod deferred_wal_consumer_connect;

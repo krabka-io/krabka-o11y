@@ -10,7 +10,6 @@ use crate::{
     is_deleted_log_entry,
 };
 
-// === split-modules: generated submodules ===
 mod compact_kafka_wal_records_to_object_store;
 mod compact_next_kafka_wal_batch_to_object_store;
 mod compact_wal_records_to_object_store;

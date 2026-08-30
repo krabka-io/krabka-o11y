@@ -436,7 +436,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attr_value;
 mod boolean_array;
 mod collect_attr_metadata;

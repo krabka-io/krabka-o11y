@@ -21,7 +21,6 @@ use crate::{
     MetadataRecord, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
 };
 
-// === split-modules: generated submodules ===
 mod cardinality_active_series_rejects_over_tenant_limit;
 mod expand_alert_template_substitutions;
 mod float_formatting_matches_go;

@@ -1,6 +1,5 @@
 use super::prelude::{BlockIndex, LabelIndex, Labels, QuerierState, SeriesParams, check};
 
-// === split-modules: generated submodules ===
 mod a_loki_offset_duration_picks_the_largest_unit_that_fits;
 mod a_loki_stream_limit_is_spent_across_streams_in_order;
 mod a_scalar_literal_ends_where_the_number_does;

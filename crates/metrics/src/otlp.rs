@@ -2277,7 +2277,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod accumulate_delta_float_series;
 mod add_compatible_native_histogram;
 mod add_spanned_histogram_counts;

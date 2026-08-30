@@ -55,7 +55,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod exemplar;
 mod series_payload;
 mod series_sample;

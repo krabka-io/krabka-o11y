@@ -1178,7 +1178,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod binary_input;
 mod bt_binary;
 mod bt_bool;

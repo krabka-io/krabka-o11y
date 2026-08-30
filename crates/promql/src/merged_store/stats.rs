@@ -6,7 +6,6 @@ use krabka_blockstore::SeriesFingerprint;
 
 use crate::{LabelNameCardinality, LabelValueCardinality, NamedTsdbStat};
 
-// === split-modules: generated submodules ===
 mod label_name_cardinality;
 mod label_value_cardinality;
 mod merge_named_stats;

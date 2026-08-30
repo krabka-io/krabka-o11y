@@ -11,7 +11,6 @@ use crate::{
     materialize_deletes_then_compact_next_kafka_wal_batch, sleep,
 };
 
-// === split-modules: generated submodules ===
 mod build_compactor_configured_object_store;
 mod build_service_dependencies;
 mod build_service_dependencies_with_client_resource_policy;

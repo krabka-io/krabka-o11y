@@ -4407,7 +4407,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod accumulate_compare_counts;
 mod apply_metric_filter;
 mod apply_rank;

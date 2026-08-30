@@ -61,7 +61,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod block_meta;
 mod col_fingerprint;
 mod col_timestamp;

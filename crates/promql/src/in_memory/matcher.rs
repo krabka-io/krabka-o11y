@@ -5,7 +5,6 @@ use krabka_blockstore::{
 
 use crate::{PromqlError, error::Result};
 
-// === split-modules: generated submodules ===
 mod all_match;
 mod prepare_matchers;
 mod prepared_matcher;

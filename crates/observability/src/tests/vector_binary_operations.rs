@@ -1,6 +1,5 @@
 use super::prelude::check;
 
-// === split-modules: generated submodules ===
 mod a_binary_set_operator_keeps_the_subset_it_names;
 mod a_top_level_arithmetic_split_names_the_operator_it_found;
 mod a_top_level_comparison_ignores_operators_nested_inside_the_query;

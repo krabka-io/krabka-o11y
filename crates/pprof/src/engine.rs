@@ -961,7 +961,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod covering_range;
 mod engine_opts;
 mod flame_engine;

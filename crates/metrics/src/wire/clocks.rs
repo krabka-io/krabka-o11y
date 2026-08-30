@@ -71,7 +71,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod clock_source_kind;
 mod clock_sync_state;
 mod clock_wire_error;

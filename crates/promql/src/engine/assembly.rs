@@ -14,7 +14,6 @@ use crate::{
     result::{InstantSample, QueryResult, SampleValue},
 };
 
-// === split-modules: generated submodules ===
 mod assemble_aggregate_batches;
 mod assemble_over_time_batches;
 mod assemble_rate_batches;

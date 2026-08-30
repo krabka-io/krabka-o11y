@@ -17,7 +17,6 @@ use crate::{
     },
 };
 
-// === split-modules: generated submodules ===
 mod append_exemplar_label_map;
 mod blockstore_error;
 mod datafusion_error;

@@ -99,7 +99,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod parse_label_selector;
 mod split_top_level_commas;
 mod trim_selector;

@@ -202,7 +202,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod append_children;
 mod bar;
 mod flame_graph;

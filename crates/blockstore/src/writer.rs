@@ -160,7 +160,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod block_writer;
 mod summarize;
 mod summary_columns;

@@ -31,7 +31,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod label_matcher;
 mod match_op;
 mod parse_query_shard_selector;

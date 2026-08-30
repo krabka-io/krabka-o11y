@@ -190,7 +190,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod exemplar;
 mod key_value;
 mod limit_exemplars;

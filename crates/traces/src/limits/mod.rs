@@ -66,7 +66,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod limit_error;
 mod limits_type;
 

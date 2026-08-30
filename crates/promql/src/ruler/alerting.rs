@@ -10,7 +10,6 @@ use super::{
 };
 use crate::{MetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue};
 
-// === split-modules: generated submodules ===
 mod evaluate_alerting_rule_with_state_and_sink;
 mod evaluate_and_dispatch_alerting_rule;
 mod evaluate_and_dispatch_alerting_rule_group;

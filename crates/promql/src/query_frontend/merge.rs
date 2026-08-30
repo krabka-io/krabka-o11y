@@ -12,7 +12,6 @@ use crate::{
     PromqlError, QueryResult, RangeSeries, SampleValue, engine::add_compatible_native_histogram,
 };
 
-// === split-modules: generated submodules ===
 mod aggregate_labels;
 mod compare_rank_candidates;
 mod divide_range_query_results;

@@ -71,7 +71,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod partition_key;
 mod span_record;
 mod traces_wal_topic;

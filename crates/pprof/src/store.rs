@@ -106,7 +106,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod profile_scan;
 mod profile_stats;
 mod profile_store;

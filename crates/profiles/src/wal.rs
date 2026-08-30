@@ -92,7 +92,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod partition_key;
 mod profile_record;
 mod profiles_wal_topic;

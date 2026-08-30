@@ -19,7 +19,6 @@ use crate::{
     QueryResult, SampleValue, TsdbBlock, TsdbHeadStats, TsdbStats,
 };
 
-// === split-modules: generated submodules ===
 mod exemplar_batch;
 mod exemplar_batch_from_rows;
 mod exemplars_include_closed_range_boundaries_and_filter_outside_rows;

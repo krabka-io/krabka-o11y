@@ -7,7 +7,6 @@ use crate::{
     scalar_vector_expression_result,
 };
 
-// === split-modules: generated submodules ===
 mod format_loki_decimal_unit;
 mod format_loki_duration_ns;
 mod format_loki_offset_duration_ns;

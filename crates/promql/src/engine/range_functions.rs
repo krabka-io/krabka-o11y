@@ -15,7 +15,6 @@ use crate::{
     result::{InstantSample, RangeSeries, SampleValue},
 };
 
-// === split-modules: generated submodules ===
 mod align_subquery_start;
 mod anchored_float_range_value;
 mod apply_outer_range_fn;

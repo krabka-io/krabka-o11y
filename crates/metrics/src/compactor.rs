@@ -1851,7 +1851,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod clock_columns;
 mod clock_reading_row;
 mod compact_wal_records;

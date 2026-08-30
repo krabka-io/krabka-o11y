@@ -907,7 +907,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod anchored_regex;
 mod block_entry;
 mod index_type;

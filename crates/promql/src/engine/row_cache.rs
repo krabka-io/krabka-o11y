@@ -20,7 +20,6 @@ tokio::task_local! {
     pub(super) static RANGE_SCAN_CACHE: RangeScanCache;
 }
 
-// === split-modules: generated submodules ===
 mod collect_float_rows;
 mod collect_histogram_rows;
 mod float_row;

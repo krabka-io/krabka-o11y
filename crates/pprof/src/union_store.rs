@@ -172,7 +172,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod collect_and_remap;
 mod max_option;
 mod min_option;

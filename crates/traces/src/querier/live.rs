@@ -733,7 +733,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attr_value_from_otlp;
 mod attrs_from_otlp;
 mod decode_span_batches;

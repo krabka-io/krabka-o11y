@@ -6,7 +6,6 @@ use crate::{
     gcd_signed, is_deleted_log_entry, matching_loki_stream_entry,
 };
 
-// === split-modules: generated submodules ===
 mod append_matching_log_row;
 mod eval_times;
 mod format_metric_value;

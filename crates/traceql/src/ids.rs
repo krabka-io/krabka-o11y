@@ -25,7 +25,6 @@
 
 use derive_more::{Display, From, Into};
 
-// === split-modules: generated submodules ===
 mod duration_nanos;
 mod unix_nano;
 

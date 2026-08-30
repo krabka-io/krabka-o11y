@@ -38,7 +38,6 @@ use krabka_metrics::{
 #[cfg(test)]
 mod tests;
 
-// === split-modules: generated submodules ===
 mod f64_list_value;
 mod histogram_columns;
 mod histogram_span_view;

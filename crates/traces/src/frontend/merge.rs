@@ -522,7 +522,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod apply_search_limits;
 mod assemble_trace;
 mod assembled_span_count;

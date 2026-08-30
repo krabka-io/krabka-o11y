@@ -151,7 +151,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decode_v2;
 mod labels_from_refs;
 mod metadata_from_v2;

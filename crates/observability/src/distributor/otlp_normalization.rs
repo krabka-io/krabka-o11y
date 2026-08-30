@@ -8,7 +8,6 @@ use crate::{
     proto_value_to_string, quote_logql_string, tenant,
 };
 
-// === split-modules: generated submodules ===
 mod contains_log_level_token;
 mod detect_log_level;
 mod discover_detected_level_label;

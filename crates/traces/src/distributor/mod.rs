@@ -977,7 +977,6 @@ overrides:
     }
 }
 
-// === split-modules: generated submodules ===
 mod append_decoded;
 mod append_decoded_response;
 mod check_shared_attrs;

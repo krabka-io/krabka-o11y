@@ -20,7 +20,6 @@ use crate::{
     validate_loki_range_query_range_limit, validate_query_length_limit, validate_query_range_limit,
 };
 
-// === split-modules: generated submodules ===
 mod execute_http_query_for_tenant;
 mod execute_http_remaining_query;
 

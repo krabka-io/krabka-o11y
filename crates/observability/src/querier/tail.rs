@@ -7,7 +7,6 @@ use crate::{
     validate_query_length_limit,
 };
 
-// === split-modules: generated submodules ===
 mod apply_loki_tail_frame_limit;
 mod eligible_tail_record_count;
 mod hot_tail_snapshot;

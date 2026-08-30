@@ -79,7 +79,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decimal_i64_to_f64;
 mod decimal_usize_to_f64;
 mod fold_bucket;

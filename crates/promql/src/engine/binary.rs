@@ -25,7 +25,6 @@ use crate::{
     result::{InstantSample, QueryResult, SampleValue},
 };
 
-// === split-modules: generated submodules ===
 mod apply_binary_fill_value;
 mod apply_binary_sample_value;
 mod apply_histogram_float_binary;

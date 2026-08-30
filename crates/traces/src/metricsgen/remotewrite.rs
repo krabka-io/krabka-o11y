@@ -321,7 +321,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod bucket_exemplars;
 mod bucket_spans_to_proto;
 mod encode_write_request;

@@ -36,7 +36,6 @@ use crate::{
     },
 };
 
-// === split-modules: generated submodules ===
 mod build_leaf_batch;
 mod instant_selector_plan;
 mod labeled_sample;

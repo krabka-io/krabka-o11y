@@ -1,6 +1,5 @@
 use crate::{BTreeMap, DistributorError, OtlpAnyValue, ProtoAnyValue, Value, proto_any_value};
 
-// === split-modules: generated submodules ===
 mod hex_string;
 mod metadata_value_to_string;
 mod otlp_value_to_json;

@@ -227,7 +227,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod extrapolated_rate;
 mod instant_delta;
 mod instant_kind;

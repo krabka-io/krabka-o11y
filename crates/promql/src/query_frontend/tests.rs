@@ -8,7 +8,6 @@ use krabka_units::prelude::*;
 use super::*;
 use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult, RangeSeries, SampleValue};
 
-// === split-modules: generated submodules ===
 mod avg_partial_recording_executor;
 mod concurrency_probe_executor;
 mod frontend_range_execution_dispatches_subqueries_concurrently;

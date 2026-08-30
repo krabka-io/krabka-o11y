@@ -194,7 +194,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod any_to_attr;
 mod any_to_text;
 mod decode_otlp;

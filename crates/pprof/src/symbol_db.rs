@@ -332,7 +332,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod drop_go_type_parameters;
 mod empty_stacktrace_id;
 mod function_rec;

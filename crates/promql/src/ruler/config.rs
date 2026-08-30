@@ -4,7 +4,6 @@ use krabka_units::prelude::*;
 
 use crate::PromqlError;
 
-// === split-modules: generated submodules ===
 mod parse_duration;
 mod stable_hash_parts;
 mod yaml_duration;

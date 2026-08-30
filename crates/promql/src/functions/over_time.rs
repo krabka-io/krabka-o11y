@@ -518,7 +518,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decode_range_column;
 mod extremum;
 mod fold_extremum;

@@ -8,7 +8,6 @@
 
 use derive_more::{Display, From, Into};
 
-// === split-modules: generated submodules ===
 mod destination_label;
 mod duration_nanos;
 mod json_expression_path;

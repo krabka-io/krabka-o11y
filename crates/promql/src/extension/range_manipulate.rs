@@ -272,7 +272,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod build_extended_range_schema;
 mod range_array_type;
 mod range_manipulate_exec;

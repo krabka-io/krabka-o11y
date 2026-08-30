@@ -23,7 +23,6 @@ use matcher::{prepare_matchers, row_matches};
 #[cfg(test)]
 mod tests;
 
-// === split-modules: generated submodules ===
 mod default_retention;
 mod exemplar_row;
 mod float_row;

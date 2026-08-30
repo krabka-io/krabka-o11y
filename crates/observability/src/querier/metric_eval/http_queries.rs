@@ -11,7 +11,6 @@ use crate::{
     validate_query_bytes_limit, validate_query_series_limit,
 };
 
-// === split-modules: generated submodules ===
 mod execute_http_metric_instant_query;
 mod execute_http_stream_query;
 mod validate_loki_interval;

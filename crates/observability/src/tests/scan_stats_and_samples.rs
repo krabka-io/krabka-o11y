@@ -1,6 +1,5 @@
 use super::prelude::{BTreeMap, Labels, METRIC_DECIMAL_SCALE, MetricValue, check};
 
-// === split-modules: generated submodules ===
 mod a_decimal_seconds_timestamp_scales_its_fraction_to_nanos;
 mod a_form_component_decodes_its_escapes_or_refuses_them;
 mod a_line_number_counts_from_one_and_clamps_past_the_end;

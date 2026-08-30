@@ -13,7 +13,6 @@ use crate::{
     normalize_otlp_logs, normalize_otlp_proto_logs, quote_logql_string,
 };
 
-// === split-modules: generated submodules ===
 mod append_distributor_wal_records;
 mod append_wal_records;
 mod check_ingest_quota;

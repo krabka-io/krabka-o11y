@@ -529,7 +529,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod attribute_label;
 mod decode_otlp;
 mod hex_lower;

@@ -1748,7 +1748,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod alloc;
 mod apply_metrics_generator_cli_overrides;
 mod build_live_store_router;

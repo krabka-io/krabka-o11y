@@ -7,7 +7,6 @@ use krabka_metrics::{COL_FINGERPRINT, COL_TIMESTAMP};
 
 use crate::PromqlError;
 
-// === split-modules: generated submodules ===
 mod float_table;
 mod histogram_table;
 mod merge_scan_table;

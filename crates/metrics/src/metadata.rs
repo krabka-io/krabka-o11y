@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::TenantCompactionRows;
 
-// === split-modules: generated submodules ===
 mod metadata_index;
 mod metric_metadata;
 

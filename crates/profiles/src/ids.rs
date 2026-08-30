@@ -11,7 +11,6 @@
 
 use derive_more::{Display, From, Into};
 
-// === split-modules: generated submodules ===
 mod default_ms;
 mod end_ms;
 mod external_partition;

@@ -33,7 +33,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod col_value;
 mod decode_float_samples;
 mod encode_float_samples;

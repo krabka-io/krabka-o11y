@@ -22,7 +22,6 @@ use crate::{
     query_frontend::{FrontendRangeRequest, execute_range_query_frontend},
 };
 
-// === split-modules: generated submodules ===
 mod exemplars_query_params;
 mod exemplars_query_params_from_form;
 mod instant_query_params;

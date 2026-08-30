@@ -18,7 +18,6 @@ use crate::{
     split_top_level_set_query,
 };
 
-// === split-modules: generated submodules ===
 mod execute_format_query;
 mod form_body_query;
 mod format_binary_operator_line;

@@ -76,7 +76,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod encode_profile_samples;
 mod profile_sample_row;
 

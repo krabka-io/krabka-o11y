@@ -269,7 +269,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod any_value_json;
 mod array_value_json;
 mod attr_value;

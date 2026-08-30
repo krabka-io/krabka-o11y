@@ -3984,7 +3984,6 @@ overrides:
     }
 }
 
-// === split-modules: generated submodules ===
 mod add_intrinsic_tags;
 mod app_state;
 mod attr_value_json;

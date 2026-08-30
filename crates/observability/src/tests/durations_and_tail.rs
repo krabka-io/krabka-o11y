@@ -1,6 +1,5 @@
 use super::prelude::{BTreeMap, Labels, MetricValue, check};
 
-// === split-modules: generated submodules ===
 mod a_bytes_literal_needs_a_number_and_a_unit_it_knows;
 mod a_loki_duration_composes_only_the_units_it_needs;
 mod a_loki_vector_sample_reads_its_value_and_not_its_timestamp;

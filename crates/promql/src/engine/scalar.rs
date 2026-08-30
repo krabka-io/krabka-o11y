@@ -14,7 +14,6 @@ use crate::{
     result::{QueryResult, SampleValue},
 };
 
-// === split-modules: generated submodules ===
 mod calendar_fn;
 mod calendar_fn_from_function_name;
 mod clamp_float;

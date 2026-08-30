@@ -22,7 +22,6 @@ use super::{
 };
 use crate::{MetricStore, PromqlError, QueryResult, SampleValue, parse_promql};
 
-// === split-modules: generated submodules ===
 mod alert_labels_map;
 mod alerts;
 mod delete_ruler_config_group;

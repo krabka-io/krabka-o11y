@@ -1,6 +1,5 @@
 use super::prelude::{BTreeSet, CompactorRunError, HttpQueryError, Labels, check};
 
-// === split-modules: generated submodules ===
 mod a_log_pattern_token_masks_only_its_variable_part;
 mod a_retained_alert_key_belongs_to_its_rule_and_was_not_just_seen;
 mod a_rule_matches_only_when_every_active_filter_accepts_it;

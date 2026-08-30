@@ -140,7 +140,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod build_leaf_batch;
 mod is_metadata_label;
 mod labeled_value;

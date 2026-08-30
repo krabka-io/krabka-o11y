@@ -121,7 +121,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod decode_jaeger_grpc_batch;
 mod duration_micros;
 mod key_value_from_proto;

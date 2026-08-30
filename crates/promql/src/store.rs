@@ -132,7 +132,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod exemplar_record;
 mod label_name_cardinality;
 mod label_value_cardinality;

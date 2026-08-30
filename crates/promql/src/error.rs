@@ -19,7 +19,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod promql_error;
 mod result;
 

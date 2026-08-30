@@ -250,7 +250,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod block_store;
 mod scan_table_request;
 mod table_name;

@@ -454,7 +454,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod aggregate_value_column;
 mod all_group_column;
 mod grouping;

@@ -15,7 +15,6 @@ use crate::{
     },
 };
 
-// === split-modules: generated submodules ===
 mod arithmetic_text;
 mod comparison_text;
 mod expr_operator;

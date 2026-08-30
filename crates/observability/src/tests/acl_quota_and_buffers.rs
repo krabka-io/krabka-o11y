@@ -12,7 +12,6 @@ use super::prelude::{
     validate_ingest_body_limit,
 };
 
-// === split-modules: generated submodules ===
 mod a_hot_tail_buffer_range_query_loses_no_record_to_its_buckets;
 mod accumulating_a_wal_batch_stops_when_empty_or_full;
 mod acl_helpers_require_topic_operation_principal_and_pattern;

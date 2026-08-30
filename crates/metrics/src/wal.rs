@@ -178,7 +178,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod clock_reading_payload;
 mod partition_key;
 mod sample_payload;

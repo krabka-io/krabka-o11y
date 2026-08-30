@@ -10,7 +10,6 @@ use crate::{
     metric_binary_sample_timestamps_match, parse_metric_sample_value,
 };
 
-// === split-modules: generated submodules ===
 mod apply_metric_binary_set_to_loki_result;
 mod apply_metric_binary_set_to_series;
 mod apply_metric_scalar_arithmetic_to_loki_result;

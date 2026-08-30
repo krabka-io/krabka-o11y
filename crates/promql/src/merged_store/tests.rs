@@ -7,7 +7,6 @@ use crate::{
     NamedTsdbStat, PromqlEngine, QueryResult, SampleValue, TsdbHeadStats, TsdbStats,
 };
 
-// === split-modules: generated submodules ===
 mod cardinality_methods_merge_cold_and_hot_series;
 mod exemplars_merges_cold_and_hot_records;
 mod instant_query_uses_hot_sample_newer_than_compacted_sample;

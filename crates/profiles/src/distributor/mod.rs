@@ -1570,7 +1570,6 @@ overrides:
     }
 }
 
-// === split-modules: generated submodules ===
 mod client_facing_message;
 mod connect_error;
 mod distributor_state;

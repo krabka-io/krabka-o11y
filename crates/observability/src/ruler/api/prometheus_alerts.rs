@@ -7,7 +7,6 @@ use crate::{
     Rfc3339, SharedPrometheusAlertStates, Value, json,
 };
 
-// === split-modules: generated submodules ===
 mod prometheus_active_at;
 mod prometheus_alert_key_matches_rule;
 mod prometheus_alerts_from_query_result;

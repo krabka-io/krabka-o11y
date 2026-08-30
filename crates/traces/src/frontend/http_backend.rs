@@ -125,7 +125,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod build_url;
 mod error_for_status;
 mod http_querier;

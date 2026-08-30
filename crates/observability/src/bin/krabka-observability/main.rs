@@ -143,7 +143,6 @@ mod tests {
     }
 }
 
-// === split-modules: generated submodules ===
 mod alloc;
 mod cli;
 mod parse_dispatch_queue_capacity;

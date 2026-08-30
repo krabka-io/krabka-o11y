@@ -2622,7 +2622,6 @@ overrides:
     }
 }
 
-// === split-modules: generated submodules ===
 mod analyze_query_handler;
 mod analyze_query_inner;
 mod connect_error;

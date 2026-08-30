@@ -14,7 +14,6 @@ use crate::{
     validate_loki_range_query_range_limit, wants_loki_parquet,
 };
 
-// === split-modules: generated submodules ===
 mod api_prom_label_names;
 mod api_prom_label_names_post;
 mod api_prom_label_values;

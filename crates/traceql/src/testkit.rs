@@ -520,7 +520,6 @@ expect_series_count: 1
     }
 }
 
-// === split-modules: generated submodules ===
 mod case;
 mod case_result;
 mod engine;
