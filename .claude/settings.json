@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bazel query:*)",
+      "Bash(bazel run //tools/format:format.check)",
+      "Bash(cargo clippy -p:*)",
+      "Bash(cargo test -p:*)",
+      "Bash(cargo tree:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git status)",
+      "Bash(rg:*)"
+    ]
+  }
+}
