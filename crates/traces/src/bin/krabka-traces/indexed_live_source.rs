@@ -1,4 +1,4 @@
-use super::{Arc, RwLock, LiveStore, SharedTraceIndex, LiveSource};
+use super::*;
 
 pub(crate) struct IndexedLiveSource {
     pub(crate) store: Arc<RwLock<LiveStore>>,

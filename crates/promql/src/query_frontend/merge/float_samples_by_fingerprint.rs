@@ -1,4 +1,4 @@
-use super::{RangeSeries, BTreeMap, SeriesFingerprint, SampleValue};
+use super::*;
 
 pub(crate) fn float_samples_by_fingerprint(
     series: Vec<RangeSeries>,

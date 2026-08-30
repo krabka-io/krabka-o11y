@@ -1,4 +1,4 @@
-use super::{Labels, v1};
+use super::*;
 
 #[must_use]
 pub fn series_to_timeseries(series: Vec<(Labels, Vec<(i64, f64)>)>) -> v1::QueryResult {

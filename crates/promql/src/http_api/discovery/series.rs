@@ -1,4 +1,4 @@
-use super::{MetricStore, State, RawQuery, Arc, PrometheusApiState, HeaderMap, Response, parse_discovery_params, IntoResponse, series_inner};
+use super::*;
 
 pub(crate) async fn series<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

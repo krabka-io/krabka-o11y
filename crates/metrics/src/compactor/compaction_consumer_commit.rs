@@ -1,4 +1,4 @@
-use super::{async_trait, CompactionConsumerCommitError};
+use super::*;
 
 /// Minimal consumer commit surface needed by the compactor loop.
 #[async_trait]

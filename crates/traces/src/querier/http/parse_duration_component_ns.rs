@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn parse_duration_component_ns(number: &str, multiplier: u128) -> Result<u128, String> {
     let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));

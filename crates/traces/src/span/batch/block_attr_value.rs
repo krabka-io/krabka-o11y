@@ -1,4 +1,4 @@
-use super::{AttrValue, BlockAttrValue};
+use super::*;
 
 pub(crate) fn block_attr_value(value: &AttrValue) -> BlockAttrValue {
     match value {

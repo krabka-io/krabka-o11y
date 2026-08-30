@@ -1,4 +1,4 @@
-use super::{SymbolTable, Labels, pb, DecodedMetadata, WireError, metadata_type, symbol_ref};
+use super::*;
 
 pub(crate) fn metadata_from_v2(
     table: &SymbolTable,

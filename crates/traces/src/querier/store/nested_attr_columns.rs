@@ -1,4 +1,4 @@
-use super::{SpanMatcher, NestedAttrColumn, MatchScope, NestedAttrScope, EVENT_ATTR_PREFIX, LINK_ATTR_PREFIX, ATTR_PREFIX};
+use super::*;
 
 pub(crate) fn nested_attr_columns(matchers: &[SpanMatcher]) -> Vec<(String, NestedAttrColumn<'_>)> {
     let mut out = Vec::new();

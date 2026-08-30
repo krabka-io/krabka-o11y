@@ -1,4 +1,4 @@
-use super::{Array, StructArray};
+use super::*;
 
 pub(crate) fn struct_column<'a, T: Array + 'static>(histograms: &'a StructArray, name: &str) -> Option<&'a T> {
     histograms

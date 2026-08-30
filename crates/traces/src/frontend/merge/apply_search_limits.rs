@@ -1,4 +1,4 @@
-use super::{TraceJson, parse_nanos};
+use super::*;
 
 /// Apply Tempo's post-merge `limit` and `spss` truncation.
 ///

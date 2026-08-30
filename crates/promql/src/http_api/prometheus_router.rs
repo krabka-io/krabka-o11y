@@ -1,4 +1,4 @@
-use super::{MetricStore, Arc, PrometheusApiState, Router, ByteSizeExt, get, query, query_post, query_range, query_range_post, query_exemplars, query_exemplars_post, post, remote_read, DefaultBodyLimit, cardinality_label_names, cardinality_label_names_post, cardinality_label_values, cardinality_label_values_post, cardinality_active_series, cardinality_active_series_post, series, series_post, labels, labels_post, label_values, label_values_post, metadata, rules, alerts, alertmanagers, targets, target_metadata, scrape_pools, format_query, format_query_post, parse_query, parse_query_post, build_info, status_config, status_flags, runtime_info, tsdb_status, tsdb_blocks, wal_replay_status, ruler_config_rules, ruler_config_namespace, set_ruler_config_group, delete_ruler_config_namespace, ruler_config_group, delete_ruler_config_group};
+use super::*;
 
 /// Builds the routes for the Prometheus API and the `/prometheus` prefix of Mimir.
 pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>) -> Router {

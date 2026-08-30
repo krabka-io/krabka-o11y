@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize, SpanJson, SpanSet};
+use super::*;
 
 /// A spanSet: the spans this trace matched plus the matched count.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

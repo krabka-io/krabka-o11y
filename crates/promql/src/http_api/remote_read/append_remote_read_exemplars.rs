@@ -1,4 +1,4 @@
-use super::{MetricStore, LabelMatcher, BTreeMap, SeriesFingerprint, Labels, pb, ApiError, remote_read_series, remote_read_exemplar};
+use super::*;
 
 pub(crate) async fn append_remote_read_exemplars<S: MetricStore>(
     store: &S,

@@ -1,4 +1,4 @@
-use super::{StructArray, StringArray, TracesError, Array};
+use super::*;
 
 pub(crate) fn struct_string_field(array: &StructArray, idx: usize) -> Result<&StringArray, TracesError> {
     array

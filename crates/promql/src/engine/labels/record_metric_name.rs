@@ -1,4 +1,4 @@
-use super::{BTreeMap, Labels};
+use super::*;
 
 /// Records the `__name__` of the first sample for a histogram group key.
 ///

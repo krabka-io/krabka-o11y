@@ -1,4 +1,4 @@
-use super::{Labels, BTreeMap, yaml_mapping_json, Value};
+use super::*;
 
 pub(crate) fn alert_labels_map(
     sample_labels: &Labels,

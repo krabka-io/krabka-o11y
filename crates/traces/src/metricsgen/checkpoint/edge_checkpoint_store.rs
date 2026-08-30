@@ -1,3 +1,4 @@
+use super::*;
 
 pub trait EdgeCheckpointStore: Send + Sync {
     fn save(&self, tenant: &str, key: &[u8], value: &[u8]);

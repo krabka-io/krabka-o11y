@@ -1,4 +1,4 @@
-use super::{Span, RecordBatch, TracesError, span_batch_with_promoted_attrs};
+use super::*;
 
 /// Build one span-block `RecordBatch` from spans of one trace.
 ///

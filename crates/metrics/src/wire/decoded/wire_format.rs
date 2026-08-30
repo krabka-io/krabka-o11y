@@ -1,3 +1,4 @@
+use super::*;
 
 /// Which `remote_write` protobuf shape an HTTP request carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

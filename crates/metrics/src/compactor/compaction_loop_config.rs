@@ -1,4 +1,4 @@
-use super::Time;
+use super::*;
 
 /// Runtime knobs for the compactor polling loop.
 #[derive(Clone, Debug, PartialEq)]

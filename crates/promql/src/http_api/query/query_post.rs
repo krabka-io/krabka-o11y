@@ -1,4 +1,4 @@
-use super::{MetricStore, State, Arc, PrometheusApiState, HeaderMap, Bytes, Response, instant_query_params_from_form, IntoResponse, query_inner};
+use super::*;
 
 pub(crate) async fn query_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

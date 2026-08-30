@@ -1,4 +1,4 @@
-use super::{Line, Result, parse_error};
+use super::*;
 
 pub(crate) fn parse_expect_string(src: &str, line: Line<'_>) -> Result<String> {
     let src = src.trim();

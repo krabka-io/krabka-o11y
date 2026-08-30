@@ -1,4 +1,4 @@
-use super::{ Result, TestFile, TestParser};
+use super::*;
 
 /// Parses the legacy Prometheus `.test` DSL subset that the conformance harness uses.
 ///

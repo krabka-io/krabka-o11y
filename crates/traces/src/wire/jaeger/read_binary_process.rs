@@ -1,4 +1,4 @@
-use super::{BinaryInput, JaegerProcess, WireError, BT_BINARY, BT_LIST, read_binary_key_value};
+use super::*;
 
 pub(crate) fn read_binary_process(input: &mut BinaryInput<'_>) -> Result<JaegerProcess, WireError> {
     let mut out = JaegerProcess::default();

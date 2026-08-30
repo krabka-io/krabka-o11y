@@ -1,4 +1,4 @@
-use super::{KeyValue, AttrValue};
+use super::*;
 
 /// Pair an attribute key with the TRUE encoded byte length of its value.
 ///

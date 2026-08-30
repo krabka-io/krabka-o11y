@@ -1,4 +1,4 @@
-use super::{Labels, BTreeMap};
+use super::*;
 
 pub(crate) fn recording_labels(
     mut labels: Labels,

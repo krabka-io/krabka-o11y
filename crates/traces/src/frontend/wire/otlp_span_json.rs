@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize};
+use super::*;
 
 /// One OTLP span.
 ///

@@ -1,4 +1,4 @@
-use super::{Result, ExtendedSelectorModifier, extended_modifier_at, PromqlError};
+use super::*;
 
 pub(crate) fn strip_extended_selector_modifiers(
     query: &str,

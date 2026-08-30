@@ -1,4 +1,4 @@
-use super::Duration;
+use super::*;
 
 pub(crate) fn duration_micros(duration: Option<&Duration>) -> i64 {
     duration.map_or(0, |duration| {

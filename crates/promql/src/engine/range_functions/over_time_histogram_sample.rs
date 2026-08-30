@@ -1,4 +1,4 @@
-use super::{NativeHistogram, OverTimeFn, add_compatible_native_histogram, scale_native_histogram_values};
+use super::*;
 
 pub(crate) fn over_time_histogram_sample(
     histograms: &[NativeHistogram],

@@ -1,4 +1,4 @@
-use super::{BTreeMap, Line, Result, parse_float};
+use super::*;
 
 pub(crate) fn parse_optional_histogram_f64(
     fields: &BTreeMap<&str, &str>,

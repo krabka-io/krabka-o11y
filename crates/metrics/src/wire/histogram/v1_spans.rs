@@ -1,4 +1,4 @@
-use super::{pb, BucketSpan};
+use super::*;
 
 pub(crate) fn v1_spans(spans: &[pb::v1::BucketSpan]) -> Vec<BucketSpan> {
     spans

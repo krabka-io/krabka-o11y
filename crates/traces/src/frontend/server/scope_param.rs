@@ -1,4 +1,4 @@
-use super::{Uri, query_param, parse_scope};
+use super::*;
 
 pub(crate) fn scope_param(uri: &Uri) -> Result<Option<krabka_traceql::TagScope>, &'static str> {
     query_param(uri, "scope")

@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn parse_scope(name: &str) -> Option<krabka_traceql::TagScope> {
     Some(match name {

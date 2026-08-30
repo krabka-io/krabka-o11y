@@ -1,4 +1,4 @@
-use super::{OuterRangeFn, Expr};
+use super::*;
 
 /// The outer range or `*_over_time` function of a subquery call.
 ///

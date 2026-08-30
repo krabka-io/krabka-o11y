@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize, Time, secs, DEFAULT_LATENCY_BUCKETS_NS};
+use super::*;
 
 /// Metrics-generator runtime configuration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

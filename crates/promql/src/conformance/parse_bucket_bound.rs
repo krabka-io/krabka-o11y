@@ -1,4 +1,4 @@
-use super::{Line, Result, parse_float};
+use super::*;
 
 pub(crate) fn parse_bucket_bound(value: &str, line: Line<'_>) -> Result<f64> {
     match value {

@@ -1,4 +1,4 @@
-use super::JobShard;
+use super::*;
 
 /// Push the querier's scan-job params for a cold-block shard. The live shard
 /// sends no such params.

@@ -1,4 +1,4 @@
-use super::Deserialize;
+use super::*;
 
 #[derive(Deserialize)]
 pub(crate) struct ZipkinEndpoint {

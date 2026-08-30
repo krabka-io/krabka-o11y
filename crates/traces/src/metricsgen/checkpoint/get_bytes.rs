@@ -1,4 +1,4 @@
-use super::{CheckpointCodecError, Buf};
+use super::*;
 
 pub(crate) fn get_bytes(buf: &mut &[u8]) -> Result<Vec<u8>, CheckpointCodecError> {
     if buf.len() < 4 {

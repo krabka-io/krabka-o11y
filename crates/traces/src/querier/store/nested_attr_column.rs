@@ -1,4 +1,4 @@
-use super::NestedAttrScope;
+use super::*;
 
 #[derive(Clone, Copy)]
 pub(crate) struct NestedAttrColumn<'a> {

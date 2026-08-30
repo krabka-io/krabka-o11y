@@ -1,4 +1,4 @@
-use super::Deserialize;
+use super::*;
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct MetadataParams {

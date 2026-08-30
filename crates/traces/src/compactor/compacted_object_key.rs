@@ -1,4 +1,4 @@
-use super::{MinOffset, MaxOffset, WindowStartNs};
+use super::*;
 
 /// Deterministic object key for a compacted span block.
 #[must_use]

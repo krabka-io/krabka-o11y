@@ -1,4 +1,4 @@
-use super::{MetadataValueArray, BooleanArray};
+use super::*;
 
 impl MetadataValueArray for BooleanArray {
     fn string_value(&self, idx: usize) -> String {

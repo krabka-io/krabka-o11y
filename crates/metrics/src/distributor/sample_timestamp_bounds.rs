@@ -1,4 +1,4 @@
-use super::DecodedSeries;
+use super::*;
 
 pub(crate) fn sample_timestamp_bounds(series: &DecodedSeries) -> Option<(i64, i64)> {
     series

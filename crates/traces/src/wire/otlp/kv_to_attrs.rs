@@ -1,4 +1,4 @@
-use super::{OtlpKv, KeyValue, Value, any_to_attr};
+use super::*;
 
 pub(crate) fn kv_to_attrs(attr: &OtlpKv) -> Vec<KeyValue> {
     let Some(value) = attr.value.as_ref() else {

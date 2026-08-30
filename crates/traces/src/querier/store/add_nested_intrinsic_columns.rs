@@ -1,4 +1,4 @@
-use super::{RecordBatch, SpanMatcher, TraceqlError, add_nested_intrinsic_columns_to_batch};
+use super::*;
 
 pub(crate) fn add_nested_intrinsic_columns(
     batches: Vec<RecordBatch>,

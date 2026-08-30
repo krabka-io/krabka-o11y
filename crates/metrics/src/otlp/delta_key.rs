@@ -1,4 +1,4 @@
-use super::Labels;
+use super::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct DeltaKey {

@@ -1,4 +1,4 @@
-use super::InstantSample;
+use super::*;
 
 /// Applies `label_join(v, dst_label, separator, src_label_1, …)` to an
 /// already-assembled instant vector.

@@ -1,4 +1,4 @@
-use super::{BTreeMap, Value};
+use super::*;
 
 pub(crate) fn labels_map_json(labels: BTreeMap<String, String>) -> Value {
     Value::Object(

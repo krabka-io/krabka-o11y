@@ -1,4 +1,4 @@
-use super::{AnyValue, AttrValue, OtlpValue};
+use super::*;
 
 pub(crate) fn attr_value_from_otlp(value: &AnyValue) -> Option<AttrValue> {
     match value.value.as_ref()? {

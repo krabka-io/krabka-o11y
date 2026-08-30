@@ -1,3 +1,4 @@
+use super::*;
 
 /// The instant functions evaluated over only the last two samples of the
 /// window: `irate` and `idelta`.

@@ -1,4 +1,4 @@
-use super::Exemplar;
+use super::*;
 
 pub(crate) fn bucket_exemplars(
     exemplars: &[Exemplar],

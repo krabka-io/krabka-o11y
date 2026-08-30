@@ -1,3 +1,4 @@
+use super::*;
 
 /// Compaction index sidecar codec errors.
 #[derive(Debug, thiserror::Error)]

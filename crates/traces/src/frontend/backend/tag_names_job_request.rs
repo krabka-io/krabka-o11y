@@ -1,4 +1,4 @@
-use super::{TagScope, JobShard};
+use super::*;
 
 /// A tag-names job for one optional scope over a window.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-use super::Extremum;
+use super::*;
 
 /// Folds a non-empty window to its `min` or `max` and ignores NaN.
 ///

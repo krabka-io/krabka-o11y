@@ -1,4 +1,4 @@
-use super::{ByteSize, parse, ByteSizeExt};
+use super::*;
 
 pub(crate) fn parse_distributor_max_decompressed(value: &str) -> Result<ByteSize, String> {
     let size = parse::positive_byte_size(value).map_err(|error| error.to_string())?;

@@ -1,4 +1,4 @@
-use super::{RankReduction, RankCandidate};
+use super::*;
 
 pub(crate) fn compare_rank_candidates(
     kind: RankReduction,

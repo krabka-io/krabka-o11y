@@ -1,4 +1,4 @@
-use super::{BTreeMap, BucketSpan, compact_spanned_histogram_counts};
+use super::*;
 
 pub(crate) fn add_bucket_maps(
     mut left: BTreeMap<i32, f64>,

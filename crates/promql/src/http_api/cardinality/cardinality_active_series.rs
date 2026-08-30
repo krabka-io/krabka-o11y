@@ -1,4 +1,4 @@
-use super::{MetricStore, State, RawQuery, Arc, PrometheusApiState, HeaderMap, Response, parse_cardinality_params, IntoResponse, cardinality_active_series_inner};
+use super::*;
 
 pub(crate) async fn cardinality_active_series<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

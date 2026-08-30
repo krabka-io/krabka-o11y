@@ -1,4 +1,4 @@
-use super::{TsdbHeadStats, NamedTsdbStat};
+use super::*;
 
 /// Tenant-scoped TSDB status statistics.
 #[derive(Clone, Debug, PartialEq, Eq)]

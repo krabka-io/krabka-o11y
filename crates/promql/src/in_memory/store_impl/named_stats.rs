@@ -1,4 +1,4 @@
-use super::{BTreeMap, NamedTsdbStat};
+use super::*;
 
 pub(crate) fn named_stats(values: BTreeMap<String, usize>) -> Vec<NamedTsdbStat> {
     let mut stats = values

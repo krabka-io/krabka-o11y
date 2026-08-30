@@ -1,4 +1,4 @@
-use super::{LogicalPlan, VALUE_COLUMN, TIME_COLUMN, SAMPLE_TIME_COLUMN};
+use super::*;
 
 /// The `Utf8` label columns of an inner plan's output schema, in schema order.
 ///

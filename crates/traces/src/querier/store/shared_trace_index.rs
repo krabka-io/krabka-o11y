@@ -1,4 +1,4 @@
-use super::{Arc, ArcSwap, TraceIndex};
+use super::*;
 
 /// A `TraceIndex` shared between the span store and the live sources.
 ///

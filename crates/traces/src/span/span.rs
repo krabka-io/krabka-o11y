@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize, SpanKind, StatusCode, KeyValue, EventRecord, LinkRecord};
+use super::*;
 
 /// One internal span. The WAL carries one record per span.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

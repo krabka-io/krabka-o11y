@@ -1,4 +1,4 @@
-use super::{HaElectionRecord, Bytes};
+use super::*;
 
 #[must_use]
 pub fn ha_election_compaction_key(record: &HaElectionRecord) -> Bytes {

@@ -1,4 +1,4 @@
-use super::{PartitionIndex, Offset};
+use super::*;
 
 /// Offset to commit for one compacted WAL partition.
 #[derive(Clone, Debug, Eq, PartialEq)]

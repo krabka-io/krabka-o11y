@@ -1,4 +1,4 @@
-use super::{Time, QueryFrontendOptions};
+use super::*;
 
 /// One user range query that enters the query-frontend.
 #[derive(Clone, Debug, PartialEq)]

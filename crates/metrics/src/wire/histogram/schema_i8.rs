@@ -1,4 +1,4 @@
-use super::WireError;
+use super::*;
 
 pub(crate) fn schema_i8(schema: i32) -> Result<i8, WireError> {
     if schema == -53 || (-4..=8).contains(&schema) {

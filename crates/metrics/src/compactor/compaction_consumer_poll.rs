@@ -1,4 +1,4 @@
-use super::{async_trait, Time, ConsumerRecord, CompactionConsumerPollError};
+use super::*;
 
 /// Minimal consumer poll surface needed by the compactor loop.
 #[async_trait]

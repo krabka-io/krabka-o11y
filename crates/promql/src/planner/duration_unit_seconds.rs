@@ -1,4 +1,4 @@
-use super::{Result, PromqlError};
+use super::*;
 
 pub(crate) fn duration_unit_seconds(unit: &str) -> Result<f64> {
     match unit {

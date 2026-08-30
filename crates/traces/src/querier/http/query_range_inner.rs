@@ -1,4 +1,4 @@
-use super::{SpanStore, AppState, HeaderMap, Uri, Response, tenant, metrics_query_param, IntoResponse, StatusCode, required_seconds_param, QueryEnforcer, limit_error_response, step_param, UnixNano, exemplar_selection, scan_options_param, Json, trace_metrics_json, filter_metrics_exemplars};
+use super::*;
 
 pub(crate) async fn query_range_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
 where

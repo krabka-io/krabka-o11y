@@ -1,4 +1,4 @@
-use super::{CatalogError, BackendError};
+use super::*;
 
 /// Map a block-catalog enumeration failure to a backend transport error.
 ///

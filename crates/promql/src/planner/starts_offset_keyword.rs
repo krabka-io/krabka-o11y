@@ -1,4 +1,4 @@
-use super::is_ident_char;
+use super::*;
 
 pub(crate) fn starts_offset_keyword(chars: &[char], index: usize) -> bool {
     const OFFSET: &str = "offset";

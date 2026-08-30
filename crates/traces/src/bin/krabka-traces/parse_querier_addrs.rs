@@ -1,4 +1,4 @@
-use super::{Url, Parser};
+use super::*;
 
 /// Parse `--querier-url` into the bare `host:port` addresses the
 /// [`HttpQuerier`] pool dials. The flag holds comma-separated querier URLs, and

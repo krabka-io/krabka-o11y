@@ -1,4 +1,4 @@
-use super::{SharedRegistry, export};
+use super::*;
 
 /// Builds the `/metrics` exporter router.
 ///

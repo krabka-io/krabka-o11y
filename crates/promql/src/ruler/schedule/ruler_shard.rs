@@ -1,4 +1,4 @@
-use super::{PromqlError, stable_hash_parts};
+use super::*;
 
 /// One ruler shard for deterministic rule-group ownership.
 ///

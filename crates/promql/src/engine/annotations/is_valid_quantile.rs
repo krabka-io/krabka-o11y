@@ -1,3 +1,4 @@
+use super::*;
 
 /// Returns true if `phi` is a valid quantile in `[0, 1]`.
 ///

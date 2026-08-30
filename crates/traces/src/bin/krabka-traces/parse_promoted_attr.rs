@@ -1,4 +1,4 @@
-use super::PromotedSpanAttr;
+use super::*;
 
 pub(crate) fn parse_promoted_attr(spec: &str, key_prefix: Option<&str>) -> Result<PromotedSpanAttr, String> {
     let (key, value_type) = spec.split_once(':').unwrap_or((spec, "string"));

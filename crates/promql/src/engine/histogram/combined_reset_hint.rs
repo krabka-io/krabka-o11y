@@ -1,4 +1,4 @@
-use super::ResetHint;
+use super::*;
 
 pub(crate) fn combined_reset_hint(left: ResetHint, right: ResetHint) -> ResetHint {
     match (left, right) {

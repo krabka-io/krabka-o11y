@@ -1,4 +1,4 @@
-use super::{NativeQuantileBucket, BucketSpan};
+use super::*;
 
 pub(crate) fn append_native_spanned_buckets(
     buckets: &mut Vec<NativeQuantileBucket>,

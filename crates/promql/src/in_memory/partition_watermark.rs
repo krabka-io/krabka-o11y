@@ -1,4 +1,4 @@
-use super::Offset;
+use super::*;
 
 /// WAL offset watermarks materialized in the head for one partition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

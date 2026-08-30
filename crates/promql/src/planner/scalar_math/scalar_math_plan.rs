@@ -1,4 +1,4 @@
-use super::{SessionContext, LogicalPlan};
+use super::*;
 
 /// The assembled scalar-math operator plan.
 ///

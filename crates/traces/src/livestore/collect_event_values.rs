@@ -1,4 +1,4 @@
-use super::{Span, BTreeSet, typed_value_parts};
+use super::*;
 
 pub(crate) fn collect_event_values(span: &Span, tag: &str, values: &mut BTreeSet<(String, String)>) {
     for event in &span.events {

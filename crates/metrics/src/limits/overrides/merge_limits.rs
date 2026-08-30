@@ -1,4 +1,4 @@
-use super::{Limits, PartialLimits};
+use super::*;
 
 /// Overlays a sparse per-tenant override, or a defaults override, on top of
 /// `base`.

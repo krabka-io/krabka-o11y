@@ -1,4 +1,4 @@
-use super::{Arc, ObjectStore, Path, CompactionRetentionError, ObjectStoreExt};
+use super::*;
 
 pub(crate) async fn delete_if_exists(
     store: &Arc<dyn ObjectStore>,

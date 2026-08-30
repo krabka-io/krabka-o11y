@@ -1,4 +1,4 @@
-use super::NativeHistogram;
+use super::*;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DeltaHistogramState {

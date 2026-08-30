@@ -1,4 +1,4 @@
-use super::ConnectionType;
+use super::*;
 
 /// A half-edge until both client and server sides arrive.
 #[derive(Clone, Debug, PartialEq, Eq)]

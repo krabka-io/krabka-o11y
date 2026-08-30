@@ -1,4 +1,4 @@
-use super::{AttrValue, OtlpAnyValue, otlp_value, OtlpValue, OtlpArrayValue};
+use super::*;
 
 pub(crate) fn otlp_values(values: &[&AttrValue]) -> OtlpAnyValue {
     if let [value] = values {

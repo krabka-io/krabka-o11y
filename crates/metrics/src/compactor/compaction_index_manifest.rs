@@ -1,4 +1,4 @@
-use super::{Deserialize, Serialize, MetricBlockKind, CompactionSeriesLabels, CompactionObjectPlan, BlockMeta, CompactionIndexError};
+use super::*;
 
 /// Compaction index sidecar written next to a metric block object.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

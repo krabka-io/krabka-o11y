@@ -1,4 +1,4 @@
-use super::RecordBatch;
+use super::*;
 
 /// Arrow batches produced from one tenant's compacted rows.
 pub struct TenantBatches {

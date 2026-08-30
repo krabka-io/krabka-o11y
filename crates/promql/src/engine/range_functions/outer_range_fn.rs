@@ -1,4 +1,4 @@
-use super::{RangeFn, IrateFn, OverTimeFn, Time};
+use super::*;
 
 /// A range or `*_over_time` function applied to an evaluated range vector.
 ///

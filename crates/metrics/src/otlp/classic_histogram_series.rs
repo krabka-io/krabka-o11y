@@ -1,4 +1,4 @@
-use super::{HistogramDataPoint, KeyValue, DecodedMetadata, DecodedSeries, OtlpError, nanos_to_millis, exemplars_from_histogram_point, labels, DecodedSample, ToPrimitive, exemplars_for_bucket};
+use super::*;
 
 pub(crate) fn classic_histogram_series(
     name: &str,

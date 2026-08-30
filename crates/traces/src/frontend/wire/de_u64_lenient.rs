@@ -1,4 +1,4 @@
-use super::Deserialize;
+use super::*;
 
 /// Deserialize a `u64` that the querier may encode as a JSON number **or** a
 /// string. Tempo encodes some accounting counters as strings.

@@ -275,14 +275,14 @@ mod tests {
 // === split-modules: generated submodules ===
 mod build_extended_range_schema;
 mod range_array_type;
-mod range_manipulate_type;
+mod range_manipulate;
 mod range_manipulate_exec;
 mod range_suffix;
 mod step_windows;
 
 pub use build_extended_range_schema::build_extended_range_schema;
 use range_array_type::range_array_type;
-pub use range_manipulate_type::RangeManipulate;
+pub use range_manipulate::RangeManipulate;
 pub use range_manipulate_exec::RangeManipulateExec;
 pub use range_suffix::RANGE_SUFFIX;
 use step_windows::StepWindows;

@@ -1,3 +1,4 @@
+use super::*;
 
 /// Default cap on the number of distinct tenants tracked for per-tenant
 /// ingestion-rate token buckets. The map is otherwise insert-only, so an

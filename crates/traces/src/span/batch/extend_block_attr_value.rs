@@ -1,4 +1,4 @@
-use super::BlockAttrValue;
+use super::*;
 
 pub(crate) fn extend_block_attr_value(existing: &mut BlockAttrValue, next: BlockAttrValue) {
     match (existing, next) {

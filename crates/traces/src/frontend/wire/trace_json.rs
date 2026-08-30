@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize, Time, SpanSetJson, TraceResult, hex16};
+use super::*;
 
 /// One matched trace in the search response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

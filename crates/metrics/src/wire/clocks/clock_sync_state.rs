@@ -1,4 +1,4 @@
-use super::{Deserialize, Serialize};
+use super::*;
 
 /// What a clock discipline does now.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

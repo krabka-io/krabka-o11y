@@ -1,4 +1,4 @@
-use super::{BTreeMap, Labels};
+use super::*;
 
 /// Expands `{{ $value }}` and `{{ $labels.NAME }}` in every value of an alert
 /// label or annotation map.

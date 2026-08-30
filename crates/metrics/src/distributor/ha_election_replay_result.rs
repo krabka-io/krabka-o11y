@@ -1,4 +1,4 @@
-use super::HaElectionPartitionOffset;
+use super::*;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct HaElectionReplayResult {

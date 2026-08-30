@@ -1,4 +1,4 @@
-use super::{DecodedSeries, WalRecord, label_pairs, WalExemplar, SamplePayload};
+use super::*;
 
 /// Fans the decoded series into one WAL record per float sample or native-
 /// histogram sample.

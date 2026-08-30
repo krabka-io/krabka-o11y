@@ -1,4 +1,4 @@
-use super::{LabelKey, sorted_labels};
+use super::*;
 
 pub(crate) fn service_graph_labels((client, server, connection_type): LabelKey) -> Vec<(String, String)> {
     sorted_labels(vec![

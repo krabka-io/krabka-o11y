@@ -1,4 +1,4 @@
-use super::{SpanRef, AttrValue};
+use super::*;
 
 pub(crate) fn instrumentation_attributes(span: &SpanRef) -> Vec<(String, AttrValue)> {
     span.attributes

@@ -1,4 +1,4 @@
-use super::{Time, minutes};
+use super::*;
 
 /// Static options for `PromQL` evaluation.
 ///

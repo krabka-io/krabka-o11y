@@ -1,4 +1,4 @@
-use super::{UnixNanos, i64};
+use super::*;
 
 impl From<UnixNanos> for i64 {
     fn from(instant: UnixNanos) -> Self {

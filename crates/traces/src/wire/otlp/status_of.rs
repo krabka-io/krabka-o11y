@@ -1,4 +1,4 @@
-use super::{Status, StatusCode};
+use super::*;
 
 pub(crate) fn status_of(status: Option<&Status>) -> (StatusCode, String) {
     match status {

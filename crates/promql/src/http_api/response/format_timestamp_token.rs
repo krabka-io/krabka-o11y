@@ -1,3 +1,4 @@
+use super::*;
 
 /// Builds the JSON number token for a millisecond timestamp.
 ///

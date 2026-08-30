@@ -1,4 +1,4 @@
-use super::{CompactInput, JaegerProcess, WireError, T_BINARY, T_LIST, read_key_value};
+use super::*;
 
 pub(crate) fn read_process(input: &mut CompactInput<'_>) -> Result<JaegerProcess, WireError> {
     let mut out = JaegerProcess::default();

@@ -1,4 +1,4 @@
-use super::{RecordBatch, StringArray, TracesError, Array};
+use super::*;
 
 pub(crate) fn string_column<'a>(batch: &'a RecordBatch, column: &str) -> Result<&'a StringArray, TracesError> {
     batch

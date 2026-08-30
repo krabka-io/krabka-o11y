@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn yaml_optional_string(value: &serde_yaml::Value, key: &str) -> Option<String> {
     value

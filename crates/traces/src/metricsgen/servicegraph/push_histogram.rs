@@ -1,4 +1,4 @@
-use super::{Series, HistogramSnapshot, SeriesSample, cumulative_buckets_seconds};
+use super::*;
 
 pub(crate) fn push_histogram(
     out: &mut Vec<Series>,

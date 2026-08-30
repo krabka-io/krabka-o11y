@@ -220,5 +220,6 @@ pub use register_scalar_math_udfs::register_scalar_math_udfs;
 use round_to_nearest::round_to_nearest;
 use scalar_f64::scalar_f64;
 pub use scalar_math_op::ScalarMathOp;
+use scalar_math_udf::ScalarMathUdf;
 pub use scalar_math_udf::scalar_math_udf;
 pub use scalar_math_udfs::scalar_math_udfs;

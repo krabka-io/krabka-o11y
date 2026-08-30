@@ -1,4 +1,4 @@
-use super::{Expr, QueryShard, inject_shard_into_selector};
+use super::*;
 
 pub(crate) fn inject_shard_into_expr(expr: &mut Expr, shard: QueryShard) {
     match expr {

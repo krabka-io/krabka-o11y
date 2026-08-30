@@ -1,4 +1,4 @@
-use super::ApiError;
+use super::*;
 
 pub(crate) fn parse_limit_parameter(value: &str) -> Result<usize, ApiError> {
     value

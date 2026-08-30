@@ -1,4 +1,4 @@
-use super::NativeHistogram;
+use super::*;
 
 /// One loaded sample slot.
 #[derive(Clone, Debug, PartialEq)]

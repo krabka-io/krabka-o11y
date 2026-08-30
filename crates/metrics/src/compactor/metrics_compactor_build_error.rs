@@ -1,4 +1,4 @@
-use super::MetricsCompactorConfigError;
+use super::*;
 
 /// Errors raised while constructing live compactor role dependencies.
 #[derive(Debug, thiserror::Error)]

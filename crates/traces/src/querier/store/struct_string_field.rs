@@ -1,4 +1,4 @@
-use super::{StructArray, Array, TraceqlError};
+use super::*;
 
 pub(crate) fn struct_string_field<'a>(
     values: &'a StructArray,

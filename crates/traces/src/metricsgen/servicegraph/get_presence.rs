@@ -1,4 +1,4 @@
-use super::{CheckpointCodecError, Buf};
+use super::*;
 
 pub(crate) fn get_presence(buf: &mut &[u8]) -> Result<bool, CheckpointCodecError> {
     if buf.is_empty() {

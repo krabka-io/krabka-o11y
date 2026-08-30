@@ -1,3 +1,4 @@
+use super::*;
 
 /// One metric metadata row ready for indexing.
 #[derive(Clone, Debug, PartialEq, Eq)]

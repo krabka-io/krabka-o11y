@@ -1,4 +1,4 @@
-use super::{SessionContext, LogicalPlan, BTreeMap, SeriesFingerprint, Labels, InstantShape};
+use super::*;
 
 /// The executable payload of `PlannedInstant::Operator`.
 pub(crate) struct OperatorInstant {

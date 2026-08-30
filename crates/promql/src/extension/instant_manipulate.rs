@@ -290,8 +290,8 @@ mod tests {
 }
 
 // === split-modules: generated submodules ===
-mod instant_manipulate_type;
+mod instant_manipulate;
 mod instant_manipulate_exec;
 
-pub use instant_manipulate_type::InstantManipulate;
+pub use instant_manipulate::InstantManipulate;
 pub use instant_manipulate_exec::InstantManipulateExec;

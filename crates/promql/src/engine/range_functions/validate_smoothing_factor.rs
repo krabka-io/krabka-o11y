@@ -1,3 +1,4 @@
+use super::*;
 
 #[cfg(feature = "experimental-functions")]
 pub(crate) fn validate_smoothing_factor(name: &str, value: f64) -> Result<()> {

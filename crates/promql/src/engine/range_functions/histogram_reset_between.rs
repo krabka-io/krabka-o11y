@@ -1,4 +1,4 @@
-use super::{NativeHistogram, histogram_counts_reset};
+use super::*;
 
 pub(crate) fn histogram_reset_between(previous: &NativeHistogram, current: &NativeHistogram) -> bool {
     current.count < previous.count

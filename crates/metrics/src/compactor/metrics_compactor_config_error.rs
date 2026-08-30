@@ -1,3 +1,4 @@
+use super::*;
 
 /// Errors raised while configuring the metrics compactor role.
 #[derive(Debug, thiserror::Error)]

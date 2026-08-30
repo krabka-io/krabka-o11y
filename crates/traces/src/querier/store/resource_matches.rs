@@ -1,4 +1,4 @@
-use super::{RecordBatch, SpanMatcher, TraceqlError, root_service_matches, string_value, COL_ROOT_SERVICE_NAME, batch_attr_matches_with_resource, RESOURCE_ATTR_PREFIX};
+use super::*;
 
 pub(crate) fn resource_matches(
     batch: &RecordBatch,

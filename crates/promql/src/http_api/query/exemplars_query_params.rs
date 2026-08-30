@@ -1,4 +1,4 @@
-use super::Deserialize;
+use super::*;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ExemplarsQueryParams {

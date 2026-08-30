@@ -1,4 +1,4 @@
-use super::AttrValue;
+use super::*;
 
 pub(crate) fn typed_value_parts(value: &AttrValue) -> (String, String) {
     match value {

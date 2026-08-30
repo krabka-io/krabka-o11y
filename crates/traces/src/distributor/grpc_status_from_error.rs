@@ -1,4 +1,4 @@
-use super::{TracesError, GrpcStatus};
+use super::*;
 
 pub(crate) fn grpc_status_from_error(err: &TracesError) -> GrpcStatus {
     match err {

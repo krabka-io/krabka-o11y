@@ -1,4 +1,4 @@
-use super::BackendError;
+use super::*;
 
 /// Build a `host/path?query` URL with the given params.
 ///

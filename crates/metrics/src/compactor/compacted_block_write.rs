@@ -1,4 +1,4 @@
-use super::{MetricBlockKind, BlockMeta, CompactionIndexManifest};
+use super::*;
 
 /// One persisted metric block and its committed index sidecar description.
 #[derive(Clone, Debug, PartialEq)]

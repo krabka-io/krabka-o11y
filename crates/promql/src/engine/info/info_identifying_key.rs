@@ -1,4 +1,4 @@
-use super::Labels;
+use super::*;
 
 pub(crate) fn info_identifying_key(labels: &Labels) -> Option<String> {
     Some(format!(

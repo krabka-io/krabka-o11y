@@ -1,4 +1,4 @@
-use super::{Deserialize, Serialize};
+use super::*;
 
 /// Where a clock gets its time.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

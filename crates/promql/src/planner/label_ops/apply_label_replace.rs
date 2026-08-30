@@ -1,4 +1,4 @@
-use super::{InstantSample, Result, Regex, PromqlError};
+use super::*;
 
 /// Applies `label_replace(v, dst_label, replacement, src_label, regex)` to an
 /// already-assembled instant vector.

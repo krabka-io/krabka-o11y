@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize};
+use super::*;
 
 /// OTLP status code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

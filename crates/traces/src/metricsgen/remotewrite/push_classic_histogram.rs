@@ -1,4 +1,4 @@
-use super::{WireTimeSeries, Series, le_label, bucket_exemplars, with_name};
+use super::*;
 
 pub(crate) fn push_classic_histogram(
     out: &mut Vec<WireTimeSeries>,

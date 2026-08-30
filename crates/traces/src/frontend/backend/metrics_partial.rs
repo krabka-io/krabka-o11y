@@ -1,4 +1,4 @@
-use super::{MetricsResponseJson, Metrics};
+use super::*;
 
 /// The partial result of one metrics job: the series body plus the accounting.
 #[derive(Clone, Debug, Default)]

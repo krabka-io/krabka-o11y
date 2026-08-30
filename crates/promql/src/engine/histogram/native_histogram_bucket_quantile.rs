@@ -1,4 +1,4 @@
-use super::{NativeHistogram, NativeQuantileBucket};
+use super::*;
 
 pub(crate) fn native_histogram_bucket_quantile(
     hist: &NativeHistogram,

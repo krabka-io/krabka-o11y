@@ -1,4 +1,4 @@
-use super::{Span, BTreeSet, bytes_to_hex};
+use super::*;
 
 pub(crate) fn collect_span_intrinsic_value(span: &Span, tag: &str, values: &mut BTreeSet<(String, String)>) {
     match tag {

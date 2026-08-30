@@ -1,4 +1,4 @@
-use super::{TraceqlValue, TypedValue};
+use super::*;
 
 pub(crate) fn typed_traceql_value(value: &TraceqlValue) -> Option<TypedValue> {
     let (type_, value) = match value {

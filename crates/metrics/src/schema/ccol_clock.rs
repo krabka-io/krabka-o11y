@@ -1,3 +1,4 @@
+use super::*;
 
 /// Clock reading clock-name column (`Dictionary<Int32, Utf8>`).
 ///

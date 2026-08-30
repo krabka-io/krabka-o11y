@@ -1,4 +1,4 @@
-use super::{HeaderMap, header};
+use super::*;
 
 pub(crate) fn wants_protobuf(headers: &HeaderMap) -> bool {
     headers

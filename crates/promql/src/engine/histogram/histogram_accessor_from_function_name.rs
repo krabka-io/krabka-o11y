@@ -1,4 +1,4 @@
-use super::HistogramAccessor;
+use super::*;
 
 /// Maps a native-histogram accessor function name to its [`HistogramAccessor`] variant.
 ///

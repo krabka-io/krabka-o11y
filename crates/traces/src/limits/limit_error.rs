@@ -1,4 +1,4 @@
-use super::Error;
+use super::*;
 
 #[derive(Clone, Debug, Error, PartialEq)]
 pub enum LimitError {

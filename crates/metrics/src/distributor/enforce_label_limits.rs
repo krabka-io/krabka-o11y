@@ -1,4 +1,4 @@
-use super::{Limits, DecodedSeries, LimitError, IngestEnforcer};
+use super::*;
 
 pub(crate) fn enforce_label_limits(limits: &Limits, series: &[DecodedSeries]) -> Result<(), LimitError> {
     for series in series {

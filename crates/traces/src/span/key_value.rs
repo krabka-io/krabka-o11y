@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize, AttrValue};
+use super::*;
 
 /// One attribute key/value pair.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-use super::DecodedClockReading;
+use super::*;
 
 /// The label set for one projected series: the clock identity, the metric
 /// name, and any state label the family adds.

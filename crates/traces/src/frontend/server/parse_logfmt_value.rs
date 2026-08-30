@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn parse_logfmt_value(input: &str) -> Option<(String, usize)> {
     if let Some(input) = input.strip_prefix('"') {

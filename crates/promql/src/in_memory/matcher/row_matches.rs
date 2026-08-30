@@ -1,4 +1,4 @@
-use super::{SeriesFingerprint, Labels, PreparedMatcher, all_match};
+use super::*;
 
 pub(crate) fn row_matches(
     fp: SeriesFingerprint,

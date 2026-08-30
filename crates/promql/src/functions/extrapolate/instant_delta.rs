@@ -1,4 +1,4 @@
-use super::{InstantKind, ToPrimitive};
+use super::*;
 
 /// Prometheus' instant estimator, shared by `irate`/`idelta`.
 ///

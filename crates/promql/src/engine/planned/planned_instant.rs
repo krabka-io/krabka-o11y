@@ -1,4 +1,4 @@
-use super::{OperatorInstant, InstantSample, RangeSeries, SessionContext, LogicalPlan, BTreeMap, SeriesFingerprint, Labels, InstantShape};
+use super::*;
 
 /// A planned instant-query result.
 ///

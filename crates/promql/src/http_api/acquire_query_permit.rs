@@ -1,4 +1,4 @@
-use super::{MetricStore, PrometheusApiState, OwnedSemaphorePermit, Arc};
+use super::*;
 
 pub(crate) async fn acquire_query_permit<S: MetricStore>(
     state: &PrometheusApiState<S>,

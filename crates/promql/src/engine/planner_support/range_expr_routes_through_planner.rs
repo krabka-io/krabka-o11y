@@ -1,4 +1,4 @@
-use super::{Expr, instant_expr_is_plannable};
+use super::*;
 
 /// Gate for routing a range query through the per-step operator planner.
 ///

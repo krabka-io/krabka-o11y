@@ -1,3 +1,4 @@
+use super::*;
 
 /// Wraps a scalar `QueryResult` from a delegated interpreter call.
 ///

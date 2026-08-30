@@ -1,4 +1,4 @@
-use super::{SpanStore, AppState, HeaderMap, Uri, Response, decode_trace_id, IntoResponse, StatusCode, tenant, optional_time_bounds, wants_json, Json, trace_json, trace_protobuf, header};
+use super::*;
 
 pub(crate) async fn trace_by_id_v1_inner<S>(
     state: &AppState<S>,

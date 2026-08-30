@@ -1,4 +1,4 @@
-use super::{NativeHistogram, add_histogram_counts};
+use super::*;
 
 pub(crate) fn add_histogram_step(
     start: &NativeHistogram,

@@ -1,4 +1,4 @@
-use super::{RecordBatch, BTreeSet, BTreeMap, TracesError, list_column, SCOL_ATTR_KEYS, Array, StringArray, RESOURCE_ATTR_PREFIX, attr_value, insert_tag_value};
+use super::*;
 
 pub(crate) fn collect_attr_metadata(
     batch: &RecordBatch,

@@ -1,4 +1,4 @@
-use super::WireError;
+use super::*;
 
 pub(crate) fn span_id_part(bytes: &[u8]) -> Result<i64, WireError> {
     if bytes.len() != 8 {

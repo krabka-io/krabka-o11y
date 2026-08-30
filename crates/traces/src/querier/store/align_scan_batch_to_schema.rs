@@ -1,4 +1,4 @@
-use super::{RecordBatch, SchemaRef, TraceqlError, Array, cast};
+use super::*;
 
 pub(crate) fn align_scan_batch_to_schema(
     batch: &RecordBatch,

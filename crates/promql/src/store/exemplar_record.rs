@@ -1,4 +1,4 @@
-use super::Labels;
+use super::*;
 
 /// One exemplar attached to a metric series.
 #[derive(Clone, Debug, PartialEq)]

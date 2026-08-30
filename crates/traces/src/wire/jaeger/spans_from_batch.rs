@@ -1,4 +1,4 @@
-use super::{JaegerBatch, Span, jaeger_span_to_internal};
+use super::*;
 
 pub(crate) fn spans_from_batch(batch: &JaegerBatch) -> Vec<Span> {
     batch

@@ -1,4 +1,4 @@
-use super::parse_duration_component_ns;
+use super::*;
 
 pub(crate) fn parse_go_duration_ns(value: &str) -> Result<u64, String> {
     if value.is_empty() {

@@ -1,4 +1,4 @@
-use super::{KeyValue, AttrValue};
+use super::*;
 
 pub(crate) fn attr_string(attrs: &[KeyValue], key: &str) -> Option<String> {
     attrs.iter().find_map(|attr| {

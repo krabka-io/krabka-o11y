@@ -1,4 +1,4 @@
-use super::{Edge, BytesMut, BufMut, put_optional_string, put_optional_i64};
+use super::*;
 
 pub(crate) fn encode_checkpoint_value(edge: &Edge) -> Vec<u8> {
     let mut buf = BytesMut::new();

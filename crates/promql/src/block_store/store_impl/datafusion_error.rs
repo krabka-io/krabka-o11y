@@ -1,4 +1,4 @@
-use super::PromqlError;
+use super::*;
 
 pub(crate) fn datafusion_error(error: datafusion::error::DataFusionError) -> PromqlError {
     let message = error.to_string();

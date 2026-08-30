@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn is_valid_label_name(name: &str) -> bool {
     let mut chars = name.chars();

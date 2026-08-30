@@ -1,4 +1,4 @@
-use super::{Field, DataType};
+use super::*;
 
 pub(crate) fn utf8_map_field(name: &str, nullable: bool) -> Field {
     Field::new_map(

@@ -1,4 +1,4 @@
-use super::{AttrValue, OtlpKeyValue, group_attrs, otlp_values};
+use super::*;
 
 pub(crate) fn otlp_attrs(attrs: &[(String, AttrValue)]) -> Vec<OtlpKeyValue> {
     group_attrs(attrs)

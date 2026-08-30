@@ -1,4 +1,4 @@
-use super::{CompiledLabelMatcher, Labels, MatchOp};
+use super::*;
 
 /// A set of [`CompiledLabelMatcher`]s for a hot match loop.
 ///

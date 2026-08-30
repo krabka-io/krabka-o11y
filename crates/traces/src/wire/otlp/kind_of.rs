@@ -1,4 +1,4 @@
-use super::{SpanKind, OtlpKind};
+use super::*;
 
 pub(crate) fn kind_of(kind: i32) -> SpanKind {
     if kind == OtlpKind::Unspecified as i32 {

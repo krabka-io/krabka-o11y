@@ -1,4 +1,4 @@
-use super::SampleSpec;
+use super::*;
 
 /// One series in a `load` statement.
 #[derive(Clone, Debug, PartialEq)]

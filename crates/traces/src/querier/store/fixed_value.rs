@@ -1,4 +1,4 @@
-use super::{RecordBatch, TraceqlError, fixed};
+use super::*;
 
 pub(crate) fn fixed_value<const N: usize>(
     batch: &RecordBatch,

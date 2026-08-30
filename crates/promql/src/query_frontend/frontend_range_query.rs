@@ -1,4 +1,4 @@
-use super::{Time, QueryShard, LabelMatcher};
+use super::*;
 
 /// One subquery the query-frontend can fan out to a querier.
 ///

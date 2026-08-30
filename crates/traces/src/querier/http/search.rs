@@ -1,4 +1,4 @@
-use super::{SpanStore, State, AppState, HeaderMap, Uri, Response, search_inner};
+use super::*;
 
 pub(crate) async fn search<S>(State(state): State<AppState<S>>, headers: HeaderMap, uri: Uri) -> Response
 where

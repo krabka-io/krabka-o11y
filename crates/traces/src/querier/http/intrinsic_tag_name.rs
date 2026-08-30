@@ -1,4 +1,4 @@
-use super::Intrinsic;
+use super::*;
 
 pub(crate) fn intrinsic_tag_name(intrinsic: &Intrinsic) -> &'static str {
     match intrinsic {

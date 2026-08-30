@@ -1,4 +1,4 @@
-use super::BTreeMap;
+use super::*;
 
 /// One alert payload ready for an Alertmanager-compatible API.
 #[derive(Clone, Debug, Eq, PartialEq)]

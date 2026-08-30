@@ -1,4 +1,4 @@
-use super::{ClassicBucket, NativeQuantileBucket};
+use super::*;
 
 pub(crate) fn classic_histogram_buckets(buckets: &[ClassicBucket]) -> Vec<NativeQuantileBucket> {
     let mut out = Vec::with_capacity(buckets.len());

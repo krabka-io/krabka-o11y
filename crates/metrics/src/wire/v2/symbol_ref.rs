@@ -1,4 +1,4 @@
-use super::{SymbolTable, WireError};
+use super::*;
 
 pub(crate) fn symbol_ref(table: &SymbolTable, index: u32) -> Result<String, WireError> {
     table

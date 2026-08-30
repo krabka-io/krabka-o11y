@@ -1,4 +1,4 @@
-use super::{HistogramExtrapolation, NativeHistogram, extrapolated_histogram_component};
+use super::*;
 
 pub(crate) fn extrapolated_histogram_counts(
     extrapolation: &HistogramExtrapolation<'_>,

@@ -1,4 +1,4 @@
-use super::{DecodedSample, DecodedSeries};
+use super::*;
 
 pub(crate) fn decoded_series(labels: Vec<(String, String)>, sample: Option<DecodedSample>) -> DecodedSeries {
     DecodedSeries {

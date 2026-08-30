@@ -1,4 +1,4 @@
-use super::{Labels, SampleValue};
+use super::*;
 
 /// One labeled point in an instant vector.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]

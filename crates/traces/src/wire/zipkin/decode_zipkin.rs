@@ -1,4 +1,4 @@
-use super::{Span, WireError, ZipkinSpan, KeyValue, AttrValue, zipkin_status, hex_fixed, zipkin_kind};
+use super::*;
 
 /// Decode a Zipkin v2 JSON span array.
 ///

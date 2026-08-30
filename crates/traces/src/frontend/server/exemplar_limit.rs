@@ -1,4 +1,4 @@
-use super::{Uri, query_param};
+use super::*;
 
 pub(crate) fn exemplar_limit(uri: &Uri) -> Option<usize> {
     match query_param(uri, "exemplars").as_deref() {

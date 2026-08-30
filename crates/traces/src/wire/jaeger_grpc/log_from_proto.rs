@@ -1,4 +1,4 @@
-use super::{api_v2, JaegerLog, timestamp_micros, key_value_from_proto};
+use super::*;
 
 pub(crate) fn log_from_proto(log: &api_v2::Log) -> JaegerLog {
     JaegerLog {

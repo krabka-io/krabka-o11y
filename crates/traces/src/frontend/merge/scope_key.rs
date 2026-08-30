@@ -1,4 +1,4 @@
-use super::TagScope;
+use super::*;
 
 /// Stable string discriminant for a `TagScope`. It is the ordering key and the
 /// dedup key.

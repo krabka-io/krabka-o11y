@@ -1,4 +1,4 @@
-use super::{async_trait, Arc, ObjectStore, CompactionIndexManifest, CompactionIndexError, ObjectStoreExt, Path, CompactionIndexSink, PutPayload};
+use super::*;
 
 /// Object-store backed compaction index sidecar sink.
 pub struct ObjectStoreCompactionIndexSink {

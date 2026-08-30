@@ -1,4 +1,4 @@
-use super::{MAX_TENANT_ID_LEN, is_allowed_tenant_byte};
+use super::*;
 
 /// Validates a tenant ID against Mimir's `ValidTenantID` rules. It rejects an
 /// empty ID, a length over 150 bytes, the reserved `.` and `..` path segments,

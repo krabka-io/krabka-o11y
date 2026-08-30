@@ -1,4 +1,4 @@
-use super::JobShard;
+use super::*;
 
 /// The output of planning: the jobs to dispatch, and how many blocks they
 /// cover. The block count seeds `metrics.totalBlocks`.

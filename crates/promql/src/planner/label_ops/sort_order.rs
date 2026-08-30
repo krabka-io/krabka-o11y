@@ -1,4 +1,4 @@
-use super::Ordering;
+use super::*;
 
 /// Sort order for the `sort` / `sort_desc` functions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

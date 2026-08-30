@@ -1,4 +1,4 @@
-use super::{prom_label, LabelMatcher, MatchOp, BTreeSet};
+use super::*;
 
 pub(crate) fn build_label_matchers(
     metric_name: Option<&str>,

@@ -1,4 +1,4 @@
-use super::{Time, TimeExt};
+use super::*;
 
 /// Query-range values available to Prometheus duration expressions.
 ///

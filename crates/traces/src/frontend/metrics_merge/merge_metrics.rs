@@ -1,4 +1,4 @@
-use super::{MetricsResponseJson, MetricSeries, merge_metric_series, limit_exemplars};
+use super::*;
 
 /// Merge all metric partials' series into one response, then apply exemplar
 /// limiting.

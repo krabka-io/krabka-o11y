@@ -1,4 +1,4 @@
-use super::{HeaderMap, TENANT_HEADER};
+use super::*;
 
 pub(crate) fn tenant(headers: &HeaderMap) -> String {
     headers

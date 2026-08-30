@@ -1,4 +1,4 @@
-use super::{TraceSpans, ResourceSpanGroup, span_resource_attributes};
+use super::*;
 
 pub(crate) fn resource_span_groups(trace: &TraceSpans, returned_spans: usize) -> Vec<ResourceSpanGroup<'_>> {
     let mut groups: Vec<ResourceSpanGroup<'_>> = Vec::new();

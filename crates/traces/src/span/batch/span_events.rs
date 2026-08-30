@@ -1,4 +1,4 @@
-use super::{Span, SpanEvent, Time, TimeExt, event_attrs};
+use super::*;
 
 pub(crate) fn span_events(span: &Span) -> Vec<SpanEvent> {
     span.events

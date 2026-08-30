@@ -1,4 +1,4 @@
-use super::AttrValue;
+use super::*;
 
 pub(crate) fn group_attrs(attrs: &[(String, AttrValue)]) -> Vec<(&str, Vec<&AttrValue>)> {
     let mut grouped: Vec<(&str, Vec<&AttrValue>)> = Vec::new();

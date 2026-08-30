@@ -1,4 +1,4 @@
-use super::SpanKind;
+use super::*;
 
 pub(crate) fn edge_side(kind: SpanKind) -> Option<bool> {
     match kind {

@@ -1,4 +1,4 @@
-use super::{NativeHistogram, histogram_reset_between};
+use super::*;
 
 pub(crate) fn histogram_reset_indices(histograms: &[NativeHistogram]) -> Vec<usize> {
     histograms

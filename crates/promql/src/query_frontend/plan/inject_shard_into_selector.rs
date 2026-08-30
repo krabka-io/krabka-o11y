@@ -1,4 +1,4 @@
-use super::{VectorSelector, QueryShard, QUERY_SHARD_LABEL, prom_label};
+use super::*;
 
 pub(crate) fn inject_shard_into_selector(selector: &mut VectorSelector, shard: QueryShard) {
     if selector

@@ -44,7 +44,7 @@ mod histogram_columns;
 mod histogram_span_view;
 mod histogram_view;
 mod list_offsets;
-mod range_array_type;
+mod range_array;
 mod span_list_value;
 mod struct_column;
 
@@ -53,6 +53,6 @@ use histogram_columns::HistogramColumns;
 pub use histogram_span_view::HistogramSpanView;
 pub use histogram_view::HistogramView;
 use list_offsets::list_offsets;
-pub use range_array_type::RangeArray;
+pub use range_array::RangeArray;
 use span_list_value::span_list_value;
 use struct_column::struct_column;

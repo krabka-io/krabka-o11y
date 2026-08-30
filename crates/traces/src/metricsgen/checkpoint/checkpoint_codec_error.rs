@@ -1,3 +1,4 @@
+use super::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CheckpointCodecError {

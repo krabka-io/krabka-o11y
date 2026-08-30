@@ -1,4 +1,4 @@
-use super::{RecordBatch, EventRef, TraceqlError, optional_list_column, SCOL_EVENTS, Array, StructArray, struct_string_field, struct_int64_field, struct_list_field, string_array_value, TimeExt, Time, nested_string_attrs};
+use super::*;
 
 pub(crate) fn event_values(batch: &RecordBatch, row: usize) -> Result<Vec<EventRef>, TraceqlError> {
     let Some(events) = optional_list_column(batch, SCOL_EVENTS)? else {

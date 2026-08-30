@@ -1,4 +1,4 @@
-use super::{DiscoveryParams, LabelMatcher, ApiError, selector_matchers};
+use super::*;
 
 pub(crate) fn discovery_matchers(
     params: &DiscoveryParams,

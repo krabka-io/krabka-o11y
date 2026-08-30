@@ -1,4 +1,4 @@
-use super::NativeHistogram;
+use super::*;
 
 /// Neutral sample shape emitted by metrics-generator processors.
 #[derive(Clone, Debug, PartialEq)]

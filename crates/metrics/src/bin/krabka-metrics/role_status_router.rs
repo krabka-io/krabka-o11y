@@ -1,4 +1,4 @@
-use super::{Router, get, role_build_info};
+use super::*;
 
 pub(crate) fn role_status_router(role: &'static str) -> Router {
     Router::new()

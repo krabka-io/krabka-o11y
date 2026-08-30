@@ -1,3 +1,4 @@
+use super::*;
 
 #[cfg(feature = "experimental-functions")]
 pub(crate) fn limit_ratio_includes_sample(ratio: f64, labels: &Labels) -> bool {

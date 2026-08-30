@@ -1,4 +1,4 @@
-use super::SessionContext;
+use super::*;
 
 /// A leaf scan result with up to two `DataFusion` tables registered.
 pub struct ScanResult {

@@ -1,4 +1,4 @@
-use super::{ConsumerRecord, TRACEPARENT_HEADER};
+use super::*;
 
 /// Make `span` a child of the distributed trace carried on any consumed
 /// record's `traceparent` header.

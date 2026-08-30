@@ -1,4 +1,4 @@
-use super::{KeyValue, AttrValue};
+use super::*;
 
 pub(crate) fn traceql_attr(attr: &KeyValue) -> Option<krabka_traceql::AttrValue> {
     Some(match &attr.value {

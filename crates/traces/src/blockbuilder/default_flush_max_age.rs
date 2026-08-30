@@ -1,4 +1,4 @@
-use super::{Time, secs};
+use super::*;
 
 /// Default maximum age of the oldest buffered span record before a flush.
 ///

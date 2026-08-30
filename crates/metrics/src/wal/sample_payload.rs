@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize, NativeHistogram, ClockReadingPayload};
+use super::*;
 
 /// One sample's WAL payload.
 ///

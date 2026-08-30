@@ -1,4 +1,4 @@
-use super::{AttrValue, OtlpAnyValue, OtlpValue};
+use super::*;
 
 pub(crate) fn otlp_value(value: &AttrValue) -> OtlpAnyValue {
     OtlpAnyValue {

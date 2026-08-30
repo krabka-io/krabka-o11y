@@ -1,4 +1,4 @@
-use super::{Result, TraceqlError};
+use super::*;
 
 pub(crate) fn fixed_16(bytes: &[u8]) -> Result<[u8; 16]> {
     bytes

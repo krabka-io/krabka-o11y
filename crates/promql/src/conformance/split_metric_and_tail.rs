@@ -1,4 +1,4 @@
-use super::{Line, Result, parse_error};
+use super::*;
 
 pub(crate) fn split_metric_and_tail<'a>(src: &'a str, line: Line<'_>) -> Result<(&'a str, &'a str)> {
     let mut brace_depth = 0_u32;

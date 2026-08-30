@@ -1,4 +1,4 @@
-use super::kahan_sum_inc;
+use super::*;
 
 /// Returns the population variance of `values`.
 ///

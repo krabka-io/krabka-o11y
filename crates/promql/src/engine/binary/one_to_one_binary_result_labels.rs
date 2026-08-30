@@ -1,4 +1,4 @@
-use super::{Labels, BinModifier, LabelModifier, is_result_metadata_label, BTreeSet, labels_without_metric_name};
+use super::*;
 
 pub(crate) fn one_to_one_binary_result_labels(input: &Labels, modifier: Option<&BinModifier>) -> Labels {
     match modifier.and_then(|modifier| modifier.matching.as_ref()) {

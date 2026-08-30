@@ -1,4 +1,4 @@
-use super::KeyValue;
+use super::*;
 
 #[derive(Clone, Default)]
 pub(crate) struct JaegerProcess {

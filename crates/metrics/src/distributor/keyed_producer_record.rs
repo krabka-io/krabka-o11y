@@ -1,4 +1,4 @@
-use super::{Bytes, ProducerRecord};
+use super::*;
 
 #[must_use]
 /// Builds a keyed producer record for a compacted topic.

@@ -1,4 +1,4 @@
-use super::{HeaderMap, ApiError, header, StatusCode};
+use super::*;
 
 pub(crate) fn require_yaml_content_type(headers: &HeaderMap) -> Result<(), ApiError> {
     let content_type = headers

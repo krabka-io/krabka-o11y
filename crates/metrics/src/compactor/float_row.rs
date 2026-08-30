@@ -1,3 +1,4 @@
+use super::*;
 
 /// One sorted float sample row ready for block encoding.
 #[derive(Clone, Debug, PartialEq)]

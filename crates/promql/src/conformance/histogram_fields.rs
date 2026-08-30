@@ -1,4 +1,4 @@
-use super::{Line, Result, BTreeMap, parse_error};
+use super::*;
 
 pub(crate) fn histogram_fields<'a>(content: &'a str, line: Line<'_>) -> Result<BTreeMap<&'a str, &'a str>> {
     let mut fields = BTreeMap::new();

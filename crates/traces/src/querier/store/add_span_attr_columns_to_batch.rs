@@ -1,4 +1,4 @@
-use super::{RecordBatch, TraceqlError, Field, attr_values_with_resource, attr_value_label, DataType, Arc, StringArray, ArrayRef, Schema};
+use super::*;
 
 pub(crate) fn add_span_attr_columns_to_batch(
     batch: &RecordBatch,

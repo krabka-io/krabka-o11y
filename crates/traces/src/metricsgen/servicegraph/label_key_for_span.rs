@@ -1,4 +1,4 @@
-use super::{SpanRecord, ConnectionType, LabelKey};
+use super::*;
 
 pub(crate) fn label_key_for_span(
     span: &SpanRecord,

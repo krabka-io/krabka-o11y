@@ -1,4 +1,4 @@
-use super::{MetricStore, Arc, PrometheusApiState, HeaderMap, DiscoveryParams, Response, label_values_dispatch, record_query_response};
+use super::*;
 
 pub(crate) async fn label_values_inner<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,

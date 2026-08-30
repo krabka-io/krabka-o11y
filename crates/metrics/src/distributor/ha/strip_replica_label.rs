@@ -1,4 +1,4 @@
-use super::DecodedSeries;
+use super::*;
 
 /// Removes the HA coordination label from the series before the WAL append.
 pub fn strip_replica_label(series: &mut [DecodedSeries]) {

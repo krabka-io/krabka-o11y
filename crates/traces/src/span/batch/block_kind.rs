@@ -1,4 +1,4 @@
-use super::SpanKind;
+use super::*;
 
 pub(crate) fn block_kind(kind: super::super::SpanKind) -> SpanKind {
     match kind {

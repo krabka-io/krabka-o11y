@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn ref_type_name(ref_type: i32) -> &'static str {
     match ref_type {

@@ -1,4 +1,4 @@
-use super::NativeHistogram;
+use super::*;
 
 pub(crate) fn native_histograms_are_range_compatible(
     left: &NativeHistogram,

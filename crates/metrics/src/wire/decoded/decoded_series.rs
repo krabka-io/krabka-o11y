@@ -1,4 +1,4 @@
-use super::{Labels, DecodedSample, NativeHistogram, DecodedExemplar, DecodedMetadata};
+use super::*;
 
 /// One decoded metric series from any ingest wire format.
 #[derive(Clone, Debug, PartialEq)]

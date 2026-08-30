@@ -1,4 +1,4 @@
-use super::Error;
+use super::*;
 
 #[derive(Debug, Error)]
 pub enum RemoteReadError {

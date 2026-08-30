@@ -1,4 +1,4 @@
-use super::{json, TraceMetricsResponse, Value, metric_label_json, metric_prom_labels};
+use super::*;
 
 pub(crate) fn trace_metrics_json(resp: &TraceMetricsResponse) -> Value {
     // Tempo `tempopb.QueryRangeResponse` protojson shape, which Grafana's Tempo

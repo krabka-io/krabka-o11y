@@ -1,4 +1,4 @@
-use super::HaElectionConsumerError;
+use super::*;
 
 #[async_trait::async_trait]
 pub trait HaElectionConsumerCommit: Send {

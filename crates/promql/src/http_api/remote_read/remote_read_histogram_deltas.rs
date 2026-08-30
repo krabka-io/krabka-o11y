@@ -1,4 +1,4 @@
-use super::ToPrimitive;
+use super::*;
 
 pub(crate) fn remote_read_histogram_deltas(is_float: bool, counts: &[f64]) -> Vec<i64> {
     if is_float {

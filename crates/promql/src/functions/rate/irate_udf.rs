@@ -1,4 +1,4 @@
-use super::{ScalarUDF, RateUdf, RateFamily};
+use super::*;
 
 /// The `irate` UDF: per-second instant rate from the last two samples.
 #[must_use]

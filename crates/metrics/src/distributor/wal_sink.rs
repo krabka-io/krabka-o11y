@@ -1,4 +1,4 @@
-use super::{Bytes, WalRecord, ProduceError};
+use super::*;
 
 /// Testable sink for metrics WAL records.
 #[async_trait::async_trait]

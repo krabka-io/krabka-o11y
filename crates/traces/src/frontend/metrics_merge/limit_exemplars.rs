@@ -1,4 +1,4 @@
-use super::MetricSeries;
+use super::*;
 
 /// Truncate each series' exemplars to `limit`. `None` disables limiting.
 pub fn limit_exemplars(series: &mut [MetricSeries], limit: Option<usize>) {

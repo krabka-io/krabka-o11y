@@ -1,4 +1,4 @@
-use super::{HashMap, Arc, FloatRow, HistogramRow, BTreeMap, SeriesFingerprint, Labels};
+use super::*;
 
 /// Per-range-query float-scan cache (see `PromqlEngine::scan_float_rows`).
 ///

@@ -1,4 +1,4 @@
-use super::{NativeHistogram, native_histogram_buckets, native_histogram_bucket_quantile};
+use super::*;
 
 pub(crate) fn native_histogram_quantile(quantile: f64, hist: &NativeHistogram) -> f64 {
     if quantile.is_nan() {

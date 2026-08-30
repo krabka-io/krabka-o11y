@@ -1,4 +1,4 @@
-use super::{Cli, EngineOpts};
+use super::*;
 
 pub(crate) fn engine_opts_from_cli(cli: &Cli) -> std::io::Result<EngineOpts> {
     if !cli

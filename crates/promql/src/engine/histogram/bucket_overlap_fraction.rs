@@ -1,4 +1,4 @@
-use super::NativeQuantileBucket;
+use super::*;
 
 pub(crate) fn bucket_overlap_fraction(bucket: NativeQuantileBucket, lower: f64, upper: f64) -> f64 {
     let overlap_lower = bucket.lower.max(lower);

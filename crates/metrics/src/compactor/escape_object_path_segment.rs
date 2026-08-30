@@ -1,3 +1,4 @@
+use super::*;
 
 /// Percent-escapes a tenant id for use as a single object-store path segment.
 ///

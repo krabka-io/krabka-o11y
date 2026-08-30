@@ -1,4 +1,4 @@
-use super::{AttrValue, BTreeSet};
+use super::*;
 
 pub(crate) fn dedup_attrs(
     attrs_in: &[(String, AttrValue)],

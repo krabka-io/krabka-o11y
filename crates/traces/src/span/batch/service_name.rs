@@ -1,4 +1,4 @@
-use super::{KeyValue, AttrValue};
+use super::*;
 
 pub(crate) fn service_name(attrs: &[KeyValue]) -> Option<String> {
     attrs.iter().find_map(|attr| {

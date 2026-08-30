@@ -1,3 +1,4 @@
+use super::*;
 
 /// Sort labels into a deterministic order for the encoder and the tests.
 #[must_use]

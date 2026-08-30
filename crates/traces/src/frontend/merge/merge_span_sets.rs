@@ -1,4 +1,4 @@
-use super::SpanSetJson;
+use super::*;
 
 /// Reunion spanSets across blocks.
 ///

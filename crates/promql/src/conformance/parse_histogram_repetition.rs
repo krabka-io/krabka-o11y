@@ -1,4 +1,4 @@
-use super::{Line, Result, NativeHistogram, parse_error, parse_histogram_literal};
+use super::*;
 
 pub(crate) fn parse_histogram_repetition(
     token: &str,

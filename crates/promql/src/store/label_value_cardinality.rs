@@ -1,3 +1,4 @@
+use super::*;
 
 /// Cardinality for one label value.
 #[derive(Clone, Debug, PartialEq, Eq)]

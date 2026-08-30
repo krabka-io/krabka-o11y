@@ -1,4 +1,4 @@
-use super::{JaegerProcess, JaegerSpan};
+use super::*;
 
 #[derive(Clone, Default)]
 pub(crate) struct JaegerBatch {

@@ -1,4 +1,4 @@
-use super::{MatchCmp, MatchValue, present_value_matches};
+use super::*;
 
 pub(crate) fn int_matches(value: i64, op: MatchCmp, expected: &MatchValue) -> bool {
     if let Some(matches) = present_value_matches(op, expected) {

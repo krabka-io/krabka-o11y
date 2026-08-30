@@ -1,3 +1,4 @@
+use super::*;
 
 #[derive(Clone, Default)]
 pub(crate) struct JaegerRef {

@@ -1,4 +1,4 @@
-use super::{Field, Scope, intrinsic_tag_name};
+use super::*;
 
 pub(crate) fn field_matches_tag(field: &Field, tag: &str) -> bool {
     let tag = tag.strip_prefix('.').unwrap_or(tag);

@@ -1,4 +1,4 @@
-use super::{MetadataValueArray, Float64Array};
+use super::*;
 
 impl MetadataValueArray for Float64Array {
     fn string_value(&self, idx: usize) -> String {

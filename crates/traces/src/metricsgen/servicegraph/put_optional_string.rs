@@ -1,4 +1,4 @@
-use super::{BytesMut, BufMut};
+use super::*;
 
 pub(crate) fn put_optional_string(buf: &mut BytesMut, value: Option<&str>) {
     match value {

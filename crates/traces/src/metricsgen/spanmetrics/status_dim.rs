@@ -1,4 +1,4 @@
-use super::StatusCode;
+use super::*;
 
 pub(crate) fn status_dim(status: StatusCode) -> &'static str {
     match status {

@@ -1,4 +1,4 @@
-use super::{ExponentialHistogramDataPoint, DecodedExemplar, exemplars_from_otlp};
+use super::*;
 
 pub(crate) fn exemplars_from_exponential_histogram_point(
     point: &ExponentialHistogramDataPoint,

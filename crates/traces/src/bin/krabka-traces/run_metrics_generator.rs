@@ -1,4 +1,4 @@
-use super::{Cli, CancellationToken, MetricsGenConfig, apply_metrics_generator_cli_overrides, wal_consumer, Arc, KafkaSpanSource, PrometheusRemoteWriteSink, MetricsGenService, SystemClock};
+use super::*;
 
 pub(crate) async fn run_metrics_generator(
     cli: Cli,

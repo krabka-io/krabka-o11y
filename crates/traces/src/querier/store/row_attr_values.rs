@@ -1,4 +1,4 @@
-use super::{ListArray, TraceqlError, Array};
+use super::*;
 
 pub(crate) fn row_attr_values(
     values: Option<&ListArray>,

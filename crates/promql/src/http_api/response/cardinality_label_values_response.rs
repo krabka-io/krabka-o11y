@@ -1,4 +1,4 @@
-use super::{json, Labels, Value, BTreeMap, BTreeSet, SeriesFingerprint, apply_limit};
+use super::*;
 
 /// Builds the Grafana Mimir `/cardinality/label_values` response from a series set.
 ///

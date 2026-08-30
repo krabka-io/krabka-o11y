@@ -1,4 +1,4 @@
-use super::{BucketSpan, HistogramCodecError, span_bucket_total};
+use super::*;
 
 pub(crate) fn validate_span_count_consistency(
     spans: &[BucketSpan],

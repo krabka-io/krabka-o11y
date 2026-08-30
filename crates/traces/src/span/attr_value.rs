@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize};
+use super::*;
 
 /// A typed attribute value. Block encoding preserves arrays.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

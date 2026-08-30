@@ -1,4 +1,4 @@
-use super::{VectorSelector, Labels, label_matcher_sets, absent_labels_from_matchers};
+use super::*;
 
 pub(crate) fn absent_labels_from_selector(selector: &VectorSelector) -> Labels {
     let matcher_sets = label_matcher_sets(selector);

@@ -1,4 +1,4 @@
-use super::{IrateFn, ToPrimitive};
+use super::*;
 
 // Prometheus computes instant rate deltas in f64 seconds; timestamp deltas
 // intentionally enter that float domain here.

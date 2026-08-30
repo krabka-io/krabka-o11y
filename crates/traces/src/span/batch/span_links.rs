@@ -1,4 +1,4 @@
-use super::{Span, SpanLink, event_attrs};
+use super::*;
 
 pub(crate) fn span_links(span: &Span) -> Vec<SpanLink> {
     span.links

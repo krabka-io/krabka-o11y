@@ -1,4 +1,4 @@
-use super::Span;
+use super::*;
 
 pub(crate) fn root_span<'a>(spans: &'a [&'a Span]) -> Option<&'a Span> {
     spans

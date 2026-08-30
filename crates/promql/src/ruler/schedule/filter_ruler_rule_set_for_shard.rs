@@ -1,4 +1,4 @@
-use super::{BTreeMap, RulerShard};
+use super::*;
 
 /// Returns the rule groups one ruler shard owns for a tenant.
 #[must_use]

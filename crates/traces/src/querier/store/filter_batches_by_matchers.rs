@@ -1,4 +1,4 @@
-use super::{RecordBatch, SpanMatcher, TraceqlError, Array, row_matches, filter_record_batch, BooleanArray};
+use super::*;
 
 pub(crate) fn filter_batches_by_matchers(
     batches: Vec<RecordBatch>,

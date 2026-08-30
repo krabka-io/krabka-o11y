@@ -1,4 +1,4 @@
-use super::{BlockStore, CompactionIndexManifest, MetricBlockKind, apply_manifest_to_blockstore};
+use super::*;
 
 /// `PromQL` metric store over compacted metric blocks.
 #[derive(Clone)]

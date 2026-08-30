@@ -1,4 +1,4 @@
-use super::{SystemTime, UNIX_EPOCH};
+use super::*;
 
 // cargo-mutants: wall-clock read; no deterministic assertion.
 #[cfg_attr(test, mutants::skip)]

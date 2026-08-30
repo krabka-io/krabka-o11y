@@ -1,4 +1,4 @@
-use super::{ArrayRef, TracesError};
+use super::*;
 
 pub(crate) fn set_column(
     schema: &arrow::datatypes::SchemaRef,

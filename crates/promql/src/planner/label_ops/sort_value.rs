@@ -1,4 +1,4 @@
-use super::{InstantSample, SampleValue};
+use super::*;
 
 /// Returns the float value of a sample, or `NaN` for a histogram sample.
 ///

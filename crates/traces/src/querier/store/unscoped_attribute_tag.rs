@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn unscoped_attribute_tag(tag: &str) -> &str {
     tag.strip_prefix("resource.")

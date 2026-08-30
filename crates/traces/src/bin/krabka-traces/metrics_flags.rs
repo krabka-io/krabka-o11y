@@ -1,4 +1,4 @@
-use super::Args;
+use super::*;
 
 #[derive(Debug, Args)]
 pub(crate) struct MetricsFlags {

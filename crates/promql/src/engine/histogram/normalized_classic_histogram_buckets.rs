@@ -1,4 +1,4 @@
-use super::ClassicBucket;
+use super::*;
 
 pub(crate) fn normalized_classic_histogram_buckets(buckets: &mut [ClassicBucket]) -> Vec<ClassicBucket> {
     buckets.sort_by(|left, right| left.upper_bound.total_cmp(&right.upper_bound));

@@ -1,3 +1,4 @@
+use super::*;
 
 /// The allowed tenant-ID bytes are ASCII alphanumerics plus `! - _ . * ' ( )`.
 pub(crate) fn is_allowed_tenant_byte(byte: u8) -> bool {

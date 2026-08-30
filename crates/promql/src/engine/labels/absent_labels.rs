@@ -1,4 +1,4 @@
-use super::{Expr, Result, Labels, absent_labels_from_selector};
+use super::*;
 
 pub(crate) fn absent_labels(expr: &Expr) -> Result<Labels> {
     match expr {

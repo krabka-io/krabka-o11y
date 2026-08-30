@@ -1,4 +1,4 @@
-use super::{SpanRecord, BTreeMap, Span};
+use super::*;
 
 /// Group records by tenant and trace id, and sort each trace for stable DFS
 /// input.

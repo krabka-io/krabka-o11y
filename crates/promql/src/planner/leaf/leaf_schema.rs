@@ -1,4 +1,4 @@
-use super::{Arc, Schema, Field, DataType, TIME_COLUMN, VALUE_COLUMN, SAMPLE_TIME_COLUMN};
+use super::*;
 
 pub(crate) fn leaf_schema(label_names: &[String]) -> Arc<Schema> {
     let mut fields = Vec::with_capacity(label_names.len() + 3);

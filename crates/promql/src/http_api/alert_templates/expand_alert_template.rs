@@ -1,4 +1,4 @@
-use super::{Labels, expand_alert_action};
+use super::*;
 
 /// Expands the minimal Prometheus alert-template subset for annotation and
 /// label values.

@@ -1,4 +1,4 @@
-use super::{SeriesFingerprint, Labels};
+use super::*;
 
 /// One float sample with its series identity resolved to a label set.
 pub struct LabeledSample {

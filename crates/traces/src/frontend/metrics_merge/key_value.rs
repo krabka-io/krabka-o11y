@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize};
+use super::*;
 
 /// One label as Tempo's `commonv1.KeyValue`: `{"key": k, "value": <AnyValue>}`.
 ///

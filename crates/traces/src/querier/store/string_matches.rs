@@ -1,4 +1,4 @@
-use super::{MatchCmp, MatchValue};
+use super::*;
 
 pub(crate) fn string_matches(value: &str, op: MatchCmp, expected: &MatchValue) -> bool {
     let MatchValue::Str(expected) = expected else {

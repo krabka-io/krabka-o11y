@@ -1,4 +1,4 @@
-use super::{RecordBatch, SpanMatcher, TraceqlError, MatchScope, RESOURCE_ATTR_PREFIX, INSTRUMENTATION_ATTR_PREFIX, ATTR_PREFIX, Array, add_span_attr_columns_to_batch};
+use super::*;
 
 /// Materialize the regular span and resource attribute columns, `attr.<key>`,
 /// that metric `by()` and `select()` projections reference.

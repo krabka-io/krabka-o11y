@@ -1,4 +1,4 @@
-use super::{FixedSizeBinaryArray, TraceqlError, Array};
+use super::*;
 
 pub(crate) fn fixed_array_value<const N: usize>(
     values: &FixedSizeBinaryArray,

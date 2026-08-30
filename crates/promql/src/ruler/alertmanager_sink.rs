@@ -1,4 +1,4 @@
-use super::{AlertmanagerAlert, RulerWalError};
+use super::*;
 
 /// Sink for firing alert notifications.
 #[async_trait::async_trait]

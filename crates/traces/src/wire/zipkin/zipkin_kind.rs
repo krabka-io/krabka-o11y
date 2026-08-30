@@ -1,4 +1,4 @@
-use super::SpanKind;
+use super::*;
 
 pub(crate) fn zipkin_kind(kind: Option<&str>) -> SpanKind {
     match kind {

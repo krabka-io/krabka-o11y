@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn scope_name(scope: krabka_traceql::TagScope) -> &'static str {
     match scope {

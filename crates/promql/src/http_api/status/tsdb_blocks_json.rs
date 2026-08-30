@@ -1,4 +1,4 @@
-use super::{json, TsdbBlock, Value};
+use super::*;
 
 pub(crate) fn tsdb_blocks_json(mut blocks: Vec<TsdbBlock>) -> Vec<Value> {
     blocks.sort_by(|left, right| {

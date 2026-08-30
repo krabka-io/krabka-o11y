@@ -1,4 +1,4 @@
-use super::{RecordBatch, BTreeSet, BTreeMap, TracesError, optional_list_column, SCOL_LINKS, collect_nested_metadata, struct_fixed_field, struct_list_field, Array, insert_tag_value, collect_nested_attrs};
+use super::*;
 
 pub(crate) fn collect_link_metadata(
     batch: &RecordBatch,

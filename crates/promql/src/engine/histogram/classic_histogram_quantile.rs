@@ -1,4 +1,4 @@
-use super::{ClassicBucket, normalized_classic_histogram_buckets};
+use super::*;
 
 pub(crate) fn classic_histogram_quantile(quantile: f64, buckets: &mut [ClassicBucket]) -> f64 {
     if quantile.is_nan() {

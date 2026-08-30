@@ -1,4 +1,4 @@
-use super::{QueryResult, apply_limit};
+use super::*;
 
 pub(crate) fn apply_result_limit(result: &mut QueryResult, limit: Option<usize>) {
     match result {

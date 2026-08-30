@@ -307,7 +307,7 @@ mod tests {
 
 // === split-modules: generated submodules ===
 mod limit_error;
-mod limits_type;
+mod limits;
 
 pub use limit_error::LimitError;
-pub use limits_type::Limits;
+pub use limits::Limits;

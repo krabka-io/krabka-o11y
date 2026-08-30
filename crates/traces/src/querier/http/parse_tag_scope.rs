@@ -1,4 +1,4 @@
-use super::TagScope;
+use super::*;
 
 pub(crate) fn parse_tag_scope(scope: &str) -> Option<TagScope> {
     match scope {

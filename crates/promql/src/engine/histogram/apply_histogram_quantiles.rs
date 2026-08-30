@@ -1,3 +1,4 @@
+use super::*;
 
 /// Applies the experimental `histogram_quantiles(label, v, phi...)` fold.
 ///

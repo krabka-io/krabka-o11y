@@ -1,3 +1,4 @@
+use super::*;
 
 /// Errors raised by the native-histogram Arrow codec.
 #[derive(Debug, thiserror::Error)]

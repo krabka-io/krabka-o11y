@@ -1,4 +1,4 @@
-use super::{Edge, LabelKey};
+use super::*;
 
 pub(crate) fn label_key_for_edge(edge: &Edge) -> LabelKey {
     (

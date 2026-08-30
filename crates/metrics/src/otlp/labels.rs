@@ -1,4 +1,4 @@
-use super::{KeyValue, Labels, insert_attributes};
+use super::*;
 
 pub(crate) fn labels(
     name: &str,

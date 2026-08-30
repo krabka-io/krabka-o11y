@@ -1,4 +1,4 @@
-use super::OtlpStatus;
+use super::*;
 
 pub(crate) fn otlp_status(code: i32, message: &str) -> OtlpStatus {
     // Tempo constructs a Status for every span, and Grafana's Tempo backend

@@ -1,4 +1,4 @@
-use super::{Exemplar, NativeHistogram};
+use super::*;
 
 /// Flat `remote_write` row, neutral to the encoder.
 #[derive(Clone, Debug, PartialEq)]

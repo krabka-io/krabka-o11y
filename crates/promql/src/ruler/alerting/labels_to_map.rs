@@ -1,4 +1,4 @@
-use super::{Labels, BTreeMap};
+use super::*;
 
 pub(crate) fn labels_to_map(labels: &Labels) -> BTreeMap<String, String> {
     labels

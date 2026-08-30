@@ -1,4 +1,4 @@
-use super::{json, ScopedTag, Value};
+use super::*;
 
 pub(crate) fn search_tags_json(tags: &[ScopedTag]) -> Value {
     json!({

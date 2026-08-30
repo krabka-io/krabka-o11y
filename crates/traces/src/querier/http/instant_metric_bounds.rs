@@ -1,4 +1,4 @@
-use super::{Uri, query_param, required_seconds_param, optional_seconds_param};
+use super::*;
 
 pub(crate) fn instant_metric_bounds(uri: &Uri) -> Result<(i64, i64, i64, i64), String> {
     if query_param(uri, "start").is_some() || query_param(uri, "end").is_some() {

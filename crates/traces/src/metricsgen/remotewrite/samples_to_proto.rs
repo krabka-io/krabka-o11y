@@ -1,4 +1,4 @@
-use super::{WireTimeSeries, Sample};
+use super::*;
 
 pub(crate) fn samples_to_proto(row: &WireTimeSeries) -> Vec<Sample> {
     if row.native_histogram.is_some() {

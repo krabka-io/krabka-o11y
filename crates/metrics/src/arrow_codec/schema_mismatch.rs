@@ -1,4 +1,4 @@
-use super::HistogramCodecError;
+use super::*;
 
 // cargo-mutants: exercised through the sample and histogram codec decode tests.
 #[cfg_attr(test, mutants::skip)]

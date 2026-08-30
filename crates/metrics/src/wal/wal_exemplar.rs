@@ -1,4 +1,4 @@
-use super::{Serialize, Deserialize};
+use super::*;
 
 /// An exemplar carried alongside a sample.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

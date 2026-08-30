@@ -1,4 +1,4 @@
-use super::{Uri, query_param, tags_to_traceql};
+use super::*;
 
 pub(crate) fn search_query(uri: &Uri) -> Result<Option<String>, &'static str> {
     if let Some(query) = query_param(uri, "q") {

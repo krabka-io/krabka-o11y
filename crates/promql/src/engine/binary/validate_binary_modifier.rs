@@ -1,4 +1,4 @@
-use super::{BinModifier, Result, VectorMatchCardinality, PromqlError};
+use super::*;
 
 /// Rejects a modifier that only a set operator may carry.
 ///

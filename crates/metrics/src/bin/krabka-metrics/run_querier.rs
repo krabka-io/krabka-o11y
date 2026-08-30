@@ -1,4 +1,4 @@
-use super::{Cli, TcpListener, querier_router};
+use super::*;
 
 pub(crate) async fn run_querier(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(cli.listen).await?;

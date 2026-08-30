@@ -1,4 +1,4 @@
-use super::{InstantSample, BinaryOp, BinModifier, Result, VectorMatchCardinality, eval_one_to_one_vector_binary, eval_many_to_one_vector_binary, eval_one_to_many_vector_binary, PromqlError};
+use super::*;
 
 pub(crate) fn eval_vector_vector_binary(
     left: Vec<InstantSample>,

@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn span_kind_json(kind: i32) -> Option<&'static str> {
     match kind {

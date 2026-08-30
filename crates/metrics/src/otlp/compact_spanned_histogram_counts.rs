@@ -1,4 +1,4 @@
-use super::{BTreeMap, BucketSpan};
+use super::*;
 
 pub(crate) fn compact_spanned_histogram_counts(buckets: BTreeMap<i32, f64>) -> (Vec<BucketSpan>, Vec<f64>) {
     let buckets = buckets

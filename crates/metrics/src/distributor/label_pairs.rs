@@ -1,4 +1,4 @@
-use super::DecodedSeries;
+use super::*;
 
 pub(crate) fn label_pairs(series: &DecodedSeries) -> Vec<(String, String)> {
     series

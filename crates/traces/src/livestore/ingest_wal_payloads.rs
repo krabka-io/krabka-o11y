@@ -1,4 +1,4 @@
-use super::{LiveStore, TracesError, SpanRecord};
+use super::*;
 
 /// Decode WAL payloads and ingest them into the live store.
 ///

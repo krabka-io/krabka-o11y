@@ -1,4 +1,4 @@
-use super::HistogramDataPoint;
+use super::*;
 
 pub(crate) fn exemplar_belongs_to_bucket(value: f64, point: &HistogramDataPoint, bucket_idx: usize) -> bool {
     let lower_ok = bucket_idx

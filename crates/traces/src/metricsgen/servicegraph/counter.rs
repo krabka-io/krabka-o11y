@@ -1,4 +1,4 @@
-use super::{Series, SeriesSample};
+use super::*;
 
 pub(crate) fn counter(name: &str, labels: &[(String, String)], value: f64, timestamp_ms: i64) -> Series {
     Series {

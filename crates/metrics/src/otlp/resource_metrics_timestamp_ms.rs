@@ -1,4 +1,4 @@
-use super::{metric, nanos_to_millis};
+use super::*;
 
 pub(crate) fn resource_metrics_timestamp_ms(
     resource_metrics: &opentelemetry_proto::tonic::metrics::v1::ResourceMetrics,

@@ -1,4 +1,4 @@
-use super::{Uri, query_param};
+use super::*;
 
 pub(crate) fn bounded_count(uri: &Uri, key: &str, default: usize) -> usize {
     query_param(uri, key)

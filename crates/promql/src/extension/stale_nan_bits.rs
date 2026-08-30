@@ -1,3 +1,4 @@
+use super::*;
 
 /// Prometheus' stale-NaN marker: the IEEE-754 quiet-NaN bit pattern that
 /// Prometheus writes to end a series.

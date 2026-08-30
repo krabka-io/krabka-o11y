@@ -1,3 +1,4 @@
+use super::*;
 
 /// Which rate-family `ScalarUDF` a range-selector plan projects.
 ///

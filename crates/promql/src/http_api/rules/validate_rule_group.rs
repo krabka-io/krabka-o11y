@@ -1,4 +1,4 @@
-use super::{ApiError, validate_rule};
+use super::*;
 
 pub(crate) fn validate_rule_group(group: &serde_yaml::Value) -> Result<(), ApiError> {
     let rules = group

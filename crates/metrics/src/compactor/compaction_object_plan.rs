@@ -1,4 +1,4 @@
-use super::{MetricBlockKind, compaction_object_key, compaction_index_key};
+use super::*;
 
 /// Deterministic object names for one compacted block and its index sidecar.
 #[derive(Clone, Debug, Eq, PartialEq)]

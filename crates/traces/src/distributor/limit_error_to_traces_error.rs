@@ -1,4 +1,4 @@
-use super::{LimitError, TracesError};
+use super::*;
 
 pub(crate) fn limit_error_to_traces_error(err: &LimitError) -> TracesError {
     match err {

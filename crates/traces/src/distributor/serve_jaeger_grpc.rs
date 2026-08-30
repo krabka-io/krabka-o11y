@@ -1,4 +1,4 @@
-use super::{SocketAddr, Arc, DistributorState, CancellationToken, GrpcServer, CollectorServiceServer, JaegerGrpcService};
+use super::*;
 
 /// Serve the Jaeger API v2 gRPC trace receiver until cancelled.
 ///

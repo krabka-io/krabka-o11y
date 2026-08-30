@@ -1,4 +1,4 @@
-use super::{RulerGroupStateRecord, RulerWalError, RulerAlertStateRecord};
+use super::*;
 
 /// Sink for compacted ruler state records.
 #[async_trait::async_trait]

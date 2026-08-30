@@ -1,4 +1,4 @@
-use super::SpanKind;
+use super::*;
 
 pub(crate) fn span_kind_dim(kind: SpanKind) -> &'static str {
     match kind {

@@ -1,4 +1,4 @@
-use super::{KeyValue, ScopeMetrics, scope_attributes};
+use super::*;
 
 pub(crate) fn metric_attributes(
     resource_attributes: &[KeyValue],

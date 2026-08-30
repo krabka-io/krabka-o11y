@@ -1,4 +1,4 @@
-use super::{BucketSpan, RemoteWriteBucketSpan};
+use super::*;
 
 pub(crate) fn bucket_spans_to_proto(spans: &[BucketSpan]) -> Vec<RemoteWriteBucketSpan> {
     spans

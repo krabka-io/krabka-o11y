@@ -1,3 +1,4 @@
+use super::*;
 
 /// Errors raised by a consumer poll.
 #[derive(Debug, thiserror::Error)]

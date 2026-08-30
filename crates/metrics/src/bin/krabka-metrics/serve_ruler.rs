@@ -1,3 +1,4 @@
+use super::*;
 
 #[cfg(test)]
 pub(crate) async fn serve_ruler(

@@ -27,7 +27,7 @@ mod exemplars_query_params;
 mod exemplars_query_params_from_form;
 mod instant_query_params;
 mod instant_query_params_from_form;
-mod query_fn;
+mod query;
 mod query_dispatch;
 mod query_exemplars;
 mod query_exemplars_inner;

@@ -1,4 +1,4 @@
-use super::EncodeLabelSet;
+use super::*;
 
 /// Per-query-route outcome label.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]

@@ -1,4 +1,4 @@
-use super::ValueEnum;
+use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum Target {

@@ -1,4 +1,4 @@
-use super::{SeriesFingerprint, Labels};
+use super::*;
 
 #[derive(Clone)]
 pub(crate) struct FloatRow {

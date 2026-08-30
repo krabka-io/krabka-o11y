@@ -1,4 +1,4 @@
-use super::kahan_sum_inc;
+use super::*;
 
 /// Returns the arithmetic mean of a non-empty float window.
 ///

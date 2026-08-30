@@ -1,4 +1,4 @@
-use super::WalExemplar;
+use super::*;
 
 /// One sorted exemplar sidecar row.
 #[derive(Clone, Debug, PartialEq)]

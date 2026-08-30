@@ -1,4 +1,4 @@
-use super::{Labels, pb};
+use super::*;
 
 pub(crate) fn remote_read_labels(labels: &Labels) -> Vec<pb::v1::Label> {
     labels

@@ -1,4 +1,4 @@
-use super::{HeaderMap, ApiError, validate_tenant};
+use super::*;
 
 pub(crate) fn tenant_from_headers(headers: &HeaderMap) -> Result<String, ApiError> {
     let tenant = headers

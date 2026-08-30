@@ -1,4 +1,4 @@
-use super::{Labels, SampleValue};
+use super::*;
 
 /// One labeled series of points in a range matrix.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]

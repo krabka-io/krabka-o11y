@@ -1,4 +1,4 @@
-use super::EncodeLabelSet;
+use super::*;
 
 /// Query route and outcome label, such as
 /// `route="search", status="ok"|"error"`.

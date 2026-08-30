@@ -1,4 +1,4 @@
-use super::{ExemplarRecord, labels_key};
+use super::*;
 
 pub(crate) fn exemplar_key(exemplar: &ExemplarRecord) -> String {
     format!(

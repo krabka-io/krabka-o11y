@@ -1,4 +1,4 @@
-use super::parse_duration_component_ns;
+use super::*;
 
 /// Parse a Go-style duration to nanoseconds.
 ///

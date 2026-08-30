@@ -1,4 +1,4 @@
-use super::{TraceqlError, Response, StatusCode, IntoResponse};
+use super::*;
 
 pub(crate) fn traceql_query_error_response(err: &TraceqlError) -> Response {
     let status = if matches!(

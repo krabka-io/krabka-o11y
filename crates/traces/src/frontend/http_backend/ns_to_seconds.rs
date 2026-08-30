@@ -1,3 +1,4 @@
+use super::*;
 
 /// Epoch nanos -> epoch seconds string. The querier parses `start` and `end` as
 /// seconds, and allows a fractional part.

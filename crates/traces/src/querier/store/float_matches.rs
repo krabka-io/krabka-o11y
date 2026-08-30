@@ -1,4 +1,4 @@
-use super::{MatchCmp, MatchValue};
+use super::*;
 
 pub(crate) fn float_matches(value: f64, op: MatchCmp, expected: &MatchValue) -> bool {
     let expected = match expected {

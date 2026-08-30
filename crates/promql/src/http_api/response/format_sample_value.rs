@@ -1,4 +1,4 @@
-use super::format_float_exponent;
+use super::*;
 
 /// Formats a float exactly like Prometheus `jsonutil.MarshalFloat`.
 ///

@@ -1,4 +1,4 @@
-use super::pb;
+use super::*;
 
 pub(crate) fn is_v1_float(histogram: &pb::v1::Histogram) -> bool {
     matches!(

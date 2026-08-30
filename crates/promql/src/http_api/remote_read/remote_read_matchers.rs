@@ -1,4 +1,4 @@
-use super::{pb, LabelMatcher, ApiError, MatchOp};
+use super::*;
 
 pub(crate) fn remote_read_matchers(matchers: &[pb::v1::LabelMatcher]) -> Result<Vec<LabelMatcher>, ApiError> {
     matchers

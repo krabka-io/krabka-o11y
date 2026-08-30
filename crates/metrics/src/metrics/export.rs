@@ -1,4 +1,4 @@
-use super::SharedRegistry;
+use super::*;
 
 pub(crate) async fn export(
     axum::extract::State(reg): axum::extract::State<SharedRegistry>,

@@ -1,4 +1,4 @@
-use super::quantile_value;
+use super::*;
 
 pub(crate) fn over_time_mad(samples: &[(i64, f64)]) -> Option<f64> {
     let mut values = samples.iter().map(|(_, value)| *value).collect::<Vec<_>>();

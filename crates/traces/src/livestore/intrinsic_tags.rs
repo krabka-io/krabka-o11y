@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) const INTRINSIC_TAGS: &[&str] = &[
     "span:childCount",

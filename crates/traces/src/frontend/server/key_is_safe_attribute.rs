@@ -1,3 +1,4 @@
+use super::*;
 
 /// A legacy `tags=` key is a safe `TraceQL` attribute reference only if it is
 /// made of identifier characters: alphanumerics plus `._:-`.

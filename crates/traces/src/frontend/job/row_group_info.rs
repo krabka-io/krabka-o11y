@@ -1,4 +1,4 @@
-use super::ByteSize;
+use super::*;
 
 /// One candidate row-group of a backend block.
 #[derive(Clone, Debug, PartialEq)]

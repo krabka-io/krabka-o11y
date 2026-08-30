@@ -1,4 +1,4 @@
-use super::Label;
+use super::*;
 
 pub(crate) fn labels_to_proto(labels: &[(String, String)]) -> Vec<Label> {
     labels

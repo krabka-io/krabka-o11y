@@ -1,4 +1,4 @@
-use super::{async_trait, SeriesPayload, SinkError};
+use super::*;
 
 /// Output edge for Prometheus `remote_write` payloads.
 #[async_trait]

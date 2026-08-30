@@ -1,4 +1,4 @@
-use super::{RecordBatch, TraceqlError, Arc, Int32Array, ArrayRef};
+use super::*;
 
 pub(crate) fn replace_scan_int32_columns(
     batch: &RecordBatch,

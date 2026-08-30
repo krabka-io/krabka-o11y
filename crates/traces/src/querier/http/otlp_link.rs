@@ -1,4 +1,4 @@
-use super::{OtlpLink, otlp_attrs};
+use super::*;
 
 pub(crate) fn otlp_link(link: &krabka_traceql::LinkRef) -> OtlpLink {
     OtlpLink {

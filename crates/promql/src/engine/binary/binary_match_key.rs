@@ -1,4 +1,4 @@
-use super::{Labels, BinModifier, LabelModifier, BTreeSet, is_result_metadata_label, labels_key};
+use super::*;
 
 pub(crate) fn binary_match_key(labels: &Labels, modifier: Option<&BinModifier>) -> String {
     let mut key_labels = Labels::new();

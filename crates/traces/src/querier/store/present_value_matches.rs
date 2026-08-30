@@ -1,4 +1,4 @@
-use super::{MatchCmp, MatchValue};
+use super::*;
 
 pub(crate) fn present_value_matches(op: MatchCmp, expected: &MatchValue) -> Option<bool> {
     match (op, expected) {

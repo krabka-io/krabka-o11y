@@ -1,4 +1,4 @@
-use super::{MetricBlockKind, escape_object_path_segment};
+use super::*;
 
 /// Deterministic object key for one tenant/kind/WAL offset compaction window.
 ///

@@ -1,4 +1,4 @@
-use super::{BinaryInput, JaegerLog, WireError, BT_I64, BT_LIST, read_binary_key_value};
+use super::*;
 
 pub(crate) fn read_binary_log(input: &mut BinaryInput<'_>) -> Result<JaegerLog, WireError> {
     let mut out = JaegerLog::default();

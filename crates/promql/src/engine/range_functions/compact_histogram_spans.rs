@@ -1,4 +1,4 @@
-use super::BucketSpan;
+use super::*;
 
 pub(crate) fn compact_histogram_spans(spans: &[BucketSpan], counts: &[f64]) -> (Vec<BucketSpan>, Vec<f64>) {
     let mut index = 0;

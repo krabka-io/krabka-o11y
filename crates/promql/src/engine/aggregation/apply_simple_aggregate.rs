@@ -1,4 +1,4 @@
-use super::{InstantSample, AggregateOp, LabelModifier, Result, BTreeMap, AggregateState, aggregate_labels, labels_key, SampleValue, PromqlError};
+use super::*;
 
 /// Shared simple-aggregation core over an already-evaluated instant vector.
 ///

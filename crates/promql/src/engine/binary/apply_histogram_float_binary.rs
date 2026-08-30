@@ -1,4 +1,4 @@
-use super::{NativeHistogram, BinaryOp, ScalarSide, SampleValue, scaled_native_histogram};
+use super::*;
 
 pub(crate) fn apply_histogram_float_binary(
     histogram: &NativeHistogram,

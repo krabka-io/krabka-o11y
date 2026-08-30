@@ -1,4 +1,4 @@
-use super::{Line, Result, parse_error};
+use super::*;
 
 pub(crate) fn parse_float(src: &str, line: Line<'_>) -> Result<f64> {
     src.parse::<f64>()

@@ -1,4 +1,4 @@
-use super::{RecordBatch, SpanMatcher, LinkRef, TraceqlError, is_link_matcher, link_values, Array, link_matcher_matches_link};
+use super::*;
 
 pub(crate) fn matching_links_for_scan(
     batch: &RecordBatch,

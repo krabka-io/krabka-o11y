@@ -1,4 +1,4 @@
-use super::{SessionContext, LogicalPlan, SeriesFingerprint, Labels};
+use super::*;
 
 /// The assembled operator plan plus the per-series labels needed to reattach
 /// label sets to the selected samples.

@@ -1,4 +1,4 @@
-use super::{Span, WireError, BinaryInput, read_binary_batch, spans_from_batch};
+use super::*;
 
 /// Decode a Jaeger binary-Thrift HTTP `Batch` body into internal spans.
 ///

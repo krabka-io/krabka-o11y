@@ -1,4 +1,4 @@
-use super::TranslationStrategy;
+use super::*;
 
 /// Normalizes an OTLP identifier into a Prometheus-compatible metric name or
 /// label name.

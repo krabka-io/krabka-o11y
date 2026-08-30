@@ -1,4 +1,4 @@
-use super::{Time, TimeExt};
+use super::*;
 
 /// The extent between two epoch-millisecond instants, clamped at zero so a
 /// reversed range reads as "no span" and not as a negative one.

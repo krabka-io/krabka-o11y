@@ -1,4 +1,4 @@
-use super::{ClockSourceKind, ClockWireError, pb};
+use super::*;
 
 pub(crate) fn source_kind(index: usize, value: i32) -> Result<ClockSourceKind, ClockWireError> {
     match pb::clocks::SourceKind::try_from(value) {

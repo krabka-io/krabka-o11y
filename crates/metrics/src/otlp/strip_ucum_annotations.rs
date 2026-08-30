@@ -1,3 +1,4 @@
+use super::*;
 
 pub(crate) fn strip_ucum_annotations(unit: &str) -> String {
     let mut out = String::with_capacity(unit.len());

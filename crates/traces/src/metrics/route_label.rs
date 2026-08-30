@@ -1,4 +1,4 @@
-use super::EncodeLabelSet;
+use super::*;
 
 /// Query route label, such as `route="search"`. It pairs with the per-route
 /// latency histogram family.

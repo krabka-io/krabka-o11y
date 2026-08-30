@@ -1,4 +1,4 @@
-use super::ANNOTATIONS;
+use super::*;
 
 /// Records a `PromQL warning:`-class annotation for the current query.
 ///

@@ -1,4 +1,4 @@
-use super::ExtremumKind;
+use super::*;
 
 /// Folds a non-empty sample window for `min_over_time` or `max_over_time`.
 ///

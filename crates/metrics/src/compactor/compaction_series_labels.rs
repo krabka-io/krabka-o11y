@@ -1,4 +1,4 @@
-use super::{Deserialize, Serialize};
+use super::*;
 
 /// One series label set persisted in a compaction manifest.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

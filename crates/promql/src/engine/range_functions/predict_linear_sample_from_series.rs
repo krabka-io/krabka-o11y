@@ -1,4 +1,4 @@
-use super::{RangeSeries, Time, float_range_samples, predict_linear};
+use super::*;
 
 pub(crate) fn predict_linear_sample_from_series(
     series: &RangeSeries,

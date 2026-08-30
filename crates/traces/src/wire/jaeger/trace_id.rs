@@ -1,4 +1,4 @@
-use super::{TraceIdHigh, TraceIdLow};
+use super::*;
 
 pub(crate) fn trace_id(high: TraceIdHigh, low: TraceIdLow) -> [u8; 16] {
     let mut out = [0; 16];

@@ -1,4 +1,4 @@
-use super::{json, MetricStore, State, Arc, PrometheusApiState, HeaderMap, Response, tenant_from_headers, IntoResponse, ApiError, prometheus_alerts_json, success_data_response};
+use super::*;
 
 pub(crate) async fn alerts<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

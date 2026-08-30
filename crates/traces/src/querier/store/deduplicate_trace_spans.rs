@@ -1,4 +1,4 @@
-use super::{SpanRef, recompute_trace_nested_sets};
+use super::*;
 
 pub(crate) fn deduplicate_trace_spans(spans: &mut Vec<SpanRef>) {
     spans.sort_by_key(|span| span.span_id);

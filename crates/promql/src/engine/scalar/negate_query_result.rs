@@ -1,4 +1,4 @@
-use super::{QueryResult, Result, SampleValue, scaled_native_histogram, labels_without_metric_name, PromqlError};
+use super::*;
 
 /// Negates an already-evaluated instant query result.
 ///

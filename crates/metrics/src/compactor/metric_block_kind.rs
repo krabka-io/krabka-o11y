@@ -1,4 +1,4 @@
-use super::{Deserialize, Serialize};
+use super::*;
 
 /// Metric block payload kind used in deterministic object keys.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
