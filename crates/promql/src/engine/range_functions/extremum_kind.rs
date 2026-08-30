@@ -1,4 +1,3 @@
-
 /// Which extremum [`fold_over_time_extremum`] tracks.
 #[derive(Clone, Copy)]
 pub(crate) enum ExtremumKind {

@@ -1,4 +1,6 @@
-use super::{AppState, HeaderMap, Path, Response, SpanStore, State, Uri, search_tag_values_v2_inner};
+use super::{
+    AppState, HeaderMap, Path, Response, SpanStore, State, Uri, search_tag_values_v2_inner,
+};
 
 pub(crate) async fn search_tag_values_v2<S>(
     State(state): State<AppState<S>>,

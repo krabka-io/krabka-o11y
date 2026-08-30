@@ -1,4 +1,6 @@
-use super::{Arc, ByteRateExt, ByteSize, ByteSizeExt, DistributorState, ExportMetricsServiceRequest, ExportMetricsServiceResponse, FrequencyExt, MetricsService, RatioExt, Status, StdDurationExt, TimeExt, TonicRequest, TonicResponse, otlp_grpc_export_inner, status_from_push_error};
+use super::{
+    Arc, ByteSize, ByteSizeExt, DistributorState, ExportMetricsServiceRequest,
+    ExportMetricsServiceResponse, MetricsService, Status, StdDurationExt, TonicRequest, TonicResponse, otlp_grpc_export_inner, status_from_push_error};
 
 /// Builds the OTLP gRPC metrics service implementation.
 #[must_use]

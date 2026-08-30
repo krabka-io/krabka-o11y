@@ -1,4 +1,7 @@
-use super::{BT_BINARY, BT_I64, BT_LIST, BinaryInput, JaegerSpan, WireError, read_binary_key_value, read_binary_log, read_binary_ref};
+use super::{
+    BT_BINARY, BT_I64, BT_LIST, BinaryInput, JaegerSpan, WireError, read_binary_key_value,
+    read_binary_log, read_binary_ref,
+};
 
 pub(crate) fn read_binary_span(input: &mut BinaryInput<'_>) -> Result<JaegerSpan, WireError> {
     let mut out = JaegerSpan::default();

@@ -1,4 +1,10 @@
-use super::{Arc, BackendError, BlockCatalog, FrontendConfig, JobShard, Metrics, MetricsJobRequest, MetricsResponseJson, QuerierBackend, SearchJobRequest, SearchPartial, SearchResponseJson, TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest, TagValuesPartial, TraceByIdJobRequest, TraceByIdResponseJson, TraceStatus, catalog_error, job, merge, metrics_merge, queue};
+use super::{
+    Arc, BackendError, BlockCatalog, FrontendConfig, JobShard, Metrics, MetricsJobRequest,
+    MetricsResponseJson, QuerierBackend, SearchJobRequest, SearchPartial, SearchResponseJson,
+    TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest, TagValuesPartial,
+    TraceByIdJobRequest, TraceByIdResponseJson, TraceStatus, catalog_error, job, merge,
+    metrics_merge, queue,
+};
 
 /// The query-frontend pipeline.
 ///

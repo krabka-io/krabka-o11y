@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
 #[repr(i32)]
 pub(crate) enum ResetHint {

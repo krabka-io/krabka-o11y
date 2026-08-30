@@ -1,4 +1,3 @@
-
 /// An expected or forbidden annotation on an eval result.
 ///
 /// This enum mirrors the Prometheus promqltest directives `expect warn`,

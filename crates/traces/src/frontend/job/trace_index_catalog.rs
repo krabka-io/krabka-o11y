@@ -1,4 +1,7 @@
-use super::{BTreeMap, BlockCatalog, BlockMetaInfo, BlockStore, BlockStoreResult, ByteSizeExt, CatalogError, TraceIndex, async_trait, blocks_for_tenant};
+use super::{
+    BTreeMap, BlockCatalog, BlockMetaInfo, BlockStore, BlockStoreResult, CatalogError, TraceIndex,
+    async_trait, blocks_for_tenant,
+};
 
 /// The production block catalog.
 ///

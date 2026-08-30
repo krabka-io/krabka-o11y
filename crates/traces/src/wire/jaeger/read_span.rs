@@ -1,4 +1,7 @@
-use super::{CompactInput, JaegerSpan, T_BINARY, T_I64, T_LIST, WireError, read_key_value, read_log, read_ref};
+use super::{
+    CompactInput, JaegerSpan, T_BINARY, T_I64, T_LIST, WireError, read_key_value, read_log,
+    read_ref,
+};
 
 pub(crate) fn read_span(input: &mut CompactInput<'_>) -> Result<JaegerSpan, WireError> {
     let mut out = JaegerSpan::default();

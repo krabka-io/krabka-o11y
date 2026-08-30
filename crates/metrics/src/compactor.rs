@@ -1954,19 +1954,22 @@ pub use compaction_consumer_poll::CompactionConsumerPoll;
 pub use compaction_consumer_poll_error::CompactionConsumerPollError;
 pub use compaction_consumer_record_error::CompactionConsumerRecordError;
 pub use compaction_index_error::CompactionIndexError;
-# [cfg_attr (test , mutants :: skip)] use compaction_index_key::compaction_index_key;
+#[cfg_attr(test, mutants::skip)]
+use compaction_index_key::compaction_index_key;
 pub use compaction_index_manifest::CompactionIndexManifest;
 pub use compaction_index_sink::CompactionIndexSink;
 pub use compaction_loop_config::CompactionLoopConfig;
 pub use compaction_loop_result::CompactionLoopResult;
 pub use compaction_object_key::compaction_object_key;
 pub use compaction_object_plan::CompactionObjectPlan;
-# [cfg_attr (test , mutants :: skip)] pub use compaction_object_plan::compaction_object_plan;
+#[cfg_attr(test, mutants::skip)]
+pub use compaction_object_plan::compaction_object_plan;
 pub use compaction_object_plan_for_rows::compaction_object_plan_for_rows;
 use compaction_object_prefix::COMPACTION_OBJECT_PREFIX;
 pub use compaction_offset_committer::CompactionOffsetCommitter;
 pub use compaction_partition_object_key::compaction_partition_object_key;
-# [cfg_attr (test , mutants :: skip)] pub use compaction_partition_object_plan::compaction_partition_object_plan;
+#[cfg_attr(test, mutants::skip)]
+pub use compaction_partition_object_plan::compaction_partition_object_plan;
 pub use compaction_partition_offset::CompactionPartitionOffset;
 pub use compaction_poll_error::CompactionPollError;
 pub use compaction_poll_result::CompactionPollResult;

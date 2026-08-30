@@ -1,4 +1,6 @@
-use super::{DecodedSeries, DeltaAccumulator, MetricsData, OtlpError, TranslationStrategy, decode_otlp_inner};
+use super::{
+    DecodedSeries, DeltaAccumulator, MetricsData, OtlpError, TranslationStrategy, decode_otlp_inner,
+};
 
 /// Translates OTLP metrics and accumulates delta temporality across calls.
 /// # Errors

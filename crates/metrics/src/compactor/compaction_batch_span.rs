@@ -7,7 +7,10 @@ use super::{ConsumerRecord, TRACEPARENT, set_remote_parent};
 /// does nothing when no polled record carries a valid trace context, so this
 /// span is always safe to build. The first record with a `traceparent` header
 /// anchors the parent.
-pub(crate) fn compaction_batch_span(records: &[ConsumerRecord], wal_records: usize) -> tracing::Span {
+pub(crate) fn compaction_batch_span(
+    records: &[ConsumerRecord],
+    wal_records: usize,
+) -> tracing::Span {
     let span = tracing::info_span!(
         "metrics_compaction",
         otel.kind = "consumer",

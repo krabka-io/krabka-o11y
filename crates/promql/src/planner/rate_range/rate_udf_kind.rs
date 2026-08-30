@@ -1,4 +1,3 @@
-
 /// Which rate-family `ScalarUDF` a range-selector plan projects.
 ///
 /// The registered UDF names (`prom_rate`, …) are the seam to

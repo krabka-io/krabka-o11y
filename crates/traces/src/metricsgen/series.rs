@@ -57,13 +57,13 @@ mod tests {
 
 // === split-modules: generated submodules ===
 mod exemplar;
-mod series;
 mod series_payload;
 mod series_sample;
+mod series_type;
 mod sorted_labels;
 
 pub use exemplar::Exemplar;
-pub use series::Series;
 pub use series_payload::SeriesPayload;
 pub use series_sample::SeriesSample;
+pub use series_type::Series;
 pub use sorted_labels::sorted_labels;

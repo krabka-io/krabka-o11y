@@ -1,4 +1,3 @@
-
 /// Leaf-batch column with the per-sample timestamp in epoch milliseconds.
 ///
 /// This column is the time index of the operator chain, so

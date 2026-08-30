@@ -1,4 +1,3 @@
-
 /// Errors the `PromQL` engine raises.
 #[derive(Debug, thiserror::Error)]
 pub enum PromqlError {

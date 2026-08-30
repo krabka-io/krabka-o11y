@@ -1,4 +1,7 @@
-use super::{ClockReadingPayload, DecodedClockReading, DecodedSample, DecodedSeries, Time, TimeExt, UnixNanos, clock_state_series, decoded_series, projected_labels, widen};
+use super::{
+    ClockReadingPayload, DecodedClockReading, DecodedSample, DecodedSeries, Time, TimeExt,
+    UnixNanos, clock_state_series, decoded_series, projected_labels, widen,
+};
 
 /// Builds the projected float series for one reading.
 pub(crate) fn clock_projection(

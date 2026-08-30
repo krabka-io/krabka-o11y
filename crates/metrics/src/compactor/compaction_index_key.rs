@@ -1,4 +1,3 @@
-use super::*;
 
 // cargo-mutants: suffix conversion is covered by object-plan and manifest tests.
 #[cfg_attr(test, mutants::skip)]

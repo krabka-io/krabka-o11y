@@ -1,4 +1,4 @@
-use super::{Array, Deserialize, Serialize};
+use super::{ Deserialize, Serialize};
 
 /// A run of populated buckets.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

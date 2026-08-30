@@ -1,4 +1,7 @@
-use super::{Array, BTreeSet, FixedSizeBinaryArray, RecordBatch, SCOL_TRACE_ID, ShardedTraceBloom, TracesError};
+use super::{
+    Array, BTreeSet, FixedSizeBinaryArray, RecordBatch, SCOL_TRACE_ID, ShardedTraceBloom,
+    TracesError,
+};
 
 pub(crate) fn trace_bloom(batches: &[RecordBatch]) -> Result<ShardedTraceBloom, TracesError> {
     let mut traces = BTreeSet::new();

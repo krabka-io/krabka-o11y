@@ -1,6 +1,8 @@
 use super::{LabelKey, sorted_labels};
 
-pub(crate) fn service_graph_labels((client, server, connection_type): LabelKey) -> Vec<(String, String)> {
+pub(crate) fn service_graph_labels(
+    (client, server, connection_type): LabelKey,
+) -> Vec<(String, String)> {
     sorted_labels(vec![
         ("client".to_string(), client),
         ("server".to_string(), server),

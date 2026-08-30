@@ -1,8 +1,12 @@
-use super::{Arc, ClockColumns, ClockReadingRow, HistogramCodecError, RecordBatch, clock_reading_schema};
+use super::{
+    Arc, ClockColumns, ClockReadingRow, HistogramCodecError, RecordBatch, clock_reading_schema,
+};
 
 /// Encodes sorted clock rows into a block against
 /// [`clock_reading_schema`](crate::schema::clock_reading_schema).
-pub(crate) fn encode_clock_reading_rows(rows: &[ClockReadingRow]) -> Result<RecordBatch, HistogramCodecError> {
+pub(crate) fn encode_clock_reading_rows(
+    rows: &[ClockReadingRow],
+) -> Result<RecordBatch, HistogramCodecError> {
     let mut columns = ClockColumns::new();
     for row in rows {
         columns.append(row);

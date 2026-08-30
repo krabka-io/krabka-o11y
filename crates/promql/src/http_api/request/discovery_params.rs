@@ -1,4 +1,3 @@
-
 #[derive(Debug, Default)]
 pub(crate) struct DiscoveryParams {
     pub(crate) matches: Vec<String>,

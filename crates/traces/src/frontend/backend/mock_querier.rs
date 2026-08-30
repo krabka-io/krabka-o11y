@@ -1,4 +1,8 @@
-use super::{BackendError, MetricsJobRequest, MetricsPartial, Mutex, QuerierBackend, SearchJobRequest, SearchPartial, TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest, TagValuesPartial, TraceByIdJobRequest, TracePartial, async_trait};
+use super::{
+    BackendError, MetricsJobRequest, MetricsPartial, Mutex, QuerierBackend, SearchJobRequest,
+    SearchPartial, TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest, TagValuesPartial,
+    TraceByIdJobRequest, TracePartial, async_trait,
+};
 
 /// A programmable in-process backend for tests.
 ///

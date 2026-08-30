@@ -1,4 +1,7 @@
-use super::{AttrValue, JaegerProcess, JaegerSpan, KeyValue, LinkRecord, Span, TraceIdHigh, TraceIdLow, i64_bytes, ref_type_name, span_kind, span_logs_to_events, span_status, trace_id};
+use super::{
+    AttrValue, JaegerProcess, JaegerSpan, KeyValue, LinkRecord, Span, TraceIdHigh, TraceIdLow,
+    i64_bytes, ref_type_name, span_kind, span_logs_to_events, span_status, trace_id,
+};
 
 pub(crate) fn jaeger_span_to_internal(span: &JaegerSpan, process: &JaegerProcess) -> Span {
     let mut resource_attrs = process.tags.clone();

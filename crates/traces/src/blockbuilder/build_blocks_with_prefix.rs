@@ -1,4 +1,7 @@
-use super::{BlockBuildOptions, BlockMeta, BlockWriter, SpanRecord, TraceIndex, TracesError, build_blocks_with_options};
+use super::{
+    BlockBuildOptions, BlockMeta, BlockWriter, SpanRecord, TraceIndex, TracesError,
+    build_blocks_with_options,
+};
 
 /// Build and write one span block, with an object-store prefix on its key.
 ///

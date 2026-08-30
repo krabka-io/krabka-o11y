@@ -1,4 +1,3 @@
-
 #[derive(Clone, Copy)]
 pub(crate) struct Line<'a> {
     pub(crate) number: usize,

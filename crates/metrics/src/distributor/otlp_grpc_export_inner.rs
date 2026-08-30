@@ -1,4 +1,7 @@
-use super::{DistributorState, ExportMetricsServiceRequest, MetricsData, PushError, TonicRequest, TranslationStrategy, append_decoded_series, decode_otlp_stateful, tenant_from_metadata};
+use super::{
+    DistributorState, ExportMetricsServiceRequest, MetricsData, PushError, TonicRequest,
+    TranslationStrategy, append_decoded_series, decode_otlp_stateful, tenant_from_metadata,
+};
 
 /// Decodes and appends an OTLP gRPC export. Returns the decoded series count on
 /// success, which is the ingest `items` measure.

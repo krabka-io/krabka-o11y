@@ -49,7 +49,7 @@ pub(super) use cardinality_params::CardinalityParams;
 pub(super) use check_range_resolution::check_range_resolution;
 pub(super) use discovery_matchers::discovery_matchers;
 pub(super) use discovery_params::DiscoveryParams;
-pub(super) use discovery_window::{ discovery_window};
+pub(super) use discovery_window::discovery_window;
 pub(super) use duration_param::duration_param;
 pub(super) use enforce_sample_count::enforce_sample_count;
 pub(super) use enforce_selected_series_limit::enforce_selected_series_limit;

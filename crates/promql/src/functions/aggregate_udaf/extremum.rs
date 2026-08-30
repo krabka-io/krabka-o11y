@@ -1,4 +1,3 @@
-
 /// Which extremum a [`PromExtremumAccumulator`] tracks.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Extremum {

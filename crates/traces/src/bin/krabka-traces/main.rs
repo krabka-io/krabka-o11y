@@ -1,4 +1,3 @@
-
 use std::{net::SocketAddr, process::ExitCode, sync::Arc};
 
 use arc_swap::ArcSwap;
@@ -1798,13 +1797,17 @@ mod run_query_frontend;
 mod target;
 mod wal_consumer;
 
-# [cfg (all (unix , feature = "heap-profiling"))] use alloc::ALLOC;
+#[cfg(all(unix, feature = "heap-profiling"))]
+use alloc::ALLOC;
+
 use apply_metrics_generator_cli_overrides::apply_metrics_generator_cli_overrides;
 use build_live_store_router::build_live_store_router;
 use build_object_store::build_object_store;
-# [cfg (test)] use build_querier_router::build_querier_router;
+#[cfg(test)]
+use build_querier_router::build_querier_router;
 use build_querier_router_with_live::build_querier_router_with_live;
-# [cfg (test)] use build_query_frontend_router::build_query_frontend_router;
+#[cfg(test)]
+use build_query_frontend_router::build_query_frontend_router;
 use build_trace_index_catalog::build_trace_index_catalog;
 use cli::Cli;
 use configured_object_store::ConfiguredObjectStore;

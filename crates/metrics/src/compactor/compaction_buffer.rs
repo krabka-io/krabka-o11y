@@ -36,7 +36,11 @@ impl CompactionBuffer {
     }
 
     /// Whether the buffer should flush now under the configured thresholds.
-    pub(crate) fn should_flush(&self, config: &CompactionLoopConfig, now: std::time::Instant) -> bool {
+    pub(crate) fn should_flush(
+        &self,
+        config: &CompactionLoopConfig,
+        now: std::time::Instant,
+    ) -> bool {
         if self.is_empty() {
             return false;
         }

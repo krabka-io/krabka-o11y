@@ -1,4 +1,3 @@
-
 /// Result-metadata labels that every scalar-math function drops.
 ///
 /// This list mirrors the interpreter function `is_result_metadata_label`. These

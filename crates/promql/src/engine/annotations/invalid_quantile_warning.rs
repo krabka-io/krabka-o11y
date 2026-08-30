@@ -1,4 +1,3 @@
-
 /// Exact Prometheus `InvalidQuantileWarning` text for a bad phi.
 ///
 /// A bad phi is a `quantile` or `quantile_over_time` phi outside `[0, 1]`, or

@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct Sample {
     #[prost(double, tag = "1")]

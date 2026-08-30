@@ -1,6 +1,11 @@
-use super::{Arc, ArrayRef, HistogramCodecError, Int64Builder, MetadataRow, RecordBatch, StringBuilder, UInt64Builder, metadata_schema};
+use super::{
+    Arc, ArrayRef, HistogramCodecError, Int64Builder, MetadataRow, RecordBatch, StringBuilder,
+    UInt64Builder, metadata_schema,
+};
 
-pub(crate) fn encode_metadata_rows(rows: &[MetadataRow]) -> Result<RecordBatch, HistogramCodecError> {
+pub(crate) fn encode_metadata_rows(
+    rows: &[MetadataRow],
+) -> Result<RecordBatch, HistogramCodecError> {
     let mut fingerprints = UInt64Builder::new();
     let mut timestamps = Int64Builder::new();
     let mut names = StringBuilder::new();

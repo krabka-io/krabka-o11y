@@ -1,4 +1,3 @@
-
 pub(crate) fn prometheus_duration_ms(value: &str) -> Option<i64> {
     let mut total_ms = 0_i64;
     let mut index = 0;

@@ -1,4 +1,3 @@
-
 /// Prometheus-style head block stats for `/api/v1/status/tsdb`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TsdbHeadStats {

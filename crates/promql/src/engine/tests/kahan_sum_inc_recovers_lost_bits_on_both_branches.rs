@@ -1,4 +1,3 @@
-
 /// `kahan_sum_inc` recovers the bits lost when one operand dwarfs the other,
 /// on both magnitude branches, and gives up on an infinite running sum rather
 /// than carrying a NaN forward.

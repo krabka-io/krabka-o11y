@@ -1,4 +1,3 @@
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ClassicBucket {
     pub(crate) upper_bound: f64,

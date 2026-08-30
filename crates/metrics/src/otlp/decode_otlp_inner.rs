@@ -1,4 +1,7 @@
-use super::{DecodedMetadata, DecodedSample, DecodedSeries, DeltaAccumulator, MetricsData, OtlpError, TranslationStrategy, labels, metric_attributes, metric_series, resource_metrics_timestamp_ms};
+use super::{
+    DecodedMetadata, DecodedSample, DecodedSeries, DeltaAccumulator, MetricsData, OtlpError,
+    TranslationStrategy, labels, metric_attributes, metric_series, resource_metrics_timestamp_ms,
+};
 
 pub(crate) fn decode_otlp_inner(
     data: &MetricsData,

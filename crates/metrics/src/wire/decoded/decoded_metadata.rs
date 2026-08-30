@@ -1,4 +1,3 @@
-use super::*;
 
 /// Metric metadata decoded from an ingest request.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1,6 +1,10 @@
 use super::{Array, RecordBatch, TraceqlError, string_array_value};
 
-pub(crate) fn string_value(batch: &RecordBatch, name: &str, row: usize) -> Result<String, TraceqlError> {
+pub(crate) fn string_value(
+    batch: &RecordBatch,
+    name: &str,
+    row: usize,
+) -> Result<String, TraceqlError> {
     let col = batch
         .column_by_name(name)
         .ok_or_else(|| TraceqlError::Store(format!("missing string column `{name}`")))?;

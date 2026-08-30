@@ -1,4 +1,3 @@
-use super::*;
 
 #[cfg(all(unix, feature = "heap-profiling"))]
 #[global_allocator]

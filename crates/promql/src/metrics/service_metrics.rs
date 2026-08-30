@@ -1,7 +1,7 @@
 use super::{
-    Arc, ByteSize, ByteSizeExt, Counter, Family, Gauge,
-    Histogram, Mutex, QueryTypeLabel, Registry, RouteLabel, RouteStatusLabel,
-    SharedRegistry, StatusLabel, Time, TimeExt};
+    Arc, ByteSize, ByteSizeExt, Counter, Family, Gauge, Histogram, Mutex, QueryTypeLabel, Registry,
+    RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, Time, TimeExt,
+};
 
 /// Bundle of metric handles that is cheap to clone. Build it one time with
 /// [`ServiceMetrics::new`]. Give a clone, one `Arc::clone` each, to every

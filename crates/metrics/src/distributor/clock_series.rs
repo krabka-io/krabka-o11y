@@ -1,4 +1,7 @@
-use super::{DecodedClockReading, DecodedSeries, UnixNanos, clock_identity_labels, clock_projection, decoded_series};
+use super::{
+    DecodedClockReading, DecodedSeries, UnixNanos, clock_identity_labels, clock_projection,
+    decoded_series,
+};
 
 /// Builds every series a clock batch publishes.
 ///

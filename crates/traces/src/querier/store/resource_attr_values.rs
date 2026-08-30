@@ -1,4 +1,6 @@
-use super::{AttrValue, RESOURCE_ATTR_PREFIX, RecordBatch, TraceqlError, attr_values_with_resource};
+use super::{
+    AttrValue, RESOURCE_ATTR_PREFIX, RecordBatch, TraceqlError, attr_values_with_resource,
+};
 
 pub(crate) fn resource_attr_values(
     batch: &RecordBatch,

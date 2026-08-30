@@ -1,6 +1,9 @@
 use super::{HeaderMap, TracesError, header};
 
-pub(crate) fn require_content_type(headers: &HeaderMap, allowed: &[&str]) -> Result<(), TracesError> {
+pub(crate) fn require_content_type(
+    headers: &HeaderMap,
+    allowed: &[&str],
+) -> Result<(), TracesError> {
     let Some(value) = headers.get(header::CONTENT_TYPE) else {
         return Ok(());
     };

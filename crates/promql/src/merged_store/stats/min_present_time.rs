@@ -1,4 +1,3 @@
-
 /// Combines the head min-time of two stores with explicit presence flags.
 ///
 /// A store reports emptiness with `None`, not with a `0` min-time, and the

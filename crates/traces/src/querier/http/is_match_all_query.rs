@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn is_match_all_query(query: &str) -> bool {
     query
         .chars()

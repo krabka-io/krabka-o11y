@@ -1,4 +1,7 @@
-use super::{Array, BucketSpan, HistogramCodecError, Int32Array, ListArray, StructArray, UInt32Array, require_non_null, schema_mismatch};
+use super::{
+    Array, BucketSpan, HistogramCodecError, Int32Array, ListArray, StructArray, UInt32Array,
+    require_non_null, schema_mismatch,
+};
 
 pub(crate) fn read_spans(
     list: &ListArray,

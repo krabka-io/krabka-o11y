@@ -1,4 +1,3 @@
-
 /// Does one Kahan-compensated incremental sum step.
 ///
 /// This function is a port of Prometheus' `kahanSumInc` (`promql/engine.go`).

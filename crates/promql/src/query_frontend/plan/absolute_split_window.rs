@@ -1,4 +1,3 @@
-
 /// The absolute split window a timestamp belongs to.
 ///
 /// The window is the greatest multiple of `split_interval` that is `<= ts`. This

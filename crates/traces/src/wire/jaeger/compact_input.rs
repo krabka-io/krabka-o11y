@@ -1,4 +1,7 @@
-use super::{T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_BYTE, T_DOUBLE, T_I16, T_I32, T_I64, T_LIST, T_MAP, T_SET, T_STOP, T_STRUCT, WireError};
+use super::{
+    T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_BYTE, T_DOUBLE, T_I16, T_I32, T_I64, T_LIST, T_MAP,
+    T_SET, T_STOP, T_STRUCT, WireError,
+};
 
 pub(crate) struct CompactInput<'a> {
     pub(crate) bytes: &'a [u8],
@@ -10,7 +13,10 @@ impl<'a> CompactInput<'a> {
         Self { bytes, pos: 0 }
     }
 
-    pub(crate) fn read_field(&mut self, last_field_id: &mut i16) -> Result<Option<(u8, i16)>, WireError> {
+    pub(crate) fn read_field(
+        &mut self,
+        last_field_id: &mut i16,
+    ) -> Result<Option<(u8, i16)>, WireError> {
         let header = self.read_u8()?;
         let field_type = header & 0x0F;
         if field_type == T_STOP {

@@ -1,6 +1,9 @@
 use super::PromotedSpanAttr;
 
-pub(crate) fn parse_promoted_attr(spec: &str, key_prefix: Option<&str>) -> Result<PromotedSpanAttr, String> {
+pub(crate) fn parse_promoted_attr(
+    spec: &str,
+    key_prefix: Option<&str>,
+) -> Result<PromotedSpanAttr, String> {
     let (key, value_type) = spec.split_once(':').unwrap_or((spec, "string"));
     if key.is_empty() {
         return Err("promoted attribute key cannot be empty".into());

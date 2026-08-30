@@ -1,5 +1,3 @@
-use super::*;
-
 /// Epoch nanos -> epoch seconds string. The querier parses `start` and `end` as
 /// seconds, and allows a fractional part.
 pub(crate) fn ns_to_seconds(ns: i64) -> String {

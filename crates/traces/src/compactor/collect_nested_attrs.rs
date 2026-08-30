@@ -1,4 +1,7 @@
-use super::{Array, BTreeMap, BTreeSet, ListArray, StringArray, TracesError, insert_tag_value, string_list_value};
+use super::{
+    Array, BTreeMap, BTreeSet, ListArray, StringArray, TracesError, insert_tag_value,
+    string_list_value,
+};
 
 pub(crate) fn collect_nested_attrs(
     keys: &ListArray,

@@ -1,4 +1,3 @@
-
 /// Synthetic per-row grouping column for an empty `PromQL` grouping.
 ///
 /// An empty grouping is `by ()` or no modifier. `GROUP BY` over an empty key set

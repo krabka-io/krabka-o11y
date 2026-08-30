@@ -1,4 +1,7 @@
-use super::{BTreeMap, DeltaHistogramState, DeltaKey, DeltaState, Labels, NativeHistogram, OtlpError, add_compatible_native_histogram, delta_key};
+use super::{
+    BTreeMap, DeltaHistogramState, DeltaKey, DeltaState, Labels, NativeHistogram, OtlpError,
+    add_compatible_native_histogram, delta_key,
+};
 
 /// Stateful accumulator for OTLP delta-temporality sums and histograms.
 #[derive(Clone, Debug, Default)]
@@ -8,7 +11,12 @@ pub struct DeltaAccumulator {
 }
 
 impl DeltaAccumulator {
-    pub(crate) fn accumulate_sum(&mut self, labels: &Labels, start_time_unix_nano: u64, delta: f64) -> f64 {
+    pub(crate) fn accumulate_sum(
+        &mut self,
+        labels: &Labels,
+        start_time_unix_nano: u64,
+        delta: f64,
+    ) -> f64 {
         let key = delta_key(labels);
         let state = self.sums.entry(key).or_default();
         if start_time_unix_nano != 0

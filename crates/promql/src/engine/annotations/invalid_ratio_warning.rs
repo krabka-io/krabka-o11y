@@ -1,4 +1,3 @@
-
 /// Exact Prometheus `InvalidRatioWarning` text.
 ///
 /// Rust's `f64` `Display` matches Go's `%g` for the integral and one-decimal

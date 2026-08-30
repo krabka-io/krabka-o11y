@@ -1,4 +1,3 @@
-
 pub(crate) fn counter_delta(values: &[f64]) -> Option<f64> {
     if values.len() < 2 {
         return Some(0.0);

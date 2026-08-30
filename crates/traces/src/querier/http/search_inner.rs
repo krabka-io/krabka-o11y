@@ -1,4 +1,9 @@
-use super::{AppState, HeaderMap, IntoResponse, Json, QueryEnforcer, Response, SearchOptions, SpanStore, StatusCode, Uri, duration_param, filter_search_duration, limit_error_response, optional_usize_param, required_seconds_param, scan_options_param, search_json, search_query, tenant};
+use super::{
+    AppState, HeaderMap, IntoResponse, Json, QueryEnforcer, Response, SearchOptions, SpanStore,
+    StatusCode, Uri, duration_param, filter_search_duration, limit_error_response,
+    optional_usize_param, required_seconds_param, scan_options_param, search_json, search_query,
+    tenant,
+};
 
 pub(crate) async fn search_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
 where

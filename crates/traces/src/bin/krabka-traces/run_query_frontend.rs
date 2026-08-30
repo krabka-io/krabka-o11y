@@ -1,4 +1,7 @@
-use super::{CancellationToken, Cli, Parser, SocketAddr, build_trace_index_catalog, frontend, frontend_config_from_cli};
+use super::{
+    CancellationToken, Cli, SocketAddr, build_trace_index_catalog, frontend,
+    frontend_config_from_cli,
+};
 
 pub(crate) async fn run_query_frontend(
     cli: Cli,

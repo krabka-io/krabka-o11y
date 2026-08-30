@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EdgeAgg {
     pub(crate) requests: f64,

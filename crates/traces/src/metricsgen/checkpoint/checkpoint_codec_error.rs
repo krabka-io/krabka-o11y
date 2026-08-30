@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Debug, thiserror::Error)]
 pub enum CheckpointCodecError {
     #[error("truncated checkpoint key")]

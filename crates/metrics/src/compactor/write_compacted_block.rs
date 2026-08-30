@@ -1,4 +1,8 @@
-use super::{BlockWriter, CompactedBlockRequest, CompactedBlockWrite, CompactionIndexManifest, CompactionIndexSink, CompactionWriteError, compaction_object_plan, compaction_partition_object_plan};
+use super::{
+    BlockWriter, CompactedBlockRequest, CompactedBlockWrite, CompactionIndexManifest,
+    CompactionIndexSink, CompactionWriteError, compaction_object_plan,
+    compaction_partition_object_plan,
+};
 
 pub(crate) async fn write_compacted_block<S>(
     block_writer: &BlockWriter,

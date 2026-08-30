@@ -1,6 +1,7 @@
 use super::{
     Arc, DataFusionError, DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore,
-    build_extended_range_schema, fmt};
+    build_extended_range_schema, fmt,
+};
 
 /// Logical node: materialize range vectors over a step grid.
 ///

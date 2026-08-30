@@ -1,4 +1,8 @@
-use super::{Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, exemplar_limit, metrics_query_param, required_step, required_time_bounds, tenant};
+use super::{
+    Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response,
+    State, StatusCode, Uri, backend_error_response, exemplar_limit, metrics_query_param,
+    required_step, required_time_bounds, tenant,
+};
 
 pub(crate) async fn query_range<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,

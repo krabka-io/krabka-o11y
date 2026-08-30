@@ -1,4 +1,9 @@
-use super::{Arc, AutoOffsetReset, BlockWriter, ByteRateExt, ByteSizeExt, CompactionLoopConfig, Consumer, DEFAULT_FLUSH_MAX_AGE, DEFAULT_FLUSH_MAX_ROWS, FrequencyExt, MetricsCompactorBuildError, MetricsCompactorConfigError, MetricsCompactorRuntime, ObjectStore, ObjectStoreCompactionIndexSink, ObjectStoreExt, RatioExt, Time, TimeExt, TryStreamExt, consumer_build_error, secs, validate_non_empty};
+use super::{
+    Arc, AutoOffsetReset, BlockWriter, CompactionLoopConfig, Consumer,
+    DEFAULT_FLUSH_MAX_AGE, DEFAULT_FLUSH_MAX_ROWS, MetricsCompactorBuildError,
+    MetricsCompactorConfigError, MetricsCompactorRuntime, ObjectStore,
+    ObjectStoreCompactionIndexSink, Time, TimeExt,
+    consumer_build_error, secs, validate_non_empty};
 
 /// Configuration for the metrics compactor role.
 #[derive(Clone, Debug)]

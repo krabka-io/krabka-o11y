@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Default)]
 pub(crate) struct JaegerRef {
     pub(crate) ref_type: i32,

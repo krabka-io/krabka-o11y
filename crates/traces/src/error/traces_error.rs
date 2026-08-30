@@ -1,5 +1,3 @@
-use super::*;
-
 /// Errors across the traces ingest and query pipeline.
 #[derive(Debug, thiserror::Error)]
 pub enum TracesError {

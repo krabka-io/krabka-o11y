@@ -1,6 +1,11 @@
-use super::{Array, BTreeMap, COL_CHILD_COUNT, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID, COL_SPAN_ID, COL_TRACE_ID, RecordBatch, TraceqlError, fixed, replace_scan_int32_columns};
+use super::{
+    Array, BTreeMap, COL_CHILD_COUNT, COL_NS_LEFT, COL_NS_RIGHT, COL_PARENT_ID, COL_PARENT_SPAN_ID,
+    COL_SPAN_ID, COL_TRACE_ID, RecordBatch, TraceqlError, fixed, replace_scan_int32_columns,
+};
 
-pub(crate) fn recompute_batch_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, TraceqlError> {
+pub(crate) fn recompute_batch_nested_sets(
+    batch: &RecordBatch,
+) -> Result<RecordBatch, TraceqlError> {
     enum Frame {
         Enter { row: usize, parent_left: i32 },
         Exit { row: usize },

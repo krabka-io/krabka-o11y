@@ -1,6 +1,9 @@
 use super::TraceMetricsResponse;
 
-pub(crate) fn instant_metrics_response(mut resp: TraceMetricsResponse, point_ns: i64) -> TraceMetricsResponse {
+pub(crate) fn instant_metrics_response(
+    mut resp: TraceMetricsResponse,
+    point_ns: i64,
+) -> TraceMetricsResponse {
     for series in &mut resp.series {
         let value = series
             .points

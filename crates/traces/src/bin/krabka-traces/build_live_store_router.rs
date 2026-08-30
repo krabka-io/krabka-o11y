@@ -1,4 +1,8 @@
-use super::{Arc, ArcSwap, BlockStore, Cli, HttpConfig, IndexedLiveSource, KrabkaSpanStore, LiveStore, LiveTier, Parser, RwLock, SharedTraceIndex, TraceIndex, TraceqlEngine, Url, engine_opts_from_cli, live_span_batches, trace_querier};
+use super::{
+    Arc, ArcSwap, BlockStore, Cli, HttpConfig, IndexedLiveSource, KrabkaSpanStore, LiveStore,
+    LiveTier, RwLock, SharedTraceIndex, TraceIndex, TraceqlEngine, Url, engine_opts_from_cli,
+    live_span_batches, trace_querier,
+};
 
 pub(crate) fn build_live_store_router(
     cli: &Cli,

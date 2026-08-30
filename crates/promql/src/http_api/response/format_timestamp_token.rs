@@ -1,4 +1,3 @@
-
 /// Builds the JSON number token for a millisecond timestamp.
 ///
 /// This function mirrors Prometheus `MarshalTimestamp`. It writes the sign, then

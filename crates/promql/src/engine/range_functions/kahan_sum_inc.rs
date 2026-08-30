@@ -1,4 +1,3 @@
-
 /// Does one Kahan-compensated incremental sum step.
 ///
 /// This function adds `increment` to the running sum `(sum, comp)` and returns

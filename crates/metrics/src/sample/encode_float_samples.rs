@@ -1,4 +1,7 @@
-use super::{Arc, ArrayRef, Float64Builder, HistogramCodecError, Int64Builder, RecordBatch, UInt64Builder, float_sample_schema};
+use super::{
+    Arc, ArrayRef, Float64Builder, HistogramCodecError, Int64Builder, RecordBatch, UInt64Builder,
+    float_sample_schema,
+};
 
 /// Encodes `(fingerprint, timestamp, value)` rows into a `RecordBatch` that
 /// matches [`float_sample_schema`].

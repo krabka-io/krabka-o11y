@@ -1,4 +1,3 @@
-use super::*;
 
 /// Prometheus translation strategy for OTLP metric names.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

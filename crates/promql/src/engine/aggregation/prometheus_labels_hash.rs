@@ -1,4 +1,3 @@
-
 /// Hashes labels exactly like Prometheus' `labels.Labels.Hash`.
 ///
 /// Krabka's persisted series fingerprint deliberately uses a different,

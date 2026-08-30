@@ -1,4 +1,3 @@
-
 /// How a planner-path output batch carries its result value and labels.
 ///
 /// The shared assembler `PromqlEngine::assemble_planned_instant` uses the shape

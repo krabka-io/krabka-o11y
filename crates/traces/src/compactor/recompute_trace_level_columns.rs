@@ -1,4 +1,9 @@
-use super::{Arc, Array, BTreeMap, Int64Array, RecordBatch, SCOL_DURATION_NANOS, SCOL_NAME, SCOL_PARENT_SPAN_ID, SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_START_NANO, SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, StringArray, TracesError, fixed_column, int64_column, set_column, string_column};
+use super::{
+    Arc, Array, BTreeMap, Int64Array, RecordBatch, SCOL_DURATION_NANOS, SCOL_NAME,
+    SCOL_PARENT_SPAN_ID, SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_START_NANO,
+    SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, StringArray, TracesError,
+    fixed_column, int64_column, set_column, string_column,
+};
 
 /// Recompute the trace-level denormalized columns over the FULL merged trace.
 ///
@@ -11,7 +16,9 @@ use super::{Arc, Array, BTreeMap, Int64Array, RecordBatch, SCOL_DURATION_NANOS, 
 /// `TraceQL` matchers `trace:duration`, `trace:rootName` and
 /// `trace:rootService` would then read wrong data. This function regroups by
 /// `trace_id` and recomputes the four columns across all merged rows.
-pub(crate) fn recompute_trace_level_columns(batch: &RecordBatch) -> Result<RecordBatch, TracesError> {
+pub(crate) fn recompute_trace_level_columns(
+    batch: &RecordBatch,
+) -> Result<RecordBatch, TracesError> {
     let trace_ids = fixed_column(batch, SCOL_TRACE_ID, 16)?;
     let parent_span_ids = fixed_column(batch, SCOL_PARENT_SPAN_ID, 8)?;
     let start = int64_column(batch, SCOL_START_NANO)?;

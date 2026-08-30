@@ -1,5 +1,3 @@
-use super::*;
-
 /// Parse a lowercase-hex 8-byte span id, the lossless inverse of [`hex8`].
 #[must_use]
 pub fn parse_hex8(s: &str) -> [u8; 8] {

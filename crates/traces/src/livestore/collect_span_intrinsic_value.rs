@@ -1,6 +1,10 @@
 use super::{BTreeSet, Span, bytes_to_hex};
 
-pub(crate) fn collect_span_intrinsic_value(span: &Span, tag: &str, values: &mut BTreeSet<(String, String)>) {
+pub(crate) fn collect_span_intrinsic_value(
+    span: &Span,
+    tag: &str,
+    values: &mut BTreeSet<(String, String)>,
+) {
     match tag {
         "span:duration" => {
             values.insert(("duration".into(), span.duration_ns.to_string()));

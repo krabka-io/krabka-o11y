@@ -1,4 +1,7 @@
-use super::{ClockSourceKind, ClockWireError, DecodedClockReading, GnssReading, NtpReading, PtpReading, TimexReading, UnixNanos, gnss_fix, is_too_far_in_the_future, pb, source_kind, sync_state};
+use super::{
+    ClockSourceKind, ClockWireError, DecodedClockReading, GnssReading, NtpReading, PtpReading,
+    TimexReading, UnixNanos, gnss_fix, is_too_far_in_the_future, pb, source_kind, sync_state,
+};
 
 pub(crate) fn decode_reading(
     index: usize,

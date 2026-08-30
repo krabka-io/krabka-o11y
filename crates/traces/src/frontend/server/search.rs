@@ -1,4 +1,8 @@
-use super::{Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, bounded_count, required_time_bounds, search_query, tenant};
+use super::{
+    Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response,
+    State, StatusCode, Uri, backend_error_response, bounded_count, required_time_bounds,
+    search_query, tenant,
+};
 
 pub(crate) async fn search<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,

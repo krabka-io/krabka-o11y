@@ -1,6 +1,4 @@
-use super::{
-    IntoResponse, Json, LimitError, PromqlError, Response, StatusCode, WireError,
-    json};
+use super::{IntoResponse, Json, LimitError, PromqlError, Response, StatusCode, WireError, json};
 
 #[derive(Debug)]
 pub(crate) struct ApiError {

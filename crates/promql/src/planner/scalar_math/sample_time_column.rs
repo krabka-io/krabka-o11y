@@ -1,4 +1,3 @@
-
 /// Leaf-batch and projection column that carries the per-series sample timestamp.
 ///
 /// The scalar-math functions report the timestamp of the inner sample unchanged,

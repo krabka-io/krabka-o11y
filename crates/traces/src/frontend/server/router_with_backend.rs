@@ -1,4 +1,7 @@
-use super::{Arc, BlockCatalog, QuerierBackend, QueryFrontend, Router, echo, get, query_instant, query_range, ready, search, search_tag_values_v2, search_tags_v2, trace_by_id};
+use super::{
+    Arc, BlockCatalog, QuerierBackend, QueryFrontend, Router, echo, get, query_instant,
+    query_range, ready, search, search_tag_values_v2, search_tags_v2, trace_by_id,
+};
 
 /// Build the query-frontend router for any backend/catalog pair.
 pub fn router_with_backend<B, C>(qf: Arc<QueryFrontend<B, C>>) -> Router

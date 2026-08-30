@@ -1,5 +1,4 @@
-use super::{ PromqlError, Time, TimeExt, parse_duration,
-    yaml_optional_string};
+use super::{PromqlError, Time, TimeExt, parse_duration, yaml_optional_string};
 
 /// Parses a Prometheus duration for the given rule field.
 ///

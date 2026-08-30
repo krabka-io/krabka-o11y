@@ -1,5 +1,3 @@
-use super::*;
-
 /// Apply an optional object-store prefix to a raw traces object key.
 #[must_use]
 pub fn prefixed_object_key(prefix: &str, key: &str) -> String {

@@ -3015,8 +3015,7 @@ use keyed_producer_record::keyed_producer_record;
 use label_pairs::label_pairs;
 use max_exemplar_label_codepoints::MAX_EXEMPLAR_LABEL_CODEPOINTS;
 use otlp_grpc_export_inner::otlp_grpc_export_inner;
-pub use otlp_metrics_service::otlp_metrics_service;
-pub use otlp_metrics_service::OtlpMetricsService;
+pub use otlp_metrics_service::{OtlpMetricsService, otlp_metrics_service};
 pub use otlp_metrics_service_server::otlp_metrics_service_server;
 use otlp_push::otlp_push;
 use otlp_push_inner::otlp_push_inner;
@@ -3038,13 +3037,16 @@ pub use serve::serve;
 use status_from_http_status::status_from_http_status;
 use status_from_push_error::status_from_push_error;
 use tenant_for_span::tenant_for_span;
-# [cfg_attr (test , mutants :: skip)] use tenant_from_headers::tenant_from_headers;
-# [cfg_attr (test , mutants :: skip)] use tenant_from_metadata::tenant_from_metadata;
+#[cfg_attr(test, mutants::skip)]
+use tenant_from_headers::tenant_from_headers;
+#[cfg_attr(test, mutants::skip)]
+use tenant_from_metadata::tenant_from_metadata;
 pub use tenant_limits::TenantLimits;
 use tenant_limits_to_limits::tenant_limits_to_limits;
 pub use validate::validate;
 use validate_exemplar_labels::validate_exemplar_labels;
-# [cfg_attr (test , mutants :: skip)] use validate_request_tenant::validate_request_tenant;
+#[cfg_attr(test, mutants::skip)]
+use validate_request_tenant::validate_request_tenant;
 use wal_producer_record::wal_producer_record;
 pub use wal_records_from_series::wal_records_from_series;
 pub use wal_sink::WalSink;

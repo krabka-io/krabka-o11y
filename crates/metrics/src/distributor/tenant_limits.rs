@@ -1,4 +1,5 @@
-use super::{ByteRateExt, ByteSize, ByteSizeExt, Frequency, FrequencyExt, RatioExt, Time, TimeExt, kibibytes, per_sec};
+use super::{ ByteSize, Frequency, Time, TimeExt,
+    kibibytes, per_sec};
 
 /// Structural per-request limits enforced before WAL append.
 #[derive(Clone, Debug, PartialEq)]

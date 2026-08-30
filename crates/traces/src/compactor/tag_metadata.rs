@@ -1,4 +1,8 @@
-use super::{BTreeMap, BTreeSet, RecordBatch, SCOL_INSTRUMENTATION_NAME, SCOL_INSTRUMENTATION_VERSION, TracesError, collect_attr_metadata, collect_event_metadata, collect_link_metadata, collect_string_column_metadata};
+use super::{
+    BTreeMap, BTreeSet, RecordBatch, SCOL_INSTRUMENTATION_NAME, SCOL_INSTRUMENTATION_VERSION,
+    TracesError, collect_attr_metadata, collect_event_metadata, collect_link_metadata,
+    collect_string_column_metadata,
+};
 
 pub(crate) type TagMetadata = (BTreeSet<String>, BTreeMap<String, BTreeSet<String>>);
 

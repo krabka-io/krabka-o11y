@@ -1,4 +1,3 @@
-
 /// Wall-clock source for cache-entry age checks.
 ///
 /// The trait exists so that tests can advance time deterministically with

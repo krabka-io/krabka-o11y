@@ -1,4 +1,7 @@
-use super::{BlockSchema, CCOL_INGEST_UNIX_NANOS, CCOL_READING_UNIX_NANOS, CCOL_UNCERTAINTY_NANOS, COL_FINGERPRINT, COL_TIMESTAMP, DataType, RequiredColumn};
+use super::{
+    BlockSchema, CCOL_INGEST_UNIX_NANOS, CCOL_READING_UNIX_NANOS, CCOL_UNCERTAINTY_NANOS,
+    COL_FINGERPRINT, COL_TIMESTAMP, DataType, RequiredColumn,
+};
 
 /// Clock reading block declaration used by generic schema validation.
 ///

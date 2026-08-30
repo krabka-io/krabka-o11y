@@ -1,4 +1,7 @@
-use super::{DecodedMetadata, DecodedSample, DecodedSeries, KeyValue, SummaryDataPoint, ToPrimitive, labels, nanos_to_millis};
+use super::{
+    DecodedMetadata, DecodedSample, DecodedSeries, KeyValue, SummaryDataPoint, ToPrimitive, labels,
+    nanos_to_millis,
+};
 
 pub(crate) fn summary_point_series(
     name: &str,

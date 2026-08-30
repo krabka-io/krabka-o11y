@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Copy)]
 pub(crate) struct HistogramSnapshot<'a> {
     pub(crate) sum: f64,

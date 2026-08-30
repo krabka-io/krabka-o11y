@@ -1,4 +1,3 @@
-use super::*;
 
 /// Clock reading last-valid-reference column in epoch nanoseconds (`Int64`).
 ///

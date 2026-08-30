@@ -1,4 +1,3 @@
-
 /// Cardinality for one label name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LabelNameCardinality {

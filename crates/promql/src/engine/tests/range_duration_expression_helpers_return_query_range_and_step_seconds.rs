@@ -1,4 +1,3 @@
-
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn range_duration_expression_helpers_return_query_range_and_step_seconds() {

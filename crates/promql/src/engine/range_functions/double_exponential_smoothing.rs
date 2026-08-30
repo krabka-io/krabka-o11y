@@ -1,4 +1,3 @@
-
 #[cfg(feature = "experimental-functions")]
 pub(crate) fn double_exponential_smoothing(
     samples: &[(i64, f64)],

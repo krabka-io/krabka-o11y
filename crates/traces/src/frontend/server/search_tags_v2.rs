@@ -1,4 +1,8 @@
-use super::{Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, json, optional_time_bounds, scope_name, scope_param, tenant};
+use super::{
+    Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response,
+    State, StatusCode, Uri, backend_error_response, json, optional_time_bounds, scope_name,
+    scope_param, tenant,
+};
 
 pub(crate) async fn search_tags_v2<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,

@@ -1,4 +1,7 @@
-use super::{EventRef, MatchScope, SpanMatcher, TimeExt, attr_values_match, int_matches, nested_presence_matches, string_matches};
+use super::{
+    EventRef, MatchScope, SpanMatcher, TimeExt, attr_values_match, int_matches,
+    nested_presence_matches, string_matches,
+};
 
 pub(crate) fn event_matcher_matches_event(event: &EventRef, matcher: &SpanMatcher) -> bool {
     let is_match = match matcher.scope {

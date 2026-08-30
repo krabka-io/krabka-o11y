@@ -1,5 +1,3 @@
-use super::*;
-
 /// The v2 by-id status.
 ///
 /// A fully-returned trace is `COMPLETE`. A trace that exceeds the max trace

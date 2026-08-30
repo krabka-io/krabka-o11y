@@ -1,4 +1,7 @@
-use super::{BTreeSet, ByteSize, Metrics, TraceByIdResponseJson, TracePartial, TraceStatus, seed_seen, union_trace_bodies};
+use super::{
+    BTreeSet, ByteSize, Metrics, TraceByIdResponseJson, TracePartial, TraceStatus, seed_seen,
+    union_trace_bodies,
+};
 
 /// Assemble one trace from per-querier by-id partials.
 ///

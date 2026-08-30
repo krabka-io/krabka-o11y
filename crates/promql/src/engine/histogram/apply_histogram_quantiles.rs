@@ -1,4 +1,3 @@
-
 /// Applies the experimental `histogram_quantiles(label, v, phi...)` fold.
 ///
 /// The input is an already-evaluated instant vector. This function emits one

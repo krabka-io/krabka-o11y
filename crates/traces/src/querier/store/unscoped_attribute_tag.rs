@@ -1,5 +1,3 @@
-use super::*;
-
 pub(crate) fn unscoped_attribute_tag(tag: &str) -> &str {
     tag.strip_prefix("resource.")
         .or_else(|| tag.strip_prefix("span."))

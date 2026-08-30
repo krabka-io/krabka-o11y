@@ -1,4 +1,10 @@
-use super::{BTreeMap, BTreeSet, BlockBuildOptions, BlockMeta, BlockWriter, MaxOffset, MinOffset, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanRecord, SummaryColumns, TraceBlockStats, TraceIndex, TracesError, WindowStartNs, collect_tags, concat_batches, group_by_trace, object_key, prefixed_object_key, span_batch_with_promoted_attrs, span_block_decl, span_block_schema_with_promoted_attrs};
+use super::{
+    BTreeMap, BTreeSet, BlockBuildOptions, BlockMeta, BlockWriter, MaxOffset, MinOffset,
+    SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanRecord, SummaryColumns, TraceBlockStats,
+    TraceIndex, TracesError, WindowStartNs, collect_tags, concat_batches, group_by_trace,
+    object_key, prefixed_object_key, span_batch_with_promoted_attrs, span_block_decl,
+    span_block_schema_with_promoted_attrs,
+};
 
 pub(crate) async fn build_blocks_with_options(
     writer: &BlockWriter,

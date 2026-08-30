@@ -1,4 +1,7 @@
-use super::{ExponentialHistogramDataPoint, MAX_NATIVE_HISTOGRAM_SCHEMA, MIN_NATIVE_HISTOGRAM_SCHEMA, NativeHistogram, OtlpError, ResetHint, ToPrimitive, downscaled_spans, nanos_to_millis};
+use super::{
+    ExponentialHistogramDataPoint, MAX_NATIVE_HISTOGRAM_SCHEMA, MIN_NATIVE_HISTOGRAM_SCHEMA,
+    NativeHistogram, OtlpError, ResetHint, ToPrimitive, downscaled_spans, nanos_to_millis,
+};
 
 /// Converts one OTLP exponential histogram point to a native histogram
 /// sample.

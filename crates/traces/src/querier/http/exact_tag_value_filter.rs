@@ -1,6 +1,12 @@
-use super::{ComparisonOp, FieldExpr, SpansetExpr, TraceqlError, TypedValue, field_matches_tag, typed_traceql_value};
+use super::{
+    ComparisonOp, FieldExpr, SpansetExpr, TraceqlError, TypedValue, field_matches_tag,
+    typed_traceql_value,
+};
 
-pub(crate) fn exact_tag_value_filter(query: &str, tag: &str) -> Result<Option<TypedValue>, TraceqlError> {
+pub(crate) fn exact_tag_value_filter(
+    query: &str,
+    tag: &str,
+) -> Result<Option<TypedValue>, TraceqlError> {
     let query = krabka_traceql::parse(query)?;
     if !query.pipeline.is_empty() {
         return Ok(None);

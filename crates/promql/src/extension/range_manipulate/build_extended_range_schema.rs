@@ -1,5 +1,4 @@
-use super::{
-    Arc, DataType, Field, RANGE_SUFFIX, Schema, SchemaRef, range_array_type};
+use super::{Arc, DataType, Field, RANGE_SUFFIX, Schema, SchemaRef, range_array_type};
 
 /// Builds the extended range-vector schema that the module contract describes.
 ///

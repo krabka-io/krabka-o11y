@@ -1,4 +1,3 @@
-
 pub(crate) fn failure_message(
     header_fail: bool,
     expect_fail_message: Option<String>,

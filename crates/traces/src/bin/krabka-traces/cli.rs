@@ -1,4 +1,12 @@
-use super::{ArgAction, ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, IndexSnapshotRetain, MetricsFlags, Parser, SocketAddr, Target, Time, UnixNano, parse, parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size, parse_non_negative_time_or_secs, parse_non_negative_whole_byte_size_or_bytes, parse_positive_time_or_millis, parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64, parse_positive_time_or_secs, parse_positive_usize, parse_positive_whole_byte_size, parse_scan_concat_max, parse_unix_nano};
+use super::{
+    ArgAction, ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, IndexSnapshotRetain,
+    MetricsFlags, Parser, SocketAddr, Target, Time, UnixNano, parse,
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_non_negative_time_or_secs, parse_non_negative_whole_byte_size_or_bytes,
+    parse_positive_time_or_millis, parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64,
+    parse_positive_time_or_secs, parse_positive_usize, parse_positive_whole_byte_size,
+    parse_scan_concat_max, parse_unix_nano,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "krabka-traces")]

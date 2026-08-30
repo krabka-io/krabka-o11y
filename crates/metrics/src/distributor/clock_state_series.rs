@@ -1,4 +1,7 @@
-use super::{ClockSyncState, DecodedClockReading, DecodedSample, DecodedSeries, GnssFix, decoded_series, indicator, projected_labels};
+use super::{
+    ClockSyncState, DecodedClockReading, DecodedSample, DecodedSeries, GnssFix, decoded_series,
+    indicator, projected_labels,
+};
 
 /// Builds the two state-enum families a clock reading publishes.
 ///
@@ -6,7 +9,10 @@ use super::{ClockSyncState, DecodedClockReading, DecodedSample, DecodedSeries, G
 /// label, the current value at `1` and every other value at `0`. Every value
 /// goes out on every reading, so a transition overwrites the old `1` with a `0`
 /// in the same scrape rather than leaving it to go stale.
-pub(crate) fn clock_state_series(reading: &DecodedClockReading, timestamp_ms: i64) -> Vec<DecodedSeries> {
+pub(crate) fn clock_state_series(
+    reading: &DecodedClockReading,
+    timestamp_ms: i64,
+) -> Vec<DecodedSeries> {
     let mut out = ClockSyncState::ALL
         .iter()
         .map(|state| {

@@ -1,4 +1,7 @@
-use super::{BlockWriter, CompactedBlockWrite, CompactionIndexSink, CompactionWriteError, PartitionIndex, TenantCompactionRows, write_compacted_tenant_blocks_with_partition};
+use super::{
+    BlockWriter, CompactedBlockWrite, CompactionIndexSink, CompactionWriteError, PartitionIndex,
+    TenantCompactionRows, write_compacted_tenant_blocks_with_partition,
+};
 
 /// Writes all non-empty block kinds for a compacted tenant partition window.
 /// # Errors

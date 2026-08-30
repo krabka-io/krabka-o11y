@@ -1,4 +1,3 @@
-
 /// Shared experimental `limit_ratio(ratio, v)` core over an already-evaluated
 /// instant vector.
 ///

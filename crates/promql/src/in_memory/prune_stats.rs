@@ -1,4 +1,3 @@
-
 /// Counts of what an [`InMemoryMetricStore::prune`] pass evicted.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PruneStats {

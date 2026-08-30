@@ -262,10 +262,8 @@ mod strip_replica_label;
 
 use decide_election::decide_election;
 pub use default_ha_failover_timeout::DEFAULT_HA_FAILOVER_TIMEOUT;
-pub use ha_decision::HaDecision;
-pub use ha_decision::ha_decision;
-pub use ha_election::HaElection;
-pub use ha_election::ha_election;
+pub use ha_decision::{HaDecision, ha_decision};
+pub use ha_election::{HaElection, ha_election};
 pub use ha_election_at::ha_election_at;
 pub use ha_election_at_with_timeout::ha_election_at_with_timeout;
 pub use ha_election_record::HaElectionRecord;

@@ -1,4 +1,3 @@
-
 /// Wraps a scalar `QueryResult` from a delegated interpreter call.
 ///
 /// The result becomes a `PlannedInstant::PrecomputedScalar`. A non-scalar result

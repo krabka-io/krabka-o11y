@@ -1,4 +1,7 @@
-use super::{Array, RecordBatch, SpanMatcher, TraceqlError, event_matcher_matches_absence, event_matcher_matches_event, event_values, is_event_matcher};
+use super::{
+    RecordBatch, SpanMatcher, TraceqlError, event_matcher_matches_absence,
+    event_matcher_matches_event, event_values, is_event_matcher,
+};
 
 pub(crate) fn nested_event_matchers_match(
     batch: &RecordBatch,

@@ -1,4 +1,3 @@
-
 /// Metric metadata served by `/api/v1/metadata`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MetadataRecord {

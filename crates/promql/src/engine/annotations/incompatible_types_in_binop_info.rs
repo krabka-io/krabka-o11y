@@ -1,4 +1,3 @@
-
 /// Exact Prometheus `IncompatibleTypesInBinOpInfo` text for incompatible operands.
 ///
 /// An operator gets incompatible operand sample types, for example a histogram

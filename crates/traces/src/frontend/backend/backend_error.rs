@@ -1,5 +1,3 @@
-use super::*;
-
 /// Failure modes of a single backend job.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum BackendError {

@@ -1,4 +1,3 @@
-
 pub(crate) struct HistogramBucketJson {
     pub(crate) boundary_rule: u8,
     pub(crate) lower: f64,

@@ -1,4 +1,3 @@
-
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn instant_duration_expression_helpers_return_zero() {

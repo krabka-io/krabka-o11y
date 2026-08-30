@@ -121,7 +121,8 @@ mod matchers_to_selectors;
 mod remote_read_error;
 mod series_to_timeseries;
 
-# [cfg_attr (test , mutants :: skip)] pub use decode_read_request::decode_read_request;
+#[cfg_attr(test, mutants::skip)]
+pub use decode_read_request::decode_read_request;
 pub use default_max_read_decompressed::DEFAULT_MAX_READ_DECOMPRESSED;
 pub use encode_read_response::encode_read_response;
 pub use matchers_to_selectors::matchers_to_selectors;

@@ -69,14 +69,14 @@ mod attr_value;
 mod event_record;
 mod key_value;
 mod link_record;
-mod span;
 mod span_kind;
+mod span_type;
 mod status_code;
 
 pub use attr_value::AttrValue;
 pub use event_record::EventRecord;
 pub use key_value::KeyValue;
 pub use link_record::LinkRecord;
-pub use span::Span;
 pub use span_kind::SpanKind;
+pub use span_type::Span;
 pub use status_code::StatusCode;

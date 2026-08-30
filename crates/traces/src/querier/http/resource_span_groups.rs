@@ -1,6 +1,9 @@
 use super::{ResourceSpanGroup, TraceSpans, span_resource_attributes};
 
-pub(crate) fn resource_span_groups(trace: &TraceSpans, returned_spans: usize) -> Vec<ResourceSpanGroup<'_>> {
+pub(crate) fn resource_span_groups(
+    trace: &TraceSpans,
+    returned_spans: usize,
+) -> Vec<ResourceSpanGroup<'_>> {
     let mut groups: Vec<ResourceSpanGroup<'_>> = Vec::new();
     for span in trace.spans.iter().take(returned_spans) {
         let attrs = span_resource_attributes(trace, span);

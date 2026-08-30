@@ -1,4 +1,3 @@
-
 use std::{
     net::SocketAddr,
     sync::{
@@ -421,7 +420,9 @@ mod spawn_retention_sweeper;
 mod target;
 mod unix_time_ms;
 
-# [cfg (all (unix , feature = "heap-profiling"))] use alloc::ALLOC;
+#[cfg(all(unix, feature = "heap-profiling"))]
+use alloc::ALLOC;
+
 use build_object_store::build_object_store;
 use cli::Cli;
 use ingest_rate_bucket_cap::IngestRateBucketCap;
@@ -435,18 +436,25 @@ use query_frontend_router::query_frontend_router;
 use role_build_info::role_build_info;
 use role_status_router::role_status_router;
 use ruler_router::ruler_router;
-# [cfg_attr (test , mutants :: skip)] use run_compactor::run_compactor;
+#[cfg_attr(test, mutants::skip)]
+use run_compactor::run_compactor;
 use run_distributor::run_distributor;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
 use run_ruler::run_ruler;
-# [cfg (test)] use serve_querier::serve_querier;
-# [cfg (test)] use serve_query_frontend::serve_query_frontend;
-# [cfg (test)] use serve_role_http::serve_role_http;
-# [cfg (test)] use serve_ruler::serve_ruler;
-# [cfg_attr (test , mutants :: skip)] use spawn_retention_sweeper::spawn_retention_sweeper;
+#[cfg(test)]
+use serve_querier::serve_querier;
+#[cfg(test)]
+use serve_query_frontend::serve_query_frontend;
+#[cfg(test)]
+use serve_role_http::serve_role_http;
+#[cfg(test)]
+use serve_ruler::serve_ruler;
+#[cfg_attr(test, mutants::skip)]
+use spawn_retention_sweeper::spawn_retention_sweeper;
 use target::Target;
-# [cfg_attr (test , mutants :: skip)] use unix_time_ms::unix_time_ms;
+#[cfg_attr(test, mutants::skip)]
+use unix_time_ms::unix_time_ms;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

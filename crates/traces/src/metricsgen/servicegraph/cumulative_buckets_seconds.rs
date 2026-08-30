@@ -1,6 +1,9 @@
 use super::*;
 
-pub(crate) fn cumulative_buckets_seconds(bucket_edges_ns: &[f64], bucket_counts: &[u64]) -> Vec<(f64, f64)> {
+pub(crate) fn cumulative_buckets_seconds(
+    bucket_edges_ns: &[f64],
+    bucket_counts: &[u64],
+) -> Vec<(f64, f64)> {
     let mut cumulative = 0_u64;
     bucket_edges_ns
         .iter()

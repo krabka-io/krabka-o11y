@@ -1,4 +1,3 @@
-
 /// Corpus green-through-the-public-entry-points guard.
 ///
 /// This test runs the full conformance corpus through the public

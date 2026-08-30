@@ -1,4 +1,7 @@
-use super::{DecodedSeries, DistributorState, PushError, append_wal_records, enforce_ingest_limits, wal_records_from_series};
+use super::{
+    DecodedSeries, DistributorState, PushError, append_wal_records, enforce_ingest_limits,
+    wal_records_from_series,
+};
 
 pub(crate) async fn append_decoded_series(
     state: &DistributorState,

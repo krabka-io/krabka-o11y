@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, Debug, serde::Deserialize)]
 pub(crate) struct TypedValueJson {
     #[serde(rename = "type", default)]

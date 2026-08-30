@@ -1,5 +1,3 @@
-use super::*;
-
 /// A by-id job: fetch one trace's spans from one querier.
 ///
 /// By-id does **not** fan per-block, because the querier reassembles a trace

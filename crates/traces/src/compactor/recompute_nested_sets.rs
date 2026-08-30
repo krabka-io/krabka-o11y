@@ -1,4 +1,8 @@
-use super::{Array, BTreeMap, HashMap, RecordBatch, SCOL_CHILD_COUNT, SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID, SCOL_SPAN_ID, SCOL_TRACE_ID, TracesError, fixed_column, replace_int32_columns};
+use super::{
+    Array, BTreeMap, HashMap, RecordBatch, SCOL_CHILD_COUNT, SCOL_NESTED_SET_LEFT,
+    SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID, SCOL_SPAN_ID, SCOL_TRACE_ID,
+    TracesError, fixed_column, replace_int32_columns,
+};
 
 pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, TracesError> {
     enum Frame {

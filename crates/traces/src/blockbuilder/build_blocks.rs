@@ -1,4 +1,6 @@
-use super::{BlockMeta, BlockWriter, SpanRecord, TraceIndex, TracesError, build_blocks_with_promoted_attrs};
+use super::{
+    BlockMeta, BlockWriter, SpanRecord, TraceIndex, TracesError, build_blocks_with_promoted_attrs,
+};
 
 /// Build and write one span block for `tenant` from the supplied WAL records.
 ///

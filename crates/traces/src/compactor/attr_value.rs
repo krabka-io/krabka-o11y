@@ -1,4 +1,7 @@
-use super::{BooleanArray, Float64Array, Int64Array, RecordBatch, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL, SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT, StringArray, TracesError, first_string_list_value};
+use super::{
+    BooleanArray, Float64Array, Int64Array, RecordBatch, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL,
+    SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT, StringArray, TracesError, first_string_list_value,
+};
 
 pub(crate) fn attr_value(
     batch: &RecordBatch,

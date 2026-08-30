@@ -1,4 +1,7 @@
-use super::{Arc, BlockMeta, BlockWriter, DEFAULT_BLOCK_READ_MAX, ObjectStore, TraceIndex, TracesError, compact_index_window_with_max_bytes};
+use super::{
+    Arc, BlockMeta, BlockWriter, DEFAULT_BLOCK_READ_MAX, ObjectStore, TraceIndex, TracesError,
+    compact_index_window_with_max_bytes,
+};
 
 /// Compact every tenant in the selected time window independently.
 ///

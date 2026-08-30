@@ -1,9 +1,11 @@
-use super::{ BTreeMap, BTreeSet, EXEMPLAR_TABLE, ExemplarRecord, FLOAT_TABLE, HISTOGRAM_TABLE,
-    LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels, METADATA_TABLE,
-    MetadataRecord, MetricBlockStore, MetricStore, Result, ScanResult, ScanTableRequest,
-    SeriesFingerprint, SessionContext, TsdbBlock, TsdbHeadStats, TsdbStats, blockstore_error,
-    datafusion_error, exemplar_schema, exemplars_from_batch, float_sample_schema,
-    metadata_from_batch, metadata_schema, named_stats, native_histogram_schema};
+use super::{
+    BTreeMap, BTreeSet, EXEMPLAR_TABLE, ExemplarRecord, FLOAT_TABLE, HISTOGRAM_TABLE, LabelMatcher,
+    LabelNameCardinality, LabelValueCardinality, Labels, METADATA_TABLE, MetadataRecord,
+    MetricBlockStore, MetricStore, Result, ScanResult, ScanTableRequest, SeriesFingerprint,
+    SessionContext, TsdbBlock, TsdbHeadStats, TsdbStats, blockstore_error, datafusion_error,
+    exemplar_schema, exemplars_from_batch, float_sample_schema, metadata_from_batch,
+    metadata_schema, named_stats, native_histogram_schema,
+};
 
 impl MetricBlockStore {
     pub(crate) fn matching_series(

@@ -1,4 +1,3 @@
-
 /// Leaf-batch column that keeps the original sample timestamp.
 ///
 /// This column is not the time index, so the operator chain carries it through

@@ -1,5 +1,3 @@
-use super::*;
-
 /// Tempo-default latency histogram bucket edges, in nanoseconds.
 pub const DEFAULT_LATENCY_BUCKETS_NS: &[f64] = &[
     2_000_000.0,

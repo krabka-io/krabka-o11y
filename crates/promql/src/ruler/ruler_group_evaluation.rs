@@ -1,4 +1,3 @@
-
 /// Summary of one ruler rule-group evaluation.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RulerGroupEvaluation {

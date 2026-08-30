@@ -1,4 +1,3 @@
-use super::*;
 
 /// Widens a signed count for a projected sample value.
 ///

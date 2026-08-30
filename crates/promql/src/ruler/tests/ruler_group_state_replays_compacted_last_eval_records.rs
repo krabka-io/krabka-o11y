@@ -1,4 +1,3 @@
-
 #[test]
 pub(crate) fn ruler_group_state_replays_compacted_last_eval_records() {
     let mut state = super::super::RulerGroupState::default();

@@ -1,4 +1,4 @@
-use super::{ DurationExprContext, Expr, Result, parse_promql_with_duration_context};
+use super::{DurationExprContext, Expr, Result, parse_promql_with_duration_context};
 
 /// Parses a `PromQL` expression into the upstream parser AST.
 ///

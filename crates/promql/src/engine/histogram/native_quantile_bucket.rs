@@ -1,4 +1,3 @@
-
 #[derive(Clone, Copy)]
 pub(crate) struct NativeQuantileBucket {
     pub(crate) lower: f64,

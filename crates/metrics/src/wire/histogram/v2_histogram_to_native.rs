@@ -1,4 +1,7 @@
-use super::{NativeHistogram, WireError, counts, is_v2_float, pb, schema_i8, v2_count, v2_reset_hint, v2_spans, v2_zero_count, validate_spans_and_counts};
+use super::{
+    NativeHistogram, WireError, counts, is_v2_float, pb, schema_i8, v2_count, v2_reset_hint,
+    v2_spans, v2_zero_count, validate_spans_and_counts,
+};
 
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.

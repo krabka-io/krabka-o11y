@@ -1,4 +1,7 @@
-use super::{DistributorState, HeaderMap, PushError, PushSuccess, append_clock_readings, decode_clock_readings, ingest_stamp, require_snappy_encoding, tenant_from_headers};
+use super::{
+    DistributorState, HeaderMap, PushError, PushSuccess, append_clock_readings,
+    decode_clock_readings, ingest_stamp, require_snappy_encoding, tenant_from_headers,
+};
 
 pub(crate) async fn clocks_push_inner(
     state: &DistributorState,

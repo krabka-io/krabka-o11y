@@ -1,4 +1,7 @@
-use super::{Arc, AtomicU64, ByteSize, ByteSizeExt, DEFAULT_MAX_RATE_BUCKETS, DashMap, Frequency, FrequencyExt, Labels, LimitError, Limits, Ordering, RateBucket, ToPrimitive, TokenBucket};
+use super::{
+    Arc, AtomicU64, ByteSize, ByteSizeExt, DEFAULT_MAX_RATE_BUCKETS, DashMap, Frequency,
+    FrequencyExt, Labels, LimitError, Limits, Ordering, RateBucket, ToPrimitive, TokenBucket,
+};
 
 #[derive(Debug)]
 pub struct IngestEnforcer {

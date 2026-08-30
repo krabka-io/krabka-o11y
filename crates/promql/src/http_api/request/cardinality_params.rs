@@ -1,4 +1,3 @@
-
 #[derive(Debug, Default)]
 pub(crate) struct CardinalityParams {
     pub(crate) selector: Option<String>,

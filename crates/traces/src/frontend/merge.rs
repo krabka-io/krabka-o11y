@@ -16,14 +16,13 @@ use std::collections::BTreeSet;
 use krabka_traceql::{ScopedTag, TagScope, TypedValue};
 use krabka_units::ByteSize;
 
-use crate::frontend::{
-    backend::{SearchPartial, TagNamesPartial, TagValuesPartial, TracePartial},
-    wire::{Metrics, SearchResponseJson, SpanSetJson, TraceByIdResponseJson, TraceJson},
-};
-
 // Re-export the metric-series merge helpers (separate module for clarity).
 pub use crate::frontend::metrics_merge::{
     MetricSample, MetricSeries, limit_exemplars, merge_metric_series,
+};
+use crate::frontend::{
+    backend::{SearchPartial, TagNamesPartial, TagValuesPartial, TracePartial},
+    wire::{Metrics, SearchResponseJson, SpanSetJson, TraceByIdResponseJson, TraceJson},
 };
 
 #[cfg(test)]

@@ -1,4 +1,7 @@
-use super::{DecodedSeries, ExemplarPolicy, Gauge, KeyValue, Metric, OtlpError, TranslationStrategy, metric_metadata, scalar_series, translated_metric_name};
+use super::{
+    DecodedSeries, ExemplarPolicy, Gauge, KeyValue, Metric, OtlpError, TranslationStrategy,
+    metric_metadata, scalar_series, translated_metric_name,
+};
 
 pub(crate) fn gauge_series(
     metric: &Metric,

@@ -1,4 +1,3 @@
-
 /// Returns the value of the sample with the greatest timestamp.
 ///
 /// A tie selects the later element, the same as `max_by_key(timestamp)` over a

@@ -1,4 +1,8 @@
-use super::{Array, BTreeMap, BTreeSet, RecordBatch, SCOL_LINKS, TracesError, collect_nested_attrs, collect_nested_metadata, insert_tag_value, optional_list_column, struct_fixed_field, struct_list_field};
+use super::{
+    Array, BTreeMap, BTreeSet, RecordBatch, SCOL_LINKS, TracesError, collect_nested_attrs,
+    collect_nested_metadata, insert_tag_value, optional_list_column, struct_fixed_field,
+    struct_list_field,
+};
 
 pub(crate) fn collect_link_metadata(
     batch: &RecordBatch,

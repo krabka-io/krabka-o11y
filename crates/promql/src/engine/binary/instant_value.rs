@@ -1,4 +1,4 @@
-use super::{InstantSample};
+use super::InstantSample;
 #[cfg(test)]
 use super::{PromqlError, QueryResult, Result};
 

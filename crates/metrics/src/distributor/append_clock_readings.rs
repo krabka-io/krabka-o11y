@@ -1,4 +1,7 @@
-use super::{DecodedClockReading, DistributorState, PushError, UnixNanos, append_wal_records, clock_series, clock_wal_records, enforce_ingest_limits, wal_records_from_series};
+use super::{
+    DecodedClockReading, DistributorState, PushError, UnixNanos, append_wal_records, clock_series,
+    clock_wal_records, enforce_ingest_limits, wal_records_from_series,
+};
 
 /// Gates a clock batch and appends both the clock block records and the
 /// projected float records.

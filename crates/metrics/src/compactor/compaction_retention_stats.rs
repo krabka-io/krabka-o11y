@@ -1,4 +1,3 @@
-use super::*;
 
 /// Counts of stale compacted objects removed by a retention sweep.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

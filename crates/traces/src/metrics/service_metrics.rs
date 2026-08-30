@@ -1,4 +1,7 @@
-use super::{Arc, ByteRateExt, ByteSize, ByteSizeExt, Counter, EncodeLabelSet, Family, FrequencyExt, Histogram, Mutex, RatioExt, Registry, RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, StdDurationExt, TenantLabel, Time, TimeExt};
+use super::{
+    Arc, ByteSize, ByteSizeExt, Counter, Family, Histogram, Mutex, Registry, RouteLabel,
+    RouteStatusLabel, SharedRegistry, StatusLabel, TenantLabel, Time, TimeExt,
+};
 
 /// Cheaply-clonable bundle of metric handles plus the shared registry.
 ///

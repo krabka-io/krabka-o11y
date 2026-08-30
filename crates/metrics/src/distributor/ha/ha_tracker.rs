@@ -1,4 +1,6 @@
-use super::{ByteRateExt, ByteSizeExt, DEFAULT_HA_FAILOVER_TIMEOUT, DecodedSeries, FrequencyExt, HaElection, HaElectionRecord, HashMap, Mutex, RatioExt, StdDurationExt, Time, TimeExt, decide_election, now_ms};
+use super::{ DEFAULT_HA_FAILOVER_TIMEOUT, DecodedSeries, HaElection,
+    HaElectionRecord, HashMap, Mutex, Time, decide_election,
+    now_ms};
 
 /// In-memory elected replica view. The distributor rebuilds it from the
 /// compacted HA-tracker topic, and extends it with an in-process first-seen

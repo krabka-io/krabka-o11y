@@ -1,4 +1,3 @@
-
 /// The reset-correcting, windowed range functions evaluated over a full
 /// `(t-range, t]` window: `rate`, `increase`, and `delta`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

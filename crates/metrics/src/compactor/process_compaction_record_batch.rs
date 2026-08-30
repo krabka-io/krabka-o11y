@@ -1,4 +1,7 @@
-use super::{BTreeMap, BlockWriter, CompactionBatchResult, CompactionIndexSink, CompactionOffsetCommitter, CompactionWalRecord, CompactionWindowError, PartitionIndex, write_compaction_partition_window};
+use super::{
+    BTreeMap, BlockWriter, CompactionBatchResult, CompactionIndexSink, CompactionOffsetCommitter,
+    CompactionWalRecord, CompactionWindowError, PartitionIndex, write_compaction_partition_window,
+};
 
 /// Processes a polled compaction batch by partition, and keeps the per-partition
 /// commits.

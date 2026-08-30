@@ -1,4 +1,3 @@
-
 /// Returns true if `phi` is a valid quantile in `[0, 1]`.
 ///
 /// The engine still evaluates an out-of-range or NaN phi. Prometheus returns

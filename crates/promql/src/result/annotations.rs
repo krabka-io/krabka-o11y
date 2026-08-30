@@ -1,4 +1,3 @@
-
 /// Warnings and info annotations from a query evaluation.
 ///
 /// This type mirrors the `util/annotations` channel of Prometheus.

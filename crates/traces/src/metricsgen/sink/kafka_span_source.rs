@@ -1,4 +1,7 @@
-use super::{AsyncMutex, Consumer, SinkError, SpanRecord, SpanSource, Time, async_trait, decode_consumer_records, millis};
+use super::{
+    AsyncMutex, Consumer, SinkError, SpanRecord, SpanSource, Time, async_trait,
+    decode_consumer_records, millis,
+};
 
 /// Kafka-backed source for the traces WAL consumer group.
 pub struct KafkaSpanSource {

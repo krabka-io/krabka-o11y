@@ -1,4 +1,3 @@
-
 #[cfg(feature = "experimental-functions")]
 pub(crate) fn sample_instances(samples: &[crate::InstantSample]) -> Vec<&str> {
     let mut instances = samples

@@ -1,6 +1,10 @@
 use super::HistogramDataPoint;
 
-pub(crate) fn exemplar_belongs_to_bucket(value: f64, point: &HistogramDataPoint, bucket_idx: usize) -> bool {
+pub(crate) fn exemplar_belongs_to_bucket(
+    value: f64,
+    point: &HistogramDataPoint,
+    bucket_idx: usize,
+) -> bool {
     let lower_ok = bucket_idx
         .checked_sub(1)
         .and_then(|lower_idx| point.explicit_bounds.get(lower_idx))

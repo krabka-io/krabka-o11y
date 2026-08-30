@@ -1,6 +1,12 @@
-use super::{EVENT_TAGS, INSTRUMENTATION_TAGS, INTRINSIC_TAGS, LINK_TAGS, ScopedTag, TagScope, merge_static_scope};
+use super::{
+    EVENT_TAGS, INSTRUMENTATION_TAGS, INTRINSIC_TAGS, LINK_TAGS, ScopedTag, TagScope,
+    merge_static_scope,
+};
 
-pub(crate) fn add_intrinsic_tags(mut tags: Vec<ScopedTag>, scope: Option<TagScope>) -> Vec<ScopedTag> {
+pub(crate) fn add_intrinsic_tags(
+    mut tags: Vec<ScopedTag>,
+    scope: Option<TagScope>,
+) -> Vec<ScopedTag> {
     if matches!(scope, None | Some(TagScope::Intrinsic)) {
         merge_static_scope(&mut tags, TagScope::Intrinsic, INTRINSIC_TAGS);
     }

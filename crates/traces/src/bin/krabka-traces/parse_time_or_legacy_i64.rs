@@ -1,4 +1,4 @@
-use super::{Parser, Time, parse};
+use super::{Time, parse};
 
 pub(crate) fn parse_time_or_legacy_i64(
     value: &str,

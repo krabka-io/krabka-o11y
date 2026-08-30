@@ -150,7 +150,9 @@ pub use decoded_sample::DecodedSample;
 pub use decoded_series::DecodedSeries;
 pub use negotiate::negotiate;
 use proto_param_value::proto_param_value;
-# [cfg_attr (test , mutants :: skip)] pub use snappy_block_decode::snappy_block_decode;
-# [cfg_attr (test , mutants :: skip)] pub (super) use snappy_block_decode_raw::snappy_block_decode_raw;
+#[cfg_attr(test, mutants::skip)]
+pub use snappy_block_decode::snappy_block_decode;
+#[cfg_attr(test, mutants::skip)]
+pub(super) use snappy_block_decode_raw::snappy_block_decode_raw;
 pub use wire_error::WireError;
 pub use wire_format::WireFormat;

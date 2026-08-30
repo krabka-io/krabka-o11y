@@ -1,4 +1,3 @@
-use super::*;
 
 /// Sane upper bound for an ingested sample timestamp, in milliseconds. This
 /// module rejects a data point beyond this bound and does not translate it into

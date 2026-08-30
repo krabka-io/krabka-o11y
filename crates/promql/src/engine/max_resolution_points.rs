@@ -1,4 +1,3 @@
-
 /// Maximum number of resolution points (steps) in one range or subquery series.
 /// Prometheus rejects a query whose `(end - start) / step + 1` is more than this
 /// limit. The limit stops an abusive resolution, for example

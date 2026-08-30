@@ -1,4 +1,3 @@
-
 /// Shared experimental `limitk(k, v)` core over an already-evaluated instant
 /// vector.
 ///

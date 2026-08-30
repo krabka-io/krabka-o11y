@@ -1,4 +1,3 @@
-
 #[cfg(feature = "experimental-functions")]
 #[derive(Clone, Copy)]
 pub(crate) enum ScalarExtremaFn {

@@ -1,4 +1,3 @@
-use super::*;
 
 /// Errors raised by symbol-table operations.
 #[derive(Debug, thiserror::Error)]

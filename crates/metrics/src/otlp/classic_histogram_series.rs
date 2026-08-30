@@ -1,4 +1,7 @@
-use super::{DecodedMetadata, DecodedSample, DecodedSeries, HistogramDataPoint, KeyValue, OtlpError, ToPrimitive, exemplars_for_bucket, exemplars_from_histogram_point, labels, nanos_to_millis};
+use super::{
+    DecodedMetadata, DecodedSample, DecodedSeries, HistogramDataPoint, KeyValue, OtlpError,
+    ToPrimitive, exemplars_for_bucket, exemplars_from_histogram_point, labels, nanos_to_millis,
+};
 
 pub(crate) fn classic_histogram_series(
     name: &str,

@@ -1,4 +1,3 @@
-use super::*;
 
 /// Clock reading uncertainty half-width column (`Int64`).
 ///

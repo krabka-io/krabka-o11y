@@ -1,4 +1,6 @@
-use super::{CompactionConsumerRecordError, CompactionWalRecord, ConsumerRecord, Offset, PartitionIndex};
+use super::{
+    CompactionConsumerRecordError, CompactionWalRecord, ConsumerRecord, Offset, PartitionIndex,
+};
 
 /// Converts polled consumer records from the metrics WAL topic into compactor
 /// inputs.

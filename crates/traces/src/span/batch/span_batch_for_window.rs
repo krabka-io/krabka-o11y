@@ -1,4 +1,8 @@
-use super::{BlockNestedSet, PromotedSpanAttr, RecordBatch, Span, SpanRow, Time, TimeExt, TracesError, assign_nested_set, block_kind, block_status, child_counts, encode_span_rows_with_promoted_attrs, root_info, span_attrs, span_events, span_links};
+use super::{
+    BlockNestedSet, PromotedSpanAttr, RecordBatch, Span, SpanRow, Time, TimeExt, TracesError,
+    assign_nested_set, block_kind, block_status, child_counts,
+    encode_span_rows_with_promoted_attrs, root_info, span_attrs, span_events, span_links,
+};
 
 /// Build one span-block `RecordBatch` whose rows are `row_spans` but whose
 /// trace-level columns are computed over `trace_spans`.

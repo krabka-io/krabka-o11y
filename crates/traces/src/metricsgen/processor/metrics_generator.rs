@@ -1,4 +1,7 @@
-use super::{Arc, CheckpointCodecError, Clock, EdgeStore, HashMap, MetricsGenConfig, SeriesPayload, SpanMetricsRegistry, SpanRecord, TenantEdgeCheckpoints, TenantState};
+use super::{
+    Arc, CheckpointCodecError, Clock, EdgeStore, HashMap, MetricsGenConfig, SeriesPayload,
+    SpanMetricsRegistry, SpanRecord, TenantEdgeCheckpoints, TenantState,
+};
 
 /// Composes span-metrics and service-graph processors per tenant.
 pub struct MetricsGenerator {

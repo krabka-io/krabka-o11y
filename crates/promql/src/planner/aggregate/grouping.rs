@@ -1,4 +1,3 @@
-
 /// How a `PromQL` aggregation selects its grouping labels.
 #[derive(Clone, Debug)]
 pub enum Grouping {

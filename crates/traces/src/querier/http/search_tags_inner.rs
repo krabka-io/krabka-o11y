@@ -1,6 +1,15 @@
-use super::{AppState, HeaderMap, IntoResponse, Json, Response, SpanStore, StatusCode, Uri, is_match_all_query, matching_traces, optional_time_bounds, q_filter_limit, query_param, scan_options_param, scope_param, scoped_tags_from_traces, search_tags_json, tenant, traceql_query_error_response};
+use super::{
+    AppState, HeaderMap, IntoResponse, Json, Response, SpanStore, StatusCode, Uri,
+    is_match_all_query, matching_traces, optional_time_bounds, q_filter_limit, query_param,
+    scan_options_param, scope_param, scoped_tags_from_traces, search_tags_json, tenant,
+    traceql_query_error_response,
+};
 
-pub(crate) async fn search_tags_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
+pub(crate) async fn search_tags_inner<S>(
+    state: &AppState<S>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response
 where
     S: SpanStore + 'static,
 {

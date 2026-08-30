@@ -1,5 +1,3 @@
-use super::*;
-
 /// Errors enumerating blocks.
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {

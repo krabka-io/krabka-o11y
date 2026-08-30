@@ -1,4 +1,8 @@
-use super::{BTreeSet, TagScope, TraceSpans, TypedValue, collect_event_values, collect_link_values, collect_span_intrinsic_values, collect_trace_intrinsic_values, scoped_attribute_tag, trace_resource_attributes, typed_value_parts};
+use super::{
+    BTreeSet, TagScope, TraceSpans, TypedValue, collect_event_values, collect_link_values,
+    collect_span_intrinsic_values, collect_trace_intrinsic_values, scoped_attribute_tag,
+    trace_resource_attributes, typed_value_parts,
+};
 
 pub(crate) fn tag_values_from_traces(traces: &[TraceSpans], tag: &str) -> Vec<TypedValue> {
     let tag = tag.strip_prefix('.').unwrap_or(tag);

@@ -25,10 +25,10 @@ mod tests {
 }
 
 // === split-modules: generated submodules ===
-mod clock;
+mod clock_type;
 mod mock_clock;
 mod system_clock;
 
-pub use clock::Clock;
+pub use clock_type::Clock;
 pub use mock_clock::MockClock;
 pub use system_clock::SystemClock;

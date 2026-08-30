@@ -1,4 +1,3 @@
-
 #[cfg(feature = "experimental-functions")]
 pub(crate) fn limit_ratio_includes_sample(ratio: f64, labels: &Labels) -> bool {
     let sample_offset = prometheus_labels_hash(labels).to_f64().unwrap_or(f64::MAX)

@@ -1,5 +1,3 @@
-use super::*;
-
 /// Prometheus exemplar attached to a sample.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Exemplar {

@@ -1,5 +1,3 @@
-use super::*;
-
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct Label {
     #[prost(string, tag = "1")]

@@ -104,7 +104,7 @@ mod tests {
 
 // === split-modules: generated submodules ===
 mod assign_nested_set;
-mod nested_set;
+mod nested_set_type;
 
 pub use assign_nested_set::assign_nested_set;
-pub use nested_set::NestedSet;
+pub use nested_set_type::NestedSet;

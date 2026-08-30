@@ -1,7 +1,7 @@
-use super::{ DurationExprContext, Expr,
-    PromqlError, Result,
-    normalize_duration_expressions, parse, parse_experimental_zero_arg_helper,
-    strip_extended_selector_modifiers, wrap_extended_selectors};
+use super::{
+    DurationExprContext, Expr, PromqlError, Result, normalize_duration_expressions, parse,
+    parse_experimental_zero_arg_helper, strip_extended_selector_modifiers, wrap_extended_selectors,
+};
 
 /// Parses `PromQL` and first folds Prometheus duration expressions to fixed durations.
 ///

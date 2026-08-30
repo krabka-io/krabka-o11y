@@ -1,4 +1,3 @@
-
 #[cfg(feature = "experimental-functions")]
 pub(crate) fn double_exponential_smoothing_sample_from_series(
     series: &RangeSeries,

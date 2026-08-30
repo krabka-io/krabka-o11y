@@ -1,4 +1,8 @@
-use super::{Arc, ArcSwap, BlockStore, Cli, HttpConfig, IndexedLiveSource, KrabkaSpanStore, LiveStore, LiveTier, ObjectStore, Parser, RemoteLiveSource, RwLock, ServiceMetrics, SharedTraceIndex, TraceIndex, TraceqlEngine, Url, build_object_store, engine_opts_from_cli, trace_querier};
+use super::{
+    Arc, ArcSwap, BlockStore, Cli, HttpConfig, IndexedLiveSource, KrabkaSpanStore, LiveStore,
+    LiveTier, ObjectStore, RemoteLiveSource, RwLock, ServiceMetrics, SharedTraceIndex, TraceIndex,
+    TraceqlEngine, Url, build_object_store, engine_opts_from_cli, trace_querier,
+};
 
 pub(crate) async fn build_querier_router_with_live(
     cli: &Cli,

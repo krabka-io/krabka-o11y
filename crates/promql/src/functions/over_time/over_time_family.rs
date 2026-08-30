@@ -1,5 +1,7 @@
-use super::{ Extremum, fold_extremum, last_value_by_timestamp, over_time_mean, over_time_variance,
-    quantile_value};
+use super::{
+    Extremum, fold_extremum, last_value_by_timestamp, over_time_mean, over_time_variance,
+    quantile_value,
+};
 
 /// Which `*_over_time` function an [`OverTimeUdf`] evaluates.
 ///

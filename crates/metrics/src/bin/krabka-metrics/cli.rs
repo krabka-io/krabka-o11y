@@ -1,4 +1,9 @@
-use super::{ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_RATE_BUCKETS, HA_TRACKER_TOPIC, Parser, SocketAddr, Target, Time, parse, parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap};
+use super::{
+    ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_RATE_BUCKETS,
+    HA_TRACKER_TOPIC, Parser, SocketAddr, Target, Time, parse,
+    parse_client_dispatch_queue_capacity, parse_client_frame_max,
+    parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap,
+};
 
 #[derive(Debug, Parser)]
 pub(crate) struct Cli {
