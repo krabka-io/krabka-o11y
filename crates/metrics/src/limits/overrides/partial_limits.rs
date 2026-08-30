@@ -18,12 +18,12 @@ pub(crate) struct PartialLimits {
     pub(crate) max_fetched_series_per_query: Option<u64>,
     #[serde(
         default,
-        deserialize_with = "super::option_non_negative_time::deserialize"
+        deserialize_with = "super::super::option_non_negative_time::deserialize"
     )]
     pub(crate) max_query_lookback: Option<Time>,
     #[serde(
         default,
-        deserialize_with = "super::option_non_negative_time::deserialize"
+        deserialize_with = "super::super::option_non_negative_time::deserialize"
     )]
     pub(crate) max_query_length: Option<Time>,
     #[serde(default, with = "serde_units::human::option_time")]

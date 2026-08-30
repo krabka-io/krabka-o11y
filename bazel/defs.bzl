@@ -145,7 +145,8 @@ def crate_binary(name, crate_root, lib, tests = True, **kwargs):
 
     Args:
       name: the binary target name, matching Cargo's `[[bin]] name`.
-      crate_root: the binary's entry point, e.g. `src/bin/broker.rs`.
+      crate_root: the binary's entry point, e.g. `src/bin/broker/main.rs`.
+        Every `.rs` file beside it is one of the binary's modules.
       lib: the `crate_library` target in this package that it links.
       tests: emit a `rust_test` over the binary's own `#[cfg(test)]` module.
         `cargo test` runs those; without this they are simply not run.
@@ -153,7 +154,13 @@ def crate_binary(name, crate_root, lib, tests = True, **kwargs):
     """
     rust_binary(
         name = name,
-        srcs = [crate_root],
+        # The binary owns the directory holding its crate root, so its own
+        # modules live beside it there.
+        srcs = [crate_root] + native.glob(
+            [crate_root.rsplit("/", 1)[0] + "/**/*.rs"],
+            exclude = [crate_root],
+            allow_empty = True,
+        ),
         aliases = _aliases(["deps"]),
         crate_features = _features(),
         crate_root = crate_root,

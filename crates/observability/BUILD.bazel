@@ -10,7 +10,7 @@ crate_library(name = "observability")
 # `bazel run //crates/observability:krabka-observability -- --help`.
 crate_binary(
     name = "krabka-observability",
-    crate_root = "src/main.rs",
+    crate_root = "src/bin/krabka-observability/main.rs",
     lib = ":observability",
 )
 
