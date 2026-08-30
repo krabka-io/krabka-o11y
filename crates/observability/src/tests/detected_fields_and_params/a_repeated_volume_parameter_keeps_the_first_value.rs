@@ -21,7 +21,7 @@ pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
     );
     check!(matches!(
         parse("query=a&aggregateBy=labels&aggregateBy=series").aggregate_by,
-        super::prelude::VolumeAggregateBy::Labels
+        super::super::prelude::VolumeAggregateBy::Labels
     ));
 
     // The defaults still apply when a parameter is absent entirely, which
@@ -29,7 +29,7 @@ pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
     check!(parse("query=a").limit == 100);
     check!(matches!(
         parse("query=a").aggregate_by,
-        super::prelude::VolumeAggregateBy::Series
+        super::super::prelude::VolumeAggregateBy::Series
     ));
     check!(parse("query=a").target_labels == None);
 
@@ -40,8 +40,8 @@ pub(crate) fn a_repeated_volume_parameter_keeps_the_first_value() {
     );
 
     // A query with no `query` at all is an error, not a default.
-    check!(super::prelude::parse_volume_params(Some("limit=5")).is_err());
-    check!(super::prelude::parse_volume_params(None).is_err());
+    check!(super::super::prelude::parse_volume_params(Some("limit=5")).is_err());
+    check!(super::super::prelude::parse_volume_params(None).is_err());
     // An unknown aggregation is rejected rather than falling back.
-    check!(super::prelude::parse_volume_params(Some("query=a&aggregateBy=nonsense")).is_err());
+    check!(super::super::prelude::parse_volume_params(Some("query=a&aggregateBy=nonsense")).is_err());
 }

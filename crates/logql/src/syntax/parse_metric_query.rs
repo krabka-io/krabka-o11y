@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricQuery, ParseError, Parser};
 
 #[tracing::instrument(level = "info", skip_all, fields(query = %input), err)]
 /// # Errors

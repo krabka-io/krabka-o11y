@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, LogfmtParser, insert_extracted_field, sanitize_logfmt_field_name};
 
 pub(crate) fn parse_logfmt_fields(line: &str, fields: &mut Labels) {
     let mut parser = LogfmtParser::new(line);

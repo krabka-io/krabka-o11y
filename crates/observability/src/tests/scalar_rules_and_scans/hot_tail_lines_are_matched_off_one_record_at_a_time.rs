@@ -81,7 +81,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         ..plan.clone()
     };
     check!(
-        super::prelude::count_loki_stream_result_hot_tail_lines(
+        super::super::prelude::count_loki_stream_result_hot_tail_lines(
             &response(&[(10, "a")]),
             &later_plan,
             &[record("tenant", 10, "a")],
@@ -91,7 +91,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
     );
     let compacted = super::super::prelude::CompactionFrontier::new(50);
     check!(
-        super::prelude::count_loki_stream_result_hot_tail_lines(
+        super::super::prelude::count_loki_stream_result_hot_tail_lines(
             &response(&[(10, "a")]),
             &plan,
             &[record("tenant", 10, "a")],

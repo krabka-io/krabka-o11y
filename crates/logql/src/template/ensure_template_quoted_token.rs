@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, template_parse_error, is_wrapped_template_token};
 
 pub(crate) fn ensure_template_quoted_token(
     command: &str,

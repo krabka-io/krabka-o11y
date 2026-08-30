@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, Deserialize, Serialize, SeriesFingerprint};
 
 /// An ordered set of `name -> value` labels identifying a series.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

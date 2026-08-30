@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricBinarySetOp;
 
 pub(crate) fn set_text(op: MetricBinarySetOp) -> &'static str {
     match op {

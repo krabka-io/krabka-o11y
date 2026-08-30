@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, Schema, validate_against};
 
 /// Validates that an Arrow schema carries the mandatory columns with the
 /// required types. Payload columns are unconstrained.

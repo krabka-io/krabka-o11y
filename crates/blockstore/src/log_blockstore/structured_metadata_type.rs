@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DataType, Field, Fields};
 
 pub(crate) fn structured_metadata_type() -> DataType {
     DataType::Map(

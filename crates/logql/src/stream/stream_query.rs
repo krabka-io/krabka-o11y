@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, PipelineStage, Labels, PipelineEvaluation};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StreamQuery {

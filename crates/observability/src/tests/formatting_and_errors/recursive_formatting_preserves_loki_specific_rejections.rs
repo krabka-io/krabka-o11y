@@ -10,7 +10,7 @@ pub(crate) fn recursive_formatting_preserves_loki_specific_rejections() {
 
     for query in queries {
         check!(
-            super::prelude::format_logql_query(query).is_err(),
+            super::super::prelude::format_logql_query(query).is_err(),
             "query: {query}"
         );
     }

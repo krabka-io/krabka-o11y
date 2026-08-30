@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BlockIndex, BlockStoreError, LabelIndex, ObjectPath, ObjectStore, TimeRange,
+    write_tenant_log_index_shard_catalog_to_object_store,
+    write_tenant_log_index_shard_to_object_store,
+};
 
 /// # Errors
 /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.

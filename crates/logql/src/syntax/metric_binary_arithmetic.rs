@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricQuery, MetricScalarArithmeticOp, MetricVectorMatching};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricBinaryArithmetic {

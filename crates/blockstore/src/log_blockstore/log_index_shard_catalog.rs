@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, Deserialize, LOG_INDEX_MANIFEST_VERSION, Serialize, TimeRange};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct LogIndexShardCatalog {

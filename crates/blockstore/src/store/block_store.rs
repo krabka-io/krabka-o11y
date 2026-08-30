@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    Arc, BlockStoreError, BlockWriter, ByteSize, DEFAULT_BLOCK_READ_MAX, Index, LabelMatcher,
+    MemTable, ObjectStore, ParquetReadOptions, Result, RowGroupMeta, ScanTableRequest, SchemaRef,
+    SessionContext, TABLE_NAME, Url, instrument, read_block_row_groups_with_max_bytes,
+    read_row_group_metadata_with_max_bytes,
+};
 
 /// Owns the object store, its `DataFusion` URL prefix, and the in-memory index.
 #[derive(Clone)]

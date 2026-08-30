@@ -1,5 +1,3 @@
-use super::*;
-
 /// Errors raised by the block store. Backend errors are stringified so public
 /// errors stay stable across dependency details.
 #[derive(Debug, thiserror::Error)]

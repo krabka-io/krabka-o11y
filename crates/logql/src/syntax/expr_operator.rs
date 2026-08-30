@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricScalarArithmeticOp, ComparisonOp, MetricBinarySetOp};
 
 #[derive(Clone, Copy)]
 pub(crate) enum ExprOperator {

@@ -1,4 +1,4 @@
-use super::*;
+use super::format_template_float;
 
 pub(crate) fn format_template_float_round(args: &[String]) -> String {
     if args.len() < 2 {

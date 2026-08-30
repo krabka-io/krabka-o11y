@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockDescriptor, BlockStoreError};
 
 pub(crate) fn validate_planned_blocks(blocks: &[BlockDescriptor]) -> Result<(), BlockStoreError> {
     if blocks.is_empty() {

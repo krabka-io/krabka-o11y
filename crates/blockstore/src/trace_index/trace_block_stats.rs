@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeMap, BTreeSet, Deserialize, Serialize, ShardedTraceBloom};
 
 /// The per-block trace footprint registered by a block builder.
 #[derive(Clone, Debug, Serialize, Deserialize)]

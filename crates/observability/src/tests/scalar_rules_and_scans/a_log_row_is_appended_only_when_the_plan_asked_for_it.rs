@@ -75,11 +75,11 @@ pub(crate) fn a_log_row_is_appended_only_when_the_plan_asked_for_it() {
     wants_nameless.fingerprints.insert(nameless);
     let mut streams = BTreeMap::new();
     check!(matches!(
-        super::prelude::append_matching_log_row(
+        super::super::prelude::append_matching_log_row(
             &mut streams,
             &wants_nameless,
             &label_index,
-            super::prelude::QueryRow {
+            super::super::prelude::QueryRow {
                 fingerprint: nameless,
                 timestamp_ns: 50,
                 line: "line",
@@ -87,6 +87,6 @@ pub(crate) fn a_log_row_is_appended_only_when_the_plan_asked_for_it() {
             },
             &[],
         ),
-        Err(super::prelude::QueryError::MissingSeriesLabels { .. })
+        Err(super::super::prelude::QueryError::MissingSeriesLabels { .. })
     ));
 }

@@ -18,11 +18,11 @@ pub(crate) fn only_an_object_store_failure_is_classified_as_retryable() {
     };
 
     // The one that is.
-    check!(super::prelude::block_store_error_is_object_store(
+    check!(super::super::prelude::block_store_error_is_object_store(
         &object_store_error()
     ));
     check!(is_object_store(
-        &super::prelude::CompactionError::BlockStore(object_store_error())
+        &super::super::prelude::CompactionError::BlockStore(object_store_error())
     ));
 
     // Every other block-store failure is not, including an I/O error,
@@ -44,34 +44,34 @@ pub(crate) fn only_an_object_store_failure_is_classified_as_retryable() {
     };
     for error in others() {
         check!(
-            !super::prelude::block_store_error_is_object_store(&error),
+            !super::super::prelude::block_store_error_is_object_store(&error),
             "{error}"
         );
     }
     for error in others() {
         check!(!is_object_store(
-            &super::prelude::CompactionError::BlockStore(error)
+            &super::super::prelude::CompactionError::BlockStore(error)
         ));
     }
 
     // And every compaction failure that is not a block-store one at all.
     check!(!is_object_store(
-        &super::prelude::CompactionError::EmptyWalBatch
+        &super::super::prelude::CompactionError::EmptyWalBatch
     ));
     check!(!is_object_store(
-        &super::prelude::CompactionError::AllRowsDeleted
+        &super::super::prelude::CompactionError::AllRowsDeleted
     ));
     check!(!is_object_store(
-        &super::prelude::CompactionError::MissingWalPosition { timestamp_ns: 1 }
+        &super::super::prelude::CompactionError::MissingWalPosition { timestamp_ns: 1 }
     ));
     check!(!is_object_store(
-        &super::prelude::CompactionError::MixedTenant {
+        &super::super::prelude::CompactionError::MixedTenant {
             expected: "a".to_string(),
             actual: "b".to_string(),
         }
     ));
     check!(!is_object_store(
-        &super::prelude::CompactionError::MixedPartition {
+        &super::super::prelude::CompactionError::MixedPartition {
             expected: 1,
             actual: 2,
         }

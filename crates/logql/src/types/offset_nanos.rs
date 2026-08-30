@@ -1,4 +1,4 @@
-use super::*;
+use super::{Display, From, Into};
 
 /// A query time offset, in nanoseconds. This is the `offset 1h` in a metric
 /// query.

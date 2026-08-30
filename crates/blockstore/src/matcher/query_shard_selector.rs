@@ -1,4 +1,4 @@
-use super::*;
+use super::SeriesFingerprint;
 
 /// Parsed `N_of_M` Mimir query shard selector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

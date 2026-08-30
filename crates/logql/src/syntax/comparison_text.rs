@@ -1,4 +1,4 @@
-use super::*;
+use super::ComparisonOp;
 
 pub(crate) fn comparison_text(op: ComparisonOp) -> &'static str {
     match op {

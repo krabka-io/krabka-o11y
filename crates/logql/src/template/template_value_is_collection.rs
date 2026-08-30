@@ -1,4 +1,4 @@
-use super::*;
+use super::TemplateRuntimeValue;
 
 pub(crate) fn template_value_is_collection(value: &TemplateRuntimeValue) -> bool {
     matches!(

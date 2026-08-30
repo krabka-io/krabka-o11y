@@ -1,4 +1,4 @@
-use super::*;
+use super::RequiredColumn;
 
 /// A signal's declared block schema and sort key.
 #[derive(Clone, Debug, PartialEq, Eq)]

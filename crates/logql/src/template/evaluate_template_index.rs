@@ -1,4 +1,4 @@
-use super::*;
+use super::{TemplateRuntimeValue, template_collection_first_args, template_index_value};
 
 pub(crate) fn evaluate_template_index(args: &[TemplateRuntimeValue]) -> TemplateRuntimeValue {
     let Some((value, indexes)) = template_collection_first_args(args) else {

@@ -1,4 +1,4 @@
-use super::*;
+use super::TemplateRuntimeValue;
 
 pub(crate) fn template_variable_path_value(
     value: &TemplateRuntimeValue,

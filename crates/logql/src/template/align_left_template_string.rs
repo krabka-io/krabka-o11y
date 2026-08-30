@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn align_left_template_string(width: usize, value: &str) -> String {
     let mut chars = value.chars().take(width).collect::<String>();

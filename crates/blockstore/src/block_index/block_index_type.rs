@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockMeta, DeserializeOwned, Serialize};
 
 /// Signal-specific index seam.
 pub trait BlockIndex: Default + Serialize + DeserializeOwned {

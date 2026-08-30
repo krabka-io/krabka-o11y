@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn is_template_function_name(name: &str) -> bool {
     matches!(

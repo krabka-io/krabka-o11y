@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn duration_unit(unit: &str) -> Option<(u8, u16, i128)> {
     match unit {

@@ -31,6 +31,6 @@ pub(crate) fn a_repeated_detected_fields_parameter_keeps_the_first_value() {
     check!(parse("query=a").limit == 1000);
     check!(parse("query=a").line_limit == 100);
 
-    check!(super::prelude::parse_detected_fields_params(Some("limit=5")).is_err());
-    check!(super::prelude::parse_detected_fields_params(None).is_err());
+    check!(super::super::prelude::parse_detected_fields_params(Some("limit=5")).is_err());
+    check!(super::super::prelude::parse_detected_fields_params(None).is_err());
 }

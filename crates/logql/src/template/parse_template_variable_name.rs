@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, template_parse_error, is_template_variable_name_char_invalid};
 
 pub(crate) fn parse_template_variable_name(
     variable: &str,

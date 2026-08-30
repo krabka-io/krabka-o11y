@@ -1,4 +1,4 @@
-use super::*;
+use super::{TemplateRuntimeValue, template_slice_bounds};
 
 pub(crate) fn template_slice_array(
     values: &[serde_json::Value],

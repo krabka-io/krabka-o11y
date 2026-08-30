@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Int64Builder, ListBuilder, SpanEvent, StringBuilder, StructBuilder, TimeExt, append_kv,
+};
 
 pub(crate) fn append_events(events: &mut ListBuilder<StructBuilder>, rows: &[SpanEvent]) {
     let sb = events.values();

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BlockStoreError, ObjectPath, ObjectStore, TimeRange, collect_tenant_log_index_shard_ranges,
+    instrument, log_tenant_index_shards_object_prefix,
+};
 
 #[instrument(level = "debug", skip_all, fields(tenant = %tenant), err)]
 /// # Errors

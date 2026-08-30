@@ -1,5 +1,3 @@
-use super::*;
-
 /// One flattened profile sample row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProfileSampleRow {

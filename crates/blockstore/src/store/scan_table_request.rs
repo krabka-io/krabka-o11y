@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, SchemaRef};
 
 /// One named `DataFusion` table registration request over indexed blocks.
 pub struct ScanTableRequest<'a> {

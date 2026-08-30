@@ -13,5 +13,5 @@ pub(crate) fn empty_prometheus_rules_filter_values_are_ignored() {
     ))
     .expect("empty values are ignored, not rejected");
 
-    check!(filters == super::prelude::PrometheusRulesFilters::default());
+    check!(filters == super::super::prelude::PrometheusRulesFilters::default());
 }

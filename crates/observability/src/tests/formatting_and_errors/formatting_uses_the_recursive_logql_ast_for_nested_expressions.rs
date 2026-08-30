@@ -11,7 +11,7 @@ pub(crate) fn formatting_uses_the_recursive_logql_ast_for_nested_expressions() {
     );
 
     check!(
-        super::prelude::format_logql_query(query).expect("the nested expression formats")
+        super::super::prelude::format_logql_query(query).expect("the nested expression formats")
             == concat!(
                 r#"label_replace(label_replace(rate({app="web"}[5m]), "inner", "$1", "app", "(.*)"), "#,
                 r#""outer", "$1", "inner", "(.*)")"#,

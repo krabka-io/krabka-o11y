@@ -1,4 +1,4 @@
-use super::*;
+use super::QueryShardSelector;
 
 /// # Errors
 /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.

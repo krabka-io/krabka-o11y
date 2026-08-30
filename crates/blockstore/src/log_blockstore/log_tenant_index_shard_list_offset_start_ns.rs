@@ -1,4 +1,4 @@
-use super::*;
+use super::TimeRange;
 
 #[must_use]
 pub fn log_tenant_index_shard_list_offset_start_ns(query_range: TimeRange) -> i64 {

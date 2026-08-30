@@ -1,4 +1,4 @@
-use super::*;
+use super::{LogqlExpr, ParseError, parse_expr};
 
 /// Parse a complete, recursively nested `LogQL` expression.
 ///

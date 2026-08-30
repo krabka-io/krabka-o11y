@@ -43,10 +43,10 @@ pub(crate) fn duration_units_are_worth_what_they_should_relative_to_each_other()
         check!(bit == 1_u16 << ordinal, "{name} bit");
     }
 
-    check!(super::prelude::prometheus_duration_unit("") == None);
-    check!(super::prelude::prometheus_duration_unit("mo") == None);
+    check!(super::super::prelude::prometheus_duration_unit("") == None);
+    check!(super::super::prelude::prometheus_duration_unit("mo") == None);
     check!(
-        super::prelude::prometheus_duration_unit("S") == None,
+        super::super::prelude::prometheus_duration_unit("S") == None,
         "case-sensitive"
     );
 }

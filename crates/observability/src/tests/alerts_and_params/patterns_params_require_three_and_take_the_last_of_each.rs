@@ -46,7 +46,7 @@ pub(crate) fn patterns_params_require_three_and_take_the_last_of_each() {
         Err(HttpQueryError::MissingQueryParameter("end"))
     ));
     check!(matches!(
-        super::prelude::parse_patterns_params(None),
+        super::super::prelude::parse_patterns_params(None),
         Err(HttpQueryError::MissingQueryParameter("query"))
     ));
 

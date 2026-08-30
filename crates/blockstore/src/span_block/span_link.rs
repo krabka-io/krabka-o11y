@@ -1,5 +1,3 @@
-use super::*;
-
 /// One nested span link.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpanLink {

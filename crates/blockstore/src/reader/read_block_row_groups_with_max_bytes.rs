@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ByteSize, ObjectStore, ObjectStoreReader, ParquetRecordBatchStreamBuilder, Path,
+    RecordBatch, Result, TryStreamExt, head_within_cap, instrument,
+};
 
 /// Reads selected row groups with a caller-supplied on-disk size limit.
 ///

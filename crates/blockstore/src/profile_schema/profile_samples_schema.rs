@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Arc, COL_FINGERPRINT, COL_TIMESTAMP, DataType, Field, PCOL_PROFILE_TYPE, PCOL_SPAN_ID,
+    PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE,
+    Schema, SchemaRef, profile_type_dict,
+};
 
 #[must_use]
 pub fn profile_samples_schema() -> SchemaRef {

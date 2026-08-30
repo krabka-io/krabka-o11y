@@ -1,4 +1,4 @@
-use super::*;
+use super::{template_float_args, format_template_float};
 
 pub(crate) fn format_template_float_product(args: &[String]) -> String {
     let Some(values) = template_float_args(args) else {

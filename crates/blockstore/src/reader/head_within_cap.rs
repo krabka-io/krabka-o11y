@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Arc, BlockStoreError, ByteSize, ByteSizeExt, ObjectStore, ObjectStoreExt, Path, Result,
+};
 
 /// `head`s the block, rejects it above `max_bytes`, and hands back its on-disk
 /// size for the Parquet reader.

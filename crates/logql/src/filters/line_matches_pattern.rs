@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn line_matches_pattern(line: &str, pattern: &str) -> bool {
     let mut remaining = line;

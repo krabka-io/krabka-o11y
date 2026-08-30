@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, gibibytes};
 
 /// Maximum on-disk byte size of a Parquet block accepted by [`read_block`].
 ///

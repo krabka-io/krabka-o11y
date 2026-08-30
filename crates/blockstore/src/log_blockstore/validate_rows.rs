@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockKey, BlockStoreError, LogRow};
 
 pub(crate) fn validate_rows(key: &BlockKey, rows: &[LogRow]) -> Result<(), BlockStoreError> {
     if let Some(row) = rows.iter().find(|row| {

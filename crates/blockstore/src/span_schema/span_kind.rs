@@ -1,5 +1,3 @@
-use super::*;
-
 /// OTLP span kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpanKind {

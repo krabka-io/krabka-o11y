@@ -1,4 +1,4 @@
-use super::*;
+use super::DataType;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromotedSpanAttrType {

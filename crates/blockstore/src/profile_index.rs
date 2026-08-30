@@ -608,10 +608,10 @@ mod tests {
 // === split-modules: generated submodules ===
 mod label_profile_type;
 mod max_profile_index_snapshot_bytes;
-mod profile_index;
+mod profile_index_type;
 mod tenant_profile_extras;
 
 pub use label_profile_type::LABEL_PROFILE_TYPE;
 pub use max_profile_index_snapshot_bytes::MAX_PROFILE_INDEX_SNAPSHOT_BYTES;
-pub use profile_index::ProfileIndex;
+pub use profile_index_type::ProfileIndex;
 use tenant_profile_extras::TenantProfileExtras;

@@ -46,7 +46,7 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
     // When the filter empties the series it reports false, so the caller
     // can drop it rather than emitting an empty series.
     let mut left = range(&[1, 4]);
-    check!(!super::prelude::apply_metric_binary_set_to_series(
+    check!(!super::super::prelude::apply_metric_binary_set_to_series(
         &mut left,
         &right,
         MetricBinarySetOp::And
@@ -55,7 +55,7 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
 
     // `or` keeps a series the right side never matches at all.
     let mut left = range(&[9]);
-    check!(super::prelude::apply_metric_binary_set_to_series(
+    check!(super::super::prelude::apply_metric_binary_set_to_series(
         &mut left,
         &right,
         MetricBinarySetOp::Or
@@ -65,19 +65,19 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
     // same three rules apply to it.
     let instant = |ts: i64| serde_json::json!({"metric": {}, "value": [ts, ts.to_string()]});
     let mut matching = instant(5);
-    check!(super::prelude::apply_metric_binary_set_to_series(
+    check!(super::super::prelude::apply_metric_binary_set_to_series(
         &mut matching,
         &instant(5),
         MetricBinarySetOp::And
     ));
     let mut differing = instant(5);
-    check!(!super::prelude::apply_metric_binary_set_to_series(
+    check!(!super::super::prelude::apply_metric_binary_set_to_series(
         &mut differing,
         &instant(6),
         MetricBinarySetOp::And
     ));
     let mut differing = instant(5);
-    check!(super::prelude::apply_metric_binary_set_to_series(
+    check!(super::super::prelude::apply_metric_binary_set_to_series(
         &mut differing,
         &instant(6),
         MetricBinarySetOp::Unless
@@ -85,7 +85,7 @@ pub(crate) fn a_binary_set_operator_keeps_the_subset_it_names() {
 
     // A series with neither shape matches nothing.
     let mut empty = serde_json::json!({"metric": {}});
-    check!(!super::prelude::apply_metric_binary_set_to_series(
+    check!(!super::super::prelude::apply_metric_binary_set_to_series(
         &mut empty,
         &right,
         MetricBinarySetOp::Or

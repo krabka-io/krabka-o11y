@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    AttrValue, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, SpanAttr, StringBuilder,
+};
 
 pub(crate) fn append_attrs(
     attrs: &[SpanAttr],

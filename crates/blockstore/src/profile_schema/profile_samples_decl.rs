@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BlockSchema, COL_FINGERPRINT, COL_TIMESTAMP, DataType, PCOL_PROFILE_TYPE, RequiredColumn,
+    profile_type_dict,
+};
 
 #[must_use]
 pub fn profile_samples_decl() -> BlockSchema {

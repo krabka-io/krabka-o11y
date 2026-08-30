@@ -1,4 +1,4 @@
-use super::*;
+use super::ParseError;
 
 pub(crate) fn syntax_error(message: &str) -> ParseError {
     ParseError::Syntax {

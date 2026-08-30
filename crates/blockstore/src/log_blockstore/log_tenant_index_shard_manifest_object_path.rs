@@ -1,4 +1,4 @@
-use super::*;
+use super::{ObjectPath, TimeRange, log_tenant_index_shards_object_prefix};
 
 #[must_use]
 pub fn log_tenant_index_shard_manifest_object_path(

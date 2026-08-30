@@ -1,4 +1,4 @@
-use super::*;
+use super::{LabelMatcher, LabelPredicate, BlockStoreError, MatchOp, BlockMatchOp};
 
 pub(crate) fn label_predicate(matcher: &LabelMatcher) -> Result<LabelPredicate, BlockStoreError> {
     LabelPredicate::new(

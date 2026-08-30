@@ -1,5 +1,3 @@
-use super::*;
-
 /// FNV-1 32-bit hash.
 #[must_use]
 pub fn fnv1_32(bytes: &[u8]) -> u32 {

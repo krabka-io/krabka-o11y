@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ArrowWriter, BlockStoreError, Cursor, LogRow, log_block_schema, rows_to_batch};
 
 pub(crate) fn encode_log_block(rows: &[LogRow]) -> Result<Vec<u8>, BlockStoreError> {
     let schema = log_block_schema();

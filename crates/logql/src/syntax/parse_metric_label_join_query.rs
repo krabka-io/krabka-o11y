@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricLabelJoin, ParseError, Parser};
 
 /// # Errors
 /// Returns an error when the query or template is malformed, a requested conversion is invalid, or evaluation cannot read its input data.

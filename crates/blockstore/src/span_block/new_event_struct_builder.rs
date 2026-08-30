@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, DataType, Field, Fields, Int64Builder, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, StringBuilder,
+    StructBuilder, new_str_list, new_str_list_list,
+};
 
 pub(crate) fn new_event_struct_builder() -> StructBuilder {
     StructBuilder::new(

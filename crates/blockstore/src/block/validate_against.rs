@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, Result, Schema};
 
 /// Validates an Arrow schema against a declared signal block schema.
 ///

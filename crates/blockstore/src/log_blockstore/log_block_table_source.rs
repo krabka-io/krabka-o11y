@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, ListingTable, ObjectPath, ObjectStore};
 
 #[derive(Debug)]
 pub(crate) enum LogBlockTableSource {

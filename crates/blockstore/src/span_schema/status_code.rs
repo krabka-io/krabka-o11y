@@ -1,5 +1,3 @@
-use super::*;
-
 /// OTLP status code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatusCode {

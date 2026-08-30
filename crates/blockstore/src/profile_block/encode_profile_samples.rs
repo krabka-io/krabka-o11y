@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ArrayRef, BinaryBuilder, BlockStoreError, Int32Type, Int64Builder, ProfileSampleRow,
+    RecordBatch, Result, StringDictionaryBuilder, UInt64Builder, profile_samples_schema,
+};
 
 /// Encodes rows into a `RecordBatch` that matches `profile_samples_schema()`.
 ///

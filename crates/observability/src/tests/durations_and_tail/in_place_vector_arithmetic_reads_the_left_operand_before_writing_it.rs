@@ -54,7 +54,7 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
     // Everything dropped reports false so the caller can discard the
     // series rather than emit one with no samples.
     let mut orphan = series(&[(9, "1")]);
-    check!(!super::prelude::apply_metric_binary_arithmetic_to_series(
+    check!(!super::super::prelude::apply_metric_binary_arithmetic_to_series(
         &mut orphan,
         &right,
         MetricScalarArithmeticOp::Subtract,
@@ -62,7 +62,7 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
 
     // A right series with no values matches nothing at all.
     let mut left = series(&[(1, "10")]);
-    check!(!super::prelude::apply_metric_binary_arithmetic_to_series(
+    check!(!super::super::prelude::apply_metric_binary_arithmetic_to_series(
         &mut left,
         &serde_json::json!({"metric": {}}),
         MetricScalarArithmeticOp::Subtract,
@@ -72,7 +72,7 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
     // single sample.
     let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
     let mut left = instant(1, "10");
-    check!(super::prelude::apply_metric_binary_arithmetic_to_series(
+    check!(super::super::prelude::apply_metric_binary_arithmetic_to_series(
         &mut left,
         &instant(1, "2"),
         MetricScalarArithmeticOp::Subtract,

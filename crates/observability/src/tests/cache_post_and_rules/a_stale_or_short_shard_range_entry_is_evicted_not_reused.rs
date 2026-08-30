@@ -12,7 +12,7 @@ pub(crate) fn a_stale_or_short_shard_range_entry_is_evicted_not_reused() {
     let key = super::super::prelude::DynamicShardRangesCacheKey {
         tenant: "t".to_string(),
     };
-    let ranges = vec![super::prelude::TimeRange {
+    let ranges = vec![super::super::prelude::TimeRange {
         start_ns: 100,
         end_ns: 200,
     }];

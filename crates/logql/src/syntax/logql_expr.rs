@@ -1,4 +1,4 @@
-use super::*;
+use super::{StreamQuery, MetricQuery, MetricScalarArithmeticOp, MetricVectorMatching, ComparisonOp, MetricBinarySetOp, fmt, Quoted, arithmetic_text, format_matching, comparison_text, set_text};
 
 /// A recursively composable `LogQL` expression.
 #[derive(Clone, Debug, PartialEq)]

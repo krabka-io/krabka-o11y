@@ -1,4 +1,4 @@
-use super::*;
+use super::{AttrValue, SpanAttr};
 
 pub(crate) fn promoted_attr_value<'a>(attrs: &'a [SpanAttr], key: &str) -> Option<&'a AttrValue> {
     attrs

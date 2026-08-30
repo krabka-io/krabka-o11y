@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricScalarArithmeticOp;
 
 pub(crate) fn arithmetic_text(op: MetricScalarArithmeticOp) -> &'static str {
     match op {

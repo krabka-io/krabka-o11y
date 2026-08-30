@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, is_template_control_assignment_variable_char, parse_template_variable_name};
 
 pub(crate) fn parse_template_control_assignment(
     expression: &str,

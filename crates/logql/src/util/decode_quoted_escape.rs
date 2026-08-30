@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn decode_quoted_escape(escaped: char) -> char {
     match escaped {

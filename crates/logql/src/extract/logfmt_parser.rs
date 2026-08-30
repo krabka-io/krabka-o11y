@@ -1,4 +1,4 @@
-use super::*;
+use super::decode_quoted_escape;
 
 pub(crate) struct LogfmtParser<'a> {
     pub(crate) input: &'a str,

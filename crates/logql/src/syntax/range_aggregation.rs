@@ -1,4 +1,4 @@
-use super::*;
+use super::Quantile;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RangeAggregation {

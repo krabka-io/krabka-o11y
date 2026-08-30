@@ -1,4 +1,4 @@
-use super::*;
+use super::ParseError;
 
 pub(crate) fn template_parse_error(message: &str) -> ParseError {
     ParseError::Syntax {

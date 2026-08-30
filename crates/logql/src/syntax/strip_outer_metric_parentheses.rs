@@ -1,4 +1,4 @@
-use super::*;
+use super::outer_metric_parentheses_inner;
 
 pub(crate) fn strip_outer_metric_parentheses(input: &str) -> &str {
     let mut trimmed = input.trim();

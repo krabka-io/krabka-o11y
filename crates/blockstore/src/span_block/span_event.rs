@@ -1,4 +1,4 @@
-use super::*;
+use super::Time;
 
 /// One nested span event.
 ///

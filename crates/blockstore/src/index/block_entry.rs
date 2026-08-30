@@ -1,4 +1,4 @@
-use super::*;
+use super::{BTreeSet, Deserialize, Serialize, SeriesFingerprint};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct BlockEntry {

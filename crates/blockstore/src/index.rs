@@ -910,14 +910,14 @@ mod tests {
 // === split-modules: generated submodules ===
 mod anchored_regex;
 mod block_entry;
-mod index;
+mod index_type;
 mod matcher_matches_empty;
 mod max_index_snapshot_bytes;
 mod tenant_index;
 
 use anchored_regex::anchored_regex;
 use block_entry::BlockEntry;
-pub use index::Index;
+pub use index_type::Index;
 use matcher_matches_empty::matcher_matches_empty;
 pub use max_index_snapshot_bytes::MAX_INDEX_SNAPSHOT_BYTES;
 use tenant_index::TenantIndex;

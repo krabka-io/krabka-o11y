@@ -1,5 +1,3 @@
-use super::*;
-
 /// The three nested-set columns for one span.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NestedSet {

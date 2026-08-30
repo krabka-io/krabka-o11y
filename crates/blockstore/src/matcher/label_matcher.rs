@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, MatchOp, Serialize};
 
 /// A single label matcher.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

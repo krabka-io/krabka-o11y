@@ -1,4 +1,4 @@
-use super::*;
+use super::{IpAddr, IpFamily};
 
 pub(crate) fn ip_to_value(addr: IpAddr) -> (IpFamily, u128) {
     match addr {

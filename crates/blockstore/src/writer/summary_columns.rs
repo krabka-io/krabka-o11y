@@ -1,4 +1,4 @@
-use super::*;
+use super::{COL_FINGERPRINT, COL_TIMESTAMP};
 
 /// Columns used to summarize a block's time bounds and distinct identity keys.
 #[derive(Clone, Debug, PartialEq, Eq)]

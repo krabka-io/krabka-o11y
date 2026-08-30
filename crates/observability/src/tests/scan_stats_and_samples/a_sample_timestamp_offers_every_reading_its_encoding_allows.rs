@@ -37,11 +37,11 @@ pub(crate) fn a_sample_timestamp_offers_every_reading_its_encoding_allows() {
     check!(candidates(serde_json::json!("nonsense")).is_none());
     check!(candidates(serde_json::json!(true)).is_none());
     check!(
-        super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([]))
+        super::super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!([]))
             .is_none()
     );
     check!(
-        super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!("bare"))
+        super::super::prelude::metric_binary_sample_timestamp_ns_candidates(&serde_json::json!("bare"))
             .is_none()
     );
 }

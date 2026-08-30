@@ -1,4 +1,4 @@
-use super::*;
+use super::{BloomShard, Deserialize, Serialize, fnv1_32};
 
 /// Sharded trace-id bloom filter.
 #[derive(Clone, Debug, Serialize, Deserialize)]

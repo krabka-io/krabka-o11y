@@ -1,4 +1,4 @@
-use super::*;
+use super::{HashMap, NestedSet, SpanNode};
 
 /// Assigns nested-set intervals by DFS preorder over the trace forest.
 #[must_use]

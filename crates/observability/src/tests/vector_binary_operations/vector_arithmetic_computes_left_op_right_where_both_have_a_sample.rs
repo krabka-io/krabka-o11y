@@ -86,7 +86,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
     // A division with no answer drops its sample rather than emitting one.
     let mut output = series(&[(1, "0")]);
     check!(
-        !super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
+        !super::super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
             &left,
             MetricScalarArithmeticOp::Divide,
@@ -97,7 +97,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
     let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
     let mut output = instant(1, "2");
     check!(
-        super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
+        super::super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
             &instant(1, "10"),
             MetricScalarArithmeticOp::Subtract,
@@ -107,7 +107,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
 
     let mut output = instant(1, "2");
     check!(
-        !super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
+        !super::super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
             &instant(2, "10"),
             MetricScalarArithmeticOp::Subtract,

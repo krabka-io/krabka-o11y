@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, template_parse_error};
 
 pub(crate) fn ensure_template_parenthesized_token(
     command: &str,

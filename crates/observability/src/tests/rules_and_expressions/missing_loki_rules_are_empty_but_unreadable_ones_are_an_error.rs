@@ -34,7 +34,7 @@ pub(crate) fn missing_loki_rules_are_empty_but_unreadable_ones_are_an_error() {
     let empty = dir.path().join("empty.json");
     std::fs::write(&empty, "{}").expect("the fixture writes");
     check!(
-        super::prelude::read_loki_rule_tenants(&empty)
+        super::super::prelude::read_loki_rule_tenants(&empty)
             .expect("an empty object parses")
             .is_empty()
     );
@@ -44,14 +44,14 @@ pub(crate) fn missing_loki_rules_are_empty_but_unreadable_ones_are_an_error() {
     let malformed = dir.path().join("malformed.json");
     std::fs::write(&malformed, "{not json").expect("the fixture writes");
     check!(matches!(
-        super::prelude::read_loki_rule_tenants(&malformed),
-        Err(super::prelude::LokiRuleStoreError::Json { .. })
+        super::super::prelude::read_loki_rule_tenants(&malformed),
+        Err(super::super::prelude::LokiRuleStoreError::Json { .. })
     ));
 
     // A directory where a file was expected is an I/O error, which is how
     // a non-NotFound failure is reached without special privileges.
     check!(matches!(
-        super::prelude::read_loki_rule_tenants(dir.path()),
-        Err(super::prelude::LokiRuleStoreError::Io { .. })
+        super::super::prelude::read_loki_rule_tenants(dir.path()),
+        Err(super::super::prelude::LokiRuleStoreError::Io { .. })
     ));
 }

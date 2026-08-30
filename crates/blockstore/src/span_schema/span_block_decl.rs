@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockSchema, DataType, RequiredColumn, SCOL_START_NANO, SCOL_TRACE_ID};
 
 /// Span block declaration used by generic schema validation.
 #[must_use]

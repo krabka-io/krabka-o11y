@@ -1,4 +1,4 @@
-use super::*;
+use super::Ordering;
 
 pub(crate) fn template_compare_values(left: &str, right: &str) -> Option<Ordering> {
     match (left.parse::<f64>(), right.parse::<f64>()) {

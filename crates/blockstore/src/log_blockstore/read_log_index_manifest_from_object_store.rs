@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BlockIndex, BlockStoreError, LabelIndex, LogIndexManifest, ObjectPath, ObjectStore,
+    ObjectStoreExt, instrument, log_index_manifest_object_path,
+};
 
 #[instrument(level = "debug", skip_all, err)]
 /// # Errors

@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricVectorGroupModifier;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MetricVectorMatching {

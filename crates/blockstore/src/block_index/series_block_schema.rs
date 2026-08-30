@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockSchema, DataType, RequiredColumn};
 
 /// The logs/metrics block declaration.
 #[must_use]

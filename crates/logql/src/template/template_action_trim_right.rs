@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn template_action_trim_right(template: &str, expression_start: usize, close: usize) -> bool {
     if close <= expression_start || !template[..close].ends_with('-') {

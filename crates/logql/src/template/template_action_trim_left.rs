@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, template_parse_error};
 
 pub(crate) fn template_action_trim_left(template: &str, open: usize) -> Result<bool, ParseError> {
     let expression_start = open + 2;

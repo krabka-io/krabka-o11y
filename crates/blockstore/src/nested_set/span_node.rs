@@ -1,5 +1,3 @@
-use super::*;
-
 /// One span's tree linkage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpanNode {

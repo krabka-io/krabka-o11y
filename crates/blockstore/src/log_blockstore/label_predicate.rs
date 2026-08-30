@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, Labels, MatchOp, Regex, anchored_regex_pattern};
 
 #[derive(Clone, Debug)]
 pub struct LabelPredicate {

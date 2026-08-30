@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, template_parse_error};
 
 pub(crate) fn split_template_pipeline(expression: &str) -> Result<Vec<&str>, ParseError> {
     let mut commands = Vec::new();

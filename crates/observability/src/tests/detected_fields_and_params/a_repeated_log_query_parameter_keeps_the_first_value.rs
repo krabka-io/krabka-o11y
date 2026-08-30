@@ -61,6 +61,6 @@ pub(crate) fn a_repeated_log_query_parameter_keeps_the_first_value() {
     );
 
     // A query parameter is still required.
-    check!(super::prelude::parse_query_params(Some("limit=5")).is_err());
-    check!(super::prelude::parse_query_params(None).is_err());
+    check!(super::super::prelude::parse_query_params(Some("limit=5")).is_err());
+    check!(super::super::prelude::parse_query_params(None).is_err());
 }

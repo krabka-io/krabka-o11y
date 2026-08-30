@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn format_template_printf_string(
     value: &str,

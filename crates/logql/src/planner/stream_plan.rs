@@ -1,4 +1,4 @@
-use super::*;
+use super::{TimeRange, StreamQuery, BTreeSet, SeriesFingerprint, BlockDescriptor};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StreamPlan {

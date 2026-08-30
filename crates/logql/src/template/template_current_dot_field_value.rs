@@ -1,4 +1,4 @@
-use super::*;
+use super::{TemplateRuntimeValue, template_variable_path_value};
 
 pub(crate) fn template_current_dot_field_value(
     value: &TemplateRuntimeValue,

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, append_len_prefixed, xxh3_64};
 
 pub type SeriesFingerprint = u64;
 

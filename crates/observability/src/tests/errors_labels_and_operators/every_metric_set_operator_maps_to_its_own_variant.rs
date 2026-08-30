@@ -7,9 +7,9 @@ use super::*;
 pub(crate) fn every_metric_set_operator_maps_to_its_own_variant() {
     use super::super::prelude::MetricBinarySetOp;
 
-    check!(super::prelude::parse_metric_set_operator("and") == Some(MetricBinarySetOp::And));
-    check!(super::prelude::parse_metric_set_operator("or") == Some(MetricBinarySetOp::Or));
-    check!(super::prelude::parse_metric_set_operator("unless") == Some(MetricBinarySetOp::Unless));
-    check!(super::prelude::parse_metric_set_operator("nor") == None);
-    check!(super::prelude::parse_metric_set_operator("") == None);
+    check!(super::super::prelude::parse_metric_set_operator("and") == Some(MetricBinarySetOp::And));
+    check!(super::super::prelude::parse_metric_set_operator("or") == Some(MetricBinarySetOp::Or));
+    check!(super::super::prelude::parse_metric_set_operator("unless") == Some(MetricBinarySetOp::Unless));
+    check!(super::super::prelude::parse_metric_set_operator("nor") == None);
+    check!(super::super::prelude::parse_metric_set_operator("") == None);
 }

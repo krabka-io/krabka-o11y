@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, BlockStoreError, DataType, Field, LogRow, MapArray, MapBuilder, StringBuilder};
 
 pub(crate) fn structured_metadata_array(rows: &[LogRow]) -> Result<MapArray, BlockStoreError> {
     let mut builder = MapBuilder::new(

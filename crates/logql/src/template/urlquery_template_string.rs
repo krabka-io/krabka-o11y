@@ -1,4 +1,4 @@
-use super::*;
+use super::hex_digit;
 
 pub(crate) fn urlquery_template_string(value: &str) -> String {
     let mut encoded = String::new();

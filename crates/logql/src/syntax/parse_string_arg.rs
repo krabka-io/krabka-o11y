@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, Parser, syntax_error};
 
 pub(crate) fn parse_string_arg(input: &str) -> Result<String, ParseError> {
     let mut p = Parser::new(input);

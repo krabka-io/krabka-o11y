@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, SeriesFingerprint};
 
 /// Metadata recorded for each written block.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

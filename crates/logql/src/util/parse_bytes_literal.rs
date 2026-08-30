@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, bytes_unit_multiplier, ByteSizeExt};
 
 pub(crate) fn parse_bytes_literal(value: &str) -> Option<ByteSize> {
     let unit_start = value

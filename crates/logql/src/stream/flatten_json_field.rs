@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, sanitize_json_field_name, insert_extracted_field, field_value_to_string};
 
 pub(crate) fn flatten_json_field(name: &str, value: &serde_json::Value, fields: &mut Labels) {
     match value {

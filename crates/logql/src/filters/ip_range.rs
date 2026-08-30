@@ -1,4 +1,4 @@
-use super::*;
+use super::{IpFamily, IpAddr, ip_to_value, ParseError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IpRange {

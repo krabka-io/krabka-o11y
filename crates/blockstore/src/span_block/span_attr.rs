@@ -1,4 +1,4 @@
-use super::*;
+use super::AttrValue;
 
 /// One generic span attribute.
 #[derive(Clone, Debug, PartialEq)]

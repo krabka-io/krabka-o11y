@@ -1,4 +1,4 @@
-use super::*;
+use super::fmt;
 
 pub(crate) struct QuotedChar(pub(crate) char);
 

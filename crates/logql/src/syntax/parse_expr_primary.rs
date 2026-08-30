@@ -1,4 +1,4 @@
-use super::*;
+use super::{LogqlExpr, ParseError, outer_metric_parentheses_inner, parse_expr, function_args, syntax_error, parse_string_arg, parse_scalar_text, parse_metric_query};
 
 pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
     if let Some(inner) = outer_metric_parentheses_inner(input) {

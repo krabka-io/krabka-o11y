@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Labels, Serialize, SeriesFingerprint};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ManifestSeries {

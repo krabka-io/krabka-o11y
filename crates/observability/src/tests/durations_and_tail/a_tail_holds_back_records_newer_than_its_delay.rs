@@ -39,7 +39,7 @@ pub(crate) fn a_tail_holds_back_records_newer_than_its_delay() {
     // one-nanosecond delay moves the cutoff too little to tell.
     let hour_ns = 3_600 * 1_000_000_000_i64;
     check!(
-        count(&[record(super::prelude::current_unix_time_ns())], hour_ns) == 0,
+        count(&[record(super::super::prelude::current_unix_time_ns())], hour_ns) == 0,
         "a record stamped now is newer than an hour ago"
     );
 

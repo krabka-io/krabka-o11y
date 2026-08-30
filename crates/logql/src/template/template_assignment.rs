@@ -1,4 +1,4 @@
-use super::*;
+use super::TemplateExpression;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TemplateAssignment {

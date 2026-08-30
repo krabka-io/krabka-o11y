@@ -1,4 +1,4 @@
-use super::*;
+use super::template_integer_args;
 
 pub(crate) fn format_template_integer_product(args: &[String]) -> String {
     let Some(values) = template_integer_args(args) else {

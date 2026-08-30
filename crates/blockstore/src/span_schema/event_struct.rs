@@ -1,4 +1,4 @@
-use super::*;
+use super::{DataType, Field, Fields, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, list_list_of, list_of};
 
 pub(crate) fn event_struct() -> DataType {
     DataType::Struct(Fields::from(vec![

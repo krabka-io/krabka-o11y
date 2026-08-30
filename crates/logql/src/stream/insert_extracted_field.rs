@@ -1,4 +1,4 @@
-use super::*;
+use super::Labels;
 
 pub(crate) fn insert_extracted_field(fields: &mut Labels, name: &str, value: String) {
     if fields.contains_key(name) {

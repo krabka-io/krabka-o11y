@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn format_decimal_ratio(numerator: u128, denominator: u128) -> String {
     let whole = numerator / denominator;

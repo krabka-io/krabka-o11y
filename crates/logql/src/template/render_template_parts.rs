@@ -1,4 +1,4 @@
-use super::*;
+use super::{TemplatePart, TemplateRenderContext};
 
 pub(crate) fn render_template_parts(parts: &[TemplatePart], context: &TemplateRenderContext<'_>) -> String {
     let mut context = context.clone();

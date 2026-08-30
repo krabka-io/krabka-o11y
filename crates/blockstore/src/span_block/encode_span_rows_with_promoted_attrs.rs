@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    Arc, ArrayRef, BlockStoreError, BooleanBuilder, Float64Builder, Int64Builder, ListBuilder,
+    PromotedAttrBuilder, PromotedSpanAttr, RecordBatch, Result, SpanColumnBuilders, SpanRow,
+    append_attrs, append_events, append_links, new_event_struct_builder, new_link_struct_builder,
+    new_str_list, new_str_list_list, span_block_schema_with_promoted_attrs,
+};
 
 /// Encodes rows into a record batch with configured attribute columns promoted
 /// out of the generic attribute lists.

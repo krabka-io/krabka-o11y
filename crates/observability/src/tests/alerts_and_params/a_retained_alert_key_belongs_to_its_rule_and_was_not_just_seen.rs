@@ -29,21 +29,21 @@ pub(crate) fn a_retained_alert_key_belongs_to_its_rule_and_was_not_just_seen() {
         annotation_templates: &templates,
     };
 
-    check!(super::prelude::prometheus_alert_key_matches_rule(
+    check!(super::super::prelude::prometheus_alert_key_matches_rule(
         &subject,
         &params(&active)
     ));
 
     // Each of the three identity fields, wrong on its own.
-    check!(!super::prelude::prometheus_alert_key_matches_rule(
+    check!(!super::super::prelude::prometheus_alert_key_matches_rule(
         &key("other", "HighErrors", "up"),
         &params(&active)
     ));
-    check!(!super::prelude::prometheus_alert_key_matches_rule(
+    check!(!super::super::prelude::prometheus_alert_key_matches_rule(
         &key("tenant", "Other", "up"),
         &params(&active)
     ));
-    check!(!super::prelude::prometheus_alert_key_matches_rule(
+    check!(!super::super::prelude::prometheus_alert_key_matches_rule(
         &key("tenant", "HighErrors", "down"),
         &params(&active)
     ));
@@ -52,13 +52,13 @@ pub(crate) fn a_retained_alert_key_belongs_to_its_rule_and_was_not_just_seen() {
     let mut seen = BTreeSet::new();
     seen.insert(subject.clone());
     check!(
-        !super::prelude::prometheus_alert_key_matches_rule(&subject, &params(&seen)),
+        !super::super::prelude::prometheus_alert_key_matches_rule(&subject, &params(&seen)),
         "an alert still firing is not also retained"
     );
     // A different key being active does not exclude this one.
     let mut other_seen = BTreeSet::new();
     other_seen.insert(key("tenant", "HighErrors", "other"));
-    check!(super::prelude::prometheus_alert_key_matches_rule(
+    check!(super::super::prelude::prometheus_alert_key_matches_rule(
         &subject,
         &params(&other_seen)
     ));

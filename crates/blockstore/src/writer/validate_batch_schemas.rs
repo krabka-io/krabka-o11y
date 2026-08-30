@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, RecordBatch, Result, SchemaRef};
 
 pub(crate) fn validate_batch_schemas(schema: &SchemaRef, batches: &[RecordBatch]) -> Result<()> {
     for (index, batch) in batches.iter().enumerate() {

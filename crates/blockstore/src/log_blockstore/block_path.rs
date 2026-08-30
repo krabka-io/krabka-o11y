@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockKey, Path, PathBuf};
 
 #[must_use]
 pub fn block_path(root: impl AsRef<Path>, key: &BlockKey) -> PathBuf {

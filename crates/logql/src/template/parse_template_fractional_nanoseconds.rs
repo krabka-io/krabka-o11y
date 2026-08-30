@@ -1,4 +1,4 @@
-use super::*;
+use super::{match_template_literal, advance_template_pos};
 
 pub(crate) fn parse_template_fractional_nanoseconds(
     value: &str,

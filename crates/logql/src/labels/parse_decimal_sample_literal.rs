@@ -1,4 +1,4 @@
-use super::*;
+use super::parse_decimal_exponent;
 
 pub(crate) fn parse_decimal_sample_literal(value: &str) -> Option<(i128, u128)> {
     if value.is_empty() {

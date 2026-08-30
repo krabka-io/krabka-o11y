@@ -1,4 +1,4 @@
-use super::*;
+use super::DataType;
 
 /// One required column in a signal block schema.
 #[derive(Clone, Debug, PartialEq, Eq)]

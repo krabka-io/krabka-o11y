@@ -1,4 +1,4 @@
-use super::*;
+use super::ObjectPath;
 
 #[must_use]
 pub fn log_tenant_index_shards_object_prefix(prefix: &ObjectPath, tenant: &str) -> ObjectPath {

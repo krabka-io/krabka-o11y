@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn truncate_template_string(value: &str, count: i64) -> String {
     if count >= 0 {

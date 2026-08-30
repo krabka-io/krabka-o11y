@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, IndexSnapshotRetain, ObjectStore, ObjectStoreExt, Path, PutPayload, Result, instrument,
+    next_snapshot_key, prune_old_index_snapshots,
+};
 
 #[instrument(skip_all, fields(key = %key, len = bytes.len()), err)]
 pub async fn put_index_snapshot(

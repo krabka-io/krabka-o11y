@@ -41,7 +41,7 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
     // The first stream takes 2 of the 5, leaving 3 for the second.
     // Adding instead would leave 7, and dividing would leave 2.
     check!(
-        kept(&super::prelude::apply_loki_stream_limit(
+        kept(&super::super::prelude::apply_loki_stream_limit(
             streams(&[2, 10]),
             Some(5)
         )) == vec![2, 3]
@@ -50,7 +50,7 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
     // A stream that exhausts the budget empties every stream after it,
     // and emptied streams are dropped entirely.
     check!(
-        kept(&super::prelude::apply_loki_stream_limit(
+        kept(&super::super::prelude::apply_loki_stream_limit(
             streams(&[5, 10]),
             Some(5)
         )) == vec![5]
@@ -58,7 +58,7 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
 
     // Under budget, nothing is touched.
     check!(
-        kept(&super::prelude::apply_loki_stream_limit(
+        kept(&super::super::prelude::apply_loki_stream_limit(
             streams(&[2, 2]),
             Some(5)
         )) == vec![2, 2]
@@ -66,7 +66,7 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
 
     // No limit means no truncation, and a non-streams result is left alone.
     check!(
-        kept(&super::prelude::apply_loki_stream_limit(
+        kept(&super::super::prelude::apply_loki_stream_limit(
             streams(&[9]),
             None
         )) == vec![9]

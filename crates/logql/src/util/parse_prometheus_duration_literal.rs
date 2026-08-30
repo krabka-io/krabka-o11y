@@ -1,4 +1,4 @@
-use super::*;
+use super::duration_unit;
 
 pub(crate) fn parse_prometheus_duration_literal(value: &str) -> Option<i64> {
     let mut rest = value;

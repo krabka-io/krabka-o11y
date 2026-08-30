@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ArrayRef, AttrValue, BooleanBuilder, Float64Builder, Int32Type, Int64Builder,
+    PromotedSpanAttr, PromotedSpanAttrType, SpanAttr, StringDictionaryBuilder, promoted_attr_value,
+};
 
 pub(crate) enum PromotedAttrBuilder {
     String {

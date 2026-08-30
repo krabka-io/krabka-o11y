@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, template_parse_error};
 
 pub(crate) fn decode_quoted_fragment(fragment: &str) -> Result<String, ParseError> {
     let mut decoded = String::new();

@@ -1,5 +1,3 @@
-use super::*;
-
 /// Synthetic label that names the active query shard (`N_of_M`).
 ///
 /// Krabka's sharding is an internal scheme over the FNV

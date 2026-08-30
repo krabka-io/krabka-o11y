@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, insert_extracted_field};
 
 pub(crate) fn insert_logfmt_parser_error(fields: &mut Labels, details: String) {
     insert_extracted_field(fields, "__error__", "LogfmtParserErr".to_string());

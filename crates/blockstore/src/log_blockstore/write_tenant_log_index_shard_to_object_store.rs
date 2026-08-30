@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BlockIndex, BlockStoreError, LabelIndex, LogIndexManifest, ObjectPath, ObjectStore,
+    ObjectStoreExt, TimeRange, instrument, log_tenant_index_shard_manifest_object_path,
+};
 
 #[instrument(
     skip_all,

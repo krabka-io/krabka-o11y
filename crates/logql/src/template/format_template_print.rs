@@ -1,4 +1,4 @@
-use super::*;
+use super::TemplateRuntimeValue;
 
 pub(crate) fn format_template_print(args: &[TemplateRuntimeValue], newline: bool) -> String {
     let mut rendered = String::new();

@@ -1,4 +1,4 @@
-use super::*;
+use super::format_template_float;
 
 pub(crate) fn parse_template_float(value: &str) -> String {
     value

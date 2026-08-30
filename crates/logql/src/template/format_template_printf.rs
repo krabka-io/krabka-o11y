@@ -1,4 +1,4 @@
-use super::*;
+use super::{consume_template_printf_number, format_template_printf_string};
 
 pub(crate) fn format_template_printf(args: &[String]) -> String {
     let Some(format) = args.first() else {

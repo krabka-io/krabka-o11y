@@ -1,4 +1,4 @@
-use super::*;
+use super::{LOG_INDEX_MANIFEST_RELATIVE_PATH, Path, PathBuf};
 
 #[must_use]
 pub fn log_index_manifest_path(root: impl AsRef<Path>) -> PathBuf {

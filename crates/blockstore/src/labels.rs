@@ -100,8 +100,8 @@ mod tests {
 }
 
 // === split-modules: generated submodules ===
-mod labels;
+mod labels_type;
 mod series_fingerprint;
 
-pub use labels::Labels;
+pub use labels_type::Labels;
 pub use series_fingerprint::SeriesFingerprint;

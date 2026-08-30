@@ -1,4 +1,4 @@
-use super::*;
+use super::RangeAggregation;
 
 pub(crate) fn range_aggregation_supports_grouping(aggregation: &RangeAggregation) -> bool {
     matches!(

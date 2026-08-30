@@ -1,6 +1,12 @@
-use super::*;
+use super::{
+    BlockStoreError, FixedSizeBinaryBuilder, ListBuilder, Result, SpanLink, StructBuilder,
+    append_kv,
+};
 
-pub(crate) fn append_links(links: &mut ListBuilder<StructBuilder>, rows: &[SpanLink]) -> Result<()> {
+pub(crate) fn append_links(
+    links: &mut ListBuilder<StructBuilder>,
+    rows: &[SpanLink],
+) -> Result<()> {
     let sb = links.values();
     for link in rows {
         sb.field_builder::<FixedSizeBinaryBuilder>(0)

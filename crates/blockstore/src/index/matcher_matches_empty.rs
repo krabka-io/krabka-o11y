@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, LabelMatcher, MatchOp, Result, anchored_regex};
 
 /// Whether `matcher` matches a series for which the label is absent, that is
 /// whether the matcher matches the empty string. This follows Prometheus

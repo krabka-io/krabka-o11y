@@ -1,4 +1,4 @@
-use super::*;
+use super::{QuantileNumerator, QuantileDenominator};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Quantile {

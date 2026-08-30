@@ -1,4 +1,4 @@
-use super::*;
+use super::push_template_unicode_escape;
 
 pub(crate) fn js_escape_template_string(value: &str) -> String {
     let mut escaped = String::new();

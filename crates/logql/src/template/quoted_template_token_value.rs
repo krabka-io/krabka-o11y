@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, is_wrapped_template_token, decode_quoted_fragment};
 
 pub(crate) fn quoted_template_token_value(token: &str) -> Result<Option<String>, ParseError> {
     if is_wrapped_template_token(token, '`') {

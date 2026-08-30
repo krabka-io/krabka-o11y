@@ -1,4 +1,4 @@
-use super::*;
+use super::{StreamQuery, ParseError, Parser};
 
 #[tracing::instrument(level = "info", skip_all, fields(query = %input), err)]
 /// # Errors

@@ -1,4 +1,3 @@
-use super::*;
 
 /// The size units that the `LogQL` grammar itself admits.
 ///

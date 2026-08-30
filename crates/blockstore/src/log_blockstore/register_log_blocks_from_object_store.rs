@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BlockDescriptor, BlockStoreError, LogBlockTableProvider, ObjectPath, ObjectStore,
+    SessionContext,
+};
 
 /// # Errors
 /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.

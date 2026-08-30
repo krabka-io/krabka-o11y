@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldFilter, FieldFilterLogicOp, Labels};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FieldFilterExpression {

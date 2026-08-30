@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, DEFAULT_BLOCK_READ_MAX, ObjectStore, Result, RowGroupMeta,
+    read_row_group_metadata_with_max_bytes,
+};
 
 /// Reads row-group sizes from Parquet metadata and does not scan row data.
 ///

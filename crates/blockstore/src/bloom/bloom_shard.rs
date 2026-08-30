@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, ToPrimitive, fnv1_32, fnv1a_32};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct BloomShard {

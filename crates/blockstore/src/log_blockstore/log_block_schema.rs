@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, DataType, Field, Schema, structured_metadata_type};
 
 pub(crate) fn log_block_schema() -> Arc<Schema> {
     Arc::new(Schema::new(vec![

@@ -49,12 +49,12 @@ mod tests {
 }
 
 // === split-modules: generated submodules ===
-mod block_index;
+mod block_index_type;
 mod block_schema;
 mod required_column;
 mod series_block_schema;
 
-pub use block_index::BlockIndex;
+pub use block_index_type::BlockIndex;
 pub use block_schema::BlockSchema;
 pub use required_column::RequiredColumn;
 pub use series_block_schema::series_block_schema;

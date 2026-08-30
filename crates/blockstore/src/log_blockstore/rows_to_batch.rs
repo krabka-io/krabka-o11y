@@ -1,6 +1,9 @@
 use super::*;
 
-pub(crate) fn rows_to_batch(rows: &[LogRow], schema: Arc<Schema>) -> Result<RecordBatch, BlockStoreError> {
+pub(crate) fn rows_to_batch(
+    rows: &[LogRow],
+    schema: Arc<Schema>,
+) -> Result<RecordBatch, BlockStoreError> {
     Ok(RecordBatch::try_new(
         schema,
         vec![

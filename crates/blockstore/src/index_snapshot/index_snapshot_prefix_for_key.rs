@@ -1,5 +1,3 @@
-use super::*;
-
 #[must_use]
 pub fn index_snapshot_prefix_for_key(key: &str) -> String {
     let key = key.trim_matches('/');

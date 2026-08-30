@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, insert_json_parser_error, flatten_json_field, sanitize_json_field_name};
 
 pub(crate) fn unpack_json_line(line: &mut String, fields: &mut Labels) {
     let Ok(serde_json::Value::Object(object)) = serde_json::from_str(line) else {

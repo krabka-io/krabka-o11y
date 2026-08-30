@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn consume_template_printf_number<I>(chars: &mut std::iter::Peekable<I>) -> Option<usize>
 where

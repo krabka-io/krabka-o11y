@@ -1,4 +1,4 @@
-use super::*;
+use super::{JsonPathPart, ParseError, JsonPathParser};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JsonPath {

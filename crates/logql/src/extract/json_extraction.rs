@@ -1,4 +1,4 @@
-use super::*;
+use super::{DestinationLabel, JsonExpressionPath, JsonPath, ParseError, template_parse_error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsonExtraction {

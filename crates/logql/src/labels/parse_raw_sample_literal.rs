@@ -1,4 +1,4 @@
-use super::*;
+use super::{parse_decimal_sample_literal, format_decimal_ratio};
 
 pub(crate) fn parse_raw_sample_literal(value: &str) -> Option<String> {
     let (numerator, denominator) = parse_decimal_sample_literal(value)?;

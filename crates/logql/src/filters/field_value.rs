@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, IpMatcher};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FieldValue {

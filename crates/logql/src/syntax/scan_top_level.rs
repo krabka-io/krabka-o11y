@@ -1,4 +1,4 @@
-use super::*;
+use super::{ParseError, syntax_error};
 
 pub(crate) fn scan_top_level(input: &str, mut found: impl FnMut(usize)) -> Result<(), ParseError> {
     let mut depth = 0usize;

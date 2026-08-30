@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockMeta, BlockStoreError, ByteSize, ByteSizeExt,
+    DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, HashMap, IndexSnapshotRetain, ObjectStore,
+    ObjectStoreExt, Path, PutPayload, Result, Serialize, ShardedTraceBloom, TenantTraceIndex,
+    TraceBlockStats, instrument, latest_index_snapshot_path, put_index_snapshot,
+};
 
 /// Trace block index.
 #[derive(Default, Serialize, Deserialize)]

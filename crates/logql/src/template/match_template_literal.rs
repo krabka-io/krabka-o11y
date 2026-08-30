@@ -1,4 +1,4 @@
-use super::*;
+use super::advance_template_pos;
 
 pub(crate) fn match_template_literal(value: &str, pos: &mut usize, expected: char) -> Option<()> {
     let ch = value.get(*pos..)?.chars().next()?;

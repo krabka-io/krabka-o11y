@@ -1,4 +1,4 @@
-use super::*;
+use super::{DataType, PromotedSpanAttrType, SCOL_PROMOTED_ATTR_PREFIX};
 
 /// A configured attribute column promoted out of the generic attribute lists.
 #[derive(Clone, Debug, PartialEq, Eq)]

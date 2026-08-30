@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, ArrayRef, BlockStoreError, FixedSizeBinaryBuilder, Int32Builder, Int64Builder, Result,
+    SpanRow, StringBuilder, TimeExt,
+};
 
 pub(crate) struct SpanColumnBuilders {
     pub(crate) trace_id: FixedSizeBinaryBuilder,

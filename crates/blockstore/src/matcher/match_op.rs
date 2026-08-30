@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 /// Matcher operator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

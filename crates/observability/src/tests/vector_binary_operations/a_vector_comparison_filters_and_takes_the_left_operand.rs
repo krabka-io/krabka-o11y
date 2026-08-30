@@ -45,7 +45,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
 
     let mut output = right();
     check!(
-        super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
+        super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
             ComparisonOp::Greater,
@@ -61,7 +61,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // side never had is still dropped, because there is nothing to compare.
     let mut output = right();
     check!(
-        super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
+        super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
             ComparisonOp::Greater,
@@ -81,7 +81,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // keeps exactly the samples `>` dropped.
     let mut output = right();
     check!(
-        super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
+        super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
             ComparisonOp::Less,
@@ -93,7 +93,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // Everything filtered out reports false so the caller drops the series.
     let mut output = series(&[(1, "99")]);
     check!(
-        !super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
+        !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &left,
             ComparisonOp::Greater,
@@ -104,7 +104,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // A left series with no values at all matches nothing.
     let mut output = right();
     check!(
-        !super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
+        !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &serde_json::json!({"metric": {}}),
             ComparisonOp::Greater,
@@ -119,7 +119,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
     let mut output = instant(1, "1");
     check!(
-        super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
+        super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &instant(1, "10"),
             ComparisonOp::Greater,
@@ -131,7 +131,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
 
     let mut output = instant(1, "1");
     check!(
-        !super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
+        !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
             &instant(2, "10"),
             ComparisonOp::Greater,

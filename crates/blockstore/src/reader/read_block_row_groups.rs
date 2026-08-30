@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, DEFAULT_BLOCK_READ_MAX, ObjectStore, RecordBatch, Result,
+    read_block_row_groups_with_max_bytes,
+};
 
 /// Reads selected row groups from a Parquet block.
 ///

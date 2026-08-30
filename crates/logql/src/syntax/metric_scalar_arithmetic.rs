@@ -1,4 +1,4 @@
-use super::*;
+use super::{MetricQuery, MetricScalarArithmeticOp};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricScalarArithmetic {

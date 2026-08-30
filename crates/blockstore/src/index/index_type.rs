@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    Arc, BTreeMap, BTreeSet, BlockEntry, BlockIndex, BlockMeta, BlockStoreError, ByteSize,
+    ByteSizeExt, Deserialize, LabelMatcher, Labels, MAX_INDEX_SNAPSHOT_BYTES, ObjectStore,
+    ObjectStoreExt, Path, PutPayload, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint,
+    TenantIndex, instrument, matcher_matches_empty,
+};
 
 /// Multi-tenant in-memory index for label resolution and block pruning.
 ///

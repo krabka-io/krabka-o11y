@@ -32,7 +32,7 @@ pub(crate) fn a_tail_frame_limit_is_spent_across_streams_in_order() {
 
     // The first stream takes 2 of the 5 and the second takes the rest.
     check!(
-        kept(&super::prelude::apply_loki_tail_frame_limit(
+        kept(&super::super::prelude::apply_loki_tail_frame_limit(
             frame(&[2, 10]),
             Some(5)
         )) == vec![2, 3]
@@ -41,25 +41,25 @@ pub(crate) fn a_tail_frame_limit_is_spent_across_streams_in_order() {
     // and emptied streams are dropped rather than sent with no values --
     // the same rule as the search path.
     check!(
-        kept(&super::prelude::apply_loki_tail_frame_limit(
+        kept(&super::super::prelude::apply_loki_tail_frame_limit(
             frame(&[5, 10]),
             Some(5)
         )) == vec![5]
     );
     check!(
-        kept(&super::prelude::apply_loki_tail_frame_limit(
+        kept(&super::super::prelude::apply_loki_tail_frame_limit(
             frame(&[2, 2]),
             Some(5)
         )) == vec![2, 2]
     );
     check!(
-        kept(&super::prelude::apply_loki_tail_frame_limit(
+        kept(&super::super::prelude::apply_loki_tail_frame_limit(
             frame(&[9]),
             None
         )) == vec![9]
     );
     check!(
-        kept(&super::prelude::apply_loki_tail_frame_limit(
+        kept(&super::super::prelude::apply_loki_tail_frame_limit(
             frame(&[9]),
             Some(0)
         ))
@@ -68,11 +68,11 @@ pub(crate) fn a_tail_frame_limit_is_spent_across_streams_in_order() {
     );
 
     // Emptiness is about the streams array, not the values in it.
-    check!(super::prelude::tail_frame_is_empty(&frame(&[])));
-    check!(super::prelude::tail_frame_is_empty(&serde_json::json!({})));
+    check!(super::super::prelude::tail_frame_is_empty(&frame(&[])));
+    check!(super::super::prelude::tail_frame_is_empty(&serde_json::json!({})));
     check!(
-        !super::prelude::tail_frame_is_empty(&frame(&[0])),
+        !super::super::prelude::tail_frame_is_empty(&frame(&[0])),
         "a stream carrying no values is still a stream"
     );
-    check!(!super::prelude::tail_frame_is_empty(&frame(&[1])));
+    check!(!super::super::prelude::tail_frame_is_empty(&frame(&[1])));
 }

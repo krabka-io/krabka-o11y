@@ -1,4 +1,4 @@
-use super::*;
+use super::LineFormat;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LabelFormatValue {

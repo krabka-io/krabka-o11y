@@ -44,7 +44,7 @@ pub(crate) fn copying_descriptor_labels_refuses_a_series_the_source_cannot_name(
         labels
     });
     check!(matches!(
-        super::prelude::insert_descriptor_labels(
+        super::super::prelude::insert_descriptor_labels(
             &mut target,
             &source,
             "tenant",
@@ -57,7 +57,7 @@ pub(crate) fn copying_descriptor_labels_refuses_a_series_the_source_cannot_name(
     // wrong tenant is just as unknown.
     let mut target = LabelIndex::default();
     check!(
-        super::prelude::insert_descriptor_labels(
+        super::super::prelude::insert_descriptor_labels(
             &mut target,
             &source,
             "other",

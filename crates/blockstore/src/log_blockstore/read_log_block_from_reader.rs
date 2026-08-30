@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlockStoreError, LogRow, ParquetRecordBatchReaderBuilder, batch_to_rows};
 
 pub(crate) fn read_log_block_from_reader(
     reader: impl datafusion::parquet::file::reader::ChunkReader + 'static,

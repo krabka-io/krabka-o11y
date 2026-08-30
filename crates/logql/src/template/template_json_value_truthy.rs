@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn template_json_value_truthy(value: &serde_json::Value) -> bool {
     match value {

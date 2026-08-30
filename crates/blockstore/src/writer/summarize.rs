@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Array, BTreeSet, BlockStoreError, FixedSizeBinaryArray, Int64Array, RecordBatch, Result,
+    SeriesFingerprint, SummaryColumns, UInt64Array,
+};
 
 pub(crate) fn summarize(
     batches: &[RecordBatch],

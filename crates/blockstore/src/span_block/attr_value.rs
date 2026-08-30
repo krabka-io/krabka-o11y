@@ -1,5 +1,3 @@
-use super::*;
-
 /// A generic attribute value list. Scalars are represented as one-element lists.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttrValue {

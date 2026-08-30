@@ -1,4 +1,4 @@
-use super::*;
+use super::{ByteSize, mebibytes};
 
 /// Maximum byte size of an index snapshot object accepted by [`Index::load`].
 ///

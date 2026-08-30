@@ -1,4 +1,4 @@
-use super::*;
+use super::{FieldFilterExpression, PipelineStage, FieldFilterChain};
 
 pub(crate) fn field_filter_expression_to_pipeline_stage(
     expression: FieldFilterExpression,

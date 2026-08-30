@@ -47,7 +47,7 @@ pub(crate) fn a_log_level_parameter_names_why_it_was_refused() {
         Err(HttpQueryError::MissingQueryParameter("log_level"))
     ));
     check!(matches!(
-        super::prelude::parse_log_level_param(None),
+        super::super::prelude::parse_log_level_param(None),
         Err(HttpQueryError::MissingQueryParameter("log_level"))
     ));
 

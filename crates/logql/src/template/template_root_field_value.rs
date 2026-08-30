@@ -1,4 +1,4 @@
-use super::*;
+use super::{Labels, TemplateRuntimeValue, template_variable_path_value};
 
 pub(crate) fn template_root_field_value(fields: &Labels, path: &[String]) -> TemplateRuntimeValue {
     let Some((first, rest)) = path.split_first() else {

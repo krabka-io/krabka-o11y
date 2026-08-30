@@ -1,4 +1,4 @@
-use super::*;
+use super::{NestedSet, SpanAttr, SpanEvent, SpanKind, SpanLink, StatusCode, Time};
 
 /// One flattened span row.
 #[derive(Clone, Debug, PartialEq)]

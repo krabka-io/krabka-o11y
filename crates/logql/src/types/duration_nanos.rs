@@ -1,4 +1,4 @@
-use super::*;
+use super::{Display, From, Into};
 
 /// A range-selector window, in nanoseconds. This is the `[5m]` in a metric
 /// query.

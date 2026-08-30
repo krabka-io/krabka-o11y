@@ -1,4 +1,4 @@
-use super::*;
+use super::{PatternPart, ParseError, pattern_parse_error};
 
 pub(crate) fn parse_pattern_parts(pattern: &str) -> Result<Vec<PatternPart>, ParseError> {
     let mut pos = 0;

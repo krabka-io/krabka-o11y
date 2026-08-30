@@ -1,4 +1,4 @@
-use super::*;
+use super::{RecordBatch, Result, SpanRow, encode_span_rows_with_promoted_attrs};
 
 /// Encodes rows into a record batch that matches the canonical span-block
 /// schema.

@@ -1,4 +1,4 @@
-use super::*;
+use super::Parser;
 
 pub(crate) fn parse_scalar_text(input: &str) -> bool {
     let mut p = Parser::new(input);

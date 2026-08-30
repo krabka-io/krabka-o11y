@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    BTreeMap, BTreeSet, BlockEntry, BlockStoreError, Deserialize, LabelMatcher, Labels, MatchOp,
+    QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint, anchored_regex,
+    parse_query_shard_selector,
+};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct TenantIndex {
@@ -24,7 +28,10 @@ impl TenantIndex {
             .unwrap_or_default()
     }
 
-    pub(crate) fn resolve_one(&self, label_matcher: &LabelMatcher) -> Result<BTreeSet<SeriesFingerprint>> {
+    pub(crate) fn resolve_one(
+        &self,
+        label_matcher: &LabelMatcher,
+    ) -> Result<BTreeSet<SeriesFingerprint>> {
         if label_matcher.name == QUERY_SHARD_LABEL {
             return self.resolve_query_shard(label_matcher);
         }
@@ -96,7 +103,10 @@ impl TenantIndex {
         }
     }
 
-    pub(crate) fn resolve_regex(&self, label_matcher: &LabelMatcher) -> Result<BTreeSet<SeriesFingerprint>> {
+    pub(crate) fn resolve_regex(
+        &self,
+        label_matcher: &LabelMatcher,
+    ) -> Result<BTreeSet<SeriesFingerprint>> {
         let regex = regex::Regex::new(&anchored_regex(&label_matcher.value)).map_err(|error| {
             BlockStoreError::InvalidBlock(format!("invalid label matcher regex: {error}"))
         })?;

@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn outer_metric_parentheses_inner(input: &str) -> Option<&str> {
     let mut chars = input.char_indices();

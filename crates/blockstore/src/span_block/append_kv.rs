@@ -1,4 +1,4 @@
-use super::*;
+use super::{ListBuilder, StringBuilder, StructBuilder};
 
 pub(crate) fn append_kv(sb: &mut StructBuilder, attrs: &[(String, String)]) {
     let keys = sb

@@ -1,4 +1,4 @@
-use super::*;
+use super::ByteSize;
 
 /// Minimal row-group metadata used by query frontends to shard block scans.
 ///

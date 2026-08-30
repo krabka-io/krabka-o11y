@@ -1,4 +1,4 @@
-use super::*;
+use super::MetricQuery;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricLabelJoin {

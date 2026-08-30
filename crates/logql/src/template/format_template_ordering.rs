@@ -1,4 +1,4 @@
-use super::*;
+use super::{Ordering, template_compare_values};
 
 pub(crate) fn format_template_ordering(args: &[String], predicate: impl FnOnce(Ordering) -> bool) -> String {
     if args.len() < 2 {

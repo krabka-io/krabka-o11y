@@ -441,8 +441,8 @@ mod tests {
 // === split-modules: generated submodules ===
 mod tenant_trace_index;
 mod trace_block_stats;
-mod trace_index;
+mod trace_index_type;
 
 use tenant_trace_index::TenantTraceIndex;
 pub use trace_block_stats::TraceBlockStats;
-pub use trace_index::TraceIndex;
+pub use trace_index_type::TraceIndex;
