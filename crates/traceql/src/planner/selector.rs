@@ -18,722 +18,6 @@ use crate::{
     store::{MatchCmp, MatchScope, MatchValue, SpanMatcher, SpanStore},
 };
 
-pub(crate) async fn plan_selector<S: SpanStore>(
-    store: &S,
-    ctx: &PlannerContext,
-    fe: &FieldExpr,
-) -> Result<PlannedSpanset> {
-    if has_nested_scope(fe)
-        && let Some(disjuncts) = field_expr_to_matcher_disjuncts(fe)
-        && disjuncts.len() > 1
-    {
-        return plan_selector_disjuncts(store, ctx, &disjuncts).await;
-    }
-
-    let matchers = field_expr_to_matchers(fe);
-    let scan = store
-        .scan_with_options(
-            &ctx.tenant,
-            &matchers,
-            ctx.start_ns.into(),
-            ctx.end_ns.into(),
-            &ctx.scan_options,
-        )
-        .await?;
-    let inspected = scan.inspected;
-    let parent_table = if needs_unfiltered_parent_table(fe) {
-        register_unfiltered_parent_table(store, ctx, &scan.ctx).await?
-    } else {
-        scan.span_table.clone()
-    };
-    if !has_nested_scope(fe)
-        && !has_parent_scope(fe)
-        && field_expr_to_matcher_disjuncts(fe).is_some_and(|disjuncts| disjuncts.len() == 1)
-    {
-        let plan = scan
-            .ctx
-            .table(&scan.span_table)
-            .await?
-            .into_unoptimized_plan();
-        return Ok(PlannedSpanset {
-            ctx: scan.ctx,
-            plan,
-            inspected,
-        });
-    }
-    let table = ident(&scan.span_table);
-    let sql = selector_sql_with_parent_table(&table, &ident(&parent_table), fe)?;
-    let df = scan.ctx.sql(&sql).await?;
-    let plan = df.into_unoptimized_plan();
-    Ok(PlannedSpanset {
-        ctx: scan.ctx,
-        plan,
-        inspected,
-    })
-}
-
-async fn plan_selector_disjuncts<S: SpanStore>(
-    store: &S,
-    ctx: &PlannerContext,
-    disjuncts: &[Vec<SpanMatcher>],
-) -> Result<PlannedSpanset> {
-    let mut batches = Vec::new();
-    let mut schema = None;
-    let mut inspected = <ByteSize as ByteSizeExt>::ZERO;
-    for matchers in disjuncts {
-        let scan = store
-            .scan_with_options(
-                &ctx.tenant,
-                matchers,
-                ctx.start_ns.into(),
-                ctx.end_ns.into(),
-                &ctx.scan_options,
-            )
-            .await?;
-        inspected += scan.inspected;
-        let mut scan_batches = collect_table(&scan.ctx, &scan.span_table).await?;
-        if schema.is_none() {
-            schema = scan_batches.first().map(RecordBatch::schema);
-        }
-        batches.append(&mut scan_batches);
-    }
-
-    let schema = schema.unwrap_or_else(crate::span_columns::span_schema);
-    let ctx = SessionContext::new();
-    let table = MemTable::try_new(schema, vec![batches])?;
-    ctx.register_table("spans", Arc::new(table))?;
-    let df = ctx.sql("SELECT DISTINCT * FROM spans").await?;
-    let plan = df.into_unoptimized_plan();
-    Ok(PlannedSpanset {
-        ctx,
-        plan,
-        inspected,
-    })
-}
-
-async fn register_unfiltered_parent_table<S: SpanStore>(
-    store: &S,
-    ctx: &PlannerContext,
-    target_ctx: &SessionContext,
-) -> Result<String> {
-    let parent_scan = store
-        .scan_with_options(
-            &ctx.tenant,
-            &[],
-            ctx.start_ns.into(),
-            ctx.end_ns.into(),
-            &ctx.scan_options,
-        )
-        .await?;
-    let batches = collect_table(&parent_scan.ctx, &parent_scan.span_table).await?;
-    let schema = batches
-        .first()
-        .map_or_else(crate::span_columns::span_schema, RecordBatch::schema);
-    let table = MemTable::try_new(schema, vec![batches])?;
-    let table_name = "parent_spans";
-    target_ctx.register_table(table_name, Arc::new(table))?;
-    Ok(table_name.to_string())
-}
-
-async fn collect_table(ctx: &SessionContext, table: &str) -> Result<Vec<RecordBatch>> {
-    Ok(ctx.table(table).await?.collect().await?)
-}
-
-pub(crate) fn selector_sql(table: &str, fe: &FieldExpr) -> Result<String> {
-    selector_sql_with_parent_table(table, table, fe)
-}
-
-pub(crate) fn selector_sql_with_parent_table(
-    table: &str,
-    parent_table: &str,
-    fe: &FieldExpr,
-) -> Result<String> {
-    if has_nested_scope(fe) {
-        if has_parent_scope(fe)
-            && let Some(predicate) = parent_field_expr_to_sql_qualified(fe, "s", "p")?
-        {
-            let trace = ident(COL_TRACE_ID);
-            let parent = ident(COL_PARENT_ID);
-            let left = ident(COL_NS_LEFT);
-            return Ok(format!(
-                "SELECT s.* FROM {table} AS s JOIN {parent_table} AS p \
-                 ON s.{trace} = p.{trace} AND s.{parent} = p.{left} \
-                 WHERE {predicate}"
-            ));
-        }
-        return Ok(format!("SELECT * FROM {table}"));
-    }
-    if has_parent_scope(fe) {
-        let predicate = field_expr_to_sql_qualified(fe, "s", "p")?;
-        let trace = ident(COL_TRACE_ID);
-        let parent = ident(COL_PARENT_ID);
-        let left = ident(COL_NS_LEFT);
-        Ok(format!(
-            "SELECT s.* FROM {table} AS s JOIN {table} AS p \
-             ON s.{trace} = p.{trace} AND s.{parent} = p.{left} \
-             WHERE {predicate}"
-        ))
-    } else {
-        let predicate = field_expr_to_sql(fe)?;
-        Ok(format!("SELECT * FROM {table} WHERE {predicate}"))
-    }
-}
-
-fn parent_field_expr_to_sql_qualified(
-    fe: &FieldExpr,
-    span_alias: &str,
-    parent_alias: &str,
-) -> Result<Option<String>> {
-    match fe {
-        FieldExpr::Comparison { lhs, op, rhs } if matches!(lhs.scope, Scope::Parent) => Ok(Some(
-            comparison_to_sql_qualified(lhs, *op, rhs, span_alias, parent_alias)?,
-        )),
-        FieldExpr::Field(field) if matches!(field.scope, Scope::Parent) => Ok(Some(format!(
-            "{} IS NOT NULL",
-            qualified_field_ident(field, span_alias, parent_alias)
-        ))),
-        FieldExpr::And(a, b) => {
-            let left = parent_field_expr_to_sql_qualified(a, span_alias, parent_alias)?;
-            let right = parent_field_expr_to_sql_qualified(b, span_alias, parent_alias)?;
-            Ok(match (left, right) {
-                (Some(left), Some(right)) => Some(format!("({left} AND {right})")),
-                (Some(predicate), None) | (None, Some(predicate)) => Some(predicate),
-                (None, None) => None,
-            })
-        }
-        FieldExpr::Or(a, b) => {
-            let left = parent_field_expr_to_sql_qualified(a, span_alias, parent_alias)?;
-            let right = parent_field_expr_to_sql_qualified(b, span_alias, parent_alias)?;
-            Ok(match (left, right) {
-                (Some(left), Some(right)) => Some(format!("({left} OR {right})")),
-                (Some(_) | None, None) | (None, Some(_)) => None,
-            })
-        }
-        FieldExpr::Not(inner) => {
-            Ok(
-                parent_field_expr_to_sql_qualified(inner, span_alias, parent_alias)?
-                    .map(|predicate| format!("(NOT {predicate})")),
-            )
-        }
-        FieldExpr::Comparison { .. } | FieldExpr::Field(_) | FieldExpr::Const(_) => Ok(None),
-    }
-}
-
-pub(crate) fn field_to_column(field: &Field) -> String {
-    let col = match &field.scope {
-        Scope::Intrinsic(i) => match i {
-            Intrinsic::Name => COL_NAME,
-            Intrinsic::Duration => COL_DURATION,
-            Intrinsic::Kind => COL_KIND,
-            Intrinsic::Status => COL_STATUS_CODE,
-            Intrinsic::StatusMessage => COL_STATUS_MESSAGE,
-            Intrinsic::Id => COL_SPAN_ID,
-            Intrinsic::ParentId => COL_PARENT_SPAN_ID,
-            Intrinsic::TraceDuration => COL_TRACE_DURATION,
-            Intrinsic::TraceRootName => COL_ROOT_SPAN_NAME,
-            Intrinsic::TraceRootService => COL_ROOT_SERVICE_NAME,
-            Intrinsic::TraceId => COL_TRACE_ID,
-            Intrinsic::NestedSetLeft => COL_NS_LEFT,
-            Intrinsic::NestedSetRight => COL_NS_RIGHT,
-            Intrinsic::NestedSetParent => COL_PARENT_ID,
-            Intrinsic::ChildCount => COL_CHILD_COUNT,
-            Intrinsic::InstrumentationName => COL_INSTRUMENTATION_NAME,
-            Intrinsic::InstrumentationVersion => COL_INSTRUMENTATION_VERSION,
-            Intrinsic::EventName => COL_EVENT_NAME,
-            Intrinsic::EventTimeSinceStart => COL_EVENT_TIME_SINCE_START,
-            Intrinsic::LinkTraceId => COL_LINK_TRACE_ID,
-            Intrinsic::LinkSpanId => COL_LINK_SPAN_ID,
-        },
-        Scope::Both | Scope::Resource if field.key == "service.name" => COL_ROOT_SERVICE_NAME,
-        Scope::Instrumentation => {
-            return format!("{ATTR_PREFIX}{INSTRUMENTATION_ATTR_PREFIX}{}", field.key);
-        }
-        Scope::Both
-        | Scope::Span
-        | Scope::Resource
-        | Scope::Parent
-        | Scope::Event
-        | Scope::Link => {
-            return format!("{ATTR_PREFIX}{}", field.key);
-        }
-    };
-    col.to_string()
-}
-
-pub(crate) fn field_expr_to_sql(fe: &FieldExpr) -> Result<String> {
-    match fe {
-        FieldExpr::Comparison { lhs, op, rhs } => comparison_to_sql(lhs, *op, rhs),
-        FieldExpr::And(a, b) => Ok(format!(
-            "({} AND {})",
-            field_expr_to_sql(a)?,
-            field_expr_to_sql(b)?
-        )),
-        FieldExpr::Or(a, b) => Ok(format!(
-            "({} OR {})",
-            field_expr_to_sql(a)?,
-            field_expr_to_sql(b)?
-        )),
-        FieldExpr::Not(inner) => Ok(format!("(NOT {})", field_expr_to_sql(inner)?)),
-        FieldExpr::Field(field) => Ok(format!("{} IS NOT NULL", ident(&field_to_column(field)))),
-        // `{}` / `{ true }` => match every span; `{ false }` => match none.
-        FieldExpr::Const(value) => Ok(if *value {
-            "TRUE".into()
-        } else {
-            "FALSE".into()
-        }),
-    }
-}
-
-pub(crate) fn has_nested_scope(fe: &FieldExpr) -> bool {
-    match fe {
-        FieldExpr::Comparison { lhs, .. } | FieldExpr::Field(lhs) => {
-            matches!(lhs.scope, Scope::Event | Scope::Link)
-                || matches!(
-                    lhs.scope,
-                    Scope::Intrinsic(
-                        Intrinsic::EventName
-                            | Intrinsic::EventTimeSinceStart
-                            | Intrinsic::LinkTraceId
-                            | Intrinsic::LinkSpanId
-                    )
-                )
-        }
-        FieldExpr::And(a, b) | FieldExpr::Or(a, b) => has_nested_scope(a) || has_nested_scope(b),
-        FieldExpr::Not(inner) => has_nested_scope(inner),
-        FieldExpr::Const(_) => false,
-    }
-}
-
-pub(crate) fn has_parent_scope(fe: &FieldExpr) -> bool {
-    match fe {
-        FieldExpr::Comparison { lhs, .. } | FieldExpr::Field(lhs) => {
-            matches!(lhs.scope, Scope::Parent)
-        }
-        FieldExpr::And(a, b) | FieldExpr::Or(a, b) => has_parent_scope(a) || has_parent_scope(b),
-        FieldExpr::Not(inner) => has_parent_scope(inner),
-        FieldExpr::Const(_) => false,
-    }
-}
-
-fn needs_unfiltered_parent_table(fe: &FieldExpr) -> bool {
-    has_nested_scope(fe) && has_parent_scope(fe)
-}
-
-fn field_expr_to_sql_qualified(
-    fe: &FieldExpr,
-    span_alias: &str,
-    parent_alias: &str,
-) -> Result<String> {
-    match fe {
-        FieldExpr::Comparison { lhs, op, rhs } => {
-            comparison_to_sql_qualified(lhs, *op, rhs, span_alias, parent_alias)
-        }
-        FieldExpr::And(a, b) => Ok(format!(
-            "({} AND {})",
-            field_expr_to_sql_qualified(a, span_alias, parent_alias)?,
-            field_expr_to_sql_qualified(b, span_alias, parent_alias)?
-        )),
-        FieldExpr::Or(a, b) => Ok(format!(
-            "({} OR {})",
-            field_expr_to_sql_qualified(a, span_alias, parent_alias)?,
-            field_expr_to_sql_qualified(b, span_alias, parent_alias)?
-        )),
-        FieldExpr::Not(inner) => Ok(format!(
-            "(NOT {})",
-            field_expr_to_sql_qualified(inner, span_alias, parent_alias)?
-        )),
-        FieldExpr::Field(field) => Ok(format!(
-            "{} IS NOT NULL",
-            qualified_field_ident(field, span_alias, parent_alias)
-        )),
-        FieldExpr::Const(value) => Ok(if *value {
-            "TRUE".into()
-        } else {
-            "FALSE".into()
-        }),
-    }
-}
-
-pub(crate) fn comparison_to_sql(field: &Field, op: ComparisonOp, value: &Value) -> Result<String> {
-    let col = ident(&field_to_column(field));
-    Ok(match (op, value) {
-        (ComparisonOp::Eq, Value::Nil) => format!("{col} IS NULL"),
-        (ComparisonOp::Neq, Value::Nil) => format!("{col} IS NOT NULL"),
-        (ComparisonOp::Re, Value::Str(pattern)) => {
-            format!("regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Nre, Value::Str(pattern)) => {
-            format!("NOT regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Eq, v) => format!("{col} = {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Neq, v) => format!("{col} != {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lt, v) => format!("{col} < {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lte, v) => format!("{col} <= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gt, v) => format!("{col} > {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gte, v) => format!("{col} >= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Re | ComparisonOp::Nre, _) => {
-            return Err(TraceqlError::Plan(
-                "regex comparison requires string value".into(),
-            ));
-        }
-    })
-}
-
-fn comparison_to_sql_qualified(
-    field: &Field,
-    op: ComparisonOp,
-    value: &Value,
-    span_alias: &str,
-    parent_alias: &str,
-) -> Result<String> {
-    let col = qualified_field_ident(field, span_alias, parent_alias);
-    Ok(match (op, value) {
-        (ComparisonOp::Eq, Value::Nil) => format!("{col} IS NULL"),
-        (ComparisonOp::Neq, Value::Nil) => format!("{col} IS NOT NULL"),
-        (ComparisonOp::Re, Value::Str(pattern)) => {
-            format!("regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Nre, Value::Str(pattern)) => {
-            format!("NOT regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Eq, v) => format!("{col} = {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Neq, v) => format!("{col} != {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lt, v) => format!("{col} < {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lte, v) => format!("{col} <= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gt, v) => format!("{col} > {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gte, v) => format!("{col} >= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Re | ComparisonOp::Nre, _) => {
-            return Err(TraceqlError::Plan(
-                "regex comparison requires string value".into(),
-            ));
-        }
-    })
-}
-
-fn qualified_field_ident(field: &Field, span_alias: &str, parent_alias: &str) -> String {
-    let alias = if matches!(field.scope, Scope::Parent) {
-        parent_alias
-    } else {
-        span_alias
-    };
-    format!("{alias}.{}", ident(&field_to_column(field)))
-}
-
-pub(crate) fn field_expr_to_matchers(fe: &FieldExpr) -> Vec<SpanMatcher> {
-    match fe {
-        FieldExpr::And(a, b) => {
-            let mut out = field_expr_to_matchers(a);
-            out.extend(field_expr_to_matchers(b));
-            out
-        }
-        FieldExpr::Comparison { .. } => matcher_from_field_expr(fe).into_iter().collect(),
-        FieldExpr::Not(inner) if has_nested_scope(inner) => {
-            field_expr_to_negated_matcher_disjuncts(inner)
-                .filter(|disjuncts| disjuncts.len() == 1)
-                .and_then(|mut disjuncts| disjuncts.pop())
-                .unwrap_or_default()
-        }
-        // A constant filter carries no per-span matcher; the SQL predicate
-        // (`TRUE`/`FALSE`) is authoritative, so it contributes no pre-filter.
-        FieldExpr::Or(_, _) | FieldExpr::Not(_) | FieldExpr::Field(_) | FieldExpr::Const(_) => {
-            vec![]
-        }
-    }
-}
-
-fn field_expr_to_matcher_disjuncts(fe: &FieldExpr) -> Option<Vec<Vec<SpanMatcher>>> {
-    match fe {
-        FieldExpr::Comparison { .. } | FieldExpr::Field(_) => {
-            Some(vec![vec![matcher_from_field_expr(fe).expect(
-                "comparison and field expressions lower to matchers",
-            )]])
-        }
-        // A constant filter is the identity/annihilator of the matcher DNF, not
-        // "unrepresentable": `true` is match-all (one disjunct with no matchers,
-        // the AND-identity) and `false` is match-none (zero disjuncts). Returning
-        // `None` here would poison an enclosing `And` via `?`, dropping the
-        // sibling's matchers and the attribute columns they project (e.g.
-        // `{ span.http.method != nil && true }` would lose the `attr.http.method`
-        // projection and fail to plan).
-        FieldExpr::Const(value) => Some(if *value { vec![vec![]] } else { vec![] }),
-        FieldExpr::And(a, b) => {
-            let left = field_expr_to_matcher_disjuncts(a)?;
-            let right = field_expr_to_matcher_disjuncts(b)?;
-            Some(
-                left.iter()
-                    .flat_map(|l| {
-                        right.iter().map(move |r| {
-                            let mut out = l.clone();
-                            out.extend(r.clone());
-                            out
-                        })
-                    })
-                    .collect(),
-            )
-        }
-        FieldExpr::Or(a, b) => {
-            let mut out = field_expr_to_matcher_disjuncts(a)?;
-            out.extend(field_expr_to_matcher_disjuncts(b)?);
-            Some(out)
-        }
-        FieldExpr::Not(inner) if has_nested_scope(inner) => {
-            field_expr_to_negated_matcher_disjuncts(inner)
-        }
-        FieldExpr::Not(_) => None,
-    }
-}
-
-fn field_expr_to_negated_matcher_disjuncts(fe: &FieldExpr) -> Option<Vec<Vec<SpanMatcher>>> {
-    match fe {
-        FieldExpr::Comparison { .. } | FieldExpr::Field(_) => {
-            matcher_from_field_expr(fe).map(|matcher| vec![vec![negate_matcher(matcher)]])
-        }
-        FieldExpr::Or(a, b) => {
-            let left = field_expr_to_negated_matcher_disjuncts(a)?;
-            let right = field_expr_to_negated_matcher_disjuncts(b)?;
-            Some(
-                left.iter()
-                    .flat_map(|l| {
-                        right.iter().map(move |r| {
-                            let mut out = l.clone();
-                            out.extend(r.clone());
-                            out
-                        })
-                    })
-                    .collect(),
-            )
-        }
-        FieldExpr::And(a, b) => {
-            let mut out = field_expr_to_negated_matcher_disjuncts(a)?;
-            out.extend(field_expr_to_negated_matcher_disjuncts(b)?);
-            Some(out)
-        }
-        FieldExpr::Not(inner) => field_expr_to_matcher_disjuncts(inner),
-        // Negated constant: `!true` is match-none (zero disjuncts), `!false` is
-        // match-all (one empty disjunct). Mirrors the non-negated identity so a
-        // `Const` sibling never poisons an enclosing conjunction.
-        FieldExpr::Const(value) => Some(if *value { vec![] } else { vec![vec![]] }),
-    }
-}
-
-fn matcher_from_field_expr(fe: &FieldExpr) -> Option<SpanMatcher> {
-    match fe {
-        FieldExpr::Comparison { lhs, op, rhs } => Some(SpanMatcher {
-            scope: match_scope(&lhs.scope),
-            key: matcher_key(lhs),
-            op: match_cmp(*op),
-            value: match_value(rhs),
-            negated: false,
-        }),
-        FieldExpr::Field(field) => Some(SpanMatcher {
-            scope: match_scope(&field.scope),
-            key: matcher_key(field),
-            op: MatchCmp::Neq,
-            value: MatchValue::Nil,
-            negated: false,
-        }),
-        FieldExpr::And(_, _) | FieldExpr::Or(_, _) | FieldExpr::Not(_) | FieldExpr::Const(_) => {
-            None
-        }
-    }
-}
-
-fn negate_matcher(mut matcher: SpanMatcher) -> SpanMatcher {
-    matcher.negated = !matcher.negated;
-    matcher
-}
-
-fn matcher_key(field: &Field) -> String {
-    match &field.scope {
-        Scope::Intrinsic(intrinsic) => intrinsic_match_key(intrinsic).to_string(),
-        _ => field.key.clone(),
-    }
-}
-
-fn intrinsic_match_key(intrinsic: &Intrinsic) -> &'static str {
-    match intrinsic {
-        Intrinsic::Name => "span:name",
-        Intrinsic::Duration => "span:duration",
-        Intrinsic::Kind => "span:kind",
-        Intrinsic::Status => "span:status",
-        Intrinsic::StatusMessage => "span:statusMessage",
-        Intrinsic::Id => "span:id",
-        Intrinsic::ParentId => "span:parentID",
-        Intrinsic::TraceDuration => "trace:duration",
-        Intrinsic::TraceRootName => "trace:rootName",
-        Intrinsic::TraceRootService => "trace:rootService",
-        Intrinsic::TraceId => "trace:id",
-        Intrinsic::NestedSetLeft => "span:nestedSetLeft",
-        Intrinsic::NestedSetRight => "span:nestedSetRight",
-        Intrinsic::NestedSetParent => "span:nestedSetParent",
-        Intrinsic::ChildCount => "span:childCount",
-        Intrinsic::InstrumentationName => "instrumentation:name",
-        Intrinsic::InstrumentationVersion => "instrumentation:version",
-        Intrinsic::EventName => "event:name",
-        Intrinsic::EventTimeSinceStart => "event:timeSinceStart",
-        Intrinsic::LinkTraceId => "link:traceID",
-        Intrinsic::LinkSpanId => "link:spanID",
-    }
-}
-
-fn match_scope(scope: &Scope) -> MatchScope {
-    match scope {
-        Scope::Both => MatchScope::Both,
-        Scope::Span => MatchScope::Span,
-        Scope::Resource => MatchScope::Resource,
-        Scope::Parent => MatchScope::Parent,
-        Scope::Event => MatchScope::Event,
-        Scope::Link => MatchScope::Link,
-        Scope::Instrumentation => MatchScope::Instrumentation,
-        Scope::Intrinsic(_) => MatchScope::Intrinsic,
-    }
-}
-
-fn match_cmp(op: ComparisonOp) -> MatchCmp {
-    match op {
-        ComparisonOp::Eq => MatchCmp::Eq,
-        ComparisonOp::Neq => MatchCmp::Neq,
-        ComparisonOp::Lt => MatchCmp::Lt,
-        ComparisonOp::Lte => MatchCmp::Lte,
-        ComparisonOp::Gt => MatchCmp::Gt,
-        ComparisonOp::Gte => MatchCmp::Gte,
-        ComparisonOp::Re => MatchCmp::Re,
-        ComparisonOp::Nre => MatchCmp::Nre,
-    }
-}
-
-fn match_value(value: &Value) -> MatchValue {
-    match value {
-        Value::Str(v) => MatchValue::Str(v.clone()),
-        Value::Int(v) | Value::Duration(v) => MatchValue::Int(*v),
-        Value::Float(v) => MatchValue::Float(*v),
-        Value::Bool(v) => MatchValue::Bool(*v),
-        Value::Nil => MatchValue::Nil,
-    }
-}
-
-fn value_sql(value: &Value) -> Result<String> {
-    match value {
-        Value::Str(v) => Ok(string_lit(v)),
-        Value::Int(v) | Value::Duration(v) => Ok(v.to_string()),
-        Value::Float(v) => {
-            if !v.is_finite() {
-                return Err(TraceqlError::Plan("comparison value is not finite".into()));
-            }
-            Ok(v.to_string())
-        }
-        Value::Bool(v) => Ok(v.to_string()),
-        Value::Nil => Err(TraceqlError::Plan(
-            "nil only supports equality comparisons".into(),
-        )),
-    }
-}
-
-fn comparison_value_sql(field: &Field, value: &Value) -> Result<String> {
-    if matches!(
-        field.scope,
-        Scope::Intrinsic(Intrinsic::Kind | Intrinsic::Status)
-    ) && let Value::Str(name) = value
-    {
-        return enum_value_sql(&field.scope, name);
-    }
-    let width = match field.scope {
-        Scope::Intrinsic(Intrinsic::TraceId | Intrinsic::LinkTraceId) => Some(16),
-        Scope::Intrinsic(Intrinsic::Id | Intrinsic::ParentId | Intrinsic::LinkSpanId) => Some(8),
-        _ => None,
-    };
-    if let Some(width) = width {
-        let Value::Str(hex) = value else {
-            return Err(TraceqlError::Plan(format!(
-                "{} comparisons require a hex string value",
-                intrinsic_name(&field.scope)
-            )));
-        };
-        return fixed_hex_lit(hex, width);
-    }
-    value_sql(value)
-}
-
-fn enum_value_sql(scope: &Scope, name: &str) -> Result<String> {
-    let normalized = name.to_ascii_lowercase();
-    let value = match scope {
-        Scope::Intrinsic(Intrinsic::Status) => status_enum_value(&normalized),
-        Scope::Intrinsic(Intrinsic::Kind) => kind_enum_value(&normalized),
-        _ => {
-            return Err(TraceqlError::Plan(format!(
-                "unknown {} enum value {name:?}",
-                intrinsic_name(scope)
-            )));
-        }
-    };
-    value.map(|v| v.to_string()).ok_or_else(|| {
-        TraceqlError::Plan(format!(
-            "unknown {} enum value {name:?}",
-            intrinsic_name(scope)
-        ))
-    })
-}
-
-fn status_enum_value(name: &str) -> Option<i32> {
-    match name {
-        "unset" => Some(0),
-        "ok" => Some(1),
-        "error" => Some(2),
-        _ => None,
-    }
-}
-
-fn kind_enum_value(name: &str) -> Option<i32> {
-    match name {
-        "unspecified" => Some(0),
-        "internal" => Some(1),
-        "server" => Some(2),
-        "client" => Some(3),
-        "producer" => Some(4),
-        "consumer" => Some(5),
-        _ => None,
-    }
-}
-
-fn intrinsic_name(scope: &Scope) -> &'static str {
-    match scope {
-        Scope::Intrinsic(Intrinsic::TraceId) => "trace:id",
-        Scope::Intrinsic(Intrinsic::Id) => "span:id",
-        Scope::Intrinsic(Intrinsic::ParentId) => "span:parentID",
-        Scope::Intrinsic(Intrinsic::Kind) => "span:kind",
-        Scope::Intrinsic(Intrinsic::Status) => "span:status",
-        _ => "intrinsic",
-    }
-}
-
-fn fixed_hex_lit(hex: &str, width: usize) -> Result<String> {
-    let expected_len = width * 2;
-    if hex.len() != expected_len {
-        return Err(TraceqlError::Plan(format!(
-            "expected {expected_len} hex characters, got {}",
-            hex.len()
-        )));
-    }
-    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(TraceqlError::Plan(
-            "hex string contains non-hex characters".into(),
-        ));
-    }
-    Ok(format!("X'{}'", hex.to_ascii_lowercase()))
-}
-
-pub(crate) fn ident(s: &str) -> String {
-    format!("\"{}\"", s.replace('"', "\"\""))
-}
-
-fn string_lit(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
-fn anchored(pattern: &str) -> String {
-    format!("^(?:{pattern})$")
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -1645,3 +929,78 @@ mod tests {
         assert!(!back.negated);
     }
 }
+
+// === split-modules: generated submodules ===
+mod anchored;
+mod collect_table;
+mod comparison_to_sql;
+mod comparison_to_sql_qualified;
+mod comparison_value_sql;
+mod enum_value_sql;
+mod field_expr_to_matcher_disjuncts;
+mod field_expr_to_matchers;
+mod field_expr_to_negated_matcher_disjuncts;
+mod field_expr_to_sql;
+mod field_expr_to_sql_qualified;
+mod field_to_column;
+mod fixed_hex_lit;
+mod has_nested_scope;
+mod has_parent_scope;
+mod ident;
+mod intrinsic_match_key;
+mod intrinsic_name;
+mod kind_enum_value;
+mod match_cmp;
+mod match_scope;
+mod match_value;
+mod matcher_from_field_expr;
+mod matcher_key;
+mod needs_unfiltered_parent_table;
+mod negate_matcher;
+mod parent_field_expr_to_sql_qualified;
+mod plan_selector;
+mod plan_selector_disjuncts;
+mod qualified_field_ident;
+mod register_unfiltered_parent_table;
+mod selector_sql;
+mod selector_sql_with_parent_table;
+mod status_enum_value;
+mod string_lit;
+mod value_sql;
+
+use anchored::anchored;
+use collect_table::collect_table;
+pub (crate) use comparison_to_sql::comparison_to_sql;
+use comparison_to_sql_qualified::comparison_to_sql_qualified;
+use comparison_value_sql::comparison_value_sql;
+use enum_value_sql::enum_value_sql;
+use field_expr_to_matcher_disjuncts::field_expr_to_matcher_disjuncts;
+pub (crate) use field_expr_to_matchers::field_expr_to_matchers;
+use field_expr_to_negated_matcher_disjuncts::field_expr_to_negated_matcher_disjuncts;
+pub (crate) use field_expr_to_sql::field_expr_to_sql;
+use field_expr_to_sql_qualified::field_expr_to_sql_qualified;
+pub (crate) use field_to_column::field_to_column;
+use fixed_hex_lit::fixed_hex_lit;
+pub (crate) use has_nested_scope::has_nested_scope;
+pub (crate) use has_parent_scope::has_parent_scope;
+pub (crate) use ident::ident;
+use intrinsic_match_key::intrinsic_match_key;
+use intrinsic_name::intrinsic_name;
+use kind_enum_value::kind_enum_value;
+use match_cmp::match_cmp;
+use match_scope::match_scope;
+use match_value::match_value;
+use matcher_from_field_expr::matcher_from_field_expr;
+use matcher_key::matcher_key;
+use needs_unfiltered_parent_table::needs_unfiltered_parent_table;
+use negate_matcher::negate_matcher;
+use parent_field_expr_to_sql_qualified::parent_field_expr_to_sql_qualified;
+pub (crate) use plan_selector::plan_selector;
+use plan_selector_disjuncts::plan_selector_disjuncts;
+use qualified_field_ident::qualified_field_ident;
+use register_unfiltered_parent_table::register_unfiltered_parent_table;
+pub (crate) use selector_sql::selector_sql;
+pub (crate) use selector_sql_with_parent_table::selector_sql_with_parent_table;
+use status_enum_value::status_enum_value;
+use string_lit::string_lit;
+use value_sql::value_sql;

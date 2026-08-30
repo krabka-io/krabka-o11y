@@ -1,6 +1,3 @@
-#[cfg(all(unix, feature = "heap-profiling"))]
-#[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use std::{
     net::SocketAddr,
@@ -32,563 +29,6 @@ use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
 use serde_json::json;
 use tokio::net::TcpListener;
-
-#[derive(Debug, Parser)]
-struct Cli {
-    #[command(flatten)]
-    profiling: krabka_telemetry::profiling::ProfilingConfig,
-    #[arg(long, env = "KRABKA_METRICS_TARGET")]
-    target: Target,
-    #[arg(long, env = "KRABKA_METRICS_LISTEN", default_value = "127.0.0.1:4041")]
-    listen: SocketAddr,
-    #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
-    admin_listen_addr: SocketAddr,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_BOOTSTRAP",
-        default_value = "127.0.0.1:9092"
-    )]
-    bootstrap: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_CLIENT_DISPATCH_QUEUE_CAPACITY",
-        default_value_t = DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-        value_parser = parse_client_dispatch_queue_capacity
-    )]
-    client_dispatch_queue_capacity: usize,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_CLIENT_FRAME_MAX",
-        default_value = "100MiB",
-        value_parser = parse_client_frame_max
-    )]
-    client_frame_max: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_OBJECT_STORE_URL",
-        default_value = "file://./.krabka-metrics-blocks"
-    )]
-    object_store_url: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_COMPACTOR_GROUP_ID",
-        default_value = "krabka-metrics-compactor"
-    )]
-    compactor_group_id: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_COMPACTOR_CLIENT_ID",
-        default_value = "krabka-metrics-compactor"
-    )]
-    compactor_client_id: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_COMPACTOR_POLL_TIMEOUT",
-        default_value = "1s",
-        value_parser = parse::positive_time
-    )]
-    compactor_poll_timeout: Time,
-    /// Flush the accumulated compaction buffer once this many WAL records are
-    /// buffered.
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_COMPACTOR_FLUSH_MAX_ROWS",
-        default_value_t = krabka_metrics::DEFAULT_FLUSH_MAX_ROWS
-    )]
-    compactor_flush_max_rows: usize,
-    /// Flush the accumulated compaction buffer once its oldest record reaches
-    /// this age.
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_COMPACTOR_FLUSH_MAX_AGE",
-        default_value = "1m",
-        value_parser = parse::positive_time
-    )]
-    compactor_flush_max_age: Time,
-    /// Delete compacted metric blocks older than this window. Zero turns
-    /// retention off.
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_COMPACTOR_RETENTION",
-        default_value = "0s",
-        value_parser = parse::non_negative_time
-    )]
-    compactor_retention: Time,
-    /// How often the compactor sweeps object-store blocks and indexes for
-    /// retention.
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_COMPACTOR_RETENTION_SWEEP_INTERVAL",
-        default_value = "1m",
-        value_parser = parse::positive_time
-    )]
-    compactor_retention_sweep_interval: Time,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_HA_TRACKER_TOPIC",
-        default_value = HA_TRACKER_TOPIC
-    )]
-    ha_tracker_topic: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_HA_TRACKER_GROUP_ID",
-        default_value = "krabka-metrics-ha-tracker"
-    )]
-    ha_tracker_group_id: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_HA_TRACKER_CLIENT_ID",
-        default_value = "krabka-metrics-ha-tracker"
-    )]
-    ha_tracker_client_id: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_HA_TRACKER_POLL_TIMEOUT",
-        default_value = "500ms",
-        value_parser = parse::positive_time
-    )]
-    ha_tracker_poll_timeout: Time,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_HA_FAILOVER_TIMEOUT",
-        default_value = "30s",
-        value_parser = parse::time,
-        allow_hyphen_values = true
-    )]
-    ha_failover_timeout: Time,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_INGEST_RATE_BUCKET_CAP",
-        default_value_t = DEFAULT_MAX_RATE_BUCKETS,
-        value_parser = parse_ingest_rate_bucket_cap
-    )]
-    ingest_rate_bucket_cap: usize,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_DISTRIBUTOR_MAX_DECOMPRESSED",
-        default_value = "32MiB",
-        value_parser = parse_distributor_max_decompressed
-    )]
-    distributor_max_decompressed: ByteSize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct IngestRateBucketCap(usize);
-
-impl IngestRateBucketCap {
-    fn new(value: usize) -> Result<Self, String> {
-        refined_type::rule::GreaterUsize::<0>::new(value)
-            .map(|value| Self(value.into_value()))
-            .map_err(|error| format!("ingest rate bucket cap: {error}"))
-    }
-
-    #[must_use]
-    const fn get(self) -> usize {
-        self.0
-    }
-}
-
-fn parse_ingest_rate_bucket_cap(value: &str) -> Result<usize, String> {
-    value
-        .parse::<usize>()
-        .map_err(|error| error.to_string())
-        .and_then(IngestRateBucketCap::new)
-        .map(IngestRateBucketCap::get)
-}
-
-fn parse_distributor_max_decompressed(value: &str) -> Result<ByteSize, String> {
-    let size = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
-    let bytes = size.bytes_f64();
-    if bytes.fract() != 0.0 || bytes > 9_007_199_254_740_992.0 {
-        return Err(
-            "size must be a positive whole-byte value exactly representable by UOM".to_owned(),
-        );
-    }
-    usize::try_from(size.bytes_u64())
-        .map_err(|_| "size must fit the platform request boundary".to_owned())?;
-    Ok(size)
-}
-
-fn parse_client_dispatch_queue_capacity(value: &str) -> Result<usize, String> {
-    let value = value.parse::<usize>().map_err(|error| error.to_string())?;
-    ConnectionDispatchQueueCapacity::new(value).map(ConnectionDispatchQueueCapacity::get)
-}
-
-fn parse_client_frame_max(value: &str) -> Result<ByteSize, String> {
-    let value = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
-    ClientFrameMax::try_from(value).map(ClientFrameMax::size)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-enum Target {
-    Distributor,
-    Compactor,
-    Querier,
-    QueryFrontend,
-    Ruler,
-}
-
-fn build_object_store(url: &str) -> Result<Arc<dyn ObjectStore>, Box<dyn std::error::Error>> {
-    let parsed = url::Url::parse(url)?;
-    let (store, _prefix) = object_store::parse_url_opts(&parsed, std::env::vars())?;
-    Ok(Arc::from(store))
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    let telemetry = krabka_telemetry::init(
-        OtlpConfig::from_env(
-            |k| std::env::var(k).ok(),
-            "krabka-metrics",
-            env!("CARGO_PKG_VERSION"),
-            "krabka-metrics",
-        )?,
-        "krabka_metrics=info,info",
-        "info",
-        "krabka-metrics",
-    )?;
-    let result = async {
-        let metrics = ServiceMetrics::new();
-        let admin = krabka_telemetry::profiling::spawn_admin_with_config(
-            cli.admin_listen_addr,
-            krabka_metrics::metrics::metrics_router(metrics.registry.clone()),
-            cli.profiling.clone(),
-        )
-        .await?;
-
-        let role = async {
-            match cli.target {
-                Target::Distributor => run_distributor(cli, metrics).await?,
-                Target::Compactor => run_compactor(cli, metrics).await?,
-                Target::Querier => run_querier(cli).await?,
-                Target::QueryFrontend => run_query_frontend(cli).await?,
-                Target::Ruler => run_ruler(cli).await?,
-            }
-            Ok::<(), Box<dyn std::error::Error>>(())
-        };
-        tokio::select! {
-            result = role => result?,
-            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
-        }
-        Ok(())
-    }
-    .await;
-    telemetry.shutdown();
-    result
-}
-
-async fn run_querier(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(cli.listen).await?;
-    let bound = listener.local_addr()?;
-    tracing::info!(%bound, "metrics querier listening");
-    axum::serve(listener, querier_router())
-        .with_graceful_shutdown(async {
-            krabka_observability::shutdown_signal().await;
-        })
-        .await?;
-    Ok(())
-}
-
-async fn run_query_frontend(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(cli.listen).await?;
-    let bound = listener.local_addr()?;
-    tracing::info!(%bound, "metrics query-frontend listening");
-    axum::serve(listener, query_frontend_router())
-        .with_graceful_shutdown(async {
-            krabka_observability::shutdown_signal().await;
-        })
-        .await?;
-    Ok(())
-}
-
-async fn run_ruler(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(cli.listen).await?;
-    let bound = listener.local_addr()?;
-    tracing::info!(%bound, "metrics ruler listening");
-    axum::serve(listener, ruler_router())
-        .with_graceful_shutdown(async {
-            krabka_observability::shutdown_signal().await;
-        })
-        .await?;
-    Ok(())
-}
-
-#[cfg(test)]
-async fn serve_querier(
-    addr: SocketAddr,
-    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
-) -> std::io::Result<SocketAddr> {
-    serve_role_http(addr, querier_router(), "metrics querier", shutdown).await
-}
-
-#[cfg(test)]
-async fn serve_query_frontend(
-    addr: SocketAddr,
-    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
-) -> std::io::Result<SocketAddr> {
-    serve_role_http(
-        addr,
-        query_frontend_router(),
-        "metrics query-frontend",
-        shutdown,
-    )
-    .await
-}
-
-#[cfg(test)]
-async fn serve_ruler(
-    addr: SocketAddr,
-    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
-) -> std::io::Result<SocketAddr> {
-    serve_role_http(addr, ruler_router(), "metrics ruler", shutdown).await
-}
-
-#[cfg(test)]
-async fn serve_role_http(
-    addr: SocketAddr,
-    router: Router,
-    role_name: &'static str,
-    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
-) -> std::io::Result<SocketAddr> {
-    let listener = TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
-    tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, router)
-            .with_graceful_shutdown(shutdown)
-            .await
-        {
-            tracing::warn!(%error, %role_name, "metrics role server stopped with error");
-        }
-    });
-    Ok(bound)
-}
-
-fn querier_router() -> Router {
-    Router::new()
-        .route("/api/v1/status/buildinfo", get(querier_build_info))
-        .route(
-            "/prometheus/api/v1/status/buildinfo",
-            get(querier_build_info),
-        )
-}
-
-fn query_frontend_router() -> Router {
-    role_status_router("query-frontend")
-}
-
-fn ruler_router() -> Router {
-    role_status_router("ruler")
-}
-
-fn role_status_router(role: &'static str) -> Router {
-    Router::new()
-        .route(
-            "/api/v1/status/buildinfo",
-            get(move || async move { role_build_info(role) }),
-        )
-        .route(
-            "/prometheus/api/v1/status/buildinfo",
-            get(move || async move { role_build_info(role) }),
-        )
-}
-
-async fn querier_build_info() -> impl IntoResponse {
-    role_build_info("querier")
-}
-
-fn role_build_info(role: &'static str) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(json!({
-            "status": "success",
-            "data": {
-                "role": role,
-                "version": env!("CARGO_PKG_VERSION"),
-                "revision": "unknown",
-                "branch": "unknown",
-                "buildUser": "krabka",
-                "buildDate": "unknown",
-                "goVersion": "n/a"
-            }
-        })),
-    )
-}
-
-async fn run_distributor(
-    cli: Cli,
-    metrics: ServiceMetrics,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let producer = Arc::new(
-        Producer::builder()
-            .bootstrap(&cli.bootstrap)
-            .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-            .frame_max(cli.client_frame_max)
-            .build()
-            .await?,
-    );
-    let mut ha_consumer = Consumer::builder()
-        .bootstrap(&cli.bootstrap)
-        .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-        .frame_max(cli.client_frame_max)
-        .group_id(cli.ha_tracker_group_id.clone())
-        .client_id(cli.ha_tracker_client_id.clone())
-        .auto_offset_reset(AutoOffsetReset::Earliest)
-        .subscribe([cli.ha_tracker_topic.clone()])
-        .build()
-        .await?;
-    let state = Arc::new(
-        DistributorState::new(Arc::new(KafkaSink::new(Arc::clone(&producer))))
-            .with_ha_failover_timeout(cli.ha_failover_timeout)
-            .with_max_rate_buckets(cli.ingest_rate_bucket_cap)
-            .with_max_decompressed(cli.distributor_max_decompressed)
-            .with_ha_election_sink(Arc::new(KafkaHaElectionSink::new(
-                Arc::clone(&producer),
-                cli.ha_tracker_topic.clone(),
-            )))
-            .with_metrics(metrics),
-    );
-    let ha_state = Arc::clone(&state);
-    let ha_topic = cli.ha_tracker_topic.clone();
-    let ha_poll_timeout = cli.ha_tracker_poll_timeout;
-    let mut ha_task = tokio::spawn(async move {
-        run_ha_election_consumer_loop(
-            &mut ha_consumer,
-            ha_state.tracker(),
-            &ha_topic,
-            ha_poll_timeout,
-            |_| false,
-        )
-        .await
-    });
-    let listener = TcpListener::bind(cli.listen).await?;
-    let bound = listener.local_addr()?;
-    tracing::info!(%bound, "metrics distributor listening");
-    let server = std::future::IntoFuture::into_future(
-        axum::serve(listener, distributor_router(state)).with_graceful_shutdown(async {
-            krabka_observability::shutdown_signal().await;
-        }),
-    );
-    tokio::pin!(server);
-    tokio::select! {
-        result = &mut server => {
-            ha_task.abort();
-            result?;
-        }
-        result = &mut ha_task => {
-            match result {
-                Ok(Ok(_)) => return Err("metrics HA tracker consumer stopped unexpectedly".into()),
-                Ok(Err(error)) => return Err(error.into()),
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-    Ok(())
-}
-
-// cargo-mutants: live compactor I/O wiring is covered by integration workflows.
-#[cfg_attr(test, mutants::skip)]
-async fn run_compactor(
-    cli: Cli,
-    metrics: ServiceMetrics,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let store = build_object_store(&cli.object_store_url)?;
-    let retention = cli.compactor_retention;
-    let sweep_interval = cli.compactor_retention_sweep_interval;
-    let mut config = MetricsCompactorConfig::new(cli.bootstrap);
-    config.client_dispatch_queue_capacity =
-        ConnectionDispatchQueueCapacity::new(cli.client_dispatch_queue_capacity)
-            .expect("validated metrics client dispatch queue capacity");
-    config.client_frame_max =
-        ClientFrameMax::try_from(cli.client_frame_max).expect("validated metrics frame maximum");
-    config.group_id = cli.compactor_group_id;
-    config.client_id = cli.compactor_client_id;
-    config.poll_timeout = cli.compactor_poll_timeout;
-    config.flush_max_rows = cli.compactor_flush_max_rows;
-    config.flush_max_age = cli.compactor_flush_max_age;
-    let runtime = config.build_runtime(store.clone())?;
-    let mut consumer = config.build_consumer().await?;
-    let stopping = Arc::new(AtomicBool::new(false));
-    if retention > Time::ZERO {
-        spawn_retention_sweeper(store, retention, sweep_interval, Arc::clone(&stopping));
-    }
-    let signal = Arc::clone(&stopping);
-    tokio::spawn(async move {
-        krabka_observability::shutdown_signal().await;
-        signal.store(true, Ordering::SeqCst);
-    });
-    let result = run_compactor_consumer_loop(
-        &mut consumer,
-        &runtime.block_writer,
-        &runtime.index_sink,
-        runtime.loop_config,
-        |_| stopping.load(Ordering::SeqCst),
-    )
-    .await?;
-    // Record the cumulative metric blocks the compactor wrote to object storage.
-    metrics.record_blocks_compacted(result.writes as u64);
-    tracing::info!(
-        polls = result.polls,
-        polled_records = result.polled_records,
-        compacted_records = result.compacted_records,
-        writes = result.writes,
-        "metrics compactor stopped"
-    );
-    Ok(())
-}
-
-// cargo-mutants: background wall-clock loop is exercised through compactor integration.
-#[cfg_attr(test, mutants::skip)]
-fn spawn_retention_sweeper(
-    store: Arc<dyn ObjectStore>,
-    retention: Time,
-    sweep_interval: Time,
-    stopping: Arc<AtomicBool>,
-) {
-    tokio::spawn(async move {
-        loop {
-            match krabka_metrics::enforce_compaction_retention(
-                store.clone(),
-                unix_time_ms(),
-                retention,
-            )
-            .await
-            {
-                Ok(stats) => {
-                    if stats.manifests_deleted > 0 || stats.blocks_deleted > 0 {
-                        tracing::info!(
-                            manifests_scanned = stats.manifests_scanned,
-                            manifests_deleted = stats.manifests_deleted,
-                            blocks_deleted = stats.blocks_deleted,
-                            "metrics compactor retention deleted old blocks"
-                        );
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "metrics compactor retention sweep failed");
-                }
-            }
-            if stopping.load(Ordering::SeqCst) {
-                break;
-            }
-            tokio::time::sleep(sweep_interval.to_std()).await;
-            if stopping.load(Ordering::SeqCst) {
-                break;
-            }
-        }
-    });
-}
-
-// cargo-mutants: wall-clock read; no deterministic assertion.
-#[cfg_attr(test, mutants::skip)]
-fn unix_time_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| {
-            i64::try_from(duration.as_millis().min(i64::MAX as u128)).unwrap_or(i64::MAX)
-        })
-}
 
 #[cfg(test)]
 mod tests {
@@ -951,4 +391,103 @@ mod tests {
     fn rejects_unknown_target() {
         assert!(Cli::try_parse_from(["krabka-metrics", "--target", "bogus"]).is_err());
     }
+}
+
+// === split-modules: generated submodules ===
+mod alloc;
+mod build_object_store;
+mod cli;
+mod ingest_rate_bucket_cap;
+mod parse_client_dispatch_queue_capacity;
+mod parse_client_frame_max;
+mod parse_distributor_max_decompressed;
+mod parse_ingest_rate_bucket_cap;
+mod querier_build_info;
+mod querier_router;
+mod query_frontend_router;
+mod role_build_info;
+mod role_status_router;
+mod ruler_router;
+mod run_compactor;
+mod run_distributor;
+mod run_querier;
+mod run_query_frontend;
+mod run_ruler;
+mod serve_querier;
+mod serve_query_frontend;
+mod serve_role_http;
+mod serve_ruler;
+mod spawn_retention_sweeper;
+mod target;
+mod unix_time_ms;
+
+# [cfg (all (unix , feature = "heap-profiling"))] use alloc::ALLOC;
+use build_object_store::build_object_store;
+use cli::Cli;
+use ingest_rate_bucket_cap::IngestRateBucketCap;
+use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
+use parse_client_frame_max::parse_client_frame_max;
+use parse_distributor_max_decompressed::parse_distributor_max_decompressed;
+use parse_ingest_rate_bucket_cap::parse_ingest_rate_bucket_cap;
+use querier_build_info::querier_build_info;
+use querier_router::querier_router;
+use query_frontend_router::query_frontend_router;
+use role_build_info::role_build_info;
+use role_status_router::role_status_router;
+use ruler_router::ruler_router;
+# [cfg_attr (test , mutants :: skip)] use run_compactor::run_compactor;
+use run_distributor::run_distributor;
+use run_querier::run_querier;
+use run_query_frontend::run_query_frontend;
+use run_ruler::run_ruler;
+# [cfg (test)] use serve_querier::serve_querier;
+# [cfg (test)] use serve_query_frontend::serve_query_frontend;
+# [cfg (test)] use serve_role_http::serve_role_http;
+# [cfg (test)] use serve_ruler::serve_ruler;
+# [cfg_attr (test , mutants :: skip)] use spawn_retention_sweeper::spawn_retention_sweeper;
+use target::Target;
+# [cfg_attr (test , mutants :: skip)] use unix_time_ms::unix_time_ms;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    let telemetry = krabka_telemetry::init(
+        OtlpConfig::from_env(
+            |k| std::env::var(k).ok(),
+            "krabka-metrics",
+            env!("CARGO_PKG_VERSION"),
+            "krabka-metrics",
+        )?,
+        "krabka_metrics=info,info",
+        "info",
+        "krabka-metrics",
+    )?;
+    let result = async {
+        let metrics = ServiceMetrics::new();
+        let admin = krabka_telemetry::profiling::spawn_admin_with_config(
+            cli.admin_listen_addr,
+            krabka_metrics::metrics::metrics_router(metrics.registry.clone()),
+            cli.profiling.clone(),
+        )
+        .await?;
+
+        let role = async {
+            match cli.target {
+                Target::Distributor => run_distributor(cli, metrics).await?,
+                Target::Compactor => run_compactor(cli, metrics).await?,
+                Target::Querier => run_querier(cli).await?,
+                Target::QueryFrontend => run_query_frontend(cli).await?,
+                Target::Ruler => run_ruler(cli).await?,
+            }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        };
+        tokio::select! {
+            result = role => result?,
+            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
+        }
+        Ok(())
+    }
+    .await;
+    telemetry.shutdown();
+    result
 }

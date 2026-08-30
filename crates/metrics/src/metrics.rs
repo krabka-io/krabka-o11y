@@ -17,191 +17,6 @@ use prometheus_client::{
 };
 use tokio::sync::Mutex;
 
-/// Shared registry that owns every metric this process emits. It is wrapped in
-/// `Arc<Mutex<…>>`, because `prometheus-client` needs `&mut Registry` to
-/// register and the exporter needs shared read access at scrape time.
-pub type SharedRegistry = Arc<Mutex<Registry>>;
-
-/// Request-outcome label: `status="ok"` or `status="error"`.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub struct StatusLabel {
-    pub status: String,
-}
-
-/// Per-tenant label for the accepted-series counter family.
-#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub struct TenantLabel {
-    pub tenant: String,
-}
-
-/// Cheaply-clonable bundle of metric handles. Construct it once with
-/// [`ServiceMetrics::new`], then hand out clones to the handlers that emit.
-/// Each clone is a single `Arc::clone`.
-#[derive(Clone)]
-pub struct ServiceMetrics {
-    pub registry: SharedRegistry,
-    // INGEST (distributor) role.
-    pub ingest_requests: Family<StatusLabel, Counter>,
-    pub ingest_bytes: Counter,
-    pub ingest_items: Counter,
-    pub ingest_duration: Histogram,
-    pub wal_append_failures: Counter,
-    /// Accepted series counted per tenant on the ingest path.
-    pub ingest_series: Family<TenantLabel, Counter>,
-    // COMPACTOR role.
-    /// Metric blocks written to object storage by the compactor.
-    pub blocks_compacted: Counter,
-}
-
-impl ServiceMetrics {
-    /// Builds a fresh registry, registers every metric, and returns the
-    /// bundle.
-    #[must_use]
-    pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("krabka_metrics");
-
-        let ingest_requests: Family<StatusLabel, Counter> = Family::default();
-        let ingest_bytes = Counter::default();
-        let ingest_items = Counter::default();
-        let ingest_duration = Histogram::new([
-            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
-        ]);
-        let wal_append_failures = Counter::default();
-        let ingest_series: Family<TenantLabel, Counter> = Family::default();
-
-        let blocks_compacted = Counter::default();
-
-        registry.register(
-            "ingest_requests",
-            "Ingest (push) requests handled, labelled by outcome status.",
-            ingest_requests.clone(),
-        );
-        registry.register(
-            "ingest_bytes",
-            "Cumulative request-body bytes accepted on the ingest path.",
-            ingest_bytes.clone(),
-        );
-        registry.register(
-            "ingest_items",
-            "Cumulative items (series/samples) accepted on the ingest path.",
-            ingest_items.clone(),
-        );
-        registry.register(
-            "ingest_duration_seconds",
-            "Ingest handler latency in seconds.",
-            ingest_duration.clone(),
-        );
-        registry.register(
-            "wal_append_failures",
-            "Cumulative WAL/produce append failures on the ingest path.",
-            wal_append_failures.clone(),
-        );
-        registry.register(
-            "ingest_series",
-            "Accepted series on the ingest path, labelled by tenant.",
-            ingest_series.clone(),
-        );
-        registry.register(
-            "blocks_compacted",
-            "Metric blocks written to object storage by the compactor.",
-            blocks_compacted.clone(),
-        );
-        Self {
-            registry: Arc::new(Mutex::new(registry)),
-            ingest_requests,
-            ingest_bytes,
-            ingest_items,
-            ingest_duration,
-            wal_append_failures,
-            ingest_series,
-            blocks_compacted,
-        }
-    }
-
-    /// Records one ingest request outcome. This method does NOT touch
-    /// `wal_append_failures`. Increment that counter separately at the real WAL
-    /// or produce error site, so a 4xx client or validation error does not
-    /// inflate the WAL-failure counter.
-    ///
-    /// `body` is the request-body size and `elapsed` is the handler latency.
-    /// This method converts both to the raw units the Prometheus instruments
-    /// hold, so a caller never spells out `_bytes` or `_secs`.
-    pub fn record_ingest(&self, ok: bool, body: ByteSize, items: u64, elapsed: Time) {
-        let status = if ok { "ok" } else { "error" };
-        self.ingest_requests
-            .get_or_create(&StatusLabel {
-                status: status.into(),
-            })
-            .inc();
-        self.ingest_bytes.inc_by(body.bytes_u64());
-        self.ingest_items.inc_by(items);
-        self.ingest_duration.observe(elapsed.secs_f64());
-    }
-
-    /// Records `series` accepted series for `tenant` on the ingest path. The
-    /// handler calls this once per accepted push request, after the body
-    /// decodes to a series count.
-    pub fn record_ingest_series(&self, tenant: &str, series: u64) {
-        if series == 0 {
-            return;
-        }
-        self.ingest_series
-            .get_or_create(&TenantLabel {
-                tenant: tenant.into(),
-            })
-            .inc_by(series);
-    }
-
-    /// Records the `blocks` metric blocks that the compactor wrote in one
-    /// flush.
-    pub fn record_blocks_compacted(&self, blocks: u64) {
-        if blocks == 0 {
-            return;
-        }
-        self.blocks_compacted.inc_by(blocks);
-    }
-}
-
-impl Default for ServiceMetrics {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Builds the `/metrics` exporter router. The admin server merges this with the
-/// pprof routes through `serve_admin_from_env_with`. Do not merge
-/// `pprof_router` here.
-pub fn metrics_router(registry: SharedRegistry) -> axum::Router {
-    axum::Router::new()
-        .route("/metrics", axum::routing::get(export))
-        .with_state(registry)
-}
-
-async fn export(
-    axum::extract::State(reg): axum::extract::State<SharedRegistry>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse as _;
-
-    let mut buf = String::new();
-    let r = reg.lock().await;
-    if let Err(e) = prometheus_client::encoding::text::encode(&mut buf, &r) {
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("encode: {e}"),
-        )
-            .into_response();
-    }
-    (
-        axum::http::StatusCode::OK,
-        [(
-            "content-type",
-            "application/openmetrics-text; version=1.0.0; charset=utf-8",
-        )],
-        buf,
-    )
-        .into_response()
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -320,3 +135,18 @@ mod tests {
         assert!(s.contains("# EOF"), "{s}");
     }
 }
+
+// === split-modules: generated submodules ===
+mod export;
+mod metrics_router;
+mod service_metrics;
+mod shared_registry;
+mod status_label;
+mod tenant_label;
+
+use export::export;
+pub use metrics_router::metrics_router;
+pub use service_metrics::ServiceMetrics;
+pub use shared_registry::SharedRegistry;
+pub use status_label::StatusLabel;
+pub use tenant_label::TenantLabel;

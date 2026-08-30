@@ -7,35 +7,6 @@ mod overrides;
 pub use enforce::{DEFAULT_MAX_RATE_BUCKETS, IngestEnforcer, QueryEnforcer};
 pub use overrides::{OverridesError, OverridesProvider};
 
-/// Mimir-style per-tenant limits used by metrics ingest and query paths.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Limits {
-    /// Accepted sample rate. A zero rate turns the ingestion rate limit off.
-    #[serde(with = "serde_units::human::frequency")]
-    pub ingestion_rate: Frequency,
-    /// Samples the token bucket may hand out in one burst.
-    pub ingestion_burst_size: u64,
-    /// Active series per tenant. `0` turns the cap off.
-    pub max_global_series_per_user: u64,
-    #[serde(with = "serde_units::human::byte_size")]
-    pub max_label_name_length: ByteSize,
-    #[serde(with = "serde_units::human::byte_size")]
-    pub max_label_value_length: ByteSize,
-    pub max_samples_per_query: u64,
-    pub max_fetched_series_per_query: u64,
-    /// How far back a query may reach. A zero extent turns the cap off.
-    #[serde(with = "non_negative_time")]
-    pub max_query_lookback: Time,
-    /// The widest span a range query may cover. A zero extent turns the cap
-    /// off.
-    #[serde(with = "non_negative_time")]
-    pub max_query_length: Time,
-    /// Accepted out-of-order ingest window. A negative extent turns the cap
-    /// off.
-    #[serde(with = "serde_units::human::time")]
-    pub out_of_order_time_window: Time,
-}
-
 /// A configured extent that must not be negative.
 ///
 /// `human::time` accepts a signed magnitude, and `QueryEnforcer::check_range`
@@ -97,79 +68,6 @@ pub(crate) mod option_non_negative_time {
             ));
         }
         Ok(value)
-    }
-}
-
-impl Default for Limits {
-    fn default() -> Self {
-        Self {
-            ingestion_rate: per_sec(10_000),
-            ingestion_burst_size: 200_000,
-            max_global_series_per_user: 150_000,
-            max_label_name_length: kibibytes(1),
-            max_label_value_length: kibibytes(2),
-            max_samples_per_query: 50_000_000,
-            max_fetched_series_per_query: 100_000,
-            max_query_lookback: Time::ZERO,
-            max_query_length: Time::ZERO,
-            out_of_order_time_window: Time::ZERO,
-        }
-    }
-}
-
-/// Per-surface limit failures with Prometheus and Mimir status metadata.
-#[derive(Clone, Debug, Error, PartialEq)]
-pub enum LimitError {
-    #[error("ingestion rate exceeded: observed {observed} samples/sec above limit {rate}")]
-    IngestionRateExceeded { rate: f64, observed: f64 },
-    #[error("maximum active series per user exceeded: observed {observed} above limit {limit}")]
-    MaxSeriesPerUser { limit: u64, observed: u64 },
-    #[error("label name too long: observed {observed} bytes above limit {limit}")]
-    LabelNameTooLong { limit: u64, observed: u64 },
-    #[error("label value too long: observed {observed} bytes above limit {limit}")]
-    LabelValueTooLong { limit: u64, observed: u64 },
-    #[error("samples per query exceeded: observed {observed} above limit {limit}")]
-    SamplesPerQueryExceeded { limit: u64, observed: u64 },
-    #[error("series per query exceeded: observed {observed} above limit {limit}")]
-    SeriesPerQueryExceeded { limit: u64, observed: u64 },
-    #[error("query lookback exceeded: observed {observed_secs}s above limit {limit_secs}s")]
-    QueryLookbackExceeded { limit_secs: u64, observed_secs: u64 },
-    #[error("query range too long: observed {observed_secs}s above limit {limit_secs}s")]
-    QueryRangeTooLong { limit_secs: u64, observed_secs: u64 },
-}
-
-impl LimitError {
-    #[must_use]
-    pub const fn http_status(&self) -> u16 {
-        match self {
-            Self::IngestionRateExceeded { .. } => 429,
-            Self::MaxSeriesPerUser { .. }
-            | Self::LabelNameTooLong { .. }
-            | Self::LabelValueTooLong { .. } => 400,
-            Self::SamplesPerQueryExceeded { .. }
-            | Self::SeriesPerQueryExceeded { .. }
-            | Self::QueryLookbackExceeded { .. }
-            | Self::QueryRangeTooLong { .. } => 422,
-        }
-    }
-
-    #[must_use]
-    pub const fn error_type(&self) -> &'static str {
-        match self {
-            Self::SamplesPerQueryExceeded { .. }
-            | Self::SeriesPerQueryExceeded { .. }
-            | Self::QueryLookbackExceeded { .. }
-            | Self::QueryRangeTooLong { .. } => "execution",
-            Self::IngestionRateExceeded { .. }
-            | Self::MaxSeriesPerUser { .. }
-            | Self::LabelNameTooLong { .. }
-            | Self::LabelValueTooLong { .. } => "bad_data",
-        }
-    }
-
-    #[must_use]
-    pub fn message(&self) -> String {
-        self.to_string()
     }
 }
 
@@ -406,3 +304,10 @@ mod tests {
         assert!(label.error_type() == "bad_data");
     }
 }
+
+// === split-modules: generated submodules ===
+mod limit_error;
+mod limits;
+
+pub use limit_error::LimitError;
+pub use limits::Limits;

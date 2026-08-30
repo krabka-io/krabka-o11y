@@ -15,278 +15,6 @@ use async_trait::async_trait;
 use krabka_blockstore::{BlockStore, Result as BlockStoreResult, TraceIndex};
 use krabka_units::{ByteSize, convert::ByteSizeExt};
 
-/// One candidate row-group of a backend block.
-#[derive(Clone, Debug, PartialEq)]
-pub struct RowGroupInfo {
-    pub index: u32,
-    /// This row-group's compressed size on the object store.
-    pub compressed: ByteSize,
-}
-
-/// Block metadata the planner needs, from the querier's block catalog.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BlockMetaInfo {
-    pub block_id: String,
-    pub start_ns: i64,
-    pub end_ns: i64,
-    /// The block's compressed size on the object store.
-    pub size: ByteSize,
-    pub row_groups: Vec<RowGroupInfo>,
-}
-
-impl BlockMetaInfo {
-    /// Total compressed size across this block's row-groups. It falls back to
-    /// [`Self::size`] when the row-group sizes are not available.
-    #[must_use]
-    pub fn total(&self) -> ByteSize {
-        let rg_total: ByteSize = self.row_groups.iter().map(|rg| rg.compressed).sum();
-        if rg_total == <ByteSize as ByteSizeExt>::ZERO {
-            self.size
-        } else {
-            rg_total
-        }
-    }
-}
-
-/// The shard a single search job scans: the live hot tier, or one cold block
-/// narrowed to a half-open row-group range `[start, end)`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum JobShard {
-    Live,
-    Block {
-        block_id: String,
-        row_group_start: u32,
-        row_group_end: u32,
-    },
-}
-
-/// The output of planning: the jobs to dispatch, and how many blocks they
-/// cover. The block count seeds `metrics.totalBlocks`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct JobPlan {
-    pub jobs: Vec<JobShard>,
-    pub total_blocks: u64,
-}
-
-/// Errors enumerating blocks.
-#[derive(Debug, thiserror::Error)]
-pub enum CatalogError {
-    #[error("block catalog error: {0}")]
-    Backend(String),
-}
-
-/// The block-catalog door: which blocks overlap `[start_ns, end_ns]` for a
-/// tenant.
-///
-/// Tests use [`MockCatalog`]. Production uses [`TraceIndexCatalog`].
-#[async_trait]
-pub trait BlockCatalog: Send + Sync {
-    async fn blocks(
-        &self,
-        tenant: &str,
-        start_ns: i64,
-        end_ns: i64,
-    ) -> Result<Vec<BlockMetaInfo>, CatalogError>;
-}
-
-/// A canned block catalog for tests.
-pub struct MockCatalog {
-    blocks: Vec<BlockMetaInfo>,
-}
-
-impl MockCatalog {
-    #[must_use]
-    pub fn new(blocks: Vec<BlockMetaInfo>) -> Self {
-        Self { blocks }
-    }
-}
-
-#[async_trait]
-impl BlockCatalog for MockCatalog {
-    async fn blocks(
-        &self,
-        _tenant: &str,
-        start_ns: i64,
-        end_ns: i64,
-    ) -> Result<Vec<BlockMetaInfo>, CatalogError> {
-        Ok(self
-            .blocks
-            .iter()
-            .filter(|b| b.end_ns >= start_ns && b.start_ns <= end_ns)
-            .cloned()
-            .collect())
-    }
-}
-
-/// The production block catalog.
-///
-/// A pre-resolved per-tenant [`krabka_blockstore::TraceIndex`] backs it. It is
-/// built once at startup from the index. It ports
-/// `backend_blocks_from_trace_index` from the legacy query-frontend.
-pub struct TraceIndexCatalog {
-    by_tenant: BTreeMap<String, Vec<BlockMetaInfo>>,
-}
-
-impl TraceIndexCatalog {
-    #[must_use]
-    pub fn new(by_tenant: BTreeMap<String, Vec<BlockMetaInfo>>) -> Self {
-        Self { by_tenant }
-    }
-
-    /// Build the catalog from a `BlockStore` and a `TraceIndex`.
-    ///
-    /// This reads each block's parquet row-group metadata, which is the
-    /// per-tenant block list.
-    ///
-    /// # Errors
-    /// Propagates object-store and parquet read errors.
-    pub async fn from_trace_index(
-        blocks: &BlockStore,
-        index: &TraceIndex,
-    ) -> BlockStoreResult<Self> {
-        let mut by_tenant = BTreeMap::new();
-        for tenant in index.tenants() {
-            let metas = blocks_for_tenant(blocks, index, &tenant).await?;
-            by_tenant.insert(tenant, metas);
-        }
-        Ok(Self::new(by_tenant))
-    }
-}
-
-/// Read the block metadata for one tenant out of a `TraceIndex`, together with
-/// the parquet row-group metadata.
-///
-/// This is ported from the legacy `backend_blocks_from_trace_index`.
-///
-/// # Errors
-/// Propagates object-store and parquet read errors.
-pub async fn blocks_for_tenant(
-    blocks: &BlockStore,
-    index: &TraceIndex,
-    tenant: &str,
-) -> BlockStoreResult<Vec<BlockMetaInfo>> {
-    let mut out = Vec::new();
-    for block in index.trace_blocks(tenant) {
-        let row_groups: Vec<RowGroupInfo> = blocks
-            .read_row_group_metadata(&block.object_key)
-            .await?
-            .into_iter()
-            .filter_map(|rg| {
-                let index = u32::try_from(rg.index).ok()?;
-                Some(RowGroupInfo {
-                    index,
-                    compressed: rg.compressed,
-                })
-            })
-            .collect();
-        let size = row_groups.iter().map(|rg| rg.compressed).sum();
-        out.push(BlockMetaInfo {
-            block_id: block.object_key.clone(),
-            start_ns: block.min_ts,
-            end_ns: block.max_ts,
-            size,
-            row_groups,
-        });
-    }
-    Ok(out)
-}
-
-#[async_trait]
-impl BlockCatalog for TraceIndexCatalog {
-    async fn blocks(
-        &self,
-        tenant: &str,
-        start_ns: i64,
-        end_ns: i64,
-    ) -> Result<Vec<BlockMetaInfo>, CatalogError> {
-        Ok(self
-            .by_tenant
-            .get(tenant)
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter(|b| b.end_ns >= start_ns && b.start_ns <= end_ns)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-}
-
-/// Fan one block into row-group-range jobs of about `target_per_job` each.
-fn plan_block_jobs(block: &BlockMetaInfo, target_per_job: ByteSize) -> Vec<JobShard> {
-    // A whole-block job when sizing is disabled, the block has <=1 row-group, or
-    // it fits under the budget.
-    if target_per_job == <ByteSize as ByteSizeExt>::ZERO
-        || block.row_groups.len() <= 1
-        || block.total() <= target_per_job
-    {
-        let end = block
-            .row_groups
-            .last()
-            .map_or(1, |rg| rg.index.saturating_add(1));
-        let start = block.row_groups.first().map_or(0, |rg| rg.index);
-        return vec![JobShard::Block {
-            block_id: block.block_id.clone(),
-            row_group_start: start,
-            row_group_end: end,
-        }];
-    }
-
-    let mut jobs = Vec::new();
-    let mut range_start: Option<u32> = None;
-    let mut range_end = 0u32;
-    let mut accumulated = <ByteSize as ByteSizeExt>::ZERO;
-    for rg in &block.row_groups {
-        range_start.get_or_insert(rg.index);
-        range_end = rg.index.saturating_add(1);
-        accumulated += rg.compressed;
-        if accumulated >= target_per_job {
-            jobs.push(JobShard::Block {
-                block_id: block.block_id.clone(),
-                row_group_start: range_start.take().unwrap_or(rg.index),
-                row_group_end: range_end,
-            });
-            accumulated = <ByteSize as ByteSizeExt>::ZERO;
-        }
-    }
-    if let Some(start) = range_start {
-        jobs.push(JobShard::Block {
-            block_id: block.block_id.clone(),
-            row_group_start: start,
-            row_group_end: range_end,
-        });
-    }
-    jobs
-}
-
-/// Plan search jobs for a query window that ends at `query_end_ns`, over the
-/// candidate blocks and the hot/cold frontier.
-///
-/// - One `Live` job if and only if the query window reaches the hot tier, that
-///   is `query_end_ns >= hot_frontier_ns`.
-/// - For each block, one whole-block job if it fits the budget. If it does not,
-///   one row-group-range job per chunk of about `target_per_job`.
-#[must_use]
-pub fn plan_search_jobs(
-    blocks: &[BlockMetaInfo],
-    query_end_ns: i64,
-    hot_frontier_ns: i64,
-    target_per_job: ByteSize,
-) -> JobPlan {
-    let mut jobs = Vec::new();
-    if query_end_ns >= hot_frontier_ns {
-        jobs.push(JobShard::Live);
-    }
-    for b in blocks {
-        jobs.extend(plan_block_jobs(b, target_per_job));
-    }
-    JobPlan {
-        jobs,
-        total_blocks: blocks.len() as u64,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use krabka_units::bytes;
@@ -405,3 +133,28 @@ mod tests {
         assert2::assert!(got[0].block_id.as_str() == "b1");
     }
 }
+
+// === split-modules: generated submodules ===
+mod block_catalog;
+mod block_meta_info;
+mod blocks_for_tenant;
+mod catalog_error;
+mod job_plan;
+mod job_shard;
+mod mock_catalog;
+mod plan_block_jobs;
+mod plan_search_jobs;
+mod row_group_info;
+mod trace_index_catalog;
+
+pub use block_catalog::BlockCatalog;
+pub use block_meta_info::BlockMetaInfo;
+pub use blocks_for_tenant::blocks_for_tenant;
+pub use catalog_error::CatalogError;
+pub use job_plan::JobPlan;
+pub use job_shard::JobShard;
+pub use mock_catalog::MockCatalog;
+use plan_block_jobs::plan_block_jobs;
+pub use plan_search_jobs::plan_search_jobs;
+pub use row_group_info::RowGroupInfo;
+pub use trace_index_catalog::TraceIndexCatalog;

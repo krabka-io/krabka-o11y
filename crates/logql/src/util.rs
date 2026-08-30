@@ -2,147 +2,6 @@ use std::fmt;
 
 use krabka_units::{ByteSize, convert::ByteSizeExt};
 
-pub(crate) fn is_ident_start(ch: char) -> bool {
-    ch == '_' || ch == ':' || ch == '.' || ch.is_ascii_alphabetic()
-}
-
-pub(crate) fn is_ident_char(ch: char) -> bool {
-    is_ident_start(ch) || ch.is_ascii_digit()
-}
-
-pub(crate) fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
-    while right != 0 {
-        let remainder = left % right;
-        left = right;
-        right = remainder;
-    }
-    left
-}
-
-pub(crate) struct QuotedChar(pub(crate) char);
-
-pub(crate) fn decode_quoted_escape(escaped: char) -> char {
-    match escaped {
-        'n' => '\n',
-        'r' => '\r',
-        't' => '\t',
-        '"' => '"',
-        '\\' => '\\',
-        other => other,
-    }
-}
-
-pub(crate) fn duration_unit(unit: &str) -> Option<(u8, u16, i128)> {
-    match unit {
-        "y" => Some((0, 0x001, 31_536_000_000_000_000)),
-        "w" => Some((1, 0x002, 604_800_000_000_000)),
-        "d" => Some((2, 0x004, 86_400_000_000_000)),
-        "h" => Some((3, 0x008, 3_600_000_000_000)),
-        "m" => Some((4, 0x010, 60_000_000_000)),
-        "s" => Some((5, 0x020, 1_000_000_000)),
-        "ms" => Some((6, 0x040, 1_000_000)),
-        "us" => Some((7, 0x080, 1_000)),
-        "ns" => Some((8, 0x100, 1)),
-        _ => None,
-    }
-}
-
-pub(crate) fn parse_prometheus_duration_literal(value: &str) -> Option<i64> {
-    let mut rest = value;
-    let mut parsed_chunk = false;
-    let mut previous_unit_order = None;
-    let mut total_ns = 0_i128;
-
-    while !rest.is_empty() {
-        let amount_len = rest.bytes().take_while(u8::is_ascii_digit).count();
-        if amount_len == 0 {
-            return None;
-        }
-        let amount = rest.get(..amount_len)?.parse::<i128>().ok()?;
-        rest = rest.get(amount_len..)?;
-
-        let unit_len = rest.bytes().take_while(u8::is_ascii_alphabetic).count();
-        let (unit_order, _unit_bit, multiplier) = duration_unit(rest.get(..unit_len)?)?;
-        rest = rest.get(unit_len..)?;
-        if previous_unit_order.is_some_and(|previous| unit_order <= previous) {
-            return None;
-        }
-
-        let chunk_ns = amount.checked_mul(multiplier)?;
-        total_ns = total_ns.checked_add(chunk_ns)?;
-        previous_unit_order = Some(unit_order);
-        parsed_chunk = true;
-    }
-
-    if !parsed_chunk {
-        return None;
-    }
-    i64::try_from(total_ns).ok()
-}
-
-pub(crate) fn format_decimal_ratio(numerator: u128, denominator: u128) -> String {
-    let whole = numerator / denominator;
-    let mut remainder = numerator % denominator;
-    if remainder == 0 {
-        return whole.to_string();
-    }
-
-    let mut decimals = String::new();
-    for _ in 0..9 {
-        if remainder == 0 {
-            break;
-        }
-        remainder *= 10;
-        let digit = u8::try_from(remainder / denominator).expect("decimal digit is less than 10");
-        decimals.push(char::from(b'0' + digit));
-        remainder %= denominator;
-    }
-    while decimals.ends_with('0') {
-        decimals.pop();
-    }
-    format!("{whole}.{decimals}")
-}
-
-pub(crate) fn parse_bytes_literal(value: &str) -> Option<ByteSize> {
-    let unit_start = value
-        .find(|ch: char| ch.is_ascii_alphabetic())
-        .unwrap_or(value.len());
-    let amount = value[..unit_start].parse::<f64>().ok()?;
-    if !amount.is_finite() || amount < 0.0 {
-        return None;
-    }
-    let multiplier = bytes_unit_multiplier(&value[unit_start..])?;
-    Some(ByteSize::from_bytes_f64(amount * multiplier))
-}
-
-/// The size units that the `LogQL` grammar itself admits.
-///
-/// The table is here and not in `krabka_units::parse::byte_size` because Loki
-/// matches these units case-sensitively. Loki accepts `KiB`, `kB`, `KB`, and
-/// `MB`, and it rejects `kib` and `mb`. The shared parser is case-insensitive,
-/// and its use would widen the query language that this crate is a compatible
-/// front-end for.
-fn bytes_unit_multiplier(unit: &str) -> Option<f64> {
-    match unit {
-        "" | "B" => Some(1.0),
-        "kB" | "KB" => Some(1_000.0),
-        "MB" => Some(1_000_000.0),
-        "GB" => Some(1_000_000_000.0),
-        "TB" => Some(1_000_000_000_000.0),
-        "KiB" => Some(1024.0),
-        "MiB" => Some(1_048_576.0),
-        "GiB" => Some(1_073_741_824.0),
-        "TiB" => Some(1_099_511_627_776.0),
-        _ => None,
-    }
-}
-
-impl fmt::Display for QuotedChar {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "'{}'", self.0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use krabka_units::{ByteSize, convert::ByteSizeExt};
@@ -236,3 +95,26 @@ mod tests {
         assert_eq!(QuotedChar('x').to_string(), "'x'");
     }
 }
+
+// === split-modules: generated submodules ===
+mod bytes_unit_multiplier;
+mod decode_quoted_escape;
+mod duration_unit;
+mod format_decimal_ratio;
+mod gcd_u64;
+mod is_ident_char;
+mod is_ident_start;
+mod parse_bytes_literal;
+mod parse_prometheus_duration_literal;
+mod quoted_char;
+
+use bytes_unit_multiplier::bytes_unit_multiplier;
+pub (crate) use decode_quoted_escape::decode_quoted_escape;
+pub (crate) use duration_unit::duration_unit;
+pub (crate) use format_decimal_ratio::format_decimal_ratio;
+pub (crate) use gcd_u64::gcd_u64;
+pub (crate) use is_ident_char::is_ident_char;
+pub (crate) use is_ident_start::is_ident_start;
+pub (crate) use parse_bytes_literal::parse_bytes_literal;
+pub (crate) use parse_prometheus_duration_literal::parse_prometheus_duration_literal;
+pub (crate) use quoted_char::QuotedChar;

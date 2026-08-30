@@ -46,192 +46,6 @@ use crate::{
     planner::leaf::{SAMPLE_TIME_COLUMN, TIME_COLUMN, VALUE_COLUMN},
 };
 
-/// Result-value column that the aggregation projection emits.
-///
-/// The column reuses the leaf/rate `value` name, so the engine's batch-label
-/// reader treats every other `Utf8` column as a grouping label.
-pub const AGGREGATE_VALUE_COLUMN: &str = VALUE_COLUMN;
-
-/// Synthetic per-row grouping column for an empty `PromQL` grouping.
-///
-/// An empty grouping is `by ()` or no modifier. `GROUP BY` over an empty key set
-/// is SQL's "single global group", which emits one row even over an empty input.
-/// Prometheus `sum by ()` over zero series yields the empty vector instead. A
-/// group by a constant-valued real column makes the group key per-row. An empty
-/// input then produces zero groups, which is the Prometheus behaviour, and a
-/// non-empty input collapses to exactly one group.
-///
-/// This module drops the column at assembly, so it never appears in the
-/// projected output.
-const ALL_GROUP_COLUMN: &str = "__krabka_agg_all__";
-
-/// The simple aggregation operators this module lowers.
-///
-/// The param ops `topk`/`bottomk`/`quantile`/`count_values`/`stddev`/`stdvar`
-/// are out of scope and never reach here. The recursive planner returns
-/// `Unsupported` for them, so the interpreter owns them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SimpleAggregateOp {
-    Sum,
-    Avg,
-    Min,
-    Max,
-    Count,
-    Group,
-}
-
-impl SimpleAggregateOp {
-    /// Builds the per-group value aggregate expression over the `value` column.
-    ///
-    /// The expression is aliased to the output value column. `count` is cast to
-    /// `Float64`, because Prometheus reports counts as floats. `group` is the
-    /// constant `1.0` for each group.
-    fn value_aggregate(self) -> Expr {
-        let value = col(VALUE_COLUMN);
-        match self {
-            Self::Sum => sum(value),
-            Self::Avg => avg(value),
-            // Arrow's built-in min/max propagate NaN (total_cmp ordering);
-            // Prometheus ignores it. Lower onto the NaN-ignoring UDAFs so the
-            // operator path matches the interpreter bit-for-bit, including the
-            // all-NaN -> NaN case.
-            Self::Min => prom_min_udaf().call(vec![value]),
-            Self::Max => prom_max_udaf().call(vec![value]),
-            // COUNT yields Int64 in DataFusion; Prometheus reports a float.
-            Self::Count => cast(count(value), arrow::datatypes::DataType::Float64),
-            // `group` ignores the values entirely and emits 1.0 per group.
-            // `max(1.0)` over a non-empty group is exactly 1.0 and needs no
-            // value column, keeping the aggregate valid even when `value` is NaN.
-            Self::Group => max(lit(1.0_f64)),
-        }
-        .alias(AGGREGATE_VALUE_COLUMN)
-    }
-}
-
-/// How a `PromQL` aggregation selects its grouping labels.
-#[derive(Clone, Debug)]
-pub enum Grouping {
-    /// `by (labels...)`: group by exactly these label columns.
-    By(Vec<String>),
-    /// `without (labels...)`: group by all input label columns except these and
-    /// except `__name__`, which `without` always drops.
-    Without(Vec<String>),
-}
-
-/// Wraps `input` in a `DataFusion` aggregate for `op grouping (<input>)`.
-///
-/// The aggregate implements that `PromQL` aggregation. `input` is the inner
-/// planner plan. The `Utf8` columns of its output schema are the candidate
-/// grouping labels: every column except the `value`/`timestamp`/
-/// `sample_timestamp` index columns. The output of the returned plan is the
-/// surviving grouping label columns plus the aggregated `value` column.
-///
-/// # Errors
-///
-/// Returns [`PromqlError::Exec`] if this function cannot build the aggregate
-/// plan.
-pub fn plan_simple_aggregate(
-    input: LogicalPlan,
-    op: SimpleAggregateOp,
-    grouping: &Grouping,
-) -> Result<LogicalPlan> {
-    let input_labels = input_label_columns(&input);
-    let group_labels = resolve_group_labels(&input_labels, grouping);
-
-    // Drop no-value input rows (a NULL `value`, the rate/`*_over_time` UDF's
-    // "no value" marker) before grouping. The interpreter omits no-value series
-    // from a group entirely, so a group whose members are all no-value forms no
-    // result row at all, and `count` counts only value-bearing series. Filtering
-    // here reproduces that exactly: such rows never reach the aggregate, so the
-    // group either disappears (all no-value) or aggregates over its value-bearing
-    // members only. A genuine NaN value is non-null, so it survives the filter and
-    // propagates (e.g. `sum` over a group holding a genuine NaN yields NaN). For a
-    // selector inner (whose `value` is non-nullable) the filter is a no-op.
-    let input = LogicalPlanBuilder::from(input)
-        .filter(col(VALUE_COLUMN).is_not_null())
-        .map_err(|error| PromqlError::Exec(error.to_string()))?
-        .build()
-        .map_err(|error| PromqlError::Exec(error.to_string()))?;
-
-    // When there is no grouping label, group by a synthetic constant-valued
-    // per-row column so an empty input yields zero groups (matching Prometheus'
-    // empty vector) rather than SQL's single global-aggregate row. The column is
-    // projected away in the final result. Only the `value` column is needed
-    // downstream (the aggregate reads it; `group` ignores it), so the synthetic
-    // projection carries just `value` plus the group column.
-    let (input, group_exprs): (LogicalPlan, Vec<Expr>) = if group_labels.is_empty() {
-        let projected = LogicalPlanBuilder::from(input)
-            .project(vec![col(VALUE_COLUMN), lit("").alias(ALL_GROUP_COLUMN)])
-            .map_err(|error| PromqlError::Exec(error.to_string()))?
-            .build()
-            .map_err(|error| PromqlError::Exec(error.to_string()))?;
-        (projected, vec![col(ALL_GROUP_COLUMN)])
-    } else {
-        (input, group_labels.iter().map(col).collect())
-    };
-    let aggr_exprs = vec![op.value_aggregate()];
-
-    let aggregated = LogicalPlanBuilder::from(input)
-        .aggregate(group_exprs, aggr_exprs)
-        .map_err(|error| PromqlError::Exec(error.to_string()))?
-        .build()
-        .map_err(|error| PromqlError::Exec(error.to_string()))?;
-
-    // Project the grouping labels through plus the value column. This pins the
-    // column order the engine's batch reader expects, keeps the value column
-    // last, and drops the synthetic all-group column when one was injected.
-    let mut projections: Vec<Expr> = group_labels.iter().map(col).collect();
-    projections.push(col(AGGREGATE_VALUE_COLUMN));
-    LogicalPlanBuilder::from(aggregated)
-        .project(projections)
-        .map_err(|error| PromqlError::Exec(error.to_string()))?
-        .build()
-        .map_err(|error| PromqlError::Exec(error.to_string()))
-}
-
-/// The `Utf8` label columns of an inner plan's output schema, in schema order.
-///
-/// The `value`/`timestamp`/`sample_timestamp` columns are the index and value
-/// columns of the operator chain. They are never labels.
-fn input_label_columns(input: &LogicalPlan) -> Vec<String> {
-    input
-        .schema()
-        .fields()
-        .iter()
-        .map(|field| field.name().clone())
-        .filter(|name| name != VALUE_COLUMN && name != TIME_COLUMN && name != SAMPLE_TIME_COLUMN)
-        .collect()
-}
-
-/// Maps a `PromQL` [`Grouping`] onto the concrete grouping label columns.
-///
-/// The result is intersected with the labels present in the input. `by` keeps
-/// the listed labels in their given order and drops each label that is not
-/// present. `without` keeps every present label except the listed ones and
-/// `__name__`.
-fn resolve_group_labels(input_labels: &[String], grouping: &Grouping) -> Vec<String> {
-    match grouping {
-        Grouping::By(labels) => {
-            let present: BTreeSet<&String> = input_labels.iter().collect();
-            // Preserve the user's `by` order; drop labels absent from the input.
-            let mut seen = BTreeSet::new();
-            labels
-                .iter()
-                .filter(|name| present.contains(name) && seen.insert((*name).clone()))
-                .cloned()
-                .collect()
-        }
-        Grouping::Without(labels) => {
-            let excluded: BTreeSet<&String> = labels.iter().collect();
-            input_labels
-                .iter()
-                .filter(|name| name.as_str() != "__name__" && !excluded.contains(name))
-                .cloned()
-                .collect()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -639,3 +453,20 @@ mod tests {
         assert2::assert!(got[0].1.is_nan());
     }
 }
+
+// === split-modules: generated submodules ===
+mod aggregate_value_column;
+mod all_group_column;
+mod grouping;
+mod input_label_columns;
+mod plan_simple_aggregate;
+mod resolve_group_labels;
+mod simple_aggregate_op;
+
+pub use aggregate_value_column::AGGREGATE_VALUE_COLUMN;
+use all_group_column::ALL_GROUP_COLUMN;
+pub use grouping::Grouping;
+use input_label_columns::input_label_columns;
+pub use plan_simple_aggregate::plan_simple_aggregate;
+use resolve_group_labels::resolve_group_labels;
+pub use simple_aggregate_op::SimpleAggregateOp;

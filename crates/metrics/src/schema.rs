@@ -5,279 +5,6 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, Field, Fields, Schema, SchemaRef};
 use krabka_blockstore::{BlockSchema, RequiredColumn};
 
-/// Mandatory blockstore column for the series fingerprint (`UInt64`).
-pub const COL_FINGERPRINT: &str = "series_fingerprint";
-/// Mandatory blockstore column for the sample timestamp in epoch milliseconds
-/// (`Int64`).
-pub const COL_TIMESTAMP: &str = "timestamp";
-
-/// Native histogram schema column (`Int8`).
-pub const COL_NH_SCHEMA: &str = "schema";
-/// Native histogram float/integer flavor column (`Boolean`).
-pub const COL_NH_IS_FLOAT: &str = "is_float";
-/// Native histogram reset hint column (`Int8`).
-pub const COL_NH_RESET_HINT: &str = "reset_hint";
-/// Native histogram zero threshold column (`Float64`).
-pub const COL_NH_ZERO_THRESHOLD: &str = "zero_threshold";
-/// Native histogram zero bucket count column (`Float64`).
-pub const COL_NH_ZERO_COUNT: &str = "zero_count";
-/// Native histogram total count column (`Float64`).
-pub const COL_NH_COUNT: &str = "count";
-/// Native histogram sum column (`Float64`).
-pub const COL_NH_SUM: &str = "sum";
-/// Native histogram positive bucket spans column.
-pub const COL_NH_POS_SPANS: &str = "positive_spans";
-/// Native histogram positive bucket counts column.
-pub const COL_NH_POS_COUNTS: &str = "positive_counts";
-/// Native histogram negative bucket spans column.
-pub const COL_NH_NEG_SPANS: &str = "negative_spans";
-/// Native histogram negative bucket counts column.
-pub const COL_NH_NEG_COUNTS: &str = "negative_counts";
-/// Native histogram custom bucket boundary values column.
-pub const COL_NH_CUSTOM_VALUES: &str = "custom_values";
-/// Native histogram start timestamp in epoch milliseconds column.
-pub const COL_NH_START_TS: &str = "start_timestamp_ms";
-
-/// Clock reading host column (`Dictionary<Int32, Utf8>`).
-pub const CCOL_NODE: &str = "node";
-/// Clock reading clock-name column (`Dictionary<Int32, Utf8>`).
-///
-/// The value names one clock on the host, such as `CLOCK_REALTIME` or
-/// `/dev/ptp0`.
-pub const CCOL_CLOCK: &str = "clock";
-/// Clock reading source-kind column (`Dictionary<Int32, Utf8>`).
-pub const CCOL_SOURCE_KIND: &str = "source_kind";
-/// Clock reading host-clock value column in epoch nanoseconds (`Int64`).
-pub const CCOL_READING_UNIX_NANOS: &str = "reading_unix_nanos";
-/// Clock reading uncertainty half-width column (`Int64`).
-///
-/// True time is in [`CCOL_READING_UNIX_NANOS`] plus or minus this value.
-pub const CCOL_UNCERTAINTY_NANOS: &str = "uncertainty_nanos";
-/// Clock reading signed offset from the reference column (`Int64`).
-pub const CCOL_OFFSET_NANOS: &str = "offset_nanos";
-/// Clock reading discipline-state column (`Dictionary<Int32, Utf8>`).
-pub const CCOL_SYNC_STATE: &str = "sync_state";
-/// Clock reading reference-identity column (`Dictionary<Int32, Utf8>`).
-///
-/// The value holds the PTP `gmIdentity`, the NTP peer, or the GNSS
-/// constellation.
-pub const CCOL_REFERENCE_ID: &str = "reference_id";
-/// Clock reading last-valid-reference column in epoch nanoseconds (`Int64`).
-///
-/// A `PromQL` query computes the holdover duration from this column alone.
-pub const CCOL_LAST_SYNC_UNIX_NANOS: &str = "last_sync_unix_nanos";
-/// Clock reading frequency correction column in parts per billion (`Int64`).
-pub const CCOL_FREQUENCY_PPB: &str = "frequency_ppb";
-/// Clock reading last-applied-step magnitude column (`Int64`).
-pub const CCOL_LAST_STEP_NANOS: &str = "last_step_nanos";
-/// NTP root delay column (`Int64`).
-pub const CCOL_ROOT_DELAY_NANOS: &str = "root_delay_nanos";
-/// NTP root dispersion column (`Int64`).
-///
-/// RFC 5905 names the sum of half the root delay and the root dispersion the
-/// synchronization distance. That sum is the real NTP uncertainty bound, and
-/// neither term alone is.
-pub const CCOL_ROOT_DISPERSION_NANOS: &str = "root_dispersion_nanos";
-/// NTP stratum column (`UInt32`).
-pub const CCOL_STRATUM: &str = "stratum";
-/// PTP mean path delay column (`Int64`).
-pub const CCOL_MEAN_PATH_DELAY_NANOS: &str = "mean_path_delay_nanos";
-/// PTP steps-removed column (`UInt32`).
-pub const CCOL_STEPS_REMOVED: &str = "steps_removed";
-/// PTP grandmaster `clockClass` column (`UInt32`).
-pub const CCOL_GM_CLOCK_CLASS: &str = "gm_clock_class";
-/// PTP grandmaster `clockAccuracy` column (`UInt32`).
-pub const CCOL_GM_CLOCK_ACCURACY: &str = "gm_clock_accuracy";
-/// Kernel timex `maxerror` column (`Int64`).
-///
-/// `adjtimex(2)` grows `maxerror` at 500 ppm between updates and sets the
-/// `STA_UNSYNC` bit at 16 s, so this column is already an uncertainty bound.
-pub const CCOL_MAX_ERROR_NANOS: &str = "max_error_nanos";
-/// Kernel timex `esterror` column (`Int64`).
-pub const CCOL_EST_ERROR_NANOS: &str = "est_error_nanos";
-/// Kernel timex `STA_UNSYNC` bit column (`Boolean`).
-pub const CCOL_UNSYNCHRONIZED: &str = "unsynchronized";
-/// GNSS satellite count column (`UInt32`).
-pub const CCOL_SATELLITES_USED: &str = "satellites_used";
-/// GNSS fix quality column (`Dictionary<Int32, Utf8>`).
-pub const CCOL_GNSS_FIX: &str = "gnss_fix";
-/// Ingest clock column in epoch nanoseconds (`Int64`).
-///
-/// The ingester stamps this column from its own clock when the row arrives.
-/// The host does not supply it. The difference between this column and
-/// [`CCOL_READING_UNIX_NANOS`] is a measured skew between two named hosts, and
-/// no single exporter can compute that number.
-pub const CCOL_INGEST_UNIX_NANOS: &str = "ingest_unix_nanos";
-
-fn fingerprint_field() -> Field {
-    Field::new(COL_FINGERPRINT, DataType::UInt64, false)
-}
-
-fn timestamp_field() -> Field {
-    Field::new(COL_TIMESTAMP, DataType::Int64, false)
-}
-
-fn f64_list_type() -> DataType {
-    DataType::List(Arc::new(Field::new("item", DataType::Float64, false)))
-}
-
-fn span_list_type() -> DataType {
-    let struct_fields = Fields::from(vec![
-        Field::new("offset", DataType::Int32, false),
-        Field::new("length", DataType::UInt32, false),
-    ]);
-
-    DataType::List(Arc::new(Field::new(
-        "item",
-        DataType::Struct(struct_fields),
-        false,
-    )))
-}
-
-fn utf8_map_field(name: &str, nullable: bool) -> Field {
-    Field::new_map(
-        name,
-        "entries",
-        Field::new("key", DataType::Utf8, false),
-        Field::new("value", DataType::Utf8, false),
-        false,
-        nullable,
-    )
-}
-
-/// Float samples, which are counters, gauges, and classic histogram bucket
-/// series.
-#[must_use]
-pub fn float_sample_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        fingerprint_field(),
-        timestamp_field(),
-        Field::new("value", DataType::Float64, false),
-    ]))
-}
-
-/// Native histogram samples with absolute bucket counts.
-#[must_use]
-pub fn native_histogram_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        fingerprint_field(),
-        timestamp_field(),
-        Field::new(COL_NH_SCHEMA, DataType::Int8, false),
-        Field::new(COL_NH_IS_FLOAT, DataType::Boolean, false),
-        Field::new(COL_NH_RESET_HINT, DataType::Int8, false),
-        Field::new(COL_NH_ZERO_THRESHOLD, DataType::Float64, false),
-        Field::new(COL_NH_ZERO_COUNT, DataType::Float64, false),
-        Field::new(COL_NH_COUNT, DataType::Float64, false),
-        Field::new(COL_NH_SUM, DataType::Float64, false),
-        Field::new(COL_NH_POS_SPANS, span_list_type(), false),
-        Field::new(COL_NH_POS_COUNTS, f64_list_type(), false),
-        Field::new(COL_NH_NEG_SPANS, span_list_type(), false),
-        Field::new(COL_NH_NEG_COUNTS, f64_list_type(), false),
-        Field::new(COL_NH_CUSTOM_VALUES, f64_list_type(), true),
-        Field::new(COL_NH_START_TS, DataType::Int64, true),
-    ]))
-}
-
-/// Exemplars whose trace and span identifiers are first-class columns.
-#[must_use]
-pub fn exemplar_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        fingerprint_field(),
-        timestamp_field(),
-        Field::new("value", DataType::Float64, false),
-        Field::new("trace_id", DataType::Utf8, true),
-        Field::new("span_id", DataType::Utf8, true),
-        utf8_map_field("labels", false),
-    ]))
-}
-
-/// Metric metadata rows used by the per-tenant metadata index.
-#[must_use]
-pub fn metadata_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        fingerprint_field(),
-        timestamp_field(),
-        Field::new("metric_family_name", DataType::Utf8, false),
-        Field::new("metric_type", DataType::Utf8, false),
-        Field::new("help", DataType::Utf8, false),
-        Field::new("unit", DataType::Utf8, false),
-    ]))
-}
-
-fn clock_label_dict() -> DataType {
-    DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))
-}
-
-/// Clock confidence readings, one row per clock, per host, per moment.
-///
-/// [`COL_TIMESTAMP`] carries the host reading in epoch milliseconds, the unit
-/// that every other metric block in this crate uses. The ingest path converts
-/// [`CCOL_READING_UNIX_NANOS`] to milliseconds to fill it. The nanosecond
-/// reading stays in its own column, so the conversion drops no precision from
-/// the block.
-///
-/// The source-specific columns are nullable. One exporter reads one kind of
-/// clock, so an NTP row leaves the PTP columns empty and a PTP row leaves the
-/// NTP columns empty.
-#[must_use]
-pub fn clock_reading_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        fingerprint_field(),
-        timestamp_field(),
-        // Identity.
-        Field::new(CCOL_NODE, clock_label_dict(), false),
-        Field::new(CCOL_CLOCK, clock_label_dict(), false),
-        Field::new(CCOL_SOURCE_KIND, clock_label_dict(), false),
-        // The reading.
-        Field::new(CCOL_READING_UNIX_NANOS, DataType::Int64, false),
-        Field::new(CCOL_UNCERTAINTY_NANOS, DataType::Int64, false),
-        Field::new(CCOL_OFFSET_NANOS, DataType::Int64, false),
-        // Discipline state.
-        Field::new(CCOL_SYNC_STATE, clock_label_dict(), false),
-        Field::new(CCOL_REFERENCE_ID, clock_label_dict(), true),
-        Field::new(CCOL_LAST_SYNC_UNIX_NANOS, DataType::Int64, true),
-        Field::new(CCOL_FREQUENCY_PPB, DataType::Int64, true),
-        Field::new(CCOL_LAST_STEP_NANOS, DataType::Int64, true),
-        // NTP.
-        Field::new(CCOL_ROOT_DELAY_NANOS, DataType::Int64, true),
-        Field::new(CCOL_ROOT_DISPERSION_NANOS, DataType::Int64, true),
-        Field::new(CCOL_STRATUM, DataType::UInt32, true),
-        // PTP.
-        Field::new(CCOL_MEAN_PATH_DELAY_NANOS, DataType::Int64, true),
-        Field::new(CCOL_STEPS_REMOVED, DataType::UInt32, true),
-        Field::new(CCOL_GM_CLOCK_CLASS, DataType::UInt32, true),
-        Field::new(CCOL_GM_CLOCK_ACCURACY, DataType::UInt32, true),
-        // Kernel timex.
-        Field::new(CCOL_MAX_ERROR_NANOS, DataType::Int64, true),
-        Field::new(CCOL_EST_ERROR_NANOS, DataType::Int64, true),
-        Field::new(CCOL_UNSYNCHRONIZED, DataType::Boolean, true),
-        // GNSS.
-        Field::new(CCOL_SATELLITES_USED, DataType::UInt32, true),
-        Field::new(CCOL_GNSS_FIX, clock_label_dict(), true),
-        // Stamped by the ingester, not by the host.
-        Field::new(CCOL_INGEST_UNIX_NANOS, DataType::Int64, false),
-    ]))
-}
-
-/// Clock reading block declaration used by generic schema validation.
-///
-/// The required set holds the two mandatory blockstore columns and the three
-/// columns that carry the signal itself. A row without a reading, an
-/// uncertainty, and an ingest stamp answers no clock confidence question.
-#[must_use]
-pub fn clock_reading_decl() -> BlockSchema {
-    BlockSchema {
-        required: vec![
-            RequiredColumn::new(COL_FINGERPRINT, DataType::UInt64, false),
-            RequiredColumn::new(COL_TIMESTAMP, DataType::Int64, false),
-            RequiredColumn::new(CCOL_READING_UNIX_NANOS, DataType::Int64, false),
-            RequiredColumn::new(CCOL_UNCERTAINTY_NANOS, DataType::Int64, false),
-            RequiredColumn::new(CCOL_INGEST_UNIX_NANOS, DataType::Int64, false),
-        ],
-        sort_key: vec![COL_FINGERPRINT.to_string(), COL_TIMESTAMP.to_string()],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use arrow::datatypes::DataType;
@@ -480,3 +207,108 @@ mod tests {
         );
     }
 }
+
+// === split-modules: generated submodules ===
+mod ccol_clock;
+mod ccol_est_error_nanos;
+mod ccol_frequency_ppb;
+mod ccol_gm_clock_accuracy;
+mod ccol_gm_clock_class;
+mod ccol_gnss_fix;
+mod ccol_ingest_unix_nanos;
+mod ccol_last_step_nanos;
+mod ccol_last_sync_unix_nanos;
+mod ccol_max_error_nanos;
+mod ccol_mean_path_delay_nanos;
+mod ccol_node;
+mod ccol_offset_nanos;
+mod ccol_reading_unix_nanos;
+mod ccol_reference_id;
+mod ccol_root_delay_nanos;
+mod ccol_root_dispersion_nanos;
+mod ccol_satellites_used;
+mod ccol_source_kind;
+mod ccol_steps_removed;
+mod ccol_stratum;
+mod ccol_sync_state;
+mod ccol_uncertainty_nanos;
+mod ccol_unsynchronized;
+mod clock_label_dict;
+mod clock_reading_decl;
+mod clock_reading_schema;
+mod col_fingerprint;
+mod col_nh_count;
+mod col_nh_custom_values;
+mod col_nh_is_float;
+mod col_nh_neg_counts;
+mod col_nh_neg_spans;
+mod col_nh_pos_counts;
+mod col_nh_pos_spans;
+mod col_nh_reset_hint;
+mod col_nh_schema;
+mod col_nh_start_ts;
+mod col_nh_sum;
+mod col_nh_zero_count;
+mod col_nh_zero_threshold;
+mod col_timestamp;
+mod exemplar_schema;
+mod f64_list_type;
+mod fingerprint_field;
+mod float_sample_schema;
+mod metadata_schema;
+mod native_histogram_schema;
+mod span_list_type;
+mod timestamp_field;
+mod utf8_map_field;
+
+pub use ccol_clock::CCOL_CLOCK;
+pub use ccol_est_error_nanos::CCOL_EST_ERROR_NANOS;
+pub use ccol_frequency_ppb::CCOL_FREQUENCY_PPB;
+pub use ccol_gm_clock_accuracy::CCOL_GM_CLOCK_ACCURACY;
+pub use ccol_gm_clock_class::CCOL_GM_CLOCK_CLASS;
+pub use ccol_gnss_fix::CCOL_GNSS_FIX;
+pub use ccol_ingest_unix_nanos::CCOL_INGEST_UNIX_NANOS;
+pub use ccol_last_step_nanos::CCOL_LAST_STEP_NANOS;
+pub use ccol_last_sync_unix_nanos::CCOL_LAST_SYNC_UNIX_NANOS;
+pub use ccol_max_error_nanos::CCOL_MAX_ERROR_NANOS;
+pub use ccol_mean_path_delay_nanos::CCOL_MEAN_PATH_DELAY_NANOS;
+pub use ccol_node::CCOL_NODE;
+pub use ccol_offset_nanos::CCOL_OFFSET_NANOS;
+pub use ccol_reading_unix_nanos::CCOL_READING_UNIX_NANOS;
+pub use ccol_reference_id::CCOL_REFERENCE_ID;
+pub use ccol_root_delay_nanos::CCOL_ROOT_DELAY_NANOS;
+pub use ccol_root_dispersion_nanos::CCOL_ROOT_DISPERSION_NANOS;
+pub use ccol_satellites_used::CCOL_SATELLITES_USED;
+pub use ccol_source_kind::CCOL_SOURCE_KIND;
+pub use ccol_steps_removed::CCOL_STEPS_REMOVED;
+pub use ccol_stratum::CCOL_STRATUM;
+pub use ccol_sync_state::CCOL_SYNC_STATE;
+pub use ccol_uncertainty_nanos::CCOL_UNCERTAINTY_NANOS;
+pub use ccol_unsynchronized::CCOL_UNSYNCHRONIZED;
+use clock_label_dict::clock_label_dict;
+pub use clock_reading_decl::clock_reading_decl;
+pub use clock_reading_schema::clock_reading_schema;
+pub use col_fingerprint::COL_FINGERPRINT;
+pub use col_nh_count::COL_NH_COUNT;
+pub use col_nh_custom_values::COL_NH_CUSTOM_VALUES;
+pub use col_nh_is_float::COL_NH_IS_FLOAT;
+pub use col_nh_neg_counts::COL_NH_NEG_COUNTS;
+pub use col_nh_neg_spans::COL_NH_NEG_SPANS;
+pub use col_nh_pos_counts::COL_NH_POS_COUNTS;
+pub use col_nh_pos_spans::COL_NH_POS_SPANS;
+pub use col_nh_reset_hint::COL_NH_RESET_HINT;
+pub use col_nh_schema::COL_NH_SCHEMA;
+pub use col_nh_start_ts::COL_NH_START_TS;
+pub use col_nh_sum::COL_NH_SUM;
+pub use col_nh_zero_count::COL_NH_ZERO_COUNT;
+pub use col_nh_zero_threshold::COL_NH_ZERO_THRESHOLD;
+pub use col_timestamp::COL_TIMESTAMP;
+pub use exemplar_schema::exemplar_schema;
+use f64_list_type::f64_list_type;
+use fingerprint_field::fingerprint_field;
+pub use float_sample_schema::float_sample_schema;
+pub use metadata_schema::metadata_schema;
+pub use native_histogram_schema::native_histogram_schema;
+use span_list_type::span_list_type;
+use timestamp_field::timestamp_field;
+use utf8_map_field::utf8_map_field;

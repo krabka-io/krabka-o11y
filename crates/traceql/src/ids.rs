@@ -25,19 +25,9 @@
 
 use derive_more::{Display, From, Into};
 
-/// An *instant*: an absolute timestamp in Unix epoch nanoseconds.
-///
-/// The crate uses this type for the query window bounds `start_ns` and
-/// `end_ns`, for a span row's start time, and for the per-bucket output
-/// timestamps of a metrics range query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
-pub(crate) struct UnixNano(pub i64);
+// === split-modules: generated submodules ===
+mod duration_nanos;
+mod unix_nano;
 
-/// A duration in nanoseconds: a *span of time*, not an instant.
-///
-/// The crate uses this type for the metrics range-query `step`. It stays
-/// distinct from [`UnixNano`], so a step can never take a timestamp position,
-/// and a timestamp can never take a step position. This holds for the
-/// metrics-range structs and for the `assemble_*` arg lists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
-pub(crate) struct DurationNanos(pub i64);
+pub (crate) use duration_nanos::DurationNanos;
+pub (crate) use unix_nano::UnixNano;

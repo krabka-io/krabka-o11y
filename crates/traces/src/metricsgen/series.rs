@@ -2,51 +2,6 @@
 
 use crate::metricsgen::NativeHistogram;
 
-/// Prometheus exemplar attached to a sample.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Exemplar {
-    pub value: f64,
-    pub labels: Vec<(String, String)>,
-    pub timestamp_ms: i64,
-}
-
-/// Neutral sample shape emitted by metrics-generator processors.
-#[derive(Clone, Debug, PartialEq)]
-pub enum SeriesSample {
-    Counter(f64),
-    Gauge(f64),
-    ClassicHistogram {
-        buckets: Vec<(f64, f64)>,
-        sum: f64,
-        count: f64,
-    },
-    NativeHistogram(NativeHistogram),
-}
-
-/// One named Prometheus series without the `__name__` label.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Series {
-    pub name: String,
-    pub labels: Vec<(String, String)>,
-    pub sample: SeriesSample,
-    pub exemplars: Vec<Exemplar>,
-    pub timestamp_ms: i64,
-}
-
-/// Batch of series for one tenant.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SeriesPayload {
-    pub tenant: String,
-    pub series: Vec<Series>,
-}
-
-/// Sort labels into a deterministic order for the encoder and the tests.
-#[must_use]
-pub fn sorted_labels(mut pairs: Vec<(String, String)>) -> Vec<(String, String)> {
-    pairs.sort();
-    pairs
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -99,3 +54,16 @@ mod tests {
         assert2::assert!((payload.series[0].exemplars[0].value - 0.25).abs() < 1e-9);
     }
 }
+
+// === split-modules: generated submodules ===
+mod exemplar;
+mod series;
+mod series_payload;
+mod series_sample;
+mod sorted_labels;
+
+pub use exemplar::Exemplar;
+pub use series::Series;
+pub use series_payload::SeriesPayload;
+pub use series_sample::SeriesSample;
+pub use sorted_labels::sorted_labels;

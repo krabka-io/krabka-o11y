@@ -1,6 +1,3 @@
-#[cfg(all(unix, feature = "heap-profiling"))]
-#[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use std::{
     net::SocketAddr,
@@ -39,723 +36,6 @@ use krabka_units::{
 use krabka_units::{mebibytes, secs};
 use object_store::{ObjectStore, path::Path as ObjectPath};
 use tokio_util::sync::CancellationToken;
-
-#[derive(Debug, Parser)]
-struct Cli {
-    #[command(flatten)]
-    profiling: krabka_telemetry::profiling::ProfilingConfig,
-    #[arg(long, env = "KRABKA_PROFILES_TARGET")]
-    target: Target,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_LISTEN_ADDR",
-        default_value = "127.0.0.1:4040"
-    )]
-    listen: SocketAddr,
-    #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
-    admin_listen_addr: SocketAddr,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_BOOTSTRAP",
-        default_value = "127.0.0.1:9092"
-    )]
-    bootstrap: String,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_WAL_TOPIC",
-        default_value = krabka_profiles::PROFILES_WAL_TOPIC,
-        value_parser = parse_non_empty_string
-    )]
-    wal_topic: String,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_BLOCK_BUILDER_GROUP_ID",
-        default_value = "krabka-profiles-block-builder",
-        value_parser = parse_non_empty_string
-    )]
-    block_builder_group_id: String,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_CLIENT_DISPATCH_QUEUE_CAPACITY",
-        default_value_t = DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-        value_parser = parse_client_dispatch_queue_capacity
-    )]
-    client_dispatch_queue_capacity: usize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_CLIENT_FRAME_MAX",
-        default_value = "100MiB",
-        value_parser = parse_client_frame_max
-    )]
-    client_frame_max: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_DISTRIBUTOR_REQUEST_MAX",
-        default_value = "16MiB",
-        value_parser = parse_positive_whole_byte_size
-    )]
-    distributor_request_max: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_DISTRIBUTOR_MAX_TRACKED_TENANTS",
-        default_value_t = 4096,
-        value_parser = parse_positive_usize
-    )]
-    distributor_max_tracked_tenants: usize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_LEGACY_MAX_NODES",
-        default_value_t = 500_000,
-        value_parser = parse_positive_usize
-    )]
-    legacy_max_nodes: usize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_LEGACY_MAX_PATH_BYTES",
-        default_value = "64MiB",
-        value_parser = parse_positive_whole_byte_size
-    )]
-    legacy_max_path_bytes: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_LEGACY_MAX_TRIE_DEPTH",
-        default_value_t = 4096,
-        value_parser = parse_positive_usize
-    )]
-    legacy_max_trie_depth: usize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_WAL_FETCH_MAX",
-        default_value = "2MiB",
-        value_parser = parse_consumer_fetch_size
-    )]
-    wal_fetch_max: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_WAL_FETCH_PARTITION_MAX",
-        default_value = "256KiB",
-        value_parser = parse_consumer_fetch_size
-    )]
-    wal_fetch_partition_max: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_OBJECT_STORE_URL",
-        default_value = "file://./.krabka-profiles-blocks"
-    )]
-    object_store_url: String,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_INDEX_OBJECT_KEY",
-        default_value = "index/profiles.json",
-        value_parser = parse_non_empty_string
-    )]
-    index_object_key: String,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_INDEX_SNAPSHOT_MAX",
-        default_value = "256MiB",
-        value_parser = parse_positive_whole_byte_size
-    )]
-    index_snapshot_max: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_INDEX_SNAPSHOT_RETAIN",
-        default_value_t = IndexSnapshotRetain::default()
-    )]
-    index_snapshot_retain: IndexSnapshotRetain,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_INDEX_REFRESH_INTERVAL",
-        default_value = "15s",
-        value_parser = parse::positive_time
-    )]
-    index_refresh_interval: Time,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_WAL_POLL_TIMEOUT",
-        default_value = "500ms",
-        value_parser = parse::positive_time
-    )]
-    wal_poll_timeout: Time,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_HOT_STORE_MAX_AGE",
-        default_value = "6h",
-        value_parser = parse::positive_time
-    )]
-    hot_store_max_age: Time,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_HOT_STORE_MAX_RECORDS",
-        default_value_t = 1_000_000,
-        value_parser = parse_positive_usize
-    )]
-    hot_store_max_records: usize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_HEATMAP_VALUE_BUCKETS",
-        default_value_t = 32,
-        value_parser = parse_positive_usize
-    )]
-    heatmap_value_buckets: usize,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_HEATMAP_TIME_BUCKETS_MAX",
-        default_value_t = 4096,
-        value_parser = parse_positive_usize
-    )]
-    heatmap_time_buckets_max: usize,
-    #[arg(
-        long = "query-frontend-shard-width",
-        visible_alias = "query-frontend-shard-ms",
-        env = "KRABKA_PROFILES_QUERY_FRONTEND_SHARD_WIDTH",
-        default_value = "15m",
-        value_parser = parse_positive_time_or_legacy_millis
-    )]
-    query_frontend_shard_width: Time,
-    #[arg(long, env = "KRABKA_PROFILES_TENANT_LIMITS_CONFIG")]
-    tenant_limits_config: Option<std::path::PathBuf>,
-    #[arg(long, env = "KRABKA_PROFILES_LIMITS_OVERRIDES_CONFIG")]
-    profiles_limits_overrides_config: Option<std::path::PathBuf>,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_QUERY_WAL_TAIL_GROUP_ID",
-        default_value = "krabka-profiles-query-wal-tail",
-        value_parser = parse_non_empty_string
-    )]
-    query_wal_tail_group_id: String,
-    #[arg(long, env = "KRABKA_PROFILES_COMPACTOR_MAX_BLOCKS_PER_JOB", default_value_t = 8, value_parser = parse_min_two_usize)]
-    compactor_max_blocks_per_job: usize,
-    #[arg(
-        long = "compactor-downsample-resolution",
-        visible_alias = "compactor-downsample-resolution-ns",
-        env = "KRABKA_PROFILES_COMPACTOR_DOWNSAMPLE_RESOLUTION",
-        value_parser = parse_positive_time_or_legacy_nanos
-    )]
-    compactor_downsample_resolution: Option<Time>,
-    #[arg(long, env = "KRABKA_PROFILES_BLOCK_BUILDER_FLUSH_RECORDS", default_value_t = krabka_profiles::blockbuilder::DEFAULT_FLUSH_RECORDS, value_parser = parse_positive_usize)]
-    block_builder_flush_records: usize,
-    #[arg(
-        long = "block-builder-flush-max-age",
-        visible_alias = "block-builder-flush-max-age-ms",
-        env = "KRABKA_PROFILES_BLOCK_BUILDER_FLUSH_MAX_AGE",
-        default_value = "10s",
-        value_parser = parse_positive_time_or_legacy_millis
-    )]
-    block_builder_flush_max_age: Time,
-    /// debuginfod base URLs, comma-separated, to fetch DWARF for unsymbolized
-    /// native frames. Empty by default: the symbolizer makes NO outbound
-    /// requests until an operator supplies URLs.
-    #[arg(
-        long = "debuginfod-url",
-        env = "KRABKA_PROFILES_DEBUGINFOD_URLS",
-        value_delimiter = ','
-    )]
-    debuginfod_urls: Vec<String>,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_DEBUGINFOD_MAX_ARTIFACT_SIZE",
-        value_parser = parse_positive_whole_byte_size
-    )]
-    debuginfod_max_artifact_size: Option<ByteSize>,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_DEBUGINFOD_CONNECT_TIMEOUT",
-        value_parser = parse::positive_time
-    )]
-    debuginfod_connect_timeout: Option<Time>,
-    #[arg(
-        long,
-        env = "KRABKA_PROFILES_DEBUGINFOD_REQUEST_TIMEOUT",
-        value_parser = parse::positive_time
-    )]
-    debuginfod_request_timeout: Option<Time>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-enum Target {
-    Distributor,
-    BlockBuilder,
-    Querier,
-    QueryFrontend,
-    Compactor,
-    Symbolizer,
-}
-
-struct ConfiguredObjectStore {
-    store: std::sync::Arc<dyn ObjectStore>,
-    prefix: ObjectPath,
-}
-
-fn parse_consumer_fetch_size(value: &str) -> Result<ByteSize, String> {
-    let size = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
-    ConsumerFetchMaxBytes::try_from(size)?;
-    Ok(size)
-}
-
-fn parse_positive_whole_byte_size(value: &str) -> Result<ByteSize, String> {
-    let size = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
-    let bytes = size.bytes_f64();
-    if bytes.fract() != 0.0 || bytes > 9_007_199_254_740_992.0 {
-        return Err(
-            "size must be a positive whole-byte value exactly representable by UOM".to_owned(),
-        );
-    }
-    Ok(size)
-}
-
-fn parse_client_dispatch_queue_capacity(value: &str) -> Result<usize, String> {
-    let value = value.parse::<usize>().map_err(|error| error.to_string())?;
-    ConnectionDispatchQueueCapacity::new(value).map(ConnectionDispatchQueueCapacity::get)
-}
-
-fn parse_client_frame_max(value: &str) -> Result<ByteSize, String> {
-    let value = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
-    ClientFrameMax::try_from(value).map(ClientFrameMax::size)
-}
-
-fn parse_positive_usize(value: &str) -> Result<usize, String> {
-    use refined_type::rule::GreaterUsize;
-
-    GreaterUsize::<0>::new(value.parse::<usize>().map_err(|error| error.to_string())?)
-        .map(refined_type::Refined::into_value)
-        .map_err(|error| error.to_string())
-}
-
-fn parse_non_empty_string(value: &str) -> Result<String, String> {
-    refined_type::rule::NonEmptyString::new(value.to_owned())
-        .map(refined_type::Refined::into_value)
-        .map_err(|error| error.to_string())
-}
-
-fn parse_min_two_usize(value: &str) -> Result<usize, String> {
-    use refined_type::rule::GreaterUsize;
-
-    GreaterUsize::<1>::new(value.parse::<usize>().map_err(|error| error.to_string())?)
-        .map(refined_type::Refined::into_value)
-        .map_err(|error| error.to_string())
-}
-
-fn parse_positive_time_or_legacy(value: &str, legacy: fn(i64) -> Time) -> Result<Time, String> {
-    if let Ok(raw) = value.parse::<i64>() {
-        if raw <= 0 {
-            return Err("time must be positive".to_owned());
-        }
-        return Ok(legacy(raw));
-    }
-    parse::positive_time(value).map_err(|error| error.to_string())
-}
-
-fn parse_positive_time_or_legacy_millis(value: &str) -> Result<Time, String> {
-    parse_positive_time_or_legacy(value, Time::from_millis)
-}
-
-fn parse_positive_time_or_legacy_nanos(value: &str) -> Result<Time, String> {
-    parse_positive_time_or_legacy(value, Time::from_nanos)
-}
-
-fn client_resource_policy(
-    cli: &Cli,
-) -> (
-    krabka_client_core::ConnectionDispatchQueueCapacity,
-    krabka_client_core::ClientFrameMax,
-) {
-    (
-        krabka_client_core::ConnectionDispatchQueueCapacity::new(
-            cli.client_dispatch_queue_capacity,
-        )
-        .expect("validated profiles client dispatch queue capacity"),
-        krabka_client_core::ClientFrameMax::try_from(cli.client_frame_max)
-            .expect("validated profiles client frame maximum"),
-    )
-}
-
-fn debuginfod_config(cli: &Cli) -> Result<DebuginfodConfig, String> {
-    let defaults = DebuginfodConfig::default();
-    DebuginfodConfig::new(
-        cli.debuginfod_max_artifact_size
-            .unwrap_or(defaults.max_artifact_size()),
-        cli.debuginfod_connect_timeout
-            .unwrap_or(defaults.connect_timeout()),
-        cli.debuginfod_request_timeout
-            .unwrap_or(defaults.request_timeout()),
-    )
-}
-
-impl ConfiguredObjectStore {
-    fn object_key(&self, key: &str) -> String {
-        let prefix = self.prefix.as_ref().trim_matches('/');
-        let key = key.trim_start_matches('/');
-        if prefix.is_empty() {
-            key.to_string()
-        } else {
-            format!("{prefix}/{key}")
-        }
-    }
-}
-
-fn build_object_store(
-    url: &str,
-) -> Result<ConfiguredObjectStore, Box<dyn std::error::Error + Send + Sync>> {
-    let parsed = url::Url::parse(url)?;
-    let (store, prefix) = object_store::parse_url_opts(&parsed, std::env::vars())?;
-    Ok(ConfiguredObjectStore {
-        store: std::sync::Arc::from(store),
-        prefix,
-    })
-}
-
-/// How long each hot WAL-tail poll waits for records.
-/// Periodically reload the profile block index from object storage and swap it
-/// into the cold store. The block-builder writes new blocks continuously.
-/// Without this reload the querier only ever sees the index snapshot that it
-/// loaded at boot, so blocks created after boot stay invisible. The symptom is
-/// that recent profiles return empty, above all sparse ones such as memory that
-/// age out of the hot tier. This loop mirrors the `TraceIndex` refresh loop of
-/// the traces querier.
-fn spawn_profile_index_refresh(
-    cold: Arc<ColdProfileStore>,
-    store: Arc<dyn ObjectStore>,
-    index_key: String,
-    max_bytes: ByteSize,
-    interval: Time,
-    shutdown: CancellationToken,
-) {
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(interval.to_std());
-        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                () = shutdown.cancelled() => return,
-                _ = tick.tick() => {}
-            }
-            match ProfileIndex::load_latest_snapshot_with_max_bytes(&store, &index_key, max_bytes)
-                .await
-            {
-                Ok(index) => cold.replace_index(Arc::new(index)),
-                Err(error) => {
-                    tracing::warn!(%error, %index_key, "profile index refresh failed; retaining last good index");
-                }
-            }
-        }
-    });
-}
-
-#[tokio::main]
-#[allow(clippy::too_many_lines)]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    let telemetry = krabka_telemetry::init(
-        OtlpConfig::from_env(
-            |k| std::env::var(k).ok(),
-            "krabka-profiles",
-            env!("CARGO_PKG_VERSION"),
-            "krabka-profiles",
-        )?,
-        "krabka_profiles=info,info",
-        "info",
-        "krabka-profiles",
-    )?;
-    let result = run(cli).await;
-    telemetry.shutdown();
-    result
-}
-
-#[allow(clippy::too_many_lines)]
-async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(&cli);
-    let debuginfod_config = debuginfod_config(&cli)?;
-    let metrics = ServiceMetrics::new();
-    let admin = krabka_telemetry::profiling::spawn_admin_with_config(
-        cli.admin_listen_addr,
-        krabka_profiles::metrics::metrics_router(metrics.registry.clone()),
-        cli.profiling.clone(),
-    )
-    .await?;
-
-    let role = async move {
-        match cli.target {
-            Target::Distributor => {
-                let limits = load_tenant_limits_config(cli.tenant_limits_config.as_deref())?;
-                let profile_overrides = load_profiles_limits_overrides_config(
-                    cli.profiles_limits_overrides_config.as_deref(),
-                )?;
-                let producer = Producer::builder()
-                    .bootstrap(&cli.bootstrap)
-                    .dispatch_queue_capacity(client_dispatch_queue_capacity.get())
-                    .frame_max(client_frame_max.size())
-                    .build()
-                    .await?;
-                let state = Arc::new(DistributorState {
-                    sink: Arc::new(KafkaSink::with_topic(Arc::new(producer), cli.wal_topic)),
-                    limits,
-                    profile_overrides,
-                    active_series: Mutex::default(),
-                    ingestion_buckets: Mutex::default(),
-                    relabel: Vec::<RelabelConfig>::new(),
-                    max_decompressed: cli.distributor_request_max,
-                    max_tracked_tenants: cli.distributor_max_tracked_tenants,
-                    legacy_decode_limits: krabka_profiles::ingest::LegacyDecodeLimits {
-                        max_nodes: cli.legacy_max_nodes,
-                        max_path_bytes: cli.legacy_max_path_bytes,
-                        max_trie_depth: cli.legacy_max_trie_depth,
-                    },
-                    metrics: metrics.clone(),
-                });
-                let shutdown = role_shutdown_token();
-                let bound = serve_supervised(cli.listen, state, shutdown.clone()).await?;
-                tracing::info!(%bound, "profiles distributor listening");
-                shutdown.cancelled().await;
-            }
-            Target::BlockBuilder => {
-                let configured = build_object_store(&cli.object_store_url)
-                    .map_err(|e| format!("object store: {e}"))?;
-                let index_key = configured.object_key(&cli.index_object_key);
-                let mut config =
-                    BlockBuilderConfig::new(cli.bootstrap, configured.store).with_metrics(metrics);
-                config.client_dispatch_queue_capacity = client_dispatch_queue_capacity;
-                config.client_frame_max = client_frame_max;
-                config.wal_topic = cli.wal_topic;
-                config.group_id = cli.block_builder_group_id;
-                config.index_key = index_key;
-                config.wal_fetch_max = cli.wal_fetch_max;
-                config.wal_fetch_partition_max = cli.wal_fetch_partition_max;
-                config.flush_records = cli.block_builder_flush_records;
-                config.flush_max_age = cli.block_builder_flush_max_age;
-                config.poll_timeout = cli.wal_poll_timeout;
-                config.index_snapshot_max = cli.index_snapshot_max;
-                config.index_snapshot_retain = cli.index_snapshot_retain;
-                krabka_profiles::blockbuilder::run_with_config(config).await?;
-            }
-            Target::Querier => {
-                let shutdown = role_shutdown_token();
-                let overrides = load_profiles_limits_overrides_config(
-                    cli.profiles_limits_overrides_config.as_deref(),
-                )?;
-                let configured = build_object_store(&cli.object_store_url)
-                    .map_err(|e| format!("object store: {e}"))?;
-                let index_key = configured.object_key(&cli.index_object_key);
-                let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
-                    &configured.store,
-                    &index_key,
-                    cli.index_snapshot_max,
-                )
-                .await?;
-                let refresh_store = Arc::clone(&configured.store);
-                let cold = Arc::new(ColdProfileStore::new_with_debuginfod_config(
-                    configured.store,
-                    Arc::new(index),
-                    cli.debuginfod_urls.clone(),
-                    debuginfod_config,
-                )?);
-                spawn_profile_index_refresh(
-                    Arc::clone(&cold),
-                    refresh_store,
-                    index_key.clone(),
-                    cli.index_snapshot_max,
-                    cli.index_refresh_interval,
-                    shutdown.clone(),
-                );
-                let hot = WalTailProfileStore::with_retention(RetentionConfig {
-                    max_age: cli.hot_store_max_age,
-                    max_records: cli.hot_store_max_records,
-                });
-                let wal_tail = spawn_wal_tail(
-                    &cli,
-                    hot.clone(),
-                    client_dispatch_queue_capacity,
-                    client_frame_max,
-                );
-                let union = Arc::new(UnionProfileStore::new(Arc::new(hot), cold));
-                let state = Arc::new(
-                    QuerierState::new_with_overrides(union, overrides)
-                        .with_heatmap_policy(
-                            cli.heatmap_value_buckets,
-                            cli.heatmap_time_buckets_max,
-                        )
-                        .with_metrics(metrics.clone()),
-                );
-                let bound = serve_querier(cli.listen, state, shutdown.clone()).await?;
-                tracing::info!(%bound, "profiles querier listening");
-                tokio::select! {
-                    () = shutdown.cancelled() => {}
-                    result = wal_tail => {
-                        shutdown.cancel();
-                        result??;
-                    }
-                }
-            }
-            Target::QueryFrontend => {
-                let shutdown = role_shutdown_token();
-                let overrides = load_profiles_limits_overrides_config(
-                    cli.profiles_limits_overrides_config.as_deref(),
-                )?;
-                let configured = build_object_store(&cli.object_store_url)
-                    .map_err(|e| format!("object store: {e}"))?;
-                let index_key = configured.object_key(&cli.index_object_key);
-                let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
-                    &configured.store,
-                    &index_key,
-                    cli.index_snapshot_max,
-                )
-                .await?;
-                let refresh_store = Arc::clone(&configured.store);
-                let cold = Arc::new(ColdProfileStore::new_with_debuginfod_config(
-                    configured.store,
-                    Arc::new(index),
-                    cli.debuginfod_urls.clone(),
-                    debuginfod_config,
-                )?);
-                spawn_profile_index_refresh(
-                    Arc::clone(&cold),
-                    refresh_store,
-                    index_key.clone(),
-                    cli.index_snapshot_max,
-                    cli.index_refresh_interval,
-                    shutdown.clone(),
-                );
-                let hot = WalTailProfileStore::with_retention(RetentionConfig {
-                    max_age: cli.hot_store_max_age,
-                    max_records: cli.hot_store_max_records,
-                });
-                let wal_tail = spawn_wal_tail(
-                    &cli,
-                    hot.clone(),
-                    client_dispatch_queue_capacity,
-                    client_frame_max,
-                );
-                let union = Arc::new(UnionProfileStore::new(Arc::new(hot), cold));
-                let state = Arc::new(
-                    QuerierState::new_frontend_with_overrides(
-                        union,
-                        FrontendConfig {
-                            shard_width: cli.query_frontend_shard_width,
-                        },
-                        overrides,
-                    )
-                    .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
-                    .with_metrics(metrics.clone()),
-                );
-                let bound = serve_querier(cli.listen, state, shutdown.clone()).await?;
-                tracing::info!(
-                    %bound,
-                    shard_width = %cli.query_frontend_shard_width.human(),
-                    "profiles query-frontend listening"
-                );
-                tokio::select! {
-                    () = shutdown.cancelled() => {}
-                    result = wal_tail => {
-                        shutdown.cancel();
-                        result??;
-                    }
-                }
-            }
-            Target::Symbolizer => {
-                krabka_profiles::symbolizer::run_with_config(
-                    cli.debuginfod_urls,
-                    debuginfod_config,
-                )
-                .await?;
-            }
-            Target::Compactor => {
-                let configured = build_object_store(&cli.object_store_url)
-                    .map_err(|e| format!("object store: {e}"))?;
-                let index_key = configured.object_key(&cli.index_object_key);
-                let mut index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
-                    &configured.store,
-                    &index_key,
-                    cli.index_snapshot_max,
-                )
-                .await?;
-                let downsample =
-                    cli.compactor_downsample_resolution
-                        .map(|resolution| DownsamplePolicy {
-                            resolution_ns: resolution.nanos_i64(),
-                        });
-                let metas = compact_once_with_policy(
-                    &configured.store,
-                    &mut index,
-                    cli.compactor_max_blocks_per_job,
-                    downsample,
-                )
-                .await?;
-                index
-                    .save_latest_snapshot_with_retain(
-                        &configured.store,
-                        &index_key,
-                        cli.index_snapshot_retain,
-                    )
-                    .await?;
-                tracing::info!(
-                    compacted_blocks = metas.len(),
-                    downsample_resolution = ?cli.compactor_downsample_resolution,
-                    "profiles compactor finished one pass"
-                );
-            }
-        }
-        Ok::<(), Box<dyn std::error::Error>>(())
-    };
-
-    tokio::select! {
-        result = role => result,
-        result = krabka_telemetry::profiling::await_admin_exit(admin) => Ok(result?),
-    }
-}
-
-fn load_tenant_limits_config(
-    path: Option<&Path>,
-) -> Result<TenantLimitConfig, Box<dyn std::error::Error>> {
-    let Some(path) = path else {
-        return Ok(TenantLimitConfig::default());
-    };
-    let bytes = std::fs::read(path)?;
-    Ok(serde_json::from_slice(&bytes)?)
-}
-
-fn load_profiles_limits_overrides_config(
-    path: Option<&Path>,
-) -> Result<OverridesProvider, Box<dyn std::error::Error>> {
-    let Some(path) = path else {
-        return Ok(OverridesProvider::new(Limits::default()));
-    };
-    let text = std::fs::read_to_string(path)?;
-    Ok(OverridesProvider::from_yaml(&text)?)
-}
-
-fn spawn_wal_tail(
-    cli: &Cli,
-    hot: WalTailProfileStore,
-    client_dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
-    client_frame_max: krabka_client_core::ClientFrameMax,
-) -> tokio::task::JoinHandle<Result<(), krabka_profiles::ProfilesError>> {
-    let bootstrap = cli.bootstrap.clone();
-    let group_id = cli.query_wal_tail_group_id.clone();
-    let wal_topic = cli.wal_topic.clone();
-    let poll_timeout = cli.wal_poll_timeout;
-    tokio::spawn(async move {
-        krabka_profiles::hot_store::run_wal_tail_with_topic(
-            hot,
-            bootstrap,
-            group_id,
-            wal_topic,
-            poll_timeout,
-            client_dispatch_queue_capacity,
-            client_frame_max,
-        )
-        .await
-    })
-}
-
-fn role_shutdown_token() -> CancellationToken {
-    let token = CancellationToken::new();
-    let signal = token.clone();
-    tokio::spawn(async move {
-        krabka_observability::shutdown_signal().await;
-        signal.cancel();
-    });
-    token
-}
 
 #[cfg(test)]
 mod tests {
@@ -1574,4 +854,73 @@ overrides:
     fn rejects_unknown_target() {
         assert!(Cli::try_parse_from(["krabka-profiles", "--target", "bogus"]).is_err());
     }
+}
+
+// === split-modules: generated submodules ===
+mod alloc;
+mod build_object_store;
+mod cli;
+mod client_resource_policy;
+mod configured_object_store;
+mod debuginfod_config;
+mod load_profiles_limits_overrides_config;
+mod load_tenant_limits_config;
+mod parse_client_dispatch_queue_capacity;
+mod parse_client_frame_max;
+mod parse_consumer_fetch_size;
+mod parse_min_two_usize;
+mod parse_non_empty_string;
+mod parse_positive_time_or_legacy;
+mod parse_positive_time_or_legacy_millis;
+mod parse_positive_time_or_legacy_nanos;
+mod parse_positive_usize;
+mod parse_positive_whole_byte_size;
+mod role_shutdown_token;
+mod run;
+mod spawn_profile_index_refresh;
+mod spawn_wal_tail;
+mod target;
+
+# [cfg (all (unix , feature = "heap-profiling"))] use alloc::ALLOC;
+use build_object_store::build_object_store;
+use cli::Cli;
+use client_resource_policy::client_resource_policy;
+use configured_object_store::ConfiguredObjectStore;
+use debuginfod_config::debuginfod_config;
+use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
+use load_tenant_limits_config::load_tenant_limits_config;
+use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
+use parse_client_frame_max::parse_client_frame_max;
+use parse_consumer_fetch_size::parse_consumer_fetch_size;
+use parse_min_two_usize::parse_min_two_usize;
+use parse_non_empty_string::parse_non_empty_string;
+use parse_positive_time_or_legacy::parse_positive_time_or_legacy;
+use parse_positive_time_or_legacy_millis::parse_positive_time_or_legacy_millis;
+use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
+use parse_positive_usize::parse_positive_usize;
+use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
+use role_shutdown_token::role_shutdown_token;
+use run::run;
+use spawn_profile_index_refresh::spawn_profile_index_refresh;
+use spawn_wal_tail::spawn_wal_tail;
+use target::Target;
+
+#[tokio::main]
+#[allow(clippy::too_many_lines)]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    let telemetry = krabka_telemetry::init(
+        OtlpConfig::from_env(
+            |k| std::env::var(k).ok(),
+            "krabka-profiles",
+            env!("CARGO_PKG_VERSION"),
+            "krabka-profiles",
+        )?,
+        "krabka_profiles=info,info",
+        "info",
+        "krabka-profiles",
+    )?;
+    let result = run(cli).await;
+    telemetry.shutdown();
+    result
 }

@@ -26,56 +26,6 @@ pub use split::split_sample_types;
 
 use crate::error::ProfilesError;
 
-/// One decoded pprof plus its series labels, before the multi-value split.
-#[derive(Debug, Clone)]
-pub struct RawProfile {
-    pub labels: Labels,
-    pub profile: PprofProfile,
-    pub delta: bool,
-    pub sample_timestamps_ns: Vec<Vec<i64>>,
-    pub sample_span_ids: Vec<Option<u64>>,
-    pub sample_trace_ids: Vec<Option<Vec<u8>>>,
-}
-
-/// One series after the multi-value split: a single `__profile_type__`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DecodedProfile {
-    pub labels: Labels,
-    pub profile_type: String,
-    pub samples: Vec<DecodedSample>,
-}
-
-/// One sample's raw payload, still unsymbolized.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodedSample {
-    pub stacktrace_location_refs: Vec<u32>,
-    pub value: i64,
-    pub timestamp_ns: i64,
-    pub span_id: Option<u64>,
-    pub trace_id: Option<Vec<u8>>,
-}
-
-/// Per-tenant ingest limits for structural validation.
-///
-/// Not `Eq`: the label caps are [`ByteSize`] quantities, which store `f64`.
-/// These limits are only ever a map value in `TenantLimitConfig::tenants`, so
-/// nothing needs the derive.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TenantLimits {
-    /// Cap on the UTF-8 bytes of a label name.
-    #[serde(default = "default_max_label_name", with = "label_byte_limit")]
-    pub max_label_name: ByteSize,
-    pub max_label_names_per_series: usize,
-    /// Cap on the UTF-8 bytes of a label value.
-    #[serde(with = "label_byte_limit")]
-    pub max_label_value: ByteSize,
-    pub session_id_buckets: u64,
-}
-
-const fn default_max_label_name() -> ByteSize {
-    bytes(1024)
-}
-
 mod label_byte_limit {
     use krabka_units::{ByteSize, convert::ByteSizeExt as _};
     use serde::{Deserializer, Serializer, de::Error as _};
@@ -101,169 +51,6 @@ mod label_byte_limit {
             ))
         }
     }
-}
-
-impl Default for TenantLimits {
-    fn default() -> Self {
-        Self {
-            max_label_name: default_max_label_name(),
-            max_label_names_per_series: 30,
-            max_label_value: bytes(2048),
-            session_id_buckets: 1024,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct TenantLimitConfig {
-    #[serde(default)]
-    pub default: TenantLimits,
-    #[serde(default)]
-    pub tenants: BTreeMap<String, TenantLimits>,
-}
-
-impl TenantLimitConfig {
-    #[must_use]
-    pub fn with_tenant_limits(mut self, tenant: impl Into<String>, limits: TenantLimits) -> Self {
-        self.tenants.insert(tenant.into(), limits);
-        self
-    }
-
-    #[must_use]
-    pub fn for_tenant(&self, tenant: &str) -> &TenantLimits {
-        self.tenants.get(tenant).unwrap_or(&self.default)
-    }
-}
-
-/// A Prometheus-style relabel rule subset.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RelabelConfig {
-    pub source_labels: Vec<String>,
-    pub regex: String,
-    pub target_label: String,
-    pub replacement: String,
-    pub action: RelabelAction,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RelabelAction {
-    Replace,
-    Keep,
-    Drop,
-}
-
-/// Inject `service_name="unknown_service"` when absent or empty.
-pub fn require_service_name(labels: &mut Labels) {
-    if labels.get("service_name").unwrap_or("").is_empty() {
-        labels.insert("service_name", "unknown_service");
-    }
-}
-
-/// Cap the cardinality of `__session_id__` with a stable modulo hash.
-pub fn cap_session_id(labels: &mut Labels, buckets: u64) {
-    let Some(raw) = labels.get("__session_id__").map(str::to_owned) else {
-        return;
-    };
-    let bucket = fnv1a(raw.as_bytes()) % buckets.max(1);
-    replace_label(labels, "__session_id__", &bucket.to_string());
-}
-
-fn fnv1a(bytes: &[u8]) -> u64 {
-    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01b3;
-
-    let mut hash = OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(PRIME);
-    }
-    hash
-}
-
-/// Enforce per-tenant structural caps.
-///
-/// # Errors
-/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-pub fn enforce_limits(labels: &Labels, limits: &TenantLimits) -> Result<(), ProfilesError> {
-    if labels.len() > limits.max_label_names_per_series {
-        return Err(ProfilesError::Invalid(format!(
-            "too many label names: {} > {}",
-            labels.len(),
-            limits.max_label_names_per_series
-        )));
-    }
-
-    for (name, value) in labels.iter() {
-        if name.len() > limits.max_label_name.bytes_usize() {
-            return Err(ProfilesError::Invalid(format!(
-                "label `{name}` name exceeds {} bytes",
-                limits.max_label_name.bytes_usize()
-            )));
-        }
-        if value.len() > limits.max_label_value.bytes_usize() {
-            return Err(ProfilesError::Invalid(format!(
-                "label `{name}` value exceeds {} bytes",
-                limits.max_label_value.bytes_usize()
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-/// Apply relabel rules in order. Returns `false` when a rule rejects the series.
-pub fn apply_relabel(labels: &mut Labels, configs: &[RelabelConfig]) -> bool {
-    for config in configs {
-        let joined = config
-            .source_labels
-            .iter()
-            .map(|name| labels.get(name).unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join(";");
-        let Ok(regex) = regex_anchored(&config.regex) else {
-            continue;
-        };
-        let matched = regex.is_match(&joined);
-
-        match config.action {
-            RelabelAction::Drop if matched => return false,
-            RelabelAction::Keep if !matched => return false,
-            RelabelAction::Replace if matched => {
-                if config.replacement.is_empty() {
-                    remove_label(labels, &config.target_label);
-                } else {
-                    replace_label(labels, &config.target_label, &config.replacement);
-                }
-            }
-            RelabelAction::Drop | RelabelAction::Keep | RelabelAction::Replace => {}
-        }
-    }
-    true
-}
-
-fn regex_anchored(pattern: &str) -> Result<regex::Regex, regex::Error> {
-    regex::Regex::new(&format!("^(?:{pattern})$"))
-}
-
-fn replace_label(labels: &mut Labels, target: &str, replacement: &str) {
-    let mut rebuilt = Labels::new();
-    for (name, value) in labels.iter() {
-        if name != target {
-            rebuilt.insert(name, value);
-        }
-    }
-    rebuilt.insert(target, replacement);
-    *labels = rebuilt;
-}
-
-fn remove_label(labels: &mut Labels, target: &str) {
-    let mut rebuilt = Labels::new();
-    for (name, value) in labels.iter() {
-        if name != target {
-            rebuilt.insert(name, value);
-        }
-    }
-    *labels = rebuilt;
 }
 
 #[cfg(test)]
@@ -683,3 +470,38 @@ mod tests {
         assert!(!apply_relabel(&mut labels, &[config]));
     }
 }
+
+// === split-modules: generated submodules ===
+mod apply_relabel;
+mod cap_session_id;
+mod decoded_profile;
+mod decoded_sample;
+mod default_max_label_name;
+mod enforce_limits;
+mod fnv1a;
+mod raw_profile;
+mod regex_anchored;
+mod relabel_action;
+mod relabel_config;
+mod remove_label;
+mod replace_label;
+mod require_service_name;
+mod tenant_limit_config;
+mod tenant_limits;
+
+pub use apply_relabel::apply_relabel;
+pub use cap_session_id::cap_session_id;
+pub use decoded_profile::DecodedProfile;
+pub use decoded_sample::DecodedSample;
+use default_max_label_name::default_max_label_name;
+pub use enforce_limits::enforce_limits;
+use fnv1a::fnv1a;
+pub use raw_profile::RawProfile;
+use regex_anchored::regex_anchored;
+pub use relabel_action::RelabelAction;
+pub use relabel_config::RelabelConfig;
+use remove_label::remove_label;
+use replace_label::replace_label;
+pub use require_service_name::require_service_name;
+pub use tenant_limit_config::TenantLimitConfig;
+pub use tenant_limits::TenantLimits;

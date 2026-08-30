@@ -3,10 +3,6 @@
 // awaits in the PromQL operator-path evaluation); the default limit is too low.
 #![recursion_limit = "256"]
 
-#[cfg(all(unix, feature = "heap-profiling"))]
-#[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 use std::{
     future::Future,
     net::SocketAddr,
@@ -33,623 +29,6 @@ use krabka_promql::{
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
-
-#[derive(Debug, Parser)]
-struct Cli {
-    #[command(flatten)]
-    profiling: krabka_telemetry::profiling::ProfilingConfig,
-    #[arg(long, env = "KRABKA_METRICS_SERVICE_TARGET")]
-    target: Target,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_SERVICE_LISTEN",
-        default_value = "127.0.0.1:4041"
-    )]
-    listen: SocketAddr,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_SERVICE_CLIENT_DISPATCH_QUEUE_CAPACITY",
-        default_value_t = DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-        value_parser = parse_client_dispatch_queue_capacity
-    )]
-    client_dispatch_queue_capacity: usize,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_SERVICE_CLIENT_FRAME_MAX",
-        default_value = "100MiB",
-        value_parser = parse_client_frame_max
-    )]
-    client_frame_max: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_OBJECT_STORE_URL",
-        default_value = "file://./.krabka-metrics-blocks"
-    )]
-    object_store_url: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_MANIFEST_PREFIX",
-        default_value = "metrics"
-    )]
-    manifest_prefix: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_COLD_CACHE_TTL",
-        default_value = "30s",
-        value_parser = parse::positive_time
-    )]
-    cold_cache_ttl: Time,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_UNBOUNDED_COMPATIBILITY_LOOKBACK",
-        default_value = "1h",
-        value_parser = parse::positive_time
-    )]
-    unbounded_compatibility_lookback: Time,
-    #[arg(long, env = "KRABKA_METRICS_RUNTIME_OVERRIDES")]
-    runtime_overrides: Option<PathBuf>,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_QUERY_FRONTEND_SPLIT",
-        default_value = "60s",
-        value_parser = parse::positive_time
-    )]
-    query_frontend_split: Time,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_QUERY_FRONTEND_SHARDS",
-        default_value_t = 1
-    )]
-    query_frontend_shards: usize,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_MAX_CONCURRENT_QUERIES",
-        default_value_t = 2
-    )]
-    max_concurrent_queries: usize,
-    #[arg(
-        long = "query-lookback-delta",
-        env = "KRABKA_METRICS_QUERY_LOOKBACK_DELTA",
-        default_value = "5m",
-        value_parser = parse::positive_time
-    )]
-    query_lookback_delta: Time,
-    #[arg(
-        long = "query-eval-interval",
-        env = "KRABKA_METRICS_QUERY_EVAL_INTERVAL",
-        default_value = "1m",
-        value_parser = parse::positive_time
-    )]
-    query_eval_interval: Time,
-    #[arg(
-        long = "query-max-samples",
-        env = "KRABKA_METRICS_QUERY_MAX_SAMPLES",
-        default_value_t = 50_000_000,
-        value_parser = parse_positive_usize
-    )]
-    query_max_samples: usize,
-    #[arg(
-        long = "remote-read-max-body",
-        env = "KRABKA_METRICS_REMOTE_READ_MAX_BODY",
-        default_value = "64MiB",
-        value_parser = parse_remote_read_max_body
-    )]
-    remote_read_max_body: ByteSize,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_QUERY_FRONTEND_CACHE_PREFIX",
-        default_value = "metrics-query-cache"
-    )]
-    query_frontend_cache_prefix: String,
-    #[arg(long, env = "KRABKA_METRICS_RULER_TENANT", default_value = "anonymous")]
-    ruler_tenant: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_RULER_EVAL_INTERVAL",
-        default_value = "60s",
-        value_parser = parse::positive_time
-    )]
-    ruler_eval_interval: Time,
-    #[arg(long, env = "KRABKA_METRICS_RULER_SHARD_INDEX", default_value_t = 1)]
-    ruler_shard_index: usize,
-    #[arg(long, env = "KRABKA_METRICS_RULER_SHARD_TOTAL", default_value_t = 1)]
-    ruler_shard_total: usize,
-    #[arg(long, env = "KRABKA_METRICS_RULER_ALERTMANAGER_URL")]
-    ruler_alertmanager_url: Option<String>,
-    /// A Prometheus rule file the ruler installs at startup.
-    ///
-    /// The ruler posts each group of the file to its own ruler-config API, so a
-    /// bundled group and a group an operator posts behave the same way. The
-    /// start stops when the ruler cannot read, parse, or install the file.
-    #[arg(long, env = "KRABKA_METRICS_RULER_BUNDLED_RULES")]
-    ruler_bundled_rules: Option<PathBuf>,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_RULER_STATE_TOPIC",
-        default_value = RULER_STATE_TOPIC
-    )]
-    ruler_state_topic: String,
-    #[arg(long, env = "KRABKA_METRICS_WAL_BOOTSTRAP")]
-    wal_bootstrap: Option<String>,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_WAL_GROUP_ID",
-        default_value = "krabka-metrics-querier"
-    )]
-    wal_group_id: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_WAL_CLIENT_ID",
-        default_value = "krabka-metrics-querier"
-    )]
-    wal_client_id: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_WAL_TOPIC",
-        default_value = WAL_TOPIC
-    )]
-    wal_topic: String,
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_WAL_POLL_TIMEOUT",
-        default_value = "500ms",
-        value_parser = parse::positive_time
-    )]
-    wal_poll_timeout: Time,
-    /// How far back the in-memory WAL head keeps samples.
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_QUERIER_WAL_HEAD_RETENTION",
-        default_value = "5m",
-        value_parser = parse::positive_time
-    )]
-    wal_head_retention: Time,
-}
-
-fn parse_client_dispatch_queue_capacity(value: &str) -> Result<usize, String> {
-    let value = value.parse::<usize>().map_err(|error| error.to_string())?;
-    ConnectionDispatchQueueCapacity::new(value).map(ConnectionDispatchQueueCapacity::get)
-}
-
-fn parse_client_frame_max(value: &str) -> Result<ByteSize, String> {
-    let value = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
-    ClientFrameMax::try_from(value).map(ClientFrameMax::size)
-}
-
-fn parse_positive_usize(value: &str) -> Result<usize, String> {
-    use refined_type::rule::GreaterUsize;
-
-    let value = value.parse::<usize>().map_err(|error| error.to_string())?;
-    GreaterUsize::<0>::new(value)
-        .map(refined_type::Refined::into_value)
-        .map_err(|error| error.to_string())
-}
-
-fn parse_remote_read_max_body(value: &str) -> Result<ByteSize, String> {
-    let value = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
-    let bytes = value.bytes_u64();
-    if ByteSize::from_bytes(bytes) == value {
-        Ok(value)
-    } else {
-        Err("remote-read maximum body must be a whole-byte value".to_owned())
-    }
-}
-
-fn query_engine_opts(cli: &Cli) -> EngineOpts {
-    EngineOpts {
-        lookback_delta: cli.query_lookback_delta,
-        eval_interval: cli.query_eval_interval,
-        max_samples: cli.query_max_samples,
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "kebab-case")]
-enum Target {
-    Querier,
-    QueryFrontend,
-    Ruler,
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    let telemetry = krabka_telemetry::init(
-        OtlpConfig::from_env(
-            |k| std::env::var(k).ok(),
-            "metrics-service",
-            env!("CARGO_PKG_VERSION"),
-            "krabka-metrics-service",
-        )?,
-        "krabka_metrics_service=info,info",
-        "info",
-        "krabka-metrics-service",
-    )?;
-    let result = async {
-        let metrics = krabka_promql::metrics::ServiceMetrics::new();
-        let admin = krabka_telemetry::profiling::spawn_admin_from_env_with_config(
-            "0.0.0.0:9404",
-            krabka_promql::metrics::metrics_router(metrics.registry.clone()),
-            cli.profiling.clone(),
-        )
-        .await?;
-
-        let role = async {
-            match cli.target {
-                Target::Querier => run_querier(cli, metrics).await?,
-                Target::QueryFrontend => run_query_frontend(cli, metrics).await?,
-                Target::Ruler => run_ruler(cli, metrics).await?,
-            }
-            Ok::<(), Box<dyn std::error::Error>>(())
-        };
-        tokio::select! {
-            result = role => result?,
-            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
-        }
-        Ok(())
-    }
-    .await;
-    telemetry.shutdown();
-    result
-}
-
-#[tracing::instrument(
-    level = "info",
-    name = "metrics.run_query_frontend",
-    skip_all,
-    fields(listen = %cli.listen, object_store = %cli.object_store_url, manifest_prefix = %cli.manifest_prefix),
-    err
-)]
-async fn run_query_frontend(
-    cli: Cli,
-    metrics: krabka_promql::metrics::ServiceMetrics,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let object_store_url = url::Url::parse(&cli.object_store_url)?;
-    let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-    let store: Arc<dyn ObjectStore> = Arc::from(store);
-    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
-        Arc::clone(&store),
-        object_store_url.clone(),
-        &cli.manifest_prefix,
-        WalHead::new(),
-    )
-    .with_cold_cache_ttl(cli.cold_cache_ttl)
-    .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
-    let mut state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
-        .with_max_concurrent_queries(cli.max_concurrent_queries)
-        .with_remote_read_max_body(cli.remote_read_max_body)
-        .with_metrics(metrics)
-        .with_query_frontend_cache(
-            QueryFrontendOptions {
-                split_interval: cli.query_frontend_split,
-                shard_count: cli.query_frontend_shards,
-            },
-            Arc::new(krabka_promql::ObjectStoreQueryFrontendCache::new(
-                store,
-                cli.query_frontend_cache_prefix.clone(),
-            )),
-        );
-    if let Some(overrides) = load_runtime_overrides(cli.runtime_overrides.as_deref())? {
-        state = state.with_query_limits(overrides);
-    }
-    let router = prometheus_router(Arc::new(state));
-    let shutdown = Shutdown::new();
-    spawn_shutdown_signal_listener(shutdown.clone());
-    let (bound, server) =
-        serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
-    tracing::info!(%bound, "metrics-service query-frontend listening");
-    // Join the server task so in-flight requests drain (graceful shutdown)
-    // before the process exits.
-    server.await?;
-    Ok(())
-}
-
-#[tracing::instrument(
-    level = "info",
-    name = "metrics.run_ruler",
-    skip_all,
-    fields(listen = %cli.listen, tenant = %cli.ruler_tenant, shard_index = cli.ruler_shard_index, shard_total = cli.ruler_shard_total),
-    err
-)]
-async fn run_ruler(
-    cli: Cli,
-    metrics: krabka_promql::metrics::ServiceMetrics,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let object_store_url = url::Url::parse(&cli.object_store_url)?;
-    let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-    let store: Arc<dyn ObjectStore> = Arc::from(store);
-    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
-        store,
-        object_store_url.clone(),
-        &cli.manifest_prefix,
-        WalHead::new(),
-    )
-    .with_cold_cache_ttl(cli.cold_cache_ttl)
-    .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
-    let mut state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
-        .with_max_concurrent_queries(cli.max_concurrent_queries)
-        .with_remote_read_max_body(cli.remote_read_max_body)
-        .with_metrics(metrics);
-    if let Some(overrides) = load_runtime_overrides(cli.runtime_overrides.as_deref())? {
-        state = state.with_query_limits(overrides);
-    }
-    let state = Arc::new(state);
-    let router = prometheus_router(Arc::clone(&state));
-    let shard = RulerShard::new(cli.ruler_shard_index, cli.ruler_shard_total)?;
-
-    // Install the bundled rules before the ruler reaches Kafka, so a rule file
-    // an operator names but the ruler cannot install stops the start early.
-    if let Some(path) = cli.ruler_bundled_rules.as_deref() {
-        let groups = install_bundled_rule_groups(&router, path, &cli.ruler_tenant).await?;
-        tracing::info!(
-            path = %path.display(),
-            groups = groups.len(),
-            "metrics ruler installed the bundled rule groups"
-        );
-    }
-
-    let bootstrap = cli.wal_bootstrap.clone().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "--wal-bootstrap is required for --target ruler",
-        )
-    })?;
-    let mut state_consumer = Consumer::builder()
-        .bootstrap(bootstrap.clone())
-        .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-        .frame_max(cli.client_frame_max)
-        .group_id(format!("{}-ruler-state", cli.wal_group_id))
-        .client_id(format!("{}-ruler-state", cli.wal_client_id))
-        .auto_offset_reset(AutoOffsetReset::Earliest)
-        .subscribe([cli.ruler_state_topic.clone()])
-        .build()
-        .await?;
-    let producer = Arc::new(
-        Producer::builder()
-            .bootstrap(bootstrap)
-            .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-            .frame_max(cli.client_frame_max)
-            .build()
-            .await?,
-    );
-    let wal_sink = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), cli.wal_topic.clone());
-    let state_sink = RulerStateFanoutSink::new(
-        PrometheusRulerStateSink::new(Arc::clone(&state)),
-        KafkaRulerStateSink::new(producer, cli.ruler_state_topic.clone()),
-    );
-    let tenant = cli.ruler_tenant.clone();
-    let interval = cli.ruler_eval_interval;
-    let alertmanager_url = cli.ruler_alertmanager_url.clone();
-    let state_for_replay = Arc::clone(&state);
-    let state_topic = cli.ruler_state_topic.clone();
-    let poll_timeout = cli.wal_poll_timeout;
-
-    let shutdown = Shutdown::new();
-    spawn_shutdown_signal_listener(shutdown.clone());
-
-    // The ruler state consumer and evaluation loop are critical: both feed
-    // ruler correctness. Their stop predicate observes the shared shutdown, and
-    // if either returns (the loops only return on error, never voluntarily) we
-    // surface it with `error!` and trigger shutdown so the process winds down
-    // loudly rather than silently running headless.
-    let consumer_shutdown = shutdown.clone();
-    let consumer_stop = consumer_shutdown.rx.clone();
-    tokio::spawn(async move {
-        let result = run_ruler_state_consumer_loop(
-            &mut state_consumer,
-            &state_for_replay,
-            &state_topic,
-            poll_timeout,
-            move |_| *consumer_stop.borrow(),
-        )
-        .await;
-        if let Err(error) = result {
-            tracing::error!(%error, "metrics ruler state consumer stopped; shutting down");
-        }
-        consumer_shutdown.trigger();
-    });
-    let eval_shutdown = shutdown.clone();
-    let eval_stop = eval_shutdown.rx.clone();
-    tokio::spawn(async move {
-        let result = run_ruler_evaluation_loop(
-            state,
-            (
-                wal_sink,
-                RulerAlertmanagerSink::from_endpoint(alertmanager_url),
-                state_sink,
-            ),
-            tenant,
-            shard,
-            interval,
-            move || *eval_stop.borrow(),
-        )
-        .await;
-        if let Err(error) = result {
-            tracing::error!(%error, "metrics ruler evaluation loop stopped; shutting down");
-        }
-        eval_shutdown.trigger();
-    });
-
-    let (bound, server) =
-        serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
-    tracing::info!(%bound, "metrics-service ruler listening");
-    // Join the server task so in-flight requests drain (graceful shutdown)
-    // before the process exits.
-    server.await?;
-    Ok(())
-}
-
-#[tracing::instrument(
-    level = "info",
-    name = "metrics.run_querier",
-    skip_all,
-    fields(listen = %cli.listen, object_store = %cli.object_store_url, manifest_prefix = %cli.manifest_prefix, wal_topic = %cli.wal_topic),
-    err
-)]
-async fn run_querier(
-    cli: Cli,
-    metrics: krabka_promql::metrics::ServiceMetrics,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let object_store_url = url::Url::parse(&cli.object_store_url)?;
-    let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-    let store: Arc<dyn ObjectStore> = Arc::from(store);
-    let head = WalHead::with_retention(cli.wal_head_retention);
-    let shutdown = Shutdown::new();
-    spawn_shutdown_signal_listener(shutdown.clone());
-    if let Some(bootstrap) = cli.wal_bootstrap.clone() {
-        let wal_head = head.clone();
-        let wal_topic = cli.wal_topic.clone();
-        let poll_timeout = cli.wal_poll_timeout;
-        let group_id = cli.wal_group_id.clone();
-        let client_id = cli.wal_client_id.clone();
-        let subscribe_topic = cli.wal_topic.clone();
-        spawn_wal_head_consumer_task(
-            move || async move {
-                Consumer::builder()
-                    .bootstrap(bootstrap)
-                    .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-                    .frame_max(cli.client_frame_max)
-                    .group_id(group_id)
-                    .client_id(client_id)
-                    .auto_offset_reset(AutoOffsetReset::Earliest)
-                    .subscribe([subscribe_topic])
-                    .build()
-                    .await
-                    .map_err(|error| error.to_string())
-            },
-            wal_head,
-            wal_topic,
-            poll_timeout,
-            shutdown.clone(),
-        );
-    }
-    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
-        store,
-        object_store_url.clone(),
-        &cli.manifest_prefix,
-        head,
-    )
-    .with_cold_cache_ttl(cli.cold_cache_ttl)
-    .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
-    let mut state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
-        .with_max_concurrent_queries(cli.max_concurrent_queries)
-        .with_remote_read_max_body(cli.remote_read_max_body)
-        .with_metrics(metrics);
-    if let Some(overrides) = load_runtime_overrides(cli.runtime_overrides.as_deref())? {
-        state = state.with_query_limits(overrides);
-    }
-    let router = prometheus_router(Arc::new(state));
-    let (bound, server) =
-        serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
-    tracing::info!(%bound, "metrics-service querier listening");
-    // Join the server task so in-flight requests drain (graceful shutdown)
-    // before the process exits.
-    server.await?;
-    Ok(())
-}
-
-fn spawn_wal_head_consumer_task<C, Build, BuildFuture>(
-    build_consumer: Build,
-    wal_head: WalHead,
-    wal_topic: String,
-    poll_timeout: Time,
-    shutdown: Shutdown,
-) -> tokio::task::JoinHandle<()>
-where
-    C: WalHeadConsumerPoll + WalHeadConsumerCommit + Send + 'static,
-    Build: FnOnce() -> BuildFuture + Send + 'static,
-    BuildFuture: Future<Output = Result<C, String>> + Send + 'static,
-{
-    tokio::spawn(async move {
-        let mut consumer = match build_consumer().await {
-            Ok(consumer) => consumer,
-            Err(error) => {
-                tracing::error!(%error, "metrics WAL head consumer failed to start; shutting down");
-                shutdown.trigger();
-                return;
-            }
-        };
-        let consumer_stop = shutdown.rx.clone();
-        let result = run_wal_head_consumer_loop(
-            &mut consumer,
-            &wal_head,
-            &wal_topic,
-            poll_timeout,
-            move |_| *consumer_stop.borrow(),
-        )
-        .await;
-        if let Err(error) = result {
-            tracing::error!(%error, "metrics WAL head consumer stopped; shutting down");
-        }
-        shutdown.trigger();
-    })
-}
-
-/// A single process-wide shutdown signal shared by the HTTP server and every
-/// background task.
-///
-/// A `true` value in the watch asks the axum server to start its graceful
-/// drain, and tells the consumer and eval loops to stop. A critical background
-/// task that exits also sets the watch, whether it exits cleanly or with an
-/// error. The whole process then stops, instead of a continued run with a dead
-/// loop.
-#[derive(Clone)]
-struct Shutdown {
-    tx: tokio::sync::watch::Sender<bool>,
-    rx: tokio::sync::watch::Receiver<bool>,
-}
-
-impl Shutdown {
-    fn new() -> Self {
-        let (tx, rx) = tokio::sync::watch::channel(false);
-        Self { tx, rx }
-    }
-
-    /// Request shutdown.
-    ///
-    /// This method is idempotent. Repeated triggers do nothing.
-    fn trigger(&self) {
-        let _ = self.tx.send(true);
-    }
-
-    /// Return a future that resolves after a caller requests shutdown.
-    ///
-    /// Each consumer gets its own clone: the server's graceful-shutdown hook
-    /// and each background task.
-    fn signalled(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
-        let mut rx = self.rx.clone();
-        async move {
-            // `borrow()` covers the already-triggered case; otherwise wait for the
-            // next change. `changed()` only errors once every sender is dropped, by
-            // which point we also want to stop, so treat that as "shut down".
-            while !*rx.borrow_and_update() {
-                if rx.changed().await.is_err() {
-                    break;
-                }
-            }
-        }
-    }
-}
-
-/// Spawn a task that sets the shared shutdown on the first shutdown signal.
-///
-/// One signal stops the server and all background tasks together.
-fn spawn_shutdown_signal_listener(shutdown: Shutdown) {
-    tokio::spawn(async move {
-        krabka_observability::shutdown_signal().await;
-        shutdown.trigger();
-    });
-}
-
-fn load_runtime_overrides(
-    path: Option<&Path>,
-) -> Result<Option<OverridesProvider>, Box<dyn std::error::Error>> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let yaml = std::fs::read_to_string(path)?;
-    Ok(Some(OverridesProvider::from_yaml(&yaml)?))
-}
 
 #[cfg(test)]
 mod tests {
@@ -1160,4 +539,81 @@ mod tests {
             Ok(())
         }
     }
+}
+
+// === split-modules: generated submodules ===
+mod alloc;
+mod cli;
+mod load_runtime_overrides;
+mod parse_client_dispatch_queue_capacity;
+mod parse_client_frame_max;
+mod parse_positive_usize;
+mod parse_remote_read_max_body;
+mod query_engine_opts;
+mod run_querier;
+mod run_query_frontend;
+mod run_ruler;
+mod shutdown;
+mod spawn_shutdown_signal_listener;
+mod spawn_wal_head_consumer_task;
+mod target;
+
+#[cfg(all(unix, feature = "heap-profiling"))]
+use alloc::ALLOC;
+
+use cli::Cli;
+use load_runtime_overrides::load_runtime_overrides;
+use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
+use parse_client_frame_max::parse_client_frame_max;
+use parse_positive_usize::parse_positive_usize;
+use parse_remote_read_max_body::parse_remote_read_max_body;
+use query_engine_opts::query_engine_opts;
+use run_querier::run_querier;
+use run_query_frontend::run_query_frontend;
+use run_ruler::run_ruler;
+use shutdown::Shutdown;
+use spawn_shutdown_signal_listener::spawn_shutdown_signal_listener;
+use spawn_wal_head_consumer_task::spawn_wal_head_consumer_task;
+use target::Target;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    let telemetry = krabka_telemetry::init(
+        OtlpConfig::from_env(
+            |k| std::env::var(k).ok(),
+            "metrics-service",
+            env!("CARGO_PKG_VERSION"),
+            "krabka-metrics-service",
+        )?,
+        "krabka_metrics_service=info,info",
+        "info",
+        "krabka-metrics-service",
+    )?;
+    let result = async {
+        let metrics = krabka_promql::metrics::ServiceMetrics::new();
+        let admin = krabka_telemetry::profiling::spawn_admin_from_env_with_config(
+            "0.0.0.0:9404",
+            krabka_promql::metrics::metrics_router(metrics.registry.clone()),
+            cli.profiling.clone(),
+        )
+        .await?;
+
+        let role = async {
+            match cli.target {
+                Target::Querier => run_querier(cli, metrics).await?,
+                Target::QueryFrontend => run_query_frontend(cli, metrics).await?,
+                Target::Ruler => run_ruler(cli, metrics).await?,
+            }
+            Ok::<(), Box<dyn std::error::Error>>(())
+        };
+        tokio::select! {
+            result = role => result?,
+            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
+        }
+        Ok(())
+    }
+    .await;
+    telemetry.shutdown();
+    result
 }

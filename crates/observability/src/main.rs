@@ -1,93 +1,12 @@
 //! `krabka-observability` is a role-selectable Loki-compatible logs service.
 //! It self-instruments with OTLP traces, JSON logs, and CPU and heap pprof.
 
-#[cfg(all(unix, feature = "heap-profiling"))]
-#[global_allocator]
-pub(crate) static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 use clap::Parser;
 use krabka_observability::{
     ClientResourcePolicy, ServiceConfig, build_service_dependencies_with_client_resource_policy,
     metrics::ServiceMetrics, serve_service,
 };
 use krabka_units::{ByteSize, parse};
-
-#[derive(Debug, Parser)]
-pub(crate) struct Cli {
-    #[command(flatten)]
-    pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
-    #[command(flatten)]
-    pub(crate) service: ServiceConfig,
-    #[arg(
-        long,
-        env = "KRABKA_OBSERVABILITY_CLIENT_DISPATCH_QUEUE_CAPACITY",
-        default_value_t = krabka_client_core::DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-        value_parser = parse_dispatch_queue_capacity
-    )]
-    pub(crate) client_dispatch_queue_capacity: usize,
-    #[arg(
-        long,
-        env = "KRABKA_OBSERVABILITY_CLIENT_FRAME_MAX",
-        default_value = "100MiB",
-        value_parser = parse_frame_max
-    )]
-    pub(crate) client_frame_max: ByteSize,
-}
-
-pub(crate) fn parse_dispatch_queue_capacity(value: &str) -> Result<usize, String> {
-    let value = value.parse::<usize>().map_err(|error| error.to_string())?;
-    krabka_client_core::ConnectionDispatchQueueCapacity::new(value)
-        .map(krabka_client_core::ConnectionDispatchQueueCapacity::get)
-}
-
-pub(crate) fn parse_frame_max(value: &str) -> Result<ByteSize, String> {
-    let value = parse::positive_byte_size(value).map_err(|error| error.to_string())?;
-    krabka_client_core::ClientFrameMax::try_from(value)
-        .map(krabka_client_core::ClientFrameMax::size)
-}
-
-#[tokio::main]
-pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    let client_resource_policy = ClientResourcePolicy {
-        dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity::new(
-            cli.client_dispatch_queue_capacity,
-        )
-        .expect("validated client dispatch queue capacity"),
-        frame_max: krabka_client_core::ClientFrameMax::try_from(cli.client_frame_max)
-            .expect("validated client frame maximum"),
-    };
-    let telemetry = krabka_telemetry::init(
-        krabka_telemetry::OtlpConfig::from_env(
-            |k| std::env::var(k).ok(),
-            "krabka-logs",
-            env!("CARGO_PKG_VERSION"),
-            "krabka-logs",
-        )?,
-        "krabka_observability=info,info",
-        "info",
-        "krabka-logs",
-    )?;
-    let metrics = ServiceMetrics::new();
-    // CPU/heap profiling admin server (Alloy pyroscope.scrape target) plus the
-    // Prometheus RED-metrics exporter on the same :9404 admin port.
-    krabka_telemetry::profiling::serve_admin_from_env_with_config(
-        "0.0.0.0:9404",
-        krabka_observability::metrics::metrics_router(metrics.registry.clone()),
-        cli.profiling.clone(),
-    )
-    .await?;
-
-    let config = cli.service;
-    let dependencies =
-        build_service_dependencies_with_client_resource_policy(&config, client_resource_policy)
-            .await?
-            .with_metrics(metrics);
-    serve_service(config, dependencies, None).await?;
-
-    telemetry.shutdown();
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
@@ -222,4 +141,58 @@ mod tests {
                 .expect("run isolated profiling environment parser test");
         assert!(status.success());
     }
+}
+
+// === split-modules: generated submodules ===
+mod alloc;
+mod cli;
+mod parse_dispatch_queue_capacity;
+mod parse_frame_max;
+
+# [cfg (all (unix , feature = "heap-profiling"))] pub (crate) use alloc::ALLOC;
+pub (crate) use cli::Cli;
+pub (crate) use parse_dispatch_queue_capacity::parse_dispatch_queue_capacity;
+pub (crate) use parse_frame_max::parse_frame_max;
+
+#[tokio::main]
+pub (crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    let client_resource_policy = ClientResourcePolicy {
+        dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity::new(
+            cli.client_dispatch_queue_capacity,
+        )
+        .expect("validated client dispatch queue capacity"),
+        frame_max: krabka_client_core::ClientFrameMax::try_from(cli.client_frame_max)
+            .expect("validated client frame maximum"),
+    };
+    let telemetry = krabka_telemetry::init(
+        krabka_telemetry::OtlpConfig::from_env(
+            |k| std::env::var(k).ok(),
+            "krabka-logs",
+            env!("CARGO_PKG_VERSION"),
+            "krabka-logs",
+        )?,
+        "krabka_observability=info,info",
+        "info",
+        "krabka-logs",
+    )?;
+    let metrics = ServiceMetrics::new();
+    // CPU/heap profiling admin server (Alloy pyroscope.scrape target) plus the
+    // Prometheus RED-metrics exporter on the same :9404 admin port.
+    krabka_telemetry::profiling::serve_admin_from_env_with_config(
+        "0.0.0.0:9404",
+        krabka_observability::metrics::metrics_router(metrics.registry.clone()),
+        cli.profiling.clone(),
+    )
+    .await?;
+
+    let config = cli.service;
+    let dependencies =
+        build_service_dependencies_with_client_resource_policy(&config, client_resource_policy)
+            .await?
+            .with_metrics(metrics);
+    serve_service(config, dependencies, None).await?;
+
+    telemetry.shutdown();
+    Ok(())
 }

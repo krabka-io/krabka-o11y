@@ -13,71 +13,6 @@ use crate::{
     profile_schema::profile_samples_schema,
 };
 
-/// One flattened profile sample row.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProfileSampleRow {
-    pub series_fingerprint: u64,
-    pub timestamp: i64,
-    pub profile_type: String,
-    pub stacktrace_id: u64,
-    pub value: i64,
-    pub stacktrace_partition: u64,
-    pub total_value: i64,
-    pub span_id: Option<u64>,
-    pub trace_id: Option<Vec<u8>>,
-}
-
-/// Encodes rows into a `RecordBatch` that matches `profile_samples_schema()`.
-///
-/// # Errors
-/// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-pub fn encode_profile_samples(rows: &[ProfileSampleRow]) -> Result<RecordBatch> {
-    let mut fp = UInt64Builder::new();
-    let mut ts = Int64Builder::new();
-    let mut profile_type = StringDictionaryBuilder::<Int32Type>::new();
-    let mut stacktrace_id = UInt64Builder::new();
-    let mut value = Int64Builder::new();
-    let mut partition = UInt64Builder::new();
-    let mut total_value = Int64Builder::new();
-    let mut span_id = UInt64Builder::new();
-    let mut trace_id = BinaryBuilder::new();
-
-    for row in rows {
-        fp.append_value(row.series_fingerprint);
-        ts.append_value(row.timestamp);
-        profile_type
-            .append(&row.profile_type)
-            .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))?;
-        stacktrace_id.append_value(row.stacktrace_id);
-        value.append_value(row.value);
-        partition.append_value(row.stacktrace_partition);
-        total_value.append_value(row.total_value);
-        match row.span_id {
-            Some(value) => span_id.append_value(value),
-            None => span_id.append_null(),
-        }
-        match &row.trace_id {
-            Some(value) => trace_id.append_value(value),
-            None => trace_id.append_null(),
-        }
-    }
-
-    let columns: Vec<ArrayRef> = vec![
-        Arc::new(fp.finish()),
-        Arc::new(ts.finish()),
-        Arc::new(profile_type.finish()),
-        Arc::new(stacktrace_id.finish()),
-        Arc::new(value.finish()),
-        Arc::new(partition.finish()),
-        Arc::new(total_value.finish()),
-        Arc::new(span_id.finish()),
-        Arc::new(trace_id.finish()),
-    ];
-
-    RecordBatch::try_new(profile_samples_schema(), columns)
-        .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use arrow::array::{Array, BinaryArray, Int64Array, UInt64Array};
@@ -140,3 +75,10 @@ mod tests {
         assert2::assert!(traces.is_null(1));
     }
 }
+
+// === split-modules: generated submodules ===
+mod encode_profile_samples;
+mod profile_sample_row;
+
+pub use encode_profile_samples::encode_profile_samples;
+pub use profile_sample_row::ProfileSampleRow;

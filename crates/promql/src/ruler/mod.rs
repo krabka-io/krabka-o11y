@@ -33,204 +33,35 @@ pub use schedule::{
     filter_ruler_rule_set_for_shard_due_for_eval,
 };
 
-/// Errors that occur when the ruler writes output to the metrics WAL.
-#[derive(Debug, thiserror::Error)]
-pub enum RulerWalError {
-    #[error("ruler wal append failed: {0}")]
-    Append(String),
-}
-
-impl From<RulerWalError> for PromqlError {
-    fn from(error: RulerWalError) -> Self {
-        Self::Exec(error.to_string())
-    }
-}
-
-/// Sink for recording-rule output records.
-#[async_trait::async_trait]
-pub trait RecordingRuleWalSink: Send + Sync {
-    async fn append_recording_rule_record(&self, record: WalRecord) -> Result<(), RulerWalError>;
-}
-
-/// One alert payload ready for an Alertmanager-compatible API.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AlertmanagerAlert {
-    pub labels: BTreeMap<String, String>,
-    pub annotations: BTreeMap<String, String>,
-    pub starts_at_ms: i64,
-    pub ends_at_ms: Option<i64>,
-    pub generator_url: String,
-}
-
-/// Sink for firing alert notifications.
-#[async_trait::async_trait]
-pub trait AlertmanagerSink: Send + Sync {
-    async fn dispatch_alerts(&self, alerts: Vec<AlertmanagerAlert>) -> Result<(), RulerWalError>;
-}
-
-/// Rebuildable state for one ruler group evaluation.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct RulerGroupStateRecord {
-    pub tenant: String,
-    pub namespace: String,
-    pub group: String,
-    pub last_eval_ms: i64,
-}
-
-/// Last-evaluation state for ruler groups, rebuildable from compacted records.
-#[derive(Debug, Default)]
-pub struct RulerGroupState {
-    last_eval_ms: BTreeMap<RulerGroupStateKey, i64>,
-}
-
-impl RulerGroupState {
-    /// Applies one compacted group-state record to the in-memory group tracker.
-    pub fn apply_record(&mut self, record: RulerGroupStateRecord) {
-        self.last_eval_ms.insert(
-            RulerGroupStateKey {
-                tenant: record.tenant,
-                namespace: record.namespace,
-                group: record.group,
-            },
-            record.last_eval_ms,
-        );
-    }
-
-    /// Rebuilds group state from compacted group-state records.
-    pub fn apply_records<I>(&mut self, records: I)
-    where
-        I: IntoIterator<Item = RulerGroupStateRecord>,
-    {
-        for record in records {
-            self.apply_record(record);
-        }
-    }
-
-    #[must_use]
-    pub fn last_eval_ms(&self, tenant: &str, namespace: &str, group: &str) -> Option<i64> {
-        self.last_eval_ms
-            .get(&RulerGroupStateKey {
-                tenant: tenant.to_string(),
-                namespace: namespace.to_string(),
-                group: group.to_string(),
-            })
-            .copied()
-    }
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct RulerGroupStateKey {
-    tenant: String,
-    namespace: String,
-    group: String,
-}
-
-/// Rebuildable state for one alert instance.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct RulerAlertStateRecord {
-    pub tenant: String,
-    pub rule_id: String,
-    pub labels: BTreeMap<String, String>,
-    pub active_since_ms: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub keep_firing_until_ms: Option<i64>,
-}
-
-/// Sink for compacted ruler state records.
-#[async_trait::async_trait]
-pub trait RulerStateSink: Send + Sync {
-    async fn persist_ruler_group_state(
-        &self,
-        record: RulerGroupStateRecord,
-    ) -> Result<(), RulerWalError>;
-
-    async fn persist_ruler_alert_state(
-        &self,
-        record: RulerAlertStateRecord,
-    ) -> Result<(), RulerWalError>;
-}
-
-struct NoopRulerStateSink;
-
-#[async_trait::async_trait]
-impl RulerStateSink for NoopRulerStateSink {
-    async fn persist_ruler_group_state(
-        &self,
-        _record: RulerGroupStateRecord,
-    ) -> Result<(), RulerWalError> {
-        Ok(())
-    }
-
-    async fn persist_ruler_alert_state(
-        &self,
-        _record: RulerAlertStateRecord,
-    ) -> Result<(), RulerWalError> {
-        Ok(())
-    }
-}
-
-/// Summary of one ruler rule-group evaluation.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct RulerGroupEvaluation {
-    pub recording_records: usize,
-    pub alerts_dispatched: usize,
-    pub last_eval_ms: i64,
-}
-
-/// Pending/firing alert state for ruler evaluations.
-#[derive(Debug, Default)]
-pub struct RulerAlertState {
-    active_since_ms: BTreeMap<AlertStateKey, i64>,
-    /// Wall-clock deadline for each alert instance that has reached the firing
-    /// state. The deadline is `eval_time + keep_firing_for`. The instance must
-    /// keep firing until that deadline after its series stops matching. An entry
-    /// here also marks the instance as fired, so a series that only ever pended
-    /// does not emit a resolved alert.
-    keep_firing_until_ms: BTreeMap<AlertStateKey, i64>,
-}
-
-impl RulerAlertState {
-    /// Applies one compacted alert-state record to the in-memory alert tracker.
-    pub fn apply_record(&mut self, record: RulerAlertStateRecord) {
-        let keep_firing_until_ms = record.keep_firing_until_ms;
-        let key = AlertStateKey {
-            tenant: record.tenant,
-            rule_id: record.rule_id,
-            labels: record.labels,
-        };
-        if let Some(active_since_ms) = record.active_since_ms {
-            self.active_since_ms.insert(key.clone(), active_since_ms);
-            match keep_firing_until_ms {
-                Some(until_ms) => {
-                    self.keep_firing_until_ms.insert(key, until_ms);
-                }
-                None => {
-                    self.keep_firing_until_ms.remove(&key);
-                }
-            }
-        } else {
-            self.active_since_ms.remove(&key);
-            self.keep_firing_until_ms.remove(&key);
-        }
-    }
-
-    /// Rebuilds alert state from compacted alert-state records.
-    pub fn apply_records<I>(&mut self, records: I)
-    where
-        I: IntoIterator<Item = RulerAlertStateRecord>,
-    {
-        for record in records {
-            self.apply_record(record);
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct AlertStateKey {
-    tenant: String,
-    rule_id: String,
-    labels: BTreeMap<String, String>,
-}
-
 #[cfg(test)]
 mod tests;
+
+// === split-modules: generated submodules ===
+mod alert_state_key;
+mod alertmanager_alert;
+mod alertmanager_sink;
+mod noop_ruler_state_sink;
+mod promql_error;
+mod recording_rule_wal_sink;
+mod ruler_alert_state;
+mod ruler_alert_state_record;
+mod ruler_group_evaluation;
+mod ruler_group_state;
+mod ruler_group_state_key;
+mod ruler_group_state_record;
+mod ruler_state_sink;
+mod ruler_wal_error;
+
+use alert_state_key::AlertStateKey;
+pub use alertmanager_alert::AlertmanagerAlert;
+pub use alertmanager_sink::AlertmanagerSink;
+use noop_ruler_state_sink::NoopRulerStateSink;
+pub use recording_rule_wal_sink::RecordingRuleWalSink;
+pub use ruler_alert_state::RulerAlertState;
+pub use ruler_alert_state_record::RulerAlertStateRecord;
+pub use ruler_group_evaluation::RulerGroupEvaluation;
+pub use ruler_group_state::RulerGroupState;
+use ruler_group_state_key::RulerGroupStateKey;
+pub use ruler_group_state_record::RulerGroupStateRecord;
+pub use ruler_state_sink::RulerStateSink;
+pub use ruler_wal_error::RulerWalError;

@@ -39,2481 +39,6 @@ use crate::{
     metrics::ServiceMetrics,
 };
 
-const TENANT_HEADER: &str = "x-scope-orgid";
-const INTRINSIC_TAGS: &[&str] = &[
-    "span:childCount",
-    "span:duration",
-    "span:id",
-    "span:kind",
-    "span:name",
-    "span:Parent",
-    "span:nestedSetLeft",
-    "span:nestedSetParent",
-    "span:nestedSetRight",
-    "span:parentID",
-    "span:status",
-    "span:statusMessage",
-    "trace:duration",
-    "trace:id",
-    "trace:rootName",
-    "trace:rootService",
-];
-const EVENT_TAGS: &[&str] = &["event:name", "event:timeSinceStart"];
-const LINK_TAGS: &[&str] = &["link:spanID", "link:traceID"];
-const INSTRUMENTATION_TAGS: &[&str] = &["instrumentation:name", "instrumentation:version"];
-struct AppState<S: SpanStore> {
-    engine: Arc<TraceqlEngine<S>>,
-    cfg: HttpConfig,
-    metrics: Option<ServiceMetrics>,
-}
-
-impl<S: SpanStore> Clone for AppState<S> {
-    fn clone(&self) -> Self {
-        Self {
-            engine: Arc::clone(&self.engine),
-            cfg: self.cfg.clone(),
-            metrics: self.metrics.clone(),
-        }
-    }
-}
-
-impl<S: SpanStore> AppState<S> {
-    /// Record one querier request on `route` with the given outcome and
-    /// elapsed time. This does nothing when metrics are not wired, as in test
-    /// routers.
-    fn record_query(&self, route: &str, ok: bool, start: std::time::Instant) {
-        if let Some(metrics) = &self.metrics {
-            metrics.record_query(route, ok, start.elapsed().as_secs_f64());
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct HttpConfig {
-    pub max_trace_spans: usize,
-    pub tag_query_filter_autocomplete_limit: usize,
-    pub limits: Limits,
-    pub overrides: Option<OverridesProvider>,
-}
-
-impl Default for HttpConfig {
-    fn default() -> Self {
-        Self {
-            max_trace_spans: usize::MAX,
-            tag_query_filter_autocomplete_limit: 25,
-            limits: Limits::default(),
-            overrides: None,
-        }
-    }
-}
-
-impl HttpConfig {
-    fn limits_for_tenant(&self, tenant: &str) -> &Limits {
-        self.overrides
-            .as_ref()
-            .map_or(&self.limits, |overrides| overrides.for_tenant(tenant))
-    }
-}
-
-pub fn router<S>(engine: Arc<TraceqlEngine<S>>) -> Router
-where
-    S: SpanStore + 'static,
-{
-    router_with_config(engine, HttpConfig::default())
-}
-
-pub fn router_with_config<S>(engine: Arc<TraceqlEngine<S>>, cfg: HttpConfig) -> Router
-where
-    S: SpanStore + 'static,
-{
-    router_with_state(AppState {
-        engine,
-        cfg,
-        metrics: None,
-    })
-}
-
-/// Like [`router_with_config`], but it also threads a [`ServiceMetrics`]
-/// bundle. Each query handler then records `query_requests` and
-/// `query_duration_seconds`.
-pub fn router_with_config_and_metrics<S>(
-    engine: Arc<TraceqlEngine<S>>,
-    cfg: HttpConfig,
-    metrics: ServiceMetrics,
-) -> Router
-where
-    S: SpanStore + 'static,
-{
-    router_with_state(AppState {
-        engine,
-        cfg,
-        metrics: Some(metrics),
-    })
-}
-
-fn router_with_state<S>(state: AppState<S>) -> Router
-where
-    S: SpanStore + 'static,
-{
-    Router::new()
-        .route("/api/echo", get(echo))
-        .route("/ready", get(ready))
-        .route("/status", get(ready))
-        .route("/api/status/buildinfo", get(buildinfo))
-        .route("/api/search", get(search::<S>))
-        .route("/api/search/tags", get(search_tags::<S>))
-        .route("/api/v2/search/tags", get(search_tags_v2::<S>))
-        .route("/api/search/tag/{tag}/values", get(search_tag_values::<S>))
-        .route(
-            "/api/v2/search/tag/{tag}/values",
-            get(search_tag_values_v2::<S>),
-        )
-        .route("/api/metrics/query_range", get(query_range::<S>))
-        .route("/api/metrics/query", get(query_instant::<S>))
-        .route("/api/v2/traces/{trace_id}", get(trace_by_id::<S>))
-        .route("/api/traces/{trace_id}", get(trace_by_id_v1::<S>))
-        .with_state(state)
-}
-
-async fn echo() -> &'static str {
-    "echo"
-}
-
-async fn ready() -> &'static str {
-    "ready"
-}
-
-/// Tempo-compatible build info.
-///
-/// Grafana's Tempo datasource probes this on every query to detect the backend
-/// version. Without it, Grafana treats the backend as a legacy Tempo and falls
-/// back to endpoints this crate does not serve, which breaks the trace-by-id
-/// view. The Prometheus-style `{status, data:{version,...}}` shape matches
-/// Tempo's `/api/status/buildinfo`.
-async fn buildinfo() -> Response {
-    Json(json!({
-        "status": "success",
-        "data": {
-            "version": "2.6.0",
-            "revision": "krabka",
-            "branch": "main",
-            "buildUser": "krabka",
-            "buildDate": "",
-            "goVersion": "",
-        },
-    }))
-    .into_response()
-}
-
-async fn search<S>(State(state): State<AppState<S>>, headers: HeaderMap, uri: Uri) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = search_inner(&state, headers, uri).await;
-    state.record_query("search", resp.status().is_success(), start);
-    resp
-}
-
-async fn search_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let tenant = tenant(&headers);
-    let query = match search_query(&uri) {
-        Ok(Some(query)) => query,
-        Ok(None) => {
-            return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response();
-        }
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let start_ns = match required_seconds_param(&uri, "start") {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let end_ns = match required_seconds_param(&uri, "end") {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    if end_ns < start_ns {
-        return (StatusCode::BAD_REQUEST, "end must be >= start").into_response();
-    }
-    let limit = match optional_usize_param(&uri, "limit") {
-        Ok(value) => value.unwrap_or(0),
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let limits = state.cfg.limits_for_tenant(&tenant);
-    if let Err(err) =
-        QueryEnforcer::check_search_limit(limits, u64::try_from(limit).unwrap_or(u64::MAX))
-    {
-        return limit_error_response(&err);
-    }
-    if let Err(err) = QueryEnforcer::check_search_duration(limits, start_ns, end_ns) {
-        return limit_error_response(&err);
-    }
-    if limit > state.engine.max_traces() {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            "max traces per search exceeded",
-        )
-            .into_response();
-    }
-    let spss = match optional_usize_param(&uri, "spss") {
-        Ok(value) => value.unwrap_or(0),
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let min_duration = match duration_param(&uri, "minDuration") {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let max_duration = match duration_param(&uri, "maxDuration") {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let scan_options = match scan_options_param(&uri) {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-
-    let duration_filtered = min_duration.is_some() || max_duration.is_some();
-    let search_limit = duration_filtered.then_some(usize::MAX);
-
-    match state
-        .engine
-        .search_with_options(
-            &tenant,
-            &query,
-            start_ns,
-            end_ns,
-            SearchOptions {
-                limit,
-                spss,
-                search_limit,
-                scan_options,
-            },
-        )
-        .await
-    {
-        Ok(resp) => {
-            let resp = if duration_filtered {
-                filter_search_duration(
-                    resp,
-                    min_duration,
-                    max_duration,
-                    state.engine.effective_search_limit(limit),
-                )
-            } else {
-                resp
-            };
-            Json(search_json(resp)).into_response()
-        }
-        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
-    }
-}
-
-async fn search_tags<S>(State(state): State<AppState<S>>, headers: HeaderMap, uri: Uri) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = search_tags_inner(&state, headers, uri).await;
-    state.record_query("tags", resp.status().is_success(), start);
-    resp
-}
-
-async fn search_tags_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let tenant = tenant(&headers);
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let scope = match scope_param(&uri) {
-        Ok(scope) => scope,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    if let Some(query) = query_param(&uri, "q") {
-        if is_match_all_query(&query) {
-            return match state
-                .engine
-                .tag_names(&tenant, scope, start_ns, end_ns)
-                .await
-            {
-                Ok(tags) => Json(search_tags_json(&tags)).into_response(),
-                Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-            };
-        }
-        let scan_options = match scan_options_param(&uri) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        let limit = match q_filter_limit(
-            &uri,
-            state.engine.max_traces(),
-            state.cfg.tag_query_filter_autocomplete_limit,
-        ) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        match matching_traces(
-            state.engine.as_ref(),
-            &tenant,
-            &query,
-            start_ns,
-            end_ns,
-            scan_options,
-            limit,
-        )
-        .await
-        {
-            Ok(traces) => {
-                Json(search_tags_json(&scoped_tags_from_traces(&traces, scope))).into_response()
-            }
-            Err(err) => traceql_query_error_response(&err),
-        }
-    } else {
-        match state
-            .engine
-            .tag_names(&tenant, scope, start_ns, end_ns)
-            .await
-        {
-            Ok(tags) => Json(search_tags_json(&tags)).into_response(),
-            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-        }
-    }
-}
-
-async fn search_tags_v2<S>(
-    State(state): State<AppState<S>>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = search_tags_v2_inner(&state, headers, uri).await;
-    state.record_query("tags", resp.status().is_success(), start);
-    resp
-}
-
-async fn search_tags_v2_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let tenant = tenant(&headers);
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let scope = match scope_param(&uri) {
-        Ok(scope) => scope,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    if let Some(query) = query_param(&uri, "q") {
-        if is_match_all_query(&query) {
-            return match state
-                .engine
-                .tag_names(&tenant, scope, start_ns, end_ns)
-                .await
-            {
-                Ok(tags) => {
-                    Json(search_tags_v2_json(&add_intrinsic_tags(tags, scope))).into_response()
-                }
-                Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-            };
-        }
-        let scan_options = match scan_options_param(&uri) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        let limit = match q_filter_limit(
-            &uri,
-            state.engine.max_traces(),
-            state.cfg.tag_query_filter_autocomplete_limit,
-        ) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        match matching_traces(
-            state.engine.as_ref(),
-            &tenant,
-            &query,
-            start_ns,
-            end_ns,
-            scan_options,
-            limit,
-        )
-        .await
-        {
-            Ok(traces) => Json(search_tags_v2_json(&add_intrinsic_tags(
-                scoped_tags_from_traces(&traces, scope),
-                scope,
-            )))
-            .into_response(),
-            Err(err) => traceql_query_error_response(&err),
-        }
-    } else {
-        match state
-            .engine
-            .tag_names(&tenant, scope, start_ns, end_ns)
-            .await
-        {
-            Ok(tags) => Json(search_tags_v2_json(&add_intrinsic_tags(tags, scope))).into_response(),
-            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-        }
-    }
-}
-
-async fn search_tag_values<S>(
-    State(state): State<AppState<S>>,
-    headers: HeaderMap,
-    Path(tag): Path<String>,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = search_tag_values_inner(&state, headers, tag, uri).await;
-    state.record_query("tag_values", resp.status().is_success(), start);
-    resp
-}
-
-async fn search_tag_values_inner<S>(
-    state: &AppState<S>,
-    headers: HeaderMap,
-    tag: String,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let tenant = tenant(&headers);
-    let tag = tempo_tag_alias(&tag);
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    if let Some(query) = query_param(&uri, "q") {
-        if is_match_all_query(&query) {
-            return match state
-                .engine
-                .tag_values(&tenant, tag, start_ns, end_ns)
-                .await
-            {
-                Ok(values) => Json(search_tag_values_json(&values)).into_response(),
-                Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-            };
-        }
-        match exact_tag_value_filter(&query, tag) {
-            Ok(Some(expected)) => {
-                return match state
-                    .engine
-                    .tag_values(&tenant, tag, start_ns, end_ns)
-                    .await
-                {
-                    Ok(values) => Json(search_tag_values_json(&filter_tag_values(
-                        values, &expected,
-                    )))
-                    .into_response(),
-                    Err(err) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
-                    }
-                };
-            }
-            Ok(None) => {}
-            Err(err) => return traceql_query_error_response(&err),
-        }
-        let scan_options = match scan_options_param(&uri) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        let limit = match q_filter_limit(
-            &uri,
-            state.engine.max_traces(),
-            state.cfg.tag_query_filter_autocomplete_limit,
-        ) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        match matching_traces(
-            state.engine.as_ref(),
-            &tenant,
-            &query,
-            start_ns,
-            end_ns,
-            scan_options,
-            limit,
-        )
-        .await
-        {
-            Ok(traces) => Json(search_tag_values_json(&tag_values_from_traces(
-                &traces, tag,
-            )))
-            .into_response(),
-            Err(err) => traceql_query_error_response(&err),
-        }
-    } else {
-        match state
-            .engine
-            .tag_values(&tenant, tag, start_ns, end_ns)
-            .await
-        {
-            Ok(values) => Json(search_tag_values_json(&values)).into_response(),
-            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-        }
-    }
-}
-
-async fn search_tag_values_v2<S>(
-    State(state): State<AppState<S>>,
-    headers: HeaderMap,
-    Path(tag): Path<String>,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = search_tag_values_v2_inner(&state, headers, tag, uri).await;
-    state.record_query("tag_values", resp.status().is_success(), start);
-    resp
-}
-
-async fn search_tag_values_v2_inner<S>(
-    state: &AppState<S>,
-    headers: HeaderMap,
-    tag: String,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let tenant = tenant(&headers);
-    let tag = tempo_tag_alias(&tag);
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    if let Some(query) = query_param(&uri, "q") {
-        if is_match_all_query(&query) {
-            return match state
-                .engine
-                .tag_values(&tenant, tag, start_ns, end_ns)
-                .await
-            {
-                Ok(values) => Json(search_tag_values_v2_json(&values)).into_response(),
-                Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-            };
-        }
-        match exact_tag_value_filter(&query, tag) {
-            Ok(Some(expected)) => {
-                return match state
-                    .engine
-                    .tag_values(&tenant, tag, start_ns, end_ns)
-                    .await
-                {
-                    Ok(values) => Json(search_tag_values_v2_json(&filter_tag_values(
-                        values, &expected,
-                    )))
-                    .into_response(),
-                    Err(err) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
-                    }
-                };
-            }
-            Ok(None) => {}
-            Err(err) => return traceql_query_error_response(&err),
-        }
-        let scan_options = match scan_options_param(&uri) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        let limit = match q_filter_limit(
-            &uri,
-            state.engine.max_traces(),
-            state.cfg.tag_query_filter_autocomplete_limit,
-        ) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        match matching_traces(
-            state.engine.as_ref(),
-            &tenant,
-            &query,
-            start_ns,
-            end_ns,
-            scan_options,
-            limit,
-        )
-        .await
-        {
-            Ok(traces) => Json(search_tag_values_v2_json(&tag_values_from_traces(
-                &traces, tag,
-            )))
-            .into_response(),
-            Err(err) => traceql_query_error_response(&err),
-        }
-    } else {
-        match state
-            .engine
-            .tag_values(&tenant, tag, start_ns, end_ns)
-            .await
-        {
-            Ok(values) => Json(search_tag_values_v2_json(&values)).into_response(),
-            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-        }
-    }
-}
-
-async fn query_range<S>(State(state): State<AppState<S>>, headers: HeaderMap, uri: Uri) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = query_range_inner(&state, headers, uri).await;
-    state.record_query("query_range", resp.status().is_success(), start);
-    resp
-}
-
-async fn query_range_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let tenant = tenant(&headers);
-    let Some(query) = metrics_query_param(&uri) else {
-        return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response();
-    };
-    let start_ns = match required_seconds_param(&uri, "start") {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let end_ns = match required_seconds_param(&uri, "end") {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    if end_ns < start_ns {
-        return (StatusCode::BAD_REQUEST, "end must be >= start").into_response();
-    }
-    let limits = state.cfg.limits_for_tenant(&tenant);
-    if let Err(err) = QueryEnforcer::check_search_duration(limits, start_ns, end_ns) {
-        return limit_error_response(&err);
-    }
-    let step_ns = match step_param(&uri, UnixNano(start_ns), UnixNano(end_ns)) {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let exemplar_selection = exemplar_selection(&uri);
-    let scan_options = match scan_options_param(&uri) {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-
-    match state
-        .engine
-        .query_range_with_options(&tenant, &query, start_ns, end_ns, step_ns, scan_options)
-        .await
-    {
-        Ok(resp) => Json(trace_metrics_json(&filter_metrics_exemplars(
-            resp,
-            exemplar_selection,
-        )))
-        .into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
-    }
-}
-
-async fn query_instant<S>(
-    State(state): State<AppState<S>>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = query_instant_inner(&state, headers, uri).await;
-    state.record_query("query", resp.status().is_success(), start);
-    resp
-}
-
-async fn query_instant_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let tenant = tenant(&headers);
-    let Some(query) = metrics_query_param(&uri) else {
-        return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response();
-    };
-    let (start_ns, end_ns, step_ns, point_ns) = match instant_metric_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    let exemplar_selection = exemplar_selection(&uri);
-    let scan_options = match scan_options_param(&uri) {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-
-    match state
-        .engine
-        .query_range_with_options(&tenant, &query, start_ns, end_ns, step_ns, scan_options)
-        .await
-    {
-        Ok(resp) => Json(trace_metrics_json(&filter_metrics_exemplars(
-            instant_metrics_response(resp, point_ns),
-            exemplar_selection,
-        )))
-        .into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
-    }
-}
-
-async fn trace_by_id<S>(
-    State(state): State<AppState<S>>,
-    headers: HeaderMap,
-    Path(trace_id): Path<String>,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = trace_by_id_inner(&state, headers, trace_id, uri).await;
-    state.record_query("trace_by_id", resp.status().is_success(), start);
-    resp
-}
-
-async fn trace_by_id_inner<S>(
-    state: &AppState<S>,
-    headers: HeaderMap,
-    trace_id: String,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let Ok(trace_id) = decode_trace_id(&trace_id) else {
-        return (StatusCode::BAD_REQUEST, "trace id must be 32 hex chars").into_response();
-    };
-    let tenant = tenant(&headers);
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-
-    match state
-        .engine
-        .trace_by_id_within(&tenant, &trace_id, start_ns, end_ns)
-        .await
-    {
-        Ok(Some(trace)) => {
-            if wants_protobuf(&headers) {
-                match trace_by_id_response_protobuf(&trace, state.cfg.max_trace_spans) {
-                    Ok(bytes) => {
-                        ([(header::CONTENT_TYPE, "application/protobuf")], bytes).into_response()
-                    }
-                    Err(err) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
-                    }
-                }
-            } else {
-                Json(trace_json(&trace, state.cfg.max_trace_spans)).into_response()
-            }
-        }
-        Ok(None) => (StatusCode::NOT_FOUND, "trace not found").into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-    }
-}
-
-/// Tempo v1 trace-by-id, at `/api/traces/{id}`.
-///
-/// Grafana's Tempo *backend* datasource fetches the trace-view here with
-/// `Accept: application/protobuf` and proto-decodes the body as OTLP. This
-/// handler therefore defaults to OTLP `TracesData` protobuf, which is Tempo's
-/// v1 default. It falls back to the wrapped JSON for humans.
-async fn trace_by_id_v1<S>(
-    State(state): State<AppState<S>>,
-    headers: HeaderMap,
-    Path(trace_id): Path<String>,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let start = std::time::Instant::now();
-    let resp = trace_by_id_v1_inner(&state, headers, trace_id, uri).await;
-    state.record_query("trace_by_id", resp.status().is_success(), start);
-    resp
-}
-
-async fn trace_by_id_v1_inner<S>(
-    state: &AppState<S>,
-    headers: HeaderMap,
-    trace_id: String,
-    uri: Uri,
-) -> Response
-where
-    S: SpanStore + 'static,
-{
-    let Ok(trace_id) = decode_trace_id(&trace_id) else {
-        return (StatusCode::BAD_REQUEST, "trace id must be 32 hex chars").into_response();
-    };
-    let tenant = tenant(&headers);
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-
-    match state
-        .engine
-        .trace_by_id_within(&tenant, &trace_id, start_ns, end_ns)
-        .await
-    {
-        Ok(Some(trace)) => {
-            if wants_json(&headers) {
-                Json(trace_json(&trace, state.cfg.max_trace_spans)).into_response()
-            } else {
-                match trace_protobuf(&trace, state.cfg.max_trace_spans) {
-                    Ok(bytes) => {
-                        ([(header::CONTENT_TYPE, "application/protobuf")], bytes).into_response()
-                    }
-                    Err(err) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
-                    }
-                }
-            }
-        }
-        Ok(None) => (StatusCode::NOT_FOUND, "trace not found").into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-    }
-}
-
-fn tenant(headers: &HeaderMap) -> String {
-    headers
-        .get(TENANT_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .filter(|v| !v.is_empty())
-        .unwrap_or("anonymous")
-        .to_string()
-}
-
-fn wants_protobuf(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|accept| {
-            accept.split(',').any(|part| {
-                let media_type = part.split(';').next().unwrap_or_default().trim();
-                media_type.eq_ignore_ascii_case("application/protobuf")
-                    || media_type.eq_ignore_ascii_case("application/x-protobuf")
-            })
-        })
-}
-
-fn wants_json(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|accept| {
-            accept.split(',').any(|part| {
-                part.split(';')
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .eq_ignore_ascii_case("application/json")
-            })
-        })
-}
-
-fn query_param(uri: &Uri, key: &str) -> Option<String> {
-    url::form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes())
-        .find_map(|(k, v)| (k == key).then(|| v.into_owned()))
-}
-
-/// The `TraceQL` metrics query string.
-///
-/// Tempo accepts both `q` and `query` on the metrics endpoints. The Explore
-/// `TraceQL` editor and the HTTP API send `q`. The Grafana Tempo datasource
-/// that powers the Traces Drilldown app sends `query`. This accepts either, and
-/// prefers `q`.
-fn metrics_query_param(uri: &Uri) -> Option<String> {
-    query_param(uri, "q").or_else(|| query_param(uri, "query"))
-}
-
-fn search_query(uri: &Uri) -> Result<Option<String>, &'static str> {
-    if let Some(query) = query_param(uri, "q") {
-        return Ok(Some(query));
-    }
-    query_param(uri, "tags")
-        .map(|tags| tags_to_traceql(&tags).ok_or("invalid query parameter tags"))
-        .transpose()
-}
-
-fn tags_to_traceql(tags: &str) -> Option<String> {
-    let parts = parse_logfmt_tags(tags)?
-        .into_iter()
-        .map(|(key, value)| {
-            // The key becomes an unquoted TraceQL attribute reference, so a key
-            // carrying TraceQL-significant characters would inject query
-            // structure (the value is already quoted+escaped). Reject such keys
-            // rather than interpolating their raw bytes.
-            key_is_safe_attribute(&key).then(|| {
-                format!(
-                    "{} = \"{}\"",
-                    traceql_tag_field(&key),
-                    value.replace('\\', "\\\\").replace('"', "\\\"")
-                )
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    (!parts.is_empty()).then(|| format!("{{ {} }}", parts.join(" && ")))
-}
-
-/// A legacy `tags=` key is a safe `TraceQL` attribute reference only if it is
-/// made of identifier characters: alphanumerics plus `._:-`.
-///
-/// Any other character, such as `{`, `}`, `"`, `\`, `|`, `&`, `=` or
-/// whitespace, could inject query structure once it is interpolated unquoted
-/// into the generated `TraceQL`.
-fn key_is_safe_attribute(key: &str) -> bool {
-    !key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
-}
-
-fn parse_logfmt_tags(tags: &str) -> Option<Vec<(String, String)>> {
-    let mut out = Vec::new();
-    let mut rest = tags.trim_start();
-    while !rest.is_empty() {
-        let key_end = rest.find('=')?;
-        let key = &rest[..key_end];
-        if key.is_empty() || key.chars().any(char::is_whitespace) {
-            return None;
-        }
-        rest = &rest[key_end + 1..];
-        let (value, consumed) = parse_logfmt_value(rest)?;
-        out.push((key.to_string(), value));
-        rest = rest[consumed..].trim_start();
-    }
-    Some(out)
-}
-
-fn parse_logfmt_value(input: &str) -> Option<(String, usize)> {
-    if let Some(input) = input.strip_prefix('"') {
-        let mut value = String::new();
-        let mut escaped = false;
-        for (idx, ch) in input.char_indices() {
-            if escaped {
-                value.push(match ch {
-                    'n' => '\n',
-                    'r' => '\r',
-                    't' => '\t',
-                    other => other,
-                });
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                return Some((value, idx + 2));
-            } else {
-                value.push(ch);
-            }
-        }
-        return None;
-    }
-
-    let end = input
-        .char_indices()
-        .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx))
-        .unwrap_or(input.len());
-    Some((input[..end].to_string(), end))
-}
-
-fn traceql_tag_field(key: &str) -> String {
-    if key.contains(':') {
-        key.to_string()
-    } else {
-        format!(".{}", key.strip_prefix('.').unwrap_or(key))
-    }
-}
-
-fn tempo_tag_alias(tag: &str) -> &str {
-    match tag.strip_prefix('.').unwrap_or(tag) {
-        "name" => "span:name",
-        "status" => "span:status",
-        tag => tag,
-    }
-}
-
-fn is_match_all_query(query: &str) -> bool {
-    query
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .eq("{}".chars())
-}
-
-fn q_filter_limit(
-    uri: &Uri,
-    max_traces: usize,
-    autocomplete_limit: usize,
-) -> Result<usize, String> {
-    Ok(
-        optional_usize_param(uri, "limit")?.map_or(usize::MAX, |limit| {
-            if limit == 0 {
-                max_traces.min(autocomplete_limit)
-            } else {
-                limit.min(max_traces).min(autocomplete_limit)
-            }
-        }),
-    )
-}
-
-fn exact_tag_value_filter(query: &str, tag: &str) -> Result<Option<TypedValue>, TraceqlError> {
-    let query = krabka_traceql::parse(query)?;
-    if !query.pipeline.is_empty() {
-        return Ok(None);
-    }
-    let SpansetExpr::Selector(expr) = query.root else {
-        return Ok(None);
-    };
-    let FieldExpr::Comparison { lhs, op, rhs } = *expr else {
-        return Ok(None);
-    };
-    if op != ComparisonOp::Eq || !field_matches_tag(&lhs, tag) {
-        return Ok(None);
-    }
-    Ok(typed_traceql_value(&rhs))
-}
-
-fn filter_tag_values(values: Vec<TypedValue>, expected: &TypedValue) -> Vec<TypedValue> {
-    values
-        .into_iter()
-        .filter(|value| value == expected)
-        .collect()
-}
-
-fn field_matches_tag(field: &Field, tag: &str) -> bool {
-    let tag = tag.strip_prefix('.').unwrap_or(tag);
-    match &field.scope {
-        Scope::Both => tag == field.key.as_str(),
-        Scope::Span => tag == format!("span.{}", field.key),
-        Scope::Resource => tag == format!("resource.{}", field.key),
-        Scope::Parent => tag == format!("parent.{}", field.key),
-        Scope::Event => tag == format!("event.{}", field.key),
-        Scope::Link => tag == format!("link.{}", field.key),
-        Scope::Instrumentation => tag == format!("instrumentation.{}", field.key),
-        Scope::Intrinsic(intrinsic) => tag == intrinsic_tag_name(intrinsic),
-    }
-}
-
-fn intrinsic_tag_name(intrinsic: &Intrinsic) -> &'static str {
-    match intrinsic {
-        Intrinsic::Name => "span:name",
-        Intrinsic::Duration => "span:duration",
-        Intrinsic::Kind => "span:kind",
-        Intrinsic::Status => "span:status",
-        Intrinsic::StatusMessage => "span:statusMessage",
-        Intrinsic::Id => "span:id",
-        Intrinsic::ParentId => "span:parentID",
-        Intrinsic::ChildCount => "span:childCount",
-        Intrinsic::TraceDuration => "trace:duration",
-        Intrinsic::TraceRootName => "trace:rootName",
-        Intrinsic::TraceRootService => "trace:rootService",
-        Intrinsic::TraceId => "trace:id",
-        Intrinsic::EventName => "event:name",
-        Intrinsic::EventTimeSinceStart => "event:timeSinceStart",
-        Intrinsic::LinkTraceId => "link:traceID",
-        Intrinsic::LinkSpanId => "link:spanID",
-        Intrinsic::InstrumentationName => "instrumentation:name",
-        Intrinsic::InstrumentationVersion => "instrumentation:version",
-        Intrinsic::NestedSetLeft => "span:nestedSetLeft",
-        Intrinsic::NestedSetRight => "span:nestedSetRight",
-        Intrinsic::NestedSetParent => "span:nestedSetParent",
-    }
-}
-
-fn typed_traceql_value(value: &TraceqlValue) -> Option<TypedValue> {
-    let (type_, value) = match value {
-        TraceqlValue::Str(value) => ("string", value.clone()),
-        TraceqlValue::Int(value) | TraceqlValue::Duration(value) => ("int", value.to_string()),
-        TraceqlValue::Float(value) if value.is_finite() => ("float", value.to_string()),
-        TraceqlValue::Bool(value) => ("bool", value.to_string()),
-        TraceqlValue::Float(_) | TraceqlValue::Nil => return None,
-    };
-    Some(TypedValue {
-        type_: type_.into(),
-        value,
-    })
-}
-
-fn optional_time_bounds(uri: &Uri) -> Result<(i64, i64), String> {
-    let start_ns = optional_seconds_param(uri, "start")?.unwrap_or(0);
-    let end_ns = optional_seconds_param(uri, "end")?.unwrap_or(i64::MAX);
-    if end_ns < start_ns {
-        return Err("end must be >= start".to_string());
-    }
-    Ok((start_ns, end_ns))
-}
-
-fn instant_metric_bounds(uri: &Uri) -> Result<(i64, i64, i64, i64), String> {
-    if query_param(uri, "start").is_some() || query_param(uri, "end").is_some() {
-        let start_ns = required_seconds_param(uri, "start")?;
-        let end_ns = required_seconds_param(uri, "end")?;
-        let step_ns = end_ns
-            .checked_sub(start_ns)
-            .and_then(|width| width.checked_add(1))
-            .filter(|step| *step > 0)
-            .ok_or_else(|| "end must be >= start".to_string())?;
-        return Ok((start_ns, end_ns, step_ns, end_ns));
-    }
-
-    let ts_ns = optional_seconds_param(uri, "time")?.unwrap_or(0);
-    Ok((ts_ns, ts_ns, 1_000_000_000, ts_ns))
-}
-
-fn parse_seconds_to_ns(value: &str) -> Option<i64> {
-    let (negative, value) = value
-        .strip_prefix('-')
-        .map_or((false, value), |rest| (true, rest));
-    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
-    if whole.is_empty()
-        || !whole.bytes().all(|b| b.is_ascii_digit())
-        || !fraction.bytes().all(|b| b.is_ascii_digit())
-        || fraction.len() > 9
-    {
-        return None;
-    }
-
-    let whole_ns = whole.parse::<i64>().ok()?.checked_mul(1_000_000_000)?;
-    let fraction_ns = if fraction.is_empty() {
-        0
-    } else {
-        let padded = format!("{fraction:0<9}");
-        padded.parse::<i64>().ok()?
-    };
-    let ns = whole_ns.checked_add(fraction_ns)?;
-    if negative { ns.checked_neg() } else { Some(ns) }
-}
-
-fn required_seconds_param(uri: &Uri, key: &'static str) -> Result<i64, String> {
-    let Some(value) = query_param(uri, key) else {
-        return Err(format!("missing query parameter {key}"));
-    };
-    parse_seconds_to_ns(&value).ok_or_else(|| format!("invalid query parameter {key}"))
-}
-
-fn optional_seconds_param(uri: &Uri, key: &'static str) -> Result<Option<i64>, String> {
-    query_param(uri, key)
-        .map(|value| {
-            parse_seconds_to_ns(&value).ok_or_else(|| format!("invalid query parameter {key}"))
-        })
-        .transpose()
-}
-
-fn optional_usize_param(uri: &Uri, key: &'static str) -> Result<Option<usize>, String> {
-    query_param(uri, key)
-        .map(|value| {
-            value
-                .parse::<usize>()
-                .map_err(|_| format!("invalid query parameter {key}"))
-        })
-        .transpose()
-}
-
-fn scan_options_param(uri: &Uri) -> Result<ScanOptions, String> {
-    let block = query_param(uri, "block");
-    let row_group_start = optional_usize_param(uri, "rowGroupStart")?;
-    let row_group_end = optional_usize_param(uri, "rowGroupEnd")?;
-    if block.is_none() && row_group_start.is_none() && row_group_end.is_none() {
-        return Ok(ScanOptions::default());
-    }
-    let Some(object_key) = block else {
-        return Err("missing query parameter block".into());
-    };
-    let Some(row_group_start) = row_group_start else {
-        return Err("missing query parameter rowGroupStart".into());
-    };
-    let Some(row_group_end) = row_group_end else {
-        return Err("missing query parameter rowGroupEnd".into());
-    };
-    if row_group_end <= row_group_start {
-        return Err("rowGroupEnd must be > rowGroupStart".into());
-    }
-    Ok(ScanOptions {
-        job: Some(ScanJob {
-            object_key,
-            row_group_start,
-            row_group_end,
-        }),
-        ..ScanOptions::default()
-    })
-}
-
-fn parse_step_to_ns(value: &str) -> Option<i64> {
-    parse_seconds_to_ns(value).or_else(|| i64::try_from(parse_go_duration_ns(value).ok()?).ok())
-}
-
-fn step_param(uri: &Uri, start_ns: UnixNano, end_ns: UnixNano) -> Result<i64, &'static str> {
-    let Some(step) = query_param(uri, "step") else {
-        // Tempo computes a default step when the client omits it; Grafana's
-        // Traces Drilldown breakdown queries send no `step`. Match that instead
-        // of rejecting the query.
-        return Ok(default_query_range_step_ns(start_ns, end_ns));
-    };
-    let Some(step_ns) = parse_step_to_ns(&step) else {
-        return Err("invalid step");
-    };
-    if step_ns <= 0 {
-        return Err("step must be positive");
-    }
-    Ok(step_ns)
-}
-
-/// Default query-range step when the request supplies none.
-///
-/// This aims for about 100 buckets over the range, rounded up to a whole
-/// second, with a 1s floor. It mirrors Tempo's `DefaultQueryRangeStep` closely
-/// enough for a usable series.
-fn default_query_range_step_ns(start_ns: UnixNano, end_ns: UnixNano) -> i64 {
-    const SECOND_NS: i64 = 1_000_000_000;
-    let delta = end_ns.0.saturating_sub(start_ns.0).max(0);
-    let raw = delta / 100;
-    let rounded = raw.saturating_add(SECOND_NS - 1) / SECOND_NS * SECOND_NS;
-    rounded.max(SECOND_NS)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ExemplarSelection {
-    All,
-    Limit(usize),
-    None,
-}
-
-fn exemplar_selection(uri: &Uri) -> ExemplarSelection {
-    match query_param(uri, "exemplars").as_deref() {
-        Some("false" | "0") => ExemplarSelection::None,
-        Some(value) => value
-            .parse::<usize>()
-            .map_or(ExemplarSelection::All, ExemplarSelection::Limit),
-        None => ExemplarSelection::All,
-    }
-}
-
-fn duration_param(uri: &Uri, key: &str) -> Result<Option<Time>, String> {
-    query_param(uri, key)
-        .map(|value| {
-            parse_go_duration_ns(&value)
-                .map(|nanos| Time::from_nanos(i64::try_from(nanos).unwrap_or(i64::MAX)))
-                .map_err(|err| format!("invalid {key}: {err}"))
-        })
-        .transpose()
-}
-
-fn parse_go_duration_ns(value: &str) -> Result<u64, String> {
-    if value.is_empty() {
-        return Err("empty duration".into());
-    }
-
-    let mut total = 0_u128;
-    let mut rest = value;
-    while !rest.is_empty() {
-        let number_len = rest
-            .char_indices()
-            .take_while(|(_, c)| c.is_ascii_digit() || *c == '.')
-            .map(|(idx, c)| idx + c.len_utf8())
-            .last()
-            .ok_or_else(|| format!("expected number in {value:?}"))?;
-        let (number, tail) = rest.split_at(number_len);
-        let unit_len = tail
-            .char_indices()
-            .take_while(|(_, c)| c.is_ascii_alphabetic() || *c == 'µ')
-            .map(|(idx, c)| idx + c.len_utf8())
-            .last()
-            .ok_or_else(|| format!("expected unit after {number:?}"))?;
-        let (unit, next) = tail.split_at(unit_len);
-        let multiplier = match unit {
-            "ns" => 1,
-            "us" | "µs" => 1_000,
-            "ms" => 1_000_000,
-            "s" => 1_000_000_000,
-            "m" => 60_000_000_000,
-            "h" => 3_600_000_000_000,
-            _ => return Err(format!("unsupported unit {unit:?}")),
-        };
-        total = total
-            .checked_add(parse_duration_component_ns(number, multiplier)?)
-            .ok_or_else(|| "duration out of range".to_string())?;
-        rest = next;
-    }
-
-    u64::try_from(total).map_err(|_| "duration out of range".into())
-}
-
-fn parse_duration_component_ns(number: &str, multiplier: u128) -> Result<u128, String> {
-    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
-    if whole.is_empty() && fraction.is_empty() {
-        return Err(format!("invalid number {number:?}"));
-    }
-    if fraction.contains('.') {
-        return Err(format!("invalid number {number:?}"));
-    }
-
-    let whole = if whole.is_empty() {
-        0
-    } else {
-        whole
-            .parse::<u128>()
-            .map_err(|_| format!("invalid number {number:?}"))?
-    };
-    let whole_ns = whole
-        .checked_mul(multiplier)
-        .ok_or_else(|| "duration out of range".to_string())?;
-    if fraction.is_empty() {
-        return Ok(whole_ns);
-    }
-
-    let fraction = fraction
-        .parse::<u128>()
-        .map_err(|_| format!("invalid number {number:?}"))?;
-    let scale = (0..number.rsplit_once('.').map_or(0, |(_, frac)| frac.len()))
-        .try_fold(1_u128, |acc, _| acc.checked_mul(10))
-        .ok_or_else(|| "duration out of range".to_string())?;
-    let fraction_ns = fraction
-        .checked_mul(multiplier)
-        .ok_or_else(|| "duration out of range".to_string())?
-        / scale;
-    whole_ns
-        .checked_add(fraction_ns)
-        .ok_or_else(|| "duration out of range".to_string())
-}
-
-fn parse_tag_scope(scope: &str) -> Option<TagScope> {
-    match scope {
-        "resource" => Some(TagScope::Resource),
-        "span" => Some(TagScope::Span),
-        "intrinsic" => Some(TagScope::Intrinsic),
-        "event" => Some(TagScope::Event),
-        "link" => Some(TagScope::Link),
-        "instrumentation" => Some(TagScope::Instrumentation),
-        _ => None,
-    }
-}
-
-fn scope_param(uri: &Uri) -> Result<Option<TagScope>, &'static str> {
-    query_param(uri, "scope")
-        .map(|scope| parse_tag_scope(&scope).ok_or("invalid scope"))
-        .transpose()
-}
-
-fn decode_trace_id(trace_id: &str) -> Result<[u8; 16], hex::FromHexError> {
-    let mut out = [0; 16];
-    hex::decode_to_slice(trace_id, &mut out)?;
-    Ok(out)
-}
-
-fn search_json(resp: SearchResponse) -> Value {
-    let inspected_traces = resp.inspected_traces;
-    let inspected_bytes = resp.inspected.bytes_u64();
-    // Spans this response scanned/returned: the distinct matched spans across
-    // every returned trace's spanSets. The frontend folds this per-job sum into
-    // the merged `metrics.inspectedSpans`.
-    let inspected_spans: usize = resp
-        .traces
-        .iter()
-        .flat_map(|trace| trace.span_sets.iter())
-        .map(|set| set.spans.len())
-        .sum();
-    json!({
-        "traces": resp.traces.into_iter().map(|trace| {
-            json!({
-                "traceID": hex::encode(trace.trace_id),
-                "rootServiceName": trace.root_service_name,
-                "rootTraceName": trace.root_trace_name,
-                "startTimeUnixNano": trace.start_time_unix_nano.to_string(),
-                // Truncated, not rounded: Tempo integer-divides its nanosecond duration,
-                // and the frontend merges this querier JSON into the public search
-                // response, so a rounded value would surface there too.
-                "durationMs": trace.duration.millis_i64_trunc(),
-                "spanSets": trace.span_sets.into_iter().map(|set| {
-                    json!({
-                        "spans": set.spans.iter().map(search_span_json).collect::<Vec<_>>(),
-                        "matched": set.matched,
-                    })
-                }).collect::<Vec<_>>(),
-            })
-        }).collect::<Vec<_>>(),
-        // Per-response job accounting the frontend folds (`metrics.add`): this
-        // search ran as one completed job. `inspectedBytes` is the decoded size of
-        // the cold+live data the scan inspected (threaded up from the SpanStore).
-        "metrics": {
-            "completedJobs": 1,
-            "totalBlocks": 0,
-            "inspectedTraces": inspected_traces,
-            "inspectedSpans": inspected_spans,
-            "inspectedBytes": inspected_bytes,
-        },
-    })
-}
-
-fn filter_search_duration(
-    mut resp: SearchResponse,
-    min_duration: Option<Time>,
-    max_duration: Option<Time>,
-    limit: usize,
-) -> SearchResponse {
-    if min_duration.is_none() && max_duration.is_none() {
-        return resp;
-    }
-    resp.traces.retain(|trace| {
-        min_duration.is_none_or(|min| trace.duration >= min)
-            && max_duration.is_none_or(|max| trace.duration <= max)
-    });
-    resp.inspected_traces = resp.traces.len();
-    resp.traces.truncate(limit);
-    resp
-}
-
-fn search_tags_json(tags: &[ScopedTag]) -> Value {
-    json!({
-        "tagNames": tags.iter().flat_map(|scope| scope.tags.iter()).collect::<Vec<_>>(),
-        "metrics": {
-            "inspectedBytes": "0",
-        },
-    })
-}
-
-fn search_tags_v2_json(tags: &[ScopedTag]) -> Value {
-    json!({
-        "scopes": tags.iter().map(|scope| {
-            json!({
-                "name": tag_scope_name(scope.scope),
-                "tags": &scope.tags,
-            })
-        }).collect::<Vec<_>>(),
-        "metrics": {
-            "inspectedBytes": "0",
-        },
-    })
-}
-
-fn search_tag_values_json(values: &[TypedValue]) -> Value {
-    json!({
-        "tagValues": values.iter().map(|value| &value.value).collect::<Vec<_>>(),
-        "metrics": {
-            "inspectedBytes": "0",
-        },
-    })
-}
-
-fn search_tag_values_v2_json(values: &[TypedValue]) -> Value {
-    json!({
-        "tagValues": values.iter().map(|value| {
-            json!({
-                "type": &value.type_,
-                "value": &value.value,
-            })
-        }).collect::<Vec<_>>(),
-        "metrics": {
-            "inspectedBytes": "0",
-        },
-    })
-}
-
-fn traceql_query_error_response(err: &TraceqlError) -> Response {
-    let status = if matches!(
-        &err,
-        TraceqlError::Parse(_) | TraceqlError::Plan(_) | TraceqlError::Unsupported(_)
-    ) {
-        StatusCode::BAD_REQUEST
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR
-    };
-    (status, err.to_string()).into_response()
-}
-
-fn limit_error_response(err: &LimitError) -> Response {
-    tempo_limit_error_response(err)
-}
-
-fn add_intrinsic_tags(mut tags: Vec<ScopedTag>, scope: Option<TagScope>) -> Vec<ScopedTag> {
-    if matches!(scope, None | Some(TagScope::Intrinsic)) {
-        merge_static_scope(&mut tags, TagScope::Intrinsic, INTRINSIC_TAGS);
-    }
-    if matches!(scope, None | Some(TagScope::Event)) {
-        merge_static_scope(&mut tags, TagScope::Event, EVENT_TAGS);
-    }
-    if matches!(scope, None | Some(TagScope::Link)) {
-        merge_static_scope(&mut tags, TagScope::Link, LINK_TAGS);
-    }
-    if matches!(scope, None | Some(TagScope::Instrumentation)) {
-        merge_static_scope(&mut tags, TagScope::Instrumentation, INSTRUMENTATION_TAGS);
-    }
-    tags
-}
-
-fn merge_static_scope(tags: &mut Vec<ScopedTag>, scope: TagScope, static_tags: &[&str]) {
-    let existing = tags
-        .iter()
-        .position(|scoped| scoped.scope == scope)
-        .map(|idx| tags.remove(idx).tags)
-        .unwrap_or_default();
-    let mut seen = BTreeSet::new();
-    let mut merged = Vec::new();
-    for tag in static_tags {
-        if seen.insert((*tag).to_string()) {
-            merged.push((*tag).to_string());
-        }
-    }
-    for tag in existing {
-        if seen.insert(tag.clone()) {
-            merged.push(tag);
-        }
-    }
-    tags.push(ScopedTag {
-        scope,
-        tags: merged,
-    });
-}
-
-async fn matching_traces<S>(
-    engine: &TraceqlEngine<S>,
-    tenant: &str,
-    query: &str,
-    start_ns: i64,
-    end_ns: i64,
-    scan_options: ScanOptions,
-    limit: usize,
-) -> Result<Vec<TraceSpans>, TraceqlError>
-where
-    S: SpanStore + 'static,
-{
-    let resp = engine
-        .search_with_options(
-            tenant,
-            query,
-            start_ns,
-            end_ns,
-            SearchOptions {
-                limit,
-                spss: 0,
-                search_limit: Some(limit),
-                scan_options,
-            },
-        )
-        .await?;
-    let mut seen = BTreeSet::new();
-    let mut traces = Vec::new();
-    for trace in resp.traces {
-        if seen.insert(trace.trace_id)
-            && let Some(trace) = engine
-                .trace_by_id_within(tenant, &trace.trace_id, start_ns, end_ns)
-                .await?
-        {
-            traces.push(trace);
-        }
-    }
-    Ok(traces)
-}
-
-fn scoped_tags_from_traces(traces: &[TraceSpans], scope: Option<TagScope>) -> Vec<ScopedTag> {
-    let mut out = Vec::new();
-
-    if matches!(scope, None | Some(TagScope::Resource)) {
-        let mut tags = BTreeSet::new();
-        for trace in traces {
-            tags.extend(
-                trace_resource_attributes(trace)
-                    .into_iter()
-                    .map(|(key, _)| key),
-            );
-        }
-        if !tags.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Resource,
-                tags: tags.into_iter().collect(),
-            });
-        }
-    }
-
-    if matches!(scope, None | Some(TagScope::Span)) {
-        let mut tags = BTreeSet::new();
-        for trace in traces {
-            for span in &trace.spans {
-                tags.extend(span.attributes.iter().map(|(key, _)| key.clone()));
-            }
-        }
-        if !tags.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Span,
-                tags: tags.into_iter().collect(),
-            });
-        }
-    }
-
-    if matches!(scope, None | Some(TagScope::Event)) {
-        let mut tags = BTreeSet::new();
-        for trace in traces {
-            for span in &trace.spans {
-                for event in &span.events {
-                    tags.extend(event.attributes.iter().map(|(key, _)| key.clone()));
-                }
-            }
-        }
-        if !tags.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Event,
-                tags: tags.into_iter().collect(),
-            });
-        }
-    }
-
-    if matches!(scope, None | Some(TagScope::Link)) {
-        let mut tags = BTreeSet::new();
-        for trace in traces {
-            for span in &trace.spans {
-                for link in &span.links {
-                    tags.extend(link.attributes.iter().map(|(key, _)| key.clone()));
-                }
-            }
-        }
-        if !tags.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Link,
-                tags: tags.into_iter().collect(),
-            });
-        }
-    }
-
-    if matches!(scope, None | Some(TagScope::Instrumentation)) {
-        let mut tags = BTreeSet::new();
-        for trace in traces {
-            for span in &trace.spans {
-                if !span.instrumentation_name.is_empty() {
-                    tags.insert("instrumentation:name".to_string());
-                }
-                if !span.instrumentation_version.is_empty() {
-                    tags.insert("instrumentation:version".to_string());
-                }
-            }
-        }
-        if !tags.is_empty() {
-            out.push(ScopedTag {
-                scope: TagScope::Instrumentation,
-                tags: tags.into_iter().collect(),
-            });
-        }
-    }
-
-    out
-}
-
-fn tag_values_from_traces(traces: &[TraceSpans], tag: &str) -> Vec<TypedValue> {
-    let tag = tag.strip_prefix('.').unwrap_or(tag);
-    let (attr_tag, attr_scope) = scoped_attribute_tag(tag);
-    let mut values = BTreeSet::new();
-    for trace in traces {
-        collect_trace_intrinsic_values(trace, tag, &mut values);
-        if matches!(attr_scope, None | Some(TagScope::Resource)) {
-            values.extend(
-                trace_resource_attributes(trace)
-                    .into_iter()
-                    .filter(|(key, _)| key == attr_tag)
-                    .map(|(_, value)| typed_value_parts(&value)),
-            );
-        }
-        for span in &trace.spans {
-            collect_span_intrinsic_values(span, &trace.spans, tag, &mut values);
-            collect_event_values(span, tag, &mut values);
-            collect_link_values(span, tag, &mut values);
-            if matches!(attr_scope, None | Some(TagScope::Span)) {
-                values.extend(
-                    span.attributes
-                        .iter()
-                        .filter(|(key, _)| key == attr_tag)
-                        .map(|(_, value)| typed_value_parts(value)),
-                );
-            }
-        }
-    }
-    values
-        .into_iter()
-        .map(|(type_, value)| TypedValue { type_, value })
-        .collect()
-}
-
-fn scoped_attribute_tag(tag: &str) -> (&str, Option<TagScope>) {
-    if let Some(tag) = tag.strip_prefix("resource.") {
-        (tag, Some(TagScope::Resource))
-    } else if let Some(tag) = tag.strip_prefix("span.") {
-        (tag, Some(TagScope::Span))
-    } else {
-        (tag, None)
-    }
-}
-
-fn collect_trace_intrinsic_values(
-    trace: &TraceSpans,
-    tag: &str,
-    values: &mut BTreeSet<(String, String)>,
-) {
-    match tag {
-        "trace:duration" => {
-            if let Some(duration) = trace_duration(trace) {
-                values.insert(("duration".to_string(), duration.nanos_i64().to_string()));
-            }
-        }
-        "trace:id" => {
-            values.insert(("string".to_string(), hex::encode(trace.trace_id)));
-        }
-        "trace:rootName" => {
-            values.insert(("string".to_string(), trace.root_trace_name.clone()));
-        }
-        "trace:rootService" => {
-            values.insert(("string".to_string(), trace.root_service_name.clone()));
-        }
-        _ => {}
-    }
-}
-
-fn trace_duration(trace: &TraceSpans) -> Option<Time> {
-    let start = trace
-        .spans
-        .iter()
-        .map(|span| span.start_time_unix_nano)
-        .min()?;
-    let end = trace.spans.iter().map(span_end_unix_nano).max()?;
-    Some(Time::from_nanos(
-        i64::try_from(end.saturating_sub(start)).unwrap_or(i64::MAX),
-    ))
-}
-
-/// A span's end instant: its start coordinate advanced by its duration.
-fn span_end_unix_nano(span: &SpanRef) -> u64 {
-    span.start_time_unix_nano
-        .saturating_add(u64::try_from(span.duration.nanos_i64()).unwrap_or(0))
-}
-
-/// An event's absolute instant: the span's start coordinate advanced by the
-/// event's offset into the span.
-fn event_unix_nano(span: &SpanRef, event: &krabka_traceql::EventRef) -> u64 {
-    span.start_time_unix_nano
-        .saturating_add(u64::try_from(event.time_since_start.nanos_i64()).unwrap_or(0))
-}
-
-fn collect_span_intrinsic_values(
-    span: &SpanRef,
-    spans: &[SpanRef],
-    tag: &str,
-    values: &mut BTreeSet<(String, String)>,
-) {
-    match tag {
-        "span:childCount" => {
-            let count = spans
-                .iter()
-                .filter(|other| other.nested_set_parent == span.nested_set_left)
-                .count();
-            values.insert(("int".to_string(), count.to_string()));
-        }
-        "span:duration" => {
-            values.insert((
-                "duration".to_string(),
-                span.duration.nanos_i64().to_string(),
-            ));
-        }
-        "span:id" => {
-            values.insert(("string".to_string(), hex::encode(span.span_id)));
-        }
-        "span:kind" => {
-            values.insert(("int".to_string(), span.kind.to_string()));
-        }
-        "span:name" => {
-            values.insert(("string".to_string(), span.name.clone()));
-        }
-        "span:parentID" => {
-            if let Some(parent_id) = span.parent_span_id {
-                values.insert(("string".to_string(), hex::encode(parent_id)));
-            }
-        }
-        "span:nestedSetLeft" => {
-            values.insert(("int".to_string(), span.nested_set_left.to_string()));
-        }
-        "span:nestedSetParent" | "span:Parent" => {
-            values.insert(("int".to_string(), span.nested_set_parent.to_string()));
-        }
-        "span:nestedSetRight" => {
-            values.insert(("int".to_string(), span.nested_set_right.to_string()));
-        }
-        "span:status" => {
-            values.insert(("int".to_string(), span.status_code.to_string()));
-        }
-        "span:statusMessage" if !span.status_message.is_empty() => {
-            values.insert(("string".to_string(), span.status_message.clone()));
-        }
-        "instrumentation:name" if !span.instrumentation_name.is_empty() => {
-            values.insert(("string".to_string(), span.instrumentation_name.clone()));
-        }
-        "instrumentation:version" if !span.instrumentation_version.is_empty() => {
-            values.insert(("string".to_string(), span.instrumentation_version.clone()));
-        }
-        _ => {}
-    }
-}
-
-fn collect_event_values(span: &SpanRef, tag: &str, values: &mut BTreeSet<(String, String)>) {
-    for event in &span.events {
-        match tag {
-            "event:name" => {
-                values.insert(("string".to_string(), event.name.clone()));
-            }
-            "event:timeSinceStart" => {
-                values.insert((
-                    "duration".to_string(),
-                    event.time_since_start.nanos_i64().to_string(),
-                ));
-            }
-            _ => {}
-        }
-        values.extend(
-            event
-                .attributes
-                .iter()
-                .filter(|(key, _)| nested_attribute_key_matches(key, tag, "event."))
-                .map(|(_, value)| typed_value_parts(value)),
-        );
-    }
-}
-
-fn collect_link_values(span: &SpanRef, tag: &str, values: &mut BTreeSet<(String, String)>) {
-    for link in &span.links {
-        match tag {
-            "link:traceID" => {
-                values.insert(("string".to_string(), hex::encode(link.trace_id)));
-            }
-            "link:spanID" => {
-                values.insert(("string".to_string(), hex::encode(link.span_id)));
-            }
-            _ => {}
-        }
-        values.extend(
-            link.attributes
-                .iter()
-                .filter(|(key, _)| nested_attribute_key_matches(key, tag, "link."))
-                .map(|(_, value)| typed_value_parts(value)),
-        );
-    }
-}
-
-fn nested_attribute_key_matches(key: &str, tag: &str, scope_prefix: &str) -> bool {
-    key == tag || tag.strip_prefix(scope_prefix).is_some_and(|tag| key == tag)
-}
-
-fn typed_value_parts(value: &AttrValue) -> (String, String) {
-    match value {
-        AttrValue::Str(value) => ("string".into(), value.clone()),
-        AttrValue::Int(value) => ("int".into(), value.to_string()),
-        AttrValue::Float(value) => ("float".into(), value.to_string()),
-        AttrValue::Bool(value) => ("bool".into(), value.to_string()),
-    }
-}
-
-/// One TraceQL-metrics label as Tempo's protojson `commonv1.KeyValue`, which is
-/// `{"key": k, "value": {"stringValue": v}}`.
-///
-/// Grafana's Tempo backend parses the `labels` field as a JSON array, so a map
-/// object fails to unmarshal with
-/// `cannot unmarshal object into Go value of type []json.RawMessage`.
-fn metric_label_json(key: &str, value: &str) -> Value {
-    json!({ "key": key, "value": { "stringValue": value } })
-}
-
-/// Prometheus-style label string for `TimeSeries.promLabels`, which is
-/// Grafana's legend. An example is `{resource_service_name="api"}`. An empty
-/// label set renders as `{}`.
-fn metric_prom_labels(labels: &[(String, String)]) -> String {
-    let inner = labels
-        .iter()
-        .map(|(key, value)| {
-            format!(
-                "{}=\"{}\"",
-                key.replace('.', "_"),
-                value.replace('"', "\\\"")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{{{inner}}}")
-}
-
-fn trace_metrics_json(resp: &TraceMetricsResponse) -> Value {
-    // Tempo `tempopb.QueryRangeResponse` protojson shape, which Grafana's Tempo
-    // backend unmarshals: `series[].labels` is an ARRAY of KeyValue, samples use
-    // `timestampMs` (milliseconds; int64 rendered as a string to match protojson)
-    // and `value`. Krabka's internal point timestamps are nanoseconds.
-    json!({
-        "series": resp.series.iter().map(|series| {
-            json!({
-                "labels": series.labels.iter()
-                    .map(|(key, value)| metric_label_json(key, value))
-                    .collect::<Vec<_>>(),
-                "promLabels": metric_prom_labels(&series.labels),
-                "samples": series.points.iter()
-                    .map(|(ts_ns, value)| json!({
-                        "timestampMs": (ts_ns / 1_000_000).to_string(),
-                        "value": *value,
-                    }))
-                    .collect::<Vec<_>>(),
-                "exemplars": series.exemplars.iter()
-                    .map(|exemplar| {
-                        json!({
-                            "labels": exemplar.labels.iter()
-                                .map(|(key, value)| metric_label_json(key, value))
-                                .collect::<Vec<_>>(),
-                            "value": exemplar.value,
-                            "timestampMs": (exemplar.timestamp_ns / 1_000_000).to_string(),
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-            })
-        }).collect::<Vec<_>>(),
-    })
-}
-
-fn filter_metrics_exemplars(
-    mut resp: TraceMetricsResponse,
-    selection: ExemplarSelection,
-) -> TraceMetricsResponse {
-    match selection {
-        ExemplarSelection::All => {}
-        ExemplarSelection::Limit(max) => {
-            for series in &mut resp.series {
-                series.exemplars.truncate(max);
-            }
-        }
-        ExemplarSelection::None => {
-            for series in &mut resp.series {
-                series.exemplars.clear();
-            }
-        }
-    }
-    resp
-}
-
-fn instant_metrics_response(mut resp: TraceMetricsResponse, point_ns: i64) -> TraceMetricsResponse {
-    for series in &mut resp.series {
-        let value = series
-            .points
-            .last()
-            .map(|(_, value)| *value)
-            .unwrap_or_default();
-        series.points = vec![(point_ns, value)];
-    }
-    resp
-}
-
-fn tag_scope_name(scope: TagScope) -> &'static str {
-    match scope {
-        TagScope::Resource => "resource",
-        TagScope::Span => "span",
-        TagScope::Intrinsic => "intrinsic",
-        TagScope::Event => "event",
-        TagScope::Link => "link",
-        TagScope::Instrumentation => "instrumentation",
-    }
-}
-
-fn search_span_json(span: &SpanRef) -> Value {
-    json!({
-        "spanID": hex::encode(span.span_id),
-        "startTimeUnixNano": span.start_time_unix_nano.to_string(),
-        "durationNanos": span.duration.nanos_i64().to_string(),
-        "attributes": attrs_json(&span.attributes),
-    })
-}
-
-fn trace_resource_attributes(trace: &TraceSpans) -> Vec<(String, AttrValue)> {
-    dedup_attrs(&trace.resource_attributes, trace.root_service_name.as_str())
-}
-
-fn span_resource_attributes(trace: &TraceSpans, span: &SpanRef) -> Vec<(String, AttrValue)> {
-    if span.resource_attributes.is_empty() {
-        trace_resource_attributes(trace)
-    } else {
-        dedup_attrs(&span.resource_attributes, "")
-    }
-}
-
-fn dedup_attrs(
-    attrs_in: &[(String, AttrValue)],
-    fallback_service_name: &str,
-) -> Vec<(String, AttrValue)> {
-    let mut seen = BTreeSet::new();
-    let mut attrs = Vec::new();
-    for (key, value) in attrs_in {
-        seen.insert(key.clone());
-        attrs.push((key.clone(), value.clone()));
-    }
-    if !fallback_service_name.is_empty() && seen.insert("service.name".into()) {
-        attrs.push((
-            "service.name".into(),
-            AttrValue::Str(fallback_service_name.to_string()),
-        ));
-    }
-    attrs
-}
-
-type ResourceAttrs = Vec<(String, AttrValue)>;
-type ResourceSpanGroup<'a> = (ResourceAttrs, Vec<&'a SpanRef>);
-
-fn resource_span_groups(trace: &TraceSpans, returned_spans: usize) -> Vec<ResourceSpanGroup<'_>> {
-    let mut groups: Vec<ResourceSpanGroup<'_>> = Vec::new();
-    for span in trace.spans.iter().take(returned_spans) {
-        let attrs = span_resource_attributes(trace, span);
-        if let Some((_, spans)) = groups
-            .iter_mut()
-            .find(|(existing_attrs, _)| existing_attrs == &attrs)
-        {
-            spans.push(span);
-        } else {
-            groups.push((attrs, vec![span]));
-        }
-    }
-    groups
-}
-
-fn trace_json(trace: &TraceSpans, max_trace_spans: usize) -> Value {
-    let total_spans = trace.spans.len();
-    let returned_spans = total_spans.min(max_trace_spans);
-    let status = if returned_spans < total_spans {
-        "PARTIAL"
-    } else {
-        "COMPLETE"
-    };
-    let message = if returned_spans < total_spans {
-        format!("trace truncated after {returned_spans} spans")
-    } else {
-        String::new()
-    };
-
-    json!({
-        "trace": {
-            "resourceSpans": resource_span_groups(trace, returned_spans)
-                .into_iter()
-                .map(|(attrs, spans)| {
-                    json!({
-                        "resource": {
-                            "attributes": attrs_json(&attrs),
-                        },
-                        "scopeSpans": scope_spans_json(trace.trace_id, spans),
-                    })
-                })
-                .collect::<Vec<_>>(),
-        },
-        "status": status,
-        "message": message,
-    })
-}
-
-fn trace_traces_data(trace: &TraceSpans, max_trace_spans: usize) -> OtlpTracesData {
-    OtlpTracesData {
-        resource_spans: resource_span_groups(trace, trace.spans.len().min(max_trace_spans))
-            .into_iter()
-            .map(|(attrs, spans)| OtlpResourceSpans {
-                resource: Some(OtlpResource {
-                    attributes: otlp_attrs(&attrs),
-                    ..OtlpResource::default()
-                }),
-                scope_spans: otlp_scope_spans(trace.trace_id, spans),
-                ..OtlpResourceSpans::default()
-            })
-            .collect(),
-    }
-}
-
-/// OTLP `TracesData` protobuf, the Tempo v1 `/api/traces/{id}` body.
-///
-/// Grafana's Tempo datasource decodes it as `tempopb.Trace`, which is
-/// wire-identical to `TracesData`. Both are field 1 = repeated
-/// `ResourceSpans`.
-fn trace_protobuf(
-    trace: &TraceSpans,
-    max_trace_spans: usize,
-) -> Result<Vec<u8>, prost::EncodeError> {
-    let data = trace_traces_data(trace, max_trace_spans);
-    let mut bytes = Vec::with_capacity(data.encoded_len());
-    data.encode(&mut bytes)?;
-    Ok(bytes)
-}
-
-/// Tempo `TraceByIDResponse`, which is
-/// `message TraceByIDResponse { Trace trace = 1; }`. It is the
-/// `/api/v2/traces/{id}` protobuf body.
-///
-/// Grafana's Tempo datasource decodes the v2 trace-by-id response into this
-/// message. The inner `Trace` is wire-identical to OTLP `TracesData`, so this
-/// type models the field as `TracesData`.
-#[derive(Clone, PartialEq, ::prost::Message)]
-struct TraceByIdResponse {
-    #[prost(message, optional, tag = "1")]
-    trace: Option<OtlpTracesData>,
-}
-
-fn trace_by_id_response_protobuf(
-    trace: &TraceSpans,
-    max_trace_spans: usize,
-) -> Result<Vec<u8>, prost::EncodeError> {
-    let response = TraceByIdResponse {
-        trace: Some(trace_traces_data(trace, max_trace_spans)),
-    };
-    let mut bytes = Vec::with_capacity(response.encoded_len());
-    response.encode(&mut bytes)?;
-    Ok(bytes)
-}
-
-type OtlpTracesData = opentelemetry_proto::tonic::trace::v1::TracesData;
-type InstrumentationKey = (String, String, Vec<(String, AttrValue)>);
-type InstrumentationGroups<'a> = Vec<(InstrumentationKey, Vec<&'a SpanRef>)>;
-
-fn otlp_scope_spans(trace_id: [u8; 16], input_spans: Vec<&SpanRef>) -> Vec<OtlpScopeSpans> {
-    let mut groups: InstrumentationGroups<'_> = Vec::new();
-    for span in input_spans {
-        let key = (
-            span.instrumentation_name.clone(),
-            span.instrumentation_version.clone(),
-            instrumentation_attributes(span),
-        );
-        if let Some((_, spans)) = groups.iter_mut().find(|(existing, _)| existing == &key) {
-            spans.push(span);
-        } else {
-            groups.push((key, vec![span]));
-        }
-    }
-
-    groups
-        .into_iter()
-        .map(|((name, version, attributes), spans)| OtlpScopeSpans {
-            scope: (!name.is_empty() || !version.is_empty() || !attributes.is_empty()).then_some(
-                InstrumentationScope {
-                    name,
-                    version,
-                    attributes: otlp_attrs(&attributes),
-                    ..InstrumentationScope::default()
-                },
-            ),
-            spans: spans
-                .into_iter()
-                .map(|span| otlp_span(trace_id, span))
-                .collect(),
-            ..OtlpScopeSpans::default()
-        })
-        .collect()
-}
-
-fn otlp_span(trace_id: [u8; 16], span: &SpanRef) -> OtlpSpan {
-    OtlpSpan {
-        trace_id: trace_id.to_vec(),
-        span_id: span.span_id.to_vec(),
-        parent_span_id: span
-            .parent_span_id
-            .map(|parent| parent.to_vec())
-            .unwrap_or_default(),
-        name: span.name.clone(),
-        kind: span.kind,
-        start_time_unix_nano: span.start_time_unix_nano,
-        end_time_unix_nano: span_end_unix_nano(span),
-        attributes: otlp_attrs(&span_attributes(span)),
-        events: span
-            .events
-            .iter()
-            .map(|event| otlp_event(span, event))
-            .collect(),
-        links: span.links.iter().map(otlp_link).collect(),
-        status: Some(otlp_status(span.status_code, &span.status_message)),
-        ..OtlpSpan::default()
-    }
-}
-
-fn otlp_event(span: &SpanRef, event: &krabka_traceql::EventRef) -> OtlpEvent {
-    OtlpEvent {
-        time_unix_nano: event_unix_nano(span, event),
-        name: event.name.clone(),
-        attributes: otlp_attrs(&event.attributes),
-        ..OtlpEvent::default()
-    }
-}
-
-fn otlp_link(link: &krabka_traceql::LinkRef) -> OtlpLink {
-    OtlpLink {
-        trace_id: link.trace_id.to_vec(),
-        span_id: link.span_id.to_vec(),
-        attributes: otlp_attrs(&link.attributes),
-        ..OtlpLink::default()
-    }
-}
-
-fn otlp_status(code: i32, message: &str) -> OtlpStatus {
-    // Tempo constructs a Status for every span, and Grafana's Tempo backend
-    // dereferences `span.Status` when transforming the protobuf trace
-    // (trace_transform.go) — an absent/nil status is a nil pointer dereference
-    // that 500s the trace view. STATUS_CODE_UNSET (0) is a valid, present status,
-    // so this is emitted unconditionally (wrapped in `Some` at the call site).
-    OtlpStatus {
-        code,
-        message: message.to_string(),
-    }
-}
-
-fn otlp_attrs(attrs: &[(String, AttrValue)]) -> Vec<OtlpKeyValue> {
-    group_attrs(attrs)
-        .into_iter()
-        .map(|(key, values)| OtlpKeyValue {
-            key: key.to_string(),
-            value: Some(otlp_values(&values)),
-            ..OtlpKeyValue::default()
-        })
-        .collect()
-}
-
-fn otlp_values(values: &[&AttrValue]) -> OtlpAnyValue {
-    if let [value] = values {
-        return otlp_value(value);
-    }
-    OtlpAnyValue {
-        value: Some(OtlpValue::ArrayValue(OtlpArrayValue {
-            values: values.iter().map(|value| otlp_value(value)).collect(),
-        })),
-    }
-}
-
-fn otlp_value(value: &AttrValue) -> OtlpAnyValue {
-    OtlpAnyValue {
-        value: Some(match value {
-            AttrValue::Str(value) => OtlpValue::StringValue(value.clone()),
-            AttrValue::Int(value) => OtlpValue::IntValue(*value),
-            AttrValue::Float(value) => OtlpValue::DoubleValue(*value),
-            AttrValue::Bool(value) => OtlpValue::BoolValue(*value),
-        }),
-    }
-}
-
-fn scope_spans_json(trace_id: [u8; 16], input_spans: Vec<&SpanRef>) -> Value {
-    let mut groups: InstrumentationGroups<'_> = Vec::new();
-    for span in input_spans {
-        let key = (
-            span.instrumentation_name.clone(),
-            span.instrumentation_version.clone(),
-            instrumentation_attributes(span),
-        );
-        if let Some((_, spans)) = groups.iter_mut().find(|(existing, _)| existing == &key) {
-            spans.push(span);
-        } else {
-            groups.push((key, vec![span]));
-        }
-    }
-
-    Value::Array(
-        groups
-            .into_iter()
-            .map(|((name, version, attributes), spans)| {
-                json!({
-                    "scope": instrumentation_scope_json(&name, &version, &attributes),
-                    "spans": spans
-                        .into_iter()
-                        .map(|span| trace_span_json(trace_id, span))
-                        .collect::<Vec<_>>(),
-                })
-            })
-            .collect(),
-    )
-}
-
-fn instrumentation_scope_json(
-    name: &str,
-    version: &str,
-    attributes: &[(String, AttrValue)],
-) -> Value {
-    let mut scope = Map::new();
-    if !name.is_empty() {
-        scope.insert("name".into(), json!(name));
-    }
-    if !version.is_empty() {
-        scope.insert("version".into(), json!(version));
-    }
-    if !attributes.is_empty() {
-        scope.insert("attributes".into(), attrs_json(attributes));
-    }
-    Value::Object(scope)
-}
-
-fn trace_span_json(trace_id: [u8; 16], span: &SpanRef) -> Value {
-    let mut obj = Map::new();
-    obj.insert("traceId".into(), json!(base64(trace_id)));
-    obj.insert("spanId".into(), json!(base64(span.span_id)));
-    if let Some(parent_span_id) = span.parent_span_id {
-        obj.insert("parentSpanId".into(), json!(base64(parent_span_id)));
-    }
-    obj.insert("name".into(), json!(span.name));
-    if let Some(kind) = span_kind_json(span.kind) {
-        obj.insert("kind".into(), json!(kind));
-    }
-    obj.insert(
-        "startTimeUnixNano".into(),
-        json!(span.start_time_unix_nano.to_string()),
-    );
-    obj.insert(
-        "endTimeUnixNano".into(),
-        json!(span_end_unix_nano(span).to_string()),
-    );
-    obj.insert(
-        "status".into(),
-        span_status_json(span.status_code, &span.status_message),
-    );
-    obj.insert("attributes".into(), attrs_json(&span_attributes(span)));
-    if !span.events.is_empty() {
-        obj.insert("events".into(), events_json(span));
-    }
-    if !span.links.is_empty() {
-        obj.insert("links".into(), links_json(&span.links));
-    }
-    Value::Object(obj)
-}
-
-fn instrumentation_attributes(span: &SpanRef) -> Vec<(String, AttrValue)> {
-    span.attributes
-        .iter()
-        .filter_map(|(key, value)| {
-            key.strip_prefix(krabka_traceql::INSTRUMENTATION_ATTR_PREFIX)
-                .map(|key| (key.to_string(), value.clone()))
-        })
-        .collect()
-}
-
-fn span_attributes(span: &SpanRef) -> Vec<(String, AttrValue)> {
-    span.attributes
-        .iter()
-        .filter(|(key, _)| !key.starts_with(krabka_traceql::INSTRUMENTATION_ATTR_PREFIX))
-        .cloned()
-        .collect()
-}
-
-fn events_json(span: &SpanRef) -> Value {
-    Value::Array(
-        span.events
-            .iter()
-            .map(|event| {
-                json!({
-                    "timeUnixNano": event_unix_nano(span, event).to_string(),
-                    "name": event.name,
-                    "attributes": attrs_json(&event.attributes),
-                })
-            })
-            .collect(),
-    )
-}
-
-fn links_json(links: &[krabka_traceql::LinkRef]) -> Value {
-    Value::Array(
-        links
-            .iter()
-            .map(|link| {
-                json!({
-                    "traceId": base64(link.trace_id),
-                    "spanId": base64(link.span_id),
-                    "attributes": attrs_json(&link.attributes),
-                })
-            })
-            .collect(),
-    )
-}
-
-fn span_kind_json(kind: i32) -> Option<&'static str> {
-    match kind {
-        1 => Some("SPAN_KIND_INTERNAL"),
-        2 => Some("SPAN_KIND_SERVER"),
-        3 => Some("SPAN_KIND_CLIENT"),
-        4 => Some("SPAN_KIND_PRODUCER"),
-        5 => Some("SPAN_KIND_CONSUMER"),
-        _ => None,
-    }
-}
-
-fn span_status_json(code: i32, message: &str) -> Value {
-    // Always emit a status object so the field is never missing (Tempo always
-    // sets a Status; Grafana dereferences it). STATUS_CODE_UNSET (0) is the
-    // protojson default and is omitted (rendered as `{}`); OK/ERROR are explicit.
-    let mut status = Map::new();
-    match code {
-        1 => {
-            status.insert("code".into(), json!("STATUS_CODE_OK"));
-        }
-        2 => {
-            status.insert("code".into(), json!("STATUS_CODE_ERROR"));
-        }
-        _ => {}
-    }
-    if !message.is_empty() {
-        status.insert("message".into(), json!(message));
-    }
-    Value::Object(status)
-}
-
-fn attrs_json(attrs: &[(String, AttrValue)]) -> Value {
-    Value::Array(
-        group_attrs(attrs)
-            .into_iter()
-            .map(|(key, values)| {
-                json!({
-                    "key": key,
-                    "value": attr_values_json(&values),
-                })
-            })
-            .collect(),
-    )
-}
-
-fn group_attrs(attrs: &[(String, AttrValue)]) -> Vec<(&str, Vec<&AttrValue>)> {
-    let mut grouped: Vec<(&str, Vec<&AttrValue>)> = Vec::new();
-    for (key, value) in attrs {
-        if let Some((_, values)) = grouped
-            .iter_mut()
-            .find(|(existing_key, _)| existing_key == key)
-        {
-            values.push(value);
-        } else {
-            grouped.push((key.as_str(), vec![value]));
-        }
-    }
-    grouped
-}
-
-fn attr_values_json(values: &[&AttrValue]) -> Value {
-    if let [value] = values {
-        return attr_value_json(value);
-    }
-    json!({
-        "arrayValue": {
-            "values": values.iter().map(|value| attr_value_json(value)).collect::<Vec<_>>(),
-        }
-    })
-}
-
-fn attr_value_json(value: &AttrValue) -> Value {
-    match value {
-        AttrValue::Str(v) => json!({"stringValue": v}),
-        AttrValue::Int(v) => json!({"intValue": v.to_string()}),
-        AttrValue::Float(v) => json!({"doubleValue": v}),
-        AttrValue::Bool(v) => json!({"boolValue": v}),
-    }
-}
-
-fn base64<const N: usize>(bytes: [u8; N]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -6458,3 +3983,275 @@ overrides:
         assert2::assert!(values.len() == 7);
     }
 }
+
+// === split-modules: generated submodules ===
+mod add_intrinsic_tags;
+mod app_state;
+mod attr_value_json;
+mod attr_values_json;
+mod attrs_json;
+mod base64;
+mod buildinfo;
+mod collect_event_values;
+mod collect_link_values;
+mod collect_span_intrinsic_values;
+mod collect_trace_intrinsic_values;
+mod decode_trace_id;
+mod dedup_attrs;
+mod default_query_range_step_ns;
+mod duration_param;
+mod echo;
+mod event_tags;
+mod event_unix_nano;
+mod events_json;
+mod exact_tag_value_filter;
+mod exemplar_selection;
+mod field_matches_tag;
+mod filter_metrics_exemplars;
+mod filter_search_duration;
+mod filter_tag_values;
+mod group_attrs;
+mod http_config;
+mod instant_metric_bounds;
+mod instant_metrics_response;
+mod instrumentation_attributes;
+mod instrumentation_groups;
+mod instrumentation_key;
+mod instrumentation_scope_json;
+mod instrumentation_tags;
+mod intrinsic_tag_name;
+mod intrinsic_tags;
+mod is_match_all_query;
+mod key_is_safe_attribute;
+mod limit_error_response;
+mod link_tags;
+mod links_json;
+mod matching_traces;
+mod merge_static_scope;
+mod metric_label_json;
+mod metric_prom_labels;
+mod metrics_query_param;
+mod nested_attribute_key_matches;
+mod optional_seconds_param;
+mod optional_time_bounds;
+mod optional_usize_param;
+mod otlp_attrs;
+mod otlp_event;
+mod otlp_link;
+mod otlp_scope_spans;
+mod otlp_span;
+mod otlp_status;
+mod otlp_traces_data;
+mod otlp_value;
+mod otlp_values;
+mod parse_duration_component_ns;
+mod parse_go_duration_ns;
+mod parse_logfmt_tags;
+mod parse_logfmt_value;
+mod parse_seconds_to_ns;
+mod parse_step_to_ns;
+mod parse_tag_scope;
+mod q_filter_limit;
+mod query_instant;
+mod query_instant_inner;
+mod query_param;
+mod query_range;
+mod query_range_inner;
+mod ready;
+mod required_seconds_param;
+mod resource_attrs;
+mod resource_span_group;
+mod resource_span_groups;
+mod router;
+mod router_with_config;
+mod router_with_config_and_metrics;
+mod router_with_state;
+mod scan_options_param;
+mod scope_param;
+mod scope_spans_json;
+mod scoped_attribute_tag;
+mod scoped_tags_from_traces;
+mod search;
+mod search_inner;
+mod search_json;
+mod search_query;
+mod search_span_json;
+mod search_tag_values;
+mod search_tag_values_inner;
+mod search_tag_values_json;
+mod search_tag_values_v2;
+mod search_tag_values_v2_inner;
+mod search_tag_values_v2_json;
+mod search_tags;
+mod search_tags_inner;
+mod search_tags_json;
+mod search_tags_v2;
+mod search_tags_v2_inner;
+mod search_tags_v2_json;
+mod span_attributes;
+mod span_end_unix_nano;
+mod span_kind_json;
+mod span_resource_attributes;
+mod span_status_json;
+mod step_param;
+mod tag_scope_name;
+mod tag_values_from_traces;
+mod tags_to_traceql;
+mod tempo_tag_alias;
+mod tenant;
+mod tenant_header;
+mod trace_by_id;
+mod trace_by_id_inner;
+mod trace_by_id_response;
+mod trace_by_id_response_protobuf;
+mod trace_by_id_v1;
+mod trace_by_id_v1_inner;
+mod trace_duration;
+mod trace_json;
+mod trace_metrics_json;
+mod trace_protobuf;
+mod trace_resource_attributes;
+mod trace_span_json;
+mod trace_traces_data;
+mod traceql_query_error_response;
+mod traceql_tag_field;
+mod typed_traceql_value;
+mod typed_value_parts;
+mod wants_json;
+mod wants_protobuf;
+
+use add_intrinsic_tags::add_intrinsic_tags;
+use app_state::AppState;
+use attr_value_json::attr_value_json;
+use attr_values_json::attr_values_json;
+use attrs_json::attrs_json;
+use base64::base64;
+use buildinfo::buildinfo;
+use collect_event_values::collect_event_values;
+use collect_link_values::collect_link_values;
+use collect_span_intrinsic_values::collect_span_intrinsic_values;
+use collect_trace_intrinsic_values::collect_trace_intrinsic_values;
+use decode_trace_id::decode_trace_id;
+use dedup_attrs::dedup_attrs;
+use default_query_range_step_ns::default_query_range_step_ns;
+use duration_param::duration_param;
+use echo::echo;
+use event_tags::EVENT_TAGS;
+use event_unix_nano::event_unix_nano;
+use events_json::events_json;
+use exact_tag_value_filter::exact_tag_value_filter;
+use exemplar_selection::ExemplarSelection;
+use exemplar_selection::exemplar_selection;
+use field_matches_tag::field_matches_tag;
+use filter_metrics_exemplars::filter_metrics_exemplars;
+use filter_search_duration::filter_search_duration;
+use filter_tag_values::filter_tag_values;
+use group_attrs::group_attrs;
+pub use http_config::HttpConfig;
+use instant_metric_bounds::instant_metric_bounds;
+use instant_metrics_response::instant_metrics_response;
+use instrumentation_attributes::instrumentation_attributes;
+use instrumentation_groups::InstrumentationGroups;
+use instrumentation_key::InstrumentationKey;
+use instrumentation_scope_json::instrumentation_scope_json;
+use instrumentation_tags::INSTRUMENTATION_TAGS;
+use intrinsic_tag_name::intrinsic_tag_name;
+use intrinsic_tags::INTRINSIC_TAGS;
+use is_match_all_query::is_match_all_query;
+use key_is_safe_attribute::key_is_safe_attribute;
+use limit_error_response::limit_error_response;
+use link_tags::LINK_TAGS;
+use links_json::links_json;
+use matching_traces::matching_traces;
+use merge_static_scope::merge_static_scope;
+use metric_label_json::metric_label_json;
+use metric_prom_labels::metric_prom_labels;
+use metrics_query_param::metrics_query_param;
+use nested_attribute_key_matches::nested_attribute_key_matches;
+use optional_seconds_param::optional_seconds_param;
+use optional_time_bounds::optional_time_bounds;
+use optional_usize_param::optional_usize_param;
+use otlp_attrs::otlp_attrs;
+use otlp_event::otlp_event;
+use otlp_link::otlp_link;
+use otlp_scope_spans::otlp_scope_spans;
+use otlp_span::otlp_span;
+use otlp_status::otlp_status;
+use otlp_traces_data::OtlpTracesData;
+use otlp_value::otlp_value;
+use otlp_values::otlp_values;
+use parse_duration_component_ns::parse_duration_component_ns;
+use parse_go_duration_ns::parse_go_duration_ns;
+use parse_logfmt_tags::parse_logfmt_tags;
+use parse_logfmt_value::parse_logfmt_value;
+use parse_seconds_to_ns::parse_seconds_to_ns;
+use parse_step_to_ns::parse_step_to_ns;
+use parse_tag_scope::parse_tag_scope;
+use q_filter_limit::q_filter_limit;
+use query_instant::query_instant;
+use query_instant_inner::query_instant_inner;
+use query_param::query_param;
+use query_range::query_range;
+use query_range_inner::query_range_inner;
+use ready::ready;
+use required_seconds_param::required_seconds_param;
+use resource_attrs::ResourceAttrs;
+use resource_span_group::ResourceSpanGroup;
+use resource_span_groups::resource_span_groups;
+pub use router::router;
+pub use router_with_config::router_with_config;
+pub use router_with_config_and_metrics::router_with_config_and_metrics;
+use router_with_state::router_with_state;
+use scan_options_param::scan_options_param;
+use scope_param::scope_param;
+use scope_spans_json::scope_spans_json;
+use scoped_attribute_tag::scoped_attribute_tag;
+use scoped_tags_from_traces::scoped_tags_from_traces;
+use search::search;
+use search_inner::search_inner;
+use search_json::search_json;
+use search_query::search_query;
+use search_span_json::search_span_json;
+use search_tag_values::search_tag_values;
+use search_tag_values_inner::search_tag_values_inner;
+use search_tag_values_json::search_tag_values_json;
+use search_tag_values_v2::search_tag_values_v2;
+use search_tag_values_v2_inner::search_tag_values_v2_inner;
+use search_tag_values_v2_json::search_tag_values_v2_json;
+use search_tags::search_tags;
+use search_tags_inner::search_tags_inner;
+use search_tags_json::search_tags_json;
+use search_tags_v2::search_tags_v2;
+use search_tags_v2_inner::search_tags_v2_inner;
+use search_tags_v2_json::search_tags_v2_json;
+use span_attributes::span_attributes;
+use span_end_unix_nano::span_end_unix_nano;
+use span_kind_json::span_kind_json;
+use span_resource_attributes::span_resource_attributes;
+use span_status_json::span_status_json;
+use step_param::step_param;
+use tag_scope_name::tag_scope_name;
+use tag_values_from_traces::tag_values_from_traces;
+use tags_to_traceql::tags_to_traceql;
+use tempo_tag_alias::tempo_tag_alias;
+use tenant::tenant;
+use tenant_header::TENANT_HEADER;
+use trace_by_id::trace_by_id;
+use trace_by_id_inner::trace_by_id_inner;
+use trace_by_id_response::TraceByIdResponse;
+use trace_by_id_response_protobuf::trace_by_id_response_protobuf;
+use trace_by_id_v1::trace_by_id_v1;
+use trace_by_id_v1_inner::trace_by_id_v1_inner;
+use trace_duration::trace_duration;
+use trace_json::trace_json;
+use trace_metrics_json::trace_metrics_json;
+use trace_protobuf::trace_protobuf;
+use trace_resource_attributes::trace_resource_attributes;
+use trace_span_json::trace_span_json;
+use trace_traces_data::trace_traces_data;
+use traceql_query_error_response::traceql_query_error_response;
+use traceql_tag_field::traceql_tag_field;
+use typed_traceql_value::typed_traceql_value;
+use typed_value_parts::typed_value_parts;
+use wants_json::wants_json;
+use wants_protobuf::wants_protobuf;

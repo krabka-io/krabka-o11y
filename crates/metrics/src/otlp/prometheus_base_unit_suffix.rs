@@ -1,0 +1,33 @@
+use super::*;
+
+pub(crate) fn prometheus_base_unit_suffix(unit: &str) -> Option<&'static str> {
+    match unit {
+        "d" => Some("days"),
+        "h" => Some("hours"),
+        "min" => Some("minutes"),
+        "s" => Some("seconds"),
+        "ms" => Some("milliseconds"),
+        "us" => Some("microseconds"),
+        "ns" => Some("nanoseconds"),
+        "m" => Some("meters"),
+        "By" => Some("bytes"),
+        "KiBy" => Some("kibibytes"),
+        "MiBy" => Some("mebibytes"),
+        "GiBy" => Some("gibibytes"),
+        "TiBy" => Some("tebibytes"),
+        "kBy" => Some("kilobytes"),
+        "MBy" => Some("megabytes"),
+        "GBy" => Some("gigabytes"),
+        "TBy" => Some("terabytes"),
+        "bit" => Some("bits"),
+        "V" => Some("volts"),
+        "A" => Some("amperes"),
+        "J" => Some("joules"),
+        "W" => Some("watts"),
+        "g" => Some("grams"),
+        "Cel" => Some("celsius"),
+        "Hz" => Some("hertz"),
+        "%" => Some("percent"),
+        _ => None,
+    }
+}

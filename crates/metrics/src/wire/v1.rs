@@ -11,101 +11,6 @@ use super::{
     histogram::v1_histogram_to_native, pb, snappy_block_decode,
 };
 
-/// # Errors
-/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn decode_v1(body: &[u8], max_decompressed: ByteSize) -> Result<Vec<DecodedSeries>, WireError> {
-    let raw = snappy_block_decode(body, max_decompressed)?;
-    let req = pb::v1::WriteRequest::decode(raw.as_slice())
-        .map_err(|error| WireError::ProtobufDecode(error.to_string()))?;
-
-    let mut out = Vec::with_capacity(req.timeseries.len());
-    for series in req.timeseries {
-        let labels = labels_from_v1(&series.labels)?;
-        let samples = series
-            .samples
-            .into_iter()
-            .map(|sample| DecodedSample::new(sample.timestamp, sample.value))
-            .collect();
-        let histograms = series
-            .histograms
-            .iter()
-            .map(|histogram| Ok((histogram.timestamp, v1_histogram_to_native(histogram)?)))
-            .collect::<Result<Vec<_>, WireError>>()?;
-        let exemplars = series
-            .exemplars
-            .iter()
-            .map(|exemplar| {
-                Ok(DecodedExemplar {
-                    labels: labels_from_v1(&exemplar.labels)?,
-                    timestamp_ms: exemplar.timestamp,
-                    value: exemplar.value,
-                })
-            })
-            .collect::<Result<Vec<_>, WireError>>()?;
-
-        out.push(DecodedSeries {
-            labels,
-            samples,
-            histograms,
-            exemplars,
-            metadata: None,
-        });
-    }
-
-    for metadata in req.metadata {
-        out.push(metadata_series_from_v1(metadata));
-    }
-
-    Ok(out)
-}
-
-fn labels_from_v1(labels: &[pb::v1::Label]) -> Result<Labels, WireError> {
-    let mut names = HashSet::with_capacity(labels.len());
-    labels
-        .iter()
-        .map(|label| {
-            if !names.insert(label.name.as_str()) {
-                return Err(WireError::Invalid(format!(
-                    "duplicate label `{}`",
-                    label.name
-                )));
-            }
-            Ok((label.name.clone(), label.value.clone()))
-        })
-        .collect()
-}
-
-fn metadata_series_from_v1(metadata: pb::v1::MetricMetadata) -> DecodedSeries {
-    let mut labels = Labels::new();
-    labels.insert("__name__", metadata.metric_family_name.as_str());
-    DecodedSeries {
-        labels,
-        samples: Vec::new(),
-        histograms: Vec::new(),
-        exemplars: Vec::new(),
-        metadata: Some(DecodedMetadata {
-            metric_family_name: metadata.metric_family_name,
-            metric_type: metadata_type(metadata.r#type),
-            help: metadata.help,
-            unit: metadata.unit,
-        }),
-    }
-}
-
-fn metadata_type(value: i32) -> String {
-    match pb::v1::metric_metadata::MetricType::try_from(value) {
-        Ok(pb::v1::metric_metadata::MetricType::Counter) => "counter",
-        Ok(pb::v1::metric_metadata::MetricType::Gauge) => "gauge",
-        Ok(pb::v1::metric_metadata::MetricType::Histogram) => "histogram",
-        Ok(pb::v1::metric_metadata::MetricType::Gaugehistogram) => "gaugehistogram",
-        Ok(pb::v1::metric_metadata::MetricType::Summary) => "summary",
-        Ok(pb::v1::metric_metadata::MetricType::Info) => "info",
-        Ok(pb::v1::metric_metadata::MetricType::Stateset) => "stateset",
-        Ok(pb::v1::metric_metadata::MetricType::Unknown) | Err(_) => "unknown",
-    }
-    .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -209,3 +114,14 @@ mod tests {
         assert!(format!("{err}").contains("duplicate label `job`"));
     }
 }
+
+// === split-modules: generated submodules ===
+mod decode_v1;
+mod labels_from_v1;
+mod metadata_series_from_v1;
+mod metadata_type;
+
+pub use decode_v1::decode_v1;
+use labels_from_v1::labels_from_v1;
+use metadata_series_from_v1::metadata_series_from_v1;
+use metadata_type::metadata_type;

@@ -3,172 +3,6 @@
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 
-/// FNV-1 32-bit hash.
-#[must_use]
-pub fn fnv1_32(bytes: &[u8]) -> u32 {
-    const OFFSET: u32 = 2_166_136_261;
-    const PRIME: u32 = 16_777_619;
-
-    let mut hash = OFFSET;
-    for &b in bytes {
-        hash = hash.wrapping_mul(PRIME);
-        hash ^= u32::from(b);
-    }
-    hash
-}
-
-fn fnv1a_32(bytes: &[u8]) -> u32 {
-    const OFFSET: u32 = 2_166_136_261;
-    const PRIME: u32 = 16_777_619;
-
-    let mut hash = OFFSET;
-    for &b in bytes {
-        hash ^= u32::from(b);
-        hash = hash.wrapping_mul(PRIME);
-    }
-    hash
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct BloomShard {
-    bits: Vec<u64>,
-    num_bits: u64,
-    k: u32,
-}
-
-impl BloomShard {
-    fn new(expected_items: usize, fp_rate: f64) -> Self {
-        let n = expected_items
-            .max(1)
-            .to_f64()
-            .expect("usize is representable as a finite f64");
-        let fp_rate = fp_rate.clamp(0.000_001, 0.5);
-        let m = (-(n * fp_rate.ln()) / (std::f64::consts::LN_2 * std::f64::consts::LN_2))
-            .ceil()
-            .max(64.0);
-        let k = ((m / n) * std::f64::consts::LN_2)
-            .round()
-            .max(1.0)
-            .to_u32()
-            .expect("bounded bloom probe count fits u32");
-        let num_bits = m.to_u64().expect("bounded bloom size fits u64");
-        let words = usize::try_from(num_bits.div_ceil(64)).unwrap_or(usize::MAX);
-        Self {
-            bits: vec![0_u64; words],
-            num_bits,
-            k,
-        }
-    }
-
-    /// Rejects a deserialized shard that would panic on lookup. Such a shard
-    /// has `num_bits == 0`, which is a divide-by-zero in `probes`, or a `bits`
-    /// vector too short to hold every bit position, which is an out-of-bounds
-    /// index in `maybe_contains` or `insert`.
-    fn validate(&self) -> Result<(), String> {
-        if self.num_bits == 0 {
-            return Err("bloom shard num_bits must be non-zero".into());
-        }
-        let required_words = usize::try_from(self.num_bits.div_ceil(64)).unwrap_or(usize::MAX);
-        if self.bits.len() < required_words {
-            return Err(format!(
-                "bloom shard bits too short: have {}, need {required_words}",
-                self.bits.len()
-            ));
-        }
-        Ok(())
-    }
-
-    fn probes(&self, trace_id: &[u8; 16]) -> impl Iterator<Item = u64> + '_ {
-        let h1 = u64::from(fnv1_32(trace_id));
-        let h2 = u64::from(fnv1a_32(trace_id)) | 1;
-        let num_bits = self.num_bits;
-        (0..u64::from(self.k)).map(move |i| h1.wrapping_add(i.wrapping_mul(h2)) % num_bits)
-    }
-
-    fn insert(&mut self, trace_id: &[u8; 16]) {
-        let probes: Vec<u64> = self.probes(trace_id).collect();
-        for bit in probes {
-            self.bits[(bit / 64) as usize] |= 1_u64 << (bit % 64);
-        }
-    }
-
-    fn maybe_contains(&self, trace_id: &[u8; 16]) -> bool {
-        self.probes(trace_id)
-            .all(|bit| self.bits[(bit / 64) as usize] & (1_u64 << (bit % 64)) != 0)
-    }
-}
-
-/// Sharded trace-id bloom filter.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ShardedTraceBloom {
-    shards: Vec<BloomShard>,
-}
-
-impl ShardedTraceBloom {
-    #[must_use]
-    pub fn new(shard_count: usize, expected_items_per_shard: usize, fp_rate: f64) -> Self {
-        let shard_count = shard_count.max(1);
-        Self {
-            shards: (0..shard_count)
-                .map(|_| BloomShard::new(expected_items_per_shard, fp_rate))
-                .collect(),
-        }
-    }
-
-    #[must_use]
-    pub fn with_tempo_defaults(expected_items: usize) -> Self {
-        const ITEMS_PER_100_KIB_SHARD: usize = 85_000;
-        let shard_count = expected_items.div_ceil(ITEMS_PER_100_KIB_SHARD).max(1);
-        let per_shard = expected_items.div_ceil(shard_count).max(1);
-        Self::new(shard_count, per_shard, 0.01)
-    }
-
-    #[must_use]
-    pub fn match_all_with_tempo_defaults() -> Self {
-        let mut bloom = Self::with_tempo_defaults(1);
-        for shard in &mut bloom.shards {
-            shard.bits.fill(u64::MAX);
-        }
-        bloom
-    }
-
-    /// Validates the invariants that constructors enforce but `Deserialize`
-    /// bypasses, so a corrupt snapshot errors at load time and does not panic
-    /// on the first lookup.
-    ///
-    /// The method rejects an empty `shards` vector, which would divide by zero
-    /// in [`Self::shard_of`], and any structurally invalid shard.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message describing the first invariant violated.
-    pub fn validate(&self) -> Result<(), String> {
-        if self.shards.is_empty() {
-            return Err("bloom must have at least one shard".into());
-        }
-        for shard in &self.shards {
-            shard.validate()?;
-        }
-        Ok(())
-    }
-
-    #[must_use]
-    pub fn shard_of(&self, trace_id: &[u8; 16]) -> usize {
-        (fnv1_32(trace_id) as usize) % self.shards.len()
-    }
-
-    pub fn insert(&mut self, trace_id: &[u8; 16]) {
-        let shard = self.shard_of(trace_id);
-        self.shards[shard].insert(trace_id);
-    }
-
-    #[must_use]
-    pub fn maybe_contains(&self, trace_id: &[u8; 16]) -> bool {
-        let shard = self.shard_of(trace_id);
-        self.shards[shard].maybe_contains(trace_id)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -333,3 +167,14 @@ mod tests {
         }
     }
 }
+
+// === split-modules: generated submodules ===
+mod bloom_shard;
+mod fnv1_32;
+mod fnv1a_32;
+mod sharded_trace_bloom;
+
+use bloom_shard::BloomShard;
+pub use fnv1_32::fnv1_32;
+use fnv1a_32::fnv1a_32;
+pub use sharded_trace_bloom::ShardedTraceBloom;

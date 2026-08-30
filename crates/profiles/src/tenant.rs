@@ -7,78 +7,6 @@
 
 use crate::error::ProfilesError;
 
-/// Maximum tenant id length in bytes.
-const MAX_TENANT_LEN: usize = 150;
-
-/// The default tenant used when no `X-Scope-OrgID` header is supplied.
-pub const ANONYMOUS_TENANT: &str = "anonymous";
-
-/// Returns `true` if `byte` is an allowed tenant character.
-///
-/// Allowed: `A-Z a-z 0-9` and the punctuation `! _ * ' ( ) - .`.
-fn is_allowed_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(byte, b'!' | b'_' | b'*' | b'\'' | b'(' | b')' | b'-' | b'.')
-}
-
-/// Validate a raw tenant id against the Mimir/Pyroscope charset.
-///
-/// Rejects the following, each with a generic message:
-/// - leading or trailing ASCII whitespace (no silent trim),
-/// - the empty string,
-/// - ids longer than 150 bytes,
-/// - the exact segments `"."` and `".."`,
-/// - any `/`, `\`, ASCII control byte (`< 0x20` or `0x7f`), or any byte
-///   outside the allowed charset.
-///
-/// On success returns the owned, validated id.
-///
-/// # Errors
-///
-/// Returns [`ProfilesError::Invalid`] when `raw` violates any of the rules
-/// above.
-pub fn validate_tenant(raw: &str) -> Result<String, ProfilesError> {
-    let invalid = || ProfilesError::Invalid("invalid tenant id".to_string());
-
-    if raw.is_empty() {
-        return Err(invalid());
-    }
-    // No silent trim: reject leading/trailing ASCII whitespace outright.
-    if raw.starts_with(|c: char| c.is_ascii_whitespace())
-        || raw.ends_with(|c: char| c.is_ascii_whitespace())
-    {
-        return Err(invalid());
-    }
-    if raw.len() > MAX_TENANT_LEN {
-        return Err(invalid());
-    }
-    if raw == "." || raw == ".." {
-        return Err(invalid());
-    }
-    if !raw.bytes().all(is_allowed_byte) {
-        return Err(invalid());
-    }
-
-    Ok(raw.to_string())
-}
-
-/// Resolve a tenant id from an optional header value.
-///
-/// Returns the [`ANONYMOUS_TENANT`] default when `value` is `None` or an empty
-/// string. The caller signals a non-UTF-8 header by passing `None`. For a
-/// present, non-empty value, [`validate_tenant`] validates the id.
-///
-/// # Errors
-///
-/// Returns [`ProfilesError::Invalid`] when a present, non-empty value fails
-/// [`validate_tenant`].
-pub fn tenant_from_header(value: Option<&str>) -> Result<String, ProfilesError> {
-    match value {
-        None | Some("") => Ok(ANONYMOUS_TENANT.to_string()),
-        Some(raw) => validate_tenant(raw),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -146,3 +74,16 @@ mod tests {
         check!(validate_tenant("ctl\u{7f}").is_err());
     }
 }
+
+// === split-modules: generated submodules ===
+mod anonymous_tenant;
+mod is_allowed_byte;
+mod max_tenant_len;
+mod tenant_from_header;
+mod validate_tenant;
+
+pub use anonymous_tenant::ANONYMOUS_TENANT;
+use is_allowed_byte::is_allowed_byte;
+use max_tenant_len::MAX_TENANT_LEN;
+pub use tenant_from_header::tenant_from_header;
+pub use validate_tenant::validate_tenant;

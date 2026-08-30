@@ -1,69 +1,13 @@
 use crate::{
     Arc, ErrorKind, FsPath, LokiRuleStoreError, LokiRuleTenants, Mutex, PathBuf, SharedLokiRules,
 };
-impl SharedLokiRules {
-    pub(crate) fn from_data_root(root: impl AsRef<FsPath>) -> Result<Self, LokiRuleStoreError> {
-        let path = loki_ruler_rules_path(root.as_ref());
-        Ok(Self {
-            tenants: Arc::new(Mutex::new(read_loki_rule_tenants(&path)?)),
-            storage_path: Some(Arc::new(path)),
-        })
-    }
 
-    pub(crate) fn persist_snapshot(
-        &self,
-        tenants: &LokiRuleTenants,
-    ) -> Result<(), LokiRuleStoreError> {
-        let Some(path) = &self.storage_path else {
-            return Ok(());
-        };
-        write_loki_rule_tenants(path, tenants)
-    }
-}
+// === split-modules: generated submodules ===
+mod loki_ruler_rules_path;
+mod read_loki_rule_tenants;
+mod shared_loki_rules;
+mod write_loki_rule_tenants;
 
-pub(crate) fn loki_ruler_rules_path(root: &FsPath) -> PathBuf {
-    root.join("loki-ruler-rules.json")
-}
-
-pub(crate) fn read_loki_rule_tenants(path: &FsPath) -> Result<LokiRuleTenants, LokiRuleStoreError> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(source) if source.kind() == ErrorKind::NotFound => return Ok(LokiRuleTenants::new()),
-        Err(source) => {
-            return Err(LokiRuleStoreError::Io {
-                path: path.to_path_buf(),
-                source,
-            });
-        }
-    };
-    serde_json::from_slice(&bytes).map_err(|source| LokiRuleStoreError::Json {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-pub(crate) fn write_loki_rule_tenants(
-    path: &FsPath,
-    tenants: &LokiRuleTenants,
-) -> Result<(), LokiRuleStoreError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| LokiRuleStoreError::Io {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    let tmp_path = path.with_file_name(".loki-ruler-rules.json.tmp");
-    let payload =
-        serde_json::to_vec_pretty(tenants).map_err(|source| LokiRuleStoreError::Json {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    std::fs::write(&tmp_path, payload).map_err(|source| LokiRuleStoreError::Io {
-        path: tmp_path.clone(),
-        source,
-    })?;
-    std::fs::rename(&tmp_path, path).map_err(|source| LokiRuleStoreError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
-}
+pub (crate) use loki_ruler_rules_path::loki_ruler_rules_path;
+pub (crate) use read_loki_rule_tenants::read_loki_rule_tenants;
+pub (crate) use write_loki_rule_tenants::write_loki_rule_tenants;

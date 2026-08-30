@@ -4,89 +4,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::labels::SeriesFingerprint;
 
-/// Synthetic label that names the active query shard (`N_of_M`).
-///
-/// Krabka's sharding is an internal scheme over the FNV
-/// [`SeriesFingerprint`]. See [`QueryShardSelector::matches`]. It is
-/// self-consistent but not byte-compatible with Mimir's stable label-hash
-/// sharding, so this label is internal-only and must not cross the
-/// Mimir-facing wire boundary.
-pub const QUERY_SHARD_LABEL: &str = "__query_shard__";
-
-/// Matcher operator.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MatchOp {
-    /// `name="value"`
-    Eq,
-    /// `name!="value"`
-    Neq,
-    /// `name=~"regex"`
-    Re,
-    /// `name!~"regex"`
-    Nre,
-}
-
-/// A single label matcher.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LabelMatcher {
-    pub name: String,
-    pub op: MatchOp,
-    pub value: String,
-}
-
-impl LabelMatcher {
-    #[must_use]
-    pub fn new(name: impl Into<String>, op: MatchOp, value: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            op,
-            value: value.into(),
-        }
-    }
-}
-
-/// Parsed `N_of_M` Mimir query shard selector.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct QueryShardSelector {
-    pub index: usize,
-    pub total: usize,
-}
-
-impl QueryShardSelector {
-    /// Whether series fingerprint `fp` falls in this shard.
-    ///
-    /// This shards on the crate's internal FNV [`SeriesFingerprint`], a
-    /// 0-based remap of Mimir's 1-based `N_of_M`. It is self-consistent within
-    /// Krabka, but it is **not** byte-compatible with Mimir's stable
-    /// label-hash sharding, which hashes the label set with a different
-    /// algorithm, so `__query_shard__` is an internal-only sharding scheme.
-    /// It must never be exposed to, nor accepted from, a real Mimir
-    /// client, because the shard boundaries would not agree across the two
-    /// systems.
-    #[must_use]
-    pub fn matches(self, fp: SeriesFingerprint) -> bool {
-        fp % self.total as u64 == (self.index - 1) as u64
-    }
-}
-
-/// # Errors
-/// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-pub fn parse_query_shard_selector(value: &str) -> Result<QueryShardSelector, String> {
-    let Some((index, total)) = value.split_once("_of_") else {
-        return Err(format!("invalid query shard selector `{value}`"));
-    };
-    let index = index
-        .parse::<usize>()
-        .map_err(|_| format!("invalid query shard selector `{value}`"))?;
-    let total = total
-        .parse::<usize>()
-        .map_err(|_| format!("invalid query shard selector `{value}`"))?;
-    if index == 0 || total == 0 || index > total {
-        return Err(format!("invalid query shard selector `{value}`"));
-    }
-    Ok(QueryShardSelector { index, total })
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -113,3 +30,16 @@ mod tests {
         }
     }
 }
+
+// === split-modules: generated submodules ===
+mod label_matcher;
+mod match_op;
+mod parse_query_shard_selector;
+mod query_shard_label;
+mod query_shard_selector;
+
+pub use label_matcher::LabelMatcher;
+pub use match_op::MatchOp;
+pub use parse_query_shard_selector::parse_query_shard_selector;
+pub use query_shard_label::QUERY_SHARD_LABEL;
+pub use query_shard_selector::QueryShardSelector;

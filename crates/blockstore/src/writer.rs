@@ -18,172 +18,6 @@ use crate::{
     labels::SeriesFingerprint,
 };
 
-/// Columns used to summarize a block's time bounds and distinct identity keys.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SummaryColumns {
-    pub id_col: String,
-    pub ts_col: String,
-}
-
-impl SummaryColumns {
-    #[must_use]
-    pub fn new(id_col: impl Into<String>, ts_col: impl Into<String>) -> Self {
-        Self {
-            id_col: id_col.into(),
-            ts_col: ts_col.into(),
-        }
-    }
-
-    #[must_use]
-    pub fn series() -> Self {
-        Self::new(COL_FINGERPRINT, COL_TIMESTAMP)
-    }
-}
-
-/// Writes Parquet blocks to an object store.
-pub struct BlockWriter {
-    store: Arc<dyn ObjectStore>,
-}
-
-impl BlockWriter {
-    #[must_use]
-    pub fn new(store: Arc<dyn ObjectStore>) -> Self {
-        Self { store }
-    }
-
-    /// Writes `batches` as a single Parquet block at `object_key`.
-    ///
-    /// Returns [`BlockMeta`] computed from the mandatory block columns.
-    ///
-    /// # Errors
-    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-    pub async fn write_block(
-        &self,
-        tenant: &str,
-        object_key: &str,
-        schema: SchemaRef,
-        batches: &[RecordBatch],
-    ) -> Result<BlockMeta> {
-        self.write_block_with_decl(
-            tenant,
-            object_key,
-            schema,
-            batches,
-            &series_block_schema(),
-            SummaryColumns::series(),
-        )
-        .await
-    }
-
-    /// Writes a block validated against a signal-specific schema declaration.
-    ///
-    /// Returns [`BlockMeta`] computed from the declared summary columns.
-    #[instrument(
-        skip_all,
-        fields(tenant = %tenant, object_key = %object_key, batches = batches.len()),
-        err
-    )]
-    /// # Errors
-    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-    pub async fn write_block_with_decl(
-        &self,
-        tenant: &str,
-        object_key: &str,
-        schema: SchemaRef,
-        batches: &[RecordBatch],
-        decl: &BlockSchema,
-        summary: SummaryColumns,
-    ) -> Result<BlockMeta> {
-        validate_against(&schema, decl)?;
-        validate_batch_schemas(&schema, batches)?;
-
-        let (min_ts, max_ts, row_count, fingerprints) = summarize(batches, &summary)?;
-
-        let path = Path::from(object_key);
-        let object_writer = BufWriter::new(self.store.clone(), path);
-        let mut writer = AsyncArrowWriter::try_new(object_writer, schema, None)?;
-        for batch in batches {
-            writer.write(batch).await?;
-        }
-        writer.close().await?;
-
-        Ok(BlockMeta {
-            tenant: tenant.to_string(),
-            object_key: object_key.to_string(),
-            min_ts,
-            max_ts,
-            row_count,
-            fingerprints,
-        })
-    }
-}
-
-fn validate_batch_schemas(schema: &SchemaRef, batches: &[RecordBatch]) -> Result<()> {
-    for (index, batch) in batches.iter().enumerate() {
-        if batch.schema().as_ref() != schema.as_ref() {
-            return Err(BlockStoreError::InvalidBlock(format!(
-                "batch {index} schema does not match writer schema"
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn summarize(
-    batches: &[RecordBatch],
-    summary: &SummaryColumns,
-) -> Result<(i64, i64, usize, Vec<SeriesFingerprint>)> {
-    let mut min_ts = i64::MAX;
-    let mut max_ts = i64::MIN;
-    let mut row_count = 0_usize;
-    let mut fps: BTreeSet<SeriesFingerprint> = BTreeSet::new();
-
-    for batch in batches {
-        row_count += batch.num_rows();
-
-        let ts = batch
-            .column_by_name(&summary.ts_col)
-            .ok_or_else(|| BlockStoreError::InvalidBlock("missing timestamp column".into()))?
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .ok_or_else(|| BlockStoreError::InvalidBlock("timestamp not Int64".into()))?;
-        let id = batch
-            .column_by_name(&summary.id_col)
-            .ok_or_else(|| BlockStoreError::InvalidBlock("missing identity column".into()))?;
-        // Only the series/logs/metrics (`UInt64` fingerprint) path populates
-        // `BlockMeta.fingerprints`; trace (span) blocks key the identity column
-        // as `FixedSizeBinary` and never read `fingerprints`, so we skip the
-        // per-row FNV pass entirely for them. `FixedSizeBinary` is still an
-        // accepted id-column type — we just don't fingerprint it.
-        let id_u64 = id.as_any().downcast_ref::<UInt64Array>();
-        if id_u64.is_none() && id.as_any().downcast_ref::<FixedSizeBinaryArray>().is_none() {
-            return Err(BlockStoreError::InvalidBlock(format!(
-                "`{}` must be UInt64 or FixedSizeBinary",
-                summary.id_col
-            )));
-        }
-
-        for i in 0..batch.num_rows() {
-            if !ts.is_null(i) {
-                let v = ts.value(i);
-                min_ts = min_ts.min(v);
-                max_ts = max_ts.max(v);
-            }
-            if let Some(fp) = id_u64
-                && !fp.is_null(i)
-            {
-                fps.insert(fp.value(i));
-            }
-        }
-    }
-
-    if row_count == 0 {
-        return Err(BlockStoreError::InvalidBlock("empty block".into()));
-    }
-
-    Ok((min_ts, max_ts, row_count, fps.into_iter().collect()))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -325,3 +159,14 @@ mod tests {
         );
     }
 }
+
+// === split-modules: generated submodules ===
+mod block_writer;
+mod summarize;
+mod summary_columns;
+mod validate_batch_schemas;
+
+pub use block_writer::BlockWriter;
+use summarize::summarize;
+pub use summary_columns::SummaryColumns;
+use validate_batch_schemas::validate_batch_schemas;

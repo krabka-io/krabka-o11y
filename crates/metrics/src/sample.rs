@@ -16,59 +16,6 @@ use crate::{
     schema::{COL_FINGERPRINT, COL_TIMESTAMP, float_sample_schema},
 };
 
-const COL_VALUE: &str = "value";
-
-/// Encodes `(fingerprint, timestamp, value)` rows into a `RecordBatch` that
-/// matches [`float_sample_schema`].
-/// # Errors
-/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn encode_float_samples(rows: &[(u64, i64, f64)]) -> Result<RecordBatch, HistogramCodecError> {
-    let mut fingerprints = UInt64Builder::new();
-    let mut timestamps = Int64Builder::new();
-    let mut values = Float64Builder::new();
-
-    for (fingerprint, timestamp, value) in rows {
-        fingerprints.append_value(*fingerprint);
-        timestamps.append_value(*timestamp);
-        values.append_value(*value);
-    }
-
-    let columns: Vec<ArrayRef> = vec![
-        Arc::new(fingerprints.finish()),
-        Arc::new(timestamps.finish()),
-        Arc::new(values.finish()),
-    ];
-
-    Ok(RecordBatch::try_new(float_sample_schema(), columns)?)
-}
-
-/// Decodes a float-sample `RecordBatch` into `(fingerprint, timestamp, value)`
-/// rows.
-/// # Errors
-/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn decode_float_samples(
-    batch: &RecordBatch,
-) -> Result<Vec<(u64, i64, f64)>, HistogramCodecError> {
-    let fingerprints = typed_column::<UInt64Array>(batch, COL_FINGERPRINT)?;
-    let timestamps = typed_column::<Int64Array>(batch, COL_TIMESTAMP)?;
-    let values = typed_column::<Float64Array>(batch, COL_VALUE)?;
-
-    let mut rows = Vec::with_capacity(batch.num_rows());
-    for row in 0..batch.num_rows() {
-        require_non_null(fingerprints, row, COL_FINGERPRINT)?;
-        require_non_null(timestamps, row, COL_TIMESTAMP)?;
-        require_non_null(values, row, COL_VALUE)?;
-
-        rows.push((
-            fingerprints.value(row),
-            timestamps.value(row),
-            values.value(row),
-        ));
-    }
-
-    Ok(rows)
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::assert;
@@ -85,3 +32,12 @@ mod tests {
         assert!(decoded == rows);
     }
 }
+
+// === split-modules: generated submodules ===
+mod col_value;
+mod decode_float_samples;
+mod encode_float_samples;
+
+use col_value::COL_VALUE;
+pub use decode_float_samples::decode_float_samples;
+pub use encode_float_samples::encode_float_samples;

@@ -1,0 +1,9 @@
+use super::*;
+
+pub(crate) fn optional_seconds_param(uri: &Uri, key: &'static str) -> Result<Option<i64>, String> {
+    query_param(uri, key)
+        .map(|value| {
+            parse_seconds_to_ns(&value).ok_or_else(|| format!("invalid query parameter {key}"))
+        })
+        .transpose()
+}

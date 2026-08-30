@@ -10,69 +10,6 @@ use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 use crate::{error::ProfilesError, ingest::RawProfile, wire::pb};
 
-/// Gunzip a gzipped body with an output-size cap.
-///
-/// # Errors
-/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-pub fn gunzip(body: &[u8], max_output: ByteSize) -> Result<Vec<u8>, ProfilesError> {
-    // The read loop compares against buffer lengths, so the cap crosses into
-    // its exact byte count here.
-    let max_output = max_output.bytes_usize();
-    let mut decoder = flate2::read::GzDecoder::new(body);
-    let mut out = Vec::new();
-    let mut buf = [0_u8; 8192];
-
-    loop {
-        let n = decoder
-            .read(&mut buf)
-            .map_err(|e| ProfilesError::Gunzip(e.to_string()))?;
-        if n == 0 {
-            break;
-        }
-        if out.len() + n > max_output {
-            return Err(ProfilesError::TooLarge { limit: max_output });
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-
-    Ok(out)
-}
-
-/// Decode a `push.v1` `PushRequest` into per-(series, sample) `RawProfile`s.
-///
-/// # Errors
-/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-pub fn decode_push(
-    req: &pb::push::v1::PushRequest,
-    max_decompressed: ByteSize,
-) -> Result<Vec<RawProfile>, ProfilesError> {
-    let mut out = Vec::new();
-    for series in &req.series {
-        let mut labels = Labels::new();
-        for label in &series.labels {
-            labels.insert(label.name.clone(), label.value.clone());
-        }
-
-        for sample in &series.samples {
-            let raw = gunzip(&sample.raw_profile, max_decompressed)?;
-            let profile = PprofProfile::decode(&raw)?;
-            let mut labels = labels.clone();
-            if !sample.id.is_empty() {
-                labels.insert("__profile_id__", sample.id.clone());
-            }
-            out.push(RawProfile {
-                labels,
-                profile,
-                delta: false,
-                sample_timestamps_ns: Vec::new(),
-                sample_span_ids: Vec::new(),
-                sample_trace_ids: Vec::new(),
-            });
-        }
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -155,3 +92,10 @@ mod tests {
         assert!(out[0].labels.get("__profile_id__") == Some("profile-a"));
     }
 }
+
+// === split-modules: generated submodules ===
+mod decode_push;
+mod gunzip;
+
+pub use decode_push::decode_push;
+pub use gunzip::gunzip;

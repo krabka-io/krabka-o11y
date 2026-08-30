@@ -9,338 +9,6 @@ use crate::metricsgen::{
     sink::{RemoteWriteSink, SinkError},
 };
 
-/// Flat `remote_write` row, neutral to the encoder.
-#[derive(Clone, Debug, PartialEq)]
-pub struct WireTimeSeries {
-    pub labels: Vec<(String, String)>,
-    pub value: f64,
-    pub timestamp_ms: i64,
-    pub exemplars: Vec<Exemplar>,
-    pub native_histogram: Option<NativeHistogram>,
-}
-
-#[must_use]
-pub fn le_label(le_seconds: f64) -> String {
-    if le_seconds.is_infinite() {
-        "+Inf".to_string()
-    } else {
-        le_seconds.to_string()
-    }
-}
-
-#[must_use]
-pub fn to_timeseries(series: &[Series]) -> Vec<WireTimeSeries> {
-    let mut out = Vec::new();
-    for s in series {
-        match &s.sample {
-            SeriesSample::Counter(value) | SeriesSample::Gauge(value) => {
-                out.push(WireTimeSeries {
-                    labels: with_name(&s.name, &s.labels),
-                    value: *value,
-                    timestamp_ms: s.timestamp_ms,
-                    exemplars: s.exemplars.clone(),
-                    native_histogram: None,
-                });
-            }
-            SeriesSample::ClassicHistogram {
-                buckets,
-                sum,
-                count,
-            } => {
-                push_classic_histogram(&mut out, s, buckets, *sum, *count);
-            }
-            SeriesSample::NativeHistogram(histogram) => {
-                out.push(WireTimeSeries {
-                    labels: with_name(&s.name, &s.labels),
-                    value: 0.0,
-                    timestamp_ms: s.timestamp_ms,
-                    exemplars: s.exemplars.clone(),
-                    native_histogram: Some(histogram.clone()),
-                });
-            }
-        }
-    }
-    out
-}
-
-fn push_classic_histogram(
-    out: &mut Vec<WireTimeSeries>,
-    s: &Series,
-    buckets: &[(f64, f64)],
-    sum: f64,
-    count: f64,
-) {
-    let bucket_name = format!("{}_bucket", s.name);
-    let mut assigned_exemplars = vec![false; s.exemplars.len()];
-
-    for (le, cumulative) in buckets {
-        let mut labels = s.labels.clone();
-        labels.push(("le".to_string(), le_label(*le)));
-        let exemplars =
-            bucket_exemplars(&s.exemplars, &mut assigned_exemplars, |ex| ex.value <= *le);
-        out.push(WireTimeSeries {
-            labels: with_name(&bucket_name, &labels),
-            value: *cumulative,
-            timestamp_ms: s.timestamp_ms,
-            exemplars,
-            native_histogram: None,
-        });
-    }
-
-    let mut inf_labels = s.labels.clone();
-    inf_labels.push(("le".to_string(), "+Inf".to_string()));
-    let inf_exemplars = bucket_exemplars(&s.exemplars, &mut assigned_exemplars, |_| true);
-    out.push(WireTimeSeries {
-        labels: with_name(&bucket_name, &inf_labels),
-        value: count,
-        timestamp_ms: s.timestamp_ms,
-        exemplars: inf_exemplars,
-        native_histogram: None,
-    });
-    out.push(WireTimeSeries {
-        labels: with_name(&format!("{}_sum", s.name), &s.labels),
-        value: sum,
-        timestamp_ms: s.timestamp_ms,
-        exemplars: Vec::new(),
-        native_histogram: None,
-    });
-    out.push(WireTimeSeries {
-        labels: with_name(&format!("{}_count", s.name), &s.labels),
-        value: count,
-        timestamp_ms: s.timestamp_ms,
-        exemplars: Vec::new(),
-        native_histogram: None,
-    });
-}
-
-fn bucket_exemplars(
-    exemplars: &[Exemplar],
-    assigned: &mut [bool],
-    mut predicate: impl FnMut(&Exemplar) -> bool,
-) -> Vec<Exemplar> {
-    let mut out = Vec::new();
-    for (idx, exemplar) in exemplars.iter().enumerate() {
-        if !assigned[idx] && predicate(exemplar) {
-            assigned[idx] = true;
-            out.push(exemplar.clone());
-        }
-    }
-    out
-}
-
-fn with_name(name: &str, labels: &[(String, String)]) -> Vec<(String, String)> {
-    let mut out = Vec::with_capacity(labels.len() + 1);
-    out.push(("__name__".to_string(), name.to_string()));
-    out.extend(labels.iter().cloned());
-    out.sort();
-    out
-}
-
-/// HTTP client for Prometheus `remote_write`.
-pub struct PrometheusRemoteWriteSink {
-    url: String,
-    http: reqwest::Client,
-}
-
-impl PrometheusRemoteWriteSink {
-    #[must_use]
-    pub fn new(url: impl Into<String>) -> Self {
-        Self {
-            url: url.into(),
-            http: reqwest::Client::new(),
-        }
-    }
-}
-
-#[async_trait]
-impl RemoteWriteSink for PrometheusRemoteWriteSink {
-    async fn write(&self, payload: &SeriesPayload) -> Result<(), SinkError> {
-        let rows = to_timeseries(&payload.series);
-        let body = encode_write_request(&rows).map_err(SinkError::Decode)?;
-        let resp = self
-            .http
-            .post(&self.url)
-            .header("Content-Type", "application/x-protobuf")
-            .header("Content-Encoding", "snappy")
-            .header("X-Prometheus-Remote-Write-Version", "0.1.0")
-            .header("X-Scope-OrgID", &payload.tenant)
-            .body(body)
-            .send()
-            .await
-            .map_err(|err| SinkError::Transport(err.to_string()))?;
-
-        if resp.status().is_success() {
-            Ok(())
-        } else {
-            Err(SinkError::Transport(format!(
-                "remote_write status {}",
-                resp.status()
-            )))
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct WriteRequest {
-    #[prost(message, repeated, tag = "1")]
-    timeseries: Vec<TimeSeries>,
-}
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct TimeSeries {
-    #[prost(message, repeated, tag = "1")]
-    labels: Vec<Label>,
-    #[prost(message, repeated, tag = "2")]
-    samples: Vec<Sample>,
-    #[prost(message, repeated, tag = "3")]
-    exemplars: Vec<RemoteWriteExemplar>,
-    #[prost(message, repeated, tag = "4")]
-    histograms: Vec<Histogram>,
-}
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct Label {
-    #[prost(string, tag = "1")]
-    name: String,
-    #[prost(string, tag = "2")]
-    value: String,
-}
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct Sample {
-    #[prost(double, tag = "1")]
-    value: f64,
-    #[prost(int64, tag = "2")]
-    timestamp: i64,
-}
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct RemoteWriteExemplar {
-    #[prost(message, repeated, tag = "1")]
-    labels: Vec<Label>,
-    #[prost(double, tag = "2")]
-    value: f64,
-    #[prost(int64, tag = "3")]
-    timestamp: i64,
-}
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct RemoteWriteBucketSpan {
-    #[prost(sint32, tag = "1")]
-    offset: i32,
-    #[prost(uint32, tag = "2")]
-    length: u32,
-}
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct Histogram {
-    #[prost(double, tag = "2")]
-    count_float: f64,
-    #[prost(double, tag = "3")]
-    sum: f64,
-    #[prost(sint32, tag = "4")]
-    schema: i32,
-    #[prost(double, tag = "5")]
-    zero_threshold: f64,
-    #[prost(double, tag = "7")]
-    zero_count_float: f64,
-    #[prost(message, repeated, tag = "11")]
-    positive_spans: Vec<RemoteWriteBucketSpan>,
-    #[prost(double, repeated, tag = "13")]
-    positive_counts: Vec<f64>,
-    #[prost(enumeration = "ResetHint", tag = "14")]
-    reset_hint: i32,
-    #[prost(int64, tag = "15")]
-    timestamp: i64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
-#[repr(i32)]
-enum ResetHint {
-    Unknown = 0,
-    Yes = 1,
-    No = 2,
-    Gauge = 3,
-}
-
-fn encode_write_request(rows: &[WireTimeSeries]) -> Result<Vec<u8>, String> {
-    let request = WriteRequest {
-        timeseries: rows
-            .iter()
-            .map(|row| TimeSeries {
-                labels: labels_to_proto(&row.labels),
-                samples: samples_to_proto(row),
-                exemplars: row
-                    .exemplars
-                    .iter()
-                    .map(|exemplar| RemoteWriteExemplar {
-                        labels: labels_to_proto(&exemplar.labels),
-                        value: exemplar.value,
-                        timestamp: exemplar.timestamp_ms,
-                    })
-                    .collect(),
-                histograms: histograms_to_proto(row),
-            })
-            .collect(),
-    };
-
-    let mut protobuf = Vec::with_capacity(request.encoded_len());
-    request
-        .encode(&mut protobuf)
-        .map_err(|err| format!("remote_write pb encode: {err}"))?;
-    snap::raw::Encoder::new()
-        .compress_vec(&protobuf)
-        .map_err(|err| format!("remote_write snappy encode: {err}"))
-}
-
-fn samples_to_proto(row: &WireTimeSeries) -> Vec<Sample> {
-    if row.native_histogram.is_some() {
-        Vec::new()
-    } else {
-        vec![Sample {
-            value: row.value,
-            timestamp: row.timestamp_ms,
-        }]
-    }
-}
-
-fn histograms_to_proto(row: &WireTimeSeries) -> Vec<Histogram> {
-    row.native_histogram
-        .iter()
-        .map(|histogram| Histogram {
-            count_float: histogram.count,
-            sum: histogram.sum,
-            schema: i32::from(histogram.schema),
-            zero_threshold: histogram.zero_threshold,
-            zero_count_float: histogram.zero_count,
-            positive_spans: bucket_spans_to_proto(&histogram.positive_spans),
-            positive_counts: histogram.positive_counts.clone(),
-            reset_hint: ResetHint::No as i32,
-            timestamp: row.timestamp_ms,
-        })
-        .collect()
-}
-
-fn bucket_spans_to_proto(spans: &[BucketSpan]) -> Vec<RemoteWriteBucketSpan> {
-    spans
-        .iter()
-        .map(|span| RemoteWriteBucketSpan {
-            offset: span.offset,
-            length: span.length,
-        })
-        .collect()
-}
-
-fn labels_to_proto(labels: &[(String, String)]) -> Vec<Label> {
-    labels
-        .iter()
-        .map(|(name, value)| Label {
-            name: name.clone(),
-            value: value.clone(),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -652,3 +320,46 @@ mod tests {
         assert2::assert!(le_label(0.008) == "0.008");
     }
 }
+
+// === split-modules: generated submodules ===
+mod bucket_exemplars;
+mod bucket_spans_to_proto;
+mod encode_write_request;
+mod histogram;
+mod histograms_to_proto;
+mod label;
+mod labels_to_proto;
+mod le_label;
+mod prometheus_remote_write_sink;
+mod push_classic_histogram;
+mod remote_write_bucket_span;
+mod remote_write_exemplar;
+mod reset_hint;
+mod sample;
+mod samples_to_proto;
+mod time_series;
+mod to_timeseries;
+mod wire_time_series;
+mod with_name;
+mod write_request;
+
+use bucket_exemplars::bucket_exemplars;
+use bucket_spans_to_proto::bucket_spans_to_proto;
+use encode_write_request::encode_write_request;
+use histogram::Histogram;
+use histograms_to_proto::histograms_to_proto;
+use label::Label;
+use labels_to_proto::labels_to_proto;
+pub use le_label::le_label;
+pub use prometheus_remote_write_sink::PrometheusRemoteWriteSink;
+use push_classic_histogram::push_classic_histogram;
+use remote_write_bucket_span::RemoteWriteBucketSpan;
+use remote_write_exemplar::RemoteWriteExemplar;
+use reset_hint::ResetHint;
+use sample::Sample;
+use samples_to_proto::samples_to_proto;
+use time_series::TimeSeries;
+pub use to_timeseries::to_timeseries;
+pub use wire_time_series::WireTimeSeries;
+use with_name::with_name;
+use write_request::WriteRequest;

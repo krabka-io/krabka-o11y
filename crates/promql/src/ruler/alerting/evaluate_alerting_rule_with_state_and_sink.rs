@@ -1,0 +1,179 @@
+use super::*;
+
+pub(crate) async fn evaluate_alerting_rule_with_state_and_sink<S, A, R>(
+    engine: &PromqlEngine<S>,
+    sink: &A,
+    state_sink: &R,
+    state: &mut RulerAlertState,
+    tenant: &str,
+    rule: &serde_yaml::Value,
+    eval_time_ms: i64,
+) -> Result<usize, PromqlError>
+where
+    S: MetricStore,
+    A: AlertmanagerSink,
+    R: RulerStateSink,
+{
+    let Some(alert_name) = yaml_optional_string(rule, "alert") else {
+        return Ok(0);
+    };
+    let expr = yaml_required_string(rule, "expr")?;
+    let result = engine.query_instant(tenant, &expr, eval_time_ms).await?;
+    let QueryResult::InstantVector(samples) = result else {
+        return Ok(0);
+    };
+
+    let rule_labels = yaml_string_map(rule, "labels");
+    let annotations = yaml_string_map(rule, "annotations");
+    let hold_for = yaml_duration(rule, "for")?;
+    let keep_firing_for = yaml_duration(rule, "keep_firing_for")?;
+    let rule_id = format!("{alert_name}\n{expr}");
+    let mut active_keys = Vec::new();
+    let mut active_records = Vec::new();
+    let mut alerts = Vec::new();
+    for sample in samples {
+        let SampleValue::Float(value) = sample.value else {
+            continue;
+        };
+        let mut labels = labels_to_map(&sample.labels);
+        labels.insert("alertname".to_string(), alert_name.clone());
+        labels.extend(rule_labels.clone());
+        // Expand `$value`/`$labels` in alert label values against the sample's
+        // series labels, matching Prometheus alert templating.
+        let labels = expand_alert_label_map(&labels, value, &sample.labels);
+        let key = AlertStateKey {
+            tenant: tenant.to_string(),
+            rule_id: rule_id.clone(),
+            labels: labels.clone(),
+        };
+        active_keys.push(key.clone());
+        let starts_at_ms = *state
+            .active_since_ms
+            .entry(key.clone())
+            .or_insert(eval_time_ms);
+        if eval_time_ms.saturating_sub(starts_at_ms) < hold_for.millis_i64() {
+            // Still pending: not firing yet, so it cannot be kept firing.
+            state.keep_firing_until_ms.remove(&key);
+            active_records.push(RulerAlertStateRecord {
+                tenant: tenant.to_string(),
+                rule_id: rule_id.clone(),
+                labels: labels.clone(),
+                active_since_ms: Some(starts_at_ms),
+                keep_firing_until_ms: None,
+            });
+            continue;
+        }
+        // Firing: (re)arm the keep-firing deadline so that if the series stops
+        // matching on a later tick the alert keeps firing for `keep_firing_for`.
+        let keep_firing_until_ms = eval_time_ms.saturating_add(keep_firing_for.millis_i64());
+        state.keep_firing_until_ms.insert(key, keep_firing_until_ms);
+        active_records.push(RulerAlertStateRecord {
+            tenant: tenant.to_string(),
+            rule_id: rule_id.clone(),
+            labels: labels.clone(),
+            active_since_ms: Some(starts_at_ms),
+            keep_firing_until_ms: Some(keep_firing_until_ms),
+        });
+        let annotations = expand_alert_label_map(&annotations, value, &sample.labels);
+        alerts.push(AlertmanagerAlert {
+            labels,
+            annotations,
+            starts_at_ms,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        });
+    }
+
+    // Reconcile alert instances whose series stopped matching this tick.
+    //
+    // Prometheus only notifies for instances that previously *fired*: a pending
+    // instance that disappears is dropped silently. A previously-firing instance
+    // is either kept firing (within its `keep_firing_for` window) or resolved
+    // with `EndsAt = eval_time`.
+    let cleared_keys = state
+        .active_since_ms
+        .keys()
+        .filter(|key| key.tenant == tenant && key.rule_id == rule_id && !active_keys.contains(key))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut cleared_records = Vec::new();
+    let mut kept_firing_keys = Vec::new();
+    for key in cleared_keys {
+        match state.keep_firing_until_ms.get(&key).copied() {
+            // Within the keep-firing window: the alert stays firing. Retain its
+            // active state and re-emit it as still-firing (no `EndsAt`).
+            Some(until_ms) if until_ms > eval_time_ms => {
+                let starts_at_ms = state
+                    .active_since_ms
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(eval_time_ms);
+                kept_firing_keys.push(key.clone());
+                active_records.push(RulerAlertStateRecord {
+                    tenant: key.tenant.clone(),
+                    rule_id: key.rule_id.clone(),
+                    labels: key.labels.clone(),
+                    active_since_ms: Some(starts_at_ms),
+                    keep_firing_until_ms: Some(until_ms),
+                });
+                alerts.push(AlertmanagerAlert {
+                    labels: key.labels.clone(),
+                    annotations: BTreeMap::new(),
+                    starts_at_ms,
+                    ends_at_ms: None,
+                    generator_url: String::new(),
+                });
+            }
+            // Had fired and the keep-firing window has elapsed (or was zero):
+            // emit a resolved alert and tombstone the instance.
+            Some(_) => {
+                let starts_at_ms = state
+                    .active_since_ms
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(eval_time_ms);
+                state.keep_firing_until_ms.remove(&key);
+                cleared_records.push(RulerAlertStateRecord {
+                    tenant: key.tenant.clone(),
+                    rule_id: key.rule_id.clone(),
+                    labels: key.labels.clone(),
+                    active_since_ms: None,
+                    keep_firing_until_ms: None,
+                });
+                alerts.push(AlertmanagerAlert {
+                    labels: key.labels.clone(),
+                    annotations: BTreeMap::new(),
+                    starts_at_ms,
+                    ends_at_ms: Some(eval_time_ms),
+                    generator_url: String::new(),
+                });
+            }
+            // Only ever pending: drop silently, no notification.
+            None => {
+                cleared_records.push(RulerAlertStateRecord {
+                    tenant: key.tenant.clone(),
+                    rule_id: key.rule_id.clone(),
+                    labels: key.labels.clone(),
+                    active_since_ms: None,
+                    keep_firing_until_ms: None,
+                });
+            }
+        }
+    }
+    for record in active_records.into_iter().chain(cleared_records) {
+        state_sink.persist_ruler_alert_state(record).await?;
+    }
+    // Retain the active instances plus any instance still inside its keep-firing
+    // window; tombstone everything else for this rule.
+    state.active_since_ms.retain(|key, _| {
+        key.tenant != tenant
+            || key.rule_id != rule_id
+            || active_keys.contains(key)
+            || kept_firing_keys.contains(key)
+    });
+    let count = alerts.len();
+    if count > 0 {
+        sink.dispatch_alerts(alerts).await?;
+    }
+    Ok(count)
+}

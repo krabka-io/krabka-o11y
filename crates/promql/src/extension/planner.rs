@@ -33,131 +33,6 @@ use crate::functions::{
     register_scalar_math_udfs,
 };
 
-/// Maps the custom `PromQL` logical nodes to their physical `Exec` nodes.
-#[derive(Debug, Default)]
-pub struct PromExtensionPlanner;
-
-#[async_trait]
-impl ExtensionPlanner for PromExtensionPlanner {
-    async fn plan_extension(
-        &self,
-        _planner: &dyn PhysicalPlanner,
-        node: &dyn UserDefinedLogicalNode,
-        _logical_inputs: &[&LogicalPlan],
-        physical_inputs: &[Arc<dyn ExecutionPlan>],
-        _session: &dyn Session,
-        _planning_ctx: &PhysicalPlanningContext,
-    ) -> DfResult<Option<Arc<dyn ExecutionPlan>>> {
-        let any = node.as_any();
-        if let Some(divide) = any.downcast_ref::<SeriesDivide>() {
-            let input = single_input(physical_inputs)?;
-            return Ok(Some(Arc::new(SeriesDivideExec::new(
-                divide.tag_columns.clone(),
-                input,
-            ))));
-        }
-        if let Some(normalize) = any.downcast_ref::<SeriesNormalize>() {
-            let input = single_input(physical_inputs)?;
-            return Ok(Some(Arc::new(SeriesNormalizeExec::new(
-                normalize.offset_ms,
-                normalize.time_index.clone(),
-                normalize.need_filter_out_nan,
-                input,
-            ))));
-        }
-        if let Some(instant) = any.downcast_ref::<InstantManipulate>() {
-            let input = single_input(physical_inputs)?;
-            return Ok(Some(Arc::new(InstantManipulateExec::new(
-                instant.start_ms,
-                instant.end_ms,
-                instant.step_ms,
-                instant.lookback_delta_ms,
-                instant.time_index.clone(),
-                instant.field_column.clone(),
-                input,
-            ))));
-        }
-        if let Some(range) = any.downcast_ref::<RangeManipulate>() {
-            let input = single_input(physical_inputs)?;
-            return Ok(Some(Arc::new(RangeManipulateExec::new(
-                range.start_ms,
-                range.end_ms,
-                range.interval_ms,
-                range.range_ms,
-                range.time_index.clone(),
-                range.field_column.clone(),
-                input,
-            ))));
-        }
-        Ok(None)
-    }
-}
-
-fn single_input(physical_inputs: &[Arc<dyn ExecutionPlan>]) -> DfResult<Arc<dyn ExecutionPlan>> {
-    match physical_inputs {
-        [input] => Ok(Arc::clone(input)),
-        _ => Err(datafusion::error::DataFusionError::Plan(
-            "PromQL operator node expects exactly one input".to_string(),
-        )),
-    }
-}
-
-/// Query planner that adds the custom `PromQL` operator nodes to the default
-/// physical planner.
-#[derive(Debug, Default)]
-struct PromQueryPlanner;
-
-#[async_trait]
-impl QueryPlanner for PromQueryPlanner {
-    async fn create_physical_plan(
-        &self,
-        logical_plan: &LogicalPlan,
-        session: &dyn Session,
-    ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        let physical_planner =
-            DefaultPhysicalPlanner::with_extension_planners(vec![Arc::new(PromExtensionPlanner)]);
-        physical_planner
-            .create_physical_plan(logical_plan, session)
-            .await
-    }
-}
-
-/// Builds a [`SessionContext`] for the custom `PromQL` operator nodes.
-///
-/// The physical planner of the returned context handles [`SeriesDivide`],
-/// [`SeriesNormalize`], [`InstantManipulate`], and [`RangeManipulate`]. Its
-/// function registry holds the rate-family, `*_over_time`, and per-row
-/// scalar-math `ScalarUDF`s. The registry also holds the NaN-ignoring
-/// `prom_min` and `prom_max` aggregate UDAFs. A range-function, scalar-math, or
-/// `min`/`max` aggregation can then lower onto them.
-#[must_use]
-pub fn prom_session_context() -> SessionContext {
-    // Pin single-partition execution. The custom PromQL operator chain
-    // ([`SeriesNormalize`] / [`SeriesDivide`] / [`InstantManipulate`] /
-    // [`RangeManipulate`]) assumes its input arrives as one ordered partition
-    // (each series contiguous, sorted by fingerprint then timestamp). With the
-    // default `target_partitions` = CPU count, DataFusion's `EnforceDistribution`
-    // rule inserts a repartition ahead of the operator chain / aggregate that
-    // scatters a series across partitions, silently producing wrong results —
-    // reproduced deterministically at `target_partitions` in `2..=6` (e.g.
-    // `COUNT(m) BY (job)` collapsing 4 series to 2 on the 2-4 core CI runners,
-    // while a high-core dev box at 32 partitions happens to dodge it). Per-query
-    // parallelism comes from the query-frontend's shard fan-out, not from
-    // DataFusion intra-query partitioning, so pinning one partition costs nothing.
-    let config = datafusion::prelude::SessionConfig::new().with_target_partitions(1);
-    let state = SessionStateBuilder::new()
-        .with_config(config)
-        .with_default_features()
-        .with_query_planner(Arc::new(PromQueryPlanner))
-        .build();
-    let ctx = SessionContext::new_with_state(state);
-    register_rate_udfs(&ctx);
-    register_over_time_udfs(&ctx);
-    register_scalar_math_udfs(&ctx);
-    register_aggregate_udafs(&ctx);
-    ctx
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -265,3 +140,14 @@ mod tests {
         assert2::assert!(got == vec![("a".to_string(), 2.0), ("b".to_string(), 20.0)]);
     }
 }
+
+// === split-modules: generated submodules ===
+mod prom_extension_planner;
+mod prom_query_planner;
+mod prom_session_context;
+mod single_input;
+
+pub use prom_extension_planner::PromExtensionPlanner;
+use prom_query_planner::PromQueryPlanner;
+pub use prom_session_context::prom_session_context;
+use single_input::single_input;

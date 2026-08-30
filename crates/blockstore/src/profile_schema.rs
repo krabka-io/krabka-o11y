@@ -14,56 +14,6 @@ use crate::{
     block_index::{BlockSchema, RequiredColumn},
 };
 
-/// The 5-part `name:sample_type:sample_unit:period_type:period_unit` string.
-pub const PCOL_PROFILE_TYPE: &str = "profile_type";
-/// Leaf-node index into the symbol-DB partition's parent-pointer tree.
-pub const PCOL_STACKTRACE_ID: &str = "stacktrace_id";
-/// The sample value for this profile type.
-pub const PCOL_VALUE: &str = "value";
-/// Which symbol-DB partition resolves this stacktrace id.
-pub const PCOL_STACKTRACE_PARTITION: &str = "stacktrace_partition";
-/// Precomputed per-profile total.
-pub const PCOL_TOTAL_VALUE: &str = "total_value";
-/// Optional span association.
-pub const PCOL_SPAN_ID: &str = "span_id";
-/// Optional trace association.
-pub const PCOL_TRACE_ID: &str = "trace_id";
-
-fn profile_type_dict() -> DataType {
-    DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))
-}
-
-#[must_use]
-pub fn profile_samples_schema() -> SchemaRef {
-    Arc::new(Schema::new(vec![
-        Field::new(COL_FINGERPRINT, DataType::UInt64, false),
-        Field::new(COL_TIMESTAMP, DataType::Int64, false),
-        Field::new(PCOL_PROFILE_TYPE, profile_type_dict(), false),
-        Field::new(PCOL_STACKTRACE_ID, DataType::UInt64, false),
-        Field::new(PCOL_VALUE, DataType::Int64, false),
-        Field::new(PCOL_STACKTRACE_PARTITION, DataType::UInt64, false),
-        Field::new(PCOL_TOTAL_VALUE, DataType::Int64, false),
-        Field::new(PCOL_SPAN_ID, DataType::UInt64, true),
-        Field::new(PCOL_TRACE_ID, DataType::Binary, true),
-    ]))
-}
-
-#[must_use]
-pub fn profile_samples_decl() -> BlockSchema {
-    BlockSchema {
-        required: vec![
-            RequiredColumn::new(COL_FINGERPRINT, DataType::UInt64, false),
-            RequiredColumn::new(PCOL_PROFILE_TYPE, profile_type_dict(), false),
-            RequiredColumn::new(COL_TIMESTAMP, DataType::Int64, false),
-        ],
-        sort_key: vec![
-            COL_FINGERPRINT.to_string(),
-            PCOL_PROFILE_TYPE.to_string(),
-            COL_TIMESTAMP.to_string(),
-        ],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use arrow::datatypes::DataType;
@@ -171,3 +121,26 @@ mod tests {
         );
     }
 }
+
+// === split-modules: generated submodules ===
+mod pcol_profile_type;
+mod pcol_span_id;
+mod pcol_stacktrace_id;
+mod pcol_stacktrace_partition;
+mod pcol_total_value;
+mod pcol_trace_id;
+mod pcol_value;
+mod profile_samples_decl;
+mod profile_samples_schema;
+mod profile_type_dict;
+
+pub use pcol_profile_type::PCOL_PROFILE_TYPE;
+pub use pcol_span_id::PCOL_SPAN_ID;
+pub use pcol_stacktrace_id::PCOL_STACKTRACE_ID;
+pub use pcol_stacktrace_partition::PCOL_STACKTRACE_PARTITION;
+pub use pcol_total_value::PCOL_TOTAL_VALUE;
+pub use pcol_trace_id::PCOL_TRACE_ID;
+pub use pcol_value::PCOL_VALUE;
+pub use profile_samples_decl::profile_samples_decl;
+pub use profile_samples_schema::profile_samples_schema;
+use profile_type_dict::profile_type_dict;

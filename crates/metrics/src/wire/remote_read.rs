@@ -10,116 +10,6 @@ use thiserror::Error;
 
 use crate::wire::{decoded::snappy_block_decode_raw, pb::v1};
 
-/// Default decompressed-body cap for a `remote_read` request when the caller
-/// supplies no cap. It mirrors the distributor's ingest default, so a single
-/// `read` request cannot decompress to an unbounded allocation.
-pub const DEFAULT_MAX_READ_DECOMPRESSED: ByteSize = mebibytes(32);
-
-#[derive(Debug, Error)]
-pub enum RemoteReadError {
-    #[error("snappy decode failed: {0}")]
-    SnappyDecode(String),
-    #[error("snappy decoded body exceeds max_output={0}")]
-    SnappyOutputTooLarge(usize),
-    #[error("snappy encode failed: {0}")]
-    SnappyEncode(String),
-    #[error("protobuf decode failed: {0}")]
-    Decode(String),
-    #[error("protobuf encode failed: {0}")]
-    Encode(String),
-    #[error("unsupported remote_read matcher type {0}")]
-    UnsupportedMatcher(i32),
-}
-
-// cargo-mutants: covered by remote_read decode round-trip and snappy limit tests.
-#[cfg_attr(test, mutants::skip)]
-/// # Errors
-/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn decode_read_request(
-    snappy_body: &[u8],
-    max_output: ByteSize,
-) -> Result<v1::ReadRequest, RemoteReadError> {
-    let raw = snappy_block_decode_raw(
-        snappy_body,
-        max_output.bytes_usize(),
-        RemoteReadError::SnappyDecode,
-        RemoteReadError::SnappyOutputTooLarge,
-    )?;
-    v1::ReadRequest::decode(raw.as_slice())
-        .map_err(|error| RemoteReadError::Decode(error.to_string()))
-}
-
-/// # Errors
-/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn encode_read_response(response: &v1::ReadResponse) -> Result<Vec<u8>, RemoteReadError> {
-    let mut raw = Vec::with_capacity(response.encoded_len());
-    response
-        .encode(&mut raw)
-        .map_err(|error| RemoteReadError::Encode(error.to_string()))?;
-    snap::raw::Encoder::new()
-        .compress_vec(&raw)
-        .map_err(|error| RemoteReadError::SnappyEncode(error.to_string()))
-}
-
-/// # Errors
-/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn matchers_to_selectors(
-    query: &v1::Query,
-) -> Result<(Vec<LabelMatcher>, i64, i64), RemoteReadError> {
-    let selectors = query
-        .matchers
-        .iter()
-        .map(|matcher| {
-            let op = match matcher.r#type {
-                0 => MatchOp::Eq,
-                1 => MatchOp::Neq,
-                2 => MatchOp::Re,
-                3 => MatchOp::Nre,
-                other => return Err(RemoteReadError::UnsupportedMatcher(other)),
-            };
-            Ok(LabelMatcher::new(&matcher.name, op, &matcher.value))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((selectors, query.start_timestamp_ms, query.end_timestamp_ms))
-}
-
-#[must_use]
-pub fn series_to_timeseries(series: Vec<(Labels, Vec<(i64, f64)>)>) -> v1::QueryResult {
-    let mut timeseries = series
-        .into_iter()
-        .map(|(labels, samples)| {
-            let mut labels = labels
-                .iter()
-                .map(|(name, value)| v1::Label {
-                    name: name.clone(),
-                    value: value.clone(),
-                })
-                .collect::<Vec<_>>();
-            labels.sort_by(|left, right| left.name.cmp(&right.name));
-
-            let mut samples = samples
-                .into_iter()
-                .map(|(timestamp, value)| v1::Sample { value, timestamp })
-                .collect::<Vec<_>>();
-            samples.sort_by_key(|sample| sample.timestamp);
-
-            v1::TimeSeries {
-                labels,
-                samples,
-                exemplars: Vec::new(),
-                histograms: Vec::new(),
-            }
-        })
-        .collect::<Vec<_>>();
-    timeseries.sort_by(|left, right| {
-        left.labels
-            .iter()
-            .map(|label| (&label.name, &label.value))
-            .cmp(right.labels.iter().map(|label| (&label.name, &label.value)))
-    });
-    v1::QueryResult { timeseries }
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
@@ -222,3 +112,18 @@ mod tests {
         assert!(decoded.results[0].timeseries[0].samples[0].timestamp == 42);
     }
 }
+
+// === split-modules: generated submodules ===
+mod decode_read_request;
+mod default_max_read_decompressed;
+mod encode_read_response;
+mod matchers_to_selectors;
+mod remote_read_error;
+mod series_to_timeseries;
+
+# [cfg_attr (test , mutants :: skip)] pub use decode_read_request::decode_read_request;
+pub use default_max_read_decompressed::DEFAULT_MAX_READ_DECOMPRESSED;
+pub use encode_read_response::encode_read_response;
+pub use matchers_to_selectors::matchers_to_selectors;
+pub use remote_read_error::RemoteReadError;
+pub use series_to_timeseries::series_to_timeseries;
