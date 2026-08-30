@@ -1,3 +1,5 @@
+use krabka_units::convert::StdDurationExt;
+
 use crate::{
     ActiveLogDeleteFilterError, BTreeMap, BTreeSet, BlockDescriptor, BlockIndex, BlockKey,
     BlockStoreError, CompactorRunError, Error, ErrorKind, FsPath, Instant, KafkaWalRecord,
@@ -13,7 +15,6 @@ use crate::{
     write_tenant_log_index_shard_catalog_to_object_store,
     write_tenant_log_index_shard_to_object_store,
 };
-use krabka_units::convert::StdDurationExt;
 pub(crate) async fn poll_accumulated_log_compaction_records(
     consumer: &mut (impl LogWalConsumer + ?Sized),
     initial_timeout: Time,

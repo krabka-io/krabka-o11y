@@ -1,7 +1,6 @@
-use crate::json;
 use crate::{
     BTreeMap, BTreeSet, Labels, OffsetDateTime, PrometheusAlertKey, PrometheusAlertRuntimeState,
-    Rfc3339, SharedPrometheusAlertStates, Value,
+    Rfc3339, SharedPrometheusAlertStates, Value, json,
 };
 
 pub(crate) fn prometheus_alerts_from_query_result(

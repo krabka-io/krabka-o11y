@@ -1,6 +1,6 @@
-use super::prelude::HttpQueryError;
-use super::prelude::{BTreeMap, BTreeSet, BlockIndex, LabelIndex, Labels, check};
 use krabka_units::convert::TimeExt as _;
+
+use super::prelude::{BTreeMap, BTreeSet, BlockIndex, HttpQueryError, LabelIndex, Labels, check};
 /// The three per-query limits share a shape: unset means no limit, a query
 /// exactly at the limit is allowed, and one unit over is refused. Each is
 /// checked at all three points, because `>` and `>=` differ only at the

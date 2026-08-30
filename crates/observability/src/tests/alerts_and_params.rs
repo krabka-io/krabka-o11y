@@ -1,5 +1,4 @@
-use super::prelude::{BTreeSet, Labels, check};
-use super::prelude::{CompactorRunError, HttpQueryError};
+use super::prelude::{BTreeSet, CompactorRunError, HttpQueryError, Labels, check};
 /// `prometheus_alert_key_matches_rule` picks out the alerts belonging to
 /// one rule that were NOT seen in this evaluation -- the ones that may need
 /// retaining as resolved. All four conditions are and-ed, so each is broken

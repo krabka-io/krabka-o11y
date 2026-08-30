@@ -1,3 +1,5 @@
+use object_store::ObjectStoreExt;
+
 use crate::{
     ActiveLogDeleteFilter, ActiveLogDeleteFilterError, Arc, BTreeMap, BlockDescriptor, BlockIndex,
     BlockKey, BlockStoreError, CompactionCommitError, CompactionError, CompactionOffsetCommitter,
@@ -7,7 +9,6 @@ use crate::{
     compact_log_block_to_object_store_with_index_output, decode_kafka_wal_record_envelope,
     is_deleted_log_entry,
 };
-use object_store::ObjectStoreExt;
 #[derive(Debug, Error)]
 pub enum KafkaWalCompactionError {
     #[error(transparent)]

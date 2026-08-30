@@ -1,13 +1,13 @@
-use crate::json;
+use axum::response::IntoResponse;
+
 use crate::{
     BTreeSet, Bytes, HeaderMap, Instant, Path, QuerierState, QueryKind, RawQuery, Response, State,
     StatusCode, Value, execute_detected_field_values_query, execute_detected_fields_query,
     execute_detected_labels_query, execute_format_query, execute_label_names_query,
-    execute_patterns_query, handle_api_prom_query, handle_api_prom_query_range, handle_query,
+    execute_patterns_query, handle_api_prom_query, handle_api_prom_query_range, handle_query, json,
     json_response, loki_success, parse_series_params, post_query_params,
     post_query_params_body_first,
 };
-use axum::response::IntoResponse;
 
 pub(crate) fn status_metrics(component: &'static str) -> Response {
     let compactor_running = usize::from(component == "compactor");

@@ -1,14 +1,14 @@
-use crate::MetricWindow;
-use crate::json;
+use axum::response::IntoResponse;
+use krabka_units::convert::ByteSizeExt;
+
 use crate::{
     ActiveLogDeleteFilter, ArrowWriter, BTreeMap, BlockDescriptor, ByteSize, CompactionFrontier,
     HttpQueryError, LOKI_PARQUET_CONTENT_TYPE, Labels, MapArray, MapBuilder, MetricQuery,
-    RangeAggregation, RecordBatch, Response, StatusCode, StreamPlan, StringBuilder, TimeRange,
-    Value, WalLogRecord, append_matching_hot_metric_record, eval_times, format_metric_samples,
-    json_response, loki_query_stats, matching_loki_stream_entry, unix_ns_string_to_loki_seconds,
+    MetricWindow, RangeAggregation, RecordBatch, Response, StatusCode, StreamPlan, StringBuilder,
+    TimeRange, Value, WalLogRecord, append_matching_hot_metric_record, eval_times,
+    format_metric_samples, json, json_response, loki_query_stats, matching_loki_stream_entry,
+    unix_ns_string_to_loki_seconds,
 };
-use axum::response::IntoResponse;
-use krabka_units::convert::ByteSizeExt;
 
 pub(crate) fn loki_parquet_label_array(
     label_sets: &[Vec<(String, String)>],

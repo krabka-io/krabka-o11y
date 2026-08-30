@@ -1,8 +1,11 @@
+use krabka_units::convert::StdDurationExt;
+
 use crate::{
-    AllowAllQueryAuthorizer, Arc, BlockIndex, BlockStoreError, ByteSize, CompactionFrontier,
-    CompactionFrontierSource, DynamicIndexCache, DynamicIndexCacheKey, DynamicIndexSource, Instant,
-    LabelIndex, LogHotTail, LogQueryAuthorizer, NonZeroUsize, ObjectPath, ObjectStore, PathBuf,
-    QuerierIndexSource, QuerierState, ServiceConfig, ServiceConfigError, ServiceMetrics,
+    AllowAllQueryAuthorizer, Arc, BlockIndex, BlockStoreError, ByteSize, ColdObjectStoreState,
+    CompactionFrontier, CompactionFrontierSource, DynamicIndexCache, DynamicIndexCacheKey,
+    DynamicIndexSource, DynamicShardIndexCacheKey, DynamicShardRangesCacheKey, HotTailState,
+    Instant, LabelIndex, LogHotTail, LogQueryAuthorizer, NonZeroUsize, ObjectPath, ObjectStore,
+    PathBuf, QuerierIndexSource, QuerierState, ServiceConfig, ServiceConfigError, ServiceMetrics,
     SharedCompactionFrontier, SharedLogDeleteRequests, SharedLokiRules,
     SharedPrometheusAlertStates, Time, TimeRange, merge_tenant_shard_indexes,
     querier_object_store_inputs, read_log_index_manifest,
@@ -11,10 +14,6 @@ use crate::{
     read_tenant_log_index_shard_ranges_from_object_store,
     read_tenant_log_index_shards_from_object_store,
 };
-use crate::{
-    ColdObjectStoreState, DynamicShardIndexCacheKey, DynamicShardRangesCacheKey, HotTailState,
-};
-use krabka_units::convert::StdDurationExt;
 impl QuerierState {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>, label_index: LabelIndex, block_index: BlockIndex) -> Self {

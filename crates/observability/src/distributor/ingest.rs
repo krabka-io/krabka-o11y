@@ -1,3 +1,7 @@
+use axum::response::IntoResponse;
+use krabka_units::convert::{ByteSizeExt, StdDurationExt, TimeExt};
+use prost::Message;
+
 use crate::{
     ByteSize, CONTENT_ENCODING, DeflateDecoder, DistributorError, DistributorState, GzDecoder,
     HeaderMap, Instant, LogIngestLimiter, LogWalSink, LokiProtoPushRequest, LokiPushRequest,
@@ -6,11 +10,6 @@ use crate::{
     loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
     normalize_otlp_logs, normalize_otlp_proto_logs, quote_logql_string,
 };
-use axum::response::IntoResponse;
-use krabka_units::convert::ByteSizeExt;
-use krabka_units::convert::StdDurationExt;
-use krabka_units::convert::TimeExt;
-use prost::Message;
 /// Records one push-handler ingest outcome from the response status and returns
 /// the response unchanged.
 ///

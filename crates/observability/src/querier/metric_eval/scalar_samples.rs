@@ -1,3 +1,6 @@
+use krabka_units::convert::TimeExt;
+use num_traits::ToPrimitive;
+
 use crate::{
     ByteSizeExt, HttpQueryError, LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS,
     LOKI_VOLUME_MAX_QUERY_RANGE, METRIC_DECIMAL_SCALE, MetricQuery, QuerierState, QueryKind,
@@ -8,8 +11,6 @@ use crate::{
     metric_scan_range, parse_decimal_sample_literal, plan_stream_query, validate_query_bytes_limit,
     validate_query_series_limit,
 };
-use krabka_units::convert::TimeExt;
-use num_traits::ToPrimitive;
 #[derive(Clone, Copy)]
 pub(crate) struct ScalarSample {
     pub(crate) numerator: i128,

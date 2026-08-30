@@ -1,8 +1,7 @@
-use crate::json;
 use crate::{
     ACCEPT, Arc, ArrayRef, BTreeMap, DataType, Duration, Field, Float64Array,
     FormattedMetricSeries, HeaderMap, HttpQueryError, Labels, LokiDirection, MetricValue,
-    RecordBatch, Response, Schema, StringArray, TimeUnit, TimestampNanosecondArray, Value,
+    RecordBatch, Response, Schema, StringArray, TimeUnit, TimestampNanosecondArray, Value, json,
     loki_parquet_batch_response, loki_parquet_label_array, loki_success_value,
     parse_metric_sample_value,
 };

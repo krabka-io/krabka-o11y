@@ -275,7 +275,6 @@ async fn export(
 
 #[cfg(test)]
 mod tests {
-    use super::{RouteStatusLabel, ServiceMetrics, StatusLabel, metrics_router};
     use assert2::{assert, check};
     use axum::{
         body::Body,
@@ -283,6 +282,8 @@ mod tests {
     };
     use krabka_units::{bytes, millis};
     use tower::ServiceExt as _;
+
+    use super::{RouteStatusLabel, ServiceMetrics, StatusLabel, metrics_router};
 
     #[tokio::test]
     async fn registry_has_logs_prefix_and_all_metrics() {

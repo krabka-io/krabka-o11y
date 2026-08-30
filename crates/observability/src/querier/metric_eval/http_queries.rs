@@ -1,7 +1,6 @@
-use crate::QueryHotTail;
 use crate::{
     ActiveLogDeleteFilter, Arc, HttpQueryError, LokiDirection, MetricQuery, QuerierState,
-    StreamPlan, StreamScanOptions, TimeRange, Value, active_log_delete_filters,
+    QueryHotTail, StreamPlan, StreamScanOptions, TimeRange, Value, active_log_delete_filters,
     add_loki_query_stats_for_stream_blocks_with_hot_tail, add_loki_query_stats_for_stream_plan,
     add_loki_query_stats_for_stream_plan_with_hot_tail, apply_loki_stream_options,
     execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes,

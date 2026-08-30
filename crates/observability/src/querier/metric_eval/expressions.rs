@@ -1,7 +1,6 @@
-use crate::json;
 use crate::{
     BTreeMap, ComparisonOp, MetricBinarySetOp, MetricScalarArithmeticOp, MetricVectorGroupModifier,
-    MetricVectorMatching, TimeRange, Value, VectorScalarExpressionParser, eval_times,
+    MetricVectorMatching, TimeRange, Value, VectorScalarExpressionParser, eval_times, json,
     loki_success_value, parse_logql_string_argument, scalar_vector_query_is_vector,
     split_logql_function_arguments, split_top_level_arithmetic_query,
     split_top_level_comparison_query, split_top_level_set_query, unix_ns_string_to_loki_seconds,

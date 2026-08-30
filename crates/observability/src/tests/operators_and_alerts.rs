@@ -1,5 +1,4 @@
-use super::prelude::MetricScalarArithmeticOp;
-use super::prelude::check;
+use super::prelude::{MetricScalarArithmeticOp, check};
 /// `parse_metric_arithmetic_operator` names the six `PromQL` scalar
 /// operators. The variants are asserted pairwise distinct, so an arm
 /// returning a neighbour's operator cannot pass -- and every unrecognised

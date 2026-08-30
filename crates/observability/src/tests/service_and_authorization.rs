@@ -1,14 +1,14 @@
-use super::prelude::proto_any_value;
+use clap::Parser as _;
+use prost::Message as _;
+
 use super::prelude::{
     Arc, AtomicOrdering, BTreeMap, CONTENT_ENCODING, CONTENT_TYPE, Duration, HeaderMap, Mutex,
     ObjectStore, ProtoAnyValue, ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord,
     QueryAuthorizationError, ServiceConfig, ServiceReadiness, UnavailableQueryAuthorizer, Url,
     WalLogRecord, build_compactor_configured_object_store, check, ingest_tenant,
-    normalize_otlp_http_logs, sleep,
+    normalize_otlp_http_logs, proto_any_value, sleep,
 };
 use crate::LogQueryAuthorizer as _;
-use clap::Parser as _;
-use prost::Message as _;
 /// Sorting a Loki vector result orders it by sample value, and touches
 /// nothing else: a matrix carries the same shape but must come back in the
 /// order it arrived. Nothing had called this at all, so returning without

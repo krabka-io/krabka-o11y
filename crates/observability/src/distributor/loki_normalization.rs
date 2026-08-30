@@ -1,3 +1,5 @@
+use krabka_units::convert::TimeExt;
+
 use crate::{
     CONTENT_TYPE, DistributorError, HeaderMap, Labels, LokiProtoPushRequest, LokiTypedPushRequest,
     MatchOp, OtlpLogsRequest, Time, Value, WalLogRecord, current_unix_time_ns,
@@ -7,7 +9,6 @@ use crate::{
     otlp_timestamp_ns, otlp_value_to_string, parse_query, parse_structured_metadata,
     quote_logql_string, tenant, validate_ingest_timestamp_ns, validate_loki_timestamp_window,
 };
-use krabka_units::convert::TimeExt;
 pub(crate) fn is_protobuf_content_type(headers: &HeaderMap) -> bool {
     let content_type = headers
         .get(CONTENT_TYPE)

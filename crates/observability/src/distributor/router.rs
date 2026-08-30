@@ -1,3 +1,7 @@
+use axum::response::IntoResponse;
+use krabka_units::convert::ByteSizeExt;
+use tracing::Instrument;
+
 use crate::{
     AllowAllIngestLimiter, Arc, AtomicBool, AtomicOrdering, ByteSize, Bytes, CONTENT_ENCODING,
     CONTENT_TYPE, Deserialize, HeaderMap, Instant, Labels, LogIngestLimiter, LogWalSink,
@@ -10,9 +14,6 @@ use crate::{
     ready, record_ingest_response, role_config, role_metrics, role_ring, role_services,
     set_prepare_shutdown, shutdown_ingester, unset_prepare_shutdown, validate_ingest_body_limit,
 };
-use axum::response::IntoResponse;
-use krabka_units::convert::ByteSizeExt;
-use tracing::Instrument;
 #[derive(Clone)]
 pub struct DistributorState {
     pub(crate) sink: Arc<dyn LogWalSink>,

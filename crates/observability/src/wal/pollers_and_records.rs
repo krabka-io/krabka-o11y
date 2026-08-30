@@ -1,12 +1,12 @@
-use crate::WalPosition;
+use krabka_units::convert::TimeExt;
+
 use crate::{
     Arc, AtomicOrdering, BTreeMap, BrokerBackedQueryAuthorizer, BufferedLogHotTail,
     CancellationToken, ClientResourcePolicy, ConsumerError, DeferredWalConsumerConnect, Error,
     JoinHandle, KafkaLogWalConsumer, KafkaWalHeader, KafkaWalRecord, LogQueryAuthorizer,
-    ProducerError, ServiceReadiness, SharedCompactionFrontier, Time, WalLogRecord,
+    ProducerError, ServiceReadiness, SharedCompactionFrontier, Time, WalLogRecord, WalPosition,
     is_loki_label_name, poll_log_hot_tail_once_with_frontier, sleep,
 };
-use krabka_units::convert::TimeExt;
 /// Spawns a background task that retries `KafkaLogWalConsumer::connect` until
 /// it succeeds, then runs the hot-tail poll loop.
 ///

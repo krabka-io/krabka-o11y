@@ -1,16 +1,16 @@
+use krabka_units::convert::TimeExt as _;
+
 use super::prelude::{
     Arc, BTreeMap, BTreeSet, BlockDescriptor, BlockIndex, BlockKey, BufferedLogHotTail,
     CompactionFrontier, InMemoryWalSink, LabelIndex, Labels, LogCompactionIndexOutput, LogHotTail,
-    LogWalSink, ObjectPath, ObjectStore, QuerierState, RecordingObjectStore,
-    ScalarVectorExpressionResult, SharedCompactionFrontier, TimeRange, WalLogRecord, WalPosition,
-    brute_force_in_range, check, hot_tail_test_record, json,
+    LogWalSink, ObjectPath, ObjectStore, Offset, PartitionIndex, QuerierState,
+    RecordingObjectStore, ScalarVectorExpressionResult, SharedCompactionFrontier, TimeRange,
+    WalLogRecord, WalPosition, brute_force_in_range, check, hot_tail_test_record, json,
     loki_instant_scalar_or_vector_response, loki_json_timestamp_value_parse_error, minutes,
     parse_detected_labels_params, read_tenant_log_index_shard_ranges_from_object_store,
     refresh_compaction_frontier_and_prune, write_compaction_frontier_to_object_store,
     write_tenant_compaction_indexes_to_object_store,
 };
-use super::prelude::{Offset, PartitionIndex};
-use krabka_units::convert::TimeExt as _;
 /// The time-bucketed `records_in_range` MUST return exactly the same records (and
 /// so the same label/field sets) as a full-buffer scan, for any inclusive
 /// `[start, end]`, even though records are appended in NO timestamp order. This is the

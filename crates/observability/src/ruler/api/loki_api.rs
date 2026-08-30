@@ -1,10 +1,10 @@
-use crate::json;
+use axum::response::IntoResponse;
+
 use crate::{
     BTreeMap, BTreeSet, Bytes, HeaderMap, HttpQueryError, LokiRuleNamespaces, Path, QuerierState,
-    RawQuery, Response, Serialize, State, StatusCode, StreamQuery, current_unix_time_ns,
+    RawQuery, Response, Serialize, State, StatusCode, StreamQuery, current_unix_time_ns, json,
     json_response, text_response,
 };
-use axum::response::IntoResponse;
 
 pub(crate) fn ring_status_page(instance: &'static str) -> Response {
     (

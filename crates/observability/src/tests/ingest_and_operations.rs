@@ -1,6 +1,8 @@
-use super::prelude::{BlockIndex, LabelIndex, Labels, Time, check};
-use super::prelude::{DistributorError, HttpQueryError};
 use krabka_units::convert::TimeExt as _;
+
+use super::prelude::{
+    BlockIndex, DistributorError, HttpQueryError, LabelIndex, Labels, Time, check,
+};
 /// Both ends of the `Loki` ingestion window are strict comparisons: a
 /// timestamp exactly at the oldest or the newest acceptable value is
 /// accepted. That is the only input separating `<` from `<=`, and against

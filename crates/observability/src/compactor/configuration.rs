@@ -1,3 +1,5 @@
+use krabka_units::convert::{StdDurationExt, TimeExt};
+
 use crate::{
     BlockDescriptor, BrokerBackedIngestLimiter, ClientResourcePolicy, ConfiguredObjectStore,
     KafkaLogWalConsumer, KafkaLogWalSink, ObjectPath, ObjectStore, Role, ServiceConfig,
@@ -8,8 +10,6 @@ use crate::{
     materialize_delete_requests_in_existing_local_manifest_blocks,
     materialize_deletes_then_compact_next_kafka_wal_batch, sleep,
 };
-use krabka_units::convert::StdDurationExt;
-use krabka_units::convert::TimeExt;
 pub(crate) fn build_compactor_configured_object_store(
     config: &ServiceConfig,
     object_store: Option<&dyn ObjectStore>,

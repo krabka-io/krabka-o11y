@@ -1,4 +1,5 @@
-use crate::WalPosition;
+use tracing::Instrument;
+
 use crate::{
     Arc, BTreeMap, BlockDescriptor, BlockIndex, BlockStoreError, BufferedLogHotTail,
     CancellationToken, CompactionError, CompactionFrontierStoreError, CompactorRunError,
@@ -6,7 +7,7 @@ use crate::{
     LogCompactionIndexOutput, LogWalConsumer, ObjectPath, ObjectStore, Offset, PartitionIndex,
     ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceRuntimeError,
     SharedCompactionFrontier, SharedLogDeleteRequests, TenantCompactionIndexCache, Time, TimeExt,
-    active_log_delete_filters_from_requests, active_log_delete_tenants,
+    WalPosition, active_log_delete_filters_from_requests, active_log_delete_tenants,
     build_compactor_configured_object_store,
     compact_wal_records_to_object_store_with_delete_filters_and_index_output,
     compactor_delete_requests_for_config, compactor_object_store, decode_kafka_wal_record_envelope,
@@ -16,7 +17,6 @@ use crate::{
     validate_compactor_policy, wal_compaction_chunks, wal_record_time_range,
     write_compaction_frontier_to_object_store,
 };
-use tracing::Instrument;
 #[cfg_attr(test, mutants::skip)]
 /// # Errors
 /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.

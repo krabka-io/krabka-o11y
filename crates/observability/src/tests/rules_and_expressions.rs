@@ -1,6 +1,6 @@
-use super::prelude::HttpQueryError;
-use super::prelude::{Time, check};
 use krabka_units::convert::TimeExt as _;
+
+use super::prelude::{HttpQueryError, Time, check};
 /// `read_loki_rule_tenants` treats a MISSING rules file as no rules, and
 /// every other I/O failure as an error. That distinction is the point: a
 /// store that has never had a rule written to it has no file, and starting

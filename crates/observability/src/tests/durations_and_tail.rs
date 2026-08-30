@@ -1,5 +1,4 @@
-use super::prelude::MetricValue;
-use super::prelude::{BTreeMap, Labels, check};
+use super::prelude::{BTreeMap, Labels, MetricValue, check};
 /// `format_loki_duration_ns` composes a duration from the largest unit
 /// down, SKIPPING units that contribute nothing -- so 3661s is "1h1m1s"
 /// and not "1h1m1s0ms0us0ns". Zero is the one duration spelled with a unit

@@ -1,5 +1,4 @@
-use super::prelude::METRIC_DECIMAL_SCALE;
-use super::prelude::{BTreeMap, Labels, MetricValue, check};
+use super::prelude::{BTreeMap, Labels, METRIC_DECIMAL_SCALE, MetricValue, check};
 /// `populate_loki_query_scan_stats` fills Loki's stats block, and the two
 /// per-source sections appear only when that source contributed. An empty
 /// `ingester` or `store` object would tell a client the source was

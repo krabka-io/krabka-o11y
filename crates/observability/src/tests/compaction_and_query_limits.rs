@@ -1,10 +1,14 @@
+use assert2::check;
+use krabka_units::convert::TimeExt as _;
+
 use super::prelude::{
     Arc, BTreeMap, BTreeSet, BlockIndex, Bytes, CompactorDeleteState, ComparisonOp,
     ConfiguredObjectStore, DetectedFieldStats, DetectedFieldType, DistributorError, HeaderMap,
     HttpQueryError, KafkaWalHeader, KafkaWalRecord, LabelIndex, Labels, LogDeleteRequestStoreError,
-    MetricVectorGroupModifier, MetricVectorMatching, ObjectPath, QuerierIndexSource, QuerierState,
-    QueryKind, QueryParams, ServiceConfig, SharedLogDeleteRequests, StatusCode, Time, TimeRange,
-    Value, apply_metric_binary_comparison_to_loki_result, build_configured_querier_state,
+    MetricVectorGroupModifier, MetricVectorMatching, ObjectPath, Offset, PartitionIndex,
+    QuerierIndexSource, QuerierState, QueryKind, QueryParams, ServiceConfig,
+    SharedLogDeleteRequests, StatusCode, Time, TimeRange, Value,
+    apply_metric_binary_comparison_to_loki_result, build_configured_querier_state,
     default_metric_range_step, detect_json_fields, execute_create_delete_request,
     execute_http_query, json, log_delete_requests_path, metric_query_uses_approx_topk,
     metric_query_uses_count_values, parse_metric_query, read_log_delete_requests,
@@ -13,9 +17,6 @@ use super::prelude::{
     validate_loki_query_range_resolution, validate_query_range_limit, write_log_index_manifest,
     write_tenant_log_index_manifest_to_object_store,
 };
-use super::prelude::{Offset, PartitionIndex};
-use assert2::check;
-use krabka_units::convert::TimeExt as _;
 
 /// The compaction span belongs to the producer's trace, taken from the
 /// first record that actually carries a `traceparent`. A record without

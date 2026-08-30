@@ -1,5 +1,4 @@
-use crate::proto_any_value;
-use crate::{BTreeMap, DistributorError, OtlpAnyValue, ProtoAnyValue, Value};
+use crate::{BTreeMap, DistributorError, OtlpAnyValue, ProtoAnyValue, Value, proto_any_value};
 
 pub(crate) fn otlp_value_to_json(value: &OtlpAnyValue) -> Value {
     match value {

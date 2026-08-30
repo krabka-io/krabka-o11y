@@ -1,6 +1,5 @@
-use crate::json;
 use crate::{
-    HttpQueryError, MetricLabelJoin, ParseError, Regex, ScalarVectorExpressionResult, Value,
+    HttpQueryError, MetricLabelJoin, ParseError, Regex, ScalarVectorExpressionResult, Value, json,
     scalar_vector_expression_result,
 };
 

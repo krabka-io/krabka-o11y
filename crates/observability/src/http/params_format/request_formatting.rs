@@ -1,3 +1,5 @@
+use krabka_logql::{LogqlExpr, parse_logql_expr};
+
 use crate::{
     Bytes, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
     MetricVectorGroupModifier, MetricVectorMatching, decode_form_component,
@@ -15,7 +17,6 @@ use crate::{
     split_query_param_pairs, split_top_level_arithmetic_query, split_top_level_comparison_query,
     split_top_level_set_query,
 };
-use krabka_logql::{LogqlExpr, parse_logql_expr};
 pub(crate) fn form_body_query(body: &Bytes) -> Result<String, HttpQueryError> {
     String::from_utf8(body.to_vec()).map_err(|_| HttpQueryError::InvalidPercentEncoding)
 }

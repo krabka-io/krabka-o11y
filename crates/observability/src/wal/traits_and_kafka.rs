@@ -1,14 +1,12 @@
-use crate::async_trait;
+use krabka_units::convert::{ByteRateExt, StdDurationExt, TimeExt};
+
 use crate::{
     AclEntry, AclEntryFilter, AclOperation, AdminClient, AdminError, Arc, AtomicBool,
     AtomicOrdering, BTreeMap, ByteRate, ByteSize, ByteSizeExt, ClientResourcePolicy,
     IngestLimitError, Instant, KafkaWalRecord, Mutex, PatternType, PermissionType,
     QueryAuthorizationError, ResourceType, Time, WalConsumerError, WalLogRecord, WalPosition,
-    WalSinkError, measured_size,
+    WalSinkError, async_trait, measured_size,
 };
-use krabka_units::convert::ByteRateExt;
-use krabka_units::convert::StdDurationExt;
-use krabka_units::convert::TimeExt;
 #[async_trait]
 pub trait LogWalSink: Send + Sync + 'static {
     async fn append(&self, record: WalLogRecord) -> Result<(), WalSinkError>;

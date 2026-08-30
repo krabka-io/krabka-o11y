@@ -1,7 +1,6 @@
-use crate::json;
 use crate::{
     ComparisonOp, MetricScalarArithmeticOp, MetricVectorGroupModifier, MetricVectorMatching, Value,
-    format_metric_value, include_metric_group_labels, metric_scalar_arithmetic_value,
+    format_metric_value, include_metric_group_labels, json, metric_scalar_arithmetic_value,
     metric_scalar_comparison_matches, metric_series_labels, metric_vector_group_modifier,
     metric_vector_matching_key, parse_decimal_seconds_timestamp, parse_metric_sample_value,
 };

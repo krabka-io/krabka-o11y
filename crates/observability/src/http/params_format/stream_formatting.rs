@@ -1,3 +1,5 @@
+use krabka_units::convert::ByteSizeExt;
+
 use crate::{
     ComparisonOp, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, FieldValue,
     HttpQueryError, LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilterOp,
@@ -5,7 +7,6 @@ use crate::{
     UnwrapConversion, format_vector_label_replace_function, parse_scalar_sample,
     planned_block_bytes,
 };
-use krabka_units::convert::ByteSizeExt;
 pub(crate) fn parse_vector_arithmetic_operator(
     query: &str,
     position: usize,

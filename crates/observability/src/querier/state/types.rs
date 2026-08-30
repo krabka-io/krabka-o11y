@@ -1,9 +1,10 @@
+use krabka_units::convert::StdDurationExt;
+
 use crate::{
     Arc, BTreeMap, BlockIndex, ByteSize, CompactionFrontierSource, Instant, LabelIndex, Labels,
     LogHotTail, LogQueryAuthorizer, Mutex, NonZeroUsize, ObjectPath, ObjectStore, PathBuf,
     ServiceMetrics, SharedLogDeleteRequests, Time, TimeRange, minutes, secs,
 };
-use krabka_units::convert::StdDurationExt;
 #[derive(Clone)]
 pub struct QuerierState {
     pub(crate) root: PathBuf,
