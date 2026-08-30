@@ -7,73 +7,6 @@ use krabka_blockstore::LabelMatcher;
 
 use crate::{error::ProfileError, frame::SymbolSource};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ProfileStats {
-    pub data_ingested: bool,
-    pub oldest_profile_time: Option<i64>,
-    pub newest_profile_time: Option<i64>,
-}
-
-/// A selected samples table plus the symbol source that resolves its raw ids.
-pub struct ProfileScan {
-    pub ctx: SessionContext,
-    pub samples_table: String,
-    pub symbols: Arc<dyn SymbolSource>,
-}
-
-/// Resolves profile matchers to a `DataFusion` samples table over a tenant's data.
-#[async_trait::async_trait]
-pub trait ProfileStore: Send + Sync {
-    async fn select(
-        &self,
-        tenant: &str,
-        profile_type: &str,
-        matchers: &[LabelMatcher],
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<ProfileScan, ProfileError>;
-
-    async fn label_names(
-        &self,
-        tenant: &str,
-        matchers: &[LabelMatcher],
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<Vec<String>, ProfileError>;
-
-    async fn label_values(
-        &self,
-        tenant: &str,
-        name: &str,
-        matchers: &[LabelMatcher],
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<Vec<String>, ProfileError>;
-
-    async fn profile_types(
-        &self,
-        tenant: &str,
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<Vec<String>, ProfileError>;
-
-    async fn series(
-        &self,
-        tenant: &str,
-        matchers: &[LabelMatcher],
-        label_names: &[String],
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<Vec<Vec<(String, String)>>, ProfileError>;
-
-    async fn stats(
-        &self,
-        tenant: &str,
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<ProfileStats, ProfileError>;
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -172,3 +105,12 @@ mod tests {
         assert!(store.profile_types("t", 0, 1).await.unwrap().is_empty());
     }
 }
+
+// === split-modules: generated submodules ===
+mod profile_scan;
+mod profile_stats;
+mod profile_store;
+
+pub use profile_scan::ProfileScan;
+pub use profile_stats::ProfileStats;
+pub use profile_store::ProfileStore;

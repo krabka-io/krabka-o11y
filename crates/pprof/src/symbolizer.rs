@@ -17,519 +17,6 @@ use refined_type::{Refined, rule::GreaterU64};
 
 use crate::{Frame, RawLocation, SymbolDb, SymbolSource};
 
-/// Default maximum size of a debuginfo artifact downloaded from a debuginfod
-/// server.
-pub const DEFAULT_DEBUGINFOD_MAX_ARTIFACT_SIZE: ByteSize = mebibytes(512);
-
-/// Default time allowed to open a debuginfod connection.
-pub const DEFAULT_DEBUGINFOD_CONNECT_TIMEOUT: Time = secs(5);
-
-/// Default time allowed for a whole debuginfod request, connection included.
-pub const DEFAULT_DEBUGINFOD_REQUEST_TIMEOUT: Time = secs(10);
-
-/// Validated resource policy for debuginfod requests.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DebuginfodConfig {
-    max_artifact_size: ByteSize,
-    connect_timeout: Time,
-    request_timeout: Time,
-}
-
-impl DebuginfodConfig {
-    /// Validate a debuginfod resource policy.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the maximum artifact size is not a positive
-    /// whole-byte value. Returns an error when either timeout is not positive
-    /// and finite. Returns an error when the connect timeout is more than the
-    /// whole-request timeout.
-    pub fn new(
-        max_artifact_size: ByteSize,
-        connect_timeout: Time,
-        request_timeout: Time,
-    ) -> Result<Self, String> {
-        let bytes = max_artifact_size.bytes_f64();
-        if !bytes.is_finite() || bytes.fract() != 0.0 || bytes > 9_007_199_254_740_992.0 {
-            return Err(
-                "debuginfod maximum artifact size must be a positive whole-byte value exactly representable by UOM"
-                    .to_string(),
-            );
-        }
-        GreaterU64::<0>::new(max_artifact_size.bytes_u64())
-            .map(Refined::into_value)
-            .map_err(|error| format!("debuginfod maximum artifact size: {error}"))?;
-
-        validate_positive_timeout("connect", connect_timeout)?;
-        validate_positive_timeout("request", request_timeout)?;
-        if connect_timeout > request_timeout {
-            return Err("debuginfod connect timeout must not exceed request timeout".to_string());
-        }
-
-        Ok(Self {
-            max_artifact_size,
-            connect_timeout,
-            request_timeout,
-        })
-    }
-
-    /// Return the maximum downloaded artifact size.
-    #[must_use]
-    pub const fn max_artifact_size(self) -> ByteSize {
-        self.max_artifact_size
-    }
-
-    /// Return the connection timeout.
-    #[must_use]
-    pub const fn connect_timeout(self) -> Time {
-        self.connect_timeout
-    }
-
-    /// Return the whole-request timeout.
-    #[must_use]
-    pub const fn request_timeout(self) -> Time {
-        self.request_timeout
-    }
-}
-
-impl Default for DebuginfodConfig {
-    fn default() -> Self {
-        Self::new(
-            DEFAULT_DEBUGINFOD_MAX_ARTIFACT_SIZE,
-            DEFAULT_DEBUGINFOD_CONNECT_TIMEOUT,
-            DEFAULT_DEBUGINFOD_REQUEST_TIMEOUT,
-        )
-        .expect("default debuginfod configuration is valid")
-    }
-}
-
-fn validate_positive_timeout(name: &str, timeout: Time) -> Result<(), String> {
-    let duration = std::time::Duration::try_from_secs_f64(timeout.secs_f64())
-        .map_err(|error| format!("debuginfod {name} timeout: {error}"))?;
-    if duration.is_zero() {
-        return Err(format!("debuginfod {name} timeout must be positive"));
-    }
-    Ok(())
-}
-
-/// Returns `true` if and only if `build_id` is a valid debuginfod build-id.
-///
-/// A valid build-id is a non-empty lowercase hex string. debuginfod build-ids
-/// are hex digests, so this function rejects a build-id that holds `/`, `.`,
-/// `..`, uppercase, or other bytes. The rejection happens before the build-id
-/// can go into a URL. This is a defence against SSRF and path traversal.
-fn is_valid_build_id(build_id: &str) -> bool {
-    build_id.len() >= 2
-        && build_id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
-/// Recover a poisoned mutex rather than propagate the panic.
-///
-/// One panicked worker must not permanently `DoS` the resolver. This function
-/// takes ownership of the inner guard and continues.
-fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// Parse an untrusted ELF/DWARF blob with `object::File::parse`.
-///
-/// This function catches any panic that the parser can trigger on a crafted
-/// artifact. It returns `Ok(())` only when the bytes parse cleanly and the
-/// parser does not panic.
-fn parse_object_guarded(bytes: &[u8]) -> Result<(), String> {
-    std::panic::catch_unwind(|| {
-        object::File::parse(bytes)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    })
-    .unwrap_or_else(|_| Err("panic while parsing object file".to_string()))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SymbolizeRequest {
-    pub build_id: String,
-    pub filename: String,
-    pub address: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeSymbol {
-    pub function: String,
-    pub file: String,
-    pub line: i32,
-}
-
-pub trait NativeResolver: Send + Sync {
-    fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>>;
-}
-
-#[derive(Default)]
-pub struct ChainedResolver {
-    resolvers: Vec<Arc<dyn NativeResolver>>,
-}
-
-impl ChainedResolver {
-    #[must_use]
-    pub fn new(resolvers: Vec<Arc<dyn NativeResolver>>) -> Self {
-        Self { resolvers }
-    }
-}
-
-impl NativeResolver for ChainedResolver {
-    fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>> {
-        self.resolvers
-            .iter()
-            .find_map(|resolver| resolver.symbolize(request))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ObjectSymbolResolver {
-    bytes: Arc<Vec<u8>>,
-    path: Option<PathBuf>,
-}
-
-impl ObjectSymbolResolver {
-    /// # Errors
-    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
-        parse_object_guarded(bytes.as_slice())?;
-        Ok(Self {
-            bytes: Arc::new(bytes),
-            path: None,
-        })
-    }
-
-    /// # Errors
-    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-    pub fn from_file(path: impl Into<PathBuf>) -> Result<Self, String> {
-        let path = path.into();
-        let bytes = std::fs::read(&path).map_err(|err| err.to_string())?;
-        parse_object_guarded(bytes.as_slice())?;
-        Ok(Self {
-            bytes: Arc::new(bytes),
-            path: Some(path),
-        })
-    }
-}
-
-#[derive(Default)]
-pub struct FileSystemResolver {
-    cache: Mutex<HashMap<String, Option<ObjectSymbolResolver>>>,
-}
-
-impl NativeResolver for FileSystemResolver {
-    fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>> {
-        let mut cache = lock_recover(&self.cache);
-        let resolver = cache
-            .entry(request.filename.clone())
-            .or_insert_with(|| ObjectSymbolResolver::from_file(&request.filename).ok());
-        resolver
-            .as_ref()
-            .and_then(|resolver| resolver.symbolize(request))
-    }
-}
-
-pub struct DebuginfodResolver {
-    base_urls: Vec<reqwest::Url>,
-    client: reqwest::blocking::Client,
-    cache: Mutex<HashMap<String, Option<ObjectSymbolResolver>>>,
-    max_debuginfo: ByteSize,
-}
-
-impl DebuginfodResolver {
-    /// # Errors
-    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-    pub fn new(base_urls: Vec<String>) -> Result<Self, String> {
-        Self::with_config(base_urls, DebuginfodConfig::default())
-    }
-
-    /// Create a resolver with an explicit debuginfod resource policy.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the caller gives no base URL. Returns an error
-    /// when a URL is invalid. Returns an error when `reqwest` cannot build the
-    /// HTTP client.
-    pub fn with_config(base_urls: Vec<String>, config: DebuginfodConfig) -> Result<Self, String> {
-        let base_urls = base_urls
-            .into_iter()
-            .filter(|url| !url.trim().is_empty())
-            .map(|url| reqwest::Url::parse(url.trim()).map_err(|err| err.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
-        if base_urls.is_empty() {
-            return Err("at least one debuginfod base URL is required".to_string());
-        }
-        // Do not follow redirects: a redirect from a debuginfod server is a
-        // vector for SSRF pivots (e.g. to internal hosts or 169.254.169.254).
-        let client = reqwest::blocking::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(config.connect_timeout().to_std())
-            .timeout(config.request_timeout().to_std())
-            .build()
-            .map_err(|err| err.to_string())?;
-        Ok(Self {
-            base_urls,
-            client,
-            cache: Mutex::new(HashMap::new()),
-            max_debuginfo: config.max_artifact_size(),
-        })
-    }
-
-    /// Build the `<base>/buildid/<build_id>/debuginfo` URL.
-    ///
-    /// This function pushes the path segments through the URL parser, so an
-    /// attacker-controlled `build_id` cannot alter the host or escape the path.
-    /// It returns `None` when the base URL cannot be a base, for example
-    /// `mailto:`.
-    fn build_url(base: &reqwest::Url, build_id: &str) -> Option<reqwest::Url> {
-        let mut url = base.clone();
-        {
-            let mut segments = url.path_segments_mut().ok()?;
-            // Drop any trailing empty segment from a base URL ending in '/'.
-            segments.pop_if_empty();
-            segments.push("buildid").push(build_id).push("debuginfo");
-        }
-        Some(url)
-    }
-
-    fn resolver_for_build_id(&self, build_id: &str) -> Option<ObjectSymbolResolver> {
-        let mut cache = lock_recover(&self.cache);
-        if let Some(cached) = cache.get(build_id) {
-            return cached.clone();
-        }
-        let resolver = self.fetch_build_id(build_id);
-        cache.insert(build_id.to_string(), resolver.clone());
-        resolver
-    }
-
-    fn fetch_build_id(&self, build_id: &str) -> Option<ObjectSymbolResolver> {
-        // `build_id` is attacker-controlled (it comes from an uploaded
-        // profile's mapping). Validate it is a plain hex build-id before it is
-        // used to construct any URL or issued in any request.
-        if !is_valid_build_id(build_id) {
-            return None;
-        }
-        for base_url in &self.base_urls {
-            let Some(url) = Self::build_url(base_url, build_id) else {
-                continue;
-            };
-            let Ok(response) = self.client.get(url).send() else {
-                continue;
-            };
-            if !response.status().is_success() {
-                continue;
-            }
-            // Reject artifacts whose advertised length already exceeds the cap,
-            // then read the body with a hard byte ceiling so a server that
-            // lies about (or omits) Content-Length still cannot exhaust memory.
-            let cap = self.max_debuginfo.bytes_u64();
-            if !content_length_within_cap(response.content_length(), cap) {
-                continue;
-            }
-            let Some(bytes) = read_capped(response, cap) else {
-                continue;
-            };
-            if let Ok(resolver) = ObjectSymbolResolver::from_bytes(bytes) {
-                return Some(resolver);
-            }
-        }
-        None
-    }
-}
-
-/// Read an HTTP body into memory.
-///
-/// This function stops and returns `None` as soon as the accumulated size is
-/// more than `cap` bytes. It avoids the unbounded `response.bytes()`
-/// allocation.
-fn read_capped(mut response: reqwest::blocking::Response, cap: u64) -> Option<Vec<u8>> {
-    read_capped_reader(&mut response, cap)
-}
-
-fn read_capped_reader(mut reader: impl Read, cap: u64) -> Option<Vec<u8>> {
-    let cap_usize = usize::try_from(cap).unwrap_or(usize::MAX);
-    let mut buf = Vec::new();
-    let mut chunk = vec![0_u8; 64 * 1024];
-    loop {
-        let read = reader.read(&mut chunk).ok()?;
-        if read == 0 {
-            break;
-        }
-        if buf.len().saturating_add(read) > cap_usize {
-            return None;
-        }
-        buf.extend_from_slice(&chunk[..read]);
-    }
-    Some(buf)
-}
-
-fn content_length_within_cap(content_length: Option<u64>, cap: u64) -> bool {
-    content_length.is_none_or(|len| len <= cap)
-}
-
-impl NativeResolver for DebuginfodResolver {
-    fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>> {
-        // Reject an attacker-controlled `build_id` up front: never cache or
-        // fetch anything for a non-hex / path-traversal value.
-        if !is_valid_build_id(&request.build_id) {
-            return None;
-        }
-        self.resolver_for_build_id(&request.build_id)
-            .and_then(|resolver| resolver.symbolize(request))
-    }
-}
-
-impl NativeResolver for ObjectSymbolResolver {
-    fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>> {
-        // The bytes may be an untrusted, crafted ELF/DWARF blob. Contain any
-        // parser panic so a single malicious artifact cannot crash the worker.
-        let bytes = Arc::clone(&self.bytes);
-        let path = self.path.clone();
-        let filename = request.filename.clone();
-        let address = request.address;
-        std::panic::catch_unwind(move || {
-            let object = object::File::parse(bytes.as_slice()).ok()?;
-            let frames = path
-                .as_ref()
-                .and_then(|path| loader_frames(path, address))
-                .or_else(|| loader_frames_from_bytes(&bytes, address));
-            if let Some(frames) = frames
-                && !frames.is_empty()
-            {
-                return Some(frames);
-            }
-            let function = nearest_symbol_name(&object, address)
-                .unwrap_or_else(|| format!("{filename}+0x{address:x}"));
-            Some(vec![NativeSymbol {
-                function,
-                file: filename,
-                line: 0,
-            }])
-        })
-        .unwrap_or(None)
-    }
-}
-
-fn loader_frames(path: &std::path::Path, address: u64) -> Option<Vec<NativeSymbol>> {
-    let loader = addr2line::Loader::new(path).ok()?;
-    let mut frames = loader.find_frames(address).ok()?;
-    let mut out = Vec::new();
-    while let Some(frame) = frames.next().ok()? {
-        let location = frame.location;
-        let function = frame
-            .function
-            .and_then(|function| function.demangle().ok().map(std::borrow::Cow::into_owned))
-            .or_else(|| loader.find_symbol(address).map(ToString::to_string))
-            .unwrap_or_default();
-        let file = location
-            .as_ref()
-            .and_then(|location| location.file)
-            .unwrap_or_default()
-            .to_string();
-        let line = location
-            .and_then(|location| location.line)
-            .and_then(|line| i32::try_from(line).ok())
-            .unwrap_or_default();
-        if !function.is_empty() || !file.is_empty() || line != 0 {
-            out.push(NativeSymbol {
-                function,
-                file,
-                line,
-            });
-        }
-    }
-    Some(out)
-}
-
-fn loader_frames_from_bytes(bytes: &[u8], address: u64) -> Option<Vec<NativeSymbol>> {
-    // `addr2line::Loader` requires a filesystem path. Use a `NamedTempFile`
-    // (O_EXCL, 0600, auto-removed on drop) instead of a predictable temp path
-    // so the untrusted blob cannot be targeted by a symlink/TOCTOU attack.
-    use std::io::Write;
-    let mut file = tempfile::NamedTempFile::new().ok()?;
-    file.write_all(bytes).ok()?;
-    file.flush().ok()?;
-    loader_frames(file.path(), address)
-}
-
-fn nearest_symbol_name(object: &object::File<'_>, address: u64) -> Option<String> {
-    object
-        .symbols()
-        .filter(|symbol| symbol.address() <= address)
-        .filter(|symbol| {
-            let size = symbol.size();
-            size == 0 || address < symbol.address().saturating_add(size)
-        })
-        .max_by_key(object::ObjectSymbol::address)
-        .and_then(|symbol| symbol.name().ok())
-        .map(ToString::to_string)
-}
-
-pub struct LazySymbolizer<R: NativeResolver> {
-    symbols: SymbolDb,
-    resolver: Arc<R>,
-    cache: Mutex<HashMap<SymbolizeRequest, Option<Vec<Frame>>>>,
-}
-
-impl<R: NativeResolver> LazySymbolizer<R> {
-    #[must_use]
-    pub fn new(symbols: SymbolDb, resolver: Arc<R>) -> Self {
-        Self {
-            symbols,
-            resolver,
-            cache: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn symbolize_location(&self, location: RawLocation) -> Vec<Frame> {
-        if location.mapping.symbolization.has_functions() {
-            return Vec::new();
-        }
-        let request = SymbolizeRequest {
-            build_id: location.build_id,
-            filename: location.filename,
-            address: location
-                .address
-                .saturating_sub(location.mapping.memory_start)
-                + location.mapping.file_offset,
-        };
-        if let Some(cached) = lock_recover(&self.cache).get(&request) {
-            return cached.clone().unwrap_or_default();
-        }
-        let resolved = self.resolver.symbolize(&request).map(|symbols| {
-            symbols
-                .into_iter()
-                .map(|symbol| Frame {
-                    function: symbol.function,
-                    file: symbol.file,
-                    line: symbol.line,
-                })
-                .collect::<Vec<_>>()
-        });
-        lock_recover(&self.cache).insert(request, resolved.clone());
-        resolved.unwrap_or_default()
-    }
-}
-
-impl<R: NativeResolver> SymbolSource for LazySymbolizer<R> {
-    fn resolve(&self, partition: u64, id: u32) -> Vec<Frame> {
-        let frames = self.symbols.resolve(partition, id);
-        if !frames.is_empty() {
-            return frames;
-        }
-        self.symbols
-            .raw_locations(partition, id)
-            .into_iter()
-            .flat_map(|location| self.symbolize_location(location))
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1126,3 +613,50 @@ mod tests {
         42
     }
 }
+
+// === split-modules: generated submodules ===
+mod chained_resolver;
+mod content_length_within_cap;
+mod debuginfod_config;
+mod debuginfod_resolver;
+mod default_debuginfod_connect_timeout;
+mod default_debuginfod_max_artifact_size;
+mod default_debuginfod_request_timeout;
+mod file_system_resolver;
+mod is_valid_build_id;
+mod lazy_symbolizer;
+mod loader_frames;
+mod loader_frames_from_bytes;
+mod lock_recover;
+mod native_resolver;
+mod native_symbol;
+mod nearest_symbol_name;
+mod object_symbol_resolver;
+mod parse_object_guarded;
+mod read_capped;
+mod read_capped_reader;
+mod symbolize_request;
+mod validate_positive_timeout;
+
+pub use chained_resolver::ChainedResolver;
+use content_length_within_cap::content_length_within_cap;
+pub use debuginfod_config::DebuginfodConfig;
+pub use debuginfod_resolver::DebuginfodResolver;
+pub use default_debuginfod_connect_timeout::DEFAULT_DEBUGINFOD_CONNECT_TIMEOUT;
+pub use default_debuginfod_max_artifact_size::DEFAULT_DEBUGINFOD_MAX_ARTIFACT_SIZE;
+pub use default_debuginfod_request_timeout::DEFAULT_DEBUGINFOD_REQUEST_TIMEOUT;
+pub use file_system_resolver::FileSystemResolver;
+use is_valid_build_id::is_valid_build_id;
+pub use lazy_symbolizer::LazySymbolizer;
+use loader_frames::loader_frames;
+use loader_frames_from_bytes::loader_frames_from_bytes;
+use lock_recover::lock_recover;
+pub use native_resolver::NativeResolver;
+pub use native_symbol::NativeSymbol;
+use nearest_symbol_name::nearest_symbol_name;
+pub use object_symbol_resolver::ObjectSymbolResolver;
+use parse_object_guarded::parse_object_guarded;
+use read_capped::read_capped;
+use read_capped_reader::read_capped_reader;
+pub use symbolize_request::SymbolizeRequest;
+use validate_positive_timeout::validate_positive_timeout;

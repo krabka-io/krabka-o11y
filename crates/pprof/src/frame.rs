@@ -1,18 +1,5 @@
 //! Resolved stack frames and symbol resolution boundary.
 
-/// One resolved stack frame.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Frame {
-    pub function: String,
-    pub file: String,
-    pub line: i32,
-}
-
-/// Resolves a raw `(partition, stacktrace_id)` into frames.
-pub trait SymbolSource: Send + Sync {
-    fn resolve(&self, partition: u64, id: u32) -> Vec<Frame>;
-}
-
 #[cfg(test)]
 mod tests {
     use assert2::assert;
@@ -39,3 +26,10 @@ mod tests {
         assert!(frames[0].function == "main");
     }
 }
+
+// === split-modules: generated submodules ===
+mod frame_type;
+mod symbol_source;
+
+pub use frame_type::Frame;
+pub use symbol_source::SymbolSource;
