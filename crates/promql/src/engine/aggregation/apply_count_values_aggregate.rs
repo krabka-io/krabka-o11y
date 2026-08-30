@@ -1,4 +1,7 @@
-use super::{AggregateState, BTreeMap, InstantSample, LabelModifier, Result, SampleValue, aggregate_labels, count_values_label_value, labels_key};
+use super::{
+    AggregateState, BTreeMap, InstantSample, LabelModifier, Result, SampleValue, aggregate_labels,
+    count_values_label_value, labels_key,
+};
 
 /// Shared `count_values("label", v)` core over an already-evaluated instant
 /// vector.

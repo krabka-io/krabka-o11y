@@ -1,4 +1,7 @@
-use super::{QueryResult, SampleValue, Value, json, labels_json, native_histogram_json, range_matrix_json, sample_string, timestamp_seconds};
+use super::{
+    QueryResult, SampleValue, Value, json, labels_json, native_histogram_json, range_matrix_json,
+    sample_string, timestamp_seconds,
+};
 
 pub(crate) fn result_json(result: QueryResult) -> Value {
     match result {

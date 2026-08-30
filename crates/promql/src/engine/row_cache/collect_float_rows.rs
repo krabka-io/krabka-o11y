@@ -1,4 +1,6 @@
-use super::{AsArray, Float64Type, FloatRow, Int64Type, PromqlError, Result, ScanResult, UInt64Type};
+use super::{
+    AsArray, Float64Type, FloatRow, Int64Type, PromqlError, Result, ScanResult, UInt64Type,
+};
 
 pub(crate) async fn collect_float_rows(
     scan: ScanResult,

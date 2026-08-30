@@ -23,10 +23,10 @@ mod assemble_selector_batches;
 mod labels_from_batch;
 mod labels_from_rate_batch;
 
-pub (super) use assemble_aggregate_batches::assemble_aggregate_batches;
-pub (super) use assemble_over_time_batches::assemble_over_time_batches;
-pub (super) use assemble_rate_batches::assemble_rate_batches;
-pub (super) use assemble_scalar_math_batches::assemble_scalar_math_batches;
-pub (super) use assemble_selector_batches::assemble_selector_batches;
+pub(super) use assemble_aggregate_batches::assemble_aggregate_batches;
+pub(super) use assemble_over_time_batches::assemble_over_time_batches;
+pub(super) use assemble_rate_batches::assemble_rate_batches;
+pub(super) use assemble_scalar_math_batches::assemble_scalar_math_batches;
+pub(super) use assemble_selector_batches::assemble_selector_batches;
 use labels_from_batch::labels_from_batch;
 use labels_from_rate_batch::labels_from_rate_batch;

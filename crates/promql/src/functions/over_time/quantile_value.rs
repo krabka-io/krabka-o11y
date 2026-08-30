@@ -1,4 +1,4 @@
-use super::{Array, ToPrimitive};
+use super::{ ToPrimitive};
 
 /// Returns the `phi`-quantile of `values`, with linear interpolation between ranks.
 ///

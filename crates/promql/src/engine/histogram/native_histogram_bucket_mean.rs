@@ -1,6 +1,9 @@
 use super::{NativeHistogram, NativeQuantileBucket};
 
-pub(crate) fn native_histogram_bucket_mean(hist: &NativeHistogram, bucket: NativeQuantileBucket) -> f64 {
+pub(crate) fn native_histogram_bucket_mean(
+    hist: &NativeHistogram,
+    bucket: NativeQuantileBucket,
+) -> f64 {
     if bucket.lower.is_infinite() && bucket.lower.is_sign_negative() {
         return bucket.upper;
     }

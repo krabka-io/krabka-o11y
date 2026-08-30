@@ -12,7 +12,7 @@ mod label_value_cardinality;
 mod merge_named_stats;
 mod min_present_time;
 
-pub (super) use label_name_cardinality::label_name_cardinality;
-pub (super) use label_value_cardinality::label_value_cardinality;
-pub (super) use merge_named_stats::merge_named_stats;
-pub (super) use min_present_time::min_present_time;
+pub(super) use label_name_cardinality::label_name_cardinality;
+pub(super) use label_value_cardinality::label_value_cardinality;
+pub(super) use merge_named_stats::merge_named_stats;
+pub(super) use min_present_time::min_present_time;

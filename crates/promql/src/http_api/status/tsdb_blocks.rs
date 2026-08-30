@@ -1,4 +1,7 @@
-use super::{ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State, json, success_data_response, tenant_from_headers, tsdb_blocks_json};
+use super::{
+    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State, json,
+    success_data_response, tenant_from_headers, tsdb_blocks_json,
+};
 
 pub(crate) async fn tsdb_blocks<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

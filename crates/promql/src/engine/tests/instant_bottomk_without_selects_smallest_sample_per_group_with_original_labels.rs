@@ -1,7 +1,8 @@
 use super::*;
 
 #[tokio::test]
-pub(crate) async fn instant_bottomk_without_selects_smallest_sample_per_group_with_original_labels() {
+pub(crate) async fn instant_bottomk_without_selects_smallest_sample_per_group_with_original_labels()
+{
     let mut store = InMemoryMetricStore::new();
     for (job, instance, value) in [
         ("api", "a", 4.0),

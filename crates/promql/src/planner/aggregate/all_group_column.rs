@@ -1,4 +1,3 @@
-use super::*;
 
 /// Synthetic per-row grouping column for an empty `PromQL` grouping.
 ///

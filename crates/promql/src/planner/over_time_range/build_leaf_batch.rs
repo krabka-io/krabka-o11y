@@ -1,4 +1,7 @@
-use super::{Arc, ArrayRef, Float64Array, Int64Array, LabeledSample, PromqlError, RecordBatch, Result, Schema, StringArray};
+use super::{
+    Arc, ArrayRef, Float64Array, Int64Array, LabeledSample, PromqlError, RecordBatch, Result,
+    Schema, StringArray,
+};
 
 pub(crate) fn build_leaf_batch(
     schema: Arc<Schema>,

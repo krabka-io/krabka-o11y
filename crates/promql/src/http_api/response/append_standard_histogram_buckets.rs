@@ -1,4 +1,7 @@
-use super::{BOUNDARY_CLOSED_BOTH, BOUNDARY_OPEN_LEFT, BOUNDARY_OPEN_RIGHT, HistogramBucketJson, NativeHistogram, append_spanned_buckets, standard_histogram_bound};
+use super::{
+    BOUNDARY_CLOSED_BOTH, BOUNDARY_OPEN_LEFT, BOUNDARY_OPEN_RIGHT, HistogramBucketJson,
+    NativeHistogram, append_spanned_buckets, standard_histogram_bound,
+};
 
 pub(crate) fn append_standard_histogram_buckets(
     buckets: &mut Vec<HistogramBucketJson>,

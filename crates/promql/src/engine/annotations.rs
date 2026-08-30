@@ -24,11 +24,12 @@ mod is_valid_quantile;
 mod mixed_classic_native_warning;
 mod warn_mixed_histograms;
 
-pub (super) use emit_info::emit_info;
-pub (super) use emit_warning::emit_warning;
-pub (super) use incompatible_types_in_binop_info::incompatible_types_in_binop_info;
-pub (super) use invalid_quantile_warning::invalid_quantile_warning;
-# [cfg (feature = "experimental-functions")] pub (super) use invalid_ratio_warning::invalid_ratio_warning;
-pub (super) use is_valid_quantile::is_valid_quantile;
+pub(super) use emit_info::emit_info;
+pub(super) use emit_warning::emit_warning;
+pub(super) use incompatible_types_in_binop_info::incompatible_types_in_binop_info;
+pub(super) use invalid_quantile_warning::invalid_quantile_warning;
+#[cfg(feature = "experimental-functions")]
+pub(super) use invalid_ratio_warning::invalid_ratio_warning;
+pub(super) use is_valid_quantile::is_valid_quantile;
 use mixed_classic_native_warning::mixed_classic_native_warning;
-pub (super) use warn_mixed_histograms::warn_mixed_histograms;
+pub(super) use warn_mixed_histograms::warn_mixed_histograms;

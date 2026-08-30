@@ -12,6 +12,6 @@ mod expand_alert_template;
 mod labels_from_map;
 
 use expand_alert_action::expand_alert_action;
-pub (super) use expand_alert_mapping_json::expand_alert_mapping_json;
-pub (crate) use expand_alert_template::expand_alert_template;
-pub (super) use labels_from_map::labels_from_map;
+pub(super) use expand_alert_mapping_json::expand_alert_mapping_json;
+pub(crate) use expand_alert_template::expand_alert_template;
+pub(super) use labels_from_map::labels_from_map;

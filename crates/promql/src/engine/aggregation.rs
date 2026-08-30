@@ -4,10 +4,6 @@ use krabka_blockstore::Labels;
 use krabka_metrics::NativeHistogram;
 #[cfg(feature = "experimental-functions")]
 use num_traits::ToPrimitive as _;
-#[cfg(test)]
-use promql_parser::parser::token::{
-    T_AVG, T_COUNT, T_GROUP, T_MAX, T_MIN, T_STDDEV, T_STDVAR, T_SUM,
-};
 use promql_parser::parser::{
     AggregateExpr, Expr, LabelModifier,
     token::{T_TOPK, TokenType},
@@ -60,18 +56,22 @@ mod count_values_label_value;
 mod limit_ratio_includes_sample;
 mod prometheus_labels_hash;
 
-pub (super) use aggregate_k::aggregate_k;
-pub (super) use aggregate_op::AggregateOp;
-pub (super) use aggregate_quantile::aggregate_quantile;
+pub(super) use aggregate_k::aggregate_k;
+pub(super) use aggregate_op::AggregateOp;
+pub(super) use aggregate_quantile::aggregate_quantile;
 use aggregate_state::AggregateState;
-pub (super) use apply_count_values_aggregate::apply_count_values_aggregate;
-pub (super) use apply_k_aggregate::apply_k_aggregate;
-# [cfg (feature = "experimental-functions")] pub (super) use apply_limit_ratio_aggregate::apply_limit_ratio_aggregate;
-# [cfg (feature = "experimental-functions")] pub (super) use apply_limitk_aggregate::apply_limitk_aggregate;
-pub (super) use apply_quantile_aggregate::apply_quantile_aggregate;
-pub (super) use apply_simple_aggregate::apply_simple_aggregate;
-pub (super) use apply_stddev_stdvar_aggregate::apply_stddev_stdvar_aggregate;
+pub(super) use apply_count_values_aggregate::apply_count_values_aggregate;
+pub(super) use apply_k_aggregate::apply_k_aggregate;
+#[cfg(feature = "experimental-functions")]
+pub(super) use apply_limit_ratio_aggregate::apply_limit_ratio_aggregate;
+#[cfg(feature = "experimental-functions")]
+pub(super) use apply_limitk_aggregate::apply_limitk_aggregate;
+pub(super) use apply_quantile_aggregate::apply_quantile_aggregate;
+pub(super) use apply_simple_aggregate::apply_simple_aggregate;
+pub(super) use apply_stddev_stdvar_aggregate::apply_stddev_stdvar_aggregate;
 use compare_k_aggregate_samples::compare_k_aggregate_samples;
 use count_values_label_value::count_values_label_value;
-# [cfg (feature = "experimental-functions")] use limit_ratio_includes_sample::limit_ratio_includes_sample;
-# [cfg (feature = "experimental-functions")] use prometheus_labels_hash::prometheus_labels_hash;
+#[cfg(feature = "experimental-functions")]
+use limit_ratio_includes_sample::limit_ratio_includes_sample;
+#[cfg(feature = "experimental-functions")]
+use prometheus_labels_hash::prometheus_labels_hash;

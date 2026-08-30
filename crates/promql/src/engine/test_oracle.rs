@@ -45,5 +45,6 @@ mod unary_float_function;
 
 use calendar_function::calendar_function;
 use over_time_function::over_time_function;
-# [cfg (test)] use string_literal_arg::string_literal_arg;
+#[cfg(test)]
+use string_literal_arg::string_literal_arg;
 use unary_float_function::unary_float_function;

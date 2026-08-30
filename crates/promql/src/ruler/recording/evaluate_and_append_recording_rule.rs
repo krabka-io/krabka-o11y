@@ -1,4 +1,6 @@
-use super::{BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink, evaluate_recording_rule};
+use super::{
+    BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink, evaluate_recording_rule,
+};
 
 /// Evaluates one recording rule and appends its materialized samples to the WAL
 /// sink.

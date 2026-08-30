@@ -1,4 +1,10 @@
-use super::{Arc, BTreeMap, BTreeSet, ExemplarRecord, InMemoryMetricStore, LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels, MemTable, MetadataRecord, MetricStore, PromqlError, Result, ScanResult, SeriesFingerprint, SessionContext, TsdbBlock, TsdbHeadStats, TsdbStats, all_match, encode_float_samples, encode_native_histograms, float_sample_schema, named_stats, native_histogram_schema, prepare_matchers, row_matches};
+use super::{
+    Arc, BTreeMap, BTreeSet, ExemplarRecord, InMemoryMetricStore, LabelMatcher,
+    LabelNameCardinality, LabelValueCardinality, Labels, MemTable, MetadataRecord, MetricStore,
+    PromqlError, Result, ScanResult, SeriesFingerprint, SessionContext, TsdbBlock, TsdbHeadStats,
+    TsdbStats, all_match, encode_float_samples, encode_native_histograms, float_sample_schema,
+    named_stats, native_histogram_schema, prepare_matchers, row_matches,
+};
 
 #[async_trait::async_trait]
 impl MetricStore for InMemoryMetricStore {

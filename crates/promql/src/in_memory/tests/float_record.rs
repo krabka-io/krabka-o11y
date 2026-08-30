@@ -1,6 +1,11 @@
 use super::*;
 
-pub(crate) fn float_record(tenant: &str, labels: &Labels, timestamp_ms: i64, value: f64) -> WalRecord {
+pub(crate) fn float_record(
+    tenant: &str,
+    labels: &Labels,
+    timestamp_ms: i64,
+    value: f64,
+) -> WalRecord {
     WalRecord {
         tenant: tenant.to_string(),
         labels: labels

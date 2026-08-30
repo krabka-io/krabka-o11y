@@ -1,4 +1,6 @@
-use super::{ApiError, InstantQueryParams, form_urlencoded, parse_limit_parameter, required_form_param};
+use super::{
+    ApiError, InstantQueryParams, form_urlencoded, parse_limit_parameter, required_form_param,
+};
 
 pub(crate) fn instant_query_params_from_form(body: &[u8]) -> Result<InstantQueryParams, ApiError> {
     let mut query = None;

@@ -1,4 +1,7 @@
-use super::{ApiError, Arc, HeaderMap, IntoResponse, MetricStore, Path, PrometheusApiState, Response, State, StatusCode, tenant_from_headers, yaml_response};
+use super::{
+    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, Path, PrometheusApiState, Response, State,
+    StatusCode, tenant_from_headers, yaml_response,
+};
 
 pub(crate) async fn ruler_config_group<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

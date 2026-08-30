@@ -7,7 +7,10 @@ use super::*;
 /// contribution of its dense member. The result has no row for the
 /// all-no-value `g="allsparse"` group: the series is absent, not present with
 /// NaN.
-pub(crate) fn assert_sparse_aggregate_excludes_no_value(query: &str, via_operators: &[crate::InstantSample]) {
+pub(crate) fn assert_sparse_aggregate_excludes_no_value(
+    query: &str,
+    via_operators: &[crate::InstantSample],
+) {
     let group_value = |g: &str| -> Option<f64> {
         via_operators
             .iter()

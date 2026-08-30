@@ -1,4 +1,7 @@
-use super::{BTreeMap, InstantSample, LabelModifier, SampleValue, TokenType, aggregate_labels, compare_k_aggregate_samples, labels_key};
+use super::{
+    BTreeMap, InstantSample, LabelModifier, SampleValue, TokenType, aggregate_labels,
+    compare_k_aggregate_samples, labels_key,
+};
 
 /// Shared `topk`/`bottomk` core over an already-evaluated instant vector.
 ///

@@ -1,6 +1,9 @@
 use super::{NativeHistogram, spanned_histogram_counts, standard_histogram_bound};
 
-pub(crate) fn zero_count_at_threshold(histogram: &NativeHistogram, mut threshold: f64) -> (f64, f64) {
+pub(crate) fn zero_count_at_threshold(
+    histogram: &NativeHistogram,
+    mut threshold: f64,
+) -> (f64, f64) {
     loop {
         let mut count = histogram.zero_count;
         let mut expanded = threshold;

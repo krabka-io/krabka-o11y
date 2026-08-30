@@ -1,4 +1,10 @@
-use super::{ActiveQueryGuard, AlertStateKey, Arc, BTreeMap, ByteSize, EngineOpts, MetricStore, OverridesProvider, PromqlEngine, QueryFrontendCache, QueryFrontendOptions, QueryFrontendState, RangeQueryCache, RulerAlertStateRecord, RulerAlertStateStore, RulerGroupState, RulerGroupStateRecord, RulerRuleStore, RwLock, Semaphore, ServiceMetrics, SystemTime, Time, mebibytes};
+use super::{
+    ActiveQueryGuard, AlertStateKey, Arc, BTreeMap, ByteSize, EngineOpts, MetricStore,
+    OverridesProvider, PromqlEngine, QueryFrontendCache, QueryFrontendOptions, QueryFrontendState,
+    RangeQueryCache, RulerAlertStateRecord, RulerAlertStateStore, RulerGroupState,
+    RulerGroupStateRecord, RulerRuleStore, RwLock, Semaphore, ServiceMetrics, SystemTime, Time,
+    mebibytes,
+};
 
 /// Shared state for the Prometheus HTTP query API.
 pub struct PrometheusApiState<S: MetricStore> {
@@ -193,7 +199,12 @@ impl<S: MetricStore> PrometheusApiState<S> {
             .map_or(0, |eval_time| *eval_time)
     }
 
-    pub(crate) fn ruler_group_last_eval_ms(&self, tenant: &str, namespace: &str, group: &str) -> Option<i64> {
+    pub(crate) fn ruler_group_last_eval_ms(
+        &self,
+        tenant: &str,
+        namespace: &str,
+        group: &str,
+    ) -> Option<i64> {
         self.ruler_group_state
             .read()
             .ok()

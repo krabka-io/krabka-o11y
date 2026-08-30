@@ -20,5 +20,5 @@ pub mod series_divide;
 mod is_stale_nan;
 mod stale_nan_bits;
 
-pub (crate) use is_stale_nan::is_stale_nan;
-pub (crate) use stale_nan_bits::STALE_NAN_BITS;
+pub(crate) use is_stale_nan::is_stale_nan;
+pub(crate) use stale_nan_bits::STALE_NAN_BITS;

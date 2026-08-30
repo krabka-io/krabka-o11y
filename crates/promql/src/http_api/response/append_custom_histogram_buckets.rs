@@ -1,6 +1,12 @@
-use super::{BOUNDARY_OPEN_LEFT, HistogramBucketJson, NativeHistogram, append_spanned_buckets, custom_histogram_bound};
+use super::{
+    BOUNDARY_OPEN_LEFT, HistogramBucketJson, NativeHistogram, append_spanned_buckets,
+    custom_histogram_bound,
+};
 
-pub(crate) fn append_custom_histogram_buckets(buckets: &mut Vec<HistogramBucketJson>, hist: &NativeHistogram) {
+pub(crate) fn append_custom_histogram_buckets(
+    buckets: &mut Vec<HistogramBucketJson>,
+    hist: &NativeHistogram,
+) {
     let custom_values = hist.custom_values.as_deref().unwrap_or_default();
     append_spanned_buckets(
         buckets,

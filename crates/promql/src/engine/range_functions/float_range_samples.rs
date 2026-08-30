@@ -1,6 +1,10 @@
 use super::{RangeSeries, SampleValue, Time, TimeExt};
 
-pub(crate) fn float_range_samples(series: &RangeSeries, range_end_ms: i64, range: Time) -> Vec<(i64, f64)> {
+pub(crate) fn float_range_samples(
+    series: &RangeSeries,
+    range_end_ms: i64,
+    range: Time,
+) -> Vec<(i64, f64)> {
     let range_start_ms = range_end_ms.saturating_sub(range.millis_i64());
     series
         .samples

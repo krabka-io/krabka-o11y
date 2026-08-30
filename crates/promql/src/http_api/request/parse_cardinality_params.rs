@@ -1,4 +1,4 @@
-use super::{ApiError, CardinalityParams, MetricStore, form_urlencoded, parse_limit_parameter};
+use super::{ApiError, CardinalityParams, form_urlencoded, parse_limit_parameter};
 
 pub(crate) fn parse_cardinality_params(
     raw_query: Option<&str>,

@@ -1,4 +1,9 @@
-use super::{Arc, BTreeSet, Expr, Extension, FunctionRegistry, LabeledSample, LogicalPlan, LogicalPlanBuilder, MemTable, PromqlError, RANGE_SUFFIX, RATE_VALUE_COLUMN, RangeManipulate, RateRangePlan, RateUdfKind, Result, SeriesDivide, SeriesNormalize, TIME_COLUMN, Time, TimeExt, VALUE_COLUMN, build_leaf_batch, col, leaf_schema, lit, prom_session_context};
+use super::{
+    Arc, BTreeSet, Expr, Extension, FunctionRegistry, LabeledSample, LogicalPlan,
+    LogicalPlanBuilder, MemTable, PromqlError, RANGE_SUFFIX, RATE_VALUE_COLUMN, RangeManipulate,
+    RateRangePlan, RateUdfKind, Result, SeriesDivide, SeriesNormalize, TIME_COLUMN, Time, TimeExt,
+    VALUE_COLUMN, build_leaf_batch, col, leaf_schema, lit, prom_session_context,
+};
 
 /// Builds the leaf table and operator chain that evaluates `f(selector[range])`
 /// at one eval instant `eval_time_ms` with the given `range` width.

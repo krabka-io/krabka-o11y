@@ -1,4 +1,8 @@
-use super::{BTreeMap, MetricStore, PrometheusApiState, PromqlError, RuleRenderOptions, TimeExt, Value, json, prometheus_rules_json, rfc3339_time_string, yaml_duration, yaml_string, zero_evaluation_time};
+use super::{
+    BTreeMap, MetricStore, PrometheusApiState, PromqlError, RuleRenderOptions, TimeExt, Value,
+    json, prometheus_rules_json, rfc3339_time_string, yaml_duration, yaml_string,
+    zero_evaluation_time,
+};
 
 pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
     state: &PrometheusApiState<S>,

@@ -1129,7 +1129,12 @@ impl<S: MetricStore> PromqlEngine<S> {
     }
 
     #[cfg(test)]
-    pub(crate) async fn eval_info_call(&self, tenant: &str, call: &Call, time_ms: i64) -> Result<QueryResult> {
+    pub(crate) async fn eval_info_call(
+        &self,
+        tenant: &str,
+        call: &Call,
+        time_ms: i64,
+    ) -> Result<QueryResult> {
         let context = parse_info_call(call)?;
 
         let QueryResult::InstantVector(samples) = self

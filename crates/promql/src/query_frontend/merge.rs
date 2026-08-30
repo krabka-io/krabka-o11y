@@ -28,13 +28,13 @@ mod scaled_native_histogram;
 
 use aggregate_labels::aggregate_labels;
 use compare_rank_candidates::compare_rank_candidates;
-pub (super) use divide_range_query_results::divide_range_query_results;
+pub(super) use divide_range_query_results::divide_range_query_results;
 use float_samples_by_fingerprint::float_samples_by_fingerprint;
 use label_sort_key::label_sort_key;
 pub use merge_range_query_results::merge_range_query_results;
-pub (super) use merge_range_query_results_with_reducer::merge_range_query_results_with_reducer;
+pub(super) use merge_range_query_results_with_reducer::merge_range_query_results_with_reducer;
 use rank_candidate::RankCandidate;
 use reduce_duplicate_step_samples::reduce_duplicate_step_samples;
-pub (super) use reduce_moment_range_query_results::reduce_moment_range_query_results;
-pub (super) use reduce_rank_range_query_results::reduce_rank_range_query_results;
+pub(super) use reduce_moment_range_query_results::reduce_moment_range_query_results;
+pub(super) use reduce_rank_range_query_results::reduce_rank_range_query_results;
 use scaled_native_histogram::scaled_native_histogram;

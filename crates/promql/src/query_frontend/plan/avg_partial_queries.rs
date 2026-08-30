@@ -1,4 +1,7 @@
-use super::{Expr, T_AVG, T_COUNT, T_SUM, TokenType, expr_contains_aggregate, expr_supports_frontend_sharding};
+use super::{
+    Expr, T_AVG, T_COUNT, T_SUM, TokenType, expr_contains_aggregate,
+    expr_supports_frontend_sharding,
+};
 
 pub(crate) fn avg_partial_queries(expr: &Expr) -> Option<(String, String)> {
     match expr {

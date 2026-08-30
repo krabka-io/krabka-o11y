@@ -1,4 +1,8 @@
-use super::{AGGREGATE_VALUE_COLUMN, ALL_GROUP_COLUMN, Expr, Grouping, LogicalPlan, LogicalPlanBuilder, PromqlError, Result, SimpleAggregateOp, VALUE_COLUMN, col, input_label_columns, lit, resolve_group_labels};
+use super::{
+    AGGREGATE_VALUE_COLUMN, ALL_GROUP_COLUMN, Expr, Grouping, LogicalPlan, LogicalPlanBuilder,
+    PromqlError, Result, SimpleAggregateOp, VALUE_COLUMN, col, input_label_columns, lit,
+    resolve_group_labels,
+};
 
 /// Wraps `input` in a `DataFusion` aggregate for `op grouping (<input>)`.
 ///

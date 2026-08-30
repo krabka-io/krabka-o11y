@@ -1,6 +1,8 @@
 use super::{ApiError, ExemplarsQueryParams, form_urlencoded, required_form_param};
 
-pub(crate) fn exemplars_query_params_from_form(body: &[u8]) -> Result<ExemplarsQueryParams, ApiError> {
+pub(crate) fn exemplars_query_params_from_form(
+    body: &[u8],
+) -> Result<ExemplarsQueryParams, ApiError> {
     let mut query = None;
     let mut start = None;
     let mut end = None;

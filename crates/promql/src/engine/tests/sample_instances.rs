@@ -1,4 +1,3 @@
-use super::*;
 
 #[cfg(feature = "experimental-functions")]
 pub(crate) fn sample_instances(samples: &[crate::InstantSample]) -> Vec<&str> {

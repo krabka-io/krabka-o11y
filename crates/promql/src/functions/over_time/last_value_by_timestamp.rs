@@ -1,4 +1,3 @@
-use super::Array;
 
 /// Returns the value of the sample with the greatest timestamp.
 ///

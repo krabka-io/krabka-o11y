@@ -51,7 +51,7 @@ use append_remote_read_exemplars::append_remote_read_exemplars;
 use append_remote_read_float_samples::append_remote_read_float_samples;
 use append_remote_read_histogram_samples::append_remote_read_histogram_samples;
 use header_list_includes::header_list_includes;
-pub (super) use remote_read::remote_read;
+pub(super) use remote_read::remote_read;
 use remote_read_bucket_spans::remote_read_bucket_spans;
 use remote_read_exemplar::remote_read_exemplar;
 use remote_read_histogram::remote_read_histogram;

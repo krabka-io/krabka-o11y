@@ -1,4 +1,6 @@
-use super::{NativeHistogram, add_bucket_maps, reduced_counts_outside_zero, zero_count_at_threshold};
+use super::{
+    NativeHistogram, add_bucket_maps, reduced_counts_outside_zero, zero_count_at_threshold,
+};
 
 pub(crate) fn add_exponential_histogram(left: &mut NativeHistogram, right: &NativeHistogram) {
     let mut threshold = left.zero_threshold.max(right.zero_threshold);

@@ -1,4 +1,3 @@
-use super::*;
 
 /// Warnings and info annotations from a query evaluation.
 ///

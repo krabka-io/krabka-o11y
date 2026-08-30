@@ -1,4 +1,3 @@
-use super::*;
 
 /// Which extremum [`fold_over_time_extremum`] tracks.
 #[derive(Clone, Copy)]

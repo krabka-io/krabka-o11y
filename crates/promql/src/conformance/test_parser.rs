@@ -1,4 +1,9 @@
-use super::{ExpectBlock, ExpectLine, Line, LoadSeries, Result, SampleSpec, Statement, TestFile, Time, TimeExt, failure_message, is_block_line, load_with_nhcb_series, parse_duration_ms, parse_error, parse_expect_directive, parse_expect_string, parse_range_vector_directive, parse_sample_token, split_metric_and_tail, split_once_whitespace, split_sample_tokens};
+use super::{
+    ExpectBlock, ExpectLine, Line, LoadSeries, Result, SampleSpec, Statement, TestFile, Time,
+    TimeExt, failure_message, is_block_line, load_with_nhcb_series, parse_duration_ms, parse_error,
+    parse_expect_directive, parse_expect_string, parse_range_vector_directive, parse_sample_token,
+    split_metric_and_tail, split_once_whitespace, split_sample_tokens,
+};
 
 pub(crate) struct TestParser<'a> {
     pub(crate) lines: Vec<Line<'a>>,

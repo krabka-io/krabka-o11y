@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn approx_eq(left: f64, right: f64) -> bool {
     if !left.is_finite() || !right.is_finite() {

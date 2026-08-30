@@ -1,4 +1,7 @@
-use super::{Arc, Bytes, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State, cardinality_label_values_inner, parse_cardinality_form};
+use super::{
+    Arc, Bytes, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State,
+    cardinality_label_values_inner, parse_cardinality_form,
+};
 
 pub(crate) async fn cardinality_label_values_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

@@ -1,4 +1,9 @@
-use super::{ApiError, BTreeMap, Labels, MetricStore, PrometheusApiState, SeriesFingerprint, append_remote_read_exemplars, append_remote_read_float_samples, append_remote_read_histogram_samples, enforce_selected_series_limit, pb, remote_read_matchers, validate_timestamp_range};
+use super::{
+    ApiError, BTreeMap, Labels, MetricStore, PrometheusApiState, SeriesFingerprint,
+    append_remote_read_exemplars, append_remote_read_float_samples,
+    append_remote_read_histogram_samples, enforce_selected_series_limit, pb, remote_read_matchers,
+    validate_timestamp_range,
+};
 
 pub(crate) async fn remote_read_response<S: MetricStore>(
     state: &PrometheusApiState<S>,

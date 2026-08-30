@@ -1,4 +1,7 @@
-use super::{BTreeMap, RulerGroupState, RulerShard, filter_ruler_rule_set_due_for_eval, filter_ruler_rule_set_for_shard};
+use super::{
+    BTreeMap, RulerGroupState, RulerShard, filter_ruler_rule_set_due_for_eval,
+    filter_ruler_rule_set_for_shard,
+};
 
 /// Returns the rule groups one shard owns whose configured interval has elapsed.
 #[must_use]

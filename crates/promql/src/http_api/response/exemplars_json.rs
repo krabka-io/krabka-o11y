@@ -1,4 +1,7 @@
-use super::{BTreeMap, ExemplarRecord, Labels, Value, json, labels_json, labels_key, sample_string, timestamp_seconds};
+use super::{
+    BTreeMap, ExemplarRecord, Labels, Value, json, labels_json, labels_key, sample_string,
+    timestamp_seconds,
+};
 
 pub(crate) fn exemplars_json(exemplars: Vec<ExemplarRecord>) -> Vec<Value> {
     let mut groups = BTreeMap::<String, (Labels, Vec<Value>)>::new();

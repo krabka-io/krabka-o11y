@@ -6,7 +6,8 @@ use super::*;
 /// far out it goes. Nothing exercised those two arms, nor a query bound that
 /// lands inside a bucket rather than on its edge.
 #[tokio::test]
-pub(crate) async fn histogram_fraction_counts_open_ended_classic_buckets_only_against_open_bounds() {
+pub(crate) async fn histogram_fraction_counts_open_ended_classic_buckets_only_against_open_bounds()
+{
     let mut store = InMemoryMetricStore::new();
     // Cumulative counts. The first `le` is negative, so the opening bucket runs
     // from -Inf, and the `+Inf` bucket closes the series at the other end.

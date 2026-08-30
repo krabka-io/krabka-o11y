@@ -1,4 +1,4 @@
-use super::{ByteRateExt, ByteSizeExt, FrequencyExt, RatioExt, Time, TimeExt};
+use super::{ Time, TimeExt};
 
 /// Query-range values available to Prometheus duration expressions.
 ///

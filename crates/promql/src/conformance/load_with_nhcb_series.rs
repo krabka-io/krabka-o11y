@@ -1,6 +1,12 @@
-use super::{BTreeMap, Line, LoadSeries, NhcbBucketSeries, NhcbGroup, Result, conformance_labels_key, labels_to_metric, labels_without_label, nhcb_sample_at, parse_bucket_bound, testkit};
+use super::{
+    BTreeMap, Line, LoadSeries, NhcbBucketSeries, NhcbGroup, Result, conformance_labels_key,
+    labels_to_metric, labels_without_label, nhcb_sample_at, parse_bucket_bound, testkit,
+};
 
-pub(crate) fn load_with_nhcb_series(series: &[LoadSeries], line: Line<'_>) -> Result<Vec<LoadSeries>> {
+pub(crate) fn load_with_nhcb_series(
+    series: &[LoadSeries],
+    line: Line<'_>,
+) -> Result<Vec<LoadSeries>> {
     let mut groups: BTreeMap<String, NhcbGroup> = BTreeMap::new();
     for load_series in series {
         let labels = testkit::metric_to_labels(&load_series.metric);

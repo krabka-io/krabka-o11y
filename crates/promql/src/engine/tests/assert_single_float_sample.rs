@@ -1,6 +1,11 @@
 use super::*;
 
-pub(crate) fn assert_single_float_sample(result: &QueryResult, job: &str, expected: f64, context: &str) {
+pub(crate) fn assert_single_float_sample(
+    result: &QueryResult,
+    job: &str,
+    expected: f64,
+    context: &str,
+) {
     let QueryResult::InstantVector(samples) = result else {
         panic!("expected vector for {context}");
     };

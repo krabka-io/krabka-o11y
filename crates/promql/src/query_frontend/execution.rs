@@ -24,7 +24,7 @@ mod range_query_executor;
 
 use execute_avg_range_query_frontend::execute_avg_range_query_frontend;
 use execute_moment_range_query_frontend::execute_moment_range_query_frontend;
-pub (super) use execute_planned_range_queries::execute_planned_range_queries;
+pub(super) use execute_planned_range_queries::execute_planned_range_queries;
 pub use execute_range_query_frontend::execute_range_query_frontend;
 use execute_single_range_query::execute_single_range_query;
 pub use range_query_executor::RangeQueryExecutor;

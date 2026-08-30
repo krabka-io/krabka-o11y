@@ -1,4 +1,8 @@
-use super::{Arc, CardinalityParams, HeaderMap, IntoResponse, Json, MetricStore, PrometheusApiState, Response, active_series_response, apply_limit, cardinality_series, enforce_selected_series_limit, tenant_from_headers};
+use super::{
+    Arc, CardinalityParams, HeaderMap, IntoResponse, Json, MetricStore, PrometheusApiState,
+    Response, active_series_response, apply_limit, cardinality_series,
+    enforce_selected_series_limit, tenant_from_headers,
+};
 
 pub(crate) async fn cardinality_active_series_inner<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,

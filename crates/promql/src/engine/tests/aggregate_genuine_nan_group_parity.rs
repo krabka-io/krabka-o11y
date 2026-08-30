@@ -148,7 +148,9 @@ pub(crate) async fn aggregate_genuine_nan_group_parity() {
                         got.unwrap_or_else(|| panic!("`{query}`: group l={l} missing in {oper:?}"));
                     let got_value = float_value(&sample.value);
                     if value.is_nan() {
-                        assert2::assert!(got_value.is_nan() && !super::super::is_stale_nan(got_value));
+                        assert2::assert!(
+                            got_value.is_nan() && !super::super::is_stale_nan(got_value)
+                        );
                     } else {
                         assert2::assert!(approx_eq(got_value, *value));
                     }

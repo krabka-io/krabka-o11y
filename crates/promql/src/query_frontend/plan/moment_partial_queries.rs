@@ -1,6 +1,11 @@
-use super::{Expr, MomentReduction, T_COUNT, T_STDDEV, T_STDVAR, T_SUM, TokenType, expr_contains_aggregate, expr_supports_frontend_sharding, parse_promql};
+use super::{
+    Expr, MomentReduction, T_COUNT, T_STDDEV, T_STDVAR, T_SUM, TokenType, expr_contains_aggregate,
+    expr_supports_frontend_sharding, parse_promql,
+};
 
-pub(crate) fn moment_partial_queries(expr: &Expr) -> Option<(String, String, String, MomentReduction)> {
+pub(crate) fn moment_partial_queries(
+    expr: &Expr,
+) -> Option<(String, String, String, MomentReduction)> {
     match expr {
         Expr::Aggregate(aggregate)
             if matches!(aggregate.op.id(), T_STDDEV | T_STDVAR)

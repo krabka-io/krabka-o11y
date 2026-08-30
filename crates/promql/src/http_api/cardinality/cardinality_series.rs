@@ -1,4 +1,7 @@
-use super::{ApiError, CardinalityParams, Labels, MetricStore, PrometheusApiState, cardinality_series_for_params};
+use super::{
+    ApiError, CardinalityParams, Labels, MetricStore, PrometheusApiState,
+    cardinality_series_for_params,
+};
 
 /// Resolves the series set a cardinality request operates on.
 ///

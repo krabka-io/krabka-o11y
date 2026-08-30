@@ -1,4 +1,8 @@
-use super::{MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink, evaluate_and_append_recording_rule, yaml_optional_string, yaml_required_string, yaml_string_map};
+use super::{
+    MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
+    evaluate_and_append_recording_rule, yaml_optional_string, yaml_required_string,
+    yaml_string_map,
+};
 
 /// Evaluates all recording rules in one rule group and appends their outputs.
 ///

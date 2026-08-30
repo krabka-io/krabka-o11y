@@ -1,4 +1,8 @@
-use super::{ApiError, AsArray, BTreeMap, Float64Type, Int64Type, Labels, MetricStore, PrometheusApiState, PromqlError, ScanResult, SeriesFingerprint, UInt64Type, enforce_sample_count, pb, remote_read_series};
+use super::{
+    ApiError, AsArray, BTreeMap, Float64Type, Int64Type, Labels, MetricStore, PrometheusApiState,
+    PromqlError, ScanResult, SeriesFingerprint, UInt64Type, enforce_sample_count, pb,
+    remote_read_series,
+};
 
 pub(crate) async fn append_remote_read_float_samples<S: MetricStore>(
     state: &PrometheusApiState<S>,

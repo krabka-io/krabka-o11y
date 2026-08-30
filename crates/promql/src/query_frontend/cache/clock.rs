@@ -1,4 +1,3 @@
-use super::*;
 
 /// Wall-clock source for cache-entry age checks.
 ///

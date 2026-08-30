@@ -1,4 +1,8 @@
-use super::{ExtremumKind, OverTimeFn, RangeSeries, SampleValue, Time, float_range_samples, fold_over_time_extremum, histogram_range_samples, over_time_histogram_sample, over_time_mad, over_time_mean, over_time_variance, range_sample_count, range_samples, timestamp_seconds};
+use super::{
+    ExtremumKind, OverTimeFn, RangeSeries, SampleValue, Time, float_range_samples,
+    fold_over_time_extremum, histogram_range_samples, over_time_histogram_sample, over_time_mad,
+    over_time_mean, over_time_variance, range_sample_count, range_samples, timestamp_seconds,
+};
 
 pub(crate) fn over_time_sample_from_series(
     series: &RangeSeries,

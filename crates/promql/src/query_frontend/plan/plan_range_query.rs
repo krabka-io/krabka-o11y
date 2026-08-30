@@ -1,4 +1,5 @@
-use super::{ByteRateExt, ByteSizeExt, FrequencyExt, FrontendRangeQuery, PromqlError, QueryFrontendOptions, RatioExt, Time, TimeExt, absolute_split_window, check_range_resolution, push_sharded_subqueries, query_supports_frontend_sharding};
+use super::{ FrontendRangeQuery, PromqlError, QueryFrontendOptions, Time, TimeExt, absolute_split_window, check_range_resolution,
+    push_sharded_subqueries, query_supports_frontend_sharding};
 
 /// Plans query-frontend fan-out for a Prometheus range query.
 ///

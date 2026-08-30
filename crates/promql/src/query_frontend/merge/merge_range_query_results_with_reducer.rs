@@ -1,4 +1,7 @@
-use super::{BTreeMap, PromqlError, QueryResult, QueryShardReducer, RangeSeries, SeriesFingerprint, label_sort_key, reduce_duplicate_step_samples};
+use super::{
+    BTreeMap, PromqlError, QueryResult, QueryShardReducer, RangeSeries, SeriesFingerprint,
+    label_sort_key, reduce_duplicate_step_samples,
+};
 
 pub(crate) fn merge_range_query_results_with_reducer(
     results: Vec<QueryResult>,

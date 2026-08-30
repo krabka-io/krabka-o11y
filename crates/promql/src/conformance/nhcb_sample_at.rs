@@ -1,4 +1,7 @@
-use super::{Line, NhcbBucketSeries, Result, SampleSpec, cumulative_to_bucket_counts, native_custom_bucket_histogram, parse_error};
+use super::{
+    Line, NhcbBucketSeries, Result, SampleSpec, cumulative_to_bucket_counts,
+    native_custom_bucket_histogram, parse_error,
+};
 
 pub(crate) fn nhcb_sample_at(
     buckets: &[NhcbBucketSeries],

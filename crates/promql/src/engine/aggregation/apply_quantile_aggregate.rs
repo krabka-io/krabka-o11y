@@ -1,4 +1,7 @@
-use super::{BTreeMap, InstantSample, LabelModifier, Labels, SampleValue, aggregate_labels, emit_warning, invalid_quantile_warning, is_valid_quantile, labels_key, quantile_value};
+use super::{
+    BTreeMap, InstantSample, LabelModifier, Labels, SampleValue, aggregate_labels, emit_warning,
+    invalid_quantile_warning, is_valid_quantile, labels_key, quantile_value,
+};
 
 /// Shared `quantile(phi, v)` core over an already-evaluated instant vector.
 ///

@@ -1,4 +1,7 @@
-use super::{PromqlError, QueryShardExecution, avg_partial_queries, expr_shard_reducer, moment_partial_queries, parse_promql, rank_reduction};
+use super::{
+    PromqlError, QueryShardExecution, avg_partial_queries, expr_shard_reducer,
+    moment_partial_queries, parse_promql, rank_reduction,
+};
 
 pub(crate) fn query_shard_execution(query: &str) -> Result<QueryShardExecution, PromqlError> {
     let expr = parse_promql(query)?;

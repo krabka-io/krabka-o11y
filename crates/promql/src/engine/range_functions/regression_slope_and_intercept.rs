@@ -1,6 +1,9 @@
 use super::ToPrimitive;
 
-pub(crate) fn regression_slope_and_intercept(samples: &[(i64, f64)], range_end_ms: i64) -> Option<(f64, f64)> {
+pub(crate) fn regression_slope_and_intercept(
+    samples: &[(i64, f64)],
+    range_end_ms: i64,
+) -> Option<(f64, f64)> {
     if samples.len() < 2 {
         return None;
     }

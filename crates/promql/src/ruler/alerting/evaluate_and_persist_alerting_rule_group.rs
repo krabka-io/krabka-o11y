@@ -1,4 +1,7 @@
-use super::{AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RulerAlertState, RulerStateSink, evaluate_and_persist_alerting_rule_with_state, yaml_optional_string};
+use super::{
+    AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RulerAlertState, RulerStateSink,
+    evaluate_and_persist_alerting_rule_with_state, yaml_optional_string,
+};
 
 /// Evaluates all alerting rules in one rule group, persists alert state, and dispatches firing alerts.
 ///

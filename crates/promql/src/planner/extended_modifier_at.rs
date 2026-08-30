@@ -1,6 +1,9 @@
 use super::{ExtendedSelectorModifier, is_ident_char};
 
-pub(crate) fn extended_modifier_at(chars: &[char], index: usize) -> Option<(ExtendedSelectorModifier, usize)> {
+pub(crate) fn extended_modifier_at(
+    chars: &[char],
+    index: usize,
+) -> Option<(ExtendedSelectorModifier, usize)> {
     for (keyword, modifier) in [
         ("anchored", ExtendedSelectorModifier::Anchored),
         ("smoothed", ExtendedSelectorModifier::Smoothed),

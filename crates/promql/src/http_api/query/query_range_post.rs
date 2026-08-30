@@ -1,4 +1,7 @@
-use super::{Arc, Bytes, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State, query_range_inner, range_query_params_from_form};
+use super::{
+    Arc, Bytes, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State,
+    query_range_inner, range_query_params_from_form,
+};
 
 pub(crate) async fn query_range_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

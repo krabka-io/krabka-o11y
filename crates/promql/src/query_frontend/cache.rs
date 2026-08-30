@@ -32,7 +32,7 @@ use entry_is_expired::entry_is_expired;
 use normalize_cache_prefix::normalize_cache_prefix;
 pub use object_store_query_frontend_cache::ObjectStoreQueryFrontendCache;
 pub use query_frontend_cache::QueryFrontendCache;
-pub (super) use range_cache_key::RangeCacheKey;
+pub(super) use range_cache_key::RangeCacheKey;
 use range_cache_key_object_name::range_cache_key_object_name;
 pub use range_query_cache::RangeQueryCache;
 use stored_range_result::StoredRangeResult;

@@ -1,4 +1,8 @@
-use super::{FrontendRangeRequest, PromqlError, QueryResult, QueryShardReducer, RangeQueryCache, RangeQueryExecutor, divide_range_query_results, execute_planned_range_queries, merge_range_query_results_with_reducer, plan_range_query};
+use super::{
+    FrontendRangeRequest, PromqlError, QueryResult, QueryShardReducer, RangeQueryCache,
+    RangeQueryExecutor, divide_range_query_results, execute_planned_range_queries,
+    merge_range_query_results_with_reducer, plan_range_query,
+};
 
 pub(crate) async fn execute_avg_range_query_frontend<E, C>(
     executor: &E,

@@ -1,4 +1,3 @@
-use super::*;
 
 /// Metric metadata served by `/api/v1/metadata`.
 #[derive(Clone, Debug, PartialEq, Eq)]

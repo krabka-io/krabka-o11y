@@ -17,8 +17,8 @@ mod info_identifying_key;
 mod info_samples_by_identifying_key;
 mod parse_info_call;
 
-pub (super) use apply_info::apply_info;
-pub (super) use info_context::InfoContext;
+pub(super) use apply_info::apply_info;
+pub(super) use info_context::InfoContext;
 use info_identifying_key::info_identifying_key;
-pub (super) use info_samples_by_identifying_key::info_samples_by_identifying_key;
-pub (super) use parse_info_call::parse_info_call;
+pub(super) use info_samples_by_identifying_key::info_samples_by_identifying_key;
+pub(super) use parse_info_call::parse_info_call;

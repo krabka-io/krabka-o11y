@@ -1,7 +1,8 @@
 use super::*;
 
 #[tokio::test]
-pub(crate) async fn instant_sum_aggregation_combines_native_histograms_with_different_span_layouts() {
+pub(crate) async fn instant_sum_aggregation_combines_native_histograms_with_different_span_layouts()
+{
     let mut left = native_histogram(4.0, 10.0);
     left.positive_spans = vec![BucketSpan {
         offset: 0,

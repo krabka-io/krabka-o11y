@@ -1,4 +1,7 @@
-use super::{Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response, State, exemplars_query_params_from_form, query_exemplars_inner};
+use super::{
+    Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response, State,
+    exemplars_query_params_from_form, query_exemplars_inner,
+};
 
 pub(crate) async fn query_exemplars<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

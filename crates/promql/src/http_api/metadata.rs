@@ -23,9 +23,9 @@ mod parse_metadata_params;
 mod target_metadata;
 mod target_metadata_json;
 
-pub (super) use metadata::metadata;
+pub(super) use metadata::metadata;
 use metadata_json::metadata_json;
 use metadata_params::MetadataParams;
 use parse_metadata_params::parse_metadata_params;
-pub (super) use target_metadata::target_metadata;
+pub(super) use target_metadata::target_metadata;
 use target_metadata_json::target_metadata_json;

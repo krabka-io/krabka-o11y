@@ -1,4 +1,8 @@
-use super::{ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response, State, apply_limit, parse_metadata_params, success_data_response, target_metadata_json, tenant_from_headers};
+use super::{
+    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response,
+    State, apply_limit, parse_metadata_params, success_data_response, target_metadata_json,
+    tenant_from_headers,
+};
 
 pub(crate) async fn target_metadata<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

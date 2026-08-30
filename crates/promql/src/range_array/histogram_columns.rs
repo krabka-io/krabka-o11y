@@ -1,4 +1,9 @@
-use super::{Array, BooleanArray, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS, COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT, COL_NH_SCHEMA, COL_NH_START_TS, COL_NH_SUM, COL_NH_ZERO_COUNT, COL_NH_ZERO_THRESHOLD, Float64Array, HistogramView, Int64Array, Int8Array, ListArray, StructArray, struct_column};
+use super::{
+    Array, BooleanArray, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS,
+    COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT, COL_NH_SCHEMA,
+    COL_NH_START_TS, COL_NH_SUM, COL_NH_ZERO_COUNT, COL_NH_ZERO_THRESHOLD, Float64Array,
+    HistogramView, Int8Array, Int64Array, ListArray, StructArray, struct_column,
+};
 
 pub(crate) struct HistogramColumns<'a> {
     pub(crate) schemas: &'a Int8Array,

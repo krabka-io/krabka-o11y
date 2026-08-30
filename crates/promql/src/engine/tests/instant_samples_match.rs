@@ -7,7 +7,10 @@ use super::*;
 /// that rule, so a plain `assert_eq!` fails when a path correctly keeps a
 /// genuine NaN value. The tests do not expect stale-NaN markers to survive
 /// selection on either path, so the markers never reach this comparison.
-pub(crate) fn instant_samples_match(left: &[crate::InstantSample], right: &[crate::InstantSample]) -> bool {
+pub(crate) fn instant_samples_match(
+    left: &[crate::InstantSample],
+    right: &[crate::InstantSample],
+) -> bool {
     if left.len() != right.len() {
         return false;
     }

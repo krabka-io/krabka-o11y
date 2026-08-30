@@ -1,4 +1,8 @@
-use super::{Arc, BTreeSet, Expr, FunctionRegistry, LabeledValue, Labels, LogicalPlanBuilder, MemTable, PromqlError, Result, SAMPLE_TIME_COLUMN, ScalarMathOp, ScalarMathPlan, VALUE_COLUMN, build_leaf_batch, col, is_metadata_label, leaf_schema, lit, prom_session_context};
+use super::{
+    Arc, BTreeSet, Expr, FunctionRegistry, LabeledValue, Labels, LogicalPlanBuilder, MemTable,
+    PromqlError, Result, SAMPLE_TIME_COLUMN, ScalarMathOp, ScalarMathPlan, VALUE_COLUMN,
+    build_leaf_batch, col, is_metadata_label, leaf_schema, lit, prom_session_context,
+};
 
 /// Builds the leaf table and projection that evaluates `op([bounds...,] value)`.
 ///

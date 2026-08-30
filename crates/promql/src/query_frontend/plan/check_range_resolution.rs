@@ -7,7 +7,11 @@ use super::{MAX_RESOLUTION_POINTS, PromqlError, Time, TimeExt};
 /// `maxResolution` is [`MAX_RESOLUTION_POINTS`]. It runs before the per-step
 /// fan-out, so an abusive resolution errors instead of an expansion into ~1e11
 /// sub-queries. [`plan_range_query`] already validates that `step` is positive.
-pub(crate) fn check_range_resolution(start_ms: i64, end_ms: i64, step: Time) -> Result<(), PromqlError> {
+pub(crate) fn check_range_resolution(
+    start_ms: i64,
+    end_ms: i64,
+    step: Time,
+) -> Result<(), PromqlError> {
     let step_ms = step.millis_i64();
     if step_ms <= 0 {
         return Ok(());

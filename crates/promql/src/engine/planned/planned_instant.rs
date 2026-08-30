@@ -1,4 +1,7 @@
-use super::{BTreeMap, InstantSample, InstantShape, Labels, LogicalPlan, OperatorInstant, RangeSeries, SeriesFingerprint, SessionContext};
+use super::{
+    BTreeMap, InstantSample, InstantShape, Labels, LogicalPlan, OperatorInstant, RangeSeries,
+    SeriesFingerprint, SessionContext,
+};
 
 /// A planned instant-query result.
 ///

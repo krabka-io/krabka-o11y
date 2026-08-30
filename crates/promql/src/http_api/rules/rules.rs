@@ -1,4 +1,8 @@
-use super::{ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response, RuleRenderOptions, RuleTypeFilter, State, json, parse_rules_params, prometheus_rule_groups_json, success_data_response, tenant_from_headers};
+use super::{
+    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response,
+    RuleRenderOptions, RuleTypeFilter, State, json, parse_rules_params,
+    prometheus_rule_groups_json, success_data_response, tenant_from_headers,
+};
 
 pub(crate) async fn rules<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

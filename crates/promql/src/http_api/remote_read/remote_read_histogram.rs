@@ -1,4 +1,7 @@
-use super::{NativeHistogram, pb, remote_read_bucket_spans, remote_read_histogram_count, remote_read_histogram_deltas, remote_read_histogram_zero_count, remote_read_reset_hint};
+use super::{
+    NativeHistogram, pb, remote_read_bucket_spans, remote_read_histogram_count,
+    remote_read_histogram_deltas, remote_read_histogram_zero_count, remote_read_reset_hint,
+};
 
 pub(crate) fn remote_read_histogram(timestamp: i64, hist: &NativeHistogram) -> pb::v1::Histogram {
     pb::v1::Histogram {

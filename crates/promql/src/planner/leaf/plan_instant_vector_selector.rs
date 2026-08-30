@@ -1,4 +1,8 @@
-use super::{Arc, BTreeSet, Extension, InstantManipulate, InstantSelectorPlan, LabeledSample, LogicalPlan, MemTable, PromqlError, Result, SeriesDivide, SeriesNormalize, TIME_COLUMN, Time, TimeExt, VALUE_COLUMN, build_leaf_batch, leaf_schema, prom_session_context};
+use super::{
+    Arc, BTreeSet, Extension, InstantManipulate, InstantSelectorPlan, LabeledSample, LogicalPlan,
+    MemTable, PromqlError, Result, SeriesDivide, SeriesNormalize, TIME_COLUMN, Time, TimeExt,
+    VALUE_COLUMN, build_leaf_batch, leaf_schema, prom_session_context,
+};
 
 /// Builds the leaf table and operator chain for a bare instant-vector selector.
 ///

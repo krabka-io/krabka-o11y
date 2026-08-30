@@ -1,4 +1,3 @@
-use super::*;
 
 pub(crate) fn stable_hash_parts(parts: &[&str]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;

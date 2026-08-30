@@ -1,4 +1,3 @@
-use super::MetricStore;
 
 #[derive(Debug, Default)]
 pub(crate) struct CardinalityParams {

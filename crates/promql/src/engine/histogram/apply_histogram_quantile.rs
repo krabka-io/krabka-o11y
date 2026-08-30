@@ -1,4 +1,9 @@
-use super::{BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue, classic_histogram_quantile, float_sample_value, labels_key, labels_without_metric_and_label, labels_without_metric_name, native_histogram_quantile, parse_classic_bucket_bound, record_metric_name, warn_mixed_histograms};
+use super::{
+    BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
+    classic_histogram_quantile, float_sample_value, labels_key, labels_without_metric_and_label,
+    labels_without_metric_name, native_histogram_quantile, parse_classic_bucket_bound,
+    record_metric_name, warn_mixed_histograms,
+};
 
 /// Prometheus. Both the `__name__` and `le` labels are dropped from every output
 /// series. Classic output samples carry `time_ms`; native ones keep the source

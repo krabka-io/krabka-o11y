@@ -1,4 +1,7 @@
-use super::{Arc, DefaultPhysicalPlanner, DfResult, ExecutionPlan, LogicalPlan, PhysicalPlanner, PromExtensionPlanner, QueryPlanner, Session, async_trait};
+use super::{
+    Arc, DefaultPhysicalPlanner, DfResult, ExecutionPlan, LogicalPlan, PhysicalPlanner,
+    PromExtensionPlanner, QueryPlanner, Session, async_trait,
+};
 
 /// Query planner that adds the custom `PromQL` operator nodes to the default
 /// physical planner.

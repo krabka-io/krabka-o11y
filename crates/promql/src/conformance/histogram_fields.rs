@@ -1,6 +1,9 @@
 use super::{BTreeMap, Line, Result, parse_error};
 
-pub(crate) fn histogram_fields<'a>(content: &'a str, line: Line<'_>) -> Result<BTreeMap<&'a str, &'a str>> {
+pub(crate) fn histogram_fields<'a>(
+    content: &'a str,
+    line: Line<'_>,
+) -> Result<BTreeMap<&'a str, &'a str>> {
     let mut fields = BTreeMap::new();
     let mut index = 0;
     let bytes = content.as_bytes();

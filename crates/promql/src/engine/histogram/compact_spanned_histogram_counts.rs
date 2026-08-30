@@ -1,6 +1,8 @@
 use super::{BTreeMap, BucketSpan};
 
-pub(crate) fn compact_spanned_histogram_counts(buckets: BTreeMap<i32, f64>) -> (Vec<BucketSpan>, Vec<f64>) {
+pub(crate) fn compact_spanned_histogram_counts(
+    buckets: BTreeMap<i32, f64>,
+) -> (Vec<BucketSpan>, Vec<f64>) {
     let buckets = buckets
         .into_iter()
         .filter(|(_, count)| *count != 0.0)

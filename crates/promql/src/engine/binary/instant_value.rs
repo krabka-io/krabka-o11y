@@ -1,4 +1,6 @@
-use super::{InstantSample, PromqlError, QueryResult, Result};
+use super::{InstantSample};
+#[cfg(test)]
+use super::{PromqlError, QueryResult, Result};
 
 pub(crate) enum InstantValue {
     Scalar(f64),

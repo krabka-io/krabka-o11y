@@ -1,6 +1,9 @@
 use super::{BlockMeta, BlockStore, CompactionIndexManifest};
 
-pub(crate) fn apply_manifest_to_blockstore(store: &mut BlockStore, manifest: &CompactionIndexManifest) {
+pub(crate) fn apply_manifest_to_blockstore(
+    store: &mut BlockStore,
+    manifest: &CompactionIndexManifest,
+) {
     for series in &manifest.series {
         store
             .index_mut()

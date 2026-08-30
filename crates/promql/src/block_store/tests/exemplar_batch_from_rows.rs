@@ -1,6 +1,8 @@
 use super::*;
 
-pub(crate) fn exemplar_batch_from_rows(rows: &[(u64, i64, f64, &str, &str, &str, &str)]) -> RecordBatch {
+pub(crate) fn exemplar_batch_from_rows(
+    rows: &[(u64, i64, f64, &str, &str, &str, &str)],
+) -> RecordBatch {
     let mut fingerprints = UInt64Builder::new();
     let mut timestamps = Int64Builder::new();
     let mut values = Float64Builder::new();

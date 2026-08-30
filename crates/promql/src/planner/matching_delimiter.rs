@@ -1,6 +1,11 @@
 use super::{PromqlError, Result};
 
-pub(crate) fn matching_delimiter(chars: &[char], start: usize, open: char, close: char) -> Result<usize> {
+pub(crate) fn matching_delimiter(
+    chars: &[char],
+    start: usize,
+    open: char,
+    close: char,
+) -> Result<usize> {
     let mut depth = 0_i32;
     let mut quote = None;
     let mut index = start;

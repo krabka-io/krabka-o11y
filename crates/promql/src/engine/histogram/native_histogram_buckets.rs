@@ -1,4 +1,7 @@
-use super::{NativeHistogram, NativeQuantileBucket, append_native_spanned_buckets, custom_histogram_bound, standard_histogram_bound};
+use super::{
+    NativeHistogram, NativeQuantileBucket, append_native_spanned_buckets, custom_histogram_bound,
+    standard_histogram_bound,
+};
 
 pub(crate) fn native_histogram_buckets(hist: &NativeHistogram) -> Vec<NativeQuantileBucket> {
     let mut buckets = Vec::new();

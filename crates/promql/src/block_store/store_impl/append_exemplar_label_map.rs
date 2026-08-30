@@ -1,6 +1,10 @@
 use super::{Array, Labels, MapArray, PromqlError, Result, StringArray};
 
-pub(crate) fn append_exemplar_label_map(labels: &mut Labels, label_maps: &MapArray, row: usize) -> Result<()> {
+pub(crate) fn append_exemplar_label_map(
+    labels: &mut Labels,
+    label_maps: &MapArray,
+    row: usize,
+) -> Result<()> {
     let entries = label_maps.value(row);
     let keys = entries
         .column(0)

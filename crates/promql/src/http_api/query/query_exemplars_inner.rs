@@ -1,4 +1,8 @@
-use super::{ApiError, Arc, BTreeMap, ExemplarsQueryParams, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, exemplar_key, exemplars_json, selector_matchers, success_data_response, tenant_from_headers, timestamp_ms, validate_timestamp_range};
+use super::{
+    ApiError, Arc, BTreeMap, ExemplarsQueryParams, HeaderMap, IntoResponse, MetricStore,
+    PrometheusApiState, Response, exemplar_key, exemplars_json, selector_matchers,
+    success_data_response, tenant_from_headers, timestamp_ms, validate_timestamp_range,
+};
 
 pub(crate) async fn query_exemplars_inner<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,

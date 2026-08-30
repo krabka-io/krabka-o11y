@@ -21,10 +21,11 @@ rules:
     let engine = PromqlEngine::new(store, EngineOpts::default());
     let sink = RecordingSink::default();
 
-    let appended =
-        super::super::evaluate_and_append_recording_rule_group(&engine, &sink, "tenant-a", &group, 60_000)
-            .await
-            .expect("recording rule group append");
+    let appended = super::super::evaluate_and_append_recording_rule_group(
+        &engine, &sink, "tenant-a", &group, 60_000,
+    )
+    .await
+    .expect("recording rule group append");
 
     let records = sink.records();
     check!(appended == 2);

@@ -1,6 +1,8 @@
 use super::{Array, MetadataRecord, PromqlError, Result, StringArray};
 
-pub(crate) fn metadata_from_batch(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<MetadataRecord>> {
+pub(crate) fn metadata_from_batch(
+    batch: &arrow::record_batch::RecordBatch,
+) -> Result<Vec<MetadataRecord>> {
     let names = batch
         .column(2)
         .as_any()

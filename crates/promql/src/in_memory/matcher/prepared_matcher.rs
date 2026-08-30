@@ -1,4 +1,7 @@
-use super::{LabelMatcher, Labels, MatchOp, PromqlError, QUERY_SHARD_LABEL, QueryShardSelector, Result, SeriesFingerprint, parse_query_shard_selector, regex_anchored};
+use super::{
+    LabelMatcher, Labels, MatchOp, PromqlError, QUERY_SHARD_LABEL, QueryShardSelector, Result,
+    SeriesFingerprint, parse_query_shard_selector, regex_anchored,
+};
 
 pub(crate) enum PreparedMatcher {
     LabelEq { name: String, value: String },

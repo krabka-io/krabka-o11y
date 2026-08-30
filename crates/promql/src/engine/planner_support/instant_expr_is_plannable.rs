@@ -1,4 +1,10 @@
-use super::{Expr, binary_operand_is_plannable, histogram_accessor_from_function_name, is_extended_range_fold_call, label_ops_kind_from_function_name, match_experimental_over_time_range_call, match_over_time_range_call, match_rate_range_call, match_subquery_range_call, param_aggregate_op_is_plannable, scalar_math_op_from_function_name, simple_aggregate_op, util_call_is_plannable};
+use super::{
+    Expr, binary_operand_is_plannable, histogram_accessor_from_function_name,
+    is_extended_range_fold_call, label_ops_kind_from_function_name,
+    match_experimental_over_time_range_call, match_over_time_range_call, match_rate_range_call,
+    match_subquery_range_call, param_aggregate_op_is_plannable, scalar_math_op_from_function_name,
+    simple_aggregate_op, util_call_is_plannable,
+};
 
 /// Returns `true` when the operator planner handles every node of `expr`.
 ///

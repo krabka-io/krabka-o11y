@@ -1,4 +1,10 @@
-use super::{BinModifier, InstantSample, Labels, NativeHistogram, PromqlError, Result, SampleValue, ScalarSide, T_ADD, T_ATAN2, T_DIV, T_EQLC, T_GTE, T_GTR, T_LAND, T_LOR, T_LSS, T_LTE, T_LUNLESS, T_MOD, T_MUL, T_NEQ, T_POW, T_SUB, TokenType, binary_returns_bool, emit_info, float_sample_value, incompatible_types_in_binop_info, labels_without_metric_name, scaled_native_histogram};
+use super::{
+    BinModifier, InstantSample, Labels, NativeHistogram, PromqlError, Result, SampleValue,
+    ScalarSide, T_ADD, T_ATAN2, T_DIV, T_EQLC, T_GTE, T_GTR, T_LAND, T_LOR, T_LSS, T_LTE,
+    T_LUNLESS, T_MOD, T_MUL, T_NEQ, T_POW, T_SUB, TokenType, binary_returns_bool, emit_info,
+    float_sample_value, incompatible_types_in_binop_info, labels_without_metric_name,
+    scaled_native_histogram,
+};
 
 #[derive(Clone, Copy)]
 pub(crate) enum BinaryOp {
@@ -75,7 +81,12 @@ impl BinaryOp {
         }
     }
 
-    pub(crate) fn apply_scalar(self, left: f64, right: f64, modifier: Option<&BinModifier>) -> Option<f64> {
+    pub(crate) fn apply_scalar(
+        self,
+        left: f64,
+        right: f64,
+        modifier: Option<&BinModifier>,
+    ) -> Option<f64> {
         if self.is_comparison() {
             let pass = self.compare(left, right);
             if binary_returns_bool(modifier) {

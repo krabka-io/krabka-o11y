@@ -1,6 +1,8 @@
 use super::ClassicBucket;
 
-pub(crate) fn normalized_classic_histogram_buckets(buckets: &mut [ClassicBucket]) -> Vec<ClassicBucket> {
+pub(crate) fn normalized_classic_histogram_buckets(
+    buckets: &mut [ClassicBucket],
+) -> Vec<ClassicBucket> {
     buckets.sort_by(|left, right| left.upper_bound.total_cmp(&right.upper_bound));
 
     let mut out: Vec<ClassicBucket> = Vec::with_capacity(buckets.len());

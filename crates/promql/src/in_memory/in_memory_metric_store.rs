@@ -1,4 +1,8 @@
-use super::{BTreeMap, DEFAULT_RETENTION, ExemplarRow, FloatRow, HashMap, HistRow, LabelMatcher, Labels, MetadataRecord, PartitionIndex, PartitionWatermark, Result, SeriesFingerprint, Time, TsdbBlock, prepare_matchers, row_matches};
+use super::{
+    BTreeMap, DEFAULT_RETENTION, ExemplarRow, FloatRow, HashMap, HistRow, LabelMatcher, Labels,
+    MetadataRecord, PartitionIndex, PartitionWatermark, Result, SeriesFingerprint, Time, TsdbBlock,
+    prepare_matchers, row_matches,
+};
 
 /// In-memory metric store keyed by tenant.
 #[derive(Clone)]

@@ -1,4 +1,8 @@
-use super::{BinModifier, BinaryOp, NativeHistogram, ResetHint, Result, SampleValue, add_compatible_native_histogram, binary_returns_bool, emit_info, incompatible_types_in_binop_info, scale_native_histogram_values};
+use super::{
+    BinModifier, BinaryOp, NativeHistogram, ResetHint, Result, SampleValue,
+    add_compatible_native_histogram, binary_returns_bool, emit_info,
+    incompatible_types_in_binop_info, scale_native_histogram_values,
+};
 
 pub(crate) fn apply_histogram_histogram_binary(
     left: &NativeHistogram,

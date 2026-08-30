@@ -1,6 +1,9 @@
 use super::{Line, Result, parse_error};
 
-pub(crate) fn split_metric_and_tail<'a>(src: &'a str, line: Line<'_>) -> Result<(&'a str, &'a str)> {
+pub(crate) fn split_metric_and_tail<'a>(
+    src: &'a str,
+    line: Line<'_>,
+) -> Result<(&'a str, &'a str)> {
     let mut brace_depth = 0_u32;
     let mut in_quotes = false;
     let mut escaped = false;

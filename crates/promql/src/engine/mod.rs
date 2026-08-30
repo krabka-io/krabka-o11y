@@ -120,5 +120,6 @@ use current_at_modifier_bounds::current_at_modifier_bounds;
 pub use engine_opts::EngineOpts;
 pub use max_resolution_points::MAX_RESOLUTION_POINTS;
 pub use promql_engine::PromqlEngine;
-# [cfg (feature = "experimental-functions")] pub (super) use query_range_context::QueryRangeContext;
+#[cfg(feature = "experimental-functions")]
+pub(super) use query_range_context::QueryRangeContext;
 use range_eval::RangeEval;

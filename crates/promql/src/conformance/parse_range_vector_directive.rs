@@ -1,6 +1,11 @@
-use super::{Line, RangeExpect, Result, Time, TimeExt, parse_duration_ms, parse_error, split_once_whitespace};
+use super::{
+    Line, RangeExpect, Result, Time, TimeExt, parse_duration_ms, parse_error, split_once_whitespace,
+};
 
-pub(crate) fn parse_range_vector_directive(directive: &str, line: Line<'_>) -> Result<Option<RangeExpect>> {
+pub(crate) fn parse_range_vector_directive(
+    directive: &str,
+    line: Line<'_>,
+) -> Result<Option<RangeExpect>> {
     let Some(rest) = directive.trim().strip_prefix("range vector from ") else {
         return Ok(None);
     };

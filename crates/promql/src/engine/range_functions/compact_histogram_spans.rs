@@ -1,6 +1,9 @@
 use super::BucketSpan;
 
-pub(crate) fn compact_histogram_spans(spans: &[BucketSpan], counts: &[f64]) -> (Vec<BucketSpan>, Vec<f64>) {
+pub(crate) fn compact_histogram_spans(
+    spans: &[BucketSpan],
+    counts: &[f64],
+) -> (Vec<BucketSpan>, Vec<f64>) {
     let mut index = 0;
     let mut count_index = 0;
     let mut buckets = Vec::new();

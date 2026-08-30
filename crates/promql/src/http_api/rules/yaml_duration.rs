@@ -1,4 +1,4 @@
-use super::{ByteRateExt, ByteSizeExt, FrequencyExt, RatioExt, Time, TimeExt, parse_yaml_duration};
+use super::{ Time, TimeExt, parse_yaml_duration};
 
 /// Returns the duration at a rule-file key as an extent.
 ///

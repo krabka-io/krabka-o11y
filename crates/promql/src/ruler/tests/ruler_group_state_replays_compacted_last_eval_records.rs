@@ -1,4 +1,3 @@
-use super::*;
 
 #[test]
 pub(crate) fn ruler_group_state_replays_compacted_last_eval_records() {

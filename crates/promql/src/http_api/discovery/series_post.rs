@@ -1,4 +1,7 @@
-use super::{Arc, Bytes, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State, parse_discovery_form, series_inner};
+use super::{
+    Arc, Bytes, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State,
+    parse_discovery_form, series_inner,
+};
 
 pub(crate) async fn series_post<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

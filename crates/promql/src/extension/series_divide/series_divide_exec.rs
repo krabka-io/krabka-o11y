@@ -1,4 +1,6 @@
-use super::{Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, RecordBatch, RecordBatchStreamAdapter, SendableRecordBatchStream, StreamExt, TaskContext, UserDefinedLogicalNodeCore, array_value_to_string, fmt};
+use super::{
+    Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
+    RecordBatch, RecordBatchStreamAdapter, SendableRecordBatchStream, StreamExt, TaskContext, array_value_to_string, fmt};
 
 /// Physical node that emits one batch per contiguous series run.
 #[derive(Debug)]
@@ -19,7 +21,10 @@ impl SeriesDivideExec {
         }
     }
 
-    pub(crate) fn split_batch(tag_columns: &[String], batch: RecordBatch) -> DfResult<Vec<RecordBatch>> {
+    pub(crate) fn split_batch(
+        tag_columns: &[String],
+        batch: RecordBatch,
+    ) -> DfResult<Vec<RecordBatch>> {
         if batch.num_rows() == 0 {
             return Ok(vec![batch]);
         }

@@ -20,10 +20,11 @@ annotations:
     let engine = PromqlEngine::new(store, EngineOpts::default());
     let sink = RecordingAlertmanagerSink::default();
 
-    let dispatched =
-        super::super::evaluate_and_dispatch_alerting_rule(&engine, &sink, "tenant-a", &rule, 60_000)
-            .await
-            .expect("alert dispatch");
+    let dispatched = super::super::evaluate_and_dispatch_alerting_rule(
+        &engine, &sink, "tenant-a", &rule, 60_000,
+    )
+    .await
+    .expect("alert dispatch");
 
     assert2::assert!(dispatched == 1);
     // `$value` is formatted via format_sample_value and `$labels.job` resolved

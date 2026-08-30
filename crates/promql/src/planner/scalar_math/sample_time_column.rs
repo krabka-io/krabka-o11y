@@ -1,4 +1,3 @@
-use super::*;
 
 /// Leaf-batch and projection column that carries the per-series sample timestamp.
 ///

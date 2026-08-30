@@ -1,6 +1,12 @@
-use super::{BTreeSet, BinModifier, LabelModifier, Labels, is_result_metadata_label, labels_without_metric_name};
+use super::{
+    BTreeSet, BinModifier, LabelModifier, Labels, is_result_metadata_label,
+    labels_without_metric_name,
+};
 
-pub(crate) fn one_to_one_binary_result_labels(input: &Labels, modifier: Option<&BinModifier>) -> Labels {
+pub(crate) fn one_to_one_binary_result_labels(
+    input: &Labels,
+    modifier: Option<&BinModifier>,
+) -> Labels {
     match modifier.and_then(|modifier| modifier.matching.as_ref()) {
         Some(LabelModifier::Include(include)) => {
             let mut labels = Labels::new();
