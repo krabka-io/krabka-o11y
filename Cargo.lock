@@ -1116,7 +1116,7 @@ dependencies = [
  "num-traits",
  "regex",
  "serde",
- "vob 4.0.0",
+ "vob 4.0.1",
 ]
 
 [[package]]
@@ -3917,7 +3917,7 @@ dependencies = [
 [[package]]
 name = "krabka-client-admin"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=f0c86c1ccdecd1776e32349764d7d2efe5dae347#f0c86c1ccdecd1776e32349764d7d2efe5dae347"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=056e7e3eddb7da2ba21c7893993897e6169bc8f2#056e7e3eddb7da2ba21c7893993897e6169bc8f2"
 dependencies = [
  "assert2",
  "async-trait",
@@ -3938,7 +3938,7 @@ dependencies = [
 [[package]]
 name = "krabka-client-consumer"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=f0c86c1ccdecd1776e32349764d7d2efe5dae347#f0c86c1ccdecd1776e32349764d7d2efe5dae347"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=056e7e3eddb7da2ba21c7893993897e6169bc8f2#056e7e3eddb7da2ba21c7893993897e6169bc8f2"
 dependencies = [
  "assert2",
  "bon",
@@ -3958,7 +3958,7 @@ dependencies = [
 [[package]]
 name = "krabka-client-core"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=f0c86c1ccdecd1776e32349764d7d2efe5dae347#f0c86c1ccdecd1776e32349764d7d2efe5dae347"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=056e7e3eddb7da2ba21c7893993897e6169bc8f2#056e7e3eddb7da2ba21c7893993897e6169bc8f2"
 dependencies = [
  "async-trait",
  "bon",
@@ -3982,7 +3982,7 @@ dependencies = [
 [[package]]
 name = "krabka-client-producer"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=f0c86c1ccdecd1776e32349764d7d2efe5dae347#f0c86c1ccdecd1776e32349764d7d2efe5dae347"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=056e7e3eddb7da2ba21c7893993897e6169bc8f2#056e7e3eddb7da2ba21c7893993897e6169bc8f2"
 dependencies = [
  "assert2",
  "async-trait",
@@ -5000,7 +5000,7 @@ dependencies = [
  "serde",
  "static_assertions",
  "vergen",
- "vob 4.0.0",
+ "vob 4.0.1",
 ]
 
 [[package]]
@@ -5014,7 +5014,7 @@ dependencies = [
  "num-traits",
  "serde",
  "sparsevec",
- "vob 4.0.0",
+ "vob 4.0.1",
 ]
 
 [[package]]
@@ -8785,9 +8785,9 @@ dependencies = [
 
 [[package]]
 name = "vob"
-version = "4.0.0"
+version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e840c5339237ded42621d3e376ed7008bf79b68574e97454c2a46fe6f3bbe7f"
+checksum = "60681a44bd4be4b4da58435befb00f60f63372fb43a86cd977183114ad851198"
 dependencies = [
  "num-traits",
  "serde",
