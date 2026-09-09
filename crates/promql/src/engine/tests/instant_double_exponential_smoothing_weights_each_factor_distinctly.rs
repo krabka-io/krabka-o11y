@@ -1,3 +1,6 @@
+#[cfg(feature = "experimental-functions")]
+use super::*;
+
 /// The same smoothing with *distinct* factors. Every other test here passes
 /// `0.5, 0.5`, where `factor` and `1.0 - factor` are the same number, so
 /// swapping either one is invisible -- as is reversing which of the two the

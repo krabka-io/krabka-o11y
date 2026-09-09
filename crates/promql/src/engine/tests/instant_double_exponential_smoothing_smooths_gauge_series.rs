@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::*;
+
+#[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn instant_double_exponential_smoothing_smooths_gauge_series() {
     let mut store = InMemoryMetricStore::new();

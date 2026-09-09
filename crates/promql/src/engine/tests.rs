@@ -128,6 +128,7 @@ mod instant_selector_planner_path_matches_interpreter;
 mod instant_selector_returns_latest_sample_within_lookback;
 mod instant_selector_stale_marker_terminates_series_before_lookback_expiry;
 mod instant_sort_functions_order_vector_by_sample_value;
+mod instant_sort_functions_place_nan_last;
 mod instant_statistical_over_time_functions_reduce_range_samples;
 mod instant_stddev_and_stdvar_aggregate_population_variance;
 mod instant_stdvar_aggregate_is_stable_for_large_offset_group;
@@ -143,6 +144,7 @@ mod instant_sum_by_groups_by_exact_labels_and_drops_metric_name;
 mod instant_time_returns_evaluation_timestamp_seconds;
 mod instant_timestamp_returns_sample_timestamp_seconds;
 mod instant_topk_and_bottomk_ignore_histograms;
+mod instant_topk_and_bottomk_rank_nan_last;
 mod instant_topk_by_selects_largest_sample_per_group_with_original_labels;
 mod instant_topk_keeps_largest_samples_with_original_labels;
 mod instant_trigonometric_functions_transform_vector_values;
@@ -227,44 +229,16 @@ use assert_minmax_nan_ignoring::assert_minmax_nan_ignoring;
 use assert_single_float_sample::assert_single_float_sample;
 use assert_single_on_x_float_sample::assert_single_on_x_float_sample;
 use assert_sparse_aggregate_excludes_no_value::assert_sparse_aggregate_excludes_no_value;
-#[cfg(feature = "experimental-functions")]
-use experimental_call_planner_path_matches_interpreter::experimental_call_planner_path_matches_interpreter;
-#[cfg(feature = "experimental-functions")]
-use experimental_param_aggregate_planner_path_matches_interpreter::experimental_param_aggregate_planner_path_matches_interpreter;
 use float_value::float_value;
-#[cfg(feature = "experimental-functions")]
-use histogram_quantiles_emits_one_sample_per_requested_quantile::histogram_quantiles_emits_one_sample_per_requested_quantile;
-#[cfg(feature = "experimental-functions")]
-use instant_double_exponential_smoothing_smooths_gauge_series::instant_double_exponential_smoothing_smooths_gauge_series;
-#[cfg(feature = "experimental-functions")]
-use instant_double_exponential_smoothing_validates_factors::instant_double_exponential_smoothing_validates_factors;
-#[cfg(feature = "experimental-functions")]
-use instant_double_exponential_smoothing_weights_each_factor_distinctly::instant_double_exponential_smoothing_weights_each_factor_distinctly;
-#[cfg(feature = "experimental-functions")]
-use instant_duration_expression_helpers_return_zero::instant_duration_expression_helpers_return_zero;
-#[cfg(feature = "experimental-functions")]
-use instant_limit_ratio_negative_selects_complement_subset::instant_limit_ratio_negative_selects_complement_subset;
-#[cfg(feature = "experimental-functions")]
-use instant_limit_ratio_selects_deterministic_hash_subset::instant_limit_ratio_selects_deterministic_hash_subset;
-#[cfg(feature = "experimental-functions")]
-use instant_limitk_by_selects_deterministic_hash_subset_per_group::instant_limitk_by_selects_deterministic_hash_subset_per_group;
-#[cfg(feature = "experimental-functions")]
-use instant_limitk_selects_deterministic_hash_subset::instant_limitk_selects_deterministic_hash_subset;
 use instant_samples_match::instant_samples_match;
 use labels::labels;
-#[cfg(feature = "experimental-functions")]
-use limit_ratio_over_bound_emits_capping_warning::limit_ratio_over_bound_emits_capping_warning;
 use mixed_histogram_store::mixed_histogram_store;
 use native_histogram::native_histogram;
 use native_histogram_store::native_histogram_store;
 use query_results_match::query_results_match;
-#[cfg(feature = "experimental-functions")]
-use range_duration_expression_helpers_return_query_range_and_step_seconds::range_duration_expression_helpers_return_query_range_and_step_seconds;
 use range_matrices_match::range_matrices_match;
 #[cfg(feature = "experimental-functions")]
 use sample_instances::sample_instances;
-#[cfg(feature = "experimental-functions")]
-use scalar_max_of_min_of_return_larger_and_smaller_scalar::scalar_max_of_min_of_return_larger_and_smaller_scalar;
 use set_op_store::set_op_store;
 use sort_instant_result::sort_instant_result;
 use stale_nan::stale_nan;

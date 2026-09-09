@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::*;
+
+#[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn scalar_max_of_min_of_return_larger_and_smaller_scalar() {
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());

@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::*;
+
+#[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn instant_limit_ratio_selects_deterministic_hash_subset() {
     let mut store = InMemoryMetricStore::new();

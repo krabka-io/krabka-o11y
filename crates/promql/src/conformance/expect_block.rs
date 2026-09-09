@@ -5,4 +5,5 @@ pub(crate) struct ExpectBlock {
     pub(crate) annotations: Vec<AnnotationExpect>,
     pub(crate) fail_message: Option<String>,
     pub(crate) range: Option<RangeExpect>,
+    pub(crate) ordered: bool,
 }

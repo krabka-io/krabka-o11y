@@ -45,6 +45,7 @@ mod range_query_plan_splits_on_step_grid_without_duplicate_steps;
 mod range_result_cache_is_scoped_by_tenant_query_range_step_and_shard;
 mod range_result_cache_returns_owned_results;
 mod rank_recording_executor;
+mod rank_reduction_ranks_nan_last_for_top_and_bottom;
 mod recording_executor;
 mod shard_query_injection_adds_mimir_selector_to_vector_and_matrix_selectors;
 

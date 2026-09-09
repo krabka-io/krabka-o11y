@@ -1,3 +1,6 @@
+#[cfg(feature = "experimental-functions")]
+use super::{InstantSample, limit_ratio_includes_sample};
+
 /// Shared experimental `limit_ratio(ratio, v)` core over an already-evaluated
 /// instant vector.
 ///

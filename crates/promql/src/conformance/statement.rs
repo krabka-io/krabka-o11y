@@ -20,6 +20,8 @@ pub enum Statement {
         expect: Vec<ExpectLine>,
         /// Expected annotation directives: `warn`, `info`, `no_warn`, and `no_info`.
         annotations: Vec<AnnotationExpect>,
+        /// Whether `expect ordered` asks for a positional result comparison.
+        ordered: bool,
         /// Optional matrix expectation metadata for instant range-vector results.
         range_expect: Option<RangeExpect>,
         /// Expected failure message. An empty message matches any failure.

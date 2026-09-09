@@ -1,3 +1,10 @@
+#[cfg(feature = "experimental-functions")]
+use super::{
+    BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
+    classic_histogram_quantile, float_sample_value, labels_key, labels_without_metric_and_label,
+    labels_without_metric_name, native_histogram_quantile, parse_classic_bucket_bound,
+};
+
 /// Applies the experimental `histogram_quantiles(label, v, phi...)` fold.
 ///
 /// The input is an already-evaluated instant vector. This function emits one

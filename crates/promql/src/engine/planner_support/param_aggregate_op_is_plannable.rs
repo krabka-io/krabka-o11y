@@ -1,6 +1,8 @@
 use super::{
     AggregateExpr, Expr, T_BOTTOMK, T_COUNT_VALUES, T_QUANTILE, T_STDDEV, T_STDVAR, T_TOPK,
 };
+#[cfg(feature = "experimental-functions")]
+use super::{T_LIMIT_RATIO, T_LIMITK, ValueType};
 
 /// Returns `true` when a parameterized or non-simple aggregation is plannable.
 ///

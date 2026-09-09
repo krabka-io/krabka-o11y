@@ -1,3 +1,4 @@
+#[cfg(not(feature = "experimental-functions"))]
 use super::*;
 
 #[cfg(not(feature = "experimental-functions"))]

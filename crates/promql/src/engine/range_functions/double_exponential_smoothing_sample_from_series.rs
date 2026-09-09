@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::{RangeSeries, Time, double_exponential_smoothing, float_range_samples};
+
+#[cfg(feature = "experimental-functions")]
 pub(crate) fn double_exponential_smoothing_sample_from_series(
     series: &RangeSeries,
     range_end_ms: i64,

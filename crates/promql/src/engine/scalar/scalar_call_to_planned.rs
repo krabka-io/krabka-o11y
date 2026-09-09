@@ -1,3 +1,6 @@
+#[cfg(feature = "experimental-functions")]
+use super::{PlannedInstant, PromqlError, QueryResult, Result};
+
 /// Wraps a scalar `QueryResult` from a delegated interpreter call.
 ///
 /// The result becomes a `PlannedInstant::PrecomputedScalar`. A non-scalar result

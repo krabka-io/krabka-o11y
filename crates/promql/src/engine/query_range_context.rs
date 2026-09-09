@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::Time;
+
+#[cfg(feature = "experimental-functions")]
 #[derive(Clone, Copy)]
 pub(crate) struct QueryRangeContext {
     /// Range start, an epoch-millisecond instant.

@@ -1,3 +1,6 @@
+#[cfg(feature = "experimental-functions")]
+use super::*;
+
 /// Differential parity for the experimental `limitk` and `limit_ratio` aggregations.
 ///
 /// These are param aggregations, and the test covers the `InvalidRatioWarning`

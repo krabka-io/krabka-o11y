@@ -16,9 +16,9 @@
 //! `eval_label_join_call`, and `eval_sort_call`, so the operator path matches
 //! the interpreter by construction. The match covers `$1` and `${name}`
 //! capture-group expansion, empty-replacement label writes, no-match
-//! passthrough, the `separator`-join semantics, and the `total_cmp` ordering
-//! with the `labels_key` tiebreak. That ordering places `NaN` last for `sort`
-//! and first for `sort_desc`.
+//! passthrough, the `separator`-join semantics, and the value ordering with the
+//! `labels_key` tiebreak. That ordering places `NaN` last for `sort` and for
+//! `sort_desc`, as Prometheus does.
 
 use std::cmp::Ordering;
 
@@ -149,27 +149,22 @@ mod tests {
     }
 
     #[test]
-    fn sort_ascending_places_nan_last() {
-        let out = apply_sort(
-            vec![
-                sample(&[("l", "b")], 2.0),
-                sample(&[("l", "n")], f64::NAN),
-                sample(&[("l", "a")], 1.0),
-            ],
-            SortOrder::Ascending,
-        );
-        // 1.0 < 2.0 < NaN (total_cmp puts NaN last for ascending).
-        assert2::assert!(order(&out) == vec!["a", "b", "n"]);
-        assert2::assert!(matches!(out[2].value, SampleValue::Float(v) if v.is_nan()));
-    }
-
-    #[test]
-    fn sort_desc_orders_high_to_low() {
-        let out = apply_sort(
-            vec![sample(&[("l", "a")], 1.0), sample(&[("l", "b")], 2.0)],
-            SortOrder::Descending,
-        );
-        assert2::assert!(order(&out) == vec!["b", "a"]);
+    fn sort_orders_by_value_and_places_nan_last_in_both_directions() {
+        for (direction, want) in [
+            (SortOrder::Ascending, vec!["a", "b", "n"]),
+            (SortOrder::Descending, vec!["b", "a", "n"]),
+        ] {
+            let out = apply_sort(
+                vec![
+                    sample(&[("l", "b")], 2.0),
+                    sample(&[("l", "n")], f64::NAN),
+                    sample(&[("l", "a")], 1.0),
+                ],
+                direction,
+            );
+            assert2::assert!(order(&out) == want);
+            assert2::assert!(matches!(out[2].value, SampleValue::Float(v) if v.is_nan()));
+        }
     }
 
     #[test]

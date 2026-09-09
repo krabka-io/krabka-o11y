@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::{QUERY_RANGE_CONTEXT, TimeExt};
+
+#[cfg(feature = "experimental-functions")]
 #[derive(Clone, Copy)]
 pub(crate) enum DurationHelper {
     Range,
