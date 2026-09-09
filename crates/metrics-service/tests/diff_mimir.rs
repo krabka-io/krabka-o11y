@@ -64,11 +64,6 @@ const TENANT: &str = "compliance";
 /// `/prometheus/api/v1/query*` read endpoints.
 const MIMIR_PORT: u16 = 9009;
 
-/// Pinned Mimir image tag, never `:latest`.
-///
-/// Override it with the `KRABKA_MIMIR_IMAGE_TAG` environment variable.
-const MIMIR_IMAGE_TAG: &str = "2.16.1";
-
 /// Queries where Mimir legitimately diverges from Krabka and must be skipped.
 ///
 /// Each entry MUST carry a justification comment. The list is intentionally
@@ -197,8 +192,16 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
 }
 
 async fn start_mimir() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
-    let tag =
-        std::env::var("KRABKA_MIMIR_IMAGE_TAG").unwrap_or_else(|_| MIMIR_IMAGE_TAG.to_string());
+    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
+    // the same map that decides what `docker load` tags. A default here would
+    // be a second copy of that decision, and when the two disagreed
+    // testcontainers pulled the image over the network and the suite compared
+    // against whatever it got rather than against the pinned bytes.
+    let tag = std::env::var("KRABKA_MIMIR_IMAGE_TAG").expect(
+        "KRABKA_MIMIR_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
+         which loads the digest-pinned image and sets this. To run one under \
+         cargo, set it to that image's tag in //bazel/images/images.bzl.",
+    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/mimir".to_string(), tag)

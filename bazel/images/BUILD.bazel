@@ -10,18 +10,9 @@ each one it is handed before executing the test binary.
 """
 
 load("@rules_oci//oci:defs.bzl", "oci_load")
+load(":images.bzl", "IMAGES")
 
 package(default_visibility = ["//visibility:public"])
-
-# Tag each image is loaded under -- the name the suites build their
-# `GenericImage` from. Keep in step with //MODULE.bazel, which pins the digests.
-IMAGES = {
-    "grafana": "mirror.gcr.io/grafana/grafana:11.6.1",
-    "mimir": "mirror.gcr.io/grafana/mimir:2.16.1",
-    "prometheus": "mirror.gcr.io/prom/prometheus:v3.8.0",
-    "pyroscope": "mirror.gcr.io/grafana/pyroscope:latest",
-    "tempo": "mirror.gcr.io/grafana/tempo:latest",
-}
 
 [
     oci_load(
