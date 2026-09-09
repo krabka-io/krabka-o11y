@@ -17,11 +17,11 @@ STE does **not** apply to:
 
 - Rust code, attributes, and the contents of doctest fences
 - Identifiers of any kind: type names, function names, crate names, feature flags, CLI flags, environment variables, config keys, and file paths
-- Protocol vocabulary: Kafka API and record-field names, `KIP-###` references, error codes, PostgreSQL keywords, `pg_*` names, and `SQLSTATE` codes
+- Query-language and wire vocabulary: PromQL, LogQL and TraceQL keywords and function names, metric and label names, pprof and OTLP field names, and HTTP status codes
 - Quoted output, captured logs, and table data
 - Text copied from an external specification
 
-Technical names are exempt from the word rules. Write `ApiVersions`, `RowDescription`, and `producer_byte_rate` as they are.
+Technical names are exempt from the word rules. Write `rate`, `histogram_quantile`, and `__name__` as they are.
 
 ## Words
 
@@ -59,7 +59,7 @@ This rule matters more than any other in this guide, because it changes what an 
 
 **Write `must` only when the code enforces the rule.** A rule is enforced when breaking it produces an observable failure from the code you are documenting: an `Err` return, a `panic!`, an `assert!`, an `expect`, or a protocol-level rejection.
 
-**Write `should` for a recommendation.** Advice to a caller, to an operator, to an external client, or to a person reading a debugging note is a recommendation. Krabka cannot make a foreign Kafka client retry, and it cannot make a caller's runtime back off.
+**Write `should` for a recommendation.** Advice to a caller, to an operator, to an external client, or to a person reading a debugging note is a recommendation. Krabka cannot make Grafana retry a query, and it cannot make a caller's runtime back off.
 
 Do not write `shall`. Keep `must not` and `do not` for prohibitions.
 
@@ -86,7 +86,7 @@ pub fn of_size(size: Time) -> Self {
 
 ## Verbs
 
-- Use the active voice and name the actor. Write "the broker rejects the request", not "the request is rejected".
+- Use the active voice and name the actor. Write "the querier rejects the request", not "the request is rejected".
 - Use simple tenses only: present, past, and future. Use the past participle as an adjective.
 - Do not use the `-ing` form as a noun or as a trailing analysis clause. Write a new sentence instead.
 - Use the imperative for instructions.

@@ -1,6 +1,6 @@
 # Rustdoc Style Guide
 
-This guide defines conventions for rustdoc comments across Krabka crates. It follows the patterns that `krabka-protocol`, `krabka-raft`, `krabka-broker`, and `krabka-metadata` already use. It complements the general [code style guide](code_style_guide.md).
+This guide defines conventions for rustdoc comments across Krabka crates. It follows the patterns that `krabka-blockstore`, `krabka-promql`, `krabka-traceql`, and `krabka-pprof` already use. It complements the general [code style guide](code_style_guide.md).
 
 This guide defines **structure**. The [prose style guide](prose_style_guide.md) defines **wording**, and it applies to every doc comment: Simplified Technical English, one short summary sentence on the first line, and `must` only where the code enforces the rule.
 
@@ -13,30 +13,28 @@ Krabka uses `//!` line comments for crate-level docs, not `/*! … */` blocks. T
 The crate-level doc should include:
 
 1. **One-line summary** — what the crate does.
-2. **Overview paragraph** — context, the relationship to other Krabka crates, and the Kafka standards and KIPs it implements.
+2. **Overview paragraph** — context, the relationship to other Krabka crates, and the query language or wire format it implements.
 3. **Key modules or types** — a short list with links to the main entry points.
 4. **Feature flags** — if the crate has any, with a description of each and which ones are on by default.
 
 ```rust
-//! Kafka wire-protocol codec.
+//! `PromQL` query engine.
 //!
-//! `krabka-protocol` encodes and decodes every Apache Kafka request and
-//! response message, byte-equivalent to the upstream JVM implementation. It
-//! performs no I/O and makes no async assumptions; it is consumed by the
-//! broker, client, and tooling crates in the workspace.
+//! `krabka-promql` parses `PromQL`, lowers the AST onto `DataFusion` plans, and
+//! evaluates instant and range queries over a step grid. It reads through a
+//! block-store adapter and does no HTTP of its own; `krabka-metrics-service`
+//! serves the Prometheus query API above it.
 //!
 //! # Key Types
 //!
-//! - [`owned`] — messages that own their data; easy to move across `await`.
-//! - [`borrowed`] — zero-copy messages that reference the input buffer.
-//! - [`ApiKey`] — the enum of every Kafka 4.3 API.
+//! - [`PromqlEngine`] — the query entry point, built from [`EngineOpts`].
+//! - [`MetricBlockStore`] — the adapter that reads blocks out of `krabka-blockstore`.
+//! - [`PromqlError`] — the crate error type.
 //!
 //! # Feature Flags
 //!
-//! - `snappy`, `zstd`, `gzip`, `lz4` — record-batch compression codecs (all on by default).
+//! - `experimental-functions` — the `limitk` and `limit_ratio` functions, which Prometheus still marks experimental (off by default).
 ```
-
-If Krabka publishes a crate to docs.rs, set `#![doc(html_root_url = "https://docs.rs/<crate>/<version>")]` as the existing crates do.
 
 ## Public Item Documentation
 
@@ -53,8 +51,8 @@ Use `//` comments on these if the logic needs an explanation. Before you add rus
 Simple items use a single `///` line:
 
 ```rust
-/// The last offset this partition has durably persisted.
-pub log_end_offset: i64,
+/// The newest sample timestamp this block holds, in milliseconds.
+pub max_time_ms: i64,
 ```
 
 ### Functions and Methods
@@ -62,11 +60,11 @@ pub log_end_offset: i64,
 Document what the function does, not how. Include parameters only when their purpose is not obvious from the name and the type.
 
 ```rust
-/// Applies a controller record to the image, returning the mutated topics.
+/// Appends a batch of samples to the open block, returning the new row count.
 ///
-/// Called only from the Raft state machine; everywhere else the image is
-/// read through shared references.
-pub fn apply(&mut self, record: &MetadataRecord) -> Vec<TopicId> {
+/// Called only from the single writer task; every reader sees the block
+/// through a shared reference.
+pub fn append(&mut self, batch: &RecordBatch) -> Result<usize, BlockStoreError> {
 ```
 
 ### Complex Items
@@ -74,23 +72,24 @@ pub fn apply(&mut self, record: &MetadataRecord) -> Vec<TopicId> {
 For types or functions with non-trivial behaviour, use structured sections:
 
 ```rust
-/// A cancellable pool of async tasks with panic propagation.
+/// A step grid over a query's time range.
 ///
-/// Tasks spawned on the pool are cancelled when the pool is dropped.
-/// If any task panics, the panic is propagated to the next `join()` call.
+/// The grid holds one evaluation timestamp per step, from `start` to `end`
+/// inclusive. `PromQL` evaluates every instant selector against this grid, so
+/// two queries with the same range and step align sample for sample.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// # async fn f(pool: krabka_broker::TaskPool) {
-/// pool.spawn(async { /* ... */ });
-/// pool.join().await;
+/// # use krabka_promql::EngineOpts;
+/// # fn f(opts: &EngineOpts) {
+/// let grid = opts.step_grid(0, 60_000);
 /// # }
 /// ```
 ///
 /// # Panics
 ///
-/// `join()` panics if any spawned task panicked.
+/// `step_grid` panics if the step is zero.
 ```
 
 ## Sections
@@ -113,56 +112,58 @@ A prose audit of this workspace found eight such boilerplate strings and hundred
 
 ## Examples
 
-- Doc examples compile **and run** in CI (`cargo test --workspace --doc`). Keep them correct against the current API.
-- Use ```` ```no_run ```` for examples that need a runtime, a network, or a live broker. These examples compile, but CI does not run them.
+- Doc examples compile **and run** in CI. `crate_tests` emits a `<crate>_doc_test` target for every library, so `bazel test //...` runs them. Keep them correct against the current API.
+- Use ```` ```no_run ```` for examples that need a runtime, a network, object storage, or a live upstream service. These examples compile, but CI does not run them.
 - Use ```` ```ignore ```` only for genuinely incomplete snippets, and sparingly.
 - Keep examples minimal. Show the API call, not the setup. Use `#`-hidden lines for boilerplate the reader does not need to see.
 - `rustfmt.toml` sets `format_code_in_doc_comments = true`, so `cargo +nightly fmt` formats the code inside your examples. Keep them fmt-clean so the format check passes.
 
-## KIP and Standard References
+## Upstream Specification References
 
-When a type or function implements a specific Kafka behaviour or KIP, reference it so a reader can trace the requirement:
+When a type or function implements a specific upstream behaviour, reference the specification so a reader can trace the requirement. The upstream for each signal is Prometheus and Grafana Mimir for metrics, Grafana Loki for logs, Grafana Tempo for traces, and Grafana Pyroscope for profiles.
 
 ```rust
-/// Assigns partitions using the uniform-sticky strategy from [KIP-848].
+/// Applies the staleness rules for a range selector, as `PromQL` defines them.
 ///
-/// [KIP-848]: https://cwiki.apache.org/confluence/display/KAFKA/KIP-848%3A+The+Next+Generation+of+the+Consumer+Rebalance+Protocol
+/// [staleness]: https://prometheus.io/docs/prometheus/latest/querying/basics/#staleness
 ```
 
-Use reference-style links at the bottom of the doc comment. Do not inline long confluence URLs in the prose.
+Where the upstream documentation does not describe the behaviour, cite the upstream source or the differential suite that pins it instead. A behaviour that only the differential suite establishes should say so, and name the suite.
+
+Use reference-style links at the bottom of the doc comment. Do not inline long URLs in the prose.
 
 ## Cross-References
 
 Use rustdoc syntax to link to other types and modules:
 
 ```rust
-/// Returns the [`RecordBatch`] decoded from the given bytes.
+/// Returns the [`Labels`] decoded from the given row.
 ///
-/// See [`RecordBatchBuilder`] for constructing batches programmatically.
+/// See [`SeriesFingerprint`] for the hash the index keys series by.
 ```
 
 Use full paths when you reference an item in another crate:
 
 ```rust
-/// Uses [`krabka_protocol::records`] for record-batch decoding.
+/// Reads blocks through [`krabka_blockstore::BlockStore`].
 ```
 
 ## Configuration Structs
 
-All `Config` structs with a `serde` derive must document every field. A field with a default value must also document that default:
+Every field of an operator-facing `Config` struct must have a doc comment. A field with a default value must also document that default:
 
 ```rust
-/// Broker listener configuration.
-pub struct Config {
-    /// Kafka wire-protocol listen address. Default: `0.0.0.0:9092`.
-    pub listen_address: String,
+/// Operator-facing service configuration.
+pub struct ServiceConfig {
+    /// HTTP query and ingest listen address. Default: `127.0.0.1:3100`.
+    pub listen_addr: SocketAddr,
 
-    /// Maximum in-flight produce requests per connection. Default: `5`.
-    pub max_in_flight: NonZeroUsize,
+    /// Maximum concurrent block scans per query. Default: `8`.
+    pub max_concurrent_scans: NonZeroUsize,
 }
 ```
 
-These fields surface in the generated configuration reference, so the doc line is the operator-facing documentation. Keep it accurate and name the default.
+These structs derive `clap::Parser`, so each field is also a command-line flag and an environment variable. The doc line is what the operator reads in `--help`. Keep it accurate and name the default.
 
 ## Traits
 
@@ -173,12 +174,12 @@ Trait documentation should describe the contract, not the implementation. Includ
 3. Lifecycle, if the trait involves registration, handles, or shutdown.
 
 ```rust
-/// A pluggable remote-storage backend for tiered log segments (KIP-405).
+/// Resolves profile matchers to a samples table over a tenant's data.
 ///
-/// Implementors provide durable, offset-addressed segment storage. The broker
-/// uploads sealed segments and fetches them on read-through; a backend must be
-/// safe to call concurrently from multiple partitions.
-pub trait RemoteStorage: Send + Sync + 'static {
+/// Implementors give label-matched, time-ranged access to stored profiles.
+/// The flame-graph engine queries a store from several tasks at once, so a
+/// backend must be safe to call concurrently.
+pub trait ProfileStore: Send + Sync {
 ```
 
 ## Trait Implementations
@@ -186,9 +187,10 @@ pub trait RemoteStorage: Send + Sync + 'static {
 Trait impl methods do not need `///` doc comments, unless the implementation behaviour is surprising or it deviates from the trait documentation. A normal `//` comment that explains the approach is useful:
 
 ```rust
-impl Encode for RecordBatch {
-    // Length and CRC are back-patched after the body is written.
-    fn encode(&self, buf: &mut BytesMut, version: i16) {
+impl Ord for SeriesFingerprint {
+    // Ordered by the raw hash, not by label order: the index sorts blocks by
+    // fingerprint, and a label-order comparison would break the merge.
+    fn cmp(&self, other: &Self) -> Ordering {
 ```
 
 ## What Not To Document
@@ -197,7 +199,7 @@ impl Encode for RecordBatch {
 - `impl` blocks for derived traits (`Debug`, `Clone`, etc.).
 - Trait impl methods, unless the behaviour is surprising. Use `//` comments instead.
 - Test modules and test helper functions.
-- Items behind `#[doc(hidden)]` and generated code. Krabka generates the protocol codec. Document the generator's output shape at the module level, not for each generated field.
+- Items behind `#[doc(hidden)]` and generated code. `krabka-metrics` and `krabka-profiles` generate prost types from vendored protos in their `build.rs`. Document the generated module's shape at the module level, not for each generated field.
 
 ## Checking Documentation
 
@@ -223,6 +225,6 @@ Check for:
 3. **Renamed or removed items** — do cross-references point to types and methods that still exist?
 4. **Example code** — would the examples compile and run against the current API?
 5. **Feature flag references** — are conditional compilation features still valid?
-6. **Behavioural and KIP claims** — does the code do what the doc says, and does the referenced KIP still describe that behaviour?
+6. **Behavioural and compatibility claims** — does the code do what the doc says, and does the referenced upstream specification still describe that behaviour?
 
-You should do this pass whenever you write docs or refactor code. The weekly `docs-freshness` CI job re-derives the generated reference from live code and flags drift. But that job catches the generated docs, not your hand-written rustdoc. The correctness pass is how your hand-written rustdoc stays true.
+You should do this pass whenever you write docs or refactor code. CI's `docgen` job builds the rustdoc for every crate, and the doc tests run under `bazel test //...`. Those catch a doc that does not build and an example that does not compile. Neither catches prose that describes the wrong behaviour. The correctness pass is how your hand-written rustdoc stays true.

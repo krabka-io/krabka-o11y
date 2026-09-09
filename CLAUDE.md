@@ -4,14 +4,14 @@
 
 ## Commands
 
-CI gates on Bazel and runs no `cargo`. Cargo works and is supported, but it is not what the repo is checked against.
+CI gates on both Bazel and Cargo, and they are not the same build. Bazel is the primary lane: it supplies its own `protoc`, pins the differential suites' container images, and runs the mutation sweep. The `cargo` job covers what only Cargo reaches -- the `protoc-bin-vendored` fallback, `.cargo/config.toml`, `--locked` against `Cargo.lock`, and the `heap-profiling` feature that no Bazel target turns on.
 
 ```bash
 bazel run //tools/format     # rewrite formatting (replaces `cargo +nightly fmt --all`)
 bazel test //...             # build + unit/integration tests + clippy
 ```
 
-Those two, in that order, are the pre-commit check. There is no `Makefile`, `justfile`, `xtask`, or git hook, and the `CONTRIBUTING.md` that the style guides link to does not exist.
+Those two, in that order, are the pre-commit check. There is no `Makefile`, `justfile`, `xtask`, or git hook, and no `CONTRIBUTING.md`.
 
 `bazel test //...` excludes the six container suites (`.bazelrc` sets `--test_tag_filters=-docker`). Run one explicitly when you touch its code:
 
@@ -39,21 +39,33 @@ cargo clippy -p krabka-promql --all-targets -- -D warnings
 
 **Krabka is greenfield and undeployed.** There are no production users, no persisted state to migrate, and no clients pinned to a specific build. Do not write backwards-compatibility shims:
 
-- No `#[serde(default)]` on metadata fields "to keep old raft logs readable"
+- No `#[serde(default)]` on record fields "to keep old WAL records readable"
 - No `V2` enum variants that stay alongside `V1` to support replay
 - No feature flags that gate new behavior behind a default-off switch
 - No migration code or one-shot upgraders for on-disk format changes
 - No deprecated-but-kept API surfaces
 
-When a schema, enum, wire format, or interface changes, change it. Delete local raft logs and data directories during development if necessary.
+When a schema, enum, wire format, or interface changes, change it. Delete local WAL topics, blocks, and data directories during development if necessary.
 
-**Kafka compatibility is the constraint that matters.** Always keep:
+**Upstream compatibility is the constraint that matters.** Each signal has one upstream implementation that Krabka must match:
 
-- Apache Kafka wire-protocol byte exactness for request and response shapes, field order, error codes, and version negotiation
-- KIP semantics for the feature that you implement
-- Behavior that the JVM admin tools rely on, such as `kafka-topics`, `kafka-acls`, `kafka-leader-election`, and `kafka-reassign-partitions`
+| Signal | Upstream | Surface to match |
+| --- | --- | --- |
+| Metrics | Prometheus, Grafana Mimir | PromQL semantics, the `/api/v1/*` query API, remote-write ingest |
+| Logs | Grafana Loki | LogQL semantics, the `/loki/api/v1/*` query API |
+| Traces | Grafana Tempo | TraceQL semantics, the `/api/search` and `/api/traces` API, OTLP ingest |
+| Profiles | Grafana Pyroscope | The pprof profile format, and the ingest and query API |
 
-When in doubt, match Kafka. If Kafka's behavior is undocumented or version-dependent, check the behavior of the latest released cp-kafka image. Do not rely on the wiki.
+Always keep the query-language semantics, the HTTP response shapes and status codes, and the wire formats these define. Grafana must be able to point a datasource at Krabka and see what it would see from the upstream component.
+
+**The oracle is the upstream implementation running in a container, not its documentation.** Two kinds of executable artifact hold that oracle, and both are in this repository:
+
+- **Six differential suites.** They boot the real component and compare against it: `diff_prometheus`, `diff_mimir` and `grafana_integration` in `crates/metrics-service`, `tempo_differential` and `grafana_e2e` in `crates/traces`, and `pyroscope_differential` in `crates/profiles`. `MODULE.bazel` pins each image by digest and Bazel loads it from a tarball, so a suite never compares against a moving target.
+- **Vendored conformance corpora.** `crates/promql/tests/testdata/` holds a curated subset of the Prometheus `promql` test corpus, and its `ATTRIBUTION.md` records the upstream tag and commit each file came from. `crates/traceql/tests/testdata/traceql/` holds the TraceQL golden corpus.
+
+When in doubt, match the upstream. If the upstream behavior is undocumented or version-dependent, run the pinned image and observe it. Do not rely on a blog post or a wiki. When you deliberately diverge, say so where the divergence lives, and say why, as `ATTRIBUTION.md` does for the corpus cases that Krabka does not implement.
+
+**Kafka is transport here, not a contract.** Each signal's write-ahead log is a Kafka topic that the `krabka-client-*` crates write and read. `krabka-metrics` and `krabka-traces` take `krabka-broker` as a dev-dependency and start one in process, so their `ingest_roundtrip` suites can exercise that path. No library or binary target depends on the broker. Krabka does not implement the Kafka protocol, and nothing here is checked against a Kafka oracle.
 
 ## Code & Documentation Style
 
@@ -86,7 +98,7 @@ When you execute an implementation plan, always use **subagent-driven developmen
 
 Sequential dispatch of one task at a time wastes wall-clock time. Use sequential dispatch only when later tasks depend on earlier ones in the same batch.
 
-A "conflict" between parallel implementers occurs only when both edit the same file. Tasks such as "add wire codes" in codes.rs and "add metadata fields" in records.rs do not conflict, and you should run them together. When in doubt, list the file set that each task touches before you decide.
+A "conflict" between parallel implementers occurs only when both edit the same file. Tasks such as "add a PromQL function" in `crates/promql/src/functions/` and "add a TraceQL operator" in `crates/traceql/src/` do not conflict, and you should run them together. When in doubt, list the file set that each task touches before you decide.
 
 **Never discard working-tree state while parallel implementers run.** `git checkout -- <path>`, `git restore`, `git stash`, and `git clean` all destroy *every* uncommitted change in the files they touch, not only yours. In a shared worktree, those files usually hold the unfinished work of another agent. To undo your own edit, reverse it directly. Re-edit the region, or apply a reverse patch of your own diff. This has already destroyed the uncommitted work of one agent.
 
