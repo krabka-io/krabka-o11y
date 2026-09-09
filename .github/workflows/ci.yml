@@ -74,6 +74,13 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # Debug info is the bulk of what a `cargo test --workspace` writes, and
+    # none of it is read here: nothing debugs a CI run, and a backtrace from a
+    # failing test needs symbols, which `debug = 0` keeps. Dropping it is what
+    # makes the build fit the runner, and it links faster for the same reason.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v7
       # The toolchain comes from `rust-toolchain.toml` rather than being named
@@ -92,9 +99,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
+      # A runner ships ~25 GB of toolchains this build never touches, and the
+      # link step below ran the disk out without them gone: `cargo test
+      # --workspace` links a test binary per target on top of the DataFusion
+      # pin, and ENOSPC during linking surfaces as `ld terminated with signal
+      # 7 [Bus error]`, which reads like a compiler bug rather than a full
+      # disk.
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          df -h /
       # Without this, every run compiles the whole DataFusion pin from source,
       # which is most of the wall clock here. The cache key covers `Cargo.lock`
-      # and the `CARGO_*` environment, so this job sets neither.
+      # and the `CARGO_*` environment, so the two `CARGO_PROFILE_*` variables
+      # below are part of it -- they are set for the job rather than per step
+      # so the cached artifacts and the ones this job builds agree.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # Two hand-written lists name the crates the sibling repositories hold:
       # `[patch.crates-io]` in Cargo.toml and `SIBLING_MEMBERS` in
