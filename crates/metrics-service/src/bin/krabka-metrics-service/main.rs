@@ -557,8 +557,9 @@ mod spawn_shutdown_signal_listener;
 mod spawn_wal_head_consumer_task;
 mod target;
 
-#[cfg(all(unix, feature = "heap-profiling"))]
-use alloc::ALLOC;
+// `alloc` deliberately has no `use` line. `#[global_allocator]` registers
+// the static by attribute, so naming it here imports something nothing
+// reads -- which is a warning, not a link to the allocator.
 
 use cli::Cli;
 use load_runtime_overrides::load_runtime_overrides;

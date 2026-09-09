@@ -148,8 +148,9 @@ mod cli;
 mod parse_dispatch_queue_capacity;
 mod parse_frame_max;
 
-#[cfg(all(unix, feature = "heap-profiling"))]
-pub(crate) use alloc::ALLOC;
+// `alloc` deliberately has no `use` line. `#[global_allocator]` registers
+// the static by attribute, so naming it here imports something nothing
+// reads -- which is a warning, not a link to the allocator.
 
 pub(crate) use cli::Cli;
 pub(crate) use parse_dispatch_queue_capacity::parse_dispatch_queue_capacity;

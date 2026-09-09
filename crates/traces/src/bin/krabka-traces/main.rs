@@ -1796,8 +1796,9 @@ mod run_query_frontend;
 mod target;
 mod wal_consumer;
 
-#[cfg(all(unix, feature = "heap-profiling"))]
-use alloc::ALLOC;
+// `alloc` deliberately has no `use` line. `#[global_allocator]` registers
+// the static by attribute, so naming it here imports something nothing
+// reads -- which is a warning, not a link to the allocator.
 
 use apply_metrics_generator_cli_overrides::apply_metrics_generator_cli_overrides;
 use build_live_store_router::build_live_store_router;

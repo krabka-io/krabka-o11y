@@ -879,8 +879,9 @@ mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
 mod target;
 
-#[cfg(all(unix, feature = "heap-profiling"))]
-use alloc::ALLOC;
+// `alloc` deliberately has no `use` line. `#[global_allocator]` registers
+// the static by attribute, so naming it here imports something nothing
+// reads -- which is a warning, not a link to the allocator.
 
 use build_object_store::build_object_store;
 use cli::Cli;
