@@ -19,6 +19,9 @@ crate_binary(
 )
 
 crate_tests(
+    # `traceql_conformance` runs the sibling crate's golden corpus through this
+    # crate's engine, reaching it with a `..` path from the crate directory.
+    data = ["//crates/traceql:corpus"],
     # Suites that drive a real Grafana-stack component and compare against
     # it, with the images each one starts. //bazel/images pins those by
     # digest and //bazel/defs.bzl loads them before the suite runs.
@@ -49,4 +52,5 @@ crate_tests(
     mutants_jobs = 1,
     mutants_shards = 24,
     mutants_timeout = "eternal",
+    no_harness = ["traceql_conformance"],
 )

@@ -16,6 +16,7 @@ load("@rules_rs//rs:rust_test.bzl", "rust_test")
 load("@rules_rs_mutants//mutants:cargo_mutants_test.bzl", "cargo_mutants_test")
 load("@rules_rust//rust:defs.bzl", "rust_doc", "rust_doc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools/datatest:defs.bzl", "datatest_corpus")
 load("//tools/lint:linters.bzl", "clippy_test")
 
 # `[workspace.lints.rust] unsafe_code = "forbid"`. rules_rs does not
@@ -54,11 +55,48 @@ def _aliases(kinds):
         if label in labels
     }
 
+def _variant(name, suffix):
+    """The target name for one feature variant, or the plain name for the default."""
+    return name + "_" + suffix if suffix else name
+
+def _corpus(lib):
+    """The staged-corpus target for this package's `harness = false` suites."""
+    return lib + "_datatest_corpus"
+
+def _suite_name(stem, suffix, no_harness):
+    """The `rust_test` target for one suite under `tests/`.
+
+    A `harness = false` suite is a `datatest_stable::harness!`, and datatest
+    finds its cases by walking a directory and keeping the regular files in it.
+    Bazel hands a test symlinks, so the walk finds nothing. Those suites are
+    therefore built as a binary that `//tools/datatest:run_datatest.sh` drives
+    once it has staged the corpus as real files, and the name that runs is the
+    wrapper's; the binary's ends `_bin`, out of the way.
+    """
+    return _variant(stem, suffix) + ("_bin" if stem in no_harness else "_test")
+
+def _datatest_test(name, binary, lib, data, env, flaky, tags):
+    """The wrapper that stages a corpus and then runs one `harness = false` suite."""
+    sh_test(
+        name = name,
+        srcs = ["//tools/datatest:run_datatest.sh"],
+        args = [
+            "$(rootpath :%s)" % binary,
+            "$(rootpath :%s)" % _corpus(lib),
+            native.package_name(),
+        ],
+        data = [":" + binary, ":" + _corpus(lib)] + data,
+        env = env,
+        flaky = flaky,
+        tags = tags,
+    )
+
 def crate_library(
         name,
         srcs = None,
         build_script_data = None,
         build_script_compile_data = None,
+        feature_variants = {},
         **kwargs):
     """`rust_library` for a workspace member, configured from Cargo metadata.
 
@@ -70,75 +108,95 @@ def crate_library(
       build_script_compile_data: files the crate's `build.rs` reaches with
         `include_str!`/`include_bytes!`, which are read while it compiles
         rather than while it runs.
+      feature_variants: further copies of the library to build with non-default
+        features turned on, as `{suffix: [feature, ...]}`. `crate.from_cargo`
+        resolves exactly one feature set per crate -- the default one -- so
+        without this nothing in the build ever compiles the code behind a
+        feature `default` leaves off, and a `#[cfg(feature = ...)]` block is
+        never seen by the compiler at all. Each entry emits `<name>_<suffix>`
+        beside the default library; pass the same dict to `crate_tests` so the
+        variant is tested rather than merely built.
       **kwargs: passed through to `rust_library`.
     """
-    deps = all_crate_deps(normal = True)
+    srcs = srcs if srcs != None else native.glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**"],
+    )
 
-    # A crate with a `build.rs` gets one, wired so its `OUT_DIR` reaches the
-    # library. Four crates here generate prost types from vendored protos and
-    # `include!` them from `OUT_DIR`; without this the include has no directory
-    # to read and the generated modules are simply absent.
-    if native.glob(["build.rs"], allow_empty = True):
-        script = name + "_build_script"
+    for suffix, extra_features in [("", [])] + feature_variants.items():
+        target = _variant(name, suffix)
+        features = _features() + extra_features
+        deps = all_crate_deps(normal = True)
 
-        # `protoc` comes from the build, not from a vendored crate. The
-        # `protoc-bin-vendored-*` crates locate their binary through
-        # `env!("CARGO_MANIFEST_DIR")`, which bakes an absolute build path into
-        # the artifact -- the same sources would produce different bytes on
-        # different machines, and the sandbox rejects it. They cannot be read at
-        # run time either: the path they want belongs to their own manifest, and
-        # nothing sets it. So the feature that pulls them in is dropped here and
-        # `PROTOC` is handed over instead, which is what `build.rs` prefers.
-        # Cargo keeps the feature on by default and behaves as it always did.
-        cargo_build_script(
-            name = script,
-            srcs = ["build.rs"],
-            build_script_env = {"PROTOC": "$(execpath //bazel:protoc)"},
-            crate_features = [f for f in _features() if f != "vendored-protoc"],
-            crate_name = crate_name() + "_build_script",
-            compile_data = build_script_compile_data or [],
-            data = build_script_data or [],
+        # A crate with a `build.rs` gets one, wired so its `OUT_DIR` reaches the
+        # library. Four crates here generate prost types from vendored protos and
+        # `include!` them from `OUT_DIR`; without this the include has no directory
+        # to read and the generated modules are simply absent. A feature variant
+        # gets its own, because `build.rs` reads the feature set too and may
+        # generate different code from it.
+        if native.glob(["build.rs"], allow_empty = True):
+            script = target + "_build_script"
+
+            # `protoc` comes from the build, not from a vendored crate. The
+            # `protoc-bin-vendored-*` crates locate their binary through
+            # `env!("CARGO_MANIFEST_DIR")`, which bakes an absolute build path into
+            # the artifact -- the same sources would produce different bytes on
+            # different machines, and the sandbox rejects it. They cannot be read at
+            # run time either: the path they want belongs to their own manifest, and
+            # nothing sets it. So the feature that pulls them in is dropped here and
+            # `PROTOC` is handed over instead, which is what `build.rs` prefers.
+            # Cargo keeps the feature on by default and behaves as it always did.
+            cargo_build_script(
+                name = script,
+                srcs = ["build.rs"],
+                build_script_env = {"PROTOC": "$(execpath //bazel:protoc)"},
+                crate_features = [f for f in features if f != "vendored-protoc"],
+                crate_name = crate_name() + "_build_script",
+                compile_data = build_script_compile_data or [],
+                data = build_script_data or [],
+                edition = edition(),
+                tools = ["//bazel:protoc"],
+                deps = [
+                    dep
+                    for dep in all_crate_deps(build = True)
+                    if "protoc-bin-vendored" not in dep
+                ],
+            )
+            deps = deps + [":" + script]
+
+        rust_library(
+            name = target,
+            srcs = srcs,
+            aliases = _aliases(["deps"]),
+            crate_features = features,
+            crate_name = crate_name(),
             edition = edition(),
-            tools = ["//bazel:protoc"],
-            deps = [
-                dep
-                for dep in all_crate_deps(build = True)
-                if "protoc-bin-vendored" not in dep
-            ],
+            rustc_flags = WORKSPACE_RUSTC_FLAGS,
+            visibility = ["//visibility:public"],
+            deps = deps,
+            **kwargs
         )
-        deps = deps + [":" + script]
 
-    rust_library(
-        name = name,
-        srcs = srcs if srcs != None else native.glob(
-            ["src/**/*.rs"],
-            exclude = ["src/bin/**"],
-        ),
-        aliases = _aliases(["deps"]),
-        crate_features = _features(),
-        crate_name = crate_name(),
-        edition = edition(),
-        rustc_flags = WORKSPACE_RUSTC_FLAGS,
-        visibility = ["//visibility:public"],
-        deps = deps,
-        **kwargs
-    )
+        # Clippy as a test, so `bazel test //...` gates on it the way `cargo clippy
+        # -- -D warnings` used to. The aspect alone only writes a report: it is
+        # `lint_test` that turns a finding into a failure. A variant gets its own:
+        # the code a feature switches on is code clippy has otherwise never read.
+        clippy_test(
+            name = target + "_clippy",
+            srcs = [":" + target],
+        )
 
-    # Clippy as a test, so `bazel test //...` gates on it the way `cargo clippy
-    # -- -D warnings` used to. The aspect alone only writes a report: it is
-    # `lint_test` that turns a finding into a failure.
-    clippy_test(
-        name = name + "_clippy",
-        srcs = [":" + name],
-    )
-
-    # `bazel build //crates/<x>:<x>_doc` renders this crate's rustdoc. The
-    # rustdoc examples themselves are run by `crate_tests`, which emits a
-    # `rust_doc_test`; this is the HTML.
-    rust_doc(
-        name = name + "_doc",
-        crate = ":" + name,
-    )
+        # `bazel build //crates/<x>:<x>_doc` renders this crate's rustdoc. The
+        # rustdoc examples themselves are run by `crate_tests`, which emits a
+        # `rust_doc_test`; this is the HTML. One rendering per crate: a variant
+        # documents the same crate with a few more items on it, which is a
+        # second copy for a reader to get lost between rather than a second
+        # thing to read.
+        if not suffix:
+            rust_doc(
+                name = target + "_doc",
+                crate = ":" + target,
+            )
 
 def crate_binary(name, crate_root, lib, tests = True, **kwargs):
     """`rust_binary` for a `[[bin]]` target that links its own crate's library.
@@ -190,6 +248,7 @@ def crate_tests(
         docker = {},
         env = {},
         extra_srcs = {},
+        feature_variants = {},
         rustc_env = {},
         manual = [],
         no_harness = [],
@@ -198,21 +257,34 @@ def crate_tests(
         mutants_jobs = 4,
         mutants_shards = 8,
         mutants_timeout = "long",
+        mutants_variant = "",
         unit_tags = []):
     """Unit tests, one target per `tests/*.rs`, and a mutation sweep.
 
     Args:
       lib: the `crate_library` target name in this package.
       data: runtime files every integration test gets (fixtures, corpora).
+        For a `no_harness` suite these are also the corpus staged for it.
       compile_data: files reachable from `include!`/`include_str!` at compile time.
       env: runtime environment for every test target in the package.
       extra_srcs: per-stem sources from outside this package, for a suite that
         reaches one with `#[path]`. Bazel places a label at its own workspace
         path, which is the path such an include is written against.
+      feature_variants: the `feature_variants` this package's `crate_library`
+        declares, `{suffix: [feature, ...]}`. Each entry repeats the unit tests
+        and every suite under tests/ against `<lib>_<suffix>`, under target
+        names suffixed the same way, so `bazel test //...` covers both feature
+        sets rather than building one and running the other.
       rustc_env: extra compile-time environment, e.g. `CARGO_MANIFEST_DIR`.
       manual: test stems to tag `manual` — Docker-driven or otherwise
         non-hermetic suites, the Bazel equivalent of their `#[ignore]`.
-      no_harness: test stems declared `harness = false` in Cargo.toml.
+      no_harness: test stems declared `harness = false` in Cargo.toml. Each
+        one is a `datatest_stable::harness!` with no `#[test]` in it, so the
+        libtest harness must be off -- built with it, rustc supplies a `main`
+        of its own and the suite runs nothing while reporting success. The
+        target that runs is a wrapper, `//tools/datatest:run_datatest.sh`,
+        which stages the corpus as real files first; a `<lib>_no_harness_check`
+        target keeps this list and the manifest from drifting apart.
       doc_tests: whether to emit a `rust_doc_test`. `cargo test` runs rustdoc
         examples; without this they are simply not run.
       mutants: whether to emit a `cargo_mutants_test`. The sweep runs the
@@ -221,8 +293,36 @@ def crate_tests(
       mutants_jobs: mutants built and tested concurrently within one shard.
       mutants_shards: Bazel shards the sweep is split across.
       mutants_timeout: Bazel timeout for one shard of the sweep.
+      mutants_variant: the `feature_variants` key whose targets the sweep
+        mutates, instead of the default-feature ones. `cargo_mutants_test` has
+        no feature argument -- it replays the recorded rustc command line of the
+        targets it is given -- so naming the variant here is how a sweep gets a
+        non-default feature. It matters where a feature guards code with tests
+        behind the same guard: compiled out, every mutant in that code survives
+        with nothing wrong.
       unit_tags: extra tags for the unit-test target.
     """
+
+    # `harness = false` is written in Cargo.toml and repeated here, and nothing
+    # else connects the two. A stem in one and not the other builds under the
+    # libtest harness, where rustc supplies a `main` of its own and the suite's
+    # `datatest_stable::harness!` becomes dead code -- the target then passes
+    # having run no cases at all. `cargo metadata` does not report `harness`, so
+    # no macro can read the answer out of `@crates`; this compares the two
+    # statements instead and fails when they diverge.
+    sh_test(
+        name = lib + "_no_harness_check",
+        srcs = ["//tools/datatest:no_harness_check.sh"],
+        args = ["$(rootpath Cargo.toml)"] + no_harness,
+        data = ["Cargo.toml"],
+    )
+
+    if no_harness:
+        datatest_corpus(
+            name = _corpus(lib),
+            srcs = data or [],
+        )
+
     unit = lib + "_test"
     rust_test(
         name = unit,
@@ -252,11 +352,18 @@ def crate_tests(
         # Suites that need Docker, or are otherwise non-hermetic, stay out: a
         # sweep reruns them once per mutant, and `manual` is exactly the marker
         # for the ones that cannot bear that.
+        # `harness = false` suites stay out too, for a different reason: the
+        # sweep runs a suite's binary itself rather than through a wrapper, so a
+        # datatest suite would find no corpus, fail against the *unmutated*
+        # baseline, and cargo-mutants would refuse the whole shard -- which it
+        # reports as measuring nothing rather than as a failure.
+        swept = _variant(lib, mutants_variant)
         integration = [
-            ":" + src[len("tests/"):-len(".rs")] + "_test"
+            ":" + _suite_name(src[len("tests/"):-len(".rs")], mutants_variant, no_harness)
             for src in native.glob(["tests/*.rs"], allow_empty = True)
             if src[len("tests/"):-len(".rs")] not in manual and
-               src[len("tests/"):-len(".rs")] not in docker
+               src[len("tests/"):-len(".rs")] not in docker and
+               src[len("tests/"):-len(".rs")] not in no_harness
         ]
 
         cargo_mutants_test(
@@ -272,11 +379,11 @@ def crate_tests(
             # logql's syntax.rs reported 165 survivors where the real number is
             # 1 -- so they are rebuilt and rerun against every mutant.
             integration_tests = integration,
-            library = ":" + lib,
+            library = ":" + swept,
             jobs = mutants_jobs,
             shard_count = mutants_shards,
             tags = ["manual"],
-            test = ":" + unit,
+            test = ":" + swept + "_test",
         )
 
     # Shared helper modules live in `tests/<name>/mod.rs` and are declared with
@@ -290,8 +397,13 @@ def crate_tests(
 
     for src in native.glob(["tests/*.rs"], allow_empty = True):
         stem = src[len("tests/"):-len(".rs")]
+
+        # A `harness = false` suite is built here but run by a wrapper, so the
+        # binary itself is `manual`: on its own it would find no corpus and fail.
+        wrapped = stem in no_harness
+
         rust_test(
-            name = stem + "_test",
+            name = _suite_name(stem, "", no_harness),
             srcs = [src] + helpers + extra_srcs.get(stem, []),
             crate_root = src,
             aliases = _aliases(["deps", "dev_deps"]),
@@ -309,16 +421,28 @@ def crate_tests(
             # break, and Bazel reports the result as FLAKY rather than passing it
             # off as a clean run -- so the flakiness stays visible instead of
             # being hidden by a `#[ignore]`.
-            flaky = stem in cpu_heavy,
-            tags = (["manual"] if stem in manual else []) +
+            flaky = stem in cpu_heavy and not wrapped,
+            tags = (["manual"] if stem in manual or wrapped else []) +
                    (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else []),
-            use_libtest_harness = stem not in no_harness,
+            use_libtest_harness = not wrapped,
             # One call, not two concatenated: an integration test links the
             # crate's normal *and* dev dependencies, and several crates list the
             # same package in both tables. `all_crate_deps` merges the two specs
             # through a set, so asking for both at once dedupes them.
             deps = all_crate_deps(normal = True, normal_dev = True) + [":" + lib],
         )
+
+        if wrapped:
+            _datatest_test(
+                name = stem + "_test",
+                binary = _suite_name(stem, "", no_harness),
+                lib = lib,
+                data = data or [],
+                env = env,
+                flaky = stem in cpu_heavy,
+                tags = (["manual"] if stem in manual else []) +
+                       (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else []),
+            )
 
         if stem not in docker:
             continue
@@ -339,7 +463,7 @@ def crate_tests(
             rustc_env = rustc_env,
             rustc_flags = WORKSPACE_RUSTC_FLAGS,
             tags = ["manual"],
-            use_libtest_harness = stem not in no_harness,
+            use_libtest_harness = not wrapped,
             deps = all_crate_deps(normal = True, normal_dev = True) + [":" + lib],
         )
 
@@ -377,3 +501,70 @@ def crate_tests(
                 "no-sandbox",
             ],
         )
+
+    # The same tests again against each feature variant of the library. Building
+    # a variant proves it compiles and nothing more; the code a feature switches
+    # on -- and, where a corpus is selected by `cfg!`, the cases that come with
+    # it -- is covered only if the tests run against it too.
+    for suffix, extra_features in feature_variants.items():
+        variant_lib = _variant(lib, suffix)
+        variant_features = _features() + extra_features
+
+        rust_test(
+            name = variant_lib + "_test",
+            aliases = _aliases(["deps", "dev_deps"]),
+            crate = ":" + variant_lib,
+            compile_data = compile_data or [],
+            crate_features = variant_features,
+            data = data or [],
+            edition = edition(),
+            env = env,
+            rustc_env = rustc_env,
+            rustc_flags = WORKSPACE_RUSTC_FLAGS,
+            tags = unit_tags,
+            deps = all_crate_deps(normal_dev = True),
+        )
+
+        for src in native.glob(["tests/*.rs"], allow_empty = True):
+            stem = src[len("tests/"):-len(".rs")]
+
+            # Container suites stay at one configuration. They are the slowest
+            # thing the repo runs, they need a daemon Bazel does not own, and a
+            # feature that changes the engine's function table is not what they
+            # are asking about.
+            if stem in docker:
+                continue
+
+            wrapped = stem in no_harness
+
+            rust_test(
+                name = _suite_name(stem, suffix, no_harness),
+                srcs = [src] + helpers + extra_srcs.get(stem, []),
+                crate_root = src,
+                aliases = _aliases(["deps", "dev_deps"]),
+                compile_data = compile_data or [],
+                crate_features = variant_features,
+                data = data or [],
+                edition = edition(),
+                env = env,
+                rustc_env = rustc_env,
+                rustc_flags = WORKSPACE_RUSTC_FLAGS,
+                flaky = stem in cpu_heavy and not wrapped,
+                tags = (["manual"] if stem in manual or wrapped else []) +
+                       (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else []),
+                use_libtest_harness = not wrapped,
+                deps = all_crate_deps(normal = True, normal_dev = True) +
+                       [":" + variant_lib],
+            )
+
+            if wrapped:
+                _datatest_test(
+                    name = _variant(stem, suffix) + "_test",
+                    binary = _suite_name(stem, suffix, no_harness),
+                    lib = lib,
+                    data = data or [],
+                    env = env,
+                    flaky = stem in cpu_heavy,
+                    tags = (["manual"] if stem in manual else []) +
+                           (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else []),
+                )

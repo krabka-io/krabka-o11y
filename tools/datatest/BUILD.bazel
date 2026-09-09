@@ -1,0 +1,16 @@
+"""Support for the suites this repo declares `harness = false`.
+
+Every one of them is a `datatest_stable::harness!` over a corpus directory, and
+each needs two things Bazel does not give it. The corpus has to reach the suite
+as real files rather than the symlinks Bazel hands a test, which is what
+`defs.bzl` stages and `run_datatest.sh` materialises. And Cargo and Bazel have
+to keep agreeing that the suite has no harness, which `no_harness_check.sh`
+enforces; `crate_tests` wires up all three.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "no_harness_check.sh",
+    "run_datatest.sh",
+])
