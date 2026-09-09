@@ -1,7 +1,7 @@
 Register the Rust toolchains by recursive pattern, not `//:all`.
 
 aspect_rules_lint_rust declares `rules_rs` 0.0.83 and registers
-`@default_rust_toolchains//:all`. This repository resolves rules_rs 0.0.106,
+`@default_rust_toolchains//:all`. This repository resolves a newer rules_rs,
 which lays that repo out with the toolchains in subpackages -- `rustc/`,
 `rustfmt/`, `rust-analyzer/` -- and no BUILD file at the root. `//:all` then
 names a package that does not exist, and every toolchain resolution fails with

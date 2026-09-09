@@ -10,7 +10,7 @@ module(
     version = "0.4.0",
 )
 
-bazel_dep(name = "rules_rs", version = "0.0.106")
+bazel_dep(name = "rules_rs", version = "0.0.110")
 bazel_dep(name = "rules_rs_mutants", version = "0.0.1")
 
 # rules_rs_mutants is not published to the Bazel Central Registry, so the
@@ -114,7 +114,7 @@ bazel_dep(name = "aspect_rules_lint", version = "2.7.2")
 bazel_dep(name = "aspect_rules_lint_rust", version = "0.0.2")
 
 # See the patch header: that module registers `@default_rust_toolchains//:all`,
-# a package rules_rs 0.0.106 does not create.
+# a package the rules_rs this repo resolves does not create.
 single_version_override(
     module_name = "aspect_rules_lint_rust",
     patch_strip = 1,
