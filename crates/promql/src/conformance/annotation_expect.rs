@@ -16,6 +16,4 @@ pub enum AnnotationExpect {
     WarnMsg(String),
     /// `expect info msg:<text>`: an info exactly equal to `<text>` must exist.
     InfoMsg(String),
-    /// `expect ordered`: a result-ordering directive with no annotation semantics.
-    Ordered,
 }

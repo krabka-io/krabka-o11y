@@ -45,9 +45,24 @@ jobs:
           # Carried into the push below, so the branch is pushed by whichever
           # identity also opens the pull request.
           token: ${{ secrets.SIBLING_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
-      - uses: dtolnay/rust-toolchain@master
+      # Pinned to a revision, not to `@master`: this job holds a write-scoped
+      # PAT and a checkout that leaves it on disk, so a force-push to the
+      # action's branch would run arbitrary code against that credential. The
+      # toolchain comes from `rust-toolchain.toml` rather than being named
+      # again here -- the action requires the input, so it is read out of the
+      # file the rest of the repo already resolves against.
+      - id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)"
+          if [ -z "${channel}" ]; then
+            echo "::error::rust-toolchain.toml names no channel"
+            exit 1
+          fi
+          echo "channel=${channel}" >>"${GITHUB_OUTPUT}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: "1.97.1"
+          toolchain: ${{ steps.toolchain.outputs.channel }}
 
       - id: bump
         env:
@@ -80,6 +95,16 @@ jobs:
 
           sed -i "s|${current}|${latest}|g" Cargo.toml
           cargo generate-lockfile
+
+          # The bump moves a revision. It never edits the two hand-written
+          # crate lists, and a sibling that added, renamed or moved a crate
+          # needs both lists changed by hand. Fail here rather than open a
+          # green pull request that hides the change. The lockfile is fresh at
+          # this point, so the check reads the new member set.
+          if ! tools/check-sibling-members.sh; then
+            echo "::error::${SIBLING} at ${latest:0:7} needs the sibling crate lists changed by hand. Correct [patch.crates-io] in Cargo.toml and SIBLING_MEMBERS in MODULE.bazel as the output above says, then run this workflow again."
+            exit 1
+          fi
 
           {
             echo "changed=true"

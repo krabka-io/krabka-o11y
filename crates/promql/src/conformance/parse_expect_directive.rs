@@ -1,22 +1,32 @@
-use super::{AnnotationExpect, Line, Result, parse_error};
+use super::{AnnotationExpect, ExpectDirective, Line, Result, parse_error};
 
-pub(crate) fn parse_expect_directive(directive: &str, line: Line<'_>) -> Result<AnnotationExpect> {
+pub(crate) fn parse_expect_directive(directive: &str, line: Line<'_>) -> Result<ExpectDirective> {
     let directive = directive.trim();
     match directive {
-        "no_warn" => return Ok(AnnotationExpect::NoWarn),
-        "no_info" => return Ok(AnnotationExpect::NoInfo),
-        "warn" => return Ok(AnnotationExpect::AnyWarn),
-        "info" => return Ok(AnnotationExpect::AnyInfo),
+        "no_warn" => {
+            return Ok(ExpectDirective::Annotation(AnnotationExpect::NoWarn));
+        }
+        "no_info" => {
+            return Ok(ExpectDirective::Annotation(AnnotationExpect::NoInfo));
+        }
+        "warn" => {
+            return Ok(ExpectDirective::Annotation(AnnotationExpect::AnyWarn));
+        }
+        "info" => {
+            return Ok(ExpectDirective::Annotation(AnnotationExpect::AnyInfo));
+        }
+        "ordered" => return Ok(ExpectDirective::Ordered),
         _ => {}
     }
     if let Some(message) = directive.strip_prefix("warn msg:") {
-        return Ok(AnnotationExpect::WarnMsg(message.trim().to_string()));
+        return Ok(ExpectDirective::Annotation(AnnotationExpect::WarnMsg(
+            message.trim().to_string(),
+        )));
     }
     if let Some(message) = directive.strip_prefix("info msg:") {
-        return Ok(AnnotationExpect::InfoMsg(message.trim().to_string()));
-    }
-    if directive == "ordered" {
-        return Ok(AnnotationExpect::Ordered);
+        return Ok(ExpectDirective::Annotation(AnnotationExpect::InfoMsg(
+            message.trim().to_string(),
+        )));
     }
     Err(parse_error(
         line,

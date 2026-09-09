@@ -5,10 +5,24 @@ package(default_visibility = ["//visibility:public"])
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
 exports_files(["Cargo.toml"])
 
-crate_library(name = "promql")
+# `experimental-functions` is off by default, so the default build never
+# compiles the code behind it: `limitk`, `limit_ratio`,
+# `double_exponential_smoothing`, the `histogram_quantiles` family, the duration
+# helpers and the query-range context they read. The conformance suite selects
+# its corpus by the same `cfg!`, so `limit.test` is skipped as well. Building
+# and testing a second copy with the feature on is what puts any of that under
+# CI; the two configurations coexist in this package under `_experimental`
+# target names.
+EXPERIMENTAL = {"experimental": ["experimental-functions"]}
+
+crate_library(
+    name = "promql",
+    feature_variants = EXPERIMENTAL,
+)
 
 crate_tests(
     data = glob(["tests/testdata/**"]),
+    feature_variants = EXPERIMENTAL,
     lib = "promql",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
     # crate size times mutants-per-shard. At the default `long` (900s) every
@@ -26,4 +40,11 @@ crate_tests(
     mutants_jobs = 1,
     mutants_shards = 32,
     mutants_timeout = "eternal",
+    # Sweep the variant, not the default build. Fifteen of this crate's unit
+    # tests sit behind `experimental-functions`, so a default-feature sweep
+    # compiles both the code and the tests that cover it out and reports every
+    # mutant in it as a survivor -- twenty-two in `double_exponential_smoothing`
+    # alone read that way.
+    mutants_variant = "experimental",
+    no_harness = ["conformance"],
 )

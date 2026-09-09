@@ -7,7 +7,13 @@ pub(crate) fn aggregate_k(aggregate: &AggregateExpr) -> Result<usize> {
             aggregate.op
         )));
     };
-    let Expr::NumberLiteral(number) = param.as_ref() else {
+    // `topk((3), x)` means `topk(3, x)`. Prometheus keeps the parentheses in the
+    // AST and reads through them, so read through them here too.
+    let mut param = param.as_ref();
+    while let Expr::Paren(paren) = param {
+        param = paren.expr.as_ref();
+    }
+    let Expr::NumberLiteral(number) = param else {
         return Err(PromqlError::Plan(format!(
             "{} parameter must be numeric",
             aggregate.op

@@ -419,8 +419,9 @@ mod spawn_retention_sweeper;
 mod target;
 mod unix_time_ms;
 
-#[cfg(all(unix, feature = "heap-profiling"))]
-use alloc::ALLOC;
+// `alloc` deliberately has no `use` line. `#[global_allocator]` registers
+// the static by attribute, so naming it here imports something nothing
+// reads -- which is a warning, not a link to the allocator.
 
 use build_object_store::build_object_store;
 use cli::Cli;

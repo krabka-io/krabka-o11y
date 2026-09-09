@@ -15,6 +15,17 @@ crate_binary(
 )
 
 crate_tests(
+    # `compactor` asserts on wall-clock behaviour: several cases wrap the
+    # runtime in a one-second `tokio::time::timeout` and give it a 250ms retry
+    # budget. That holds on an idle machine and does not under `bazel
+    # coverage`, where instrumentation makes every action slower and the test
+    # shares four cores with whatever else the invocation is still compiling --
+    # `compactor_runtime_retries_shard_manifest_write_errors_before_committing_offsets`
+    # timed out that way while the promql feature variant was building beside
+    # it, having reached none of the assertions that would show a real fault.
+    # `cpu:4` stops Bazel scheduling work alongside it, and the retry reports
+    # FLAKY rather than passing a timing hiccup off as a clean run.
+    cpu_heavy = ["compactor"],
     lib = "observability",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
     # crate size times mutants-per-shard. At the default `long` (900s) every

@@ -1,3 +1,6 @@
+#[cfg(feature = "experimental-functions")]
+use super::*;
+
 /// Differential parity for the experimental scalar and range functions.
 ///
 /// The functions are `max_of`, `min_of`, `double_exponential_smoothing` over a

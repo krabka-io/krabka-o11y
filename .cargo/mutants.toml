@@ -12,14 +12,18 @@ test_tool = "nextest"
 # mutant in the code they cover reports as a survivor with nothing wrong --
 # twenty-two in `double_exponential_smoothing` alone read that way.
 #
-# Sweep that crate with the feature on:
+# `//crates/promql:promql_mutants` no longer has that problem: it names
+# `mutants_variant = "experimental"`, so the sweep mutates the copy of the crate
+# that //bazel:defs.bzl builds with the feature on. A plain `cargo mutants` run
+# still has to be told:
 #
 #     cargo mutants -p krabka-promql --features experimental-functions ...
 #
-# It is deliberately not set here. This file is shared with every other crate
-# and with the Bazel targets, and `--all-features` would also switch on
-# `vendored-protoc` -- which //bazel:defs.bzl explicitly filters out -- and
-# `heap-profiling`, neither of which any test needs.
+# No feature is set here, and none should be. This file is shared with every
+# other crate and with every Bazel target, `cargo_mutants_test` reads it only to
+# enumerate mutants, and `--all-features` would also switch on `vendored-protoc`
+# -- which //bazel:defs.bzl explicitly filters out -- and `heap-profiling`,
+# neither of which any test needs.
 profile = "mutants"
 
 # A surviving mutant in the ingest and query paths is often only caught by the

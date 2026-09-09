@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::*;
+
+#[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn limit_ratio_over_bound_emits_capping_warning() {
     let mut store = InMemoryMetricStore::new();

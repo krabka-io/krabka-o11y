@@ -927,7 +927,16 @@ async fn start_krabka_querier(records: &[SpanRecord]) -> TestResult<KrabkaPair> 
 // ---------------------------------------------------------------------------
 
 async fn start_grafana() -> TestResult<ContainerAsync<GenericImage>> {
-    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").unwrap_or_else(|_| "11.5.2".into());
+    // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
+    // the same map that decides what `docker load` tags. A default here would
+    // be a second copy of that decision, and when the two disagreed
+    // testcontainers pulled the image over the network and the suite compared
+    // against whatever it got rather than against the pinned bytes.
+    let tag = std::env::var("KRABKA_GRAFANA_IMAGE_TAG").expect(
+        "KRABKA_GRAFANA_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
+         which loads the digest-pinned image and sets this. To run one under \
+         cargo, set it to that image's tag in //bazel/images/images.bzl.",
+    );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
@@ -941,7 +950,13 @@ async fn start_grafana() -> TestResult<ContainerAsync<GenericImage>> {
 }
 
 async fn start_prometheus() -> TestResult<ContainerAsync<GenericImage>> {
-    let tag = std::env::var("KRABKA_PROM_IMAGE_TAG").unwrap_or_else(|_| "v3.1.0".into());
+    // Set by //bazel/defs.bzl; see the note above.
+    let tag = std::env::var("KRABKA_PROMETHEUS_IMAGE_TAG")
+        .expect(
+            "KRABKA_PROMETHEUS_IMAGE_TAG is unset. These suites run under `bazel test --config=docker`, \
+         which loads the digest-pinned image and sets this. To run one under \
+         cargo, set it to that image's tag in //bazel/images/images.bzl.",
+        );
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/prom/prometheus".to_string(), tag)

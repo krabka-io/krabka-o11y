@@ -2,8 +2,6 @@ use std::{cmp::Ordering, collections::BTreeMap};
 
 use krabka_blockstore::Labels;
 use krabka_metrics::NativeHistogram;
-#[cfg(feature = "experimental-functions")]
-use num_traits::ToPrimitive as _;
 use promql_parser::parser::{
     AggregateExpr, Expr, LabelModifier,
     token::{T_TOPK, TokenType},
@@ -23,6 +21,9 @@ use crate::{
 
 #[cfg(all(test, feature = "experimental-functions"))]
 mod tests {
+    use assert2::assert;
+    use num_traits::ToPrimitive as _;
+
     use super::*;
 
     #[test]

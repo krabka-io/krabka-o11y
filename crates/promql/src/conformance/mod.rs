@@ -11,7 +11,7 @@ use crate::{PromqlError, error::Result};
 /// Runs parsed `.test` files through the in-memory `PromQL` engine.
 pub mod testkit {
     use std::{
-        collections::BTreeMap,
+        collections::{BTreeMap, BTreeSet},
         fmt,
         path::{Path, PathBuf},
         sync::Arc,
@@ -141,6 +141,7 @@ pub mod testkit {
                     expr,
                     expect,
                     annotations,
+                    ordered,
                     range_expect,
                     fail_message,
                 } => {
@@ -152,6 +153,7 @@ pub mod testkit {
                         result,
                         expect,
                         annotations,
+                        *ordered,
                         range_expect.as_ref(),
                         fail_message.as_deref(),
                     )
@@ -375,6 +377,7 @@ pub mod testkit {
         result: Result<(QueryResult, Annotations)>,
         expect: &[ExpectLine],
         annotations: &[AnnotationExpect],
+        ordered: bool,
         range_expect: Option<&RangeExpect>,
         fail_message: Option<&str>,
     ) -> Result<()> {
@@ -393,7 +396,7 @@ pub mod testkit {
                         range_expect.start_ms,
                         range_expect.step,
                     ),
-                    None => compare_instant_result(result, expect),
+                    None => compare_instant_result(result, expect, ordered),
                 }
             }
         }
@@ -435,7 +438,6 @@ pub mod testkit {
                 AnnotationExpect::NoInfo => raised.infos.is_empty(),
                 AnnotationExpect::WarnMsg(text) => raised.warnings.iter().any(|w| w == text),
                 AnnotationExpect::InfoMsg(text) => raised.infos.iter().any(|i| i == text),
-                AnnotationExpect::Ordered => true,
             };
             if !ok {
                 return Err(PromqlError::Exec(format!(
@@ -457,7 +459,6 @@ pub mod testkit {
             AnnotationExpect::NoInfo => "expect no_info".to_string(),
             AnnotationExpect::WarnMsg(text) => format!("expect warn msg:{text}"),
             AnnotationExpect::InfoMsg(text) => format!("expect info msg:{text}"),
-            AnnotationExpect::Ordered => "expect ordered".to_string(),
         }
     }
 
@@ -475,7 +476,17 @@ pub mod testkit {
         }
     }
 
-    fn compare_instant_result(result: QueryResult, expect: &[ExpectLine]) -> Result<()> {
+    /// Compares an instant result against the expectation block.
+    ///
+    /// `ordered` carries the `expect ordered` directive. It selects a
+    /// positional comparison of the instant vector, the way Prometheus
+    /// promqltest does. Without it the comparison ignores the result order,
+    /// because most queries do not promise one.
+    fn compare_instant_result(
+        result: QueryResult,
+        expect: &[ExpectLine],
+        ordered: bool,
+    ) -> Result<()> {
         if let QueryResult::Str { value, .. } = result {
             let expected = expect_single_string(expect)?;
             if value == expected {
@@ -498,8 +509,8 @@ pub mod testkit {
         let actual = match result {
             QueryResult::InstantVector(samples) => samples
                 .into_iter()
-                .map(|sample| Ok((labels_key(&sample.labels), sample.value)))
-                .collect::<Result<BTreeMap<_, _>>>()?,
+                .map(|sample| (labels_key(&sample.labels), sample.value))
+                .collect::<Vec<_>>(),
             other => {
                 return Err(PromqlError::Exec(format!(
                     "expected instant vector result, got {}",
@@ -507,18 +518,20 @@ pub mod testkit {
                 )));
             }
         };
-        let mut expected = BTreeMap::new();
+        let mut expected = Vec::with_capacity(expect.len());
+        let mut seen = BTreeSet::new();
         for line in expect {
             let key = labels_key(&metric_to_labels(&line.metric));
             let value = expect_single_instant_value(line)?;
-            // Two `expect` lines collapsing to the same labelset would silently
-            // overwrite in the map and weaken the count check below; reject the
+            // Two `expect` lines collapsing to the same labelset would make one
+            // of them unreachable and weaken the count check below; reject the
             // duplicate instead of deduping it away.
-            if expected.insert(key.clone(), value).is_some() {
+            if !seen.insert(key.clone()) {
                 return Err(PromqlError::Parse(format!(
                     "duplicate expected series {key}"
                 )));
             }
+            expected.push((key, value));
         }
 
         if actual.len() != expected.len() {
@@ -528,6 +541,11 @@ pub mod testkit {
                 actual.len()
             )));
         }
+        if ordered {
+            return compare_ordered_instant_samples(&actual, &expected);
+        }
+
+        let actual = actual.into_iter().collect::<BTreeMap<_, _>>();
         for (labels, expected_value) in expected {
             let Some(actual_value) = actual.get(&labels) else {
                 return Err(PromqlError::Exec(format!("missing sample for {labels}")));
@@ -540,6 +558,53 @@ pub mod testkit {
         }
 
         Ok(())
+    }
+
+    /// Compares an instant vector position by position, under `expect ordered`.
+    ///
+    /// The sample at each position must carry the labels that the expectation
+    /// block writes at the same position. A position alone does not say which
+    /// series moved, so a mismatch reports both orders in full.
+    fn compare_ordered_instant_samples(
+        actual: &[(String, SampleValue)],
+        expected: &[(String, SampleValue)],
+    ) -> Result<()> {
+        for (index, ((actual_labels, actual_value), (expected_labels, expected_value))) in
+            actual.iter().zip(expected).enumerate()
+        {
+            if actual_labels != expected_labels {
+                return Err(PromqlError::Exec(format!(
+                    "order mismatch at position {}: expected `{}`, got `{}`; \
+                     expected order [{}], got [{}]",
+                    index + 1,
+                    describe_labels_key(expected_labels),
+                    describe_labels_key(actual_labels),
+                    describe_order(expected),
+                    describe_order(actual),
+                )));
+            }
+            if !instant_values_equal(actual_value, expected_value) {
+                return Err(PromqlError::Exec(format!(
+                    "value mismatch for {actual_labels}: expected {expected_value:?}, got {actual_value:?}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Renders one labelset key on a single line, for a failure message.
+    fn describe_labels_key(key: &str) -> String {
+        key.trim_end_matches('\n').replace('\n', ", ")
+    }
+
+    /// Renders the labelsets of an instant vector in their result order.
+    fn describe_order(samples: &[(String, SampleValue)]) -> String {
+        samples
+            .iter()
+            .map(|(labels, _)| describe_labels_key(labels))
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     fn compare_range_result(
@@ -1083,6 +1148,56 @@ eval instant at 2m down{job="api"}
             }
         }
 
+        /// `expect ordered` makes the instant comparison positional, and the
+        /// default comparison stays order-insensitive. The same result and the
+        /// same expectation lines pass without the directive and fail with it,
+        /// and the failure names the position and both orders in full.
+        #[test]
+        fn an_ordered_expectation_compares_an_instant_vector_by_position() {
+            let sample = |metric: &str, value: f64| crate::InstantSample {
+                labels: metric_to_labels(metric),
+                ts_ms: 0,
+                value: SampleValue::Float(value),
+            };
+            let expected_line = |metric: &str, value: f64| ExpectLine {
+                metric: metric.to_owned(),
+                values: vec![SampleSpec::Value(value)],
+            };
+            // The result order of a ranking query: the highest value first.
+            let result = || {
+                QueryResult::InstantVector(vec![
+                    sample(r#"up{job="b"}"#, 2.0),
+                    sample(r#"up{job="a"}"#, 1.0),
+                ])
+            };
+            let written_in_result_order = [
+                expected_line(r#"up{job="b"}"#, 2.0),
+                expected_line(r#"up{job="a"}"#, 1.0),
+            ];
+            let written_in_another_order = [
+                expected_line(r#"up{job="a"}"#, 1.0),
+                expected_line(r#"up{job="b"}"#, 2.0),
+            ];
+
+            check!(compare_instant_result(result(), &written_in_result_order, true).is_ok());
+            check!(compare_instant_result(result(), &written_in_result_order, false).is_ok());
+            check!(
+                compare_instant_result(result(), &written_in_another_order, false).is_ok(),
+                "without the directive the order does not matter"
+            );
+
+            let message = compare_instant_result(result(), &written_in_another_order, true)
+                .expect_err("the written order is not the result order")
+                .to_string();
+            check!(
+                message
+                    == "execution error: order mismatch at position 1: \
+                        expected `__name__=up, job=a`, got `__name__=up, job=b`; \
+                        expected order [__name__=up, job=a | __name__=up, job=b], \
+                        got [__name__=up, job=b | __name__=up, job=a]"
+            );
+        }
+
         /// The corpus's annotation oracle: `warn`/`info` need at least one of
         /// that kind, `no_warn`/`no_info` need none, and a `msg:` directive
         /// needs an exact match. A failure names the expectation it could not
@@ -1125,7 +1240,6 @@ eval instant at 2m down{job="api"}
                     &informed,
                     Some("expect info msg:i two"),
                 ),
-                (AnnotationExpect::Ordered, &none, None),
             ] {
                 let result = compare_annotations(std::slice::from_ref(&expect), raised);
                 match unsatisfied_description {
@@ -1373,6 +1487,7 @@ clear
                         values: vec![SampleSpec::Value(3.0)],
                     }],
                     annotations: Vec::new(),
+                    ordered: false,
                     range_expect: None,
                     fail_message: None,
                 },
@@ -1531,6 +1646,69 @@ eval instant at 0 up{job="api"}
         .unwrap();
 
         testkit::run_test_file(&file).await.unwrap();
+    }
+
+    /// The `expect ordered` directive must reach the result comparison. The
+    /// same file, with its expectation lines written in an order the query does
+    /// not return, passes without the directive and fails with it.
+    #[tokio::test]
+    async fn testkit_honours_expect_ordered_on_an_instant_vector() {
+        let case = |directive: &str| {
+            format!(
+                r#"
+load 1m
+  up{{job="a"}} 1
+  up{{job="b"}} 2
+
+eval instant at 0 sort_desc(up)
+{directive}  up{{job="a"}} 1
+  up{{job="b"}} 2
+"#
+            )
+        };
+
+        let unordered = parse_test_file(&case("")).expect("the file parses");
+        testkit::run_test_file(&unordered)
+            .await
+            .expect("without the directive the result order does not matter");
+
+        let ordered = parse_test_file(&case("  expect ordered\n")).expect("the file parses");
+        let message = testkit::run_test_file(&ordered)
+            .await
+            .expect_err("the written order is not the result order")
+            .to_string();
+        assert2::assert!(
+            message.contains("order mismatch at position 1"),
+            "{message}"
+        );
+    }
+
+    /// `expect ordered` asserts a result order, and only an instant vector has
+    /// one. The parser refuses the directive on a range eval and on an instant
+    /// eval that expects a range vector, rather than accepting it and then
+    /// ignoring it.
+    #[test]
+    fn expect_ordered_is_refused_where_no_result_order_exists() {
+        for (src, expected) in [
+            (
+                "eval range from 0 to 1m step 1m up\n  expect ordered\n  up 1 2\n",
+                "expect ordered is only valid for instant evals",
+            ),
+            (
+                concat!(
+                    "eval instant at 1m up[1m]\n",
+                    "  expect ordered\n",
+                    "  expect range vector from 0 to 1m step 1m\n",
+                    "  up 1 2\n",
+                ),
+                "expect ordered is not valid with expect range vector",
+            ),
+        ] {
+            let message = parse_test_file(src)
+                .expect_err("the directive is refused")
+                .to_string();
+            assert2::assert!(message.contains(expected), "{message}");
+        }
     }
 
     #[tokio::test]
@@ -1759,6 +1937,7 @@ mod conformance_labels_key;
 mod cumulative_to_bucket_counts;
 mod escape_label_value;
 mod expect_block;
+mod expect_directive;
 mod expect_line;
 mod failure_message;
 mod histogram_fields;
@@ -1808,6 +1987,7 @@ use conformance_labels_key::conformance_labels_key;
 use cumulative_to_bucket_counts::cumulative_to_bucket_counts;
 use escape_label_value::escape_label_value;
 use expect_block::ExpectBlock;
+use expect_directive::ExpectDirective;
 pub use expect_line::ExpectLine;
 use failure_message::failure_message;
 use histogram_fields::histogram_fields;

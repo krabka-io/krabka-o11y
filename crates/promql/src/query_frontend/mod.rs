@@ -18,7 +18,7 @@ use execution::execute_planned_range_queries;
 pub use execution::{RangeQueryExecutor, execute_range_query_frontend};
 pub use merge::merge_range_query_results;
 #[cfg(test)]
-use merge::merge_range_query_results_with_reducer;
+use merge::{merge_range_query_results_with_reducer, reduce_rank_range_query_results};
 pub use plan::plan_range_query;
 #[cfg(test)]
 use plan::query_with_shard_selector;

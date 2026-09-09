@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::*;
+
+#[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn histogram_quantiles_emits_one_sample_per_requested_quantile() {
     let mut store = InMemoryMetricStore::new();

@@ -1,3 +1,6 @@
+#[cfg(feature = "experimental-functions")]
+use super::{BTreeMap, InstantSample, LabelModifier, aggregate_labels, labels_key};
+
 /// Shared experimental `limitk(k, v)` core over an already-evaluated instant
 /// vector.
 ///

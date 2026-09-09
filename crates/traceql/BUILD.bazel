@@ -7,6 +7,14 @@ exports_files(["Cargo.toml"])
 
 crate_library(name = "traceql")
 
+# The golden TraceQL corpus. //crates/traces runs the same cases through the
+# full ingest-and-query path, and a glob cannot reach across a package
+# boundary, so the files are named here for it to depend on.
+filegroup(
+    name = "corpus",
+    srcs = glob(["tests/testdata/**"]),
+)
+
 crate_tests(
     data = glob(["tests/testdata/**"]),
     lib = "traceql",
@@ -26,4 +34,5 @@ crate_tests(
     mutants_jobs = 1,
     mutants_shards = 16,
     mutants_timeout = "eternal",
+    no_harness = ["golden_corpus"],
 )

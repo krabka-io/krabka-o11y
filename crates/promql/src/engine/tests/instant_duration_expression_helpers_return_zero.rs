@@ -1,4 +1,7 @@
 #[cfg(feature = "experimental-functions")]
+use super::*;
+
+#[cfg(feature = "experimental-functions")]
 #[tokio::test]
 pub(crate) async fn instant_duration_expression_helpers_return_zero() {
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());

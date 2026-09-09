@@ -1,8 +1,9 @@
 use super::{
-    ExpectBlock, ExpectLine, Line, LoadSeries, Result, SampleSpec, Statement, TestFile, Time,
-    TimeExt, failure_message, is_block_line, load_with_nhcb_series, parse_duration_ms, parse_error,
-    parse_expect_directive, parse_expect_string, parse_range_vector_directive, parse_sample_token,
-    split_metric_and_tail, split_once_whitespace, split_sample_tokens,
+    ExpectBlock, ExpectDirective, ExpectLine, Line, LoadSeries, Result, SampleSpec, Statement,
+    TestFile, Time, TimeExt, failure_message, is_block_line, load_with_nhcb_series,
+    parse_duration_ms, parse_error, parse_expect_directive, parse_expect_string,
+    parse_range_vector_directive, parse_sample_token, split_metric_and_tail, split_once_whitespace,
+    split_sample_tokens,
 };
 
 pub(crate) struct TestParser<'a> {
@@ -117,13 +118,24 @@ impl<'a> TestParser<'a> {
             annotations,
             fail_message: expect_fail_message,
             range,
+            ordered,
         } = self.parse_expect_block()?;
+        // Prometheus refuses an ordered expectation on a matrix result, because
+        // a matrix is always sorted by labels. Refuse it here at parse time, so
+        // that the directive is never accepted and then ignored.
+        if ordered && range.is_some() {
+            return Err(parse_error(
+                header,
+                "expect ordered is not valid with expect range vector",
+            ));
+        }
 
         Ok(Statement::EvalInstant {
             at_ms: parse_duration_ms(at, header)?,
             expr: expr.to_string(),
             expect,
             annotations,
+            ordered,
             range_expect: range,
             fail_message: failure_message(fail, expect_fail_message),
         })
@@ -155,11 +167,18 @@ impl<'a> TestParser<'a> {
             annotations,
             fail_message: expect_fail_message,
             range,
+            ordered,
         } = self.parse_expect_block()?;
         if range.is_some() {
             return Err(parse_error(
                 header,
                 "expect range vector is only valid for instant evals",
+            ));
+        }
+        if ordered {
+            return Err(parse_error(
+                header,
+                "expect ordered is only valid for instant evals",
             ));
         }
 
@@ -179,6 +198,7 @@ impl<'a> TestParser<'a> {
         let mut annotations = Vec::new();
         let mut fail_message = None;
         let mut range = None;
+        let mut ordered = false;
 
         while let Some(line) = self.peek() {
             if !is_block_line(line) {
@@ -211,7 +231,10 @@ impl<'a> TestParser<'a> {
                     }
                     continue;
                 }
-                annotations.push(parse_expect_directive(directive, line)?);
+                match parse_expect_directive(directive, line)? {
+                    ExpectDirective::Annotation(annotation) => annotations.push(annotation),
+                    ExpectDirective::Ordered => ordered = true,
+                }
                 continue;
             }
             if !line.trimmed.contains(char::is_whitespace) {
@@ -248,6 +271,7 @@ impl<'a> TestParser<'a> {
             annotations,
             fail_message,
             range,
+            ordered,
         })
     }
 

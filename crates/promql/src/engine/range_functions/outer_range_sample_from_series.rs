@@ -1,3 +1,5 @@
+#[cfg(feature = "experimental-functions")]
+use super::double_exponential_smoothing_sample_from_series;
 use super::{
     ExtendedSelectorModifier, Labels, OuterRangeFn, RangeSeries, SampleValue, Time,
     deriv_sample_from_series, instant_delta_sample_from_series, labels_without_metric_name,

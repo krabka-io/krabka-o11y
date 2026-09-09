@@ -142,10 +142,15 @@ krabka-units = "0.4.0"
 # against crates.io above and in the member manifests; the patch below is
 # the single place a sibling revision is bumped.
 #
-# Every crate each sibling publishes is listed, not only the ones this
-# repo names directly: cargo ignores a dependency's own patch table, so a
-# crate reached transitively would otherwise come from the registry while
-# its git twin is also in the graph.
+# Every sibling crate in the dependency graph is listed, not only the ones
+# this repo names directly: cargo ignores a dependency's own patch table,
+# so a crate reached through another sibling crate would otherwise come
+# from the registry while its git twin is also in the graph. A sibling
+# crate that nothing here uses needs no entry.
+#
+# tools/check-sibling-members.sh checks this table and the SIBLING_MEMBERS
+# dict in MODULE.bazel against the siblings at the pinned revisions.
+# sync-siblings.yml runs it on every bump.
 [patch.crates-io]
 krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
 krabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
