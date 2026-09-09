@@ -39,9 +39,12 @@ cargo test --workspace
 bazel test //...
 ```
 
-Both are supported and both are gated in CI. Bazel additionally pins the
-container images the differential suites run against, and runs the mutation
-sweep.
+Both are gated in CI, and they are not the same build. Bazel supplies its own
+`protoc`, pins the container images the differential suites run against, and
+runs the mutation sweep. The cargo job covers what only cargo reaches: the
+`protoc-bin-vendored` fallback, `.cargo/config.toml`, `--locked` against
+`Cargo.lock`, and the `heap-profiling` feature. CI also runs `cargo deny check`
+over the policy in [`deny.toml`](deny.toml).
 
 ## Differential suites
 

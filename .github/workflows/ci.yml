@@ -55,6 +55,112 @@ jobs:
         run: aspect build //...
       - name: test
         run: aspect test //...
+  # Cargo, gated. Bazel is what the rest of CI builds with, but the two are not
+  # the same build, so the cargo path can break with nothing to say so:
+  # //bazel/defs.bzl strips the `vendored-protoc` feature and hands `PROTOC` to
+  # the build scripts, it applies the workspace lint set by hand because
+  # rules_rs does not read Cargo lint tables, and no Bazel action reads
+  # //.cargo/config.toml. This job is the only place any of that runs.
+  #
+  # `--locked` is the second reason to have it. rules_rs resolves from
+  # `Cargo.lock` through `crate.from_cargo`, so a manifest edited without a
+  # regenerated lockfile breaks the Bazel build too. This reports that in
+  # seconds instead of leaving it to a stale-looking build failure.
+  #
+  # The six container suites are `#[ignore]` under cargo, so they stay in the
+  # `docker` jobs below and do not run twice.
+  cargo:
+    name: cargo
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      # The toolchain comes from `rust-toolchain.toml` rather than being named
+      # again here. The action needs the input, so it is read out of the file
+      # the rest of the repo already resolves against, the same way
+      # //.github/workflows/sync-siblings.yml reads it.
+      - id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)"
+          if [ -z "${channel}" ]; then
+            echo "::error::rust-toolchain.toml names no channel"
+            exit 1
+          fi
+          echo "channel=${channel}" >>"${GITHUB_OUTPUT}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      # Without this, every run compiles the whole DataFusion pin from source,
+      # which is most of the wall clock here. The cache key covers `Cargo.lock`
+      # and the `CARGO_*` environment, so this job sets neither.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # Two hand-written lists name the crates the sibling repositories hold:
+      # `[patch.crates-io]` in Cargo.toml and `SIBLING_MEMBERS` in
+      # MODULE.bazel. The script reads the pinned checkouts through `cargo
+      # metadata`, so it needs a resolved dependency graph, which a sandboxed
+      # Bazel test does not have. sync-siblings.yml runs it on the weekly bump.
+      # Running it here catches a hand edit to either list on the pull request
+      # that makes it. It comes first because it takes about a second.
+      - name: sibling crate lists
+        run: tools/check-sibling-members.sh
+      - name: test
+        run: cargo test --workspace --locked
+      # `heap-profiling` swaps the global allocator for jemalloc in each
+      # service binary, behind a `cfg`. No Bazel target turns the feature on,
+      # so `bazel test //...` never compiles those lines -- and the clippy
+      # aspect that gates the rest of the workspace never reads them either.
+      # This is the only lint those lines get, so it is clippy rather than
+      # `cargo check`: the first compilation of this feature turned up five
+      # unused imports that nothing had ever been in a position to report.
+      - name: heap-profiling
+        run: |
+          cargo clippy --locked --features heap-profiling --all-targets \
+            -p krabka-metrics \
+            -p krabka-metrics-service \
+            -p krabka-observability \
+            -p krabka-profiles \
+            -p krabka-traces \
+            -- -D warnings
+  # Supply-chain policy, from //deny.toml. That file names the advisories this
+  # workspace accepts and the licenses and sources it allows, and until this
+  # job existed nothing read it. It had drifted far enough to fail on its first
+  # run.
+  #
+  # `sources` is the half that earns a place on every pull request: it fails on
+  # any git or registry source //deny.toml does not name, so a new unpinned
+  # remote cannot arrive unnoticed. `advisories` reads the RustSec database,
+  # which moves without a change here, so this job can turn red on a pull
+  # request that did not touch a dependency. That is what it is for.
+  #
+  # cargo-deny is pinned to a version, not left to float, so the same commit
+  # gets the same result from the tool. The job compiles nothing and holds no
+  # cache. It does fetch twice: the git dependencies, because `cargo metadata`
+  # reads their manifests, and the RustSec advisory database.
+  deny:
+    name: cargo-deny
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)"
+          if [ -z "${channel}" ]; then
+            echo "::error::rust-toolchain.toml names no channel"
+            exit 1
+          fi
+          echo "channel=${channel}" >>"${GITHUB_OUTPUT}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2.87.9
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny --locked check advisories bans licenses sources
   # LCOV over the first-party crates. Separate from `ci` because instrumented
   # binaries are a different build, so sharing that job's cache would only
   # evict it.

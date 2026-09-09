@@ -210,6 +210,9 @@ crate.from_cargo(
 # Cargo workspace whose `members` is the glob `crates/*`. rules_rs resolves a git
 # crate's directory by matching the crate name against the members list, and it
 # skips glob entries, so each member's path is named here instead.
+#
+# tools/check-sibling-members.sh keeps this dict and the [patch.crates-io] table
+# in Cargo.toml in step with the siblings at the pinned revisions.
 SIBLING_MEMBERS = {
     "krabka-audit": "crates/audit",
     "krabka-authz": "crates/authz",

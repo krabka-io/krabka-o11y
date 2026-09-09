@@ -10,31 +10,30 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 ignore = [
-    # quick-xml DoS advisories (quadratic duplicate-attribute check and
-    # unbounded namespace-declaration allocation). Patched in quick-xml
-    # >= 0.41, which is the version `crabka-pgtypes` pins for the `xml`
-    # type — the one place attacker-controlled XML enters, since any client
-    # that can run `SELECT '…'::xml` chooses the document. These ignores
-    # cover only the transitive 0.39 copy under polars-io and the S3 XML
-    # paths, whose input is a response from a configured endpoint. Drop them
-    # once those upstreams take 0.41 too; do NOT extend the reasoning to a
-    # SQL-reachable parser.
+    # quick-xml denial-of-service advisories: a quadratic duplicate-attribute
+    # check, and an unbounded namespace-declaration allocation. quick-xml 0.41
+    # fixes both. The only copy in this graph is 0.39 under `object_store`,
+    # which parses the XML that S3 and Azure return. That input comes from the
+    # object-store endpoint the operator configured, not from a query, so no
+    # client chooses the document. Drop these once `object_store` takes 0.41.
+    # Do not extend this reasoning to a parser a query can reach.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
-    # RSA "Marvin" timing side-channel. Pulled in transitively by `picky`
-    # (a hard dependency of the vendored `sspi` Kerberos stack). Our GSSAPI
-    # path is auth-only over AES keytab keys and performs no RSA private-key
-    # operations (no PKINIT), so the network-observable timing leak does not
-    # apply. The advisory has no fixed release available.
+    # RSA "Marvin" timing side-channel. `picky` pulls `rsa` in, and `picky` is
+    # a hard dependency of `sspi`, which `krabka-security` uses for the
+    # Kerberos path. That path authenticates over AES keytab keys and does no
+    # RSA private-key operation, so the network-observable timing leak does
+    # not apply. The advisory has no fixed release.
     "RUSTSEC-2023-0071",
-    # bincode is unmaintained (the team ceased development; v2.0.1 is considered
-    # feature-complete and "no safe upgrade is available"). This is an
-    # unmaintained notice, not a vulnerability. Pulled in transitively via
-    # `polars-utils` (the `polars` columnar-streams feature).
+    # bincode 1.3.3 is unmaintained. The team stopped development and calls
+    # 2.0.1 feature-complete, so no safe upgrade exists. This is an
+    # unmaintained notice, not a vulnerability. It reaches the graph through
+    # `lrpar` and `lrlex`, the parser generator behind `promql-parser`.
     "RUSTSEC-2025-0141",
-    # paste is unmaintained. Pulled in transitively by the pinned DataFusion
-    # dependency used by the new internal profiles crates; no fixed release is
-    # available through that DataFusion revision.
+    # paste is unmaintained. It reaches the graph twice: through `pprof_util`
+    # under `jemalloc_pprof`, which `krabka-telemetry` uses, and through
+    # `refined_type`, which `krabka-blockstore` uses. Neither upstream offers
+    # a release that drops it.
     "RUSTSEC-2024-0436",
 ]
 
@@ -53,30 +52,26 @@ allow = [
     "Zlib",
     "CC0-1.0",
     "bzip2-1.0.6",
-    # webpki-roots ships the Mozilla NSS CA bundle (data, not code) under
-    # CDLA-Permissive-2.0. Pulled in transitively via reqwest + rustls.
+    # webpki-root-certs ships the Mozilla NSS CA bundle, which is data rather
+    # than code, under CDLA-Permissive-2.0. It arrives transitively under
+    # rustls.
     "CDLA-Permissive-2.0",
 ]
 exceptions = [
-    # pglz is a direct, safe Rust port of PostgreSQL's PGLZ codec. Keep the
-    # permissive PostgreSQL License allowance scoped to that crate.
-    { allow = ["PostgreSQL"], crate = "pglz" },
-    # portpicker is public-domain-equivalent (The Unlicense, OSI-approved and
-    # FSF Free/Libre). Pulled in transitively via the vendored `sspi` crate's
-    # `network_client` feature, which we need for KDC communication.
+    # portpicker is public-domain-equivalent: The Unlicense, which is
+    # OSI-approved and FSF Free/Libre. It enters through the `network_client`
+    # feature of `sspi`, the Kerberos stack `krabka-security` uses for KDC
+    # communication. Keep the allowance scoped to that crate.
     { allow = ["Unlicense"], crate = "portpicker" },
-    # xxhash-rust is BSL-1.0 (Boost, OSI-approved and FSF Free/Libre — a
-    # permissive, non-copyleft license). Pulled in transitively via polars
-    # (the `polars` columnar-streams feature).
+    # xxhash-rust is BSL-1.0, the Boost license, which is OSI-approved, FSF
+    # Free/Libre and non-copyleft. `krabka-blockstore` and `krabka-promql`
+    # both depend on it directly.
     { allow = ["BSL-1.0"], crate = "xxhash-rust" },
-    # varint-rs uses the OSI-approved zero-clause BSD license. It enters
-    # transitively through fjall/lsm-tree, so keep the allowance crate-scoped.
-    { allow = ["0BSD"], crate = "varint-rs" },
-    # Creusot's specification attributes/proc macros are LGPL-2.1-or-later.
-    # They enter the graph only through the newly added verified kernels
-    # (`krabka-verified`) and throttle arithmetic contracts; ordinary cargo
-    # builds use Creusot's dummy macro implementation, so keep this allowance
-    # crate-scoped rather than allowing LGPL globally.
+    # Creusot's specification attributes and proc macros are
+    # LGPL-2.1-or-later. They enter the graph only through `krabka-throttle`,
+    # whose arithmetic contracts they annotate, and an ordinary cargo build
+    # uses Creusot's dummy macro implementation. Keep this allowance scoped to
+    # the two crates rather than allowing LGPL over the whole graph.
     { allow = ["LGPL-2.1-or-later"], crate = "creusot-std" },
     { allow = ["LGPL-2.1-or-later"], crate = "creusot-std-proc" },
 ]
@@ -96,15 +91,12 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
     # Temporary DataFusion pin for profile query support.
     "https://github.com/apache/datafusion",
-    # Temporary compatibility pin until testcontainers-modules publishes a
-    # release that depends on testcontainers 0.28.
-    "https://github.com/testcontainers/testcontainers-rs-modules-community",
-]
-
-[[licenses.clarify]]
-name = "cfg_block"
-version = "0.1.1"
-expression = "Apache-2.0"
-license-files = [
-    { path = "LICENSE", hash = 0x0fb72a18 }
+    # The sibling repositories. `[patch.crates-io]` in Cargo.toml pins every
+    # crate each one publishes to a single revision, and sync-siblings.yml
+    # proposes the bumps. krabka-schema-registry is on the list because the
+    # broker depends on `krabka-schema-serde`, which that repository owns.
+    "https://github.com/krabka-io/krabka-broker",
+    "https://github.com/krabka-io/krabka-client-rs",
+    "https://github.com/krabka-io/krabka-protocol",
+    "https://github.com/krabka-io/krabka-schema-registry",
 ]
