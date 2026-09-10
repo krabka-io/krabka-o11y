@@ -26,13 +26,9 @@ where
     let mut writes = Vec::new();
     let mut committed_offsets = Vec::new();
     // Write every partition's block durably BEFORE committing any offsets.
-    // `commit_sync` advances the whole assignment's offsets (a whole-snapshot
-    // commit, see `Consumer::commit_sync`), so committing inside the loop would
-    // advance partitions whose blocks have not yet been written; a later
-    // partition's write failure would then skip those un-written records on the
-    // next run — silent data loss. Writing all partitions first means the single
-    // commit below only advances past fully-durable data, and any write error
-    // returns before the commit so the next poll re-reads (at-least-once).
+    // Commit only the offsets produced by the durable writes below. A consumer
+    // position can include records that are not in this flush, so committing a
+    // whole assignment would be a data-loss boundary.
     for partition_records in by_partition.into_values() {
         let result =
             write_compaction_partition_window(block_writer, index_sink, &partition_records).await?;
@@ -45,7 +41,7 @@ where
 
     if !committed_offsets.is_empty() {
         consumer
-            .commit_sync_mut()
+            .commit_offsets_sync_mut(&committed_offsets)
             .await
             .map_err(|error| CompactionCommitError::Commit(error.to_string()))?;
     }

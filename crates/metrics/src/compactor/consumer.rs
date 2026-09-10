@@ -1,7 +1,6 @@
 use super::{
-    CompactionConsumerCommit, CompactionConsumerCommitError, CompactionConsumerCommitMut,
-    CompactionConsumerPoll, CompactionConsumerPollError, Consumer, ConsumerRecord, Time,
-    async_trait,
+    CompactionConsumerCommit, CompactionConsumerCommitError, CompactionConsumerPoll,
+    CompactionConsumerPollError, Consumer, ConsumerRecord, Time, async_trait,
 };
 
 #[async_trait]
@@ -28,15 +27,6 @@ impl CompactionConsumerCommit for Consumer {
             .map(|offset| ((topic.to_string(), offset.partition.0), offset.offset.0))
             .collect();
         Consumer::commit_offsets_sync(self, offsets)
-            .await
-            .map_err(|error| CompactionConsumerCommitError::Commit(error.to_string()))
-    }
-}
-
-#[async_trait]
-impl CompactionConsumerCommitMut for Consumer {
-    async fn commit_sync_mut(&mut self) -> Result<(), CompactionConsumerCommitError> {
-        Consumer::commit_sync(self)
             .await
             .map_err(|error| CompactionConsumerCommitError::Commit(error.to_string()))
     }

@@ -1388,6 +1388,7 @@ mod tests {
         let mut consumer = PollAndCommit {
             batches: vec![vec![make_record(10, 100)], Vec::new()],
             commit_calls: 0,
+            committed_offsets: Vec::new(),
         };
 
         let result = super::run_compactor_consumer_loop(
@@ -1410,6 +1411,7 @@ mod tests {
         // Buffered for one poll, then flushed once on the empty-poll shutdown.
         check!(result.writes == 1);
         check!(consumer.commit_calls == 1);
+        check!(consumer.committed_offsets[0][0].offset == krabka_ids::Offset(11));
     }
 
     #[tokio::test]
@@ -1435,6 +1437,7 @@ mod tests {
         let mut consumer = PollAndCommit {
             batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],
             commit_calls: 0,
+            committed_offsets: Vec::new(),
         };
 
         let result = super::run_compactor_consumer_loop(
@@ -1457,6 +1460,7 @@ mod tests {
         // Single block + single commit for the whole two-poll buffer.
         check!(result.writes == 1);
         check!(consumer.commit_calls == 1);
+        check!(consumer.committed_offsets[0][0].offset == krabka_ids::Offset(12));
         let manifests = sink.manifests.lock().expect("manifest lock");
         assert!(manifests.len() == 1);
         check!(manifests[0].first_offset == 10);
@@ -1591,6 +1595,7 @@ mod tests {
     struct PollAndCommit {
         batches: Vec<Vec<krabka_client_consumer::ConsumerRecord>>,
         commit_calls: usize,
+        committed_offsets: Vec<Vec<super::CompactionPartitionOffset>>,
     }
 
     #[async_trait]
@@ -1623,10 +1628,63 @@ mod tests {
 
     #[async_trait]
     impl super::CompactionConsumerCommitMut for PollAndCommit {
-        async fn commit_sync_mut(&mut self) -> Result<(), super::CompactionConsumerCommitError> {
+        async fn commit_offsets_sync_mut(
+            &mut self,
+            offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
             self.commit_calls += 1;
+            self.committed_offsets.push(offsets.to_vec());
             Ok(())
         }
+    }
+
+    struct RecordingSelectedCommit {
+        calls: Arc<std::sync::Mutex<Vec<Vec<super::CompactionPartitionOffset>>>>,
+    }
+
+    #[async_trait]
+    impl super::CompactionConsumerCommit for RecordingSelectedCommit {
+        async fn commit_offsets_sync(
+            &self,
+            _topic: &str,
+            offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
+            self.calls.lock().unwrap().push(offsets.to_vec());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_consumer_retries_prior_partition_offsets_on_later_commits() {
+        use super::CompactionConsumerCommitMut as _;
+
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner = RecordingSelectedCommit {
+            calls: Arc::clone(&calls),
+        };
+        let mut consumer = super::DurableCompactionConsumer::new(inner, crate::WAL_TOPIC);
+        consumer
+            .commit_offsets_sync_mut(&[super::CompactionPartitionOffset {
+                partition: krabka_ids::PartitionIndex(0),
+                offset: krabka_ids::Offset(11),
+            }])
+            .await
+            .unwrap();
+        consumer
+            .commit_offsets_sync_mut(&[super::CompactionPartitionOffset {
+                partition: krabka_ids::PartitionIndex(1),
+                offset: krabka_ids::Offset(21),
+            }])
+            .await
+            .unwrap();
+
+        let calls = calls.lock().unwrap();
+        check!(calls.len() == 2);
+        check!(calls[1].len() == 2);
+        check!(calls[1][0].partition == krabka_ids::PartitionIndex(0));
+        check!(calls[1][0].offset == krabka_ids::Offset(11));
+        check!(calls[1][1].partition == krabka_ids::PartitionIndex(1));
+        check!(calls[1][1].offset == krabka_ids::Offset(21));
     }
 
     #[test]
@@ -1917,6 +1975,7 @@ mod consumer_build_error;
 mod default_flush_max_age;
 mod default_flush_max_rows;
 mod delete_if_exists;
+mod durable_compaction_consumer;
 mod encode_clock_reading_rows;
 mod encode_exemplar_rows;
 mod encode_metadata_rows;
@@ -2004,6 +2063,7 @@ use consumer_build_error::consumer_build_error;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
 pub use default_flush_max_rows::DEFAULT_FLUSH_MAX_ROWS;
 use delete_if_exists::delete_if_exists;
+pub use durable_compaction_consumer::DurableCompactionConsumer;
 use encode_clock_reading_rows::encode_clock_reading_rows;
 use encode_exemplar_rows::encode_exemplar_rows;
 use encode_metadata_rows::encode_metadata_rows;
