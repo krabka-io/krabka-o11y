@@ -12,6 +12,25 @@ impl RulerAlertmanagerSink {
             Self::Http(AlertmanagerHttpSink::new(endpoint))
         })
     }
+
+    #[must_use]
+    pub fn from_endpoints(
+        endpoints: Vec<String>,
+        external_labels: std::collections::BTreeMap<String, String>,
+        generator_url_template: Option<String>,
+    ) -> Self {
+        if endpoints.is_empty() {
+            Self::Noop(NoopAlertmanagerSink)
+        } else {
+            Self::Http(AlertmanagerHttpSink::with_delivery(
+                endpoints,
+                external_labels,
+                generator_url_template,
+                3,
+                std::time::Duration::from_millis(250),
+            ))
+        }
+    }
 }
 
 #[async_trait::async_trait]

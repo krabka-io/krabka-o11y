@@ -1022,6 +1022,105 @@ rules:
         assert2::assert!(body == expected);
     }
 
+    #[tokio::test]
+    async fn alertmanager_delivery_retries_and_enriches_alerts() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let attempts_for_route = Arc::clone(&attempts);
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received_for_route = Arc::clone(&received);
+        let router = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(move |body: bytes::Bytes| {
+                let attempt = attempts_for_route.fetch_add(1, Ordering::SeqCst);
+                let received = Arc::clone(&received_for_route);
+                async move {
+                    if attempt == 0 {
+                        return axum::http::StatusCode::SERVICE_UNAVAILABLE;
+                    }
+                    received.lock().unwrap().push(body.to_vec());
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
+            std::future::pending::<()>().await;
+        })
+        .await
+        .unwrap();
+        let sink = super::AlertmanagerHttpSink::with_delivery(
+            vec![format!("http://{bound}/api/v2/alerts")],
+            std::collections::BTreeMap::from([
+                ("cluster".to_string(), "prod".to_string()),
+                ("severity".to_string(), "external-default".to_string()),
+            ]),
+            Some("https://metrics.example/alerts/{alertname}".to_string()),
+            2,
+            Duration::ZERO,
+        );
+
+        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([
+                ("alertname".to_string(), "InstanceDown".to_string()),
+                ("severity".to_string(), "page".to_string()),
+            ]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        }])
+        .await
+        .unwrap();
+
+        assert2::assert!(attempts.load(Ordering::SeqCst) == 2);
+        let body: serde_json::Value = serde_json::from_slice(&received.lock().unwrap()[0]).unwrap();
+        assert2::assert!(body[0]["labels"]["cluster"] == "prod");
+        assert2::assert!(body[0]["labels"]["severity"] == "page");
+        assert2::assert!(body[0]["generatorURL"] == "https://metrics.example/alerts/InstanceDown");
+    }
+
+    #[tokio::test]
+    async fn alertmanager_delivery_isolates_a_failed_endpoint() {
+        let received = Arc::new(AtomicUsize::new(0));
+        let received_for_route = Arc::clone(&received);
+        let router = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(move || {
+                received_for_route.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::OK }
+            }),
+        );
+        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
+            std::future::pending::<()>().await;
+        })
+        .await
+        .unwrap();
+        let sink = super::AlertmanagerHttpSink::with_delivery(
+            vec![
+                "http://127.0.0.1:9/api/v2/alerts".to_string(),
+                format!("http://{bound}/api/v2/alerts"),
+            ],
+            std::collections::BTreeMap::new(),
+            None,
+            1,
+            Duration::ZERO,
+        );
+
+        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([(
+                "alertname".to_string(),
+                "InstanceDown".to_string(),
+            )]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        }])
+        .await
+        .unwrap();
+
+        assert2::assert!(received.load(Ordering::SeqCst) == 1);
+    }
+
     #[test]
     fn ruler_state_records_round_trip_with_compacted_keys() {
         let group = krabka_promql::RulerGroupStateRecord {

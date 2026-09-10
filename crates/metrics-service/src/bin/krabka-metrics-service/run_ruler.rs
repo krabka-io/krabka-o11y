@@ -82,7 +82,9 @@ pub(crate) async fn run_ruler(
     );
     let tenant = cli.ruler_tenant.clone();
     let interval = cli.ruler_eval_interval;
-    let alertmanager_url = cli.ruler_alertmanager_url.clone();
+    let alertmanager_urls = cli.ruler_alertmanager_url.clone();
+    let external_labels = cli.ruler_external_label.iter().cloned().collect();
+    let generator_url_template = cli.ruler_generator_url_template.clone();
     let state_for_replay = Arc::clone(&state);
     let state_topic = cli.ruler_state_topic.clone();
     let poll_timeout = cli.wal_poll_timeout;
@@ -118,7 +120,11 @@ pub(crate) async fn run_ruler(
             state,
             (
                 wal_sink,
-                RulerAlertmanagerSink::from_endpoint(alertmanager_url),
+                RulerAlertmanagerSink::from_endpoints(
+                    alertmanager_urls,
+                    external_labels,
+                    generator_url_template,
+                ),
                 state_sink,
             ),
             tenant,

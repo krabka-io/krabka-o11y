@@ -1,7 +1,7 @@
 use super::{
     ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, Parser, PathBuf, RULER_STATE_TOPIC,
     SocketAddr, Target, Time, WAL_TOPIC, parse, parse_client_dispatch_queue_capacity,
-    parse_client_frame_max, parse_positive_usize, parse_remote_read_max_body,
+    parse_client_frame_max, parse_external_label, parse_positive_usize, parse_remote_read_max_body,
 };
 
 #[derive(Debug, Parser)]
@@ -124,8 +124,18 @@ pub(crate) struct Cli {
     pub(crate) ruler_shard_index: usize,
     #[arg(long, env = "KRABKA_METRICS_RULER_SHARD_TOTAL", default_value_t = 1)]
     pub(crate) ruler_shard_total: usize,
-    #[arg(long, env = "KRABKA_METRICS_RULER_ALERTMANAGER_URL")]
-    pub(crate) ruler_alertmanager_url: Option<String>,
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_RULER_ALERTMANAGER_URL",
+        value_delimiter = ','
+    )]
+    pub(crate) ruler_alertmanager_url: Vec<String>,
+    /// Label in `name=value` form added when an alert does not define it.
+    #[arg(long, env = "KRABKA_METRICS_RULER_EXTERNAL_LABEL", value_parser = parse_external_label, value_delimiter = ',')]
+    pub(crate) ruler_external_label: Vec<(String, String)>,
+    /// Generator URL template. `{alertname}` expands to the outgoing alert name.
+    #[arg(long, env = "KRABKA_METRICS_RULER_GENERATOR_URL_TEMPLATE")]
+    pub(crate) ruler_generator_url_template: Option<String>,
     /// A Prometheus rule file the ruler installs at startup.
     ///
     /// The ruler posts each group of the file to its own ruler-config API, so a
