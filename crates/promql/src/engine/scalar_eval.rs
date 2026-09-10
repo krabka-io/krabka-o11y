@@ -1,10 +1,5 @@
-#[cfg(feature = "experimental-functions")]
 use num_traits::ToPrimitive as _;
-#[cfg(feature = "experimental-functions")]
-use promql_parser::parser::AggregateExpr;
-use promql_parser::parser::Call;
-#[cfg(any(test, feature = "experimental-functions"))]
-use promql_parser::parser::Expr;
+use promql_parser::parser::{AggregateExpr, Call, Expr};
 
 use super::PromqlEngine;
 #[cfg(feature = "experimental-functions")]
@@ -86,8 +81,14 @@ impl<S: MetricStore> PromqlEngine<S> {
         }
     }
 
-    #[cfg(feature = "experimental-functions")]
-    pub(super) async fn eval_limitk_parameter(
+    /// Resolves the `k` of `topk`, `bottomk`, or `limitk`.
+    ///
+    /// Prometheus returns the empty vector for any `k` below one WITHOUT
+    /// looking at it further, so `topk(0.5, v)` and `topk(-1, v)` are empty
+    /// rather than errors, and it truncates the rest toward zero. Only a NaN or
+    /// a value that will not fit an `int64` is refused, and the refusal text is
+    /// Prometheus' own.
+    pub(super) async fn eval_k_parameter(
         &self,
         tenant: &str,
         aggregate: &AggregateExpr,
@@ -96,21 +97,24 @@ impl<S: MetricStore> PromqlEngine<S> {
         let value = self
             .eval_aggregate_scalar_parameter(tenant, aggregate, time_ms)
             .await?;
-        if value <= 0.0 {
+        // A NaN is not below one, so it falls through to the refusal below.
+        if value < 1.0 {
             return Ok(0);
         }
-        if !value.is_finite() || value.fract() != 0.0 {
-            return Err(PromqlError::Plan(format!(
-                "{} parameter must be an integer",
-                aggregate.op
-            )));
+        if value.is_nan() {
+            return Err(PromqlError::Plan("Parameter value is NaN".to_string()));
         }
         value
-            .to_string()
-            .parse::<usize>()
-            .map_err(|_| PromqlError::Plan(format!("{} parameter is too large", aggregate.op)))
+            .trunc()
+            .to_usize()
+            .ok_or_else(|| PromqlError::Plan(format!("Scalar value {value} overflows int64")))
     }
 
+    /// Resolves the ratio of `limit_ratio`.
+    ///
+    /// A ratio of zero selects nothing, a NaN is refused with Prometheus' own
+    /// text, and a ratio outside `[-1, 1]` is capped to the nearer bound with a
+    /// warning.
     #[cfg(feature = "experimental-functions")]
     pub(super) async fn eval_limit_ratio_parameter(
         &self,
@@ -122,9 +126,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             .eval_aggregate_scalar_parameter(tenant, aggregate, time_ms)
             .await?;
         if value.is_nan() {
-            return Err(PromqlError::Plan(
-                "limit_ratio parameter must not be NaN".to_string(),
-            ));
+            return Err(PromqlError::Plan("Ratio value is NaN".to_string()));
         }
         let capped = value.clamp(-1.0, 1.0);
         // Matches Prometheus: warn whenever the ratio fell outside [-1, 1] and
@@ -135,7 +137,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         Ok(capped)
     }
 
-    #[cfg(feature = "experimental-functions")]
+    /// Resolves an aggregation's scalar parameter.
+    ///
+    /// Prometheus evaluates the parameter as an ordinary scalar expression, so
+    /// `topk(scalar(foo), v)` is as legal as `topk(3, v)`.
     pub(super) async fn eval_aggregate_scalar_parameter(
         &self,
         tenant: &str,
@@ -225,7 +230,6 @@ impl<S: MetricStore> PromqlEngine<S> {
         }
     }
 
-    #[cfg(any(test, feature = "experimental-functions"))]
     pub(super) async fn eval_scalar_expr(
         &self,
         tenant: &str,

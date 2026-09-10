@@ -214,26 +214,39 @@ mod tests {
         assert2::assert!(large.to_bits() == 0x4671_87bd_f63d_b730);
     }
 
+    /// The direct Kahan mean keeps the low bits that cancel against the large
+    /// ones: `1e16 + 1e-16 + 1e-16 - 1e16` really is `2e-16`, so the mean of
+    /// those four samples is `5e-17` and not zero.
     #[test]
     fn mean_uses_compensated_updates() {
         let mean = over_time_mean(&[1e16, 1e-16, 1e-16, -1e16]);
-        assert2::assert!(mean.to_bits() == 0.25_f64.to_bits());
+        assert2::assert!(mean.to_bits() == 5e-17_f64.to_bits());
     }
 
+    /// The running sum switches the fold to an incremental mean, so a window
+    /// that overflows `f64` still averages to the infinity Prometheus reports.
     #[test]
-    fn infinite_mean_guard_matches_prometheus_cases() {
-        for (mean, value, want) in [
-            (f64::INFINITY, f64::INFINITY, true),
-            (f64::INFINITY, 1.0, true),
-            (f64::NEG_INFINITY, f64::NEG_INFINITY, true),
-            (f64::NEG_INFINITY, -1.0, true),
-            (f64::INFINITY, f64::NEG_INFINITY, false),
-            (f64::NEG_INFINITY, f64::INFINITY, false),
-            (f64::INFINITY, f64::NAN, false),
-            (1.0, 1.0, false),
+    fn mean_saturates_the_way_prometheus_does() {
+        for (values, want) in [
+            (vec![f64::INFINITY], f64::INFINITY),
+            (vec![f64::INFINITY, 1.0], f64::INFINITY),
+            (vec![f64::NEG_INFINITY, -1.0], f64::NEG_INFINITY),
+            (vec![f64::MAX, f64::MAX], f64::MAX),
         ] {
-            assert2::assert!(keep_infinite_mean(mean, value) == want);
+            assert2::assert!(
+                over_time_mean(&values).to_bits() == want.to_bits(),
+                "{values:?}"
+            );
         }
+        assert2::assert!(over_time_mean(&[f64::INFINITY, f64::NEG_INFINITY]).is_nan());
+    }
+
+    /// `sum_over_time` compensates, so a small term is not lost against a large
+    /// one that later cancels.
+    #[test]
+    fn sum_is_kahan_compensated() {
+        assert2::assert!(over_time_sum(&[1.0, 1e-16, -1.0]).to_bits() == 1e-16_f64.to_bits());
+        assert2::assert!(over_time_sum(&[f64::INFINITY, 1.0]).to_bits() == f64::INFINITY.to_bits());
     }
 
     #[test]
@@ -522,11 +535,11 @@ mod decode_range_column;
 mod extremum;
 mod fold_extremum;
 mod kahan_sum_inc;
-mod keep_infinite_mean;
 mod last_value_by_timestamp;
 mod over_time_family;
 mod over_time_family_udfs;
 mod over_time_mean;
+mod over_time_sum;
 mod over_time_udf;
 mod over_time_variance;
 mod quantile_value;
@@ -537,11 +550,11 @@ use decode_range_column::decode_range_column;
 use extremum::Extremum;
 use fold_extremum::fold_extremum;
 use kahan_sum_inc::kahan_sum_inc;
-use keep_infinite_mean::keep_infinite_mean;
 use last_value_by_timestamp::last_value_by_timestamp;
 pub use over_time_family::OverTimeFamily;
 pub use over_time_family_udfs::over_time_family_udfs;
 use over_time_mean::over_time_mean;
+use over_time_sum::over_time_sum;
 #[cfg(test)]
 use over_time_udf::OverTimeUdf;
 pub use over_time_udf::over_time_udf;

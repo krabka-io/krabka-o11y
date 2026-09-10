@@ -33,9 +33,10 @@ pub(crate) fn apply_histogram_histogram_binary(
                 None
             });
         }
-        BinaryOp::Gt | BinaryOp::Lt | BinaryOp::Gte | BinaryOp::Lte => {
-            // Ordered comparisons are undefined between two histograms:
-            // Prometheus drops the pair and raises an info annotation.
+        // Every other operator is undefined between two histograms -- the
+        // ordered comparisons, and `*`, `/`, `%`, `^` and `atan2` alike.
+        // Prometheus drops the pair and raises an info annotation.
+        _ => {
             emit_info(incompatible_types_in_binop_info(
                 "histogram",
                 op.symbol(),
@@ -43,7 +44,6 @@ pub(crate) fn apply_histogram_histogram_binary(
             ));
             return Ok(None);
         }
-        _ => return Ok(None),
     }
     Ok(Some(SampleValue::Histogram(out)))
 }

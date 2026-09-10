@@ -209,7 +209,7 @@ impl<'a> DurationExprParser<'a> {
         } else {
             Err(PromqlError::Parse(format!(
                 "expected number or duration in `{}`",
-                &self.src[start..]
+                self.chars[start..].iter().collect::<String>()
             )))
         }
     }

@@ -7,9 +7,10 @@ use super::*;
 /// free -- and hid that the Kahan compensation went NaN on the very first
 /// infinite increment and rode all the way out to the result.
 ///
-/// The last case pins the compensation itself. It differs from the uncorrected
-/// mean only in the final bits, so it is compared bit-for-bit; a relative
-/// tolerance would accept the fold running backwards.
+/// The last case pins the compensation itself. `1.0 + 0.1 + 0.1` sums to
+/// `1.2000000000000002` without it, one ulp off the `1.2` that the compensated
+/// sum reaches, so the mean differs in its final bit. It is compared
+/// bit-for-bit; a relative tolerance would accept the fold running backwards.
 #[tokio::test]
 pub(crate) async fn avg_over_time_carries_infinities_and_keeps_its_compensation() {
     let mut store = InMemoryMetricStore::new();
@@ -93,7 +94,7 @@ pub(crate) async fn avg_over_time_carries_infinities_and_keeps_its_compensation(
         .find(|sample| sample.labels.get("series") == Some("f"))
         .expect("a float series in the result");
     assert2::assert!(
-        float_value(&float.value).to_bits() == 0.399_999_999_999_999_97_f64.to_bits(),
+        float_value(&float.value).to_bits() == 0.4_f64.to_bits(),
         "the Kahan compensation is added, not subtracted or dropped"
     );
 }

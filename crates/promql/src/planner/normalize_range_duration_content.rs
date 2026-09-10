@@ -11,6 +11,8 @@ pub(crate) fn normalize_range_duration_content(
             DurationExprParser::new(content, duration_ctx).parse()?,
         );
     };
+    // The colon offset is in bytes and `:` is one byte wide, so both ends of
+    // the split fall on a character boundary.
     let range = content[..colon].trim();
     let step = content[colon + 1..].trim();
     let range = seconds_to_duration_literal(DurationExprParser::new(range, duration_ctx).parse()?)?;

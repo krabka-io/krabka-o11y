@@ -40,8 +40,8 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use aggregation::{
-    AggregateOp, aggregate_k, aggregate_quantile, apply_count_values_aggregate, apply_k_aggregate,
-    apply_quantile_aggregate, apply_simple_aggregate,
+    AggregateOp, apply_count_values_aggregate, apply_k_aggregate, apply_quantile_aggregate,
+    apply_simple_aggregate,
 };
 #[cfg(feature = "experimental-functions")]
 #[cfg(test)]

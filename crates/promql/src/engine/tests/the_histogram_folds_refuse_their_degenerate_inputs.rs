@@ -5,7 +5,9 @@ use super::*;
 /// enough to interpolate between; and a NaN bound, or a histogram holding
 /// nothing, yields NaN rather than a number. Each guard below is a chain of
 /// `||`, and no test had ever made exactly one of its clauses true -- which is
-/// what tells the chain apart from the same clauses joined by `&&`.
+/// what tells the chain apart from the same clauses joined by `&&`. A native
+/// histogram whose count is BELOW zero is not degenerate to Prometheus, which
+/// refuses only an exactly-empty one, so it is not among these.
 #[tokio::test]
 pub(crate) async fn the_histogram_folds_refuse_their_degenerate_inputs() {
     let mut store = InMemoryMetricStore::new();
@@ -36,15 +38,6 @@ pub(crate) async fn the_histogram_folds_refuse_their_degenerate_inputs() {
         10_000,
         native_histogram(0.0, 0.0),
     );
-    // A negative count is the only way to tell the `count <= 0.0` clause from
-    // the NaN one beside it: at exactly zero the fold divides zero by zero and
-    // reaches NaN by itself.
-    store.push_histogram(
-        "tenant-a",
-        labels(&[("__name__", "nhneg")]),
-        10_000,
-        native_histogram(-1.0, 0.0),
-    );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let value = |query: &'static str| {
@@ -74,9 +67,8 @@ pub(crate) async fn the_histogram_folds_refuse_their_degenerate_inputs() {
         "histogram_fraction(NaN, 1, c2)",
         "histogram_fraction(NaN, 1, nh)",
         "histogram_fraction(0, NaN, nh)",
-        // A histogram holding nothing, or less than nothing, has no fraction.
+        // A histogram holding nothing has no fraction to report.
         "histogram_fraction(0, 1, nh0)",
-        "histogram_fraction(0, 1, nhneg)",
     ] {
         assert2::assert!(value(query).await.is_nan(), "{query}");
     }

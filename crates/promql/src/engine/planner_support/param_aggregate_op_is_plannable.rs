@@ -1,14 +1,14 @@
 use super::{
-    AggregateExpr, Expr, T_BOTTOMK, T_COUNT_VALUES, T_QUANTILE, T_STDDEV, T_STDVAR, T_TOPK,
+    AggregateExpr, T_BOTTOMK, T_COUNT_VALUES, T_QUANTILE, T_STDDEV, T_STDVAR, T_TOPK, ValueType,
 };
 #[cfg(feature = "experimental-functions")]
-use super::{T_LIMIT_RATIO, T_LIMITK, ValueType};
+use super::{T_LIMIT_RATIO, T_LIMITK};
 
 /// Returns `true` when a parameterized or non-simple aggregation is plannable.
 ///
 /// Such an aggregation routes through the operator path
 /// (`plan_param_aggregate_expr`). The aggregations are `topk`/`bottomk`/
-/// `quantile` (numeric-literal param), `count_values` (string-literal param),
+/// `quantile` (scalar param), `count_values` (string-literal param),
 /// `stddev`/`stdvar` (no param), and the experimental `limitk`/`limit_ratio`
 /// (scalar param). The `limitk` and `limit_ratio` params resolve through the
 /// SAME interpreter helpers, which include the deduplicated
@@ -18,10 +18,16 @@ use super::{T_LIMIT_RATIO, T_LIMITK, ValueType};
 /// time, and the interpreter raises the canonical error.
 pub(crate) fn param_aggregate_op_is_plannable(aggregate: &AggregateExpr) -> bool {
     match aggregate.op.id() {
-        T_TOPK | T_BOTTOMK | T_QUANTILE => {
-            matches!(aggregate.param.as_deref(), Some(Expr::NumberLiteral(_)))
-        }
-        T_COUNT_VALUES => matches!(aggregate.param.as_deref(), Some(Expr::StringLiteral(_))),
+        // `topk`/`bottomk`/`quantile` take any SCALAR parameter, not only a
+        // literal: `topk(scalar(foo), v)` is legal PromQL.
+        T_TOPK | T_BOTTOMK | T_QUANTILE => aggregate
+            .param
+            .as_deref()
+            .is_some_and(|param| param.value_type() == ValueType::Scalar),
+        T_COUNT_VALUES => aggregate
+            .param
+            .as_deref()
+            .is_some_and(|param| param.value_type() == ValueType::String),
         T_STDDEV | T_STDVAR => aggregate.param.is_none(),
         // `limitk`/`limit_ratio` carry a scalar parameter resolved through the
         // interpreter helpers; the planner short-circuits a 0 param and applies

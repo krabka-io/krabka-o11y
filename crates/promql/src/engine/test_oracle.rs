@@ -8,10 +8,10 @@ use promql_parser::parser::{
 
 use super::{
     AggregateOp, ExtendedSelectorExpr, ExtendedSelectorModifier, HistogramAccessor, InstantValue,
-    IrateFn, OuterRangeFn, OverTimeFn, PromqlEngine, RangeFn, aggregate_k, aggregate_quantile,
-    apply_count_values_aggregate, apply_histogram_accessor, apply_histogram_fraction,
-    apply_histogram_quantile, apply_info, apply_k_aggregate, apply_outer_range_fn,
-    apply_quantile_aggregate, apply_simple_aggregate, combine_instant_binary, emit_warning,
+    IrateFn, OuterRangeFn, OverTimeFn, PromqlEngine, RangeFn, apply_count_values_aggregate,
+    apply_histogram_accessor, apply_histogram_fraction, apply_histogram_quantile, apply_info,
+    apply_k_aggregate, apply_outer_range_fn, apply_quantile_aggregate, apply_simple_aggregate,
+    combine_instant_binary, emit_warning,
     info::parse_info_call,
     invalid_quantile_warning, is_valid_quantile, label_ops,
     labels::{absent_labels, labels_without_metric_name},

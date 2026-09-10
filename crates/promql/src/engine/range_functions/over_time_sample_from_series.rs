@@ -1,7 +1,8 @@
 use super::{
-    ExtremumKind, OverTimeFn, RangeSeries, SampleValue, Time, float_range_samples,
-    fold_over_time_extremum, histogram_range_samples, over_time_histogram_sample, over_time_mad,
-    over_time_mean, over_time_variance, range_sample_count, range_samples, timestamp_seconds,
+    ExtremumKind, OverTimeFn, RangeSeries, SampleValue, Time, emit_warning, float_range_samples,
+    fold_over_time_extremum, histogram_range_samples, mixed_floats_histograms_warning,
+    note_histograms_ignored_in_range, over_time_histogram_sample, over_time_mad, over_time_mean,
+    over_time_sum, over_time_variance, range_sample_count, range_samples, timestamp_seconds,
 };
 
 pub(crate) fn over_time_sample_from_series(
@@ -10,9 +11,17 @@ pub(crate) fn over_time_sample_from_series(
     range: Time,
     kind: OverTimeFn,
 ) -> Option<SampleValue> {
+    // `ts_of_first_over_time` and `ts_of_last_over_time` time the earliest and
+    // latest sample of ANY type, so a window of nothing but histograms still
+    // has an answer.
     if matches!(
         kind,
-        OverTimeFn::Count | OverTimeFn::First | OverTimeFn::Last | OverTimeFn::Present
+        OverTimeFn::Count
+            | OverTimeFn::First
+            | OverTimeFn::Last
+            | OverTimeFn::Present
+            | OverTimeFn::TsOfFirst
+            | OverTimeFn::TsOfLast
     ) {
         let sample_count = range_sample_count(series, range_end_ms, range);
         if sample_count == 0 {
@@ -27,6 +36,14 @@ pub(crate) fn over_time_sample_from_series(
                 .max_by_key(|(timestamp, _)| *timestamp)
                 .map(|(_, value)| value.clone()),
             OverTimeFn::Present => Some(SampleValue::Float(1.0)),
+            OverTimeFn::TsOfFirst => range_samples(series, range_end_ms, range)
+                .map(|(timestamp, _)| timestamp)
+                .min()
+                .map(|timestamp| SampleValue::Float(timestamp_seconds(timestamp))),
+            OverTimeFn::TsOfLast => range_samples(series, range_end_ms, range)
+                .map(|(timestamp, _)| timestamp)
+                .max()
+                .map(|timestamp| SampleValue::Float(timestamp_seconds(timestamp))),
             _ => unreachable!("over_time histogram-safe kind checked above"),
         };
     }
@@ -34,8 +51,29 @@ pub(crate) fn over_time_sample_from_series(
     if matches!(kind, OverTimeFn::Sum | OverTimeFn::Avg) {
         let histograms = histogram_range_samples(series, range_end_ms, range);
         if !histograms.is_empty() {
+            // A window that mixes the two types has neither a float sum nor a
+            // histogram sum: Prometheus warns and drops the series.
+            if !float_range_samples(series, range_end_ms, range).is_empty() {
+                emit_warning(mixed_floats_histograms_warning(
+                    series.labels.get("__name__").unwrap_or(""),
+                ));
+                return None;
+            }
             return over_time_histogram_sample(&histograms, kind).map(SampleValue::Histogram);
         }
+    }
+
+    if matches!(
+        kind,
+        OverTimeFn::Min
+            | OverTimeFn::Max
+            | OverTimeFn::Stddev
+            | OverTimeFn::Stdvar
+            | OverTimeFn::Mad
+            | OverTimeFn::TsOfMin
+            | OverTimeFn::TsOfMax
+    ) {
+        note_histograms_ignored_in_range(series, range_end_ms, range);
     }
 
     let samples = float_range_samples(series, range_end_ms, range);
@@ -44,7 +82,7 @@ pub(crate) fn over_time_sample_from_series(
     }
 
     let value = match kind {
-        OverTimeFn::Sum => samples.iter().map(|(_, value)| value).sum(),
+        OverTimeFn::Sum => over_time_sum(samples.iter().map(|(_, value)| *value)),
         OverTimeFn::Avg => over_time_mean(samples.iter().map(|(_, value)| *value)),
         OverTimeFn::Count => unreachable!("count_over_time handled before float extraction"),
         OverTimeFn::Min => fold_over_time_extremum(&samples, ExtremumKind::Min),
@@ -62,20 +100,9 @@ pub(crate) fn over_time_sample_from_series(
             .max_by_key(|(timestamp, _)| *timestamp)
             .map(|(_, value)| value)
             .expect("non-empty samples"),
-        OverTimeFn::TsOfFirst => timestamp_seconds(
-            samples
-                .into_iter()
-                .min_by_key(|(timestamp, _)| *timestamp)
-                .map(|(timestamp, _)| timestamp)
-                .expect("non-empty samples"),
-        ),
-        OverTimeFn::TsOfLast => timestamp_seconds(
-            samples
-                .into_iter()
-                .max_by_key(|(timestamp, _)| *timestamp)
-                .map(|(timestamp, _)| timestamp)
-                .expect("non-empty samples"),
-        ),
+        OverTimeFn::TsOfFirst | OverTimeFn::TsOfLast => {
+            unreachable!("ts_of_first/ts_of_last handled before float extraction")
+        }
         OverTimeFn::TsOfMin => timestamp_seconds(
             samples
                 .into_iter()

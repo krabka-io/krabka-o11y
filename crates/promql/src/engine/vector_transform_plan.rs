@@ -7,7 +7,7 @@ use promql_parser::parser::{Call, Expr, VectorSelector};
 
 use super::{
     InstantShape, LabelOpsKind, PlannedInstant, PromqlEngine, apply_selector_time_modifier,
-    label_matcher_sets,
+    label_matcher_sets, planner_support::float_scalar_math_values,
 };
 use crate::{
     error::Result,
@@ -184,7 +184,9 @@ impl<S: MetricStore> PromqlEngine<S> {
                 Ok(Some(PlannedInstant::Precomputed(out)))
             }
             LabelOpsKind::LabelJoin => {
-                if call.args.args.len() < 4 {
+                // `label_join(v, dst, sep)` with no source label is legal: it
+                // joins nothing, so `dst` comes out empty and is removed.
+                if call.args.args.len() < 3 {
                     return Ok(None);
                 }
                 let (Some(dst), Some(separator)) = (
@@ -262,8 +264,14 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// NaN latest-in-window sample and drops only stale-NaN markers, exactly as
     /// the shared `InstantManipulate` operator does. This method recurses into
     /// every other planner-supported inner expression and assembles it. It
-    /// returns `None` for a histogram-bearing selector or an inner expression the
-    /// planner cannot evaluate, and the caller falls back.
+    /// returns `None` for an inner expression the planner cannot evaluate, and
+    /// the caller falls back.
+    ///
+    /// A histogram-bearing selector rides the histogram-aware
+    /// `eval_instant_selector` and keeps its histogram samples. The caller
+    /// decides what to do with them, because the callers differ: `label_replace`
+    /// and `label_join` rewrite a histogram series like any other, `sort` and
+    /// `sort_desc` drop it, and the calendar family ignores it.
     pub(super) fn label_ops_inner_vector<'a>(
         &'a self,
         tenant: &'a str,
@@ -281,7 +289,13 @@ impl<S: MetricStore> PromqlEngine<S> {
                     .selector_has_histogram_series(tenant, selector, time_ms)
                     .await?
                 {
-                    return Ok(None);
+                    let QueryResult::InstantVector(samples) = self
+                        .eval_instant_selector(tenant, selector, time_ms)
+                        .await?
+                    else {
+                        return Ok(None);
+                    };
+                    return Ok(Some(samples));
                 }
                 let samples = self
                     .scalar_math_selector_samples(tenant, selector, time_ms)
@@ -340,13 +354,22 @@ impl<S: MetricStore> PromqlEngine<S> {
             if let Expr::VectorSelector(selector) = inner {
                 // A bare selector: select the latest in-window float sample per
                 // series, dropping stale-NaN markers but **keeping** genuine NaN
-                // (matching `eval_instant_selector`). Histogram-bearing selectors
-                // fall back to the interpreter.
+                // (matching `eval_instant_selector`). A histogram-bearing
+                // selector rides the histogram-aware selection and then drops
+                // its histogram samples: `simpleFloatFunc` and `clamp` process
+                // only float samples, so a histogram series is simply absent
+                // from the result.
                 if self
                     .selector_has_histogram_series(tenant, selector, time_ms)
                     .await?
                 {
-                    return Ok(None);
+                    let QueryResult::InstantVector(samples) = self
+                        .eval_instant_selector(tenant, selector, time_ms)
+                        .await?
+                    else {
+                        return Ok(None);
+                    };
+                    return Ok(Some(float_scalar_math_values(samples)));
                 }
                 return Ok(Some(
                     self.scalar_math_selector_samples(tenant, selector, time_ms)
@@ -365,20 +388,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             else {
                 return Ok(None);
             };
-            let mut samples = Vec::with_capacity(inner_samples.len());
-            for sample in inner_samples {
-                let SampleValue::Float(value) = sample.value else {
-                    // The planner paths are float-only, so a histogram here would
-                    // be a contract violation; fall back defensively.
-                    return Ok(None);
-                };
-                samples.push(ScalarMathLabeledValue {
-                    labels: sample.labels,
-                    ts_ms: sample.ts_ms,
-                    value,
-                });
-            }
-            Ok(Some(samples))
+            Ok(Some(float_scalar_math_values(inner_samples)))
         }
         .boxed()
     }

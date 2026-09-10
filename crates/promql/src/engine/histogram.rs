@@ -4,9 +4,14 @@ use krabka_blockstore::Labels;
 use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 
 use super::{
-    annotations::warn_mixed_histograms,
+    annotations::{
+        bad_bucket_label_warning, emit_info, emit_warning,
+        histogram_quantile_forced_monotonicity_info, invalid_quantile_warning, is_valid_quantile,
+        native_histogram_fraction_nans_info, native_histogram_quantile_nan_result_info,
+        native_histogram_quantile_nan_skew_info, warn_mixed_histograms,
+    },
     labels::{
-        float_sample_value, labels_key, labels_without_metric_and_label,
+        float_sample_value, labels_key, labels_without_label, labels_without_metric_and_label,
         labels_without_metric_name, record_metric_name,
     },
 };
@@ -301,6 +306,7 @@ mod add_bucket_maps;
 mod add_compatible_native_histogram;
 mod add_custom_histogram;
 mod add_exponential_histogram;
+mod almost_equal;
 mod append_native_spanned_buckets;
 mod apply_histogram_accessor;
 mod apply_histogram_fraction;
@@ -308,6 +314,7 @@ mod apply_histogram_quantile;
 mod apply_histogram_quantiles;
 mod bucket_overlap_fraction;
 mod classic_bucket;
+mod classic_bucket_bound;
 mod classic_histogram_buckets;
 mod classic_histogram_fraction;
 mod classic_histogram_quantile;
@@ -316,9 +323,11 @@ mod compact_spanned_histogram_counts;
 mod custom_histogram_bound;
 mod histogram_accessor;
 mod histogram_accessor_from_function_name;
+mod native_histogram_all_buckets;
 mod native_histogram_bucket_mean;
 mod native_histogram_bucket_quantile;
 mod native_histogram_buckets;
+mod native_histogram_detect_reset;
 mod native_histogram_fraction;
 mod native_histogram_quantile;
 mod native_histogram_stdvar;
@@ -332,12 +341,14 @@ mod scale_native_histogram_values;
 mod scaled_native_histogram;
 mod spanned_histogram_counts;
 mod standard_histogram_bound;
+mod zero_bucket_bounds;
 mod zero_count_at_threshold;
 
 use add_bucket_maps::add_bucket_maps;
 pub(crate) use add_compatible_native_histogram::add_compatible_native_histogram;
 use add_custom_histogram::add_custom_histogram;
 use add_exponential_histogram::add_exponential_histogram;
+use almost_equal::almost_equal;
 use append_native_spanned_buckets::append_native_spanned_buckets;
 pub(super) use apply_histogram_accessor::apply_histogram_accessor;
 pub(super) use apply_histogram_fraction::apply_histogram_fraction;
@@ -346,6 +357,7 @@ pub(super) use apply_histogram_quantile::apply_histogram_quantile;
 pub(super) use apply_histogram_quantiles::apply_histogram_quantiles;
 use bucket_overlap_fraction::bucket_overlap_fraction;
 use classic_bucket::ClassicBucket;
+use classic_bucket_bound::classic_bucket_bound;
 use classic_histogram_buckets::classic_histogram_buckets;
 use classic_histogram_fraction::classic_histogram_fraction;
 use classic_histogram_quantile::classic_histogram_quantile;
@@ -354,9 +366,11 @@ use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
 use custom_histogram_bound::custom_histogram_bound;
 pub(super) use histogram_accessor::HistogramAccessor;
 pub(super) use histogram_accessor_from_function_name::histogram_accessor_from_function_name;
+use native_histogram_all_buckets::native_histogram_all_buckets;
 use native_histogram_bucket_mean::native_histogram_bucket_mean;
 use native_histogram_bucket_quantile::native_histogram_bucket_quantile;
 use native_histogram_buckets::native_histogram_buckets;
+pub(super) use native_histogram_detect_reset::native_histogram_detect_reset;
 use native_histogram_fraction::native_histogram_fraction;
 use native_histogram_quantile::native_histogram_quantile;
 use native_histogram_stdvar::native_histogram_stdvar;
@@ -370,4 +384,5 @@ pub(super) use scale_native_histogram_values::scale_native_histogram_values;
 pub(super) use scaled_native_histogram::scaled_native_histogram;
 use spanned_histogram_counts::spanned_histogram_counts;
 use standard_histogram_bound::standard_histogram_bound;
+use zero_bucket_bounds::zero_bucket_bounds;
 use zero_count_at_threshold::zero_count_at_threshold;

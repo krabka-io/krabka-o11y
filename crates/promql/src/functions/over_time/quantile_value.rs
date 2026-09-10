@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use super::ToPrimitive;
 
 /// Returns the `phi`-quantile of `values`, with linear interpolation between ranks.
@@ -23,7 +25,19 @@ pub(crate) fn quantile_value(phi: f64, values: &[f64]) -> Option<f64> {
         return Some(f64::INFINITY);
     }
     let mut sorted = values.to_vec();
-    sorted.sort_by(f64::total_cmp);
+    // Prometheus sorts with `vectorByValueHeap.Less`, which calls a NaN LESS
+    // than every other value, so a NaN sample is the smallest one in the window
+    // and a quantile that lands between it and its neighbour interpolates to
+    // NaN. `total_cmp` would instead sort a positive NaN last.
+    sorted.sort_by(|left, right| {
+        if left.is_nan() {
+            return Ordering::Less;
+        }
+        if right.is_nan() {
+            return Ordering::Greater;
+        }
+        left.total_cmp(right)
+    });
     if sorted.len() == 1 {
         return Some(sorted[0]);
     }

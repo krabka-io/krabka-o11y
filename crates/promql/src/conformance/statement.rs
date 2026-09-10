@@ -26,6 +26,9 @@ pub enum Statement {
         range_expect: Option<RangeExpect>,
         /// Expected failure message. An empty message matches any failure.
         fail_message: Option<String>,
+        /// Reason this case is a known divergence from Prometheus, when it is
+        /// one. A case marked this way is required to fail.
+        divergence: Option<String>,
     },
     /// Evaluates a range query.
     EvalRange {
@@ -43,6 +46,9 @@ pub enum Statement {
         annotations: Vec<AnnotationExpect>,
         /// Expected failure message. An empty message matches any failure.
         fail_message: Option<String>,
+        /// Reason this case is a known divergence from Prometheus, when it is
+        /// one. A case marked this way is required to fail.
+        divergence: Option<String>,
     },
     /// Clears the loaded series.
     Clear,

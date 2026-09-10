@@ -21,6 +21,7 @@ pub(crate) fn apply_outer_range_fn(
                 range.range,
                 outer,
                 range.modifier,
+                time_ms,
             )
             .map(|(labels, value)| InstantSample {
                 labels,

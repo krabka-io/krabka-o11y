@@ -1,7 +1,8 @@
 use super::{
     HistogramExtrapolation, NativeHistogram, RangeFn, ResetHint, Time, compact_histogram_spans,
-    extrapolated_histogram_component, extrapolated_histogram_counts, histogram_reset_indices,
-    native_histograms_are_range_compatible,
+    emit_warning, extrapolated_histogram_component, extrapolated_histogram_counts,
+    histogram_reset_indices, native_histogram_not_counter_warning,
+    native_histogram_not_gauge_warning, native_histograms_are_range_compatible,
 };
 
 pub(crate) fn range_histogram_sample(
@@ -11,9 +12,29 @@ pub(crate) fn range_histogram_sample(
     range_end_ms: i64,
     range: Time,
     kind: RangeFn,
+    metric: &str,
 ) -> Option<NativeHistogram> {
     if !matches!(kind, RangeFn::Rate | RangeFn::Increase | RangeFn::Delta) || histograms.len() < 2 {
         return None;
+    }
+    // `histogramRate` says so when it is handed the sample kind the function
+    // was not written for: a gauge histogram to `rate`/`increase`, or a counter
+    // histogram to `delta`. Both still compute a result.
+    if matches!(kind, RangeFn::Delta) {
+        let ends_are_gauges = histograms
+            .first()
+            .is_some_and(|histogram| histogram.reset_hint == ResetHint::Gauge)
+            && histograms
+                .last()
+                .is_some_and(|histogram| histogram.reset_hint == ResetHint::Gauge);
+        if !ends_are_gauges {
+            emit_warning(native_histogram_not_gauge_warning(metric));
+        }
+    } else if histograms
+        .iter()
+        .any(|histogram| histogram.reset_hint == ResetHint::Gauge)
+    {
+        emit_warning(native_histogram_not_counter_warning(metric));
     }
     let first = histograms.first()?;
     let last = histograms.last()?;

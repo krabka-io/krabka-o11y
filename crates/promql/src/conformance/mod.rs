@@ -18,6 +18,7 @@ pub mod testkit {
     };
 
     use krabka_blockstore::Labels;
+    use krabka_metrics::{NativeHistogram, ResetHint};
     use krabka_units::prelude::*;
 
     use super::Result;
@@ -25,8 +26,8 @@ pub mod testkit {
         Annotations, EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryResult,
         SampleValue,
         conformance::{
-            AnnotationExpect, ExpectLine, RangeExpect, SampleSpec, Statement, TestFile,
-            parse_test_file,
+            AnnotationExpect, ChunkResetHints, ExpectLine, RangeExpect, SampleSpec, Statement,
+            TestFile, compacted_native_histogram, parse_test_file,
         },
     };
 
@@ -43,6 +44,8 @@ pub mod testkit {
         pub passed_cases: usize,
         pub total_cases: usize,
         pub error: Option<String>,
+        /// Cases annotated `# krabka:divergence`, which are expected to fail.
+        pub divergences: Vec<String>,
     }
 
     /// Per-file coverage report for a Prometheus `.test` corpus run.
@@ -78,6 +81,9 @@ pub mod testkit {
                     "{status} {} {}/{}",
                     file.name, file.passed_cases, file.total_cases
                 )?;
+                for divergence in &file.divergences {
+                    writeln!(f, "  DIVERGENCE {divergence}")?;
+                }
                 if let Some(error) = &file.error {
                     writeln!(f, "  {error}")?;
                 }
@@ -86,22 +92,74 @@ pub mod testkit {
         }
     }
 
+    /// Case-level outcome of one parsed Prometheus `.test` file.
+    #[derive(Debug, Default)]
+    pub struct FileOutcome {
+        /// Eval cases the file holds.
+        pub total_cases: usize,
+        /// Eval cases that matched Prometheus.
+        pub passed_cases: usize,
+        /// Mismatches, in file order.
+        pub failures: Vec<PromqlError>,
+        /// Reasons of the annotated divergences that diverged as annotated.
+        pub divergences: Vec<String>,
+    }
+
     /// Runs a parsed Prometheus `.test` file through an [`InMemoryMetricStore`].
     ///
     /// # Errors
     ///
-    /// Returns the first parse, execution, or assertion mismatch error.
+    /// Returns the first load error, or the collected case mismatches.
     pub async fn run_test_file(file: &TestFile) -> Result<()> {
+        let mut outcome = run_test_file_outcome(file).await?;
+        if outcome.failures.is_empty() {
+            return Ok(());
+        }
+        let extra = outcome.failures.len() - 1;
+        let first = outcome.failures.swap_remove(0);
+        if extra == 0 {
+            return Err(first);
+        }
+        Err(PromqlError::Exec(format!(
+            "{first}\n... and {extra} further failing case(s); see the conformance report"
+        )))
+    }
+
+    /// Runs a parsed Prometheus `.test` file and reports every case outcome.
+    ///
+    /// Unlike [`run_test_file`] this runs on past a mismatching case, so that
+    /// one run triages a whole file.
+    ///
+    /// # Errors
+    ///
+    /// Returns a load error, which stops the file.
+    pub async fn run_test_file_outcome(file: &TestFile) -> Result<FileOutcome> {
         let mut store = InMemoryMetricStore::new();
+        let mut hints: BTreeMap<String, ChunkResetHints> = BTreeMap::new();
+        let mut outcome = FileOutcome::default();
 
         for statement in &file.statements {
             match statement {
                 Statement::Load { step, series } => {
-                    for load_series in series {
+                    // A `load` block that names the same series twice keeps only
+                    // the LAST definition: upstream's `loadCmd.set` writes into a
+                    // map keyed by the series, so the second line replaces the
+                    // first rather than colliding with it at the same timestamps.
+                    let last_definition: BTreeMap<&str, usize> = series
+                        .iter()
+                        .enumerate()
+                        .map(|(index, load_series)| (load_series.metric.as_str(), index))
+                        .collect();
+                    for (index, load_series) in series.iter().enumerate() {
+                        if last_definition.get(load_series.metric.as_str()) != Some(&index) {
+                            continue;
+                        }
                         let labels = metric_to_labels(&load_series.metric);
+                        let hints = hints.entry(load_series.metric.clone()).or_default();
                         for (index, sample) in load_series.values.iter().enumerate() {
                             match sample {
                                 SampleSpec::Value(value) => {
+                                    hints.push_float();
                                     store.push_float(
                                         TENANT,
                                         labels.clone(),
@@ -110,14 +168,17 @@ pub mod testkit {
                                     );
                                 }
                                 SampleSpec::Histogram(histogram) => {
+                                    let mut histogram = histogram.clone();
+                                    histogram.reset_hint = hints.push_histogram(&histogram);
                                     store.push_histogram(
                                         TENANT,
                                         labels.clone(),
                                         index_to_timestamp(index, *step)?,
-                                        histogram.clone(),
+                                        histogram,
                                     );
                                 }
                                 SampleSpec::Stale => {
+                                    hints.push_float();
                                     store.push_float(
                                         TENANT,
                                         labels.clone(),
@@ -144,12 +205,13 @@ pub mod testkit {
                     ordered,
                     range_expect,
                     fail_message,
+                    divergence,
                 } => {
                     let engine = PromqlEngine::new(Arc::new(store.clone()), EngineOpts::default());
                     let result = engine
                         .query_instant_with_annotations(TENANT, expr, *at_ms)
                         .await;
-                    handle_instant_eval_result(
+                    let case = handle_instant_eval_result(
                         result,
                         expect,
                         annotations,
@@ -157,7 +219,8 @@ pub mod testkit {
                         range_expect.as_ref(),
                         fail_message.as_deref(),
                     )
-                    .map_err(|error| add_eval_context(error, "instant", expr))?;
+                    .map_err(|error| add_eval_context(error, "instant", expr));
+                    record_case(&mut outcome, divergence.as_deref(), expr, case);
                 }
                 Statement::EvalRange {
                     start_ms,
@@ -167,12 +230,13 @@ pub mod testkit {
                     expect,
                     annotations,
                     fail_message,
+                    divergence,
                 } => {
                     let engine = PromqlEngine::new(Arc::new(store.clone()), EngineOpts::default());
                     let result = engine
                         .query_range_with_annotations(TENANT, expr, *start_ms, *end_ms, *step)
                         .await;
-                    handle_range_eval_result(
+                    let case = handle_range_eval_result(
                         result,
                         expect,
                         annotations,
@@ -180,13 +244,41 @@ pub mod testkit {
                         *start_ms,
                         *step,
                     )
-                    .map_err(|error| add_eval_context(error, "range", expr))?;
+                    .map_err(|error| add_eval_context(error, "range", expr));
+                    record_case(&mut outcome, divergence.as_deref(), expr, case);
                 }
-                Statement::Clear => store = InMemoryMetricStore::new(),
+                Statement::Clear => {
+                    store = InMemoryMetricStore::new();
+                    hints.clear();
+                }
             }
         }
 
-        Ok(())
+        Ok(outcome)
+    }
+
+    /// Files one eval case into `outcome`, honouring a `# krabka:divergence`
+    /// annotation.
+    ///
+    /// An annotated case has to diverge. A case that starts matching Prometheus
+    /// is a failure, so that a fixed divergence cannot stay annotated as one.
+    fn record_case(
+        outcome: &mut FileOutcome,
+        divergence: Option<&str>,
+        expr: &str,
+        case: Result<()>,
+    ) {
+        outcome.total_cases += 1;
+        match (divergence, case) {
+            (None, Ok(())) => outcome.passed_cases += 1,
+            (None, Err(error)) => outcome.failures.push(error),
+            (Some(reason), Err(_)) => {
+                outcome.divergences.push(format!("`{expr}`: {reason}"));
+            }
+            (Some(reason), Ok(())) => outcome.failures.push(PromqlError::Exec(format!(
+                "eval `{expr}` is annotated as the known divergence `{reason}`, but it now matches Prometheus; drop the annotation"
+            ))),
+        }
     }
 
     fn add_eval_context(error: PromqlError, kind: &str, expr: &str) -> PromqlError {
@@ -250,6 +342,7 @@ pub mod testkit {
                         passed_cases: 0,
                         total_cases: 0,
                         error: Some(error.to_string()),
+                        divergences: Vec::new(),
                     }],
                 };
             }
@@ -307,6 +400,7 @@ pub mod testkit {
                     passed_cases: 0,
                     total_cases: 0,
                     error: Some(format!("read `{}`: {error}", path.display())),
+                    divergences: Vec::new(),
                 };
             }
         };
@@ -319,38 +413,35 @@ pub mod testkit {
                     passed_cases: 0,
                     total_cases: 0,
                     error: Some(error.to_string()),
+                    divergences: Vec::new(),
                 };
             }
         };
-        let total_cases = count_eval_cases(&file);
-        match run_test_file(&file).await {
-            Ok(()) => FileResult {
+        match run_test_file_outcome(&file).await {
+            Ok(outcome) => FileResult {
                 name,
-                passed: true,
-                passed_cases: total_cases,
-                total_cases,
-                error: None,
+                passed: outcome.failures.is_empty(),
+                passed_cases: outcome.passed_cases,
+                total_cases: outcome.total_cases,
+                error: (!outcome.failures.is_empty()).then(|| {
+                    outcome
+                        .failures
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("\n  ")
+                }),
+                divergences: outcome.divergences,
             },
             Err(error) => FileResult {
                 name,
                 passed: false,
                 passed_cases: 0,
-                total_cases,
+                total_cases: 0,
                 error: Some(error.to_string()),
+                divergences: Vec::new(),
             },
         }
-    }
-
-    fn count_eval_cases(file: &TestFile) -> usize {
-        file.statements
-            .iter()
-            .filter(|statement| {
-                matches!(
-                    statement,
-                    Statement::EvalInstant { .. } | Statement::EvalRange { .. }
-                )
-            })
-            .count()
     }
 
     pub(crate) fn metric_to_labels(metric: &str) -> Labels {
@@ -733,10 +824,78 @@ pub mod testkit {
                 floats_equal(*actual, *expected)
             }
             (SampleValue::Histogram(actual), SampleValue::Histogram(expected)) => {
-                actual == expected
+                histograms_equal(actual, expected)
             }
             _ => false,
         }
+    }
+
+    /// Compares two native histograms the way Prometheus's `promqltest`
+    /// comparator does over the fields it inspects.
+    ///
+    /// Upstream's `compareNativeHistogram` never looks at the counter-reset
+    /// hint, so the corpus states `counter_reset_hint` only on the cases that
+    /// are about the hint and leaves it off everywhere else. Reading an unstated
+    /// hint as `unknown` would turn every silent case into an assertion upstream
+    /// never made, so an unstated hint matches any hint. A stated one still has
+    /// to match, which keeps the hint under test wherever the corpus names it.
+    ///
+    /// Custom bucket bounds compare through `CustomBucketBoundsMatch`, which
+    /// holds no bounds and an empty list of bounds to be the same thing, so a
+    /// subtraction that reconciles two disjoint layouts away matches a corpus
+    /// line that simply states no `custom_values`.
+    fn histograms_equal(actual: &NativeHistogram, expected: &NativeHistogram) -> bool {
+        // Both sides are compacted first, exactly as `compareResult` does: an
+        // empty bucket that one fold left behind and the other did not is a
+        // difference in encoding, not in what was observed.
+        let actual = compacted_native_histogram(actual);
+        let expected = compacted_native_histogram(expected);
+        actual.schema == expected.schema
+            && floats_equal(actual.count, expected.count)
+            && floats_equal(actual.sum, expected.sum)
+            && custom_bounds_match(&actual, &expected)
+            && actual.zero_threshold.to_bits() == expected.zero_threshold.to_bits()
+            && floats_equal(actual.zero_count, expected.zero_count)
+            && actual.positive_spans == expected.positive_spans
+            && actual.negative_spans == expected.negative_spans
+            && bucket_counts_equal(&actual.positive_counts, &expected.positive_counts)
+            && bucket_counts_equal(&actual.negative_counts, &expected.negative_counts)
+            && reset_hints_equal(actual.reset_hint, expected.reset_hint)
+    }
+
+    /// Whether two histograms agree on their custom bucket bounds.
+    ///
+    /// `compareNativeHistogram` asks only when the EXPECTED histogram uses
+    /// custom buckets, and `CustomBucketBoundsMatch` holds no bounds and an
+    /// empty list of bounds to be the same thing.
+    fn custom_bounds_match(actual: &NativeHistogram, expected: &NativeHistogram) -> bool {
+        if !expected.is_nhcb() {
+            return true;
+        }
+        let bounds =
+            |histogram: &NativeHistogram| histogram.custom_values.clone().unwrap_or_default();
+        bounds(actual) == bounds(expected)
+    }
+
+    /// Whether two bucket-count lists agree, to the corpus' float tolerance.
+    fn bucket_counts_equal(actual: &[f64], expected: &[f64]) -> bool {
+        actual.len() == expected.len()
+            && actual
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| floats_equal(*actual, *expected))
+    }
+
+    /// Whether a stated counter-reset hint matches.
+    ///
+    /// Upstream's comparator never looks at the hint, so the corpus states
+    /// `counter_reset_hint` only on the cases that are about the hint and leaves
+    /// it off everywhere else. Reading an unstated hint as `unknown` would turn
+    /// every silent case into an assertion upstream never made, so an unstated
+    /// hint matches any hint. A stated one still has to match, which keeps the
+    /// hint under test wherever the corpus names it.
+    fn reset_hints_equal(actual: ResetHint, expected: ResetHint) -> bool {
+        expected == ResetHint::Unknown || actual == expected
     }
 
     fn floats_equal(actual: f64, expected: f64) -> bool {
@@ -1023,8 +1182,8 @@ pub mod testkit {
 
         /// A report's case count is what its pass ratio divides by, and only
         /// `eval` statements are cases -- a `load` or a `clear` is setup.
-        #[test]
-        fn only_eval_statements_count_as_cases() {
+        #[tokio::test]
+        async fn only_eval_statements_count_as_cases() {
             let file = parse_test_file(
                 r#"
 load 1m
@@ -1046,11 +1205,18 @@ eval instant at 2m down{job="api"}
 "#,
             )
             .expect("the test file parses");
-            check!(count_eval_cases(&file) == 3);
+            let outcome = run_test_file_outcome(&file)
+                .await
+                .expect("the test file runs");
+            check!(outcome.total_cases == 3);
+            check!(outcome.passed_cases == 3);
 
             let setup_only = parse_test_file("load 1m\n  up{job=\"api\"} 0+1x2\n")
                 .expect("the setup-only file parses");
-            check!(count_eval_cases(&setup_only) == 0);
+            let outcome = run_test_file_outcome(&setup_only)
+                .await
+                .expect("the setup-only file runs");
+            check!(outcome.total_cases == 0);
         }
 
         /// Only `limit.test` needs `experimental-functions`; every other
@@ -1086,6 +1252,7 @@ eval instant at 2m down{job="api"}
                         passed_cases: 3,
                         total_cases: 3,
                         error: None,
+                        divergences: vec!["`foo`: not implemented".to_owned()],
                     },
                     FileResult {
                         name: "bad.test".to_owned(),
@@ -1093,12 +1260,13 @@ eval instant at 2m down{job="api"}
                         passed_cases: 1,
                         total_cases: 4,
                         error: Some("boom".to_owned()),
+                        divergences: Vec::new(),
                     },
                 ],
             };
             let expected = "PromQL conformance report\n\
                  files: 2\n\
-                 PASS good.test 3/3\n\
+                 PASS good.test 3/3\n  DIVERGENCE `foo`: not implemented\n\
                  FAIL bad.test 1/4\n  boom\n";
             check!(report.to_string() == expected);
 
@@ -1490,6 +1658,7 @@ clear
                     ordered: false,
                     range_expect: None,
                     fail_message: None,
+                    divergence: None,
                 },
                 Statement::Clear,
             ],
@@ -1927,12 +2096,200 @@ eval instant at 1m up{job="api"}
 
         testkit::run_test_file(&file).await.unwrap();
     }
+
+    /// A loaded histogram series reads back with the counter-reset hint that
+    /// Prometheus's chunks report, not the one the corpus line wrote. The first
+    /// sample of a counter chunk is `unknown`, later ones are `not_reset`, a
+    /// counter reset starts a fresh chunk, and a gauge series stays a gauge
+    /// throughout. Without this, `range_queries.test`'s `not_reset` expectation
+    /// over a plain `{{count:0}}+{{count:1}}x4` series is unreachable.
+    #[tokio::test]
+    async fn a_loaded_histogram_takes_the_hint_its_chunk_would_report() {
+        let file = parse_test_file(
+            r"
+load 1m
+  counter {{count:0}}+{{count:1}}x3
+  reset_midway {{count:5}} {{count:6}} {{count:1}} {{count:2}}
+  gauge {{count:5 counter_reset_hint:gauge}}x3
+
+eval instant at 0m counter
+  counter {{count:0 counter_reset_hint:unknown}}
+
+eval instant at 1m counter
+  counter {{count:1 counter_reset_hint:not_reset}}
+
+eval instant at 3m counter
+  counter {{count:3 counter_reset_hint:not_reset}}
+
+eval instant at 1m reset_midway
+  reset_midway {{count:6 counter_reset_hint:not_reset}}
+
+eval instant at 2m reset_midway
+  reset_midway {{count:1 counter_reset_hint:unknown}}
+
+eval instant at 3m reset_midway
+  reset_midway {{count:2 counter_reset_hint:not_reset}}
+
+eval instant at 2m gauge
+  gauge {{count:5 counter_reset_hint:gauge}}
+",
+        )
+        .unwrap();
+
+        testkit::run_test_file(&file).await.unwrap();
+    }
+
+    /// An expectation that does NOT state a `counter_reset_hint` accepts any
+    /// hint, because upstream's comparator never looks at the hint and the
+    /// corpus therefore states one only where the hint is the point. An
+    /// expectation that does state one still has to match.
+    #[tokio::test]
+    async fn an_unstated_counter_reset_hint_matches_any_hint() {
+        let file = parse_test_file(
+            r"
+load 1m
+  counter {{count:0}}+{{count:1}}x3
+
+eval instant at 1m counter
+  counter {{count:1}}
+",
+        )
+        .unwrap();
+        testkit::run_test_file(&file).await.unwrap();
+
+        let wrong = parse_test_file(
+            r"
+load 1m
+  counter {{count:0}}+{{count:1}}x3
+
+eval instant at 1m counter
+  counter {{count:1 counter_reset_hint:gauge}}
+",
+        )
+        .unwrap();
+        assert2::check!(testkit::run_test_file(&wrong).await.is_err());
+    }
+
+    /// Two histograms that differ only in a trailing empty bucket, or in the
+    /// last bits of a sum, are the same histogram: `compareResult` compacts both
+    /// sides and compares the numbers with a relative tolerance. A sum that
+    /// differs by more than that tolerance is still a difference.
+    #[tokio::test]
+    async fn histogram_expectations_compare_the_way_prometheus_compares_them() {
+        let file = parse_test_file(
+            r"
+load 1m
+  metric {{schema:0 sum:1 count:3 buckets:[1 2 0]}}
+
+eval instant at 0m metric
+  metric {{schema:0 sum:1.0000000001 count:3 buckets:[1 2]}}
+",
+        )
+        .unwrap();
+        testkit::run_test_file(&file).await.unwrap();
+
+        let wrong = parse_test_file(
+            r"
+load 1m
+  metric {{schema:0 sum:1 count:3 buckets:[1 2 0]}}
+
+eval instant at 0m metric
+  metric {{schema:0 sum:2 count:3 buckets:[1 2]}}
+",
+        )
+        .unwrap();
+        assert2::check!(testkit::run_test_file(&wrong).await.is_err());
+    }
+
+    /// A `# krabka:divergence` directive marks the eval after it as a case the
+    /// engine is known to get wrong. Such a case is REQUIRED to fail: one that
+    /// starts matching Prometheus is reported, so a fixed divergence cannot go
+    /// on being annotated as one.
+    #[tokio::test]
+    async fn a_known_divergence_is_recorded_and_required_to_diverge() {
+        let file = parse_test_file(
+            r#"
+load 1m
+  up{job="api"} 1
+
+# krabka:divergence the engine has not learned to count
+eval instant at 0m up{job="api"}
+  up{job="api"} 99
+"#,
+        )
+        .unwrap();
+        let outcome = testkit::run_test_file_outcome(&file).await.unwrap();
+        assert2::check!(outcome.total_cases == 1);
+        assert2::check!(outcome.passed_cases == 0);
+        assert2::check!(outcome.failures.is_empty());
+        assert2::check!(
+            outcome.divergences
+                == vec![r#"`up{job="api"}`: the engine has not learned to count"#.to_owned()]
+        );
+
+        let fixed = parse_test_file(
+            r#"
+load 1m
+  up{job="api"} 1
+
+# krabka:divergence the engine has not learned to count
+eval instant at 0m up{job="api"}
+  up{job="api"} 1
+"#,
+        )
+        .unwrap();
+        let outcome = testkit::run_test_file_outcome(&fixed).await.unwrap();
+        assert2::check!(outcome.divergences.is_empty());
+        assert2::check!(outcome.failures.len() == 1);
+        assert2::check!(
+            outcome.failures[0]
+                .to_string()
+                .contains("drop the annotation")
+        );
+    }
+
+    /// A directive with no reason, one that does not precede an eval, and an
+    /// unknown `# krabka:` directive are all refused at parse time. Every other
+    /// comment stays a comment.
+    #[test]
+    fn a_malformed_krabka_directive_is_refused() {
+        for source in [
+            "# krabka:divergence  \neval instant at 0m up\n",
+            "# krabka:divergence why\nload 1m\n  up 1\n",
+            "# krabka:something-else\neval instant at 0m up\n",
+            "# krabka:divergence why\n",
+        ] {
+            assert2::check!(parse_test_file(source).is_err(), "{source}");
+        }
+        assert2::check!(parse_test_file("# an ordinary comment\neval instant at 0m up\n").is_ok());
+    }
+
+    /// A `load` block that names the same series twice keeps the LAST
+    /// definition, as `loadCmd.set` does, rather than writing both at the same
+    /// timestamps.
+    #[tokio::test]
+    async fn the_last_definition_of_a_repeated_load_series_wins() {
+        let file = parse_test_file(
+            r#"
+load 1m
+  up{job="api"} 1
+  up{job="api"} 7
+
+eval instant at 0m up{job="api"}
+  up{job="api"} 7
+"#,
+        )
+        .unwrap();
+        testkit::run_test_file(&file).await.unwrap();
+    }
 }
 
 mod add_histogram_counts;
 mod add_histogram_step;
 mod annotation_expect;
+mod chunk_reset_hints;
 mod compact_spanned_histogram_counts;
+mod compacted_native_histogram;
 mod conformance_labels_key;
 mod cumulative_to_bucket_counts;
 mod escape_label_value;
@@ -1940,6 +2297,8 @@ mod expect_block;
 mod expect_directive;
 mod expect_line;
 mod failure_message;
+mod histogram_buckets_shrank;
+mod histogram_chunk_appendable;
 mod histogram_fields;
 mod histogram_span;
 mod is_block_line;
@@ -1982,7 +2341,9 @@ mod test_parser;
 use add_histogram_counts::add_histogram_counts;
 use add_histogram_step::add_histogram_step;
 pub use annotation_expect::AnnotationExpect;
+use chunk_reset_hints::ChunkResetHints;
 use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
+use compacted_native_histogram::compacted_native_histogram;
 use conformance_labels_key::conformance_labels_key;
 use cumulative_to_bucket_counts::cumulative_to_bucket_counts;
 use escape_label_value::escape_label_value;
@@ -1990,6 +2351,8 @@ use expect_block::ExpectBlock;
 use expect_directive::ExpectDirective;
 pub use expect_line::ExpectLine;
 use failure_message::failure_message;
+use histogram_buckets_shrank::histogram_buckets_shrank;
+use histogram_chunk_appendable::histogram_chunk_appendable;
 use histogram_fields::histogram_fields;
 use histogram_span::histogram_span;
 use is_block_line::is_block_line;

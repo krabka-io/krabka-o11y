@@ -1,7 +1,8 @@
 use super::{
     ExtendedSelectorModifier, RangeFn, RangeSeries, SampleValue, Time, TimeExt,
-    anchored_float_range_value, count_changes, count_histogram_resets, count_resets,
-    extrapolated_rate, range_histogram_sample, smoothed_float_range_value,
+    anchored_float_range_value, count_changes, count_resets, count_step_transitions, emit_warning,
+    extrapolated_rate, mixed_floats_histograms_warning, range_histogram_sample,
+    smoothed_float_range_value,
 };
 
 pub(crate) fn range_function_sample_from_series(
@@ -12,6 +13,14 @@ pub(crate) fn range_function_sample_from_series(
     modifier: Option<ExtendedSelectorModifier>,
 ) -> Option<SampleValue> {
     let range_start_ms = range_end_ms.saturating_sub(range.millis_i64());
+    // `changes` and `resets` count over the whole plain window, floats and
+    // histograms together, so they never meet the float-or-histogram split
+    // below. The extended `anchored`/`smoothed` windows keep their own float
+    // handling.
+    if modifier.is_none() && matches!(kind, RangeFn::Changes | RangeFn::Resets) {
+        return count_step_transitions(series, range_start_ms, range_end_ms, kind)
+            .map(SampleValue::Float);
+    }
     let mut timestamps = Vec::new();
     let mut values = Vec::new();
     let mut histograms = Vec::new();
@@ -27,14 +36,14 @@ pub(crate) fn range_function_sample_from_series(
         match value {
             SampleValue::Float(value) => {
                 if !histograms.is_empty() {
-                    return None;
+                    return warn_mixed_window(series);
                 }
                 timestamps.push(*timestamp);
                 values.push(*value);
             }
             SampleValue::Histogram(histogram) => {
                 if !values.is_empty() {
-                    return None;
+                    return warn_mixed_window(series);
                 }
                 timestamps.push(*timestamp);
                 histograms.push(histogram.clone());
@@ -59,9 +68,6 @@ pub(crate) fn range_function_sample_from_series(
     }
 
     if !histograms.is_empty() {
-        if matches!(kind, RangeFn::Resets) {
-            return count_histogram_resets(&histograms).map(SampleValue::Float);
-        }
         return range_histogram_sample(
             &timestamps,
             &histograms,
@@ -69,6 +75,7 @@ pub(crate) fn range_function_sample_from_series(
             range_end_ms,
             range,
             kind,
+            series.labels.get("__name__").unwrap_or(""),
         )
         .map(SampleValue::Histogram);
     }
@@ -85,4 +92,13 @@ pub(crate) fn range_function_sample_from_series(
         ),
     }?;
     Some(SampleValue::Float(value))
+}
+
+/// Warns that a rate-family window holds both floats and histograms, and drops
+/// the series -- `extrapolatedRate` needs one kind or the other.
+fn warn_mixed_window(series: &RangeSeries) -> Option<SampleValue> {
+    emit_warning(mixed_floats_histograms_warning(
+        series.labels.get("__name__").unwrap_or(""),
+    ));
+    None
 }

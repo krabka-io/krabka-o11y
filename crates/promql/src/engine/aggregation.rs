@@ -1,14 +1,18 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use krabka_blockstore::Labels;
-use krabka_metrics::NativeHistogram;
+use krabka_metrics::{NativeHistogram, ResetHint};
 use promql_parser::parser::{
-    AggregateExpr, Expr, LabelModifier,
+    LabelModifier,
     token::{T_TOPK, TokenType},
 };
 
 use super::{
-    annotations::{emit_warning, invalid_quantile_warning, is_valid_quantile},
+    annotations::{
+        emit_info, emit_warning, histogram_counter_reset_collision_warning,
+        histogram_ignored_in_aggregation_info, invalid_quantile_warning, is_valid_quantile,
+        mixed_floats_histograms_agg_warning,
+    },
     histogram::{add_compatible_native_histogram, scaled_native_histogram},
     labels::{aggregate_labels, float_sample_value, labels_key},
     range_functions::kahan_sum_inc,
@@ -40,9 +44,7 @@ mod tests {
     }
 }
 
-mod aggregate_k;
 mod aggregate_op;
-mod aggregate_quantile;
 mod aggregate_state;
 mod apply_count_values_aggregate;
 mod apply_k_aggregate;
@@ -53,12 +55,11 @@ mod apply_simple_aggregate;
 mod apply_stddev_stdvar_aggregate;
 mod compare_k_aggregate_samples;
 mod count_values_label_value;
+mod counter_reset_hints;
 mod limit_ratio_includes_sample;
 mod prometheus_labels_hash;
 
-pub(super) use aggregate_k::aggregate_k;
 pub(super) use aggregate_op::AggregateOp;
-pub(super) use aggregate_quantile::aggregate_quantile;
 use aggregate_state::AggregateState;
 pub(super) use apply_count_values_aggregate::apply_count_values_aggregate;
 pub(super) use apply_k_aggregate::apply_k_aggregate;
@@ -71,6 +72,7 @@ pub(super) use apply_simple_aggregate::apply_simple_aggregate;
 pub(super) use apply_stddev_stdvar_aggregate::apply_stddev_stdvar_aggregate;
 use compare_k_aggregate_samples::compare_k_aggregate_samples;
 use count_values_label_value::count_values_label_value;
+use counter_reset_hints::CounterResetHints;
 #[cfg(feature = "experimental-functions")]
 use limit_ratio_includes_sample::limit_ratio_includes_sample;
 #[cfg(feature = "experimental-functions")]

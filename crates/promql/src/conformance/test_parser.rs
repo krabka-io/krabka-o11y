@@ -1,10 +1,22 @@
 use super::{
-    ExpectBlock, ExpectDirective, ExpectLine, Line, LoadSeries, Result, SampleSpec, Statement,
-    TestFile, Time, TimeExt, failure_message, is_block_line, load_with_nhcb_series,
+    ExpectBlock, ExpectDirective, ExpectLine, Line, LoadSeries, PromqlError, Result, SampleSpec,
+    Statement, TestFile, Time, TimeExt, failure_message, is_block_line, load_with_nhcb_series,
     parse_duration_ms, parse_error, parse_expect_directive, parse_expect_string,
     parse_range_vector_directive, parse_sample_token, split_metric_and_tail, split_once_whitespace,
     split_sample_tokens,
 };
+
+/// Prefix of a Krabka-only directive. Prometheus reads the line as a comment,
+/// so a corpus file that carries one stays a valid upstream `.test` file.
+const KRABKA_DIRECTIVE: &str = "# krabka:";
+/// Marks the eval case that follows as a known divergence from Prometheus.
+const DIVERGENCE_DIRECTIVE: &str = "# krabka:divergence ";
+/// Marks the eval case that follows as a known divergence in a DEFAULT build,
+/// and an ordinary case under `experimental-functions`. It is how a corpus file
+/// that must run in both builds carries a case that needs an experimental
+/// function.
+const EXPERIMENTAL_DIVERGENCE_DIRECTIVE: &str =
+    "# krabka:divergence-without-experimental-functions ";
 
 pub(crate) struct TestParser<'a> {
     pub(crate) lines: Vec<Line<'a>>,
@@ -18,7 +30,9 @@ impl<'a> TestParser<'a> {
             .enumerate()
             .filter_map(|(index, raw)| {
                 let trimmed = raw.trim();
-                (!trimmed.is_empty() && !trimmed.starts_with('#')).then_some(Line {
+                (!trimmed.is_empty()
+                    && (!trimmed.starts_with('#') || trimmed.starts_with(KRABKA_DIRECTIVE)))
+                .then_some(Line {
                     number: index + 1,
                     raw,
                     trimmed,
@@ -30,8 +44,39 @@ impl<'a> TestParser<'a> {
 
     pub(crate) fn parse_file(&mut self) -> Result<TestFile> {
         let mut statements = Vec::new();
+        let mut divergence = None;
 
         while let Some(line) = self.peek() {
+            let experimental_only = line.trimmed.strip_prefix(EXPERIMENTAL_DIVERGENCE_DIRECTIVE);
+            if let Some(reason) = experimental_only.or_else(|| {
+                line.trimmed
+                    .strip_prefix(DIVERGENCE_DIRECTIVE)
+                    .filter(|_| experimental_only.is_none())
+            }) {
+                self.index += 1;
+                let reason = reason.trim();
+                if reason.is_empty() {
+                    return Err(parse_error(line, "krabka:divergence needs a reason"));
+                }
+                // Under `experimental-functions` the feature-conditional form
+                // marks no divergence at all: the case is expected to pass.
+                if experimental_only.is_some() && cfg!(feature = "experimental-functions") {
+                    continue;
+                }
+                if divergence.replace(reason.to_string()).is_some() {
+                    return Err(parse_error(line, "duplicate krabka:divergence directive"));
+                }
+                continue;
+            }
+            if line.trimmed.starts_with(KRABKA_DIRECTIVE) {
+                return Err(parse_error(line, "unknown krabka directive"));
+            }
+            if divergence.is_some() && !line.trimmed.starts_with("eval") {
+                return Err(parse_error(
+                    line,
+                    "krabka:divergence must precede an eval statement",
+                ));
+            }
             if line.trimmed.starts_with("load ") {
                 statements.push(self.parse_load(false)?);
             } else if line.trimmed.starts_with("load_with_nhcb ") {
@@ -42,17 +87,23 @@ impl<'a> TestParser<'a> {
             } else if line.trimmed.starts_with("eval instant at ")
                 || line.trimmed.starts_with("eval_fail instant at ")
             {
-                statements.push(self.parse_eval_instant()?);
+                statements.push(self.parse_eval_instant(divergence.take())?);
             } else if line.trimmed.starts_with("eval range from ")
                 || line.trimmed.starts_with("eval_fail range from ")
             {
-                statements.push(self.parse_eval_range()?);
+                statements.push(self.parse_eval_range(divergence.take())?);
             } else {
                 return Err(parse_error(
                     line,
                     "expected load, eval, eval_fail, or clear",
                 ));
             }
+        }
+
+        if let Some(reason) = divergence {
+            return Err(PromqlError::Parse(format!(
+                "krabka:divergence `{reason}` has no eval statement after it"
+            )));
         }
 
         Ok(TestFile { statements })
@@ -100,7 +151,7 @@ impl<'a> TestParser<'a> {
         Ok(Statement::Load { step, series })
     }
 
-    pub(crate) fn parse_eval_instant(&mut self) -> Result<Statement> {
+    pub(crate) fn parse_eval_instant(&mut self, divergence: Option<String>) -> Result<Statement> {
         let header = self.next().expect("peeked header");
         let (fail, rest) = if let Some(rest) = header.trimmed.strip_prefix("eval_fail instant at ")
         {
@@ -138,10 +189,11 @@ impl<'a> TestParser<'a> {
             ordered,
             range_expect: range,
             fail_message: failure_message(fail, expect_fail_message),
+            divergence,
         })
     }
 
-    pub(crate) fn parse_eval_range(&mut self) -> Result<Statement> {
+    pub(crate) fn parse_eval_range(&mut self, divergence: Option<String>) -> Result<Statement> {
         let header = self.next().expect("peeked header");
         let (fail, rest) = if let Some(rest) = header.trimmed.strip_prefix("eval_fail range from ")
         {
@@ -190,6 +242,7 @@ impl<'a> TestParser<'a> {
             expect,
             annotations,
             fail_message: failure_message(fail, expect_fail_message),
+            divergence,
         })
     }
 

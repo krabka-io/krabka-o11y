@@ -1,25 +1,17 @@
-use super::{IrateFn, ToPrimitive};
+use super::IrateFn;
 
-// Prometheus computes instant rate deltas in f64 seconds; timestamp deltas
-// intentionally enter that float domain here.
-pub(crate) fn instant_delta(timestamps: &[i64], values: &[f64], kind: IrateFn) -> Option<f64> {
-    let n = timestamps.len();
-    if n < 2 || values.len() != n {
-        return None;
-    }
-    let previous = values[n - 2];
-    let last = values[n - 1];
+/// Folds the last two float samples of a window into `irate` or `idelta`.
+///
+/// `irate` reads a fall in value as a counter reset and takes the newer sample
+/// whole, then divides by the interval between the two. `idelta` is meant for
+/// gauges, so it reports the signed difference as it stands.
+pub(crate) fn instant_delta(previous: f64, last: f64, interval_secs: f64, kind: IrateFn) -> f64 {
     let mut result = last - previous;
-    if matches!(kind, IrateFn::Irate) && result < 0.0 {
-        result = last;
-    }
-
     if matches!(kind, IrateFn::Irate) {
-        let interval = (timestamps[n - 1] - timestamps[n - 2]).to_f64()? / 1000.0;
-        if interval <= 0.0 {
-            return None;
+        if result < 0.0 {
+            result = last;
         }
-        result /= interval;
+        result /= interval_secs;
     }
-    Some(result)
+    result
 }
