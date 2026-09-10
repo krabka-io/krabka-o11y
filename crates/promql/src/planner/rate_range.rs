@@ -31,7 +31,6 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::{
-    catalog::MemTable,
     execution::FunctionRegistry,
     logical_expr::{Expr, Extension, LogicalPlan, LogicalPlanBuilder, col, lit},
     prelude::SessionContext,
@@ -39,7 +38,7 @@ use datafusion::{
 use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_units::prelude::*;
 
-use super::LabeledSeries;
+use super::{LabeledSeries, StepGrid, leaf::leaf_scan};
 use crate::{
     PromqlError,
     error::Result,
@@ -92,9 +91,14 @@ mod tests {
                 (240_000, 4.0),
             ],
         )];
-        let plan = plan_rate_range_selector(samples, 300_000, millis(300_000), RateUdfKind::Rate)
-            .await
-            .unwrap();
+        let plan = plan_rate_range_selector(
+            samples,
+            StepGrid::instant(300_000, 300_000),
+            millis(300_000),
+            RateUdfKind::Rate,
+        )
+        .await
+        .unwrap();
         let batches = plan
             .ctx
             .execute_logical_plan(plan.plan)
@@ -131,10 +135,14 @@ mod tests {
     #[tokio::test]
     async fn increase_range_plan_corrects_reset() {
         let samples = vec![labeled("a", &[(0, 1.0), (60_000, 2.0), (120_000, 1.0)])];
-        let plan =
-            plan_rate_range_selector(samples, 120_000, millis(120_000), RateUdfKind::Increase)
-                .await
-                .unwrap();
+        let plan = plan_rate_range_selector(
+            samples,
+            StepGrid::instant(120_000, 120_000),
+            millis(120_000),
+            RateUdfKind::Increase,
+        )
+        .await
+        .unwrap();
         let batches = plan
             .ctx
             .execute_logical_plan(plan.plan)
@@ -160,9 +168,14 @@ mod tests {
         use arrow::array::Array;
 
         let samples = vec![labeled("a", &[(60_000, 1.0)])];
-        let plan = plan_rate_range_selector(samples, 60_000, millis(60_000), RateUdfKind::Rate)
-            .await
-            .unwrap();
+        let plan = plan_rate_range_selector(
+            samples,
+            StepGrid::instant(60_000, 60_000),
+            millis(60_000),
+            RateUdfKind::Rate,
+        )
+        .await
+        .unwrap();
         let batches = plan
             .ctx
             .execute_logical_plan(plan.plan)

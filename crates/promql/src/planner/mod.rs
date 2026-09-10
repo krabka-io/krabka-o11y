@@ -30,6 +30,37 @@ mod tests {
     use crate::PromqlError;
 
     #[test]
+    fn a_step_grid_places_only_its_own_instants() {
+        let grid = StepGrid {
+            start: 1_000,
+            end: 4_000,
+            step: 1_000,
+        };
+
+        assert2::assert!(grid.point_count() == 4);
+        assert2::assert!(grid.index_of(1_000) == Some(0));
+        assert2::assert!(grid.index_of(4_000) == Some(3));
+        // Between two instants, and outside the bounds on either side: the
+        // range driver's leaf memo must miss on all three, so a subquery's
+        // sub-step falls through to a plan of its own.
+        assert2::assert!(grid.index_of(1_500) == None);
+        assert2::assert!(grid.index_of(999) == None);
+        assert2::assert!(grid.index_of(4_001) == None);
+    }
+
+    #[test]
+    fn a_one_point_step_grid_holds_exactly_its_instant() {
+        let grid = StepGrid::instant(7_000, 0);
+
+        // A zero stride is raised to one, so the operators keep their
+        // positive-stride invariant.
+        assert2::assert!(grid.step == 1);
+        assert2::assert!(grid.point_count() == 1);
+        assert2::assert!(grid.index_of(7_000) == Some(0));
+        assert2::assert!(grid.index_of(7_001) == None);
+    }
+
+    #[test]
     fn parse_promql_wraps_parser_success() {
         let expr = parse_promql("up").unwrap();
 
@@ -141,6 +172,7 @@ mod parse_promql_with_duration_context;
 mod seconds_to_duration_literal;
 mod skip_ws;
 mod starts_offset_keyword;
+mod step_grid;
 mod strip_extended_selector_modifiers;
 mod timed_value;
 mod top_level_colon;
@@ -169,6 +201,7 @@ pub use parse_promql_with_duration_context::parse_promql_with_duration_context;
 use seconds_to_duration_literal::seconds_to_duration_literal;
 use skip_ws::skip_ws;
 use starts_offset_keyword::starts_offset_keyword;
+pub use step_grid::StepGrid;
 use strip_extended_selector_modifiers::strip_extended_selector_modifiers;
 pub use timed_value::TimedValue;
 use top_level_colon::top_level_colon;

@@ -7,8 +7,8 @@
 //! `value` column. The `MetricStore::scan` seam returns fingerprint, timestamp,
 //! and value rows with no label columns. This module fills that gap: it
 //! materializes the labels of the matched series, keyed by fingerprint, into
-//! label columns beside the samples. It then registers the result as an
-//! in-memory leaf table and assembles the
+//! label columns beside the samples. It then wraps the result in a catalog-free
+//! in-memory `TableScan` (see [`leaf_scan`]) and assembles the
 //! `SeriesDivide -> SeriesNormalize -> InstantManipulate` chain that selects one
 //! sample per series inside the lookback window.
 
@@ -21,13 +21,14 @@ use arrow::{
 };
 use datafusion::{
     catalog::MemTable,
-    logical_expr::{Extension, LogicalPlan},
+    datasource::provider_as_source,
+    logical_expr::{Extension, LogicalPlan, LogicalPlanBuilder},
     prelude::SessionContext,
 };
 use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_units::prelude::*;
 
-use super::LabeledSeries;
+use super::{LabeledSeries, StepGrid};
 use crate::{
     PromqlError,
     error::Result,
@@ -39,6 +40,7 @@ use crate::{
 
 mod build_leaf_batch;
 mod instant_selector_plan;
+mod leaf_scan;
 mod leaf_schema;
 mod plan_instant_vector_selector;
 mod sample_time_column;
@@ -47,6 +49,7 @@ mod value_column;
 
 use build_leaf_batch::build_leaf_batch;
 pub use instant_selector_plan::InstantSelectorPlan;
+pub(crate) use leaf_scan::leaf_scan;
 use leaf_schema::leaf_schema;
 pub use plan_instant_vector_selector::plan_instant_vector_selector;
 pub use sample_time_column::SAMPLE_TIME_COLUMN;

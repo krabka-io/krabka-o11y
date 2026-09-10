@@ -10,6 +10,7 @@ use crate::{
     error::Result,
     functions::OverTimeFamily,
     planner::{
+        StepGrid,
         leaf::{InstantSelectorPlan, plan_instant_vector_selector},
         over_time_range::{OverTimeRangePlan, plan_over_time_range_selector},
         rate_range::{RateRangePlan, RateUdfKind, plan_rate_range_selector},
@@ -30,6 +31,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         selector: &VectorSelector,
         time_ms: i64,
     ) -> Result<PlannedInstant> {
+        // Inside a range query this leaf is planned once over the whole step
+        // grid and every step reads the memo. The memoized value at `time_ms` is
+        // what this method would have computed for that one step, so the caller
+        // sees no difference beyond the plan it no longer builds.
+        if let Some(samples) = self.grid_selector_vector(tenant, selector, time_ms).await? {
+            return Ok(PlannedInstant::Precomputed(samples));
+        }
         // `@ start()`/`@ end()` resolve to the active range query's bounds (when
         // present in a range query); for an instant query the bounds are absent and
         // a bare `@ start()`/`@ end()` raises the same hard error the interpreter
@@ -56,7 +64,12 @@ impl<S: MetricStore> PromqlEngine<S> {
             ctx,
             plan,
             labels_by_fp,
-        } = plan_instant_vector_selector(samples, eval_time_ms, self.opts.lookback_delta).await?;
+        } = plan_instant_vector_selector(
+            samples,
+            StepGrid::instant(eval_time_ms, self.opts.lookback_delta.millis_i64()),
+            self.opts.lookback_delta,
+        )
+        .await?;
         Ok(PlannedInstant::operator(
             ctx,
             plan,
@@ -133,6 +146,14 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         kind: RateUdfKind,
     ) -> Result<PlannedInstant> {
+        // Inside a range query this leaf is planned once over the whole step
+        // grid; see `plan_instant_selector`.
+        if let Some(samples) = self
+            .grid_rate_vector(tenant, selector, time_ms, kind)
+            .await?
+        {
+            return Ok(PlannedInstant::Precomputed(samples));
+        }
         let range = selector_duration(selector.range)?;
         let eval_end_ms = apply_selector_time_modifier(
             time_ms,
@@ -153,7 +174,13 @@ impl<S: MetricStore> PromqlEngine<S> {
             ctx,
             plan,
             labels_by_fp,
-        } = plan_rate_range_selector(samples, eval_end_ms, range, kind).await?;
+        } = plan_rate_range_selector(
+            samples,
+            StepGrid::instant(eval_end_ms, range.millis_i64()),
+            range,
+            kind,
+        )
+        .await?;
         Ok(PlannedInstant::operator(
             ctx,
             plan,
@@ -177,6 +204,14 @@ impl<S: MetricStore> PromqlEngine<S> {
         family: OverTimeFamily,
         phi: f64,
     ) -> Result<PlannedInstant> {
+        // Inside a range query this leaf is planned once over the whole step
+        // grid; see `plan_instant_selector`.
+        if let Some(samples) = self
+            .grid_over_time_vector(tenant, selector, time_ms, family, phi)
+            .await?
+        {
+            return Ok(PlannedInstant::Precomputed(samples));
+        }
         let range = selector_duration(selector.range)?;
         let eval_end_ms = apply_selector_time_modifier(
             time_ms,
@@ -197,7 +232,14 @@ impl<S: MetricStore> PromqlEngine<S> {
             ctx,
             plan,
             labels_by_fp,
-        } = plan_over_time_range_selector(samples, eval_end_ms, range, family, phi).await?;
+        } = plan_over_time_range_selector(
+            samples,
+            StepGrid::instant(eval_end_ms, range.millis_i64()),
+            range,
+            family,
+            phi,
+        )
+        .await?;
         Ok(PlannedInstant::operator(
             ctx,
             plan,
