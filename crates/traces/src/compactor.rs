@@ -603,6 +603,88 @@ mod tests {
             check!(index.tag_values("tenant", tag, 0, 2_000) == vec![want.to_string()]);
         }
     }
+
+
+    /// The declared trace order is `[trace_id, start_unix_nano]`, so two
+    /// sibling spans starting on the same nanosecond are rows the key cannot
+    /// separate -- and their row order is exactly what `recompute_nested_sets`
+    /// numbers them in. A merge that let the run holding a trace's earlier
+    /// rows carry on through the tie would renumber the pair against what the
+    /// pre-compaction blocks showed, a difference `/api/traces` hands straight
+    /// to Grafana. The tie belongs to the earliest input block, as it does
+    /// anywhere else the declared key runs out.
+    #[tokio::test]
+    async fn sibling_spans_tied_on_the_sort_key_keep_their_block_order_through_a_compaction() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let write = |key: &'static str, spans: Vec<Span>| {
+            let writer = &writer;
+            async move {
+                let batch = span_batch(&spans).expect("the spans form a batch");
+                writer
+                    .write_block_with_decl(
+                        "tenant",
+                        key,
+                        span_block_schema(),
+                        &[batch],
+                        &span_block_decl(),
+                        SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+                    )
+                    .await
+                    .expect("the block is written");
+            }
+        };
+
+        write(
+            "tied-a.parquet",
+            vec![mk_span([4; 8], Some([2; 8]), 2_000, 10, "a", "api")],
+        )
+        .await;
+        // The second block also holds the root, whose earlier start makes it
+        // the run the merge picks first -- the shape in which a merge can
+        // over-run a tie it did not win.
+        write(
+            "tied-b.parquet",
+            vec![
+                mk_span([2; 8], None, 1_000, 100, "GET /", "api"),
+                mk_span([3; 8], Some([2; 8]), 2_000, 10, "b", "api"),
+            ],
+        )
+        .await;
+
+        let mut index = TraceIndex::new();
+        compact_block_keys(
+            store.clone(),
+            &writer,
+            &mut index,
+            "tenant",
+            &["tied-a.parquet".to_string(), "tied-b.parquet".to_string()],
+            "tied.parquet",
+        )
+        .await
+        .expect("the blocks compact");
+
+        let batches = read_block(store, "tied.parquet")
+            .await
+            .expect("the block reads");
+        let tied = &batches[0];
+        let span_ids = fixed_column(tied, SCOL_SPAN_ID, 8).expect("the column is present");
+        let left = tied
+            .column_by_name(SCOL_NESTED_SET_LEFT)
+            .expect("the column is present")
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .expect("the column is i32");
+        let numbering = (0..tied.num_rows())
+            .map(|row| (span_ids.value(row)[0], left.value(row)))
+            .collect::<Vec<_>>();
+
+        check!(
+            numbering == vec![(2, 1), (4, 2), (3, 4)],
+            "the root, then the tied sibling from the earlier block, then the later block's"
+        );
+    }
+
 }
 
 mod attr_value;
