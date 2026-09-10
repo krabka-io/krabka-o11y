@@ -17,11 +17,11 @@ use tracing::instrument;
 use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
-    error::{BlockStoreError, Result},
+    error::Result,
     index::Index,
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, latest_index_snapshot_path,
-        put_index_snapshot,
+        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockRemovals,
+        latest_index_snapshot_path, put_index_snapshot, read_index_snapshot_bytes,
     },
     labels::{Labels, SeriesFingerprint},
     matcher::LabelMatcher,
@@ -33,6 +33,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        error::BlockStoreError,
         labels::Labels,
         matcher::{LabelMatcher, MatchOp},
     };
@@ -54,6 +55,16 @@ mod tests {
             ("__profile_type__", profile_type),
             ("service_name", service_name),
         ])
+    }
+
+    fn block_keys(index: &ProfileIndex) -> Vec<String> {
+        let mut keys: Vec<String> = index
+            .all_blocks()
+            .into_iter()
+            .map(|meta| meta.object_key)
+            .collect();
+        keys.sort();
+        keys
     }
 
     fn seed() -> ProfileIndex {
@@ -536,6 +547,107 @@ mod tests {
             ProfileIndex::load_latest_snapshot_with_max_bytes(&store, "index/profiles.json", cap)
                 .await;
         assert2::assert!(matches!(got, Err(BlockStoreError::InvalidBlock(_))));
+    }
+
+    /// A profiles block builder publishes its own blocks without erasing
+    /// anyone else's, even when it starts from an empty index.
+    #[tokio::test]
+    async fn snapshot_writes_merge_into_the_newest_generation() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (published, ..) = seed_with_blocks();
+        published
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let mut fresh = ProfileIndex::new();
+        let shipping = profile_labels("process_cpu", CPU_TYPE, "shipping");
+        let shipping_fp = shipping.fingerprint();
+        fresh.add_series("t", shipping_fp, &shipping);
+        <ProfileIndex as BlockIndex>::add_block(
+            &mut fresh,
+            &BlockMeta {
+                tenant: "t".to_string(),
+                object_key: "cpu-shipping.parquet".to_string(),
+                min_ts: 100,
+                max_ts: 199,
+                row_count: 5,
+                fingerprints: vec![shipping_fp],
+            },
+        );
+        fresh.add_profile_block("t", "cpu-shipping.parquet", vec![7]);
+        fresh
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        check!(
+            block_keys(&loaded)
+                == strings(&[
+                    "cpu-checkout.parquet",
+                    "cpu-payments.parquet",
+                    "cpu-shipping.parquet",
+                    "heap-checkout.parquet",
+                ])
+        );
+        check!(loaded.stacktrace_partitions("cpu-shipping.parquet") == vec![7]);
+        check!(
+            loaded.label_values("t", "service_name")
+                == strings(&["checkout", "payments", "shipping"])
+        );
+        check!(loaded.profile_types("t") == strings(&[HEAP_TYPE, CPU_TYPE]));
+    }
+
+    /// The merge is a union, so a compaction swap has to be replayed against
+    /// the merge base. Otherwise every snapshot write would resurrect the
+    /// blocks the compactor just replaced.
+    #[tokio::test]
+    async fn compaction_removals_are_not_resurrected_by_the_merge() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (mut index, cpu_checkout_fp, heap_checkout_fp, _) = seed_with_blocks();
+        index.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        index.replace_profile_blocks(
+            "t",
+            &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
+            &[(
+                BlockMeta {
+                    tenant: "t".to_string(),
+                    object_key: "compacted.parquet".to_string(),
+                    min_ts: 100,
+                    max_ts: 399,
+                    row_count: 30,
+                    fingerprints: vec![cpu_checkout_fp, heap_checkout_fp],
+                },
+                vec![9],
+            )],
+        );
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        check!(block_keys(&loaded) == strings(&["compacted.parquet", "cpu-payments.parquet"]));
+        check!(
+            loaded
+                .stacktrace_partitions("cpu-checkout.parquet")
+                .is_empty()
+        );
+        check!(loaded.stacktrace_partitions("compacted.parquet") == vec![9]);
     }
 
     #[tokio::test]

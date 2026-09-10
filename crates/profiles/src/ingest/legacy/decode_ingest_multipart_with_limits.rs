@@ -67,64 +67,82 @@ pub async fn decode_ingest_multipart_with_limits(
         .as_ref()
         .and_then(|config| config.cumulative)
         .is_some_and(|cumulative| !cumulative);
-    let profile = match query.format {
+    // As on the plain-body path: a pprof or a JFR recording carries its own
+    // sample types, and the stack formats are all read as CPU profiles.
+    let (profile, metric_name) = match query.format {
         IngestFormat::Pprof => {
             let raw = pprof_bytes.ok_or_else(|| {
                 ProfilesError::Invalid("missing multipart `profile` part".to_string())
             })?;
-            let profile = PprofProfile::decode(&raw)?;
-            if let Some(config) = &sample_type_config {
+            let profile = PprofProfile::decode(&maybe_gunzip(&raw, max)?)?;
+            let profile = if let Some(config) = &sample_type_config {
                 apply_sample_type_config(profile, config)
             } else {
                 profile
-            }
+            };
+            let metric_name = pprof_metric_name(&profile).ok_or_else(|| {
+                ProfilesError::Decode("pprof profile declares no sample_type".to_string())
+            })?;
+            (profile, metric_name)
         }
         IngestFormat::Groups => {
             let raw = folded_bytes.ok_or_else(|| {
                 ProfilesError::Invalid("missing multipart folded `profile` part".to_string())
             })?;
-            folded_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&raw))?
+            legacy_cpu_profile(
+                folded_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&raw))?,
+                query,
+            )
         }
         IngestFormat::Lines => {
             let raw = folded_bytes.ok_or_else(|| {
                 ProfilesError::Invalid("missing multipart lines `profile` part".to_string())
             })?;
-            lines_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&raw))?
+            legacy_cpu_profile(
+                lines_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&raw))?,
+                query,
+            )
         }
         IngestFormat::Tree => {
             let raw = folded_bytes.ok_or_else(|| {
                 ProfilesError::Invalid("missing multipart tree `profile` part".to_string())
             })?;
-            tree_to_pprof(&query.name, &query.units, &raw, limits)?
+            legacy_cpu_profile(
+                tree_to_pprof(&query.name, &query.units, &raw, limits)?,
+                query,
+            )
         }
         IngestFormat::Trie => {
             let raw = folded_bytes.ok_or_else(|| {
                 ProfilesError::Invalid("missing multipart trie `profile` part".to_string())
             })?;
-            trie_to_pprof(&query.name, &query.units, &raw, limits)?
+            legacy_cpu_profile(
+                trie_to_pprof(&query.name, &query.units, &raw, limits)?,
+                query,
+            )
         }
         IngestFormat::Speedscope => {
             let raw = folded_bytes.ok_or_else(|| {
                 ProfilesError::Invalid("missing multipart speedscope `profile` part".to_string())
             })?;
-            speedscope_to_pprof(&query.name, &query.units, &raw)?
+            legacy_cpu_profile(speedscope_to_pprof(&query.name, &query.units, &raw)?, query)
         }
         IngestFormat::Jfr => {
             let raw = jfr_bytes.ok_or_else(|| {
                 ProfilesError::Invalid("missing multipart `jfr` part".to_string())
             })?;
-            jfr_to_pprof(&query.name, &raw)?
+            let profile =
+                apply_query_sample_rate(jfr_to_pprof(&query.name, &raw)?, query.sample_rate);
+            let metric_name = pprof_metric_name(&profile).ok_or_else(|| {
+                ProfilesError::Decode("JFR profile declares no sample_type".to_string())
+            })?;
+            (profile, metric_name)
         }
-    };
-    let profile = if query.format == IngestFormat::Pprof {
-        profile
-    } else {
-        apply_query_sample_rate(profile, query.sample_rate)
     };
     let profile = apply_query_time(profile, query)?;
 
     Ok(RawProfile {
-        labels: query_labels(query, multipart_labels),
+        labels: query_labels(query, &metric_name, multipart_labels),
         profile,
         delta,
         sample_timestamps_ns: Vec::new(),

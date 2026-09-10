@@ -7,7 +7,10 @@ use krabka_pprof::PprofProfile;
 use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 use serde::Deserialize;
 
-use crate::{error::ProfilesError, ingest::RawProfile};
+use crate::{
+    error::ProfilesError,
+    ingest::{RawProfile, gunzip},
+};
 
 #[cfg(test)]
 mod tests {
@@ -528,10 +531,12 @@ mod tests {
         let raw = decode("jfr", "jfr").unwrap();
         check!(raw.labels.get("service_name") == Some("payments"));
 
-        // The same part under a format that has no labels concept.
+        // The same part under a format that has no labels concept. The door
+        // still names the series after the `?name=` application, as Pyroscope
+        // does, so the check is that the part did not override that.
         let raw = decode("groups", "profile").unwrap();
         check!(
-            raw.labels.get("service_name") == None,
+            raw.labels.get("service_name") == Some("app"),
             "labels: {:?}",
             raw.labels
         );
@@ -703,7 +708,10 @@ mod tests {
         .await
         .unwrap();
 
-        check!(raw.labels.get("__name__") == Some("myapp"));
+        // A pprof brings its own sample types, so the metric name follows
+        // them rather than the `?name=` application, which stays the service.
+        check!(raw.labels.get("__name__") == Some("process_cpu"));
+        check!(raw.labels.get("service_name") == Some("myapp"));
         check!(raw.labels.get("env") == Some("prod"));
         check!(raw.profile.sample_types()[0].0 == "cpu");
         check!(raw.profile.inner().period == original_period);
@@ -740,7 +748,7 @@ mod tests {
             raw.profile.period_type_strings() == ("wall".to_string(), "nanoseconds".to_string())
         );
         let split = crate::ingest::split_sample_types(&raw).unwrap();
-        assert!(split[0].profile_type == "myapp:wall:nanoseconds:wall:nanoseconds:delta");
+        assert!(split[0].profile_type == "wall:wall:nanoseconds:wall:nanoseconds:delta");
     }
 
     #[test]
@@ -773,13 +781,21 @@ mod tests {
         .await
         .unwrap();
 
-        check!(raw.labels.get("__name__") == Some("myapp"));
-        check!(raw.profile.sample_types()[0] == ("samples".to_string(), "count".to_string()));
+        // Pyroscope reads a folded upload as its default CPU profile and
+        // keeps `?name=` as the service, so the metric name is fixed.
+        check!(raw.labels.get("__name__") == Some("process_cpu"));
+        check!(raw.labels.get("service_name") == Some("myapp"));
+        check!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
         check!(raw.profile.samples().len() == 2);
     }
 
+    /// `?units=` names the unit of a stack format's counts, and Pyroscope
+    /// ignores it: every stack upload becomes a CPU profile in nanoseconds
+    /// whatever the parameter says. Observed against `grafana/pyroscope:2.2.1`,
+    /// which answers a folded upload sent with `units=bytes` with
+    /// `process_cpu:cpu:nanoseconds:cpu:nanoseconds`.
     #[tokio::test]
-    async fn decode_multipart_folded_groups_applies_query_units() {
+    async fn decode_multipart_folded_groups_ignores_query_units() {
         let query = parse_ingest_query("name=myapp&units=bytes").unwrap();
         let boundary = "test-boundary";
         let folded = "main;work 7\n";
@@ -799,7 +815,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(raw.profile.sample_types()[0] == ("samples".to_string(), "bytes".to_string()));
+        assert!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
     }
 
     #[tokio::test]
@@ -826,9 +842,11 @@ mod tests {
             .collect::<Vec<_>>();
         values.sort_unstable();
 
-        assert!(raw.profile.sample_types()[0] == ("samples".to_string(), "samples".to_string()));
+        // One count at 250 Hz stands for 4ms, and Pyroscope stores that time
+        // rather than the count, so the three `main;work` lines are 12ms.
+        assert!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
         assert!(raw.profile.inner().period == 4_000_000);
-        assert!(values == vec![1, 3]);
+        assert!(values == vec![4_000_000, 12_000_000]);
     }
 
     #[tokio::test]
@@ -872,8 +890,8 @@ mod tests {
             .collect::<Vec<_>>();
         values.sort_unstable();
 
-        assert!(raw.profile.sample_types()[0] == ("samples".to_string(), "samples".to_string()));
-        assert!(values == vec![4, 5]);
+        assert!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
+        assert!(values == vec![40_000_000, 50_000_000]);
     }
 
     #[tokio::test]
@@ -902,8 +920,8 @@ mod tests {
             .filter_map(|function| raw.profile.string(function.name))
             .collect::<Vec<_>>();
 
-        check!(raw.profile.sample_types()[0] == ("samples".to_string(), "samples".to_string()));
-        check!(values == vec![1, 2]);
+        check!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
+        check!(values == vec![10_000_000, 20_000_000]);
         for function in ["a", "b", "c"] {
             check!(functions.contains(&function));
         }
@@ -935,8 +953,8 @@ mod tests {
             .filter_map(|function| raw.profile.string(function.name))
             .collect::<Vec<_>>();
 
-        check!(raw.profile.sample_types()[0] == ("samples".to_string(), "samples".to_string()));
-        check!(values == vec![1, 2]);
+        check!(raw.profile.sample_types()[0] == ("cpu".to_string(), "nanoseconds".to_string()));
+        check!(values == vec![10_000_000, 20_000_000]);
         for function in ["a", "b", "c"] {
             check!(functions.contains(&function));
         }
@@ -996,8 +1014,11 @@ mod tests {
         .await
         .unwrap();
 
+        // A `labels` part overrides the service the `?name=` application would
+        // otherwise give, and the metric name comes from the decoded sample
+        // type rather than from the application.
         for (name, value) in [
-            ("__name__", "myapp"),
+            ("__name__", "process_cpu"),
             ("service_name", "payments"),
             ("region", "us-east"),
         ] {
@@ -1166,6 +1187,7 @@ mod decode_ingest_body;
 mod decode_ingest_body_with_limits;
 mod decode_ingest_multipart;
 mod decode_ingest_multipart_with_limits;
+mod default_spy_name;
 mod folded_to_pprof;
 mod ingest_format;
 mod ingest_query;
@@ -1173,12 +1195,16 @@ mod intern_profile_string;
 mod intern_string;
 mod jfr_method_name;
 mod jfr_to_pprof;
+mod legacy_cpu_mapping;
+mod legacy_cpu_profile;
 mod legacy_decode_limits;
 mod lines_to_pprof;
+mod maybe_gunzip;
 mod parse_ingest_query;
 mod parse_labels_part;
 mod parse_sample_type_config;
 mod parse_unix_time_ms;
+mod pprof_metric_name;
 mod query_labels;
 mod read_tree_varint;
 mod sample_type_config;
@@ -1198,6 +1224,7 @@ pub use decode_ingest_body::decode_ingest_body;
 pub use decode_ingest_body_with_limits::decode_ingest_body_with_limits;
 pub use decode_ingest_multipart::decode_ingest_multipart;
 pub use decode_ingest_multipart_with_limits::decode_ingest_multipart_with_limits;
+use default_spy_name::DEFAULT_SPY_NAME;
 use folded_to_pprof::folded_to_pprof;
 pub use ingest_format::IngestFormat;
 pub use ingest_query::IngestQuery;
@@ -1205,12 +1232,16 @@ use intern_profile_string::intern_profile_string;
 use intern_string::intern_string;
 use jfr_method_name::jfr_method_name;
 use jfr_to_pprof::jfr_to_pprof;
+use legacy_cpu_mapping::{LEGACY_CPU_METRIC_NAME, apply_legacy_cpu_mapping};
+use legacy_cpu_profile::legacy_cpu_profile;
 pub use legacy_decode_limits::LegacyDecodeLimits;
 use lines_to_pprof::lines_to_pprof;
+use maybe_gunzip::maybe_gunzip;
 pub use parse_ingest_query::parse_ingest_query;
 use parse_labels_part::parse_labels_part;
 use parse_sample_type_config::parse_sample_type_config;
 use parse_unix_time_ms::parse_unix_time_ms;
+use pprof_metric_name::pprof_metric_name;
 use query_labels::query_labels;
 use read_tree_varint::read_tree_varint;
 use sample_type_config::SampleTypeConfig;

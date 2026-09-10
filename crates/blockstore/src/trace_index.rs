@@ -16,8 +16,8 @@ use crate::{
     bloom::ShardedTraceBloom,
     error::{BlockStoreError, Result},
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, latest_index_snapshot_path,
-        put_index_snapshot,
+        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockRemovals,
+        latest_index_snapshot_path, put_index_snapshot, read_index_snapshot_bytes,
     },
 };
 
@@ -64,6 +64,20 @@ mod tests {
             tag_names,
             tag_values,
         }
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn block_keys(index: &TraceIndex) -> Vec<String> {
+        let mut keys: Vec<String> = index
+            .trace_blocks("t")
+            .iter()
+            .map(|block| block.object_key.clone())
+            .collect();
+        keys.sort();
+        keys
     }
 
     fn seed() -> TraceIndex {
@@ -369,6 +383,112 @@ mod tests {
         let got =
             TraceIndex::load_latest_snapshot_with_max_bytes(&store, "index/traces.json", cap).await;
         assert2::assert!(matches!(got, Err(BlockStoreError::InvalidBlock(_))));
+    }
+
+    #[tokio::test]
+    async fn snapshot_generations_advance_one_key_at_a_time() {
+        use object_store::{ObjectStore, memory::InMemory};
+
+        let idx = seed();
+        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+
+        let mut keys = Vec::new();
+        for _ in 0..3 {
+            keys.push(
+                idx.save_latest_snapshot(&store, "index/traces.json")
+                    .await
+                    .unwrap(),
+            );
+        }
+
+        // Zero-padded generations, so the lexicographic last entry of a listing
+        // is the numerically newest snapshot, which is what the loader assumes.
+        check!(
+            keys == vec![
+                "index/traces/snapshots/00000000000000000000.json".to_string(),
+                "index/traces/snapshots/00000000000000000001.json".to_string(),
+                "index/traces/snapshots/00000000000000000002.json".to_string(),
+            ]
+        );
+    }
+
+    /// A writer publishes its own blocks without erasing anyone else's, even
+    /// when it starts from an empty index, which is what a fresh replica and a
+    /// restarted one both do before their first load lands.
+    #[tokio::test]
+    async fn snapshot_writes_merge_into_the_newest_generation() {
+        use object_store::{ObjectStore, memory::InMemory};
+
+        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+
+        let mut first = TraceIndex::new();
+        first.add_trace_block("t", stats("b1", 0, 100, &[1], &[("service.name", "api")]));
+        first
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        let mut second = TraceIndex::new();
+        second.add_trace_block("t", stats("b2", 200, 300, &[3], &[("service.name", "web")]));
+        second
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        check!(block_keys(&loaded) == vec!["b1".to_string(), "b2".to_string()]);
+        check!(loaded.tag_values("t", "service.name", 0, 1_000) == strings(&["api", "web"]));
+
+        // Re-saving the same writer's view republishes the same set, rather
+        // than duplicating its own blocks.
+        second
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        check!(block_keys(&loaded) == vec!["b1".to_string(), "b2".to_string()]);
+    }
+
+    /// The merge is a union, so a compaction swap has to be replayed against
+    /// the merge base. Otherwise every snapshot write would resurrect the
+    /// blocks the compactor just replaced.
+    #[tokio::test]
+    async fn compaction_removals_are_not_resurrected_by_the_merge() {
+        use object_store::{ObjectStore, memory::InMemory};
+
+        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+        let mut idx = seed();
+        idx.save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        idx.replace_trace_blocks(
+            "t",
+            &strings(&["b1", "b2"]),
+            stats("c1", 0, 300, &[1, 2, 3], &[]),
+        );
+        idx.save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        check!(block_keys(&loaded) == vec!["c1".to_string()]);
+
+        // The removal is durable now, so the next write need not replay it and
+        // must not undo it either.
+        idx.save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        check!(block_keys(&loaded) == vec!["c1".to_string()]);
     }
 
     #[tokio::test]

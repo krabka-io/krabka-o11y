@@ -2797,3 +2797,641 @@ async fn proxy_render(client: &reqwest::Client, query: &GrafanaQuery<'_>) -> Opt
     }
     response.json().await.ok()
 }
+
+// -- Legacy `/ingest` differential ----------------------------------------
+
+/// One upload through the legacy `/ingest` door, sent byte for byte to both
+/// backends.
+struct LegacyIngestCase {
+    /// The `?name=` application, unique per case so the series never collide.
+    app: &'static str,
+    format: &'static str,
+    content_type: &'static str,
+    /// The profile type the upload is expected to land as, in both backends.
+    profile_type: &'static str,
+    body: Vec<u8>,
+}
+
+/// The stack formats all describe the same two-frame profile: 100 counts of
+/// `main.hotloop` under `main.work`, and 40 of `main.work` on its own. Sending
+/// one shape through four encodings makes a decoder that drops a frame or
+/// mis-sums a value visible as a difference from Pyroscope rather than as a
+/// difference between the cases.
+fn legacy_ingest_cases(goroutine_pprof: &[u8]) -> Vec<LegacyIngestCase> {
+    vec![
+        LegacyIngestCase {
+            app: "krabkadifffolded",
+            format: "groups",
+            content_type: "text/plain",
+            profile_type: CPU_PROFILE_TYPE,
+            body: b"main.work;main.hotloop 100\nmain.work 40\n".to_vec(),
+        },
+        LegacyIngestCase {
+            app: "krabkadifflines",
+            format: "lines",
+            content_type: "text/plain",
+            profile_type: CPU_PROFILE_TYPE,
+            // One line per sample, so the same shape needs 140 of them.
+            body: lines_body(),
+        },
+        LegacyIngestCase {
+            app: "krabkadifftrie",
+            format: "trie",
+            content_type: "application/octet-stream",
+            profile_type: CPU_PROFILE_TYPE,
+            // A trie node's key is its parent's key plus this suffix, so the
+            // leaf carries only `;main.hotloop`.
+            body: stack_node(
+                b"",
+                0,
+                &[stack_node(
+                    b"main.work",
+                    40,
+                    &[stack_node(b";main.hotloop", 100, &[])],
+                )],
+            ),
+        },
+        LegacyIngestCase {
+            app: "krabkadifftree",
+            format: "tree",
+            content_type: "application/octet-stream",
+            profile_type: CPU_PROFILE_TYPE,
+            // A tree node carries its own name, not a key suffix.
+            body: stack_node(
+                b"",
+                0,
+                &[stack_node(
+                    b"main.work",
+                    40,
+                    &[stack_node(b"main.hotloop", 100, &[])],
+                )],
+            ),
+        },
+        LegacyIngestCase {
+            app: "krabkadiffpprof",
+            format: "pprof",
+            // A raw pprof body, which is what the SDKs that do not speak
+            // `push.v1` post. Pyroscope names the series after the profile's
+            // own sample type rather than after `?name=`.
+            content_type: "binary/octet-stream",
+            profile_type: PROFILE_TYPE,
+            body: goroutine_pprof.to_vec(),
+        },
+    ]
+}
+
+/// 100 `main.work;main.hotloop` lines and 40 `main.work` lines, one sample per
+/// line, which is what the `lines` format means.
+fn lines_body() -> Vec<u8> {
+    let mut body = String::new();
+    for _ in 0..100 {
+        body.push_str("main.work;main.hotloop\n");
+    }
+    for _ in 0..40 {
+        body.push_str("main.work\n");
+    }
+    body.into_bytes()
+}
+
+/// One node of Pyroscope's `trie` and `tree` payloads, which share a shape:
+/// a length-prefixed label, the node's own value, and its children.
+fn stack_node(label: &[u8], value: u64, children: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = uvarint(label.len() as u64);
+    out.extend_from_slice(label);
+    out.extend(uvarint(value));
+    out.extend(uvarint(children.len() as u64));
+    for child in children {
+        out.extend_from_slice(child);
+    }
+    out
+}
+
+fn uvarint(mut value: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let byte = u8::try_from(value & 0x7f).expect("seven bits fit a byte");
+        value >>= 7;
+        if value == 0 {
+            out.push(byte);
+            return out;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
+async fn post_ingest(
+    client: &reqwest::Client,
+    base: &str,
+    tenant: Option<&str>,
+    case: &LegacyIngestCase,
+) -> TestResult {
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs()
+        .to_string();
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("name", case.app)
+        .append_pair("format", case.format)
+        .append_pair("sampleRate", "100")
+        .append_pair("from", &now_secs)
+        .append_pair("until", &now_secs)
+        .finish();
+    let mut request = client
+        .post(format!("{base}/ingest?{query}"))
+        .header(reqwest::header::CONTENT_TYPE, case.content_type)
+        .body(case.body.clone());
+    if let Some(tenant) = tenant {
+        request = request.header("x-scope-orgid", tenant);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "/ingest format={} to {base} returned {status}: {body}",
+            case.format
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Move everything the distributor appended into the querier's hot store, the
+/// way the WAL tail would.
+fn drain_sink_into_store(sink: &CapturingSink, store: &WalTailProfileStore) -> TestResult {
+    let records = sink
+        .records
+        .lock()
+        .map_err(|_| "capturing sink lock poisoned")?
+        .clone();
+    for record in records {
+        store.append_record(record)?;
+    }
+    Ok(())
+}
+
+/// Every legacy `/ingest` format, ingested byte for byte into real Pyroscope
+/// and into krabka, then rendered from both and compared.
+///
+/// `tests/pyroscope_differential.rs` covered only `push.v1` before this, which
+/// left the whole of `src/ingest/legacy` measured against krabka's own idea of
+/// each wire format. It differed from Pyroscope's: a stack upload is a CPU
+/// profile in nanoseconds named `process_cpu`, whatever `?units=` says, and
+/// its counts are stored as the time they stand for.
+///
+/// Two formats are deliberately absent, and neither is a silent skip:
+///
+///   * **speedscope.** `grafana/pyroscope:2.2.1` answers a speedscope upload
+///     with 200 and stores nothing. No series appears under the application
+///     afterwards, so there is no upstream flamegraph to compare against.
+///     Krabka stores it, which is the more useful of the two behaviors. The
+///     divergence is that krabka has data where Pyroscope has none.
+///   * **jfr.** Pyroscope splits one JFR recording into a series per event
+///     type (a wall recording yields both `wall` and `process_cpu`, tagged
+///     `jfr_event`), while krabka decodes it into a single profile. That is a
+///     structural difference in the decoder rather than a value difference,
+///     and it is too large to hide behind a flamebearer comparison.
+#[tokio::test]
+#[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
+async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {
+    let client = reqwest::Client::new();
+    let pyroscope = start_pyroscope().await?;
+    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
+    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let goroutine_pprof = fetch_goroutine_pprof(&client, &pyroscope_base).await?;
+
+    let sink = CapturingSink::default();
+    let store = WalTailProfileStore::new();
+    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
+
+    let cases = legacy_ingest_cases(&goroutine_pprof);
+    for case in &cases {
+        post_ingest(&client, &pyroscope_base, None, case).await?;
+        post_ingest(&client, &krabka.distributor_base, Some(TENANT), case).await?;
+    }
+    drain_sink_into_store(&sink, &store)?;
+
+    for case in &cases {
+        let query = format!(r#"{}{{service_name="{}"}}"#, case.profile_type, case.app);
+        let pyroscope_render = render_until_non_empty(
+            &client,
+            &pyroscope_base,
+            std::slice::from_ref(&query),
+            "now-1h",
+            "now",
+            None,
+        )
+        .await
+        .map_err(|err| format!("pyroscope render for format={}: {err}", case.format))?;
+        let krabka_render = render_any(
+            &client,
+            &krabka.querier_base,
+            &[query],
+            "0",
+            &i64::MAX.to_string(),
+            Some(TENANT),
+            false,
+        )
+        .await
+        .map_err(|err| format!("krabka render for format={}: {err}", case.format))?;
+        assert_flamebearer_equal(&pyroscope_render, &krabka_render)
+            .map_err(|err| format!("/ingest format={}: {err}", case.format))?;
+    }
+
+    krabka.shutdown();
+    Ok(())
+}
+
+// -- Profile-type differential -------------------------------------------
+
+/// One profile pushed through `push.v1`, plus the type it is queried back as.
+struct ProfileTypeCase {
+    app: &'static str,
+    name: &'static str,
+    profile_type: &'static str,
+    gzipped_pprof: Vec<u8>,
+}
+
+/// The `push.v1` differential covered goroutine profiles alone, so every
+/// sample type but `goroutine:count` went unmeasured. That includes the two
+/// whose values are nanoseconds, and the one that carries four sample types in
+/// a single profile. Each case here pushes the same bytes to both backends and
+/// compares the flamegraph they answer with.
+///
+/// The allocation, mutex and block profiles are the Pyroscope container's own,
+/// so they are real Go profiles rather than hand-built ones; the CPU profile is
+/// synthetic because the container's `/debug/pprof/profile` is not enabled.
+#[tokio::test]
+#[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
+async fn real_pyroscope_profile_types_match_krabka() -> TestResult {
+    let client = reqwest::Client::new();
+    let pyroscope = start_pyroscope().await?;
+    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
+    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+
+    let now_nanos = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?;
+    let cases = vec![
+        ProfileTypeCase {
+            app: "krabkadiffcpu",
+            name: CPU_NAME,
+            profile_type: CPU_PROFILE_TYPE,
+            gzipped_pprof: synthetic_cpu_pprof(now_nanos)?,
+        },
+        ProfileTypeCase {
+            app: "krabkadiffalloc",
+            name: "memory",
+            profile_type: "memory:alloc_space:bytes:space:bytes",
+            gzipped_pprof: fetch_debug_pprof(&client, &pyroscope_base, "allocs").await?,
+        },
+        ProfileTypeCase {
+            app: "krabkadiffmutex",
+            name: "mutex",
+            profile_type: "mutex:delay:nanoseconds:contentions:count",
+            gzipped_pprof: fetch_debug_pprof(&client, &pyroscope_base, "mutex").await?,
+        },
+        ProfileTypeCase {
+            app: "krabkadiffblock",
+            name: "block",
+            profile_type: "block:delay:nanoseconds:contentions:count",
+            gzipped_pprof: fetch_debug_pprof(&client, &pyroscope_base, "block").await?,
+        },
+        ProfileTypeCase {
+            app: "krabkadiffgoroutines",
+            name: "goroutines",
+            profile_type: PROFILE_TYPE,
+            gzipped_pprof: fetch_goroutine_pprof(&client, &pyroscope_base).await?,
+        },
+    ];
+
+    let sink = CapturingSink::default();
+    let store = WalTailProfileStore::new();
+    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
+
+    for case in &cases {
+        post_push_typed(&client, &pyroscope_base, None, case).await?;
+        post_push_typed(&client, &krabka.distributor_base, Some(TENANT), case).await?;
+    }
+    drain_sink_into_store(&sink, &store)?;
+
+    for case in &cases {
+        let query = format!(r#"{}{{service_name="{}"}}"#, case.profile_type, case.app);
+        let pyroscope_render = render_until_non_empty(
+            &client,
+            &pyroscope_base,
+            std::slice::from_ref(&query),
+            "now-1h",
+            "now",
+            None,
+        )
+        .await
+        .map_err(|err| format!("pyroscope render for {}: {err}", case.profile_type))?;
+        let krabka_render = render_any(
+            &client,
+            &krabka.querier_base,
+            &[query],
+            "0",
+            &i64::MAX.to_string(),
+            Some(TENANT),
+            false,
+        )
+        .await
+        .map_err(|err| format!("krabka render for {}: {err}", case.profile_type))?;
+        assert_flamebearer_equal(&pyroscope_render, &krabka_render)
+            .map_err(|err| format!("profile type {}: {err}", case.profile_type))?;
+    }
+
+    krabka.shutdown();
+    Ok(())
+}
+
+async fn fetch_debug_pprof(
+    client: &reqwest::Client,
+    base: &str,
+    kind: &str,
+) -> TestResult<Vec<u8>> {
+    Ok(client
+        .get(format!("{base}/debug/pprof/{kind}?debug=0"))
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?
+        .to_vec())
+}
+
+async fn post_push_typed(
+    client: &reqwest::Client,
+    base: &str,
+    tenant: Option<&str>,
+    case: &ProfileTypeCase,
+) -> TestResult {
+    let body = json!({
+        "series": [{
+            "labels": [
+                { "name": "__name__", "value": case.name },
+                { "name": "service_name", "value": case.app }
+            ],
+            "samples": [{
+                "rawProfile": BASE64.encode(&case.gzipped_pprof),
+                "ID": format!("krabka-differential-{}", case.app)
+            }]
+        }]
+    });
+    let mut request = client
+        .post(format!("{base}/push.v1.PusherService/Push"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(&body);
+    if let Some(tenant) = tenant {
+        request = request.header("x-scope-orgid", tenant);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("push.v1 {} to {base} returned {status}: {body}", case.name).into());
+    }
+    Ok(())
+}
+
+// -- OTLP `v1development` differential ------------------------------------
+
+/// The OTLP profiles door, exported byte for byte into real Pyroscope and into
+/// krabka, then rendered from both and compared.
+///
+/// `src/ingest/otlp.rs` was measured only against fixtures built in its own
+/// tests, so nothing checked that krabka reads the `v1development` tables the
+/// way the component it replaces does. The export here is a protobuf built
+/// from krabka's vendored copy of the schema and posted unchanged to both, so
+/// a divergence in the dictionary indices, the stack ordering or the derived
+/// series name shows up as a difference in the flamegraph.
+#[tokio::test]
+#[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
+async fn real_pyroscope_otlp_export_matches_krabka() -> TestResult {
+    let client = reqwest::Client::new();
+    let pyroscope = start_pyroscope().await?;
+    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
+    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+
+    let sink = CapturingSink::default();
+    let store = WalTailProfileStore::new();
+    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
+
+    let now_nanos = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?;
+    let export = otlp_export_body(now_nanos);
+    post_otlp_export(&client, &pyroscope_base, None, &export).await?;
+    post_otlp_export(&client, &krabka.distributor_base, Some(TENANT), &export).await?;
+    drain_sink_into_store(&sink, &store)?;
+
+    // Pyroscope names an OTLP series after the profile's own sample type, so
+    // this is `cpu:...` where the `/ingest` stack formats give `process_cpu`.
+    let query = format!(r#"{OTLP_PROFILE_TYPE}{{service_name="{OTLP_SERVICE}"}}"#);
+    let pyroscope_render = render_until_non_empty(
+        &client,
+        &pyroscope_base,
+        std::slice::from_ref(&query),
+        "now-1h",
+        "now",
+        None,
+    )
+    .await?;
+    let krabka_render = render_any(
+        &client,
+        &krabka.querier_base,
+        &[query],
+        "0",
+        &i64::MAX.to_string(),
+        Some(TENANT),
+        false,
+    )
+    .await?;
+    assert_flamebearer_equal(&pyroscope_render, &krabka_render)?;
+    assert_otlp_series_labels_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+
+    krabka.shutdown();
+    Ok(())
+}
+
+/// The series an OTLP export produces, compared label for label. The
+/// flamegraph alone would not notice a series named or tagged differently,
+/// and Pyroscope tags an OTLP series `__otel__` on top of the meta labels
+/// every ingest path writes.
+async fn assert_otlp_series_labels_match(
+    client: &reqwest::Client,
+    pyroscope_base: &str,
+    krabka_base: &str,
+) -> TestResult {
+    let body = json!({
+        "matchers": [format!(r#"{{service_name="{OTLP_SERVICE}"}}"#)],
+        "start": query_start_ms(),
+        "end": query_end_ms(),
+    });
+    let pyroscope = connect_json_until(
+        client,
+        pyroscope_base,
+        None,
+        "Series",
+        body.clone(),
+        series_has_labelsets,
+    )
+    .await?;
+    let krabka = connect_json(client, krabka_base, Some(TENANT), "Series", body).await?;
+
+    let expected = series_label_sets(&pyroscope)
+        .ok_or_else(|| format!("pyroscope Series response has no label sets: {pyroscope}"))?;
+    let actual = series_label_sets(&krabka)
+        .ok_or_else(|| format!("krabka Series response has no label sets: {krabka}"))?;
+    if expected != actual {
+        return Err(format!(
+            "OTLP series label sets differ:\n  pyroscope={expected:?}\n  krabka={actual:?}"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+const OTLP_SERVICE: &str = "krabkadiffotlp";
+const OTLP_PROFILE_TYPE: &str = "cpu:cpu:nanoseconds:cpu:nanoseconds";
+
+/// The same two-frame CPU profile the other cases use, in OTLP's table form:
+/// one stack per sample, every symbol reached through the shared dictionary.
+fn otlp_export_body(time_unix_nano: u64) -> Vec<u8> {
+    use krabka_profiles::wire::pb::{
+        opentelemetry::proto::{
+            common::v1::{AnyValue, KeyValue, any_value::Value as AnyValueValue},
+            resource::v1::Resource,
+        },
+        otlp_profiles::{
+            ExportProfilesServiceRequest, Function, Line, Location, Mapping, Profile,
+            ProfilesDictionary, ResourceProfiles, Sample, ScopeProfiles, Stack, ValueType,
+        },
+    };
+
+    // 0="" 1="cpu" 2="nanoseconds" 3=main.work 4=main.hotloop 5="app.go"
+    let dictionary = ProfilesDictionary {
+        string_table: ["", "cpu", "nanoseconds", FUNC_WORK, FUNC_HOT, "app.go"]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+        // Pyroscope refuses an export whose locations point at a mapping that
+        // is not there, so the one mapping every location shares is declared
+        // even though the profile is fully symbolized.
+        mapping_table: vec![Mapping {
+            filename_strindex: 5,
+            ..Mapping::default()
+        }],
+        function_table: vec![
+            Function {
+                name_strindex: 3,
+                system_name_strindex: 3,
+                filename_strindex: 5,
+                start_line: 1,
+            },
+            Function {
+                name_strindex: 4,
+                system_name_strindex: 4,
+                filename_strindex: 5,
+                start_line: 2,
+            },
+        ],
+        location_table: vec![
+            Location {
+                address: 0x1000,
+                lines: vec![Line {
+                    function_index: 0,
+                    line: 10,
+                    column: 0,
+                }],
+                ..Location::default()
+            },
+            Location {
+                address: 0x2000,
+                lines: vec![Line {
+                    function_index: 1,
+                    line: 20,
+                    column: 0,
+                }],
+                ..Location::default()
+            },
+        ],
+        stack_table: vec![
+            // Leaf-first, as in pprof: main.hotloop called from main.work.
+            Stack {
+                location_indices: vec![1, 0],
+            },
+            Stack {
+                location_indices: vec![0],
+            },
+        ],
+        ..ProfilesDictionary::default()
+    };
+
+    let profile = Profile {
+        sample_type: Some(ValueType {
+            type_strindex: 1,
+            unit_strindex: 2,
+        }),
+        period_type: Some(ValueType {
+            type_strindex: 1,
+            unit_strindex: 2,
+        }),
+        period: 10_000_000,
+        time_unix_nano,
+        duration_nano: 1_000_000_000,
+        samples: vec![
+            Sample {
+                stack_index: 0,
+                values: vec![100],
+                ..Sample::default()
+            },
+            Sample {
+                stack_index: 1,
+                values: vec![40],
+                ..Sample::default()
+            },
+        ],
+        ..Profile::default()
+    };
+
+    let request = ExportProfilesServiceRequest {
+        resource_profiles: vec![ResourceProfiles {
+            resource: Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(AnyValueValue::StringValue(OTLP_SERVICE.to_string())),
+                    }),
+                }],
+                ..Resource::default()
+            }),
+            scope_profiles: vec![ScopeProfiles {
+                profiles: vec![profile],
+                ..ScopeProfiles::default()
+            }],
+            ..ResourceProfiles::default()
+        }],
+        dictionary: Some(dictionary),
+    };
+    prost::Message::encode_to_vec(&request)
+}
+
+async fn post_otlp_export(
+    client: &reqwest::Client,
+    base: &str,
+    tenant: Option<&str>,
+    body: &[u8],
+) -> TestResult {
+    let mut request = client
+        .post(format!("{base}/v1development/profiles"))
+        .header(reqwest::header::CONTENT_TYPE, "application/x-protobuf")
+        .body(body.to_vec());
+    if let Some(tenant) = tenant {
+        request = request.header("x-scope-orgid", tenant);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("OTLP export to {base} returned {status}: {body}").into());
+    }
+    Ok(())
+}

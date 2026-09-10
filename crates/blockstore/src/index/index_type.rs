@@ -368,6 +368,30 @@ impl Index {
             })
     }
 
+    /// Folds every series and block of `other` into this index.
+    ///
+    /// Series postings are grow-only, so the union is their join: replaying a
+    /// series that is already here is a no-op, and a block that both sides name
+    /// takes `other`'s bounds. Removals are not expressed here; a caller that
+    /// has any replays them with [`Index::replace_blocks`] after merging.
+    pub(crate) fn merge_from(&mut self, other: &Self) {
+        for (tenant, tenant_index) in &other.tenants {
+            for (fingerprint, labels) in &tenant_index.series {
+                self.add_series(tenant, *fingerprint, labels);
+            }
+            for block in &tenant_index.blocks {
+                self.add_block(&BlockMeta {
+                    tenant: tenant.clone(),
+                    object_key: block.object_key.clone(),
+                    min_ts: block.min_ts,
+                    max_ts: block.max_ts,
+                    row_count: block.row_count,
+                    fingerprints: block.fingerprints.iter().copied().collect(),
+                });
+            }
+        }
+    }
+
     /// Replaces the `remove_keys` blocks with `add`. This is the compaction
     /// swap.
     pub fn replace_blocks(&mut self, tenant: &str, remove_keys: &[String], add: &[BlockMeta]) {

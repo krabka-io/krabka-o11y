@@ -329,7 +329,7 @@ async fn configured_index_snapshot_retention_is_applied() {
         snapshot.unwrap();
         count += 1;
     }
-    assert_eq!(count, 2);
+    assert2::assert!(count == 2);
 }
 
 #[tokio::test]
@@ -992,4 +992,393 @@ async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
             .candidate_blocks_for_trace("tenant-a", &[4; 16], 0, 1_000)
             == vec![key.to_string()]
     );
+}
+
+/// Object store that holds each writer's *first* trace-index snapshot `put` at
+/// a barrier.
+///
+/// Every block builder reaches the gate before any of them is allowed to write,
+/// so a test creates a genuine overlap between concurrent
+/// `save_latest_snapshot_*` calls without a sleep: the barrier releases only
+/// once all the writers are inside their snapshot write. Only the first
+/// `gated_puts` snapshot writes wait, which is exactly one per writer; a writer
+/// that loses the race and retries must not block on peers that have already
+/// finished. Every other operation, block writes included, delegates straight
+/// through to an inner [`InMemory`] store.
+struct IndexSnapshotBarrierStore {
+    inner: Arc<InMemory>,
+    snapshot_prefix: String,
+    gate: Arc<tokio::sync::Barrier>,
+    gated_puts: usize,
+    snapshot_puts: AtomicUsize,
+}
+
+impl IndexSnapshotBarrierStore {
+    fn new(snapshot_prefix: &str, gate: Arc<tokio::sync::Barrier>, gated_puts: usize) -> Self {
+        Self {
+            inner: Arc::new(InMemory::new()),
+            snapshot_prefix: snapshot_prefix.to_string(),
+            gate,
+            gated_puts,
+            snapshot_puts: AtomicUsize::new(0),
+        }
+    }
+
+    /// Snapshot writes attempted, retries included.
+    ///
+    /// A test asserts this exceeds the writer count. That is the evidence the
+    /// barrier did its job: writers that never overlapped would each land their
+    /// first write, and the total would equal the writer count exactly.
+    fn snapshot_put_count(&self) -> usize {
+        self.snapshot_puts.load(Ordering::SeqCst)
+    }
+}
+
+impl std::fmt::Debug for IndexSnapshotBarrierStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IndexSnapshotBarrierStore")
+    }
+}
+
+impl std::fmt::Display for IndexSnapshotBarrierStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IndexSnapshotBarrierStore")
+    }
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for IndexSnapshotBarrierStore {
+    async fn put_opts(
+        &self,
+        location: &Path,
+        payload: PutPayload,
+        opts: PutOptions,
+    ) -> object_store::Result<PutResult> {
+        if location.as_ref().starts_with(&self.snapshot_prefix)
+            && self.snapshot_puts.fetch_add(1, Ordering::SeqCst) < self.gated_puts
+        {
+            self.gate.wait().await;
+        }
+        self.inner.put_opts(location, payload, opts).await
+    }
+
+    async fn put_multipart_opts(
+        &self,
+        location: &Path,
+        opts: PutMultipartOptions,
+    ) -> object_store::Result<Box<dyn MultipartUpload>> {
+        self.inner.put_multipart_opts(location, opts).await
+    }
+
+    async fn get_opts(
+        &self,
+        location: &Path,
+        options: GetOptions,
+    ) -> object_store::Result<GetResult> {
+        self.inner.get_opts(location, options).await
+    }
+
+    fn delete_stream(
+        &self,
+        locations: BoxStream<'static, object_store::Result<Path>>,
+    ) -> BoxStream<'static, object_store::Result<Path>> {
+        self.inner.delete_stream(locations)
+    }
+
+    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+        self.inner.list(prefix)
+    }
+
+    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
+        self.inner.list_with_delimiter(prefix).await
+    }
+
+    async fn copy_opts(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: CopyOptions,
+    ) -> object_store::Result<()> {
+        self.inner.copy_opts(from, to, options).await
+    }
+}
+
+/// Two block-builder replicas share one object store and one `index_key`, and
+/// each owns its own WAL partition, so their block sets are disjoint. Each
+/// keeps its own in-memory [`TraceIndex`], which is what `run_block_builder`
+/// builds: one `load_latest_snapshot_or_empty` at startup, and an
+/// `Arc<Mutex<_>>` from then on.
+///
+/// The barrier makes the two snapshot writes genuinely concurrent without a
+/// sleep. Neither `put` proceeds until both are inside it. Afterwards the index
+/// that any restarted builder or querier loads must still name both writers'
+/// blocks. Both blocks are durable in the store either way, so anything missing
+/// here is a block that exists but can never be found.
+///
+/// `save_latest_snapshot_with_retain` merges into the newest stored snapshot
+/// and publishes the result under the next generation with a conditional
+/// create, so the loser of the race re-reads the winner's snapshot and folds
+/// its own blocks into that.
+#[tokio::test]
+async fn concurrent_block_builders_sharing_one_index_key_keep_both_blocks_queryable() {
+    let gate = Arc::new(tokio::sync::Barrier::new(2));
+    let barrier = Arc::new(IndexSnapshotBarrierStore::new("index/traces", gate, 2));
+    let store: Arc<dyn ObjectStore> = Arc::clone(&barrier) as Arc<dyn ObjectStore>;
+    let config = block_builder_config();
+
+    let windows_a = decode_consumer_records(&[consumer_record(
+        3,
+        10,
+        &rec("tenant-a", [1; 16], 1, None, 100),
+    )])
+    .unwrap();
+    let windows_b = decode_consumer_records(&[consumer_record(
+        4,
+        20,
+        &rec("tenant-a", [2; 16], 1, None, 200),
+    )])
+    .unwrap();
+
+    let builder_a = {
+        let store = Arc::clone(&store);
+        let config = &config;
+        async move {
+            let writer = BlockWriter::new(Arc::clone(&store));
+            let mut index = TraceIndex::new();
+            flush_partition_windows(&writer, &mut index, store, config, windows_a)
+                .await
+                .unwrap();
+        }
+    };
+    let builder_b = {
+        let store = Arc::clone(&store);
+        let config = &config;
+        async move {
+            let writer = BlockWriter::new(Arc::clone(&store));
+            let mut index = TraceIndex::new();
+            flush_partition_windows(&writer, &mut index, store, config, windows_b)
+                .await
+                .unwrap();
+        }
+    };
+    tokio::join!(builder_a, builder_b);
+
+    let key_a = "traces/tenant-a/00003/00000000000000000010-00000000000000000010-100.parquet";
+    let key_b = "traces/tenant-a/00004/00000000000000000020-00000000000000000020-200.parquet";
+
+    // Both blocks are durably written: the loss, if any, is index-only.
+    check!(read_block(Arc::clone(&store), key_a).await.is_ok());
+    check!(read_block(Arc::clone(&store), key_b).await.is_ok());
+
+    let reloaded = TraceIndex::load_latest_snapshot(&store, &config.index_key)
+        .await
+        .unwrap();
+    check!(
+        reloaded.candidate_blocks_for_trace("tenant-a", &[1; 16], 0, 1_000)
+            == vec![key_a.to_string()]
+    );
+    check!(
+        reloaded.candidate_blocks_for_trace("tenant-a", &[2; 16], 0, 1_000)
+            == vec![key_b.to_string()]
+    );
+    // One of the two lost the race for the generation and wrote again.
+    check!(barrier.snapshot_put_count() > 2);
+}
+
+/// One WAL partition window flushed through a builder that carries `index`,
+/// the way `run_block_builder` does between polls.
+async fn flush_one_window(
+    store: &Arc<dyn ObjectStore>,
+    config: &BlockBuilderConfig,
+    index: &mut TraceIndex,
+    partition: i32,
+    offset: i64,
+    trace_id: [u8; 16],
+    start_ns: i64,
+) {
+    let windows = decode_consumer_records(&[consumer_record(
+        partition,
+        offset,
+        &rec("tenant-a", trace_id, 1, None, start_ns),
+    )])
+    .unwrap();
+    let writer = BlockWriter::new(Arc::clone(store));
+    flush_partition_windows(&writer, index, Arc::clone(store), config, windows)
+        .await
+        .unwrap();
+}
+
+fn block_key(partition: i32, offset: i64, start_ns: i64) -> String {
+    format!("traces/tenant-a/{partition:05}/{offset:020}-{offset:020}-{start_ns}.parquet")
+}
+
+/// Every block the index names, sorted, which is exact where a trace-id lookup
+/// would also admit a bloom false positive.
+fn indexed_block_keys(index: &TraceIndex) -> Vec<String> {
+    let mut keys: Vec<String> = index
+        .trace_blocks("tenant-a")
+        .iter()
+        .map(|block| block.object_key.clone())
+        .collect();
+    keys.sort();
+    keys
+}
+
+async fn snapshot_object_count(store: &Arc<dyn ObjectStore>, index_key: &str) -> usize {
+    use futures::StreamExt as _;
+
+    let prefix = Path::from(krabka_blockstore::index_snapshot_prefix_for_key(index_key));
+    let mut stream = store.list(Some(&prefix));
+    let mut count = 0;
+    while let Some(meta) = stream.next().await {
+        meta.unwrap();
+        count += 1;
+    }
+    count
+}
+
+/// The two-writer race is the smallest one. Three replicas, each owning its own
+/// WAL partition and its own in-memory index, all reach the gate before any of
+/// them writes, so two of the three must lose the conditional create and fold
+/// into the winner's snapshot rather than over it.
+#[tokio::test]
+async fn three_concurrent_block_builders_sharing_one_index_key_keep_every_block_queryable() {
+    let gate = Arc::new(tokio::sync::Barrier::new(3));
+    let barrier = Arc::new(IndexSnapshotBarrierStore::new("index/traces", gate, 3));
+    let store: Arc<dyn ObjectStore> = Arc::clone(&barrier) as Arc<dyn ObjectStore>;
+    let config = block_builder_config();
+
+    let builders = [
+        (3, 10, [1; 16], 100),
+        (4, 20, [2; 16], 200),
+        (5, 30, [3; 16], 300),
+    ]
+    .map(|(partition, offset, trace_id, start_ns)| {
+        let store = Arc::clone(&store);
+        let config = &config;
+        async move {
+            let mut index = TraceIndex::new();
+            flush_one_window(
+                &store, config, &mut index, partition, offset, trace_id, start_ns,
+            )
+            .await;
+        }
+    });
+    let [first, second, third] = builders;
+    tokio::join!(first, second, third);
+
+    let expected = vec![
+        block_key(3, 10, 100),
+        block_key(4, 20, 200),
+        block_key(5, 30, 300),
+    ];
+    for key in &expected {
+        check!(read_block(Arc::clone(&store), key).await.is_ok());
+    }
+
+    let reloaded = TraceIndex::load_latest_snapshot(&store, &config.index_key)
+        .await
+        .unwrap();
+    check!(indexed_block_keys(&reloaded) == expected);
+    // Two of the three lost the race for a generation and wrote again.
+    check!(barrier.snapshot_put_count() > 3);
+}
+
+/// A builder that restarts reloads the snapshot and keeps flushing. What it
+/// publishes next must still name the blocks its peer wrote while it was down,
+/// so the loss cannot creep back in one restart at a time.
+#[tokio::test]
+async fn a_restarted_block_builder_keeps_a_concurrent_writers_blocks() {
+    let gate = Arc::new(tokio::sync::Barrier::new(2));
+    let store: Arc<dyn ObjectStore> =
+        Arc::new(IndexSnapshotBarrierStore::new("index/traces", gate, 2));
+    let config = block_builder_config();
+
+    let first = {
+        let store = Arc::clone(&store);
+        let config = &config;
+        async move {
+            let mut index = TraceIndex::new();
+            flush_one_window(&store, config, &mut index, 3, 10, [1; 16], 100).await;
+        }
+    };
+    let second = {
+        let store = Arc::clone(&store);
+        let config = &config;
+        async move {
+            let mut index = TraceIndex::new();
+            flush_one_window(&store, config, &mut index, 4, 20, [2; 16], 200).await;
+        }
+    };
+    tokio::join!(first, second);
+
+    // Partition 3's builder comes back up and flushes its next window.
+    let mut restarted = TraceIndex::load_latest_snapshot(&store, &config.index_key)
+        .await
+        .unwrap();
+    flush_one_window(&store, &config, &mut restarted, 3, 11, [4; 16], 400).await;
+
+    let reloaded = TraceIndex::load_latest_snapshot(&store, &config.index_key)
+        .await
+        .unwrap();
+    check!(
+        indexed_block_keys(&reloaded)
+            == vec![
+                block_key(3, 10, 100),
+                block_key(3, 11, 400),
+                block_key(4, 20, 200),
+            ]
+    );
+}
+
+/// Retention still bounds the snapshot set under contention, and pruning down
+/// to two generations never strands a writer: one whose merge base is deleted
+/// before it can read it starts over from whatever is newest.
+#[tokio::test]
+async fn retention_still_prunes_when_four_builders_write_at_once() {
+    let gate = Arc::new(tokio::sync::Barrier::new(4));
+    let barrier = Arc::new(IndexSnapshotBarrierStore::new("index/traces", gate, 4));
+    let store: Arc<dyn ObjectStore> = Arc::clone(&barrier) as Arc<dyn ObjectStore>;
+    let retain = krabka_blockstore::IndexSnapshotRetain::new(2).unwrap();
+    let config = BlockBuilderConfig {
+        index_snapshot_retain: retain,
+        ..block_builder_config()
+    };
+
+    let builders = [
+        (3, 10, [1; 16], 100),
+        (4, 20, [2; 16], 200),
+        (5, 30, [3; 16], 300),
+        (6, 40, [4; 16], 400),
+    ]
+    .map(|(partition, offset, trace_id, start_ns)| {
+        let store = Arc::clone(&store);
+        let config = &config;
+        async move {
+            let mut index = TraceIndex::new();
+            flush_one_window(
+                &store, config, &mut index, partition, offset, trace_id, start_ns,
+            )
+            .await;
+        }
+    });
+    let [first, second, third, fourth] = builders;
+    tokio::join!(first, second, third, fourth);
+
+    check!(snapshot_object_count(&store, &config.index_key).await == retain.into_value());
+
+    let reloaded = TraceIndex::load_latest_snapshot(&store, &config.index_key)
+        .await
+        .unwrap();
+    check!(
+        indexed_block_keys(&reloaded)
+            == vec![
+                block_key(3, 10, 100),
+                block_key(4, 20, 200),
+                block_key(5, 30, 300),
+                block_key(6, 40, 400),
+            ]
+    );
+    // Three of the four lost the race for a generation and wrote again.
+    check!(barrier.snapshot_put_count() > 4);
 }

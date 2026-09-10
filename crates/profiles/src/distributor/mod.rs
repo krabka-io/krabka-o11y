@@ -1194,8 +1194,15 @@ overrides:
         assert!(recs.len() == 1);
         check!(recs[0].tenant == "tenant-a");
         for (name, value) in [
-            ("__profile_type__", "myapp:samples:samples:samples:samples"),
+            // A folded upload is Pyroscope's default CPU profile, whatever the
+            // `?units=` says, and its counts are stored as the time they stand
+            // for: three counts at the default 100 Hz are 30ms.
+            (
+                "__profile_type__",
+                "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+            ),
             ("service_name", "api"),
+            ("pyroscope_spy", "unknown"),
         ] {
             check!(
                 recs[0]
@@ -1205,7 +1212,7 @@ overrides:
             );
         }
         assert!(recs[0].samples.len() == 1);
-        check!(recs[0].samples[0].value == 3);
+        check!(recs[0].samples[0].value == 30_000_000);
         check!(recs[0].samples[0].timestamp_ns == 1_700_000_000_000_000_000);
     }
 

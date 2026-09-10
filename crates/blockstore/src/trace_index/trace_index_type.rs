@@ -1,14 +1,22 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockIndex, BlockMeta, BlockStoreError, ByteSize, ByteSizeExt,
-    DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, HashMap, IndexSnapshotRetain, ObjectStore,
-    ObjectStoreExt, Path, PutPayload, Result, Serialize, ShardedTraceBloom, TenantTraceIndex,
-    TraceBlockStats, instrument, latest_index_snapshot_path, put_index_snapshot,
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockMeta, BlockStoreError, ByteSize,
+    DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, HashMap, IndexSnapshotBytes, IndexSnapshotRetain,
+    ObjectStore, ObjectStoreExt, Path, PendingBlockRemovals, PutPayload, Result, Serialize,
+    ShardedTraceBloom, TenantTraceIndex, TraceBlockStats, instrument, latest_index_snapshot_path,
+    put_index_snapshot, read_index_snapshot_bytes,
 };
+
+/// How an oversized or unreadable trace-index snapshot names itself in errors.
+const SNAPSHOT_LABEL: &str = "trace index snapshot";
 
 /// Trace block index.
 #[derive(Default, Serialize, Deserialize)]
 pub struct TraceIndex {
     pub(crate) tenants: HashMap<String, TenantTraceIndex>,
+    /// Blocks this writer dropped and has yet to make durable. Not persisted:
+    /// see [`PendingBlockRemovals`].
+    #[serde(skip)]
+    pending_removals: PendingBlockRemovals,
 }
 
 impl TraceIndex {
@@ -18,6 +26,7 @@ impl TraceIndex {
     }
 
     pub fn add_trace_block(&mut self, tenant: &str, stats: TraceBlockStats) {
+        self.pending_removals.forget(tenant, &stats.object_key);
         let tenant_index = self.tenants.entry(tenant.to_string()).or_default();
         tenant_index
             .blocks
@@ -46,6 +55,12 @@ impl TraceIndex {
         mut replacement: TraceBlockStats,
     ) {
         let old_keys: BTreeSet<&str> = old_keys.iter().map(String::as_str).collect();
+        self.pending_removals
+            .record(tenant, old_keys.iter().copied());
+        // A compaction may reuse the key of a block it replaces. That block is
+        // live again, so it must not be replayed as a removal.
+        self.pending_removals
+            .forget(tenant, &replacement.object_key);
         let tenant_index = self.tenants.entry(tenant.to_string()).or_default();
 
         let mut carried_tag_names = BTreeSet::new();
@@ -188,7 +203,58 @@ impl TraceIndex {
         key: &str,
         retain: IndexSnapshotRetain,
     ) -> Result<String> {
-        put_index_snapshot(store, key, serde_json::to_vec(self)?, retain).await
+        let removals = self.pending_removals.pending();
+        let snapshot_key = put_index_snapshot(
+            store,
+            key,
+            retain,
+            DEFAULT_INDEX_SNAPSHOT_MAX,
+            SNAPSHOT_LABEL,
+            |base| self.merged_snapshot_bytes(base, &removals),
+        )
+        .await?;
+        self.pending_removals.commit(&removals);
+        Ok(snapshot_key)
+    }
+
+    /// Folds this index into the snapshot `base` and serialises the result.
+    ///
+    /// The merge is a union keyed by object key, with this index winning, plus
+    /// a replay of `removals`. Union alone would lose nothing this writer owns
+    /// but would resurrect every block it compacted away, because the base
+    /// still names them.
+    fn merged_snapshot_bytes(
+        &self,
+        base: Option<&[u8]>,
+        removals: &BTreeMap<String, BTreeSet<String>>,
+    ) -> Result<Vec<u8>> {
+        let mut merged = match base {
+            Some(bytes) => Self::from_snapshot_bytes(bytes)?,
+            None => Self::new(),
+        };
+        for (tenant, tenant_index) in &self.tenants {
+            for block in &tenant_index.blocks {
+                merged.add_trace_block(tenant, block.clone());
+            }
+        }
+        for (tenant, removed) in removals {
+            if let Some(tenant_index) = merged.tenants.get_mut(tenant) {
+                tenant_index
+                    .blocks
+                    .retain(|block| !removed.contains(&block.object_key));
+            }
+        }
+        Ok(serde_json::to_vec(&merged)?)
+    }
+
+    /// Parses and validates a stored snapshot.
+    fn from_snapshot_bytes(bytes: &[u8]) -> Result<Self> {
+        let index: Self = serde_json::from_slice(bytes)?;
+        // `Deserialize` bypasses the bloom constructors' invariant checks, so a
+        // structurally-valid-but-corrupt snapshot would panic on the first
+        // lookup. Validate here so it surfaces as an error instead.
+        index.validate()?;
+        Ok(index)
     }
 
     /// # Errors
@@ -254,45 +320,10 @@ impl TraceIndex {
         path: &Path,
         max_bytes: ByteSize,
     ) -> Result<Self> {
-        let bytes = match krabka_object_store::read_capped(store, path, max_bytes.bytes_u64()).await
-        {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                return Err(match error {
-                    krabka_object_store::ObjectStoreError::TooLarge {
-                        size, max_bytes, ..
-                    } => BlockStoreError::InvalidBlock(format!(
-                        "trace index snapshot `{path}` is {size} bytes, exceeds cap of {max_bytes} bytes"
-                    )),
-                    krabka_object_store::ObjectStoreError::Backend(message)
-                    | krabka_object_store::ObjectStoreError::InvalidConfig(message) => {
-                        BlockStoreError::ObjectStore(message)
-                    }
-                    krabka_object_store::ObjectStoreError::Io(error) => {
-                        BlockStoreError::ObjectStore(error.to_string())
-                    }
-                    not_found @ krabka_object_store::ObjectStoreError::NotFound(_) => {
-                        match store.head(path).await {
-                            Ok(_) => BlockStoreError::ObjectStore(not_found.to_string()),
-                            Err(missing) => BlockStoreError::ObjectStore(missing.to_string()),
-                        }
-                    }
-                    // Write-side variants: `read_capped` cannot raise them, but
-                    // they are part of the enum, so surface them like any other
-                    // backend failure rather than widening the read path.
-                    conflict @ (krabka_object_store::ObjectStoreError::AlreadyExists(_)
-                    | krabka_object_store::ObjectStoreError::Precondition { .. }) => {
-                        BlockStoreError::ObjectStore(conflict.to_string())
-                    }
-                });
-            }
-        };
-        let index: Self = serde_json::from_slice(&bytes)?;
-        // `Deserialize` bypasses the bloom constructors' invariant checks, so a
-        // structurally-valid-but-corrupt snapshot would panic on the first
-        // lookup. Validate here so it surfaces as an error instead.
-        index.validate()?;
-        Ok(index)
+        match read_index_snapshot_bytes(store, path, max_bytes, SNAPSHOT_LABEL).await? {
+            IndexSnapshotBytes::Present(bytes) => Self::from_snapshot_bytes(&bytes),
+            IndexSnapshotBytes::Absent(missing) => Err(missing),
+        }
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
