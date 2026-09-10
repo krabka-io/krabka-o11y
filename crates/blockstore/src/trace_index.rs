@@ -7,20 +7,22 @@ use std::{
 };
 
 use krabka_units::prelude::*;
-use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
+use object_store::ObjectStore;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
-    bloom::ShardedTraceBloom,
+    bloom::{BloomShard, ShardedTraceBloom},
     compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
+    index::{ByteReader, IndexShardRange, push_ivarint, push_uvarint},
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockAdditions,
-        PendingBlockRemovals, latest_index_snapshot_path, put_index_snapshot,
-        read_index_snapshot_bytes,
+        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, PendingBlockAdditions,
+        PendingBlockRemovals, PendingRemoval, SnapshotManifest, put_manifest_snapshot,
+        put_shard_payload, read_latest_snapshot_manifest, read_shard_payload,
+        shard_payload_content_hash, shard_payload_object_key, shard_ranges_for_span,
     },
 };
 
@@ -283,15 +285,21 @@ mod tests {
 
         let idx = seed();
         let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
-        idx.save(&store, "index/traces.json").await.unwrap();
-        let loaded = TraceIndex::load(&store, "index/traces.json").await.unwrap();
+        idx.save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
         let got = loaded.candidate_blocks_for_trace("t", &tid(1), 0, 1_000);
         assert2::assert!(got == vec!["b1".to_string()]);
     }
 
     #[tokio::test]
     async fn missing_latest_snapshot_is_empty_but_corruption_is_an_error() {
-        use object_store::{ObjectStore, PutPayload, memory::InMemory, path::Path};
+        use object_store::{
+            ObjectStore, ObjectStoreExt as _, PutPayload, memory::InMemory, path::Path,
+        };
 
         let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
         let empty = TraceIndex::load_latest_snapshot_or_empty_with_max_bytes(
@@ -303,9 +311,14 @@ mod tests {
         .unwrap();
         assert2::assert!(empty.trace_blocks("tenant-a").is_empty());
 
+        // The object a generation swaps is the manifest, so that is what a
+        // reader has to refuse to guess at.
         store
             .put(
-                &Path::from("index/traces.json"),
+                &Path::from(format!(
+                    "{}/00000000000000000000.json",
+                    crate::index_snapshot_prefix_for_key("index/traces.json")
+                )),
                 PutPayload::from(b"not-json".to_vec()),
             )
             .await
@@ -597,70 +610,88 @@ mod tests {
         check!(block_keys(&loaded) == vec!["b2".to_string(), "x".to_string()]);
     }
 
-    #[tokio::test]
-    async fn load_rejects_corrupt_bloom_instead_of_panicking() {
-        use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory};
+    /// A shard payload can carry a bloom that no constructor would have
+    /// produced, because the bytes come from shared object storage.
+    ///
+    /// Both shapes here divide by zero on the first probe: an empty `shards`
+    /// vector in `shard_of`, and a zero-width shard in the bit index. The
+    /// decoder has to reject them, or a lookup panics the process later, a long
+    /// way from the object that caused it.
+    #[test]
+    fn decoding_a_shard_rejects_a_bloom_no_lookup_could_survive() {
+        for (name, bloom) in [
+            ("no shards at all", ShardedTraceBloom { shards: Vec::new() }),
+            (
+                "a shard of zero width",
+                ShardedTraceBloom {
+                    shards: vec![BloomShard {
+                        bits: Vec::new(),
+                        num_bits: 0,
+                        k: 1,
+                    }],
+                },
+            ),
+            (
+                "a shard whose bits are shorter than its width",
+                ShardedTraceBloom {
+                    shards: vec![BloomShard {
+                        bits: vec![0],
+                        num_bits: 4_096,
+                        k: 1,
+                    }],
+                },
+            ),
+        ] {
+            let block = TraceBlockStats {
+                object_key: "b1".to_string(),
+                min_ts: 0,
+                max_ts: 100,
+                bloom,
+                tag_names: BTreeSet::new(),
+                tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
+            };
+            let bytes = encode_trace_shard("t", std::slice::from_ref(&block));
 
-        // A structurally-valid-but-corrupt snapshot: a shard with num_bits == 0
-        // would divide-by-zero on the first `% num_bits` probe. `load` must
-        // surface this as an error rather than letting a later lookup panic.
-        let snapshot = serde_json::json!({
-            "tenants": {
-                "t": {
-                    "blocks": [{
-                        "object_key": "b1",
-                        "min_ts": 0,
-                        "max_ts": 100,
-                        "bloom": { "shards": [{ "bits": [], "num_bits": 0, "k": 1 }] },
-                        "tag_names": [],
-                        "tag_values": {}
-                    }]
-                }
-            }
-        });
-        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
-        store
-            .put(
-                &object_store::path::Path::from("index/corrupt.json"),
-                PutPayload::from(serde_json::to_vec(&snapshot).unwrap()),
-            )
-            .await
-            .unwrap();
+            let got = decode_trace_shard("shard.kbs", &bytes);
 
-        let loaded = TraceIndex::load(&store, "index/corrupt.json").await;
-        assert2::assert!(loaded.is_err());
+            assert2::assert!(got.is_err(), "{name} should be rejected");
+        }
     }
 
-    #[tokio::test]
-    async fn load_rejects_empty_shards_bloom() {
-        use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory};
+    /// The bytes are the identity of a shard payload, so the encoding has to be
+    /// a function of the records and nothing else, and the decoder has to give
+    /// the records back unchanged. The first is what makes the content-address
+    /// stable enough to skip a write; the second is what makes it safe to.
+    #[test]
+    fn a_shard_payload_round_trips_and_encodes_the_same_records_the_same_way() {
+        let blocks = vec![
+            stats("b1", 0, 100, &[1, 2], &[("service.name", "api")]),
+            stats(
+                "b2",
+                200,
+                300,
+                &[3],
+                &[("service.name", "web"), ("kind", "server")],
+            ),
+        ];
 
-        // Empty `shards` would divide-by-zero on `% shards.len()` in shard_of.
-        let snapshot = serde_json::json!({
-            "tenants": {
-                "t": {
-                    "blocks": [{
-                        "object_key": "b1",
-                        "min_ts": 0,
-                        "max_ts": 100,
-                        "bloom": { "shards": [] },
-                        "tag_names": [],
-                        "tag_values": {}
-                    }]
-                }
-            }
-        });
-        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
-        store
-            .put(
-                &object_store::path::Path::from("index/empty-shards.json"),
-                PutPayload::from(serde_json::to_vec(&snapshot).unwrap()),
-            )
-            .await
-            .unwrap();
+        let bytes = encode_trace_shard("t", &blocks);
+        let (tenant, decoded) = decode_trace_shard("shard.kbs", &bytes).unwrap();
 
-        let loaded = TraceIndex::load(&store, "index/empty-shards.json").await;
-        assert2::assert!(loaded.is_err());
+        check!(tenant == "t");
+        check!(decoded.len() == blocks.len());
+        for (got, want) in decoded.iter().zip(&blocks) {
+            check!(got.object_key == want.object_key);
+            check!((got.min_ts, got.max_ts) == (want.min_ts, want.max_ts));
+            check!(got.tag_names == want.tag_names);
+            check!(got.tag_values == want.tag_values);
+            check!(got.row_count == want.row_count);
+            check!(got.level == want.level);
+            check!(trace_block_fingerprint(got) == trace_block_fingerprint(want));
+        }
+        check!(encode_trace_shard("t", &decoded) == bytes);
     }
 
     #[test]
@@ -795,12 +826,20 @@ mod tests {
     }
 }
 
+mod decode_trace_shard;
+mod encode_trace_shard;
 mod tenant_trace_index;
 mod trace_block_fingerprint;
 mod trace_block_stats;
+mod trace_index_shard_width;
 mod trace_index_type;
+mod trace_shard_format;
 
+use decode_trace_shard::decode_trace_shard;
+use encode_trace_shard::encode_trace_shard;
 use tenant_trace_index::TenantTraceIndex;
 use trace_block_fingerprint::trace_block_fingerprint;
 pub use trace_block_stats::TraceBlockStats;
+use trace_index_shard_width::TRACE_INDEX_SHARD_WIDTH;
 pub use trace_index_type::TraceIndex;
+use trace_shard_format::{TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC};

@@ -1052,7 +1052,7 @@ async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
     );
 }
 
-/// Object store that holds each writer's *first* trace-index snapshot `put` at
+/// Object store that holds each writer's *first* trace-index manifest `put` at
 /// a barrier.
 ///
 /// Every block builder reaches the gate before any of them is allowed to write,
@@ -1061,8 +1061,15 @@ async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
 /// once all the writers are inside their snapshot write. Only the first
 /// `gated_puts` snapshot writes wait, which is exactly one per writer; a writer
 /// that loses the race and retries must not block on peers that have already
-/// finished. Every other operation, block writes included, delegates straight
-/// through to an inner [`InMemory`] store.
+/// finished. Every other operation delegates straight through to an inner
+/// [`InMemory`] store.
+///
+/// The gate is on the snapshot prefix rather than on the index key's whole
+/// subtree, because a snapshot write is now two kinds of put: the shard
+/// payloads, which are content-addressed and so cannot conflict, and the
+/// manifest, which is the conditional create that decides the race. Gating the
+/// payloads would release the writers before either had reached the write that
+/// contends.
 struct IndexSnapshotBarrierStore {
     inner: Arc<InMemory>,
     snapshot_prefix: String,
@@ -1180,7 +1187,11 @@ impl ObjectStore for IndexSnapshotBarrierStore {
 #[tokio::test]
 async fn concurrent_block_builders_sharing_one_index_key_keep_both_blocks_queryable() {
     let gate = Arc::new(tokio::sync::Barrier::new(2));
-    let barrier = Arc::new(IndexSnapshotBarrierStore::new("index/traces", gate, 2));
+    let barrier = Arc::new(IndexSnapshotBarrierStore::new(
+        "index/traces/snapshots",
+        gate,
+        2,
+    ));
     let store: Arc<dyn ObjectStore> = Arc::clone(&barrier) as Arc<dyn ObjectStore>;
     let config = block_builder_config();
 
@@ -1302,7 +1313,11 @@ async fn snapshot_object_count(store: &Arc<dyn ObjectStore>, index_key: &str) ->
 #[tokio::test]
 async fn three_concurrent_block_builders_sharing_one_index_key_keep_every_block_queryable() {
     let gate = Arc::new(tokio::sync::Barrier::new(3));
-    let barrier = Arc::new(IndexSnapshotBarrierStore::new("index/traces", gate, 3));
+    let barrier = Arc::new(IndexSnapshotBarrierStore::new(
+        "index/traces/snapshots",
+        gate,
+        3,
+    ));
     let store: Arc<dyn ObjectStore> = Arc::clone(&barrier) as Arc<dyn ObjectStore>;
     let config = block_builder_config();
 
@@ -1348,8 +1363,11 @@ async fn three_concurrent_block_builders_sharing_one_index_key_keep_every_block_
 #[tokio::test]
 async fn a_restarted_block_builder_keeps_a_concurrent_writers_blocks() {
     let gate = Arc::new(tokio::sync::Barrier::new(2));
-    let store: Arc<dyn ObjectStore> =
-        Arc::new(IndexSnapshotBarrierStore::new("index/traces", gate, 2));
+    let store: Arc<dyn ObjectStore> = Arc::new(IndexSnapshotBarrierStore::new(
+        "index/traces/snapshots",
+        gate,
+        2,
+    ));
     let config = block_builder_config();
 
     let first = {
@@ -1395,7 +1413,11 @@ async fn a_restarted_block_builder_keeps_a_concurrent_writers_blocks() {
 #[tokio::test]
 async fn retention_still_prunes_when_four_builders_write_at_once() {
     let gate = Arc::new(tokio::sync::Barrier::new(4));
-    let barrier = Arc::new(IndexSnapshotBarrierStore::new("index/traces", gate, 4));
+    let barrier = Arc::new(IndexSnapshotBarrierStore::new(
+        "index/traces/snapshots",
+        gate,
+        4,
+    ));
     let store: Arc<dyn ObjectStore> = Arc::clone(&barrier) as Arc<dyn ObjectStore>;
     let retain = krabka_blockstore::IndexSnapshotRetain::new(2).unwrap();
     let config = BlockBuilderConfig {
@@ -1441,7 +1463,7 @@ async fn retention_still_prunes_when_four_builders_write_at_once() {
     check!(barrier.snapshot_put_count() > 4);
 }
 
-/// Object store that holds one trace-index snapshot `put` until the test lets
+/// Object store that holds one trace-index manifest `put` until the test lets
 /// it go.
 ///
 /// [`IndexSnapshotBarrierStore`] makes two writers overlap but leaves the order
@@ -1606,7 +1628,7 @@ fn trace_block_stats(
 /// written since its last successful write.
 #[tokio::test]
 async fn a_builder_merge_does_not_resurrect_the_block_a_compactor_replaced() {
-    let handoff_store = Arc::new(SnapshotHandoffStore::new("index/traces"));
+    let handoff_store = Arc::new(SnapshotHandoffStore::new("index/traces/snapshots"));
     let store: Arc<dyn ObjectStore> = Arc::clone(&handoff_store) as Arc<dyn ObjectStore>;
     let config = block_builder_config();
 
@@ -1674,7 +1696,7 @@ async fn a_builder_merge_does_not_resurrect_the_block_a_compactor_replaced() {
 /// input record changed and reject the whole replacement.
 #[tokio::test]
 async fn a_reused_input_key_rejects_the_stale_compactor_output() {
-    let handoff_store = Arc::new(SnapshotHandoffStore::new("index/traces"));
+    let handoff_store = Arc::new(SnapshotHandoffStore::new("index/traces/snapshots"));
     let store: Arc<dyn ObjectStore> = Arc::clone(&handoff_store) as Arc<dyn ObjectStore>;
     let index_key = "index/traces.json";
     let reused_key = "traces/tenant-a/compacted/l1-100-200-0000000000000001.parquet";

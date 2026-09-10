@@ -71,6 +71,11 @@ mutants = { workspace = true }
 # check. Test-only, hence dev-dependencies.
 opentelemetry = { workspace = true, features = ["trace"] }
 opentelemetry_sdk = { workspace = true, features = ["trace"] }
+# `logql_engine_proptest` generates series, lines, selectors and line-filter
+# chains, and checks the engine's answer against the one the LogQL
+# specification gives. Test-only, hence dev-dependencies. It also uses
+# `regex::escape`, which reaches it as a normal dependency of this crate.
+proptest = { workspace = true }
 # `loki_differential` speaks HTTP to a real Loki container and to this crate's
 # own router over a loopback listener, so both sides go through one client.
 reqwest = { workspace = true }

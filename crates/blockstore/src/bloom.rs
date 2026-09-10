@@ -173,7 +173,7 @@ mod fnv1_32;
 mod fnv1a_32;
 mod sharded_trace_bloom;
 
-use bloom_shard::BloomShard;
+pub(crate) use bloom_shard::BloomShard;
 pub use fnv1_32::fnv1_32;
 use fnv1a_32::fnv1a_32;
 pub use sharded_trace_bloom::ShardedTraceBloom;
