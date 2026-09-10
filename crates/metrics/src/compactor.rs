@@ -1021,10 +1021,6 @@ mod tests {
 
     #[async_trait]
     impl super::CompactionConsumerCommit for RecordingCommitSync {
-        async fn assignment(&self) -> Vec<(String, i32)> {
-            Vec::new()
-        }
-
         async fn commit_offsets_sync(
             &self,
             topic: &str,
@@ -1619,10 +1615,6 @@ mod tests {
 
     #[async_trait]
     impl super::CompactionConsumerCommit for PollAndCommit {
-        async fn assignment(&self) -> Vec<(String, i32)> {
-            Vec::new()
-        }
-
         async fn commit_offsets_sync(
             &self,
             _topic: &str,
@@ -1648,15 +1640,10 @@ mod tests {
 
     struct RecordingSelectedCommit {
         calls: Arc<std::sync::Mutex<Vec<Vec<super::CompactionPartitionOffset>>>>,
-        assigned: Arc<std::sync::Mutex<Vec<(String, i32)>>>,
     }
 
     #[async_trait]
     impl super::CompactionConsumerCommit for RecordingSelectedCommit {
-        async fn assignment(&self) -> Vec<(String, i32)> {
-            self.assigned.lock().unwrap().clone()
-        }
-
         async fn commit_offsets_sync(
             &self,
             _topic: &str,
@@ -1668,17 +1655,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_consumer_retries_prior_partition_offsets_on_later_commits() {
+    async fn durable_consumer_forwards_each_exact_offset_set() {
         use super::CompactionConsumerCommitMut as _;
 
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let assigned = Arc::new(std::sync::Mutex::new(vec![
-            (crate::WAL_TOPIC.to_string(), 0),
-            (crate::WAL_TOPIC.to_string(), 1),
-        ]));
         let inner = RecordingSelectedCommit {
             calls: Arc::clone(&calls),
-            assigned,
         };
         let mut consumer = super::DurableCompactionConsumer::new(inner, crate::WAL_TOPIC);
         consumer
@@ -1698,55 +1680,9 @@ mod tests {
 
         let calls = calls.lock().unwrap();
         check!(calls.len() == 2);
-        check!(calls[1].len() == 2);
-        check!(calls[1][0].partition == krabka_ids::PartitionIndex(0));
-        check!(calls[1][0].offset == krabka_ids::Offset(11));
-        check!(calls[1][1].partition == krabka_ids::PartitionIndex(1));
-        check!(calls[1][1].offset == krabka_ids::Offset(21));
-    }
-
-    #[tokio::test]
-    async fn durable_consumer_prunes_offsets_for_revoked_partitions() {
-        use super::CompactionConsumerCommitMut as _;
-
-        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let assigned = Arc::new(std::sync::Mutex::new(vec![
-            (crate::WAL_TOPIC.to_string(), 0),
-            (crate::WAL_TOPIC.to_string(), 1),
-        ]));
-        let inner = RecordingSelectedCommit {
-            calls: Arc::clone(&calls),
-            assigned: Arc::clone(&assigned),
-        };
-        let mut consumer = super::DurableCompactionConsumer::new(inner, crate::WAL_TOPIC);
-        consumer
-            .commit_offsets_sync_mut(&[super::CompactionPartitionOffset {
-                partition: krabka_ids::PartitionIndex(0),
-                offset: krabka_ids::Offset(11),
-            }])
-            .await
-            .unwrap();
-
-        *assigned.lock().unwrap() = vec![(crate::WAL_TOPIC.to_string(), 1)];
-        consumer
-            .commit_offsets_sync_mut(&[
-                super::CompactionPartitionOffset {
-                    partition: krabka_ids::PartitionIndex(0),
-                    offset: krabka_ids::Offset(12),
-                },
-                super::CompactionPartitionOffset {
-                    partition: krabka_ids::PartitionIndex(1),
-                    offset: krabka_ids::Offset(21),
-                },
-            ])
-            .await
-            .unwrap();
-
-        let calls = calls.lock().unwrap();
-        check!(calls.len() == 2);
-        assert!(calls[1].len() == 1);
-        assert!(calls[1][0].partition == krabka_ids::PartitionIndex(1));
-        assert!(calls[1][0].offset == krabka_ids::Offset(21));
+        check!(calls[1].len() == 1);
+        check!(calls[1][0].partition == krabka_ids::PartitionIndex(1));
+        check!(calls[1][0].offset == krabka_ids::Offset(21));
     }
 
     #[test]
