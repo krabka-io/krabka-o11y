@@ -339,17 +339,20 @@ impl TraceIndex {
             None => (Self::new(), true),
         };
         for (tenant, removed) in removals {
-            if let Some(tenant_index) = merged.tenants.get(tenant) {
-                for block in &tenant_index.blocks {
-                    if removed
-                        .get(&block.object_key)
-                        .is_some_and(|fingerprint| *fingerprint != trace_block_fingerprint(block))
-                    {
-                        return Err(BlockStoreError::InvalidBlock(format!(
-                            "trace compaction input `{}` changed before its replacement was published",
-                            block.object_key
-                        )));
-                    }
+            let live = merged.tenants.get(tenant);
+            for (object_key, fingerprint) in removed {
+                let unchanged = live
+                    .and_then(|tenant_index| {
+                        tenant_index
+                            .blocks
+                            .iter()
+                            .find(|block| block.object_key == *object_key)
+                    })
+                    .is_some_and(|block| trace_block_fingerprint(block) == *fingerprint);
+                if !unchanged {
+                    return Err(BlockStoreError::InvalidBlock(format!(
+                        "trace compaction input `{object_key}` changed before its replacement was published"
+                    )));
                 }
             }
         }

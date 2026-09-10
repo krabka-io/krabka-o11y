@@ -19,7 +19,7 @@ use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
     compaction::{BlockLevel, CompactionCandidate, level_above},
-    error::Result,
+    error::{BlockStoreError, Result},
     index::Index,
     index_snapshot::{
         DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockAdditions,
@@ -752,16 +752,18 @@ mod tests {
         check!(loaded.stacktrace_partitions("cpu-shipping.parquet") == vec![7]);
     }
 
-    /// The other direction, and the one that rules out a plain tombstone.
+    /// The other direction, and the one that rules out publishing a stale
+    /// compaction output.
     ///
     /// Object keys are derived from what a block holds, not minted, so the same
     /// key can be handed out again for a different set of inputs. A removal
     /// recorded by name alone would drop the block written under that key
     /// since, and every later snapshot would carry the drop forward: a live
-    /// object nothing names any more. Pinning the removal to the record it
-    /// retired makes it simply not match.
+    /// object nothing names any more. Publishing both it and the stale
+    /// compaction output would double-count the retired samples, so the whole
+    /// replacement must instead be rejected.
     #[tokio::test]
-    async fn a_block_written_again_under_a_retired_key_survives_the_merge() {
+    async fn a_reused_input_key_rejects_the_stale_profile_compaction() {
         use object_store::memory::InMemory;
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -817,10 +819,15 @@ mod tests {
             .await
             .unwrap();
 
-        compactor
+        let result = compactor
             .save_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
+            .await;
+
+        assert2::assert!(matches!(
+            result,
+            Err(BlockStoreError::InvalidBlock(message))
+                if message.contains("cpu-checkout.parquet")
+        ));
 
         let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
             .await
@@ -828,7 +835,6 @@ mod tests {
         check!(
             block_keys(&loaded)
                 == strings(&[
-                    "compacted.parquet",
                     "cpu-checkout.parquet",
                     "cpu-payments.parquet",
                     "heap-checkout.parquet",

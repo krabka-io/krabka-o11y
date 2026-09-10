@@ -1,9 +1,9 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, ByteSize, CompactionCandidate,
-    DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, Index, IndexSnapshotBytes, IndexSnapshotRetain,
-    LABEL_PROFILE_TYPE, LabelMatcher, Labels, ObjectStore, ObjectStoreExt, Path,
-    PendingBlockAdditions, PendingBlockRemovals, PutPayload, Result, Serialize, SeriesFingerprint,
-    TenantProfileExtras, instrument, latest_index_snapshot_path, level_above,
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, ByteSize,
+    CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, Index, IndexSnapshotBytes,
+    IndexSnapshotRetain, LABEL_PROFILE_TYPE, LabelMatcher, Labels, ObjectStore, ObjectStoreExt,
+    Path, PendingBlockAdditions, PendingBlockRemovals, PutPayload, Result, Serialize,
+    SeriesFingerprint, TenantProfileExtras, instrument, latest_index_snapshot_path, level_above,
     profile_block_fingerprint, put_index_snapshot, read_index_snapshot_bytes,
 };
 
@@ -513,6 +513,21 @@ impl ProfileIndex {
                 (meta.object_key.clone(), (meta, partitions))
             })
             .collect::<BTreeMap<_, _>>();
+        for (tenant, removed) in removals {
+            for (object_key, fingerprint) in removed {
+                let unchanged = base_blocks
+                    .get(object_key)
+                    .is_some_and(|(meta, partitions)| {
+                        meta.tenant == *tenant
+                            && profile_block_fingerprint(meta, partitions) == *fingerprint
+                    });
+                if !unchanged {
+                    return Err(BlockStoreError::InvalidBlock(format!(
+                        "profile compaction input `{object_key}` changed before its replacement was published"
+                    )));
+                }
+            }
+        }
         let stale: BTreeSet<String> = if contribute_all {
             BTreeSet::new()
         } else {

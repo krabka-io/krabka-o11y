@@ -555,6 +555,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_compaction_is_rejected_when_an_input_was_already_replaced() {
+        use object_store::{ObjectStore, memory::InMemory};
+
+        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+        let mut stale = seed();
+        stale
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        let mut first = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        first.replace_trace_blocks(
+            "t",
+            &strings(&["b1"]),
+            sized(stats("x", 0, 100, &[1, 2], &[]), 2),
+        );
+        first
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        stale.replace_trace_blocks(
+            "t",
+            &strings(&["b1", "b2"]),
+            sized(stats("y", 0, 300, &[1, 2, 3], &[]), 3),
+        );
+        let result = stale
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await;
+
+        assert2::assert!(matches!(
+            result,
+            Err(BlockStoreError::InvalidBlock(message)) if message.contains("b1")
+        ));
+        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        check!(block_keys(&loaded) == vec!["b2".to_string(), "x".to_string()]);
+    }
+
+    #[tokio::test]
     async fn load_rejects_corrupt_bloom_instead_of_panicking() {
         use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory};
 
