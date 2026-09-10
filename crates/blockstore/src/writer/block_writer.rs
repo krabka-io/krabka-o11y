@@ -1,8 +1,8 @@
 use super::{
-    Arc, AsyncArrowWriter, BlockMeta, BlockSchema, BlockStreamWriter, BufWriter, ObjectStore, Path,
-    RecordBatch, Result, SchemaRef, SortKeyCheck, SummaryColumns, block_writer_properties, debug,
-    instrument, is_sorted_by_key, series_block_schema, sort_batches_by_key, validate_against,
-    validate_batch_schemas,
+    AbortOnPartFailureStore, Arc, AsyncArrowWriter, BlockMeta, BlockSchema, BlockStreamWriter,
+    BufWriter, ObjectStore, Path, RecordBatch, Result, SchemaRef, SortKeyCheck, SummaryColumns,
+    block_writer_properties, debug, instrument, is_sorted_by_key, series_block_schema,
+    sort_batches_by_key, validate_against, validate_batch_schemas,
 };
 
 /// Writes Parquet blocks to an object store.
@@ -142,7 +142,8 @@ impl BlockWriter {
     ) -> Result<BlockStreamWriter> {
         validate_against(&schema, decl)?;
         let properties = block_writer_properties(&schema, decl)?;
-        let object_writer = BufWriter::new(self.store.clone(), Path::from(object_key));
+        let store = Arc::new(AbortOnPartFailureStore::new(self.store.clone()));
+        let object_writer = BufWriter::new(store, Path::from(object_key));
         let writer = AsyncArrowWriter::try_new(object_writer, schema.clone(), Some(properties))?;
         Ok(BlockStreamWriter::new(
             writer,

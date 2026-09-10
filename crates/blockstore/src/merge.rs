@@ -18,9 +18,13 @@ use arrow::{
     row::{Row, RowConverter, Rows, SortField},
 };
 use bytes::Bytes;
-use futures::{FutureExt, StreamExt, TryStreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{
+    FutureExt, StreamExt, TryStreamExt,
+    future::{BoxFuture, try_join_all},
+    stream::BoxStream,
+};
 use krabka_units::prelude::*;
-use object_store::{ObjectStore, ObjectStoreExt, path::Path};
+use object_store::{GetOptions, ObjectMeta, ObjectStore, ObjectStoreExt, path::Path};
 use parquet::{
     arrow::{
         ParquetRecordBatchStreamBuilder, arrow_reader::ArrowReaderOptions,

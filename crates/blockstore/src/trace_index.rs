@@ -510,6 +510,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_compaction_is_rejected_when_an_input_key_was_reused() {
+        use object_store::{ObjectStore, memory::InMemory};
+
+        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+        let mut compactor = seed();
+        compactor
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        let mut reuser = TraceIndex::new();
+        reuser.add_trace_block("t", sized(stats("b1", 400, 500, &[9], &[]), 1));
+        reuser
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        compactor.replace_trace_blocks(
+            "t",
+            &strings(&["b1"]),
+            sized(stats("c1", 0, 100, &[1, 2], &[]), 2),
+        );
+        let result = compactor
+            .save_latest_snapshot(&store, "index/traces.json")
+            .await;
+
+        assert2::assert!(matches!(
+            result,
+            Err(BlockStoreError::InvalidBlock(message)) if message.contains("b1")
+        ));
+        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        check!(block_keys(&loaded) == vec!["b1".to_string(), "b2".to_string()]);
+        check!(
+            loaded
+                .trace_blocks("t")
+                .iter()
+                .find(|block| block.object_key == "b1")
+                .map(|block| block.min_ts)
+                == Some(400)
+        );
+    }
+
+    #[tokio::test]
     async fn load_rejects_corrupt_bloom_instead_of_panicking() {
         use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory};
 

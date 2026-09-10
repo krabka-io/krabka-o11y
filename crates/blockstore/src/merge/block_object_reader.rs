@@ -1,6 +1,7 @@
 use super::{
-    Arc, ArrowReaderOptions, AsyncFileReader, BoxFuture, Bytes, FutureExt, ObjectStore,
-    ObjectStoreExt, ParquetMetaData, ParquetMetaDataReader, Path, Range, to_parquet_error,
+    Arc, ArrowReaderOptions, AsyncFileReader, BoxFuture, Bytes, FutureExt, GetOptions, ObjectMeta,
+    ObjectStore, ParquetMetaData, ParquetMetaDataReader, Path, Range, to_parquet_error,
+    try_join_all,
 };
 
 /// A Parquet byte source over one block on an object store.
@@ -16,21 +17,40 @@ pub(crate) struct BlockObjectReader {
     store: Arc<dyn ObjectStore>,
     path: Path,
     size: u64,
+    e_tag: Option<String>,
+    version: Option<String>,
 }
 
 impl BlockObjectReader {
-    pub(crate) fn new(store: Arc<dyn ObjectStore>, path: Path, size: u64) -> Self {
-        Self { store, path, size }
+    pub(crate) fn new(store: Arc<dyn ObjectStore>, meta: ObjectMeta) -> Self {
+        Self {
+            store,
+            path: meta.location,
+            size: meta.size,
+            e_tag: meta.e_tag,
+            version: meta.version,
+        }
+    }
+
+    fn get_options(&self, range: Range<u64>) -> GetOptions {
+        GetOptions {
+            if_match: self.e_tag.clone(),
+            range: Some(range.into()),
+            version: self.version.clone(),
+            ..GetOptions::default()
+        }
     }
 }
 
 impl AsyncFileReader for BlockObjectReader {
     fn get_bytes(&mut self, range: Range<u64>) -> BoxFuture<'_, parquet::errors::Result<Bytes>> {
         async move {
-            self.store
-                .get_range(&self.path, range)
+            let result = self
+                .store
+                .get_opts(&self.path, self.get_options(range))
                 .await
-                .map_err(to_parquet_error)
+                .map_err(to_parquet_error)?;
+            result.bytes().await.map_err(to_parquet_error)
         }
         .boxed()
     }
@@ -40,10 +60,17 @@ impl AsyncFileReader for BlockObjectReader {
         ranges: Vec<Range<u64>>,
     ) -> BoxFuture<'_, parquet::errors::Result<Vec<Bytes>>> {
         async move {
-            self.store
-                .get_ranges(&self.path, &ranges)
-                .await
-                .map_err(to_parquet_error)
+            try_join_all(ranges.into_iter().map(|range| {
+                let store = Arc::clone(&self.store);
+                let path = self.path.clone();
+                let options = self.get_options(range);
+                async move {
+                    let result = store.get_opts(&path, options).await?;
+                    result.bytes().await
+                }
+            }))
+            .await
+            .map_err(to_parquet_error)
         }
         .boxed()
     }
@@ -61,5 +88,33 @@ impl AsyncFileReader for BlockObjectReader {
                 .map(Arc::new)
         }
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use object_store::{ObjectStoreExt, PutPayload, memory::InMemory};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn every_range_is_pinned_to_the_headed_object() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let path = Path::from("block.parquet");
+        store
+            .put(&path, PutPayload::from_static(b"parquet"))
+            .await
+            .unwrap();
+        let mut meta = store.head(&path).await.unwrap();
+        meta.e_tag = Some("etag".to_string());
+        meta.version = Some("version".to_string());
+        let reader = BlockObjectReader::new(store, meta);
+
+        for range in [0..2, 2..7] {
+            let options = reader.get_options(range.clone());
+            assert2::assert!(options.if_match.as_deref() == Some("etag"));
+            assert2::assert!(options.version.as_deref() == Some("version"));
+            assert2::assert!(options.range == Some(range.into()));
+        }
     }
 }

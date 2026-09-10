@@ -338,6 +338,21 @@ impl TraceIndex {
             Some(bytes) => (Self::from_snapshot_bytes(bytes)?, false),
             None => (Self::new(), true),
         };
+        for (tenant, removed) in removals {
+            if let Some(tenant_index) = merged.tenants.get(tenant) {
+                for block in &tenant_index.blocks {
+                    if removed
+                        .get(&block.object_key)
+                        .is_some_and(|fingerprint| *fingerprint != trace_block_fingerprint(block))
+                    {
+                        return Err(BlockStoreError::InvalidBlock(format!(
+                            "trace compaction input `{}` changed before its replacement was published",
+                            block.object_key
+                        )));
+                    }
+                }
+            }
+        }
         for (tenant, tenant_index) in &self.tenants {
             for block in &tenant_index.blocks {
                 if contribute_all || additions.contains(&block.object_key) {

@@ -2,8 +2,9 @@ use super::{
     Arc, BTreeSet, BlockMeta, BlockStoreError, BlockStreamWriter, BlockWriter,
     DEFAULT_BLOCK_READ_MAX, DownsamplePolicy, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, ObjectStore,
     ObjectStoreExt, Path, ProfileIndex, ProfilesError, PutPayload, RecordBatch, SampleGroupBuffer,
-    SortedMerge, StreamExt, SummaryColumns, SymbolDb, destination_partitions, downsample_batches,
-    load_symdb, open_block_stream, profile_samples_decl, remap_partitions, source_partitions,
+    SchemaRef, SortedMerge, StreamExt, SummaryColumns, SymbolDb, destination_partitions,
+    downsample_batches, load_symdb, open_block_stream, profile_samples_decl, remap_partitions,
+    source_partitions,
 };
 
 /// Merges profile blocks into one, optionally summing their samples into
@@ -56,7 +57,7 @@ pub async fn compact_blocks_with_policy(
         )
         .await
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
-        schema.get_or_insert(block_schema);
+        validate_compaction_schema(&mut schema, block_schema, block_key)?;
         runs.push(
             batches
                 .map(move |batch| {
@@ -139,6 +140,52 @@ pub async fn compact_blocks_with_policy(
         &[(meta.clone(), out_partitions.into_iter().collect())],
     );
     Ok(meta)
+}
+
+fn validate_compaction_schema(
+    schema: &mut Option<SchemaRef>,
+    candidate: SchemaRef,
+    block_key: &str,
+) -> Result<(), ProfilesError> {
+    if let Some(expected) = schema {
+        if expected.as_ref() != candidate.as_ref() {
+            return Err(ProfilesError::Block(format!(
+                "profile block `{block_key}` has a different schema from the first compaction input"
+            )));
+        }
+    } else {
+        *schema = Some(candidate);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::datatypes::{DataType, Field, Schema};
+
+    use super::*;
+
+    #[test]
+    fn compaction_rejects_an_input_with_a_different_schema() {
+        let first = Arc::new(Schema::new(vec![Field::new(
+            "value",
+            DataType::Int64,
+            false,
+        )]));
+        let different = Arc::new(Schema::new(vec![Field::new(
+            "value",
+            DataType::UInt64,
+            false,
+        )]));
+        let mut selected = None;
+
+        validate_compaction_schema(&mut selected, first, "a.parquet").unwrap();
+        let result = validate_compaction_schema(&mut selected, different, "b.parquet");
+
+        assert2::assert!(
+            matches!(result, Err(ProfilesError::Block(message)) if message.contains("b.parquet"))
+        );
+    }
 }
 
 async fn next_merged(merge: &mut SortedMerge) -> Result<Option<RecordBatch>, ProfilesError> {

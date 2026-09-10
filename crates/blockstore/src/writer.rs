@@ -44,7 +44,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use bytes::Bytes;
-    use futures::stream::BoxStream;
+    use futures::{FutureExt, stream::BoxStream};
     use object_store::{
         CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
         ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, UploadPart,
@@ -90,6 +90,7 @@ mod tests {
     struct AbortStore {
         inner: InMemory,
         aborted: Arc<AtomicBool>,
+        fail_parts: bool,
     }
 
     impl std::fmt::Display for AbortStore {
@@ -117,6 +118,7 @@ mod tests {
             Ok(Box::new(AbortUpload {
                 inner: self.inner.put_multipart_opts(location, options).await?,
                 aborted: Arc::clone(&self.aborted),
+                fail_parts: self.fail_parts,
             }))
         }
 
@@ -163,11 +165,21 @@ mod tests {
     struct AbortUpload {
         inner: Box<dyn MultipartUpload>,
         aborted: Arc<AtomicBool>,
+        fail_parts: bool,
     }
 
     #[async_trait]
     impl MultipartUpload for AbortUpload {
         fn put_part(&mut self, data: PutPayload) -> UploadPart {
+            if self.fail_parts {
+                return async {
+                    Err(object_store::Error::Generic {
+                        store: "test",
+                        source: std::io::Error::other("part failed").into(),
+                    })
+                }
+                .boxed();
+            }
             self.inner.put_part(data)
         }
 
@@ -795,6 +807,7 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(AbortStore {
             inner: InMemory::new(),
             aborted: Arc::clone(&aborted),
+            fail_parts: false,
         });
         let schema = series_schema();
         let decl = series_block_schema();
@@ -824,6 +837,29 @@ mod tests {
         assert2::assert!(
             block
                 .write_batch(&sample_batch(&log_schema()))
+                .await
+                .is_err()
+        );
+        assert2::assert!(aborted.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn a_failed_multipart_part_aborts_before_finalization_returns() {
+        let aborted = Arc::new(AtomicBool::new(false));
+        let inner: Arc<dyn ObjectStore> = Arc::new(AbortStore {
+            inner: InMemory::new(),
+            aborted: Arc::clone(&aborted),
+            fail_parts: true,
+        });
+        let store = AbortOnPartFailureStore::new(inner);
+        let mut upload = store
+            .put_multipart(&Path::from("failed.parquet"))
+            .await
+            .unwrap();
+
+        assert2::assert!(
+            upload
+                .put_part(PutPayload::from_static(b"part"))
                 .await
                 .is_err()
         );
@@ -925,6 +961,7 @@ mod tests {
     }
 }
 
+mod abort_on_part_failure_store;
 mod block_row_group_rows;
 mod block_stream_writer;
 mod block_summary;
@@ -940,6 +977,7 @@ mod summary_columns;
 mod validate_batch_schema;
 mod validate_batch_schemas;
 
+use abort_on_part_failure_store::AbortOnPartFailureStore;
 pub use block_row_group_rows::BLOCK_ROW_GROUP_ROWS;
 pub use block_stream_writer::BlockStreamWriter;
 use block_summary::BlockSummary;

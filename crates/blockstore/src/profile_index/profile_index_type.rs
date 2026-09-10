@@ -505,18 +505,33 @@ impl ProfileIndex {
         // Read before the union folds this writer's blocks in: a block this
         // writer has published that the base no longer names was retired by
         // somebody else, and must not come back.
+        let base_blocks = merged
+            .all_blocks()
+            .into_iter()
+            .map(|meta| {
+                let partitions = merged.stacktrace_partitions(&meta.object_key);
+                (meta.object_key.clone(), (meta, partitions))
+            })
+            .collect::<BTreeMap<_, _>>();
         let stale: BTreeSet<String> = if contribute_all {
             BTreeSet::new()
         } else {
-            let base_keys: BTreeSet<String> = merged
-                .all_blocks()
-                .into_iter()
-                .map(|meta| meta.object_key)
-                .collect();
             self.all_blocks()
                 .into_iter()
+                .filter(|meta| {
+                    if additions.contains(&meta.object_key) {
+                        return false;
+                    }
+                    let partitions = self.stacktrace_partitions(&meta.object_key);
+                    let fingerprint = profile_block_fingerprint(meta, &partitions);
+                    base_blocks
+                        .get(&meta.object_key)
+                        .map(|(base_meta, base_partitions)| {
+                            profile_block_fingerprint(base_meta, base_partitions) != fingerprint
+                        })
+                        .unwrap_or(true)
+                })
                 .map(|meta| meta.object_key)
-                .filter(|key| !additions.contains(key) && !base_keys.contains(key))
                 .collect()
         };
         merged.series.merge_from(&self.series);
@@ -538,9 +553,10 @@ impl ProfileIndex {
                 .block_partitions
                 .insert(object_key.clone(), partitions.clone());
         }
-        // `Index::merge_from` is a union and takes no removals, so the blocks
-        // it just resurrected are taken back out here. Only the block records
-        // go: the series postings behind them are grow-only.
+        // `Index::merge_from` takes the other side's record for an equal key,
+        // so restore the base's newer record when the key was reused. A key
+        // absent from the base was retired and stays absent. Only block
+        // records change: the series postings behind them are grow-only.
         if !stale.is_empty() {
             let mut stale_by_tenant: BTreeMap<String, Vec<String>> = BTreeMap::new();
             for meta in self.all_blocks() {
@@ -552,9 +568,19 @@ impl ProfileIndex {
                 }
             }
             for (tenant, keys) in stale_by_tenant {
-                merged.series.replace_blocks(&tenant, &keys, &[]);
+                let replacements = keys
+                    .iter()
+                    .filter_map(|key| base_blocks.get(key).map(|(meta, _)| meta.clone()))
+                    .collect::<Vec<_>>();
+                merged.series.replace_blocks(&tenant, &keys, &replacements);
                 for object_key in &keys {
-                    merged.block_partitions.remove(object_key);
+                    if let Some((_, partitions)) = base_blocks.get(object_key) {
+                        merged
+                            .block_partitions
+                            .insert(object_key.clone(), partitions.clone());
+                    } else {
+                        merged.block_partitions.remove(object_key);
+                    }
                 }
             }
         }

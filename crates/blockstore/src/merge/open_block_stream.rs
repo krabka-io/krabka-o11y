@@ -42,7 +42,7 @@ pub async fn open_block_stream(
         )));
     }
 
-    let reader = BlockObjectReader::new(store, path, meta.size);
+    let reader = BlockObjectReader::new(store, meta);
     let builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
         .map_err(|error| {
