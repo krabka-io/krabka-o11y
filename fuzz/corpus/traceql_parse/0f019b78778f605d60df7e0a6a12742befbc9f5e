@@ -1,0 +1,1 @@
+{ .svc != nil } | count_over_time() | by(span.svc) | topk(2)

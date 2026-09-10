@@ -1,0 +1,1 @@
+testhistogram3_bucket{le=".2"} / ignoring(le) testhistogram3_count

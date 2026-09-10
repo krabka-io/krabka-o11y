@@ -1,0 +1,1 @@
+SUM(http_requests_total) BY (job) > 1000

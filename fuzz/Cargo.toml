@@ -1,0 +1,211 @@
+# Fuzz targets for the unauthenticated wire decoders and the query-language
+# parsers.
+#
+# This is a workspace of its own, not a member of the root one. cargo-fuzz
+# needs a nightly toolchain and `-Z` flags; the repository pins stable in
+# //rust-toolchain.toml and Bazel builds through rules_rs against a pinned
+# toolchain. Keeping the fuzz crate outside the root workspace is what lets
+# `cargo build --workspace` and `bazel build //...` stay on stable and stay
+# unaware that this directory exists. //Cargo.toml names it in `exclude` as
+# well, so the separation is stated in both places rather than resting on the
+# `crates/*` glob happening not to match.
+#
+# The cost of that separation is the `[patch.crates-io]` table below. Cargo
+# reads `[patch]` only from the workspace root it is building, so the sibling
+# revisions have to be repeated here. //tools/check-fuzz-patch.sh diffs the two
+# tables and fails when they drift; the `tools` job on every pull request runs
+# it.
+[package]
+name = "krabka-o11y-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+# The workspace MSRV, repeated. Nothing here compiles on that toolchain -- the
+# targets need nightly. It is stated because Cargo's resolver reads it, and
+# with it the lockfile beside this file picks the same dependency versions as
+# //Cargo.lock rather than the newest ones the registry offers.
+rust-version = "1.97.1"
+license = "Apache-2.0"
+authors = ["The Krabka Authors"]
+
+[package.metadata]
+cargo-fuzz = true
+
+# There is no `[lints]` table here, and //Cargo.toml's does not reach across a
+# workspace boundary. The `fuzz-build` job runs `cargo clippy -- -D warnings`
+# over this crate, which is Clippy's default groups rather than the workspace's
+# `pedantic`. Two of the workspace's lines cannot apply: `unsafe_code =
+# "forbid"` rejects the `#[unsafe(no_mangle)]` entry point that `fuzz_target!`
+# expands to, and `pedantic` asks for kebab-case binary names, which every
+# cargo-fuzz corpus path and every fuzz target file here spells with
+# underscores. Neither is worth an `#[allow]`, and //CLAUDE.md rules those out.
+
+[workspace]
+
+# The version pins repeat //Cargo.toml's `[workspace.dependencies]` rather than
+# inheriting it: a workspace does not lend its table to another workspace. Keep
+# `prost` and `snap` on the same lines as the root table, because the models in
+# `src/` encode messages the decoders under test then read back.
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+krabka-logql = { path = "../crates/logql" }
+krabka-metrics = { path = "../crates/metrics" }
+krabka-pprof = { path = "../crates/pprof" }
+krabka-promql = { path = "../crates/promql" }
+krabka-traceql = { path = "../crates/traceql" }
+krabka-traces = { path = "../crates/traces" }
+krabka-units = { version = "0.4.0" }
+libfuzzer-sys = "0.4"
+# The features //crates/traces/Cargo.toml takes, so `TracesData` here is the
+# same type `decode_otlp` takes there.
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "gen-tonic-messages", "trace"] }
+prost = "0.14"
+snap = "1"
+
+# Each target is one `[[bin]]`. `test`, `doc` and `bench` are off because a
+# fuzz target is a libFuzzer entry point rather than a Rust test binary, and
+# `cargo test` on this crate would otherwise try to run it as one.
+
+[[bin]]
+name = "jaeger_compact_thrift"
+path = "fuzz_targets/jaeger_compact_thrift.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jaeger_compact_structured"
+path = "fuzz_targets/jaeger_compact_structured.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jaeger_binary_thrift"
+path = "fuzz_targets/jaeger_binary_thrift.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "traces_otlp"
+path = "fuzz_targets/traces_otlp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zipkin_json"
+path = "fuzz_targets/zipkin_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pprof_profile"
+path = "fuzz_targets/pprof_profile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote_write_v1"
+path = "fuzz_targets/remote_write_v1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote_write_v1_structured"
+path = "fuzz_targets/remote_write_v1_structured.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote_write_v2"
+path = "fuzz_targets/remote_write_v2.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote_read"
+path = "fuzz_targets/remote_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "metrics_otlp"
+path = "fuzz_targets/metrics_otlp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "promql_parse"
+path = "fuzz_targets/promql_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "logql_parse"
+path = "fuzz_targets/logql_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "traceql_parse"
+path = "fuzz_targets/traceql_parse.rs"
+test = false
+doc = false
+bench = false
+
+# Sibling repositories, pinned by revision. These crates are declared
+# against crates.io above and in the member manifests; the patch below is
+# the single place a sibling revision is bumped.
+#
+# Every sibling crate in the dependency graph is listed, not only the ones
+# this repo names directly: cargo ignores a dependency's own patch table,
+# so a crate reached through another sibling crate would otherwise come
+# from the registry while its git twin is also in the graph. A sibling
+# crate that nothing here uses needs no entry.
+#
+# tools/check-sibling-members.sh checks this table and the SIBLING_MEMBERS
+# dict in MODULE.bazel against the siblings at the pinned revisions.
+# sync-siblings.yml runs it on every bump.
+[patch.crates-io]
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-broker = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-kraft-core = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-log = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-logfmt = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-object-store = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-raft = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-records-legacy = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-remote-storage = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-remote-storage-topic = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-telemetry = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-throttle = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-verified = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+# `krabka-broker` depends on `krabka-schema-serde`, so the git dependency
+# above needs it patched here too. Resolved from krabka-schema-registry, the
+# same source the broker itself patches, so the broker gets the copy it was
+# built against.
+krabka-schema-serde = { git = "https://github.com/krabka-io/krabka-schema-registry", rev = "ee9c3933fb1d71735846e7e5e33ea6ab3a694dc5" }
+krabka-client-admin = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-consumer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-core = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-producer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-compression = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-ids = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-metadata = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-protocol = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-security = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-trace-context = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-units = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-voters = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }

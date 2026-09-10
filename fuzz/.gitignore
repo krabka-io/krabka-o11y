@@ -1,0 +1,8 @@
+# Build output, and the two directories libFuzzer writes into.
+#
+# `corpus/` is checked in and is not ignored. //tools/fuzz-corpus.py writes
+# every file in it, and `--check` compares the directory against what that
+# script would write, in both directions.
+target/
+artifacts/
+coverage/

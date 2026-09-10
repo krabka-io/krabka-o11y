@@ -1,0 +1,1 @@
+count(limit_ratio(-1.0, http_requests) and http_requests)

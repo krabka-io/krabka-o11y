@@ -1,0 +1,1 @@
+min_over_time(metric_total[15s:10s])
