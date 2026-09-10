@@ -46,6 +46,40 @@ runs the mutation sweep. The cargo job covers what only cargo reaches: the
 `Cargo.lock`, and the `heap-profiling` feature. CI also runs `cargo deny check`
 over the policy in [`deny.toml`](deny.toml).
 
+## Run
+
+The repository publishes one multi-architecture image with all five service
+binaries. Use an immutable digest in a deployment:
+
+```bash
+docker pull ghcr.io/krabka-io/krabka-o11y@sha256:<digest>
+```
+
+The runnable deployment is in
+[`krabka-o11y-demo`](https://github.com/krabka-io/krabka-o11y-demo/tree/main/demo/observability).
+It starts one role for each signal with a broker and an object store.
+
+Provision the topic contract before you start a service:
+
+```bash
+docker run --rm ghcr.io/krabka-io/krabka-o11y@sha256:<digest> \
+  krabka-o11y-bootstrap --bootstrap broker:9092
+```
+
+The command creates missing topics and rejects an incompatible existing topic.
+Set `--partitions`, `--replicas`, and `--retention-ms` for the deployment.
+Do not change the partition count after data is written. The WAL partition is
+part of the per-series ordering contract.
+
+| Topic | Policy | Purpose |
+| --- | --- | --- |
+| `__krabka_metrics_wal` | delete | Metrics WAL |
+| `__krabka_traces_wal` | delete | Traces WAL |
+| `__krabka_profiles_wal` | delete | Profiles WAL |
+| `__krabka_observability_logs_wal` | delete | Logs WAL |
+| `__krabka_metrics_ha` | compact | HA tracker state |
+| `__krabka_metrics_ruler_state` | compact | Alert state |
+
 ## Differential suites
 
 Six suites boot a real Grafana-stack component and compare against it, rather

@@ -19,6 +19,8 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+pub mod topic_contract;
+
 use async_trait::async_trait;
 use axum::{
     Extension, Router,
