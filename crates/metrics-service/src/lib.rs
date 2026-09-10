@@ -46,7 +46,7 @@ mod tests {
     use std::{
         sync::{
             Arc,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
@@ -1020,6 +1020,447 @@ rules:
             "generatorURL": "http://krabka.example/graph",
         }]);
         assert2::assert!(body == expected);
+    }
+
+    #[tokio::test]
+    async fn alertmanager_delivery_retries_and_enriches_alerts() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let attempts_for_route = Arc::clone(&attempts);
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received_for_route = Arc::clone(&received);
+        let router = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(move |body: bytes::Bytes| {
+                let attempt = attempts_for_route.fetch_add(1, Ordering::SeqCst);
+                let received = Arc::clone(&received_for_route);
+                async move {
+                    if attempt == 0 {
+                        return axum::http::StatusCode::SERVICE_UNAVAILABLE;
+                    }
+                    received.lock().unwrap().push(body.to_vec());
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
+            std::future::pending::<()>().await;
+        })
+        .await
+        .unwrap();
+        let sink = super::AlertmanagerHttpSink::with_delivery(
+            vec![format!("http://{bound}/api/v2/alerts")],
+            std::collections::BTreeMap::from([
+                ("cluster".to_string(), "prod".to_string()),
+                ("severity".to_string(), "external-default".to_string()),
+            ]),
+            Some("https://metrics.example/alerts/{alertname}".to_string()),
+            2,
+            Duration::ZERO,
+            Duration::from_secs(1),
+        );
+
+        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([
+                ("alertname".to_string(), "Instance Down?/&".to_string()),
+                ("severity".to_string(), "page".to_string()),
+            ]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        }])
+        .await
+        .unwrap();
+
+        assert2::assert!(attempts.load(Ordering::SeqCst) == 2);
+        let body: serde_json::Value = serde_json::from_slice(&received.lock().unwrap()[0]).unwrap();
+        assert2::assert!(body[0]["labels"]["cluster"] == "prod");
+        assert2::assert!(body[0]["labels"]["severity"] == "page");
+        assert2::assert!(
+            body[0]["generatorURL"] == "https://metrics.example/alerts/Instance%20Down%3F%2F%26"
+        );
+    }
+
+    #[tokio::test]
+    async fn alertmanager_delivery_isolates_a_failed_endpoint() {
+        let stalled = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(|| async {
+                std::future::pending::<axum::http::StatusCode>().await;
+            }),
+        );
+        let stalled_bound =
+            super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), stalled, async {
+                std::future::pending::<()>().await;
+            })
+            .await
+            .unwrap();
+        let received = Arc::new(AtomicUsize::new(0));
+        let received_for_route = Arc::clone(&received);
+        let router = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(move || {
+                received_for_route.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::OK }
+            }),
+        );
+        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
+            std::future::pending::<()>().await;
+        })
+        .await
+        .unwrap();
+        let sink = super::AlertmanagerHttpSink::with_delivery(
+            vec![
+                format!("http://{stalled_bound}/api/v2/alerts"),
+                format!("http://{bound}/api/v2/alerts"),
+            ],
+            std::collections::BTreeMap::new(),
+            None,
+            1,
+            Duration::ZERO,
+            Duration::from_millis(20),
+        );
+
+        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([(
+                "alertname".to_string(),
+                "InstanceDown".to_string(),
+            )]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        }])
+        .await
+        .unwrap();
+
+        assert2::assert!(received.load(Ordering::SeqCst) == 1);
+    }
+
+    #[tokio::test]
+    async fn alertmanager_delivery_errors_do_not_expose_endpoint_credentials() {
+        let sink = super::AlertmanagerHttpSink::with_delivery(
+            vec!["http://user:password@127.0.0.1:9/api/v2/alerts?token=secret".to_string()],
+            std::collections::BTreeMap::new(),
+            None,
+            1,
+            Duration::ZERO,
+            Duration::from_millis(20),
+        );
+        let error = sink
+            .dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
+                labels: std::collections::BTreeMap::from([(
+                    "alertname".to_string(),
+                    "InstanceDown".to_string(),
+                )]),
+                annotations: std::collections::BTreeMap::new(),
+                starts_at_ms: 60_000,
+                ends_at_ms: None,
+                generator_url: String::new(),
+            }])
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert2::assert!(!error.contains("password"));
+        assert2::assert!(!error.contains("secret"));
+        assert2::assert!(error.contains("endpoint 1: request failed"));
+    }
+
+    #[tokio::test]
+    async fn alertmanager_queue_preserves_progress_and_eventually_resends() {
+        use krabka_promql::AlertmanagerSink as _;
+
+        let available = Arc::new(AtomicBool::new(false));
+        let delivered = Arc::new(AtomicUsize::new(0));
+        let available_for_route = Arc::clone(&available);
+        let delivered_for_route = Arc::clone(&delivered);
+        let router = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(move || {
+                let available = Arc::clone(&available_for_route);
+                let delivered = Arc::clone(&delivered_for_route);
+                async move {
+                    if available.load(Ordering::SeqCst) {
+                        delivered.fetch_add(1, Ordering::SeqCst);
+                        axum::http::StatusCode::OK
+                    } else {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE
+                    }
+                }
+            }),
+        );
+        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
+            std::future::pending::<()>().await;
+        })
+        .await
+        .unwrap();
+        let sink = super::QueuedAlertmanagerSink::new(
+            super::AlertmanagerHttpSink::with_delivery(
+                vec![format!("http://{bound}/api/v2/alerts")],
+                std::collections::BTreeMap::new(),
+                None,
+                1,
+                Duration::ZERO,
+                Duration::from_millis(20),
+            ),
+            2,
+            Duration::from_millis(1),
+        );
+        let alert = krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([(
+                "alertname".to_string(),
+                "InstanceDown".to_string(),
+            )]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        };
+
+        // Delivery failure does not fail or stall the evaluation-facing call.
+        tokio::time::timeout(
+            Duration::from_millis(20),
+            sink.dispatch_alerts(vec![alert.clone()]),
+        )
+        .await
+        .expect("enqueue must remain independent from endpoint delivery")
+        .unwrap();
+        sink.dispatch_alerts(vec![alert]).await.unwrap();
+        available.store(true, Ordering::SeqCst);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while delivered.load(Ordering::SeqCst) != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("queued alert batches were not resent");
+    }
+
+    #[tokio::test]
+    async fn alertmanager_queue_applies_backpressure_when_full() {
+        use krabka_promql::AlertmanagerSink as _;
+
+        let request_started = Arc::new(tokio::sync::Notify::new());
+        let request_started_for_route = Arc::clone(&request_started);
+        let router = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(move || {
+                let request_started = Arc::clone(&request_started_for_route);
+                async move {
+                    request_started.notify_one();
+                    std::future::pending::<axum::http::StatusCode>().await
+                }
+            }),
+        );
+        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
+            std::future::pending::<()>().await;
+        })
+        .await
+        .unwrap();
+        let sink = super::QueuedAlertmanagerSink::new(
+            super::AlertmanagerHttpSink::with_delivery(
+                vec![format!("http://{bound}/api/v2/alerts")],
+                std::collections::BTreeMap::new(),
+                None,
+                1,
+                Duration::ZERO,
+                Duration::from_secs(1),
+            ),
+            1,
+            Duration::ZERO,
+        );
+        let alert = krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([(
+                "alertname".to_string(),
+                "InstanceDown".to_string(),
+            )]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        };
+
+        sink.dispatch_alerts(vec![alert.clone()]).await.unwrap();
+        request_started.notified().await;
+        sink.dispatch_alerts(vec![alert.clone()]).await.unwrap();
+        let blocked =
+            tokio::time::timeout(Duration::from_millis(20), sink.dispatch_alerts(vec![alert]))
+                .await;
+
+        assert2::assert!(blocked.is_err(), "a full queue must apply backpressure");
+    }
+
+    #[tokio::test]
+    async fn alertmanager_queue_discards_a_permanent_rejection_and_delivers_the_next_batch() {
+        use krabka_promql::AlertmanagerSink as _;
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let attempts_for_route = Arc::clone(&attempts);
+        let router = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(move || {
+                let attempt = attempts_for_route.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if attempt == 0 {
+                        axum::http::StatusCode::BAD_REQUEST
+                    } else {
+                        axum::http::StatusCode::OK
+                    }
+                }
+            }),
+        );
+        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
+            std::future::pending::<()>().await;
+        })
+        .await
+        .unwrap();
+        let sink = super::QueuedAlertmanagerSink::new(
+            super::AlertmanagerHttpSink::with_delivery(
+                vec![format!("http://{bound}/api/v2/alerts")],
+                std::collections::BTreeMap::new(),
+                None,
+                3,
+                Duration::ZERO,
+                Duration::from_secs(1),
+            ),
+            2,
+            Duration::ZERO,
+        );
+        let alert = krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([(
+                "alertname".to_string(),
+                "InstanceDown".to_string(),
+            )]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        };
+
+        sink.dispatch_alerts(vec![alert.clone()]).await.unwrap();
+        sink.dispatch_alerts(vec![alert]).await.unwrap();
+        sink.shutdown(Duration::from_secs(1)).await.unwrap();
+
+        assert2::assert!(attempts.load(Ordering::SeqCst) == 2);
+    }
+
+    #[tokio::test]
+    async fn alertmanager_queue_drains_accepted_batches_during_shutdown() {
+        use krabka_promql::AlertmanagerSink as _;
+
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let delivered = Arc::new(AtomicBool::new(false));
+        let started_for_route = Arc::clone(&started);
+        let release_for_route = Arc::clone(&release);
+        let delivered_for_route = Arc::clone(&delivered);
+        let router = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(move || {
+                let started = Arc::clone(&started_for_route);
+                let release = Arc::clone(&release_for_route);
+                let delivered = Arc::clone(&delivered_for_route);
+                async move {
+                    started.notify_one();
+                    release.notified().await;
+                    delivered.store(true, Ordering::SeqCst);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
+            std::future::pending::<()>().await;
+        })
+        .await
+        .unwrap();
+        let sink = Arc::new(super::QueuedAlertmanagerSink::new(
+            super::AlertmanagerHttpSink::new(format!("http://{bound}/api/v2/alerts")),
+            1,
+            Duration::ZERO,
+        ));
+        let alert = krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([(
+                "alertname".to_string(),
+                "InstanceDown".to_string(),
+            )]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: Some(120_000),
+            generator_url: String::new(),
+        };
+        sink.dispatch_alerts(vec![alert]).await.unwrap();
+        started.notified().await;
+
+        let sink_for_shutdown = Arc::clone(&sink);
+        let shutdown =
+            tokio::spawn(async move { sink_for_shutdown.shutdown(Duration::from_secs(1)).await });
+        tokio::task::yield_now().await;
+        assert2::assert!(!shutdown.is_finished());
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), shutdown)
+            .await
+            .expect("queue did not drain")
+            .unwrap()
+            .unwrap();
+
+        assert2::assert!(delivered.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn alertmanager_queue_bounds_shutdown_when_delivery_cannot_finish() {
+        use krabka_promql::AlertmanagerSink as _;
+
+        let sink = super::QueuedAlertmanagerSink::new(
+            super::AlertmanagerHttpSink::with_delivery(
+                vec!["http://127.0.0.1:9/api/v2/alerts".to_string()],
+                std::collections::BTreeMap::new(),
+                None,
+                1,
+                Duration::ZERO,
+                Duration::from_secs(1),
+            ),
+            1,
+            Duration::ZERO,
+        );
+        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([(
+                "alertname".to_string(),
+                "InstanceDown".to_string(),
+            )]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        }])
+        .await
+        .unwrap();
+
+        let error = sink.shutdown(Duration::from_millis(20)).await.unwrap_err();
+
+        assert2::assert!(error.to_string().contains("drain timed out"));
+    }
+
+    #[tokio::test]
+    async fn alertmanager_delivery_treats_builder_errors_as_permanent() {
+        let sink = super::AlertmanagerHttpSink::new("not a URL");
+
+        let error = sink
+            .deliver(vec![krabka_promql::AlertmanagerAlert {
+                labels: std::collections::BTreeMap::from([(
+                    "alertname".to_string(),
+                    "InstanceDown".to_string(),
+                )]),
+                annotations: std::collections::BTreeMap::new(),
+                starts_at_ms: 60_000,
+                ends_at_ms: None,
+                generator_url: String::new(),
+            }])
+            .await
+            .unwrap_err();
+
+        assert2::assert!(!error.is_retryable());
     }
 
     #[test]
@@ -2279,6 +2720,7 @@ mod prometheus_ruler_state_sink;
 mod promql_error;
 mod query_frontend_prometheus_router_for_store;
 mod query_frontend_prometheus_router_for_store_with_cache;
+mod queued_alertmanager_sink;
 mod refreshing_blockstore_prometheus_router;
 mod refreshing_blockstore_prometheus_router_with_hot_store;
 mod refreshing_metric_block_store;
@@ -2345,6 +2787,7 @@ pub use prometheus_router_for_store::prometheus_router_for_store;
 pub use prometheus_ruler_state_sink::PrometheusRulerStateSink;
 pub use query_frontend_prometheus_router_for_store::query_frontend_prometheus_router_for_store;
 pub use query_frontend_prometheus_router_for_store_with_cache::query_frontend_prometheus_router_for_store_with_cache;
+pub use queued_alertmanager_sink::QueuedAlertmanagerSink;
 pub use refreshing_blockstore_prometheus_router::refreshing_blockstore_prometheus_router;
 pub use refreshing_blockstore_prometheus_router_with_hot_store::refreshing_blockstore_prometheus_router_with_hot_store;
 pub use refreshing_metric_block_store::RefreshingMetricBlockStore;

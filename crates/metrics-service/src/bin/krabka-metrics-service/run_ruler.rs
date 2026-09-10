@@ -82,13 +82,32 @@ pub(crate) async fn run_ruler(
     );
     let tenant = cli.ruler_tenant.clone();
     let interval = cli.ruler_eval_interval;
-    let alertmanager_url = cli.ruler_alertmanager_url.clone();
+    let alertmanager_urls = cli.ruler_alertmanager_url.clone();
+    let alertmanager_queue_capacity = cli.ruler_alertmanager_queue_capacity;
+    let external_labels = cli
+        .ruler_external_label
+        .iter()
+        .chain(
+            cli.ruler_external_label_env
+                .iter()
+                .flat_map(|labels| &labels.0),
+        )
+        .cloned()
+        .collect();
+    let generator_url_template = cli.ruler_generator_url_template.clone();
     let state_for_replay = Arc::clone(&state);
     let state_topic = cli.ruler_state_topic.clone();
     let poll_timeout = cli.wal_poll_timeout;
 
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
+
+    let alert_sink = RulerAlertmanagerSink::from_endpoints(
+        alertmanager_urls,
+        external_labels,
+        generator_url_template,
+        alertmanager_queue_capacity,
+    );
 
     // The ruler state consumer and evaluation loop are critical: both feed
     // ruler correctness. Their stop predicate observes the shared shutdown, and
@@ -112,19 +131,15 @@ pub(crate) async fn run_ruler(
         consumer_shutdown.trigger();
     });
     let eval_shutdown = shutdown.clone();
-    let eval_stop = eval_shutdown.rx.clone();
-    tokio::spawn(async move {
+    let eval_alert_sink = alert_sink.clone();
+    let evaluator = tokio::spawn(async move {
         let result = run_ruler_evaluation_loop(
             state,
-            (
-                wal_sink,
-                RulerAlertmanagerSink::from_endpoint(alertmanager_url),
-                state_sink,
-            ),
+            (wal_sink, eval_alert_sink, state_sink),
             tenant,
             shard,
             interval,
-            move || *eval_stop.borrow(),
+            eval_shutdown.signalled(),
         )
         .await;
         if let Err(error) = result {
@@ -138,6 +153,12 @@ pub(crate) async fn run_ruler(
     tracing::info!(%bound, "metrics-service ruler listening");
     // Join the server task so in-flight requests drain (graceful shutdown)
     // before the process exits.
-    server.await?;
+    let server_result = server.await;
+    shutdown.trigger();
+    let evaluator_result = evaluator.await;
+    let drain_result = alert_sink.shutdown().await;
+    server_result?;
+    evaluator_result?;
+    drain_result?;
     Ok(())
 }
