@@ -38,7 +38,7 @@ use crate::{
 #[cfg(test)]
 mod tests {
     use arrow::{
-        array::{Int64Array, UInt64Array},
+        array::{Int64Array, StringArray, UInt64Array},
         datatypes::{DataType, Field, Schema},
     };
     use assert2::{assert, check};
@@ -151,6 +151,47 @@ mod tests {
         let (rows, _) = drain(&mut merge).await;
 
         assert!(rows == vec![(1, 5), (1, 5), (1, 5)]);
+    }
+
+    #[tokio::test]
+    async fn a_later_run_cannot_carry_an_equal_key_past_an_earlier_run() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
+            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
+            Field::new("source", DataType::Utf8, false),
+        ]));
+        let batch = |rows: &[(u64, &'static str)]| {
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(UInt64Array::from_iter_values(rows.iter().map(|row| row.0))),
+                    Arc::new(Int64Array::from_iter_values(rows.iter().map(|_| 1))),
+                    Arc::new(StringArray::from_iter_values(rows.iter().map(|row| row.1))),
+                ],
+            )
+            .expect("the columns match the schema")
+        };
+        let mut merge = SortedMerge::new(
+            schema.clone(),
+            &sort_key(),
+            vec![
+                run(vec![batch(&[(2, "earlier")])]),
+                run(vec![batch(&[(1, "first"), (2, "later")])]),
+            ],
+            MERGE_BATCH_ROWS,
+        )
+        .expect("the runs share the sort key");
+        let mut sources = Vec::new();
+        while let Some(batch) = merge.next_batch().await.expect("the runs merge") {
+            let source = batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("a string column");
+            sources.extend(source.iter().flatten().map(str::to_string));
+        }
+
+        assert!(sources == vec!["first", "earlier", "later"]);
     }
 
     /// The batch size is the merge's whole resident cost, so it has to be a

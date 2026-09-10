@@ -96,7 +96,9 @@ impl SortedMerge {
                 // is already in order, so it goes out as one slice rather than
                 // as a row at a time.
                 let count = match self.next_lowest_head(winner) {
-                    Some(limit) => self.runs[winner].rows_upto(&limit),
+                    Some((limit_run, limit)) => {
+                        self.runs[winner].rows_before(&limit, winner < limit_run)
+                    }
                     None => self.runs[winner].remaining(),
                 };
                 count.clamp(1, self.batch_rows - rows)
@@ -124,12 +126,12 @@ impl SortedMerge {
     }
 
     /// The lowest key held by any run other than `winner`.
-    fn next_lowest_head(&self, winner: usize) -> Option<arrow::row::Row<'_>> {
+    fn next_lowest_head(&self, winner: usize) -> Option<(usize, arrow::row::Row<'_>)> {
         self.runs
             .iter()
             .enumerate()
             .filter(|(index, _)| *index != winner)
-            .filter_map(|(_, run)| run.head())
-            .min()
+            .filter_map(|(index, run)| run.head().map(|head| (index, head)))
+            .min_by(|(_, left), (_, right)| left.cmp(right))
     }
 }

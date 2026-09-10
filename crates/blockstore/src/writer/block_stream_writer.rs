@@ -22,7 +22,7 @@ use super::{
 /// worse than failing: row-group pruning trusts it, and would skip groups that
 /// hold matching rows.
 pub struct BlockStreamWriter {
-    writer: AsyncArrowWriter<BufWriter>,
+    writer: Option<AsyncArrowWriter<BufWriter>>,
     tenant: String,
     object_key: String,
     schema: SchemaRef,
@@ -34,7 +34,6 @@ pub struct BlockStreamWriter {
     order: Option<SortKeyCheck>,
     sort_key: Vec<String>,
     batches: usize,
-    failed: bool,
 }
 
 impl BlockStreamWriter {
@@ -48,7 +47,7 @@ impl BlockStreamWriter {
         sort_key: &[String],
     ) -> Self {
         Self {
-            writer,
+            writer: Some(writer),
             tenant: tenant.to_string(),
             object_key: object_key.to_string(),
             schema,
@@ -57,7 +56,6 @@ impl BlockStreamWriter {
             order,
             sort_key: sort_key.to_vec(),
             batches: 0,
-            failed: false,
         }
     }
 
@@ -73,37 +71,44 @@ impl BlockStreamWriter {
     /// order, or when an earlier call already failed; and an object-store or
     /// Parquet error when the encoded bytes cannot be written.
     pub async fn write_batch(&mut self, batch: &RecordBatch) -> Result<()> {
-        if self.failed {
+        if self.writer.is_none() {
             return Err(self.poisoned());
         }
         if batch.num_rows() == 0 {
             return Ok(());
         }
 
-        validate_batch_schema(&self.schema, batch, self.batches).inspect_err(|_| {
-            self.failed = true;
-        })?;
+        if let Err(error) = validate_batch_schema(&self.schema, batch, self.batches) {
+            return self.abandon(error).await;
+        }
 
         if let Some(order) = &mut self.order {
-            let sorted = order.accept(batch).inspect_err(|_| {
-                self.failed = true;
-            })?;
+            let sorted = match order.accept(batch) {
+                Ok(sorted) => sorted,
+                Err(error) => return self.abandon(error).await,
+            };
             if !sorted {
-                self.failed = true;
-                return Err(BlockStoreError::InvalidBlock(format!(
+                let error = BlockStoreError::InvalidBlock(format!(
                     "batch {} of block `{}` is out of the declared sort order {:?}; a streaming \
                      writer cannot reorder rows it has already encoded",
                     self.batches, self.object_key, self.sort_key
-                )));
+                ));
+                return self.abandon(error).await;
             }
         }
 
-        self.summary
-            .push(batch, &self.columns)
-            .inspect_err(|_| self.failed = true)?;
-        self.writer.write(batch).await.inspect_err(|_| {
-            self.failed = true;
-        })?;
+        if let Err(error) = self.summary.push(batch, &self.columns) {
+            return self.abandon(error).await;
+        }
+        if let Err(error) = self
+            .writer
+            .as_mut()
+            .expect("an active block has a writer")
+            .write(batch)
+            .await
+        {
+            return self.abandon(error.into()).await;
+        }
         self.batches += 1;
         Ok(())
     }
@@ -114,15 +119,25 @@ impl BlockStreamWriter {
     /// Returns [`BlockStoreError::InvalidBlock`] when an earlier call failed or
     /// no row was ever written, and an object-store or Parquet error when the
     /// footer cannot be written.
-    pub async fn finish(self) -> Result<BlockMeta> {
-        if self.failed {
+    pub async fn finish(mut self) -> Result<BlockMeta> {
+        if self.writer.is_none() {
             return Err(self.poisoned());
         }
         // Ask the summary first: it is what knows whether the block has any
         // rows, and closing an empty one would leave a queryless object at the
         // key instead of leaving the upload unfinished.
-        let (min_ts, max_ts, row_count, fingerprints) = self.summary.finish()?;
-        self.writer.close().await?;
+        let mut writer = self.writer.take().expect("an active block has a writer");
+        let (min_ts, max_ts, row_count, fingerprints) = match self.summary.finish() {
+            Ok(summary) => summary,
+            Err(error) => {
+                writer.into_inner().abort().await?;
+                return Err(error);
+            }
+        };
+        if let Err(error) = writer.finish().await {
+            writer.into_inner().abort().await?;
+            return Err(error.into());
+        }
 
         Ok(BlockMeta {
             tenant: self.tenant,
@@ -137,6 +152,26 @@ impl BlockStreamWriter {
             // the level -- are known.
             level: BlockLevel::INGESTED,
         })
+    }
+
+    /// Stops the write and removes uploaded multipart parts.
+    ///
+    /// # Errors
+    /// Returns an object-store error when the multipart upload cannot be stopped.
+    pub async fn abort(mut self) -> Result<()> {
+        self.abort_inner().await
+    }
+
+    async fn abandon<T>(&mut self, error: BlockStoreError) -> Result<T> {
+        self.abort_inner().await?;
+        Err(error)
+    }
+
+    async fn abort_inner(&mut self) -> Result<()> {
+        if let Some(writer) = self.writer.take() {
+            writer.into_inner().abort().await?;
+        }
+        Ok(())
     }
 
     fn poisoned(&self) -> BlockStoreError {

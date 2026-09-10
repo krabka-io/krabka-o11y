@@ -64,19 +64,19 @@ impl RunCursor {
             .map_or(0, |(batch, _)| batch.num_rows() - self.row)
     }
 
-    /// How many rows from the cursor sort at or below `limit`.
+    /// How many rows from the cursor sort before `limit`, with optional ties.
     ///
     /// The batch is in the declared order, so this is a binary search rather
     /// than a scan -- which is what makes the merge cost one comparison per
     /// *run* of rows it emits instead of one per row.
-    pub(crate) fn rows_upto(&self, limit: &Row<'_>) -> usize {
+    pub(crate) fn rows_before(&self, limit: &Row<'_>, include_equal: bool) -> usize {
         let Some((batch, rows)) = &self.current else {
             return 0;
         };
         let (mut low, mut high) = (self.row, batch.num_rows());
         while low < high {
             let middle = low + (high - low) / 2;
-            if rows.row(middle) <= *limit {
+            if rows.row(middle) < *limit || include_equal && rows.row(middle) == *limit {
                 low = middle + 1;
             } else {
                 high = middle;

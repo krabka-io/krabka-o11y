@@ -32,15 +32,25 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use arrow::{
         array::{Int64Array, StringArray, UInt64Array},
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
+    use async_trait::async_trait;
     use bytes::Bytes;
-    use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory, path::Path};
+    use futures::stream::BoxStream;
+    use object_store::{
+        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
+        ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, UploadPart,
+        memory::InMemory,
+        path::{Path, Path as ObjectPath},
+    };
     use parquet::{
         arrow::arrow_reader::ParquetRecordBatchReaderBuilder,
         file::{
@@ -74,6 +84,101 @@ mod tests {
             vec![Arc::new(fp), Arc::new(ts), Arc::new(line)],
         )
         .unwrap()
+    }
+
+    #[derive(Debug)]
+    struct AbortStore {
+        inner: InMemory,
+        aborted: Arc<AtomicBool>,
+    }
+
+    impl std::fmt::Display for AbortStore {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("AbortStore")
+        }
+    }
+
+    #[async_trait]
+    impl ObjectStore for AbortStore {
+        async fn put_opts(
+            &self,
+            location: &ObjectPath,
+            payload: PutPayload,
+            options: PutOptions,
+        ) -> object_store::Result<PutResult> {
+            self.inner.put_opts(location, payload, options).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &ObjectPath,
+            options: PutMultipartOptions,
+        ) -> object_store::Result<Box<dyn MultipartUpload>> {
+            Ok(Box::new(AbortUpload {
+                inner: self.inner.put_multipart_opts(location, options).await?,
+                aborted: Arc::clone(&self.aborted),
+            }))
+        }
+
+        async fn get_opts(
+            &self,
+            location: &ObjectPath,
+            options: GetOptions,
+        ) -> object_store::Result<GetResult> {
+            self.inner.get_opts(location, options).await
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&ObjectPath>,
+        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&ObjectPath>,
+        ) -> object_store::Result<ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &ObjectPath,
+            to: &ObjectPath,
+            options: CopyOptions,
+        ) -> object_store::Result<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
+
+        fn delete_stream(
+            &self,
+            locations: BoxStream<'static, object_store::Result<ObjectPath>>,
+        ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
+            self.inner.delete_stream(locations)
+        }
+    }
+
+    #[derive(Debug)]
+    struct AbortUpload {
+        inner: Box<dyn MultipartUpload>,
+        aborted: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl MultipartUpload for AbortUpload {
+        fn put_part(&mut self, data: PutPayload) -> UploadPart {
+            self.inner.put_part(data)
+        }
+
+        async fn complete(&mut self) -> object_store::Result<PutResult> {
+            self.inner.complete().await
+        }
+
+        async fn abort(&mut self) -> object_store::Result<()> {
+            self.aborted.store(true, Ordering::Relaxed);
+            self.inner.abort().await
+        }
     }
 
     #[tokio::test]
@@ -682,6 +787,47 @@ mod tests {
             .unwrap();
 
         assert2::assert!(block.write_batch(&batch).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_failed_streaming_write_aborts_its_multipart_upload() {
+        let aborted = Arc::new(AtomicBool::new(false));
+        let store: Arc<dyn ObjectStore> = Arc::new(AbortStore {
+            inner: InMemory::new(),
+            aborted: Arc::clone(&aborted),
+        });
+        let schema = series_schema();
+        let decl = series_block_schema();
+        let object_writer = BufWriter::with_capacity(store, Path::from("failed.parquet"), 1);
+        let parquet_writer = AsyncArrowWriter::try_new(
+            object_writer,
+            schema.clone(),
+            Some(block_writer_properties(&schema, &decl).unwrap()),
+        )
+        .unwrap();
+        let mut block = BlockStreamWriter::new(
+            parquet_writer,
+            "t",
+            "failed.parquet",
+            schema.clone(),
+            SummaryColumns::series(),
+            Some(SortKeyCheck::new(&decl.sort_key)),
+            &decl.sort_key,
+        );
+        let fingerprints = UInt64Array::from_iter_values(0..BLOCK_ROW_GROUP_ROWS as u64);
+        let timestamps = Int64Array::from_iter_values((0..BLOCK_ROW_GROUP_ROWS).map(|_| 1));
+        let full_group =
+            RecordBatch::try_new(schema, vec![Arc::new(fingerprints), Arc::new(timestamps)])
+                .unwrap();
+        block.write_batch(&full_group).await.unwrap();
+
+        assert2::assert!(
+            block
+                .write_batch(&sample_batch(&log_schema()))
+                .await
+                .is_err()
+        );
+        assert2::assert!(aborted.load(Ordering::Relaxed));
     }
 
     /// A stream that never carried a row leaves no object behind: an empty

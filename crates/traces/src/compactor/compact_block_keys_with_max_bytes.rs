@@ -87,18 +87,29 @@ pub async fn compact_block_keys_with_max_bytes(
 
     let mut buffer = TraceGroupBuffer::new(schema);
     let mut stats = CompactedBlockStats::new();
-    while let Some(merged) = merge
-        .next_batch()
-        .await
-        .map_err(|err| TracesError::Block(err.to_string()))?
-    {
-        buffer.push(merged);
-        while let Some(complete) = buffer.take_complete(MERGE_BATCH_ROWS)? {
-            write_complete_traces(&mut block, &mut stats, &complete).await?;
+    let writes: Result<(), TracesError> = async {
+        while let Some(merged) = merge
+            .next_batch()
+            .await
+            .map_err(|err| TracesError::Block(err.to_string()))?
+        {
+            buffer.push(merged);
+            while let Some(complete) = buffer.take_complete(MERGE_BATCH_ROWS)? {
+                write_complete_traces(&mut block, &mut stats, &complete).await?;
+            }
         }
+        if let Some(rest) = buffer.take_rest()? {
+            write_complete_traces(&mut block, &mut stats, &rest).await?;
+        }
+        Ok(())
     }
-    if let Some(rest) = buffer.take_rest()? {
-        write_complete_traces(&mut block, &mut stats, &rest).await?;
+    .await;
+    if let Err(error) = writes {
+        block
+            .abort()
+            .await
+            .map_err(|err| TracesError::Block(err.to_string()))?;
+        return Err(error);
     }
 
     let mut meta = block

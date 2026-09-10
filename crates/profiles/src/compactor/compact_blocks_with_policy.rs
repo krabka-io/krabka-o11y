@@ -82,29 +82,40 @@ pub async fn compact_blocks_with_policy(
         )
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
 
-    match downsample {
-        None => {
-            while let Some(merged) = next_merged(&mut merge).await? {
-                write(&mut block, &merged).await?;
-            }
-        }
-        Some(policy) => {
-            if policy.resolution_ns <= 0 {
-                return Err(ProfilesError::Block(
-                    "downsample resolution must be positive".to_string(),
-                ));
-            }
-            let mut buffer = SampleGroupBuffer::new(schema, policy.resolution_ns);
-            while let Some(merged) = next_merged(&mut merge).await? {
-                buffer.push(merged);
-                while let Some(complete) = buffer.take_complete(MERGE_BATCH_ROWS)? {
-                    write_downsampled(&mut block, &complete, policy).await?;
+    let writes: Result<(), ProfilesError> = async {
+        match downsample {
+            None => {
+                while let Some(merged) = next_merged(&mut merge).await? {
+                    write(&mut block, &merged).await?;
                 }
             }
-            if let Some(rest) = buffer.take_rest()? {
-                write_downsampled(&mut block, &rest, policy).await?;
+            Some(policy) => {
+                if policy.resolution_ns <= 0 {
+                    return Err(ProfilesError::Block(
+                        "downsample resolution must be positive".to_string(),
+                    ));
+                }
+                let mut buffer = SampleGroupBuffer::new(schema, policy.resolution_ns);
+                while let Some(merged) = next_merged(&mut merge).await? {
+                    buffer.push(merged);
+                    while let Some(complete) = buffer.take_complete(MERGE_BATCH_ROWS)? {
+                        write_downsampled(&mut block, &complete, policy).await?;
+                    }
+                }
+                if let Some(rest) = buffer.take_rest()? {
+                    write_downsampled(&mut block, &rest, policy).await?;
+                }
             }
         }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = writes {
+        block
+            .abort()
+            .await
+            .map_err(|err| ProfilesError::Block(err.to_string()))?;
+        return Err(error);
     }
 
     let mut meta = block
