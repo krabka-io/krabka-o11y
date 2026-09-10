@@ -28,11 +28,11 @@ use krabka_broker::{Broker, BrokerConfig};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::{
-    KafkaLogWalConsumer, KafkaLogWalSink, Offset, PartitionIndex, QuerierIndexSource, Role,
-    ServiceConfig, ServiceDependencies, WalLogRecord, WalPosition, build_service_router,
-    decode_kafka_wal_record, distributor_router, run_compactor_until_idle,
+    KafkaLogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig,
+    ServiceDependencies, WalLogRecord, WalPosition, build_service_dependencies,
+    build_service_router, decode_kafka_wal_record, run_compactor_until_idle,
 };
-use krabka_units::secs;
+use krabka_units::{days, secs};
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -64,10 +64,21 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     // 1. The real HTTP door. Same router the distributor role serves, same
     //    Loki push body a client would send, and a sink that produces to the
     //    broker rather than to a vector in this process.
-    let sink = KafkaLogWalSink::connect(bootstrap.clone(), wal_topic.clone())
+    let distributor_root = tempfile::tempdir().expect("distributor data root");
+    let mut distributor_config = roundtrip_config(
+        Role::Distributor,
+        distributor_root.path().to_path_buf(),
+        &bootstrap,
+        &wal_topic,
+        None,
+    );
+    distributor_config.reject_old_samples_max_age = days(36_500);
+    let dependencies = build_service_dependencies(&distributor_config)
         .await
-        .expect("wal sink connect");
-    let response = distributor_router(sink)
+        .expect("distributor dependencies");
+    let response = build_service_router(&distributor_config, dependencies, None)
+        .await
+        .expect("distributor router")
         .oneshot(
             Request::builder()
                 .method("POST")
