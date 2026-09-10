@@ -322,6 +322,17 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-coverage
           repository-cache: true
+      # Instrumented binaries are far larger than a normal build, and this job
+      # links every test target in the workspace. It ran the runner's disk to
+      # 15 MB free and the link died as `clang++: Bus error (core dumped)`,
+      # which reads like an LLVM crash rather than a full disk -- the same
+      # disguise ENOSPC wears in the `cargo` job above. The runner ships ~25 GB
+      # of toolchains no Bazel action here touches.
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          df -h /
       - run: bazel coverage //crates/...
       # //codecov.yml holds the targets this upload is measured against: a
       # `patch` status that gates, and a `project` status that reports. Read
