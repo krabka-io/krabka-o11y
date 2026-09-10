@@ -17,6 +17,10 @@ impl CompactionConsumerPoll for Consumer {
 
 #[async_trait]
 impl CompactionConsumerCommit for Consumer {
+    async fn assignment(&self) -> Vec<(String, i32)> {
+        Consumer::assignment(self).await
+    }
+
     async fn commit_offsets_sync(
         &self,
         topic: &str,

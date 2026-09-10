@@ -44,7 +44,19 @@ where
         &mut self,
         offsets: &[CompactionPartitionOffset],
     ) -> Result<(), CompactionConsumerCommitError> {
+        let assigned = self.inner.assignment().await;
+        let assigned = assigned
+            .into_iter()
+            .filter_map(|(topic, partition)| {
+                (topic == self.topic).then_some(PartitionIndex(partition))
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        self.durable_offsets
+            .retain(|partition, _| assigned.contains(partition));
         for offset in offsets {
+            if !assigned.contains(&offset.partition) {
+                continue;
+            }
             self.durable_offsets
                 .entry(offset.partition)
                 .and_modify(|current| {
