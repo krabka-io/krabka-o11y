@@ -355,20 +355,12 @@ jobs:
       # silent: the job stayed green and Codecov reported the previous run's
       # numbers, or none. An upload that does not arrive is a coverage result
       # nobody has, so it fails here.
-      #
-      # This upload ran tokenless and was refused, which reads as `Token length:
-      # 0` and `Token required because branch is protected` and looks exactly
-      # like a missing secret. It was not one: the repository had been disabled
-      # on Codecov. It is enabled now, and a tokenless upload from a GitHub
-      # Actions run is authenticated by the runner's OIDC identity, protected
-      # branch or not. A `token:` is still passed when the secret exists, so
-      # adding one later changes nothing here.
       - uses: codecov/codecov-action@v7
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: bazel-out/_coverage/_coverage_report.dat
           disable_search: true
           fail_ci_if_error: true
+          use_oidc: true
   # rustdoc for every crate, kept as an artifact. The `ci` job already builds
   # these -- a `rust_doc` per crate is an ordinary target -- so this exists to
   # publish the output, and to keep rendering the whole set even when `aspect
