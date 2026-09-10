@@ -24,6 +24,7 @@ mod profile_index;
 mod profile_schema;
 mod reader;
 mod span_block;
+mod span_id;
 mod span_schema;
 mod store;
 mod trace_index;
@@ -91,6 +92,10 @@ pub use reader::{
 pub use span_block::{
     AttrValue, SpanAttr, SpanEvent, SpanLink, SpanRow, encode_span_rows,
     encode_span_rows_with_promoted_attrs,
+};
+pub use span_id::{
+    span_id_be_bytes_from_u64, span_id_hex_from_u64, span_id_u64_from_be_bytes,
+    span_id_u64_from_be_slice,
 };
 pub use span_schema::{
     PromotedSpanAttr, PromotedSpanAttrType, SCOL_ATTR_IS_ARRAY, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,

@@ -1,5 +1,6 @@
 //! Jaeger API v2 gRPC decoding.
 
+use krabka_blockstore::span_id_u64_from_be_slice;
 use prost_types::{Duration, Timestamp};
 
 use crate::{

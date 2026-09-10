@@ -1,6 +1,7 @@
 use super::{
     Array, AsArray, BTreeMap, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_SPAN_ID,
-    PCOL_TOTAL_VALUE, ProfileError, Time, UInt64Type, pb, step_bucket_ms, types_label_pairs,
+    PCOL_TOTAL_VALUE, ProfileError, Time, UInt64Type, pb, span_id_hex_from_u64, step_bucket_ms,
+    types_label_pairs,
 };
 
 pub(crate) async fn span_exemplars_from_totals(
@@ -43,7 +44,7 @@ pub(crate) async fn span_exemplars_from_totals(
                 .push(pb::types::v1::Exemplar {
                     timestamp,
                     profile_id: String::new(),
-                    span_id: format!("{:x}", span_ids.value(row)),
+                    span_id: span_id_hex_from_u64(span_ids.value(row)),
                     value: totals.value(row),
                     labels: label_pairs.clone(),
                 });
