@@ -1016,13 +1016,20 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingCommitSync {
-        calls: Mutex<usize>,
+        calls: Mutex<Vec<(String, Vec<super::CompactionPartitionOffset>)>>,
     }
 
     #[async_trait]
     impl super::CompactionConsumerCommit for RecordingCommitSync {
-        async fn commit_sync(&self) -> Result<(), super::CompactionConsumerCommitError> {
-            *self.calls.lock().expect("commit calls lock") += 1;
+        async fn commit_offsets_sync(
+            &self,
+            topic: &str,
+            offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
+            self.calls
+                .lock()
+                .expect("commit calls lock")
+                .push((topic.to_string(), offsets.to_vec()));
             Ok(())
         }
     }
@@ -1030,7 +1037,7 @@ mod tests {
     #[tokio::test]
     async fn compaction_consumer_committer_calls_commit_sync_once() {
         let sync = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&sync);
+        let committer = super::CompactionConsumerCommitter::new(&sync, crate::WAL_TOPIC);
 
         super::CompactionOffsetCommitter::commit_offsets(
             &committer,
@@ -1042,7 +1049,16 @@ mod tests {
         .await
         .expect("commit offsets");
 
-        assert!(*sync.calls.lock().expect("commit calls lock") == 1);
+        assert!(
+            *sync.calls.lock().expect("commit calls lock")
+                == vec![(
+                    crate::WAL_TOPIC.to_string(),
+                    vec![super::CompactionPartitionOffset {
+                        partition: super::PartitionIndex(2),
+                        offset: super::Offset(11),
+                    }],
+                )]
+        );
     }
 
     struct StaticPoller {
@@ -1066,7 +1082,7 @@ mod tests {
         let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&commit);
+        let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let wal_record = float_record("tenant-a", "up", "api", 100);
         let mut poller = StaticPoller {
             records: vec![krabka_client_consumer::ConsumerRecord {
@@ -1102,7 +1118,7 @@ mod tests {
                     offset: super::Offset(22),
                 }]
         );
-        check!(*commit.calls.lock().expect("commit calls lock") == 1);
+        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
         check!(sink.manifests.lock().expect("manifest lock").len() == 1);
     }
 
@@ -1133,7 +1149,7 @@ mod tests {
         let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&commit);
+        let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
@@ -1187,7 +1203,7 @@ mod tests {
                     }],
                 }
         );
-        check!(*commit.calls.lock().expect("commit calls lock") == 1);
+        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
         assert!(sink.manifests.lock().expect("manifest lock").len() == 1);
         // The single block spans the full buffered offset range [10, 11].
         let manifests = sink.manifests.lock().expect("manifest lock");
@@ -1203,7 +1219,7 @@ mod tests {
         let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&commit);
+        let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
@@ -1252,7 +1268,7 @@ mod tests {
                     offset: super::Offset(12),
                 }]
         );
-        check!(*commit.calls.lock().expect("commit calls lock") == 1);
+        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
         check!(sink.manifests.lock().expect("manifest lock").len() == 1);
     }
 
@@ -1286,7 +1302,7 @@ mod tests {
         let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&commit);
+        let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
@@ -1343,7 +1359,7 @@ mod tests {
                     offset: super::Offset(12),
                 }]
         );
-        check!(*commit.calls.lock().expect("commit calls lock") == 1);
+        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
         let manifests = sink.manifests.lock().expect("manifest lock");
         assert!(manifests.len() == 1);
         check!(manifests[0].first_offset == 10);
@@ -1594,7 +1610,11 @@ mod tests {
 
     #[async_trait]
     impl super::CompactionConsumerCommit for PollAndCommit {
-        async fn commit_sync(&self) -> Result<(), super::CompactionConsumerCommitError> {
+        async fn commit_offsets_sync(
+            &self,
+            _topic: &str,
+            _offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
             Err(super::CompactionConsumerCommitError::Commit(
                 "immutable commit path should not be used by this adapter test".into(),
             ))

@@ -18,8 +18,16 @@ impl CompactionConsumerPoll for Consumer {
 
 #[async_trait]
 impl CompactionConsumerCommit for Consumer {
-    async fn commit_sync(&self) -> Result<(), CompactionConsumerCommitError> {
-        Consumer::commit_sync(self)
+    async fn commit_offsets_sync(
+        &self,
+        topic: &str,
+        offsets: &[super::CompactionPartitionOffset],
+    ) -> Result<(), CompactionConsumerCommitError> {
+        let offsets = offsets
+            .iter()
+            .map(|offset| ((topic.to_string(), offset.partition.0), offset.offset.0))
+            .collect();
+        Consumer::commit_offsets_sync(self, offsets)
             .await
             .map_err(|error| CompactionConsumerCommitError::Commit(error.to_string()))
     }
