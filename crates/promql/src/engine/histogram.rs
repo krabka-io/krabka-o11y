@@ -89,6 +89,125 @@ mod tests {
         }
     }
 
+    /// `DetectReset` compares bucket populations BY INDEX, over both
+    /// histograms resolved to the current one's schema and zero threshold --
+    /// what `floatBucketIterator` hands `detectReset` upstream. A positional
+    /// walk of the two count vectors instead compares whichever buckets happen
+    /// to share an offset in the vector, which asks the same question only
+    /// when the two span layouts already agree.
+    #[test]
+    fn detect_reset_aligns_buckets_by_index_not_by_position() {
+        type Case = (&'static str, NativeHistogram, NativeHistogram, bool);
+        let span = |offset, length| BucketSpan { offset, length };
+        let positive = |schema, count, spans: Vec<BucketSpan>, counts: Vec<f64>| {
+            let mut hist = histogram(schema, ResetHint::Unknown);
+            hist.count = count;
+            hist.positive_spans = spans;
+            hist.positive_counts = counts;
+            hist
+        };
+        let negative = |count, spans: Vec<BucketSpan>, counts: Vec<f64>| {
+            let mut hist = histogram(0, ResetHint::Unknown);
+            hist.count = count;
+            hist.negative_spans = spans;
+            hist.negative_counts = counts;
+            hist
+        };
+        let zero_region = |threshold: f64, zero_count: f64, counts: Vec<f64>| {
+            let mut hist = histogram(0, ResetHint::Unknown);
+            hist.count = 100.0;
+            hist.zero_threshold = threshold;
+            hist.zero_count = zero_count;
+            hist.positive_spans = if counts.is_empty() {
+                Vec::new()
+            } else {
+                vec![span(0, u32::try_from(counts.len()).unwrap())]
+            };
+            hist.positive_counts = counts;
+            hist
+        };
+
+        let cases: [Case; 10] = [
+            // The count of 5 moved from bucket 0 to bucket 1. A positional walk
+            // compares [5] against [5] and sees nothing.
+            (
+                "a count that moved to the next bucket",
+                positive(0, 5.0, vec![span(0, 1)], vec![5.0]),
+                positive(0, 5.0, vec![span(1, 1)], vec![5.0]),
+                true,
+            ),
+            // Buckets 0 and 2, spelled once as two spans and once as one span
+            // with a hole in it. Nothing moved.
+            (
+                "the same buckets described by different spans",
+                positive(0, 3.0, vec![span(0, 1), span(1, 1)], vec![1.0, 2.0]),
+                positive(0, 3.0, vec![span(0, 3)], vec![1.0, 0.0, 2.0]),
+                false,
+            ),
+            // Bucket 2 fell from 2 to 1, but it is the third count in the
+            // current vector and the second in the previous one.
+            (
+                "a bucket that shrank at an index the vectors do not share",
+                positive(0, 3.0, vec![span(0, 1), span(1, 1)], vec![1.0, 2.0]),
+                positive(0, 7.0, vec![span(0, 3)], vec![1.0, 5.0, 1.0]),
+                true,
+            ),
+            (
+                "a populated bucket the current histogram no longer carries",
+                positive(0, 3.0, vec![span(0, 2)], vec![1.0, 2.0]),
+                positive(0, 3.0, vec![span(0, 1)], vec![1.0]),
+                true,
+            ),
+            (
+                "an empty bucket the current histogram no longer carries",
+                positive(0, 1.0, vec![span(0, 2)], vec![1.0, 0.0]),
+                positive(0, 1.0, vec![span(0, 1)], vec![1.0]),
+                false,
+            ),
+            // Schema 1 buckets 1 and 2 are both halves of schema 0 bucket 1, so
+            // they merge to 7 before the comparison.
+            (
+                "a finer previous schema merged short of the coarser current one",
+                positive(1, 7.0, vec![span(1, 2)], vec![3.0, 4.0]),
+                positive(0, 10.0, vec![span(1, 1)], vec![6.0]),
+                true,
+            ),
+            (
+                "a finer previous schema merged level with the coarser current one",
+                positive(1, 7.0, vec![span(1, 2)], vec![3.0, 4.0]),
+                positive(0, 10.0, vec![span(1, 1)], vec![7.0]),
+                false,
+            ),
+            (
+                "a negative count that moved to the next bucket",
+                negative(5.0, vec![span(0, 1)], vec![5.0]),
+                negative(5.0, vec![span(1, 1)], vec![5.0]),
+                true,
+            ),
+            // Widening the zero threshold to 1 folds the previous histogram's
+            // bucket 0, which spans (0.5, 1], into its zero count: 3 + 5 = 8.
+            (
+                "a zero count short of the buckets the wider threshold swallowed",
+                zero_region(0.0, 3.0, vec![5.0]),
+                zero_region(1.0, 3.0, Vec::new()),
+                true,
+            ),
+            (
+                "a zero count level with the buckets the wider threshold swallowed",
+                zero_region(0.0, 3.0, vec![5.0]),
+                zero_region(1.0, 8.0, Vec::new()),
+                false,
+            ),
+        ];
+
+        for (name, previous, current, expected) in cases {
+            assert2::check!(
+                native_histogram_detect_reset(&previous, &current) == expected,
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn add_downscales_exponential_buckets() {
         let mut left = histogram(1, ResetHint::No);
@@ -321,6 +440,7 @@ mod classic_histogram_quantile;
 mod combined_reset_hint;
 mod compact_spanned_histogram_counts;
 mod custom_histogram_bound;
+mod detect_reset_bucket_counts;
 mod histogram_accessor;
 mod histogram_accessor_from_function_name;
 mod native_histogram_all_buckets;
@@ -364,6 +484,7 @@ use classic_histogram_quantile::classic_histogram_quantile;
 use combined_reset_hint::combined_reset_hint;
 use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
 use custom_histogram_bound::custom_histogram_bound;
+use detect_reset_bucket_counts::detect_reset_bucket_counts;
 pub(super) use histogram_accessor::HistogramAccessor;
 pub(super) use histogram_accessor_from_function_name::histogram_accessor_from_function_name;
 use native_histogram_all_buckets::native_histogram_all_buckets;

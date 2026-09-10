@@ -76,9 +76,9 @@ use krabka_client_producer::{
 };
 use krabka_logql::{
     ComparisonOp, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, FieldValue,
-    LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilter, LineFilterOp,
-    LogfmtParserConfig, MatchOp, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet,
-    MetricBinarySetOp, MetricLabelJoin, MetricQuery, MetricScalarArithmetic,
+    LabelFormatAssignment, LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilter,
+    LineFilterOp, LogfmtParserConfig, MatchOp, MetricBinaryArithmetic, MetricBinaryComparison,
+    MetricBinarySet, MetricBinarySetOp, MetricLabelJoin, MetricQuery, MetricScalarArithmetic,
     MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
     MetricVectorMatching, ParseError, ParserStage, PipelineStage, PlanError, Quantile,
     RangeAggregation, StreamPlan, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion,
