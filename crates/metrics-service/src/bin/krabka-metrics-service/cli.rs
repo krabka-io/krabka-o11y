@@ -130,6 +130,14 @@ pub(crate) struct Cli {
         value_delimiter = ','
     )]
     pub(crate) ruler_alertmanager_url: Vec<String>,
+    /// Maximum alert batches buffered while Alertmanager is unavailable.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_RULER_ALERTMANAGER_QUEUE_CAPACITY",
+        default_value_t = 64,
+        value_parser = parse_positive_usize
+    )]
+    pub(crate) ruler_alertmanager_queue_capacity: usize,
     /// Label in `name=value` form added when an alert does not define it.
     #[arg(long, env = "KRABKA_METRICS_RULER_EXTERNAL_LABEL", value_parser = parse_external_label)]
     pub(crate) ruler_external_label: Vec<(String, String)>,

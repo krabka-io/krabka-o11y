@@ -1,4 +1,6 @@
-use super::*;
+use std::{collections::BTreeMap, time::Duration};
+
+use super::{AlertmanagerSink, RulerWalError, alertmanager_payload};
 
 fn encode_url_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
@@ -104,7 +106,7 @@ impl AlertmanagerSink for AlertmanagerHttpSink {
                         response.status()
                     )),
                     Err(_) => {
-                        failures.push(format!("endpoint {}: request failed", endpoint_index + 1))
+                        failures.push(format!("endpoint {}: request failed", endpoint_index + 1));
                     }
                 }
                 if attempt < self.max_attempts {

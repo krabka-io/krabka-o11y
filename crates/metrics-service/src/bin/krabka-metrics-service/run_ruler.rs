@@ -83,6 +83,7 @@ pub(crate) async fn run_ruler(
     let tenant = cli.ruler_tenant.clone();
     let interval = cli.ruler_eval_interval;
     let alertmanager_urls = cli.ruler_alertmanager_url.clone();
+    let alertmanager_queue_capacity = cli.ruler_alertmanager_queue_capacity;
     let external_labels = cli.ruler_external_label.iter().cloned().collect();
     let generator_url_template = cli.ruler_generator_url_template.clone();
     let state_for_replay = Arc::clone(&state);
@@ -124,6 +125,7 @@ pub(crate) async fn run_ruler(
                     alertmanager_urls,
                     external_labels,
                     generator_url_template,
+                    alertmanager_queue_capacity,
                 ),
                 state_sink,
             ),

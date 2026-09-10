@@ -121,6 +121,8 @@ mod tests {
             "ruler",
             "--ruler-alertmanager-url",
             "http://am-0/api/v2/alerts,http://am-1/api/v2/alerts",
+            "--ruler-alertmanager-queue-capacity",
+            "7",
             "--ruler-external-label",
             "cluster=prod",
             "--ruler-external-label",
@@ -131,6 +133,7 @@ mod tests {
         .unwrap();
 
         assert2::assert!(cli.ruler_alertmanager_url.len() == 2);
+        assert2::assert!(cli.ruler_alertmanager_queue_capacity == 7);
         assert2::assert!(
             cli.ruler_external_label
                 == [
