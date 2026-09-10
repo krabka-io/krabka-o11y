@@ -1035,7 +1035,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compaction_consumer_committer_calls_commit_sync_once() {
+    async fn compaction_consumer_committer_forwards_selected_offsets() {
         let sync = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&sync, crate::WAL_TOPIC);
 
