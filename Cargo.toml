@@ -37,8 +37,19 @@ inherits = "test"
 debug = "none"
 
 [profile.dev]
-# Split debug info into a separate file (reduces linker work)
+# Split debug info into a separate file (reduces linker work). Keep it
+# `packed`: `krabka-pprof` resolves DWARF through `addr2line::Loader` against
+# the binary's companion file, and `unpacked` scatters it into `.dwo` fragments
+# that the loader is not guaranteed to find.
 split-debuginfo = "packed"
+# Line tables, not full DWARF. Backtraces keep their file and line -- including
+# the self-symbolizing test in `krabka-pprof`, which needs exactly this and
+# nothing more -- while the variable and type information no build here consumes
+# stops being emitted. That information is the bulk of it: the `.dwp` files it
+# produced repeatedly filled this repository's build volume and CI's runners,
+# where a full disk shows up as an LLVM crash report or a linker Bus error
+# rather than as anything mentioning space.
+debug = "line-tables-only"
 
 [workspace.dependencies]
 addr2line = "0.27"
