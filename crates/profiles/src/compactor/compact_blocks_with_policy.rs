@@ -1,9 +1,20 @@
 use super::{
-    Arc, BTreeSet, BlockMeta, DownsamplePolicy, ObjectStore, ObjectStoreExt, Path, ProfileIndex,
-    ProfilesError, PutPayload, SymbolDb, destination_partitions, downsample_batches, load_batches,
-    load_symdb, remap_partitions, source_partitions, write_batches,
+    Arc, BTreeSet, BlockMeta, BlockStoreError, BlockStreamWriter, BlockWriter,
+    DEFAULT_BLOCK_READ_MAX, DownsamplePolicy, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, ObjectStore,
+    ObjectStoreExt, Path, ProfileIndex, ProfilesError, PutPayload, RecordBatch, SampleGroupBuffer,
+    SortedMerge, StreamExt, SummaryColumns, SymbolDb, destination_partitions, downsample_batches,
+    load_symdb, open_block_stream, profile_samples_decl, remap_partitions, source_partitions,
 };
 
+/// Merges profile blocks into one, optionally summing their samples into
+/// coarser time buckets.
+///
+/// The inputs are each already in the declared
+/// `[fingerprint, profile_type, timestamp]` order, so they are merged rather
+/// than concatenated and sorted: the merge holds one batch of each input, and
+/// the block writer takes the merged batches in the order it wants them. What
+/// stays resident is the output's symbol DB and one batch per input, not the
+/// samples of every block being read.
 ///
 /// # Errors
 /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
@@ -21,9 +32,10 @@ pub async fn compact_blocks_with_policy(
         ));
     }
 
-    let mut out_batches = Vec::new();
     let mut out_symbols = SymbolDb::new();
     let mut out_partitions = BTreeSet::new();
+    let mut schema = None;
+    let mut runs = Vec::with_capacity(input_keys.len());
 
     for (block_idx, block_key) in input_keys.iter().enumerate() {
         let source_partitions = source_partitions(index, block_key);
@@ -36,19 +48,69 @@ pub async fn compact_blocks_with_policy(
             out_partitions.insert(*dest);
         }
 
-        let batches = load_batches(store, block_key).await?;
-        for batch in batches {
-            let batch = remap_partitions(&batch, &partition_map)?;
-            out_batches.push(batch);
+        let (block_schema, batches) = open_block_stream(
+            Arc::clone(store),
+            block_key,
+            DEFAULT_BLOCK_READ_MAX,
+            MERGE_READ_BATCH_ROWS,
+        )
+        .await
+        .map_err(|err| ProfilesError::Block(err.to_string()))?;
+        schema.get_or_insert(block_schema);
+        runs.push(
+            batches
+                .map(move |batch| {
+                    remap_partitions(&batch?, &partition_map)
+                        .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))
+                })
+                .boxed(),
+        );
+    }
+
+    let schema =
+        schema.ok_or_else(|| ProfilesError::Block("cannot compact empty block set".into()))?;
+    let decl = profile_samples_decl();
+    let mut merge = SortedMerge::new(schema.clone(), &decl.sort_key, runs, MERGE_BATCH_ROWS)
+        .map_err(|err| ProfilesError::Block(err.to_string()))?;
+    let mut block = BlockWriter::new(Arc::clone(store))
+        .open_block(
+            tenant,
+            output_key,
+            schema.clone(),
+            &decl,
+            SummaryColumns::series(),
+        )
+        .map_err(|err| ProfilesError::Block(err.to_string()))?;
+
+    match downsample {
+        None => {
+            while let Some(merged) = next_merged(&mut merge).await? {
+                write(&mut block, &merged).await?;
+            }
+        }
+        Some(policy) => {
+            if policy.resolution_ns <= 0 {
+                return Err(ProfilesError::Block(
+                    "downsample resolution must be positive".to_string(),
+                ));
+            }
+            let mut buffer = SampleGroupBuffer::new(schema, policy.resolution_ns);
+            while let Some(merged) = next_merged(&mut merge).await? {
+                buffer.push(merged);
+                while let Some(complete) = buffer.take_complete(MERGE_BATCH_ROWS)? {
+                    write_downsampled(&mut block, &complete, policy).await?;
+                }
+            }
+            if let Some(rest) = buffer.take_rest()? {
+                write_downsampled(&mut block, &rest, policy).await?;
+            }
         }
     }
 
-    let out_batches = match downsample {
-        Some(policy) => downsample_batches(&out_batches, policy)?,
-        None => out_batches,
-    };
-
-    let meta = write_batches(store, tenant, output_key, &out_batches).await?;
+    let mut meta = block
+        .finish()
+        .await
+        .map_err(|err| ProfilesError::Block(err.to_string()))?;
     store
         .put(
             &Path::from(format!("{output_key}.symdb")),
@@ -57,10 +119,39 @@ pub async fn compact_blocks_with_policy(
         .await
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
 
-    index.replace_profile_blocks(
+    // The index derives the level from the blocks being retired and hands it
+    // back, so the meta this returns says what the index recorded rather than
+    // the level-zero the writer stamped.
+    meta.level = index.replace_profile_blocks(
         tenant,
         input_keys,
         &[(meta.clone(), out_partitions.into_iter().collect())],
     );
     Ok(meta)
+}
+
+async fn next_merged(merge: &mut SortedMerge) -> Result<Option<RecordBatch>, ProfilesError> {
+    merge
+        .next_batch()
+        .await
+        .map_err(|err| ProfilesError::Block(err.to_string()))
+}
+
+async fn write(block: &mut BlockStreamWriter, batch: &RecordBatch) -> Result<(), ProfilesError> {
+    block
+        .write_batch(batch)
+        .await
+        .map_err(|err| ProfilesError::Block(err.to_string()))
+}
+
+/// Sums a run of complete time buckets and writes the result.
+async fn write_downsampled(
+    block: &mut BlockStreamWriter,
+    batch: &RecordBatch,
+    policy: DownsamplePolicy,
+) -> Result<(), ProfilesError> {
+    for summed in downsample_batches(std::slice::from_ref(batch), policy)? {
+        write(block, &summed).await?;
+    }
+    Ok(())
 }

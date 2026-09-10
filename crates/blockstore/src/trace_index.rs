@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
 };
 
@@ -14,11 +15,12 @@ use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
     bloom::ShardedTraceBloom,
-    compaction::{BlockLevel, BlockLineage, BlockLineageIndex, CompactionCandidate},
+    compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockRemovals,
-        latest_index_snapshot_path, put_index_snapshot, read_index_snapshot_bytes,
+        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockAdditions,
+        PendingBlockRemovals, latest_index_snapshot_path, put_index_snapshot,
+        read_index_snapshot_bytes,
     },
 };
 
@@ -64,7 +66,14 @@ mod tests {
             bloom,
             tag_names,
             tag_values,
+            row_count: 0,
+            level: BlockLevel::INGESTED,
         }
+    }
+
+    /// `stats` with a row count, for the tests where the planner reads one.
+    fn sized(stats: TraceBlockStats, row_count: usize) -> TraceBlockStats {
+        TraceBlockStats { row_count, ..stats }
     }
 
     fn strings(values: &[&str]) -> Vec<String> {
@@ -205,6 +214,7 @@ mod tests {
             max_ts: 20,
             row_count: 1,
             fingerprints: Vec::new(),
+            level: BlockLevel::INGESTED,
         };
 
         BlockIndex::add_block(&mut idx, &meta);
@@ -229,6 +239,7 @@ mod tests {
             max_ts: 20,
             row_count: 1,
             fingerprints: Vec::new(),
+            level: BlockLevel::INGESTED,
         };
 
         BlockIndex::add_block(&mut idx, &meta);
@@ -251,12 +262,18 @@ mod tests {
         );
         let old_keys = vec!["b1".to_string(), "b2".to_string()];
 
-        idx.replace_trace_blocks("t", &old_keys, replacement.clone(), 3);
-        idx.replace_trace_blocks("t", &old_keys, replacement.clone(), 3);
+        idx.replace_trace_blocks("t", &old_keys, replacement.clone());
+        idx.replace_trace_blocks("t", &old_keys, replacement.clone());
 
+        // The second swap finds its inputs already gone, so it re-derives the
+        // level from nothing. The block must keep the rung it climbed.
+        let promoted = TraceBlockStats {
+            level: BlockLevel(1),
+            ..replacement
+        };
         let blocks = idx.trace_blocks("t");
         assert2::assert!(
-            serde_json::to_value(blocks).unwrap() == serde_json::to_value([replacement]).unwrap()
+            serde_json::to_value(blocks).unwrap() == serde_json::to_value([promoted]).unwrap()
         );
     }
 
@@ -471,7 +488,6 @@ mod tests {
             "t",
             &strings(&["b1", "b2"]),
             stats("c1", 0, 300, &[1, 2, 3], &[]),
-            3,
         );
         idx.save_latest_snapshot(&store, "index/traces.json")
             .await
@@ -560,52 +576,69 @@ mod tests {
     }
 
     #[test]
-    fn a_compacted_trace_block_records_its_level_and_its_inputs() {
+    fn a_compacted_trace_block_records_its_level_on_its_own_record() {
         let mut idx = TraceIndex::new();
-        idx.add_trace_block_with_rows("t", stats("b1", 0, 100, &[1], &[]), 10);
-        idx.add_trace_block_with_rows("t", stats("b2", 200, 300, &[2], &[]), 20);
+        idx.add_trace_block("t", sized(stats("b1", 0, 100, &[1], &[]), 10));
+        idx.add_trace_block("t", sized(stats("b2", 200, 300, &[2], &[]), 20));
 
         check!(idx.block_level("b1") == BlockLevel::INGESTED);
-        idx.replace_trace_blocks(
+        let level = idx.replace_trace_blocks(
             "t",
             &strings(&["b1", "b2"]),
-            stats("c1", 0, 300, &[1, 2], &[]),
-            30,
+            sized(stats("c1", 0, 300, &[1, 2], &[]), 30),
         );
 
-        check!(
-            idx.block_lineage("c1")
-                == Some(&BlockLineage {
-                    level: BlockLevel(1),
-                    row_count: 30,
-                    sources: strings(&["b1", "b2"]),
-                })
-        );
-        // The inputs are gone, so their lineage goes with them.
-        check!(idx.block_lineage("b1").is_none());
+        check!(level == BlockLevel(1));
+        check!(idx.block_level("c1") == BlockLevel(1));
+        // The inputs are gone, and the level went with the records rather than
+        // outliving them in a map of its own.
+        check!(idx.trace_blocks("t").len() == 1);
+        check!(idx.block_level("b1") == BlockLevel::INGESTED);
 
         // A second round climbs one more rung.
-        idx.add_trace_block_with_rows("t", stats("b3", 300, 400, &[3], &[]), 5);
-        idx.replace_trace_blocks(
+        idx.add_trace_block("t", sized(stats("b3", 300, 400, &[3], &[]), 5));
+        let level = idx.replace_trace_blocks(
             "t",
             &strings(&["c1", "b3"]),
-            stats("c2", 0, 400, &[1, 2, 3], &[]),
-            35,
+            sized(stats("c2", 0, 400, &[1, 2, 3], &[]), 35),
         );
+        check!(level == BlockLevel(2));
         check!(idx.block_level("c2") == BlockLevel(2));
+    }
+
+    /// A pending removal pins itself to the fingerprint of the record it
+    /// retired. The level and the row count are part of that record, so two
+    /// blocks under one key that differ only there must not agree on a
+    /// fingerprint -- a removal that matched both would drop a live object
+    /// nothing else names.
+    #[test]
+    fn the_record_fingerprint_tells_two_blocks_apart_by_level_and_row_count() {
+        let ingested = sized(stats("b1", 0, 100, &[1], &[]), 10);
+        let compacted = TraceBlockStats {
+            level: BlockLevel(1),
+            ..ingested.clone()
+        };
+        let regrown = TraceBlockStats {
+            row_count: 11,
+            ..ingested.clone()
+        };
+
+        let of = trace_block_fingerprint;
+        check!(of(&ingested) == of(&ingested.clone()));
+        check!(of(&ingested) != of(&compacted));
+        check!(of(&ingested) != of(&regrown));
     }
 
     #[test]
     fn compaction_candidates_carry_the_level_and_row_count_in_a_stable_order() {
         let mut idx = TraceIndex::new();
-        idx.add_trace_block_with_rows("zeta", stats("z1", 0, 100, &[1], &[]), 7);
-        idx.add_trace_block_with_rows("alpha", stats("a2", 200, 300, &[2], &[]), 20);
-        idx.add_trace_block_with_rows("alpha", stats("a1", 0, 100, &[3], &[]), 10);
+        idx.add_trace_block("zeta", sized(stats("z1", 0, 100, &[1], &[]), 7));
+        idx.add_trace_block("alpha", sized(stats("a2", 200, 300, &[2], &[]), 20));
+        idx.add_trace_block("alpha", sized(stats("a1", 0, 100, &[3], &[]), 10));
         idx.replace_trace_blocks(
             "alpha",
             &strings(&["a1", "a2"]),
-            stats("a0", 0, 300, &[2, 3], &[]),
-            30,
+            sized(stats("a0", 0, 300, &[2, 3], &[]), 30),
         );
 
         check!(
@@ -647,8 +680,7 @@ mod tests {
         idx.replace_trace_blocks(
             "t",
             &strings(&["b1", "b2"]),
-            stats("c1", 0, 300, &[1, 2, 3], &[]),
-            42,
+            sized(stats("c1", 0, 300, &[1, 2, 3], &[]), 42),
         );
         idx.save_latest_snapshot(&store, "index/traces.json")
             .await
@@ -669,16 +701,18 @@ mod tests {
                     level: BlockLevel(1),
                 }]
         );
-        // The replaced blocks left no lineage behind, so the snapshot does not
-        // grow once per block ever written.
-        check!(loaded.block_lineage("b1").is_none());
+        // The replaced blocks are gone, and so is everything the index said
+        // about them: there is nowhere else for a level to outlive a record.
+        check!(loaded.trace_blocks("t").len() == 1);
     }
 }
 
 mod tenant_trace_index;
+mod trace_block_fingerprint;
 mod trace_block_stats;
 mod trace_index_type;
 
 use tenant_trace_index::TenantTraceIndex;
+use trace_block_fingerprint::trace_block_fingerprint;
 pub use trace_block_stats::TraceBlockStats;
 pub use trace_index_type::TraceIndex;

@@ -7,7 +7,9 @@ use arrow::{
         Array, ArrayRef, DynComparator, FixedSizeBinaryArray, Int64Array, UInt32Array, UInt64Array,
         make_comparator,
     },
-    compute::{SortColumn, SortOptions, concat_batches, lexsort_to_indices, take_record_batch},
+    compute::{
+        SortColumn, SortOptions, concat_batches, lexsort_to_indices, take, take_record_batch,
+    },
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
@@ -23,6 +25,7 @@ use tracing::{debug, instrument};
 use crate::{
     block::{BlockMeta, COL_FINGERPRINT, COL_TIMESTAMP, validate_against},
     block_index::{BlockSchema, series_block_schema},
+    compaction::BlockLevel,
     error::{BlockStoreError, Result},
     labels::SeriesFingerprint,
 };
@@ -95,6 +98,7 @@ mod tests {
                 max_ts: 400,
                 row_count: 4,
                 fingerprints: vec![10, 20],
+                level: BlockLevel::INGESTED,
             }
         );
 
@@ -114,6 +118,19 @@ mod tests {
             FixedSizeBinaryArray::try_from_iter(ids.iter().map(<[u8; 16]>::as_slice)).unwrap();
         let ts = Int64Array::from(vec![100_i64, 200]);
         RecordBatch::try_new(schema, vec![Arc::new(trace_id), Arc::new(ts)]).unwrap()
+    }
+
+    /// The summary of `batches`, folded one batch at a time exactly as the
+    /// writer folds them.
+    fn summarize(
+        batches: &[RecordBatch],
+        columns: &SummaryColumns,
+    ) -> Result<(i64, i64, usize, Vec<SeriesFingerprint>)> {
+        let mut summary = BlockSummary::new();
+        for batch in batches {
+            summary.push(batch, columns)?;
+        }
+        summary.finish()
     }
 
     #[test]
@@ -140,6 +157,42 @@ mod tests {
         let (_min, _max, _rows, mut fps) = summarize(&[batch], &SummaryColumns::series()).unwrap();
         fps.sort_unstable();
         assert2::assert!(fps == vec![10_u64, 20]);
+    }
+
+    /// A block summarized in pieces is the block summarized whole: the same
+    /// bounds, the same row count, the same fingerprints. The streaming
+    /// writer's `BlockMeta` is only trustworthy if that holds, and a bound
+    /// that came out too narrow would drop the block from a query's range
+    /// rather than fail anywhere visible.
+    #[test]
+    fn a_summary_folded_batch_by_batch_matches_one_taken_over_the_whole_block() {
+        let schema = series_schema();
+        let split = (0..7_i64)
+            .map(|group| {
+                let fp = UInt64Array::from_iter_values(
+                    (0..3_u64).map(|row| u64::try_from(group).expect("a group index") * 3 + row),
+                );
+                let ts = Int64Array::from_iter_values((0..3_i64).map(|row| group * 3 + row - 4));
+                RecordBatch::try_new(schema.clone(), vec![Arc::new(fp), Arc::new(ts)]).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let whole = arrow::compute::concat_batches(&schema, &split).unwrap();
+
+        assert2::assert!(
+            summarize(&split, &SummaryColumns::series()).unwrap()
+                == summarize(std::slice::from_ref(&whole), &SummaryColumns::series()).unwrap()
+        );
+    }
+
+    /// A block with no rows has no time bounds to prune by, so it is an error
+    /// rather than an object nothing can query.
+    #[test]
+    fn a_summary_of_no_rows_at_all_is_an_error() {
+        let empty: Vec<RecordBatch> = Vec::new();
+        assert2::assert!(matches!(
+            summarize(&empty, &SummaryColumns::series()),
+            Err(BlockStoreError::InvalidBlock(message)) if message == "empty block"
+        ));
     }
 
     #[tokio::test]
@@ -502,6 +555,163 @@ mod tests {
         );
     }
 
+    /// The streaming path exists to spend less memory, not to write a
+    /// different block. Handed the same rows in the same order, it must
+    /// produce the same rows back and the same `BlockMeta` -- bounds, row
+    /// count and fingerprints -- as the buffered path, because the index
+    /// entry a compaction records is that metadata.
+    #[tokio::test]
+    async fn a_streamed_block_holds_what_the_buffered_one_would() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let schema = series_schema();
+        let batches = (0..4_u64)
+            .map(|group| {
+                let fp = UInt64Array::from_iter_values((0..5).map(|row| group * 5 + row));
+                let ts = Int64Array::from_iter_values(
+                    (0..5).map(|row| i64::try_from(group * 5 + row).unwrap()),
+                );
+                RecordBatch::try_new(schema.clone(), vec![Arc::new(fp), Arc::new(ts)]).unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let buffered = writer
+            .write_block("t", "buffered.parquet", schema.clone(), &batches)
+            .await
+            .unwrap();
+
+        let mut block = writer
+            .open_block(
+                "t",
+                "streamed.parquet",
+                schema.clone(),
+                &series_block_schema(),
+                SummaryColumns::series(),
+            )
+            .unwrap();
+        for batch in &batches {
+            block.write_batch(batch).await.unwrap();
+        }
+        let streamed = block.finish().await.unwrap();
+
+        assert2::assert!(
+            streamed
+                == BlockMeta {
+                    object_key: "streamed.parquet".to_string(),
+                    ..buffered
+                }
+        );
+
+        let read_back = |key: &'static str| {
+            let store = store.clone();
+            let schema = schema.clone();
+            async move {
+                let batches = read_block(store, key).await.unwrap();
+                arrow::compute::concat_batches(&schema, &batches).unwrap()
+            }
+        };
+        assert2::assert!(
+            read_back("streamed.parquet").await == read_back("buffered.parquet").await
+        );
+    }
+
+    /// A streaming writer cannot sort rows it has already encoded, so a caller
+    /// that breaks the declared order is refused rather than quietly given a
+    /// block whose `sorting_columns` lies about it. The violation is across a
+    /// batch boundary, which is the case a per-batch check would miss.
+    #[tokio::test]
+    async fn a_streaming_caller_that_breaks_the_declared_order_is_refused() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let schema = series_schema();
+        let batch = |fingerprints: Vec<u64>| {
+            let ts = Int64Array::from_iter_values(fingerprints.iter().map(|_| 1_i64));
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![Arc::new(UInt64Array::from(fingerprints)), Arc::new(ts)],
+            )
+            .unwrap()
+        };
+
+        let mut block = writer
+            .open_block(
+                "t",
+                "unsorted.parquet",
+                schema.clone(),
+                &series_block_schema(),
+                SummaryColumns::series(),
+            )
+            .unwrap();
+        block.write_batch(&batch(vec![30, 40])).await.unwrap();
+        let rejected = block.write_batch(&batch(vec![10, 20])).await;
+
+        assert2::assert!(
+            matches!(&rejected, Err(BlockStoreError::InvalidBlock(message))
+                if message.contains("out of the declared sort order"))
+        );
+        // Once refused, the block stays refused: a caller that ignored the
+        // error must not be able to close a mis-sorted block anyway.
+        assert2::assert!(block.finish().await.is_err());
+        assert2::assert!(read_block(store, "unsorted.parquet").await.is_err());
+    }
+
+    /// Rows out of order *within* one batch are the same lie about
+    /// `sorting_columns`, and are refused on the same terms.
+    #[tokio::test]
+    async fn a_streaming_caller_is_refused_for_disorder_inside_one_batch() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store);
+        let schema = series_schema();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt64Array::from(vec![10_u64, 10])),
+                Arc::new(Int64Array::from(vec![9_i64, 8])),
+            ],
+        )
+        .unwrap();
+
+        let mut block = writer
+            .open_block(
+                "t",
+                "unsorted.parquet",
+                schema,
+                &series_block_schema(),
+                SummaryColumns::series(),
+            )
+            .unwrap();
+
+        assert2::assert!(block.write_batch(&batch).await.is_err());
+    }
+
+    /// A stream that never carried a row leaves no object behind: an empty
+    /// block has no time bounds to prune by, and an index entry pointing at
+    /// one would send every query that overlaps it to a file with nothing in.
+    #[tokio::test]
+    async fn a_stream_with_no_rows_writes_no_block() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let schema = series_schema();
+        let empty = RecordBatch::new_empty(schema.clone());
+
+        let mut block = writer
+            .open_block(
+                "t",
+                "empty.parquet",
+                schema,
+                &series_block_schema(),
+                SummaryColumns::series(),
+            )
+            .unwrap();
+        block.write_batch(&empty).await.unwrap();
+
+        assert2::assert!(
+            matches!(block.finish().await, Err(BlockStoreError::InvalidBlock(message))
+                if message == "empty block")
+        );
+        assert2::assert!(store.head(&Path::from("empty.parquet")).await.is_err());
+    }
+
     #[test]
     fn sorting_columns_index_parquet_leaves_rather_than_arrow_fields() {
         // One nested Arrow field ahead of the sort key contributes two
@@ -570,25 +780,31 @@ mod tests {
 }
 
 mod block_row_group_rows;
+mod block_stream_writer;
+mod block_summary;
 mod block_writer;
 mod block_writer_properties;
 mod block_zstd_level;
 mod is_sorted_by_key;
 mod key_columns;
 mod sort_batches_by_key;
+mod sort_key_check;
 mod sort_key_options;
-mod summarize;
 mod summary_columns;
+mod validate_batch_schema;
 mod validate_batch_schemas;
 
 pub use block_row_group_rows::BLOCK_ROW_GROUP_ROWS;
+pub use block_stream_writer::BlockStreamWriter;
+use block_summary::BlockSummary;
 pub use block_writer::BlockWriter;
 pub use block_writer_properties::block_writer_properties;
 pub use block_zstd_level::BLOCK_ZSTD_LEVEL;
 use is_sorted_by_key::is_sorted_by_key;
 use key_columns::key_columns;
 use sort_batches_by_key::sort_batches_by_key;
-use sort_key_options::SORT_KEY_OPTIONS;
-use summarize::summarize;
+use sort_key_check::SortKeyCheck;
+pub(crate) use sort_key_options::SORT_KEY_OPTIONS;
 pub use summary_columns::SummaryColumns;
+use validate_batch_schema::validate_batch_schema;
 use validate_batch_schemas::validate_batch_schemas;

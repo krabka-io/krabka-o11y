@@ -1,4 +1,4 @@
-use super::{Deserialize, Serialize};
+use super::{BlockLevel, Deserialize, Serialize};
 
 /// One block, as the index knows it.
 ///
@@ -16,6 +16,7 @@ pub(crate) struct BlockEntry {
     pub(crate) row_count: usize,
     pub(crate) fingerprint_count: usize,
     pub(crate) fingerprint_digest: u64,
+    pub(crate) level: BlockLevel,
 }
 
 impl BlockEntry {

@@ -891,6 +891,8 @@ mod tests {
                 bloom: krabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
                 tag_names: std::collections::BTreeSet::default(),
                 tag_values: std::collections::BTreeMap::default(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let source = trace_querier::live::RemoteLiveSource::new(
@@ -1041,6 +1043,8 @@ mod tests {
                 bloom: krabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
                 tag_names: std::collections::BTreeSet::default(),
                 tag_values: std::collections::BTreeMap::default(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         index.add_trace_block(
@@ -1052,6 +1056,8 @@ mod tests {
                 bloom: krabka_blockstore::ShardedTraceBloom::new(1, 1, 0.01),
                 tag_names: std::collections::BTreeSet::default(),
                 tag_values: std::collections::BTreeMap::default(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let source = IndexedLiveSource::new(

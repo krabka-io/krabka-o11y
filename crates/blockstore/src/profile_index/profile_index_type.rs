@@ -1,10 +1,10 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockLineage, BlockLineageIndex, BlockMeta,
-    ByteSize, CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, Index,
-    IndexSnapshotBytes, IndexSnapshotRetain, LABEL_PROFILE_TYPE, LabelMatcher, Labels, ObjectStore,
-    ObjectStoreExt, Path, PendingBlockRemovals, PutPayload, Result, Serialize, SeriesFingerprint,
-    TenantProfileExtras, instrument, latest_index_snapshot_path, put_index_snapshot,
-    read_index_snapshot_bytes,
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, ByteSize, CompactionCandidate,
+    DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, Index, IndexSnapshotBytes, IndexSnapshotRetain,
+    LABEL_PROFILE_TYPE, LabelMatcher, Labels, ObjectStore, ObjectStoreExt, Path,
+    PendingBlockAdditions, PendingBlockRemovals, PutPayload, Result, Serialize, SeriesFingerprint,
+    TenantProfileExtras, instrument, latest_index_snapshot_path, level_above,
+    profile_block_fingerprint, put_index_snapshot, read_index_snapshot_bytes,
 };
 
 /// How an oversized or unreadable profile-index snapshot names itself in errors.
@@ -16,13 +16,14 @@ pub struct ProfileIndex {
     pub(crate) series: Index,
     pub(crate) extras: BTreeMap<String, TenantProfileExtras>,
     pub(crate) block_partitions: BTreeMap<String, Vec<u64>>,
-    /// Compaction level and lineage per block, beside the series postings that
-    /// hold the block's time bounds and row count.
-    pub(crate) lineage: BlockLineageIndex,
     /// Blocks this writer dropped and has yet to make durable. Not persisted:
     /// see [`PendingBlockRemovals`].
     #[serde(skip)]
     pending_removals: PendingBlockRemovals,
+    /// Blocks this writer registered and has yet to make durable. Not
+    /// persisted: see [`PendingBlockAdditions`].
+    #[serde(skip)]
+    pending_additions: PendingBlockAdditions,
 }
 
 impl ProfileIndex {
@@ -252,35 +253,31 @@ impl ProfileIndex {
     }
 
     pub fn add_profile_block(&mut self, _tenant: &str, object_key: &str, partitions: Vec<u64>) {
-        self.lineage.record_ingested(object_key, 0);
+        self.pending_additions.record(object_key);
         self.block_partitions
             .insert(object_key.to_string(), partitions);
     }
 
-    /// How many rounds of compaction produced `object_key`.
+    /// How many rounds of compaction produced `object_key`, or
+    /// [`BlockLevel::INGESTED`] for a block the index does not hold.
     #[must_use]
     pub fn block_level(&self, object_key: &str) -> BlockLevel {
-        self.lineage.level(object_key)
-    }
-
-    /// The level, row count and immediate inputs recorded for `object_key`.
-    #[must_use]
-    pub fn block_lineage(&self, object_key: &str) -> Option<&BlockLineage> {
-        self.lineage.lineage(object_key)
+        self.series
+            .block_level(object_key)
+            .unwrap_or(BlockLevel::INGESTED)
     }
 
     /// Every block in the index, as the compaction planner sees it.
     ///
-    /// The time bounds and row count come from the series postings, which are
-    /// the authority on what a block holds; only the level comes from the
-    /// lineage records.
+    /// Time bounds, row count and level all come from the block records the
+    /// series postings hold; nothing about a block is kept anywhere else.
     #[must_use]
     pub fn compaction_candidates(&self) -> Vec<CompactionCandidate> {
         let mut candidates: Vec<CompactionCandidate> = self
             .all_blocks()
             .into_iter()
             .map(|meta| CompactionCandidate {
-                level: self.lineage.level(&meta.object_key),
+                level: meta.level,
                 tenant: meta.tenant,
                 object_key: meta.object_key,
                 min_ts: meta.min_ts,
@@ -296,30 +293,43 @@ impl ProfileIndex {
         candidates
     }
 
+    /// Swaps the `remove_keys` blocks for `add`, and returns the level the
+    /// added blocks were stamped with.
+    ///
+    /// The level is not a parameter: it is one rung above the highest of the
+    /// blocks being retired, and those are named here already because naming
+    /// them is what retires them. A compactor therefore cannot register its
+    /// output at a level that contradicts its inputs, and cannot register it
+    /// without saying what they were.
     pub fn replace_profile_blocks(
         &mut self,
         tenant: &str,
         remove_keys: &[String],
         add: &[(BlockMeta, Vec<u64>)],
-    ) {
-        self.pending_removals
-            .record(tenant, remove_keys.iter().map(String::as_str));
-        // Recorded before the inputs are forgotten, because a replacement's
-        // level is one above the highest of theirs.
-        for (meta, _) in add {
-            self.lineage
-                .record_compacted(&meta.object_key, remove_keys, meta.row_count);
-        }
-        let added: BTreeSet<&str> = add
-            .iter()
-            .map(|(meta, _)| meta.object_key.as_str())
+    ) -> BlockLevel {
+        // Pinned to the records being dropped, and so read before they are.
+        // A removal that named only the key would also drop a block another
+        // writer has since written under that key.
+        let dropped: BTreeSet<&str> = remove_keys.iter().map(String::as_str).collect();
+        let retired: Vec<(String, u64)> = self
+            .all_blocks()
+            .into_iter()
+            .filter(|meta| meta.tenant == tenant && dropped.contains(meta.object_key.as_str()))
+            .map(|meta| {
+                let partitions = self.stacktrace_partitions(&meta.object_key);
+                let fingerprint = profile_block_fingerprint(&meta, &partitions);
+                (meta.object_key, fingerprint)
+            })
             .collect();
-        self.lineage.forget(
-            remove_keys
+        self.pending_removals.record(
+            tenant,
+            retired
                 .iter()
-                .map(String::as_str)
-                .filter(|key| !added.contains(key)),
+                .map(|(key, fingerprint)| (key.as_str(), *fingerprint)),
         );
+        for key in &dropped {
+            self.pending_additions.forget(key);
+        }
         // A compaction may reuse the key of a block it replaces. That block is
         // live again, so it must not be replayed as a removal.
         for (meta, _) in add {
@@ -328,11 +338,26 @@ impl ProfileIndex {
         for key in remove_keys {
             self.block_partitions.remove(key);
         }
-        let metas = add.iter().map(|(meta, _)| meta.clone()).collect::<Vec<_>>();
+        // Read before the inputs are dropped, and never below what an added
+        // key already sits at: a snapshot merge re-registers blocks whose
+        // inputs are long gone, and re-deriving from nothing would demote a
+        // compacted block back to level zero every save.
+        let mut level = level_above(remove_keys.iter().map(|key| self.block_level(key)));
+        for (meta, _) in add {
+            level = level.max(self.block_level(&meta.object_key));
+        }
+        let metas = add
+            .iter()
+            .map(|(meta, _)| BlockMeta {
+                level,
+                ..meta.clone()
+            })
+            .collect::<Vec<_>>();
         self.series.replace_blocks(tenant, remove_keys, &metas);
         for (meta, partitions) in add {
             self.add_profile_block(tenant, &meta.object_key, partitions.clone());
         }
+        level
     }
 
     #[must_use]
@@ -386,6 +411,22 @@ impl ProfileIndex {
         self.series.all_blocks_unscoped()
     }
 
+    /// Every block's record fingerprint, grouped by tenant, as a snapshot
+    /// merge needs it to tell a retired block from one written under the same
+    /// key since.
+    fn block_fingerprints_by_tenant(&self) -> BTreeMap<String, BTreeMap<String, u64>> {
+        let mut by_tenant: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
+        for meta in self.all_blocks() {
+            let partitions = self.stacktrace_partitions(&meta.object_key);
+            let fingerprint = profile_block_fingerprint(&meta, &partitions);
+            by_tenant
+                .entry(meta.tenant.clone())
+                .or_default()
+                .insert(meta.object_key, fingerprint);
+        }
+        by_tenant
+    }
+
     #[instrument(skip_all, fields(key = %key, len = tracing::field::Empty), err)]
     /// # Errors
     /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
@@ -416,34 +457,67 @@ impl ProfileIndex {
         retain: IndexSnapshotRetain,
     ) -> Result<String> {
         let removals = self.pending_removals.pending();
+        let additions = self.pending_additions.pending();
         let snapshot_key = put_index_snapshot(
             store,
             key,
             retain,
             DEFAULT_INDEX_SNAPSHOT_MAX,
             SNAPSHOT_LABEL,
-            |base| self.merged_snapshot_bytes(base, &removals),
+            |base| self.merged_snapshot_bytes(base, &removals, &additions),
         )
         .await?;
         self.pending_removals.commit(&removals);
+        self.pending_additions.commit(&additions);
         Ok(snapshot_key)
     }
 
     /// Folds this index into the snapshot `base` and serialises the result.
     ///
     /// Series, postings and profile types are grow-only, so their union is
-    /// their join. Blocks and their stacktrace partitions are keyed by object
-    /// key, with this index winning, plus a replay of `removals`: union alone
-    /// would resurrect every block this writer compacted away, because the base
-    /// still names them.
+    /// their join. Blocks and their stacktrace partitions are another matter:
+    /// the base is the state of the whole system, and this writer contributes
+    /// only what it alone knows. That is `additions`, the blocks it has
+    /// registered since its last successful write, plus a replay of
+    /// `removals`.
+    ///
+    /// Contributing every block this index names instead would be the wider
+    /// bug. A writer that read a block from a snapshot and has held it in
+    /// memory ever since has no removal to replay when a *concurrent*
+    /// compactor retires that block, so a full union would put the compaction's
+    /// input back beside its output and the querier would read both. Anything
+    /// this writer has already published is in the chain the base descends
+    /// from, so leaving it out loses nothing.
+    ///
+    /// A `base` of `None` is the exception: there is no chain, so there is no
+    /// concurrent writer whose removal could be undone, and everything this
+    /// index names is contributed.
     fn merged_snapshot_bytes(
         &self,
         base: Option<&[u8]>,
-        removals: &BTreeMap<String, BTreeSet<String>>,
+        removals: &BTreeMap<String, BTreeMap<String, u64>>,
+        additions: &BTreeSet<String>,
     ) -> Result<Vec<u8>> {
-        let mut merged = match base {
-            Some(bytes) => Self::from_snapshot_bytes(bytes)?,
-            None => Self::new(),
+        let (mut merged, contribute_all) = match base {
+            Some(bytes) => (Self::from_snapshot_bytes(bytes)?, false),
+            None => (Self::new(), true),
+        };
+        // Read before the union folds this writer's blocks in: a block this
+        // writer has published that the base no longer names was retired by
+        // somebody else, and must not come back.
+        let stale: BTreeSet<String> = if contribute_all {
+            BTreeSet::new()
+        } else {
+            let base_keys: BTreeSet<String> = merged
+                .all_blocks()
+                .into_iter()
+                .map(|meta| meta.object_key)
+                .collect();
+            self.all_blocks()
+                .into_iter()
+                .map(|meta| meta.object_key)
+                .filter(|key| !additions.contains(key) && !base_keys.contains(key))
+                .collect()
         };
         merged.series.merge_from(&self.series);
         for (tenant, extras) in &self.extras {
@@ -457,29 +531,51 @@ impl ProfileIndex {
             }
         }
         for (object_key, partitions) in &self.block_partitions {
+            if stale.contains(object_key) {
+                continue;
+            }
             merged
                 .block_partitions
                 .insert(object_key.clone(), partitions.clone());
         }
-        // This writer's view of a block's level wins over the base's, so a
-        // compacted block does not read back as freshly ingested.
-        merged.lineage.merge_from(&self.lineage);
+        // `Index::merge_from` is a union and takes no removals, so the blocks
+        // it just resurrected are taken back out here. Only the block records
+        // go: the series postings behind them are grow-only.
+        if !stale.is_empty() {
+            let mut stale_by_tenant: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for meta in self.all_blocks() {
+                if stale.contains(&meta.object_key) {
+                    stale_by_tenant
+                        .entry(meta.tenant)
+                        .or_default()
+                        .push(meta.object_key);
+                }
+            }
+            for (tenant, keys) in stale_by_tenant {
+                merged.series.replace_blocks(&tenant, &keys, &[]);
+                for object_key in &keys {
+                    merged.block_partitions.remove(object_key);
+                }
+            }
+        }
+        let live_fingerprints = merged.block_fingerprints_by_tenant();
         for (tenant, removed) in removals {
-            let removed_keys: Vec<String> = removed.iter().cloned().collect();
+            // Only the record the removal pinned itself to is dropped. A block
+            // written under the same key since is a different block, and
+            // dropping it would hide an object nothing else names.
+            let live = live_fingerprints.get(tenant);
+            let removed_keys: Vec<String> = removed
+                .iter()
+                .filter(|(object_key, fingerprint)| {
+                    live.and_then(|live| live.get(*object_key)) == Some(*fingerprint)
+                })
+                .map(|(object_key, _)| object_key.clone())
+                .collect();
             merged.series.replace_blocks(tenant, &removed_keys, &[]);
-            for object_key in removed {
+            for object_key in &removed_keys {
                 merged.block_partitions.remove(object_key);
             }
-            merged.lineage.forget(removed.iter().map(String::as_str));
         }
-        // Lineage outlives nothing: a record for a block no longer in the
-        // index would make the snapshot grow once per block ever written.
-        let live: BTreeSet<String> = merged
-            .all_blocks()
-            .into_iter()
-            .map(|meta| meta.object_key)
-            .collect();
-        merged.lineage.retain_keys(&live);
         Ok(serde_json::to_vec(&merged)?)
     }
 
@@ -565,6 +661,7 @@ impl ProfileIndex {
 
 impl BlockIndex for ProfileIndex {
     fn add_block(&mut self, meta: &BlockMeta) {
+        self.pending_additions.record(&meta.object_key);
         BlockIndex::add_block(&mut self.series, meta);
     }
 

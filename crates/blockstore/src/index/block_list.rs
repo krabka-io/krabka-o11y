@@ -1,5 +1,5 @@
 use super::{
-    BTreeMap, BTreeSet, BlockEntry, BlockListRepr, BlockMeta, Deserialize, Serialize,
+    BTreeMap, BTreeSet, BlockEntry, BlockLevel, BlockListRepr, BlockMeta, Deserialize, Serialize,
     SeriesFingerprint, fingerprint_set_digest,
 };
 
@@ -97,6 +97,7 @@ impl BlockList {
                 entry.min_ts = meta.min_ts;
                 entry.max_ts = meta.max_ts;
                 entry.row_count = meta.row_count;
+                entry.level = meta.level;
                 if moved {
                     self.detach(ordinal);
                     self.attach(ordinal);
@@ -115,6 +116,7 @@ impl BlockList {
             row_count: meta.row_count,
             fingerprint_count: fingerprints.len(),
             fingerprint_digest: digest,
+            level: meta.level,
         });
         self.live.push(true);
         self.position.push(NO_POSITION);
@@ -230,6 +232,7 @@ impl BlockList {
                     max_ts: entry.max_ts,
                     row_count: entry.row_count,
                     fingerprints: fingerprints.remove(ordinal).unwrap_or_default(),
+                    level: entry.level,
                 }
             })
             .collect()
@@ -243,6 +246,13 @@ impl BlockList {
             .copied()
             .filter(|ordinal| self.entries[*ordinal as usize].overlaps(min_ts, max_ts))
             .collect()
+    }
+
+    /// How many rounds of compaction produced the live block at `object_key`.
+    pub(crate) fn level_of(&self, object_key: &str) -> Option<BlockLevel> {
+        self.by_key
+            .get(object_key)
+            .map(|ordinal| self.entries[*ordinal as usize].level)
     }
 
     /// The entry behind an ordinal, live or not.

@@ -412,9 +412,10 @@ mod tests {
     };
     use http_body_util::BodyExt;
     use krabka_blockstore::{
-        AttrValue as BlockAttrValue, BlockStore, NestedSet as BlockNestedSet, ShardedTraceBloom,
-        SpanAttr, SpanKind as BlockSpanKind, SpanRow, StatusCode as BlockStatusCode,
-        TraceBlockStats, TraceIndex, encode_span_rows, span_block_schema,
+        AttrValue as BlockAttrValue, BlockLevel, BlockStore, NestedSet as BlockNestedSet,
+        ShardedTraceBloom, SpanAttr, SpanKind as BlockSpanKind, SpanRow,
+        StatusCode as BlockStatusCode, TraceBlockStats, TraceIndex, encode_span_rows,
+        span_block_schema,
     };
     use krabka_traceql::{
         AttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, LinkRef, TraceqlEngine,
@@ -714,6 +715,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared_index(trace_index), None);
@@ -2292,6 +2295,8 @@ overrides:
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared_index(trace_index), None);

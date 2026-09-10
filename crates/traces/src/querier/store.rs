@@ -659,10 +659,11 @@ mod tests {
     };
     use assert2::check;
     use krabka_blockstore::{
-        AttrValue as BlockAttrValue, BlockWriter, NestedSet as BlockNestedSet, PromotedSpanAttr,
-        SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanAttr, SpanKind as BlockSpanKind,
-        SpanRow, StatusCode as BlockStatusCode, SummaryColumns, TraceBlockStats, encode_span_rows,
-        encode_span_rows_with_promoted_attrs, span_block_decl, span_block_schema,
+        AttrValue as BlockAttrValue, BlockLevel, BlockWriter, NestedSet as BlockNestedSet,
+        PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanAttr,
+        SpanKind as BlockSpanKind, SpanRow, StatusCode as BlockStatusCode, SummaryColumns,
+        TraceBlockStats, encode_span_rows, encode_span_rows_with_promoted_attrs, span_block_decl,
+        span_block_schema,
     };
     use krabka_traceql::{
         COL_CHILD_COUNT, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, EngineOpts,
@@ -1616,6 +1617,8 @@ mod tests {
                 bloom,
                 tag_names: tags,
                 tag_values: values,
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
 
@@ -1682,6 +1685,8 @@ mod tests {
                         BTreeSet::from(["true".to_string()]),
                     ),
                 ]),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -1747,6 +1752,8 @@ mod tests {
                     ("exception.type".into(), BTreeSet::from(["timeout".into()])),
                     ("link.kind".into(), BTreeSet::from(["retry".into()])),
                 ]),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -1819,6 +1826,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::from(["exception.type".into(), "link.kind".into()]),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -1872,6 +1881,8 @@ mod tests {
                 bloom: ShardedTraceBloom::new(1, 8, 0.01),
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
 
@@ -1958,6 +1969,8 @@ mod tests {
                     "instrumentation:name".to_string(),
                 ]),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -2023,6 +2036,8 @@ mod tests {
                     bloom: ShardedTraceBloom::with_tempo_defaults(1),
                     tag_names: BTreeSet::new(),
                     tag_values: BTreeMap::new(),
+                    row_count: 0,
+                    level: BlockLevel::INGESTED,
                 },
             );
             index
@@ -2135,6 +2150,8 @@ mod tests {
                 bloom: ShardedTraceBloom::with_tempo_defaults(1),
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -2232,6 +2249,8 @@ mod tests {
                 bloom: ShardedTraceBloom::with_tempo_defaults(1),
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -2312,6 +2331,8 @@ mod tests {
                     "event:name".to_string(),
                     BTreeSet::from(["exception".to_string()]),
                 )]),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -2378,6 +2399,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -2550,6 +2573,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -2641,6 +2666,8 @@ mod tests {
                     bloom,
                     tag_names: BTreeSet::new(),
                     tag_values: BTreeMap::new(),
+                    row_count: 0,
+                    level: BlockLevel::INGESTED,
                 },
             );
         }
@@ -2695,6 +2722,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let live = LiveTier::new(Arc::new(FakeLiveSource {
@@ -2764,6 +2793,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let live = LiveTier::new(Arc::new(FakeLiveSource {
@@ -2846,6 +2877,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -2907,6 +2940,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let live = LiveTier::new(Arc::new(FakeLiveSource {
@@ -2991,6 +3026,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let live = LiveTier::new(Arc::new(FakeLiveSource {
@@ -3117,6 +3154,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
@@ -3332,6 +3371,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
@@ -3389,6 +3430,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
@@ -3499,6 +3542,8 @@ mod tests {
                     "service.name".to_string(),
                     BTreeSet::from(["billing".to_string(), "checkout".to_string()]),
                 )]),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
@@ -3583,6 +3628,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
@@ -3710,6 +3757,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
         handle.store(Arc::new(new_index));

@@ -342,7 +342,7 @@ mod tests {
         use std::collections::{BTreeMap, BTreeSet};
 
         use arc_swap::ArcSwap;
-        use krabka_blockstore::{ShardedTraceBloom, TraceBlockStats, TraceIndex};
+        use krabka_blockstore::{BlockLevel, ShardedTraceBloom, TraceBlockStats, TraceIndex};
 
         let block = |key: &str, min_ts, max_ts| TraceBlockStats {
             object_key: key.to_string(),
@@ -351,6 +351,8 @@ mod tests {
             bloom: ShardedTraceBloom::with_tempo_defaults(1),
             tag_names: BTreeSet::new(),
             tag_values: BTreeMap::new(),
+            row_count: 0,
+            level: BlockLevel::INGESTED,
         };
         let mut index = TraceIndex::new();
         // The newest is neither first nor last, so taking either end is wrong.

@@ -70,6 +70,7 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
         push_len(&mut out, block.row_count);
         push_len(&mut out, block.fingerprint_count);
         out.extend_from_slice(&block.fingerprint_digest.to_le_bytes());
+        push_uvarint(&mut out, u64::from(block.level.get()));
     }
 
     push_len(&mut out, payload.postings.len());

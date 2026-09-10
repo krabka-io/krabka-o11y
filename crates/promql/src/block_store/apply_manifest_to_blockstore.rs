@@ -1,4 +1,4 @@
-use super::{BlockMeta, BlockStore, CompactionIndexManifest};
+use super::{BlockLevel, BlockMeta, BlockStore, CompactionIndexManifest};
 
 pub(crate) fn apply_manifest_to_blockstore(
     store: &mut BlockStore,
@@ -16,5 +16,6 @@ pub(crate) fn apply_manifest_to_blockstore(
         max_ts: manifest.max_ts,
         row_count: manifest.row_count,
         fingerprints: manifest.fingerprints.clone(),
+        level: BlockLevel::INGESTED,
     });
 }

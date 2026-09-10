@@ -81,7 +81,7 @@ pub(crate) async fn build_blocks_with_options(
     for trace_id in traces {
         bloom.insert(&trace_id);
     }
-    index.add_trace_block_with_rows(
+    index.add_trace_block(
         tenant,
         TraceBlockStats {
             object_key: meta.object_key.clone(),
@@ -90,8 +90,9 @@ pub(crate) async fn build_blocks_with_options(
             bloom,
             tag_names,
             tag_values,
+            row_count: meta.row_count,
+            level: meta.level,
         },
-        meta.row_count,
     );
 
     Ok(vec![meta])

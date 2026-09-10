@@ -1,5 +1,5 @@
 use super::{
-    BTreeMap, BlockEntry, BlockList, BlockListRepr, BlockStoreError, ByteReader,
+    BTreeMap, BlockEntry, BlockLevel, BlockList, BlockListRepr, BlockStoreError, ByteReader,
     INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, Index, Labels, Result, SeriesFingerprint,
     TenantIndex,
 };
@@ -70,6 +70,11 @@ fn decode(bytes: &[u8]) -> Result<Index> {
         let row_count = reader.count_unbounded("a block row count")?;
         let fingerprint_count = reader.count_unbounded("a block fingerprint count")?;
         let fingerprint_digest = reader.u64_le("a block fingerprint digest")?;
+        let level = BlockLevel(
+            u32::try_from(reader.uvarint("a block level")?).map_err(|_| {
+                BlockStoreError::InvalidBlock("names a compaction level beyond u32".to_string())
+            })?,
+        );
         entries.push(BlockEntry {
             object_key,
             min_ts,
@@ -77,6 +82,7 @@ fn decode(bytes: &[u8]) -> Result<Index> {
             row_count,
             fingerprint_count,
             fingerprint_digest,
+            level,
         });
     }
 
