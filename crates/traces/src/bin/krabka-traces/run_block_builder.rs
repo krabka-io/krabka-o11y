@@ -12,7 +12,7 @@ pub(crate) async fn run_block_builder(
     let consumer = wal_consumer(
         cli.bootstrap.clone(),
         "krabka-traces-block-builder",
-        Some("krabka-traces-block-builder"),
+        None,
         cli.wal_fetch_max,
         cli.wal_fetch_partition_max,
         cli.client_dispatch_queue_capacity,

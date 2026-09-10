@@ -16,7 +16,6 @@ pub async fn run_with_config(config: BlockBuilderConfig) -> Result<(), ProfilesE
         .dispatch_queue_capacity(config.client_dispatch_queue_capacity.get())
         .frame_max(config.client_frame_max.size())
         .group_id(config.group_id.clone())
-        .group_instance_id(config.group_id)
         .fetch_max(config.wal_fetch_max)
         .fetch_partition_max(config.wal_fetch_partition_max)
         .subscribe(vec![config.wal_topic.clone()])
