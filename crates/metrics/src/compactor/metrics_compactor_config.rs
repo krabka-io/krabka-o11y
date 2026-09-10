@@ -1,8 +1,8 @@
 use super::{
     Arc, AutoOffsetReset, BlockWriter, CompactionLoopConfig, Consumer, DEFAULT_FLUSH_MAX_AGE,
-    DEFAULT_FLUSH_MAX_ROWS, MetricsCompactorBuildError, MetricsCompactorConfigError,
-    MetricsCompactorRuntime, ObjectStore, ObjectStoreCompactionIndexSink, Time, TimeExt,
-    consumer_build_error, secs, validate_non_empty,
+    DEFAULT_FLUSH_MAX_ROWS, DurableCompactionConsumer, MetricsCompactorBuildError,
+    MetricsCompactorConfigError, MetricsCompactorRuntime, ObjectStore,
+    ObjectStoreCompactionIndexSink, Time, TimeExt, consumer_build_error, secs, validate_non_empty,
 };
 
 /// Configuration for the metrics compactor role.
@@ -78,9 +78,11 @@ impl MetricsCompactorConfig {
 
     /// # Errors
     /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-    pub async fn build_consumer(&self) -> Result<Consumer, MetricsCompactorBuildError> {
+    pub async fn build_consumer(
+        &self,
+    ) -> Result<DurableCompactionConsumer<Consumer>, MetricsCompactorBuildError> {
         self.validate()?;
-        Consumer::builder()
+        let consumer = Consumer::builder()
             .bootstrap(self.bootstrap.clone())
             .dispatch_queue_capacity(self.client_dispatch_queue_capacity.get())
             .frame_max(self.client_frame_max.size())
@@ -90,6 +92,10 @@ impl MetricsCompactorConfig {
             .subscribe([self.wal_topic.clone()])
             .build()
             .await
-            .map_err(|error| consumer_build_error(&error))
+            .map_err(|error| consumer_build_error(&error))?;
+        Ok(DurableCompactionConsumer::new(
+            consumer,
+            self.wal_topic.clone(),
+        ))
     }
 }

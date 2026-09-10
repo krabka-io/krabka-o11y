@@ -1016,21 +1016,28 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingCommitSync {
-        calls: Mutex<usize>,
+        calls: Mutex<Vec<(String, Vec<super::CompactionPartitionOffset>)>>,
     }
 
     #[async_trait]
     impl super::CompactionConsumerCommit for RecordingCommitSync {
-        async fn commit_sync(&self) -> Result<(), super::CompactionConsumerCommitError> {
-            *self.calls.lock().expect("commit calls lock") += 1;
+        async fn commit_offsets_sync(
+            &self,
+            topic: &str,
+            offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
+            self.calls
+                .lock()
+                .expect("commit calls lock")
+                .push((topic.to_string(), offsets.to_vec()));
             Ok(())
         }
     }
 
     #[tokio::test]
-    async fn compaction_consumer_committer_calls_commit_sync_once() {
+    async fn compaction_consumer_committer_forwards_selected_offsets() {
         let sync = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&sync);
+        let committer = super::CompactionConsumerCommitter::new(&sync, crate::WAL_TOPIC);
 
         super::CompactionOffsetCommitter::commit_offsets(
             &committer,
@@ -1042,7 +1049,16 @@ mod tests {
         .await
         .expect("commit offsets");
 
-        assert!(*sync.calls.lock().expect("commit calls lock") == 1);
+        assert!(
+            *sync.calls.lock().expect("commit calls lock")
+                == vec![(
+                    crate::WAL_TOPIC.to_string(),
+                    vec![super::CompactionPartitionOffset {
+                        partition: super::PartitionIndex(2),
+                        offset: super::Offset(11),
+                    }],
+                )]
+        );
     }
 
     struct StaticPoller {
@@ -1066,7 +1082,7 @@ mod tests {
         let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&commit);
+        let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let wal_record = float_record("tenant-a", "up", "api", 100);
         let mut poller = StaticPoller {
             records: vec![krabka_client_consumer::ConsumerRecord {
@@ -1102,7 +1118,7 @@ mod tests {
                     offset: super::Offset(22),
                 }]
         );
-        check!(*commit.calls.lock().expect("commit calls lock") == 1);
+        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
         check!(sink.manifests.lock().expect("manifest lock").len() == 1);
     }
 
@@ -1133,7 +1149,7 @@ mod tests {
         let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&commit);
+        let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
@@ -1187,7 +1203,7 @@ mod tests {
                     }],
                 }
         );
-        check!(*commit.calls.lock().expect("commit calls lock") == 1);
+        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
         assert!(sink.manifests.lock().expect("manifest lock").len() == 1);
         // The single block spans the full buffered offset range [10, 11].
         let manifests = sink.manifests.lock().expect("manifest lock");
@@ -1203,7 +1219,7 @@ mod tests {
         let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&commit);
+        let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
@@ -1252,7 +1268,7 @@ mod tests {
                     offset: super::Offset(12),
                 }]
         );
-        check!(*commit.calls.lock().expect("commit calls lock") == 1);
+        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
         check!(sink.manifests.lock().expect("manifest lock").len() == 1);
     }
 
@@ -1286,7 +1302,7 @@ mod tests {
         let block_writer = krabka_blockstore::BlockWriter::new(object_store);
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
-        let committer = super::CompactionConsumerCommitter::new(&commit);
+        let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
         let make_record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
             partition: 0,
@@ -1343,7 +1359,7 @@ mod tests {
                     offset: super::Offset(12),
                 }]
         );
-        check!(*commit.calls.lock().expect("commit calls lock") == 1);
+        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
         let manifests = sink.manifests.lock().expect("manifest lock");
         assert!(manifests.len() == 1);
         check!(manifests[0].first_offset == 10);
@@ -1372,6 +1388,7 @@ mod tests {
         let mut consumer = PollAndCommit {
             batches: vec![vec![make_record(10, 100)], Vec::new()],
             commit_calls: 0,
+            committed_offsets: Vec::new(),
         };
 
         let result = super::run_compactor_consumer_loop(
@@ -1394,6 +1411,7 @@ mod tests {
         // Buffered for one poll, then flushed once on the empty-poll shutdown.
         check!(result.writes == 1);
         check!(consumer.commit_calls == 1);
+        check!(consumer.committed_offsets[0][0].offset == krabka_ids::Offset(11));
     }
 
     #[tokio::test]
@@ -1419,6 +1437,7 @@ mod tests {
         let mut consumer = PollAndCommit {
             batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],
             commit_calls: 0,
+            committed_offsets: Vec::new(),
         };
 
         let result = super::run_compactor_consumer_loop(
@@ -1441,6 +1460,7 @@ mod tests {
         // Single block + single commit for the whole two-poll buffer.
         check!(result.writes == 1);
         check!(consumer.commit_calls == 1);
+        check!(consumer.committed_offsets[0][0].offset == krabka_ids::Offset(12));
         let manifests = sink.manifests.lock().expect("manifest lock");
         assert!(manifests.len() == 1);
         check!(manifests[0].first_offset == 10);
@@ -1575,6 +1595,7 @@ mod tests {
     struct PollAndCommit {
         batches: Vec<Vec<krabka_client_consumer::ConsumerRecord>>,
         commit_calls: usize,
+        committed_offsets: Vec<Vec<super::CompactionPartitionOffset>>,
     }
 
     #[async_trait]
@@ -1594,7 +1615,11 @@ mod tests {
 
     #[async_trait]
     impl super::CompactionConsumerCommit for PollAndCommit {
-        async fn commit_sync(&self) -> Result<(), super::CompactionConsumerCommitError> {
+        async fn commit_offsets_sync(
+            &self,
+            _topic: &str,
+            _offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
             Err(super::CompactionConsumerCommitError::Commit(
                 "immutable commit path should not be used by this adapter test".into(),
             ))
@@ -1603,10 +1628,61 @@ mod tests {
 
     #[async_trait]
     impl super::CompactionConsumerCommitMut for PollAndCommit {
-        async fn commit_sync_mut(&mut self) -> Result<(), super::CompactionConsumerCommitError> {
+        async fn commit_offsets_sync_mut(
+            &mut self,
+            offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
             self.commit_calls += 1;
+            self.committed_offsets.push(offsets.to_vec());
             Ok(())
         }
+    }
+
+    struct RecordingSelectedCommit {
+        calls: Arc<std::sync::Mutex<Vec<Vec<super::CompactionPartitionOffset>>>>,
+    }
+
+    #[async_trait]
+    impl super::CompactionConsumerCommit for RecordingSelectedCommit {
+        async fn commit_offsets_sync(
+            &self,
+            _topic: &str,
+            offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
+            self.calls.lock().unwrap().push(offsets.to_vec());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_consumer_forwards_each_exact_offset_set() {
+        use super::CompactionConsumerCommitMut as _;
+
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner = RecordingSelectedCommit {
+            calls: Arc::clone(&calls),
+        };
+        let mut consumer = super::DurableCompactionConsumer::new(inner, crate::WAL_TOPIC);
+        consumer
+            .commit_offsets_sync_mut(&[super::CompactionPartitionOffset {
+                partition: krabka_ids::PartitionIndex(0),
+                offset: krabka_ids::Offset(11),
+            }])
+            .await
+            .unwrap();
+        consumer
+            .commit_offsets_sync_mut(&[super::CompactionPartitionOffset {
+                partition: krabka_ids::PartitionIndex(1),
+                offset: krabka_ids::Offset(21),
+            }])
+            .await
+            .unwrap();
+
+        let calls = calls.lock().unwrap();
+        check!(calls.len() == 2);
+        check!(calls[1].len() == 1);
+        check!(calls[1][0].partition == krabka_ids::PartitionIndex(1));
+        check!(calls[1][0].offset == krabka_ids::Offset(21));
     }
 
     #[test]
@@ -1897,6 +1973,7 @@ mod consumer_build_error;
 mod default_flush_max_age;
 mod default_flush_max_rows;
 mod delete_if_exists;
+mod durable_compaction_consumer;
 mod encode_clock_reading_rows;
 mod encode_exemplar_rows;
 mod encode_metadata_rows;
@@ -1984,6 +2061,7 @@ use consumer_build_error::consumer_build_error;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
 pub use default_flush_max_rows::DEFAULT_FLUSH_MAX_ROWS;
 use delete_if_exists::delete_if_exists;
+pub use durable_compaction_consumer::DurableCompactionConsumer;
 use encode_clock_reading_rows::encode_clock_reading_rows;
 use encode_exemplar_rows::encode_exemplar_rows;
 use encode_metadata_rows::encode_metadata_rows;
