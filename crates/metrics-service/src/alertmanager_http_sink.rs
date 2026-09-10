@@ -1,5 +1,18 @@
 use super::*;
 
+fn encode_url_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write as _;
+            write!(encoded, "%{byte:02X}").expect("writing to a String cannot fail");
+        }
+    }
+    encoded
+}
+
 pub struct AlertmanagerHttpSink {
     pub(crate) client: reqwest::Client,
     pub(crate) endpoints: Vec<String>,
@@ -7,6 +20,7 @@ pub struct AlertmanagerHttpSink {
     pub(crate) generator_url_template: Option<String>,
     pub(crate) max_attempts: usize,
     pub(crate) retry_delay: Duration,
+    pub(crate) request_timeout: Duration,
 }
 
 impl AlertmanagerHttpSink {
@@ -18,6 +32,7 @@ impl AlertmanagerHttpSink {
             None,
             3,
             Duration::from_millis(250),
+            Duration::from_secs(5),
         )
     }
 
@@ -28,6 +43,7 @@ impl AlertmanagerHttpSink {
         generator_url_template: Option<String>,
         max_attempts: usize,
         retry_delay: Duration,
+        request_timeout: Duration,
     ) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -36,6 +52,7 @@ impl AlertmanagerHttpSink {
             generator_url_template,
             max_attempts: max_attempts.max(1),
             retry_delay,
+            request_timeout,
         }
     }
 
@@ -51,7 +68,8 @@ impl AlertmanagerHttpSink {
                 && let Some(template) = &self.generator_url_template
             {
                 let alert_name = alert.labels.get("alertname").map_or("", String::as_str);
-                alert.generator_url = template.replace("{alertname}", alert_name);
+                let alert_name = encode_url_component(alert_name);
+                alert.generator_url = template.replace("{alertname}", &alert_name);
             }
         }
     }
@@ -69,14 +87,25 @@ impl AlertmanagerSink for AlertmanagerHttpSink {
         self.enrich(&mut alerts);
         let payload = alertmanager_payload(alerts);
         let mut failures = Vec::new();
-        for endpoint in &self.endpoints {
+        for (endpoint_index, endpoint) in self.endpoints.iter().enumerate() {
             for attempt in 1..=self.max_attempts {
-                match self.client.post(endpoint).json(&payload).send().await {
+                match self
+                    .client
+                    .post(endpoint)
+                    .timeout(self.request_timeout)
+                    .json(&payload)
+                    .send()
+                    .await
+                {
                     Ok(response) if response.status().is_success() => return Ok(()),
-                    Ok(response) => {
-                        failures.push(format!("{endpoint}: HTTP {}", response.status()))
+                    Ok(response) => failures.push(format!(
+                        "endpoint {}: HTTP {}",
+                        endpoint_index + 1,
+                        response.status()
+                    )),
+                    Err(_) => {
+                        failures.push(format!("endpoint {}: request failed", endpoint_index + 1))
                     }
-                    Err(error) => failures.push(format!("{endpoint}: {error}")),
                 }
                 if attempt < self.max_attempts {
                     tokio::time::sleep(self.retry_delay).await;

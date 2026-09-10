@@ -1056,11 +1056,12 @@ rules:
             Some("https://metrics.example/alerts/{alertname}".to_string()),
             2,
             Duration::ZERO,
+            Duration::from_secs(1),
         );
 
         sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
             labels: std::collections::BTreeMap::from([
-                ("alertname".to_string(), "InstanceDown".to_string()),
+                ("alertname".to_string(), "Instance Down?/&".to_string()),
                 ("severity".to_string(), "page".to_string()),
             ]),
             annotations: std::collections::BTreeMap::new(),
@@ -1075,11 +1076,25 @@ rules:
         let body: serde_json::Value = serde_json::from_slice(&received.lock().unwrap()[0]).unwrap();
         assert2::assert!(body[0]["labels"]["cluster"] == "prod");
         assert2::assert!(body[0]["labels"]["severity"] == "page");
-        assert2::assert!(body[0]["generatorURL"] == "https://metrics.example/alerts/InstanceDown");
+        assert2::assert!(
+            body[0]["generatorURL"] == "https://metrics.example/alerts/Instance%20Down%3F%2F%26"
+        );
     }
 
     #[tokio::test]
     async fn alertmanager_delivery_isolates_a_failed_endpoint() {
+        let stalled = axum::Router::new().route(
+            "/api/v2/alerts",
+            axum::routing::post(|| async {
+                std::future::pending::<axum::http::StatusCode>().await
+            }),
+        );
+        let stalled_bound =
+            super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), stalled, async {
+                std::future::pending::<()>().await
+            })
+            .await
+            .unwrap();
         let received = Arc::new(AtomicUsize::new(0));
         let received_for_route = Arc::clone(&received);
         let router = axum::Router::new().route(
@@ -1096,13 +1111,14 @@ rules:
         .unwrap();
         let sink = super::AlertmanagerHttpSink::with_delivery(
             vec![
-                "http://127.0.0.1:9/api/v2/alerts".to_string(),
+                format!("http://{stalled_bound}/api/v2/alerts"),
                 format!("http://{bound}/api/v2/alerts"),
             ],
             std::collections::BTreeMap::new(),
             None,
             1,
             Duration::ZERO,
+            Duration::from_millis(20),
         );
 
         sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
@@ -1119,6 +1135,36 @@ rules:
         .unwrap();
 
         assert2::assert!(received.load(Ordering::SeqCst) == 1);
+    }
+
+    #[tokio::test]
+    async fn alertmanager_delivery_errors_do_not_expose_endpoint_credentials() {
+        let sink = super::AlertmanagerHttpSink::with_delivery(
+            vec!["http://user:password@127.0.0.1:9/api/v2/alerts?token=secret".to_string()],
+            std::collections::BTreeMap::new(),
+            None,
+            1,
+            Duration::ZERO,
+            Duration::from_millis(20),
+        );
+        let error = sink
+            .dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
+                labels: std::collections::BTreeMap::from([(
+                    "alertname".to_string(),
+                    "InstanceDown".to_string(),
+                )]),
+                annotations: std::collections::BTreeMap::new(),
+                starts_at_ms: 60_000,
+                ends_at_ms: None,
+                generator_url: String::new(),
+            }])
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert2::assert!(!error.contains("password"));
+        assert2::assert!(!error.contains("secret"));
+        assert2::assert!(error.contains("endpoint 1: request failed"));
     }
 
     #[test]

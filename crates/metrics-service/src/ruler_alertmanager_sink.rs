@@ -28,6 +28,7 @@ impl RulerAlertmanagerSink {
                 generator_url_template,
                 3,
                 std::time::Duration::from_millis(250),
+                std::time::Duration::from_secs(5),
             ))
         }
     }
