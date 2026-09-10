@@ -1,5 +1,5 @@
 use super::{
-    Labels, LokiStreamEntry, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL,
+    Labels, LokiStreamEntry, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL, label_format_destinations,
     should_insert_unknown_detected_level_for_stream_query,
 };
 
@@ -17,10 +17,12 @@ const DETECTED_LEVEL_LABEL: &str = "detected_level";
 /// `categorize-labels` response can lift them back out.
 ///
 /// The bucketing reads a label's origin off its value, because the pipeline
-/// hands back one flat field map. Loki instead tracks a category per label
-/// through every stage, and the two disagree in one place: a parser stage that
-/// writes a label the value it already had -- the same key, the same string --
-/// is read here as the label it overwrote rather than as a parsed one.
+/// hands back one flat field map rather than Loki's per-label category. Two
+/// things keep that from mattering. A parser stage cannot silently overwrite a
+/// label it did not produce -- a name already taken is written as
+/// `<name>_extracted` -- so the only stage whose write can hide behind an
+/// unchanged value is `label_format`, and the query names the labels that
+/// stage writes even when the evaluated fields cannot.
 pub(crate) fn matching_loki_stream_entry(
     query: &StreamQuery,
     labels: &Labels,
@@ -36,9 +38,17 @@ pub(crate) fn matching_loki_stream_entry(
         stream_labels.insert(DETECTED_LEVEL_LABEL.to_string(), "unknown".to_string());
     }
 
+    // A `label_format` destination is parsed whatever it held before, and
+    // Loki's own answer moves it out of `structuredMetadata` as readily as out
+    // of the stream, so this is asked before either.
+    let formatted = label_format_destinations(query);
     let mut entry_metadata = Labels::new();
     let mut parsed = Labels::new();
     for (name, value) in &stream_labels {
+        if formatted.contains(name.as_str()) {
+            parsed.insert(name.clone(), value.clone());
+            continue;
+        }
         // Loki's level discovery writes `detected_level` as structured
         // metadata, not as a series label, so it is bucketed with the metadata
         // whether it was discovered at ingest or filled in as `unknown` here.
