@@ -1,5 +1,5 @@
 use super::{
-    BTreeMap, BTreeSet, BlockEntry, BlockStoreError, Deserialize, LabelMatcher, Labels, MatchOp,
+    BTreeMap, BTreeSet, BlockList, BlockStoreError, Deserialize, LabelMatcher, Labels, MatchOp,
     QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint, anchored_regex,
     parse_query_shard_selector,
 };
@@ -12,12 +12,37 @@ pub(crate) struct TenantIndex {
     /// never collide distinct `(name, value)` pairs into one bucket.
     pub(crate) postings: BTreeMap<String, BTreeMap<String, BTreeSet<SeriesFingerprint>>>,
     pub(crate) values: BTreeMap<String, BTreeSet<String>>,
-    pub(crate) blocks: Vec<BlockEntry>,
+    pub(crate) blocks: BlockList,
 }
 
 impl TenantIndex {
     pub(crate) fn all_fingerprints(&self) -> BTreeSet<SeriesFingerprint> {
         self.series.keys().copied().collect()
+    }
+
+    /// Records a series and the postings that reach it.
+    ///
+    /// `postings` and `values` are wholly derived from `series`, which is why
+    /// neither is persisted: a decoder replays this for every series it reads
+    /// and gets the same maps back.
+    pub(crate) fn add_series(&mut self, fingerprint: SeriesFingerprint, labels: &Labels) {
+        if self.series.contains_key(&fingerprint) {
+            return;
+        }
+        self.series.insert(fingerprint, labels.clone());
+
+        for (name, value) in labels.iter() {
+            self.postings
+                .entry(name.clone())
+                .or_default()
+                .entry(value.clone())
+                .or_default()
+                .insert(fingerprint);
+            self.values
+                .entry(name.clone())
+                .or_default()
+                .insert(value.clone());
+        }
     }
 
     pub(crate) fn exact_posting(&self, name: &str, value: &str) -> BTreeSet<SeriesFingerprint> {

@@ -1,9 +1,10 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockIndex, BlockMeta, ByteSize, DEFAULT_INDEX_SNAPSHOT_MAX,
-    Deserialize, Index, IndexSnapshotBytes, IndexSnapshotRetain, LABEL_PROFILE_TYPE, LabelMatcher,
-    Labels, ObjectStore, ObjectStoreExt, Path, PendingBlockRemovals, PutPayload, Result, Serialize,
-    SeriesFingerprint, TenantProfileExtras, instrument, latest_index_snapshot_path,
-    put_index_snapshot, read_index_snapshot_bytes,
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockLineage, BlockLineageIndex, BlockMeta,
+    ByteSize, CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, Index,
+    IndexSnapshotBytes, IndexSnapshotRetain, LABEL_PROFILE_TYPE, LabelMatcher, Labels, ObjectStore,
+    ObjectStoreExt, Path, PendingBlockRemovals, PutPayload, Result, Serialize, SeriesFingerprint,
+    TenantProfileExtras, instrument, latest_index_snapshot_path, put_index_snapshot,
+    read_index_snapshot_bytes,
 };
 
 /// How an oversized or unreadable profile-index snapshot names itself in errors.
@@ -15,6 +16,9 @@ pub struct ProfileIndex {
     pub(crate) series: Index,
     pub(crate) extras: BTreeMap<String, TenantProfileExtras>,
     pub(crate) block_partitions: BTreeMap<String, Vec<u64>>,
+    /// Compaction level and lineage per block, beside the series postings that
+    /// hold the block's time bounds and row count.
+    pub(crate) lineage: BlockLineageIndex,
     /// Blocks this writer dropped and has yet to make durable. Not persisted:
     /// see [`PendingBlockRemovals`].
     #[serde(skip)]
@@ -248,8 +252,48 @@ impl ProfileIndex {
     }
 
     pub fn add_profile_block(&mut self, _tenant: &str, object_key: &str, partitions: Vec<u64>) {
+        self.lineage.record_ingested(object_key, 0);
         self.block_partitions
             .insert(object_key.to_string(), partitions);
+    }
+
+    /// How many rounds of compaction produced `object_key`.
+    #[must_use]
+    pub fn block_level(&self, object_key: &str) -> BlockLevel {
+        self.lineage.level(object_key)
+    }
+
+    /// The level, row count and immediate inputs recorded for `object_key`.
+    #[must_use]
+    pub fn block_lineage(&self, object_key: &str) -> Option<&BlockLineage> {
+        self.lineage.lineage(object_key)
+    }
+
+    /// Every block in the index, as the compaction planner sees it.
+    ///
+    /// The time bounds and row count come from the series postings, which are
+    /// the authority on what a block holds; only the level comes from the
+    /// lineage records.
+    #[must_use]
+    pub fn compaction_candidates(&self) -> Vec<CompactionCandidate> {
+        let mut candidates: Vec<CompactionCandidate> = self
+            .all_blocks()
+            .into_iter()
+            .map(|meta| CompactionCandidate {
+                level: self.lineage.level(&meta.object_key),
+                tenant: meta.tenant,
+                object_key: meta.object_key,
+                min_ts: meta.min_ts,
+                max_ts: meta.max_ts,
+                row_count: meta.row_count,
+            })
+            .collect();
+        candidates.sort_by(|left, right| {
+            left.tenant
+                .cmp(&right.tenant)
+                .then_with(|| left.object_key.cmp(&right.object_key))
+        });
+        candidates
     }
 
     pub fn replace_profile_blocks(
@@ -260,6 +304,22 @@ impl ProfileIndex {
     ) {
         self.pending_removals
             .record(tenant, remove_keys.iter().map(String::as_str));
+        // Recorded before the inputs are forgotten, because a replacement's
+        // level is one above the highest of theirs.
+        for (meta, _) in add {
+            self.lineage
+                .record_compacted(&meta.object_key, remove_keys, meta.row_count);
+        }
+        let added: BTreeSet<&str> = add
+            .iter()
+            .map(|(meta, _)| meta.object_key.as_str())
+            .collect();
+        self.lineage.forget(
+            remove_keys
+                .iter()
+                .map(String::as_str)
+                .filter(|key| !added.contains(key)),
+        );
         // A compaction may reuse the key of a block it replaces. That block is
         // live again, so it must not be replayed as a removal.
         for (meta, _) in add {
@@ -401,13 +461,25 @@ impl ProfileIndex {
                 .block_partitions
                 .insert(object_key.clone(), partitions.clone());
         }
+        // This writer's view of a block's level wins over the base's, so a
+        // compacted block does not read back as freshly ingested.
+        merged.lineage.merge_from(&self.lineage);
         for (tenant, removed) in removals {
             let removed_keys: Vec<String> = removed.iter().cloned().collect();
             merged.series.replace_blocks(tenant, &removed_keys, &[]);
             for object_key in removed {
                 merged.block_partitions.remove(object_key);
             }
+            merged.lineage.forget(removed.iter().map(String::as_str));
         }
+        // Lineage outlives nothing: a record for a block no longer in the
+        // index would make the snapshot grow once per block ever written.
+        let live: BTreeSet<String> = merged
+            .all_blocks()
+            .into_iter()
+            .map(|meta| meta.object_key)
+            .collect();
+        merged.lineage.retain_keys(&live);
         Ok(serde_json::to_vec(&merged)?)
     }
 

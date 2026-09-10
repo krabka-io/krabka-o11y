@@ -17,6 +17,7 @@ mod info;
 mod info_plan;
 mod instant_query;
 mod labels;
+mod merge_by_fingerprint;
 mod planned;
 mod planner_dispatch;
 mod planner_support;

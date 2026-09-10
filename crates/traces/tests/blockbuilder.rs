@@ -4,13 +4,15 @@ use std::sync::{
 };
 
 use arrow::{
-    array::{DictionaryArray, StringArray},
+    array::{Array, DictionaryArray, FixedSizeBinaryArray, Int64Array, StringArray},
     datatypes::Int32Type,
 };
 use assert2::check;
 use bytes::Bytes;
 use futures::stream::BoxStream;
-use krabka_blockstore::{BlockWriter, PromotedSpanAttr, TraceIndex, read_block};
+use krabka_blockstore::{
+    BlockWriter, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID, TraceIndex, read_block,
+};
 use krabka_client_consumer::ConsumerRecord;
 use krabka_traces::{
     AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode, TracesError,
@@ -629,6 +631,58 @@ async fn build_blocks_promotes_configured_attribute_columns() {
         .unwrap();
     let key = usize::try_from(methods.keys().value(0)).unwrap();
     assert2::assert!(values.value(key) == "GET");
+}
+
+/// The span block declares `[trace_id, start_unix_nano]` as its sort key, and
+/// the block's trace-id bounds and Parquet `sorting_columns` only describe the
+/// file if its rows really are in that order. The builder produces that order
+/// itself: it orders the per-trace batches by trace id, and `group_by_trace`
+/// orders each trace's spans by start. Leaving it to the order the grouping
+/// map happens to iterate in would make the invariant an accident of the map's
+/// key type.
+#[tokio::test]
+async fn a_written_block_is_ordered_by_trace_id_then_start() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(store.clone());
+    let mut index = TraceIndex::new();
+    // Interleaved: neither the trace ids nor the starts arrive in order.
+    let records = vec![
+        rec("tenant-a", [2; 16], 1, None, 300),
+        rec("tenant-a", [1; 16], 2, None, 100),
+        rec("tenant-a", [2; 16], 3, Some(1), 250),
+        rec("tenant-a", [1; 16], 4, Some(2), 150),
+    ];
+
+    let metas = build_blocks(&writer, &mut index, "tenant-a", 7, &records, (10, 20))
+        .await
+        .unwrap();
+
+    let batches = read_block(store, &metas[0].object_key).await.unwrap();
+    let mut trace_ids = Vec::new();
+    let mut starts = Vec::new();
+    for batch in &batches {
+        let ids = batch
+            .column_by_name(SCOL_TRACE_ID)
+            .expect("the trace id column")
+            .as_any()
+            .downcast_ref::<FixedSizeBinaryArray>()
+            .expect("a fixed-size binary column");
+        trace_ids.extend((0..ids.len()).map(|row| ids.value(row).to_vec()));
+        starts.extend(
+            batch
+                .column_by_name(SCOL_START_NANO)
+                .expect("the start column")
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .expect("an i64 column")
+                .values()
+                .iter()
+                .copied(),
+        );
+    }
+
+    check!(trace_ids == vec![vec![1_u8; 16], vec![1; 16], vec![2; 16], vec![2; 16]]);
+    check!(starts == vec![100, 150, 250, 300]);
 }
 
 /// Shared, ordered event log.

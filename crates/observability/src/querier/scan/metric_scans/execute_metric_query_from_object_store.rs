@@ -1,6 +1,7 @@
 use super::{
-    Arc, CompactionFrontier, LabelIndex, MetricQuery, ObjectPath, ObjectStore, QueryError,
-    StreamPlan, Value, execute_metric_query_from_object_store_with_hot_tail_frontier,
+    Arc, ColdBlockScan, CompactionFrontier, LabelIndex, MetricQuery, ObjectPath, ObjectStore,
+    QueryError, StreamPlan, Value, default_block_fetch_concurrency,
+    execute_metric_query_from_object_store_with_hot_tail_frontier,
 };
 
 /// # Errors
@@ -13,8 +14,11 @@ pub async fn execute_metric_query_from_object_store(
     label_index: &LabelIndex,
 ) -> Result<Value, QueryError> {
     execute_metric_query_from_object_store_with_hot_tail_frontier(
-        store,
-        prefix,
+        ColdBlockScan {
+            store,
+            prefix,
+            block_fetch_concurrency: default_block_fetch_concurrency(),
+        },
         plan,
         query,
         label_index,

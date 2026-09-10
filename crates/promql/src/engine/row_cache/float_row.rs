@@ -1,6 +1,6 @@
 use super::SeriesFingerprint;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(crate) struct FloatRow {
     pub(crate) fp: SeriesFingerprint,
     pub(crate) ts_ms: i64,

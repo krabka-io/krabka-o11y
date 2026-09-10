@@ -1,4 +1,4 @@
-use super::{Arc, BTreeMap, FloatRow, HashMap, HistogramRow, Labels, SeriesFingerprint};
+use super::{Arc, BTreeMap, FloatWindow, HashMap, HistogramRow, Labels, SeriesFingerprint};
 
 /// Per-range-query float-scan cache (see `PromqlEngine::scan_float_rows`).
 ///
@@ -19,7 +19,9 @@ use super::{Arc, BTreeMap, FloatRow, HashMap, HistogramRow, Labels, SeriesFinger
 pub(crate) struct RangeScanCacheInner {
     pub(crate) full_start_ms: i64,
     pub(crate) full_end_ms: i64,
-    pub(crate) floats: HashMap<String, Arc<Vec<FloatRow>>>,
+    /// Per-matcher-set float rows over the union window, indexed by series so
+    /// a step is a binary search rather than a pass over the union.
+    pub(crate) floats: HashMap<String, Arc<FloatWindow>>,
     /// Per-matcher-set histogram rows over the union window. The instant-selector
     /// path probes for histogram series at every step
     /// (`selector_has_histogram_series`). This probe is a second per-step store
@@ -30,5 +32,5 @@ pub(crate) struct RangeScanCacheInner {
     /// of any sub-window. Callers use it only as a `get(&fp)` lookup keyed by
     /// rows already filtered to the sub-window, so they never read the extra
     /// entries.
-    pub(crate) labels: HashMap<String, Arc<BTreeMap<SeriesFingerprint, Labels>>>,
+    pub(crate) labels: HashMap<String, Arc<BTreeMap<SeriesFingerprint, Arc<Labels>>>>,
 }

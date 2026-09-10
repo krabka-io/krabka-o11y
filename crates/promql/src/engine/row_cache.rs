@@ -23,6 +23,7 @@ tokio::task_local! {
 mod collect_float_rows;
 mod collect_histogram_rows;
 mod float_row;
+mod float_window;
 mod histogram_row;
 mod matchers_cache_key;
 mod range_scan_cache;
@@ -31,6 +32,7 @@ mod range_scan_cache_inner;
 pub(super) use collect_float_rows::collect_float_rows;
 pub(super) use collect_histogram_rows::collect_histogram_rows;
 pub(super) use float_row::FloatRow;
+pub(super) use float_window::FloatWindow;
 pub(super) use histogram_row::HistogramRow;
 pub(super) use matchers_cache_key::matchers_cache_key;
 pub(super) use range_scan_cache::RangeScanCache;

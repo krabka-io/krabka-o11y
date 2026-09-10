@@ -95,6 +95,7 @@ mod tests {
                         RequiredColumn::new(SCOL_START_NANO, DataType::Int64, false),
                     ],
                     sort_key: vec![SCOL_TRACE_ID.to_string(), SCOL_START_NANO.to_string()],
+                    bloom_columns: vec![SCOL_SPAN_ID.to_string()],
                 }
         );
     }

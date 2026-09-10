@@ -71,6 +71,12 @@ index_prune/resolve_regex/100000          unseeded
 index_prune/trace_prune_by_tag/12         unseeded
 index_prune/trace_prune_by_tag/360        unseeded
 index_prune/trace_prune_by_tag/90         unseeded
+log_object_store_scan/parquet_scan/10000          unseeded
+log_object_store_scan/parquet_scan/100000         unseeded
+log_object_store_scan/parquet_scan/1000000        unseeded
+log_object_store_scan/row_struct_round_trip/10000     unseeded
+log_object_store_scan/row_struct_round_trip/100000    unseeded
+log_object_store_scan/row_struct_round_trip/1000000   unseeded
 pprof_merge/depth/16                      unseeded
 pprof_merge/depth/4                       unseeded
 pprof_merge/depth/64                      unseeded

@@ -200,36 +200,54 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 let configured = build_object_store(&cli.object_store_url)
                     .map_err(|e| format!("object store: {e}"))?;
                 let index_key = configured.object_key(&cli.index_object_key);
-                let mut index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
-                    &configured.store,
-                    &index_key,
-                    cli.index_snapshot_max,
-                )
-                .await?;
+                let policy = compaction_policy_from_cli(&cli);
                 let downsample =
                     cli.compactor_downsample_resolution
                         .map(|resolution| DownsamplePolicy {
                             resolution_ns: resolution.nanos_i64(),
                         });
-                let metas = compact_once_with_policy(
-                    &configured.store,
-                    &mut index,
-                    cli.compactor_max_blocks_per_job,
-                    downsample,
-                )
-                .await?;
-                index
-                    .save_latest_snapshot_with_retain(
+                let shutdown = role_shutdown_token();
+                tracing::info!(
+                    interval = %cli.compactor_interval.human(),
+                    max_blocks_per_job = policy.max_blocks_per_job(),
+                    target_rows = policy.target_rows_per_block(),
+                    max_level = %policy.max_level(),
+                    "profiles compactor scheduling passes"
+                );
+                // A pass reloads the index rather than carrying one across
+                // ticks: the block builder publishes new blocks into the same
+                // snapshot chain, and a stale in-memory copy would plan
+                // against blocks that have since been replaced.
+                let mut tick = tokio::time::interval(cli.compactor_interval.to_std());
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        biased;
+                        () = shutdown.cancelled() => break,
+                        _ = tick.tick() => {}
+                    }
+                    match run_compaction_pass(
                         &configured.store,
                         &index_key,
-                        cli.index_snapshot_retain,
+                        &cli,
+                        policy,
+                        downsample,
                     )
-                    .await?;
-                tracing::info!(
-                    compacted_blocks = metas.len(),
-                    downsample_resolution = ?cli.compactor_downsample_resolution,
-                    "profiles compactor finished one pass"
-                );
+                    .await
+                    {
+                        Ok(compacted_blocks) => tracing::info!(
+                            compacted_blocks,
+                            downsample_resolution = ?cli.compactor_downsample_resolution,
+                            "profiles compactor finished one pass"
+                        ),
+                        // One failed pass is not a reason to lose the role. The
+                        // next tick reloads the index and replans from
+                        // whatever is durable.
+                        Err(error) => {
+                            tracing::warn!(%error, "profiles compaction pass failed; retrying on the next tick");
+                        }
+                    }
+                }
             }
         }
         Ok::<(), Box<dyn std::error::Error>>(())

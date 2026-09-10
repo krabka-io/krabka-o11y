@@ -13,18 +13,20 @@ use arrow::{
     compute::concat_batches,
     record_batch::RecordBatch,
 };
-#[cfg(test)]
-use krabka_blockstore::read_block;
 use krabka_blockstore::{
-    BlockIndex, BlockMeta, BlockWriter, DEFAULT_BLOCK_READ_MAX, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,
-    SCOL_ATTR_VALUE_BOOL, SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT, SCOL_CHILD_COUNT,
-    SCOL_DURATION_NANOS, SCOL_EVENTS, SCOL_INSTRUMENTATION_NAME, SCOL_INSTRUMENTATION_VERSION,
-    SCOL_LINKS, SCOL_NAME, SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID,
-    SCOL_PARENT_SPAN_ID, SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID,
-    SCOL_START_NANO, SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO,
-    ShardedTraceBloom, SummaryColumns, TraceBlockStats, TraceIndex, read_block_with_max_bytes,
-    span_block_decl, span_block_schema,
+    BlockMeta, BlockWriter, CompactionJob, CompactionPolicy, DEFAULT_BLOCK_READ_MAX,
+    SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL, SCOL_ATTR_VALUE_DOUBLE,
+    SCOL_ATTR_VALUE_INT, SCOL_CHILD_COUNT, SCOL_DURATION_NANOS, SCOL_EVENTS,
+    SCOL_INSTRUMENTATION_NAME, SCOL_INSTRUMENTATION_VERSION, SCOL_LINKS, SCOL_NAME,
+    SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID,
+    SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID, SCOL_START_NANO,
+    SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, ShardedTraceBloom,
+    SummaryColumns, TraceBlockStats, TraceIndex, input_key_fingerprint,
+    plan_compactions as plan_level_compactions, read_block_with_max_bytes, span_block_decl,
+    span_block_schema_with_promoted_attrs,
 };
+#[cfg(test)]
+use krabka_blockstore::{read_block, span_block_schema};
 use krabka_units::ByteSize;
 use object_store::ObjectStore;
 
@@ -32,13 +34,16 @@ use crate::{
     blockbuilder::prefixed_object_key,
     error::TracesError,
     ids::{MaxOffset, MinOffset, WindowStartNs},
-    span::batch::RESOURCE_ATTR_PREFIX,
+    span::{
+        batch::RESOURCE_ATTR_PREFIX,
+        promoted::{align_batch_to_block_schema, merged_promoted_attrs},
+    },
 };
 
 #[cfg(test)]
 mod tests {
     use assert2::check;
-    use krabka_blockstore::BlockIndex;
+    use krabka_blockstore::{BlockIndex, BlockLevel};
     use object_store::memory::InMemory;
 
     use super::*;
@@ -308,8 +313,19 @@ mod tests {
         }
     }
 
+    /// A policy wide enough that only the level ladder and the fan-in cap
+    /// decide what merges: no row target and no time bucketing in the way.
+    fn wide_policy(max_blocks_per_job: usize, max_level: u32) -> CompactionPolicy {
+        CompactionPolicy::new(
+            max_blocks_per_job,
+            usize::MAX,
+            BlockLevel(max_level),
+            i64::MAX,
+        )
+    }
+
     #[tokio::test]
-    async fn compact_index_window_compacts_each_tenant_independently() {
+    async fn a_pass_compacts_each_tenant_independently() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let writer = BlockWriter::new(store.clone());
         let mut index = TraceIndex::new();
@@ -318,7 +334,7 @@ mod tests {
         write_indexed_block(&writer, &mut index, "tenant-b", "tenant-b/input-1.parquet").await;
         write_indexed_block(&writer, &mut index, "tenant-b", "tenant-b/input-2.parquet").await;
 
-        compact_index_window(store, &writer, &mut index, "", 0, 2_000)
+        compact_once(store, &writer, &mut index, "", wide_policy(8, 4))
             .await
             .unwrap();
 
@@ -328,6 +344,48 @@ mod tests {
         assert2::assert!(tenant_b.len() == 1);
         check!(tenant_a[0].contains("traces/tenant-a/"));
         check!(tenant_b[0].contains("traces/tenant-b/"));
+        check!(index.block_level(&tenant_a[0]) == BlockLevel(1));
+    }
+
+    /// The compactor has to stop on its own, because nothing else stops it: a
+    /// scheduled pass runs forever. Each pass replaces at least two blocks
+    /// with one a level higher, and a block at the top of the ladder is never
+    /// an input again, so passes over a quiet index run out of work.
+    #[tokio::test]
+    async fn repeated_passes_climb_the_ladder_and_then_plan_nothing() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let mut index = TraceIndex::new();
+        for n in 0..4 {
+            let key = format!("tenant/input-{n}.parquet");
+            write_indexed_block(&writer, &mut index, "tenant", &key).await;
+        }
+
+        let policy = wide_policy(2, 2);
+        let mut levels = Vec::new();
+        let mut passes = 0;
+        loop {
+            let metas = compact_once(store.clone(), &writer, &mut index, "", policy)
+                .await
+                .unwrap();
+            if metas.is_empty() {
+                break;
+            }
+            passes += 1;
+            assert2::assert!(passes <= 4, "compaction did not converge");
+            levels.push(
+                metas
+                    .iter()
+                    .map(|meta| index.block_level(&meta.object_key))
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        // Four blocks pair into two at level 1, then into one at level 2,
+        // which is the cap: the third pass plans nothing.
+        check!(levels == vec![vec![BlockLevel(1); 2], vec![BlockLevel(2)],]);
+        check!(passes == 2);
+        check!(index.candidate_blocks("tenant", 0, 2_000).len() == 1);
     }
 
     async fn write_indexed_block(
@@ -446,8 +504,8 @@ mod collect_nested_metadata;
 mod collect_string_column_metadata;
 mod compact_block_keys;
 mod compact_block_keys_with_max_bytes;
-mod compact_index_window;
-mod compact_index_window_with_max_bytes;
+mod compact_once;
+mod compact_once_with_policy;
 mod compacted_object_key;
 mod first_string_list_value;
 mod fixed_column;
@@ -458,6 +516,8 @@ mod int64_column;
 mod list_column;
 mod metadata_value_array;
 mod optional_list_column;
+mod plan_compactions;
+mod planned_compacted_object_key;
 mod recompute_nested_sets;
 mod recompute_trace_level_columns;
 mod replace_int32_columns;
@@ -481,8 +541,8 @@ use collect_nested_metadata::collect_nested_metadata;
 use collect_string_column_metadata::collect_string_column_metadata;
 pub use compact_block_keys::compact_block_keys;
 pub use compact_block_keys_with_max_bytes::compact_block_keys_with_max_bytes;
-pub use compact_index_window::compact_index_window;
-pub use compact_index_window_with_max_bytes::compact_index_window_with_max_bytes;
+pub use compact_once::compact_once;
+pub use compact_once_with_policy::compact_once_with_policy;
 pub use compacted_object_key::compacted_object_key;
 use first_string_list_value::first_string_list_value;
 use fixed_column::fixed_column;
@@ -491,6 +551,8 @@ use int64_column::int64_column;
 use list_column::list_column;
 use metadata_value_array::MetadataValueArray;
 use optional_list_column::optional_list_column;
+pub use plan_compactions::plan_compactions;
+pub use planned_compacted_object_key::planned_compacted_object_key;
 use recompute_nested_sets::recompute_nested_sets;
 use recompute_trace_level_columns::recompute_trace_level_columns;
 use replace_int32_columns::replace_int32_columns;

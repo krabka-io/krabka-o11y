@@ -17,7 +17,7 @@ pub(crate) async fn collect_object_store_metric_log_batches(
         &ctx,
         "logs",
         store,
-        prefix.clone(),
+        prefix,
         std::slice::from_ref(block),
     )?;
     Ok(ctx

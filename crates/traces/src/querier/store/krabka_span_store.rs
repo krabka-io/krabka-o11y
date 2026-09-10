@@ -53,8 +53,13 @@ impl KrabkaSpanStore {
                 return Ok(Vec::new());
             }
             let row_groups = (job.row_group_start..job.row_group_end).collect::<Vec<_>>();
+            // The row groups decode with the block's own schema, which is
+            // wider than the base one whenever the block was written with
+            // promoted attribute columns, so read it off the block rather than
+            // assuming today's ingest configuration wrote it.
+            let schema = block_span_schema(&self.blocks, &job.object_key).await?;
             self.blocks
-                .scan_block_row_groups(&job.object_key, &row_groups, span_block_schema())
+                .scan_block_row_groups(&job.object_key, &row_groups, schema)
                 .await
                 .map_err(|err| block_err(&err))?
         } else {

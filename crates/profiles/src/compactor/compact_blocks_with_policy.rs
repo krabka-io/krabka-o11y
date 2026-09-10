@@ -1,7 +1,7 @@
 use super::{
     Arc, BTreeSet, BlockMeta, DownsamplePolicy, ObjectStore, ObjectStoreExt, Path, ProfileIndex,
-    ProfilesError, PutPayload, SymbolDb, collect_meta, destination_partitions, downsample_batches,
-    load_batches, load_symdb, remap_partitions, source_partitions, write_batches,
+    ProfilesError, PutPayload, SymbolDb, destination_partitions, downsample_batches, load_batches,
+    load_symdb, remap_partitions, source_partitions, write_batches,
 };
 
 ///
@@ -24,9 +24,6 @@ pub async fn compact_blocks_with_policy(
     let mut out_batches = Vec::new();
     let mut out_symbols = SymbolDb::new();
     let mut out_partitions = BTreeSet::new();
-    let mut fingerprints = BTreeSet::new();
-    let mut min_ts = i64::MAX;
-    let mut max_ts = i64::MIN;
 
     for (block_idx, block_key) in input_keys.iter().enumerate() {
         let source_partitions = source_partitions(index, block_key);
@@ -50,13 +47,8 @@ pub async fn compact_blocks_with_policy(
         Some(policy) => downsample_batches(&out_batches, policy)?,
         None => out_batches,
     };
-    let mut row_count = 0_usize;
-    for batch in &out_batches {
-        collect_meta(batch, &mut fingerprints, &mut min_ts, &mut max_ts);
-        row_count += batch.num_rows();
-    }
 
-    write_batches(store, output_key, &out_batches).await?;
+    let meta = write_batches(store, tenant, output_key, &out_batches).await?;
     store
         .put(
             &Path::from(format!("{output_key}.symdb")),
@@ -65,14 +57,6 @@ pub async fn compact_blocks_with_policy(
         .await
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
 
-    let meta = BlockMeta {
-        tenant: tenant.to_string(),
-        object_key: output_key.to_string(),
-        min_ts,
-        max_ts,
-        row_count,
-        fingerprints: fingerprints.into_iter().collect(),
-    };
     index.replace_profile_blocks(
         tenant,
         input_keys,

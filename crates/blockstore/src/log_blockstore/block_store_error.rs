@@ -26,6 +26,12 @@ pub enum BlockStoreError {
     Io(#[from] io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("log block `{object_key}` is {size_bytes} bytes, exceeds cap of {max_bytes} bytes")]
+    LogBlockTooLarge {
+        object_key: String,
+        size_bytes: u64,
+        max_bytes: u64,
+    },
     #[error("log index manifest fingerprint mismatch: expected {expected}, got {actual}")]
     ManifestFingerprintMismatch {
         expected: SeriesFingerprint,

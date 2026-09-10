@@ -3,7 +3,9 @@ use std::{net::SocketAddr, process::ExitCode, sync::Arc};
 use arc_swap::ArcSwap;
 use clap::{ArgAction, Args, Parser, ValueEnum};
 use krabka_blockstore::{
-    BlockStore, BlockWriter, IndexSnapshotRetain, PromotedSpanAttr, TraceIndex,
+    BlockLevel, BlockStore, BlockWriter, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB,
+    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, PromotedSpanAttr,
+    TraceIndex,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerFetchMaxBytes};
 use krabka_client_core::{
@@ -14,7 +16,7 @@ use krabka_telemetry::OtlpConfig;
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
     LiveStore, TRACES_WAL_TOPIC, blockbuilder,
-    compactor::compact_index_window_with_max_bytes,
+    compactor::compact_once_with_policy,
     distributor::{self, DistributorState, KafkaSink},
     frontend::{self, FrontendConfig, TraceIndexCatalog},
     ids::UnixNano,
@@ -1623,22 +1625,48 @@ mod tests {
         assert2::assert!(cli.ingest_rate_burst == 7);
     }
 
+    /// Compaction is configured by a policy, not by a time window: what merges
+    /// with what follows from the levels and time ranges the index already
+    /// records.
     #[test]
-    fn parses_compactor_window() {
+    fn parses_the_compaction_policy() {
         let cli = Cli::try_parse_from([
             "krabka-traces",
             "--target",
             "compactor",
-            "--compaction-start-ns",
-            "100",
-            "--compaction-end-ns",
-            "200",
+            "--compaction-max-blocks-per-job",
+            "4",
+            "--compaction-target-rows",
+            "250000",
+            "--compaction-max-level",
+            "3",
+            "--compaction-level-window",
+            "30m",
+            "--compaction-interval",
+            "90s",
         ])
         .unwrap();
 
         assert2::assert!(matches!(cli.target, Target::Compactor));
-        assert2::assert!(cli.compaction_start == UnixNano(100));
-        assert2::assert!(cli.compaction_end == UnixNano(200));
+        let policy = compaction_policy_from_cli(&cli);
+        check!(policy.max_blocks_per_job() == 4);
+        check!(policy.target_rows_per_block() == 250_000);
+        check!(policy.max_level() == BlockLevel(3));
+        check!(policy.window_ns_for(BlockLevel(0)) == 1_800_000_000_000);
+        check!(policy.window_ns_for(BlockLevel(1)) == 3_600_000_000_000);
+        check!(cli.compaction_interval == secs(90));
+    }
+
+    /// The defaults have to make a usable ladder on their own, because the
+    /// compactor now runs unattended.
+    #[test]
+    fn the_default_compaction_policy_is_a_usable_ladder() {
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "compactor"]).unwrap();
+        let policy = compaction_policy_from_cli(&cli);
+        check!(policy.max_blocks_per_job() == DEFAULT_MAX_BLOCKS_PER_JOB);
+        check!(policy.target_rows_per_block() == DEFAULT_TARGET_ROWS_PER_BLOCK);
+        check!(policy.max_level() == DEFAULT_MAX_LEVEL);
+        check!(policy.window_ns_for(BlockLevel(0)) == 7_200_000_000_000);
     }
 
     #[test]
@@ -1652,8 +1680,8 @@ mod tests {
                         "tests::unix_time_policy_reads_uom_environment_and_prefers_cli",
                     ])
                     .env(CHILD, "1")
-                    .env("KRABKA_TRACES_COMPACTION_START", "1s")
-                    .env("KRABKA_TRACES_COMPACTION_END", "2s")
+                    .env("KRABKA_TRACES_COMPACTION_INTERVAL", "1s")
+                    .env("KRABKA_TRACES_COMPACTION_LEVEL_WINDOW", "2s")
                     .env("KRABKA_TRACES_LIVE_FRONTIER", "3s")
                     .status()
                     .expect("child test");
@@ -1664,33 +1692,25 @@ mod tests {
         let from_env = Cli::try_parse_from(["krabka-traces", "--target=compactor"]).unwrap();
         check!(
             (
-                from_env.compaction_start,
-                from_env.compaction_end,
+                from_env.compaction_interval,
+                from_env.compaction_level_window,
                 from_env.live_frontier,
-            ) == (
-                UnixNano(1_000_000_000),
-                UnixNano(2_000_000_000),
-                Some(UnixNano(3_000_000_000)),
-            )
+            ) == (secs(1), secs(2), Some(UnixNano(3_000_000_000)))
         );
         let from_cli = Cli::try_parse_from([
             "krabka-traces",
             "--target=compactor",
-            "--compaction-start=4s",
-            "--compaction-end=5s",
+            "--compaction-interval=4s",
+            "--compaction-level-window=5s",
             "--live-frontier=6s",
         ])
         .unwrap();
         check!(
             (
-                from_cli.compaction_start,
-                from_cli.compaction_end,
+                from_cli.compaction_interval,
+                from_cli.compaction_level_window,
                 from_cli.live_frontier,
-            ) == (
-                UnixNano(4_000_000_000),
-                UnixNano(5_000_000_000),
-                Some(UnixNano(6_000_000_000)),
-            )
+            ) == (secs(4), secs(5), Some(UnixNano(6_000_000_000)))
         );
     }
 
@@ -1757,6 +1777,7 @@ mod build_querier_router_with_live;
 mod build_query_frontend_router;
 mod build_trace_index_catalog;
 mod cli;
+mod compaction_policy_from_cli;
 mod configured_object_store;
 mod engine_opts_from_cli;
 mod f64_from_usize;
@@ -1770,12 +1791,14 @@ mod metrics_flags;
 mod parse_client_dispatch_queue_capacity;
 mod parse_client_frame_max;
 mod parse_consumer_fetch_size;
+mod parse_min_two_usize;
 mod parse_non_negative_time_or_secs;
 mod parse_non_negative_whole_byte_size_or_bytes;
 mod parse_positive_time_or_millis;
 mod parse_positive_time_or_nanos;
 mod parse_positive_time_or_nanos_f64;
 mod parse_positive_time_or_secs;
+mod parse_positive_u32;
 mod parse_positive_usize;
 mod parse_positive_whole_byte_size;
 mod parse_promoted_attr;
@@ -1810,6 +1833,7 @@ use build_querier_router_with_live::build_querier_router_with_live;
 use build_query_frontend_router::build_query_frontend_router;
 use build_trace_index_catalog::build_trace_index_catalog;
 use cli::Cli;
+use compaction_policy_from_cli::compaction_policy_from_cli;
 use configured_object_store::ConfiguredObjectStore;
 use engine_opts_from_cli::engine_opts_from_cli;
 use f64_from_usize::f64_from_usize;
@@ -1823,12 +1847,14 @@ use metrics_flags::MetricsFlags;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
 use parse_consumer_fetch_size::parse_consumer_fetch_size;
+use parse_min_two_usize::parse_min_two_usize;
 use parse_non_negative_time_or_secs::parse_non_negative_time_or_secs;
 use parse_non_negative_whole_byte_size_or_bytes::parse_non_negative_whole_byte_size_or_bytes;
 use parse_positive_time_or_millis::parse_positive_time_or_millis;
 use parse_positive_time_or_nanos::parse_positive_time_or_nanos;
 use parse_positive_time_or_nanos_f64::parse_positive_time_or_nanos_f64;
 use parse_positive_time_or_secs::parse_positive_time_or_secs;
+use parse_positive_u32::parse_positive_u32;
 use parse_positive_usize::parse_positive_usize;
 use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
 use parse_promoted_attr::parse_promoted_attr;

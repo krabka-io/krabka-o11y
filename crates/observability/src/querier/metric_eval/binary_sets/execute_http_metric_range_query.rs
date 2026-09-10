@@ -1,6 +1,6 @@
 use super::{
-    ActiveLogDeleteFilter, Arc, HttpQueryError, MetricQuery, QuerierState, QueryHotTail,
-    StreamPlan, TimeRange, Value,
+    ActiveLogDeleteFilter, Arc, ColdBlockScan, HttpQueryError, MetricQuery, QuerierState,
+    QueryHotTail, StreamPlan, TimeRange, Value,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
     execute_metric_query_range_with_deletes,
     execute_metric_query_range_with_hot_tail_frontier_and_deletes, hot_tail_snapshot,
@@ -20,8 +20,11 @@ pub(crate) async fn execute_http_metric_range_query(
     if let Some(cold_store) = &state.cold_store {
         let (records, frontier) = hot_tail_snapshot(state, plan.time_range);
         return execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes(
-            Arc::clone(&cold_store.store),
-            &cold_store.prefix,
+            ColdBlockScan {
+                store: Arc::clone(&cold_store.store),
+                prefix: &cold_store.prefix,
+                block_fetch_concurrency: state.cold_block_fetch_concurrency,
+            },
             plan,
             query,
             &state.label_index,

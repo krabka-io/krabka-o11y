@@ -1,16 +1,11 @@
 //! Block-builder helpers for WAL records -> profile sample blocks.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::Cursor,
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use arrow::record_batch::RecordBatch;
 use krabka_blockstore::{
-    BlockIndex, BlockMeta, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels, ProfileIndex,
-    ProfileSampleRow, encode_profile_samples,
+    BlockIndex, BlockMeta, BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels,
+    ProfileIndex, ProfileSampleRow, SummaryColumns, encode_profile_samples, profile_samples_decl,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};
@@ -18,7 +13,6 @@ use krabka_units::{
     ByteSize, Time, convert::StdDurationExt as _, kibibytes, mebibytes, millis, secs,
 };
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
-use parquet::arrow::ArrowWriter;
 use tracing::Instrument as _;
 
 use crate::{
@@ -135,13 +129,10 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let config = BlockBuilderConfig::new("broker:9092".into(), store);
 
-        assert_eq!(
-            config.index_snapshot_max,
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX
-        );
-        assert_eq!(
-            config.index_snapshot_retain.into_value(),
-            krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
+        check!(config.index_snapshot_max == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX);
+        check!(
+            config.index_snapshot_retain.into_value()
+                == krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_RETAIN
         );
     }
 
@@ -150,11 +141,8 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let config = BlockBuilderConfig::new("broker:9092".into(), store);
 
-        assert_eq!(config.wal_fetch_max, DEFAULT_WAL_FETCH_MAX);
-        assert_eq!(
-            config.wal_fetch_partition_max,
-            DEFAULT_WAL_FETCH_PARTITION_MAX
-        );
+        check!(config.wal_fetch_max == DEFAULT_WAL_FETCH_MAX);
+        check!(config.wal_fetch_partition_max == DEFAULT_WAL_FETCH_PARTITION_MAX);
     }
 
     #[test]

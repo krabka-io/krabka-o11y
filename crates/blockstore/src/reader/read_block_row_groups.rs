@@ -5,7 +5,7 @@ use super::{
 
 /// Reads selected row groups from a Parquet block.
 ///
-/// As with [`read_block`], the reader rejects the block when its on-disk size
+/// As with [`read_block`](crate::read_block), the reader rejects the block when its on-disk size
 /// exceeds [`DEFAULT_BLOCK_READ_MAX`], before it streams any bytes.
 ///
 /// # Errors

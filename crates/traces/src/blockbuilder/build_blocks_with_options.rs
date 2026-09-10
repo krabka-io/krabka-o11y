@@ -1,9 +1,9 @@
 use super::{
     BTreeMap, BTreeSet, BlockBuildOptions, BlockMeta, BlockWriter, MaxOffset, MinOffset,
-    SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanRecord, SummaryColumns, TraceBlockStats,
-    TraceIndex, TracesError, WindowStartNs, collect_tags, concat_batches, group_by_trace,
-    object_key, prefixed_object_key, span_batch_with_promoted_attrs, span_block_decl,
-    span_block_schema_with_promoted_attrs,
+    RecordBatch, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanRecord, SummaryColumns,
+    TraceBlockStats, TraceIndex, TracesError, WindowStartNs, collect_tags, concat_batches,
+    group_by_trace, object_key, prefixed_object_key, span_batch_with_promoted_attrs,
+    span_block_decl, span_block_schema_with_promoted_attrs,
 };
 
 pub(crate) async fn build_blocks_with_options(
@@ -16,8 +16,7 @@ pub(crate) async fn build_blocks_with_options(
     options: BlockBuildOptions<'_>,
 ) -> Result<Vec<BlockMeta>, TracesError> {
     let grouped = group_by_trace(records);
-    let mut batches = Vec::new();
-    let mut traces = Vec::new();
+    let mut per_trace: Vec<([u8; 16], RecordBatch)> = Vec::new();
     let mut tag_names = BTreeSet::new();
     let mut tag_values: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut window_start_ns = i64::MAX;
@@ -29,16 +28,31 @@ pub(crate) async fn build_blocks_with_options(
         window_start_ns =
             window_start_ns.min(spans.iter().map(|span| span.start_ns).min().unwrap_or(0));
         collect_tags(&spans, &mut tag_names, &mut tag_values);
-        traces.push(trace_id);
-        batches.push(span_batch_with_promoted_attrs(
-            &spans,
-            options.promoted_attrs,
-        )?);
+        per_trace.push((
+            trace_id,
+            span_batch_with_promoted_attrs(&spans, options.promoted_attrs)?,
+        ));
     }
 
-    if batches.is_empty() {
+    if per_trace.is_empty() {
         return Ok(Vec::new());
     }
+
+    // The block schema declares `[trace_id, start_unix_nano]` as its sort key,
+    // and the block-level trace-id bounds are only meaningful if the rows
+    // really are in that order. `group_by_trace` sorts each trace's spans by
+    // start, so ordering the per-trace batches by trace id orders the block.
+    // Doing it here rather than leaning on the grouping map's key order keeps
+    // the invariant a property of this function.
+    per_trace.sort_by_key(|(trace_id, _)| *trace_id);
+    let traces = per_trace
+        .iter()
+        .map(|(trace_id, _)| *trace_id)
+        .collect::<Vec<_>>();
+    let batches = per_trace
+        .into_iter()
+        .map(|(_, batch)| batch)
+        .collect::<Vec<_>>();
 
     let schema = span_block_schema_with_promoted_attrs(options.promoted_attrs);
     let concatenated =
@@ -67,7 +81,7 @@ pub(crate) async fn build_blocks_with_options(
     for trace_id in traces {
         bloom.insert(&trace_id);
     }
-    index.add_trace_block(
+    index.add_trace_block_with_rows(
         tenant,
         TraceBlockStats {
             object_key: meta.object_key.clone(),
@@ -77,6 +91,7 @@ pub(crate) async fn build_blocks_with_options(
             tag_names,
             tag_values,
         },
+        meta.row_count,
     );
 
     Ok(vec![meta])

@@ -2,7 +2,6 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Cursor,
     sync::Arc,
 };
 
@@ -12,130 +11,59 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use krabka_blockstore::{
-    BlockMeta, COL_FINGERPRINT, COL_TIMESTAMP, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
-    PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, ProfileIndex,
-    ProfileSampleRow, encode_profile_samples,
+    BlockMeta, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, CompactionJob, CompactionPolicy,
+    PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION,
+    PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, ProfileIndex, ProfileSampleRow, SummaryColumns,
+    encode_profile_samples, input_key_fingerprint, plan_compactions as plan_level_compactions,
+    profile_samples_decl,
 };
 use krabka_pprof::SymbolDb;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
-use parquet::arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::{blockbuilder::STACKTRACE_PARTITION, error::ProfilesError};
 
 #[cfg(test)]
 mod tests {
-
-    /// `fnv1a` hashes a list of keys into one value, folding a separator
-    /// between them so that where one key ends and the next begins is part of
-    /// the input. Two compaction inputs that join differently must not share
-    /// an output name.
-    ///
-    /// The expected hashes are stated outright rather than compared against
-    /// each other. Inequality is too weak a claim for a hash: dropping the
-    /// separator, or leaving it unmixed, or replacing the xor with an or, all
-    /// still produce different values for different inputs, and all survived
-    /// a version of this test that only asserted the values differed.
-    #[test]
-    fn hashing_keys_folds_a_separator_between_them() {
-        let hash = |keys: &[&str]| {
-            super::fnv1a(&keys.iter().map(|k| (*k).to_string()).collect::<Vec<_>>())
-        };
-
-        // No keys leaves the offset basis untouched.
-        check!(hash(&[]) == 0xcbf2_9ce4_8422_2325);
-
-        // One empty key still folds a separator, so it is not the same as no
-        // key at all.
-        check!(hash(&[""]) == 0xaf64_724c_8602_eb6e);
-        check!(hash(&["a"]) == 0x089b_c907_b544_c769);
-
-        // Order is part of the input.
-        check!(hash(&["a", "b"]) == 0xd2b3_7181_9297_f98a);
-        check!(hash(&["b", "a"]) == 0x0185_7199_9fe5_8c66);
-
-        // So is where the keys divide: the same bytes split two ways, and
-        // joined into one, give three different hashes.
-        check!(hash(&["ab", "c"]) == 0x20ba_9b30_25a8_b421);
-        check!(hash(&["a", "bc"]) == 0xa0a3_542c_19b9_00ab);
-        check!(hash(&["abc"]) == 0xfc18_2483_ee08_06dc);
-    }
     use std::sync::Arc;
 
     use assert2::{assert, check};
-    use krabka_blockstore::{BlockIndex, Labels};
+    use krabka_blockstore::{BlockIndex, BlockLevel, Labels};
     use krabka_pprof::{EngineOpts, FlameEngine};
     use object_store::{ObjectStore, memory::InMemory};
 
-    /// The compactor hashes a *list* of keys, not a blob, so it folds a 0xff
-    /// separator in after each one. Without it a single key `ab` and the pair
-    /// `a`, `b` would collide, and two different compaction inputs would
-    /// share a key.
-    ///
-    /// The expected values are computed from the FNV-1a definition rather
-    /// than captured from this implementation.
+    /// The compacted object key spans the whole job -- the earliest start and
+    /// the latest end across every input -- and names the level the output
+    /// lands at. Two jobs over the same range with different inputs must not
+    /// collide, which is what the fingerprint of the input keys is for.
     #[test]
-    fn compaction_keys_hash_their_boundaries_not_just_their_bytes() {
-        let hash = |keys: &[&str]| {
-            super::fnv1a(&keys.iter().map(|k| (*k).to_string()).collect::<Vec<_>>())
-        };
-
-        check!(
-            hash(&[]) == 0xcbf2_9ce4_8422_2325,
-            "no keys is the offset basis"
-        );
-        check!(hash(&["a"]) == 0x089b_c907_b544_c769);
-        check!(hash(&["ab"]) == 0xe720_2e19_0542_452f);
-        check!(hash(&["a", "b"]) == 0xd2b3_7181_9297_f98a);
-
-        // The three relationships the separator exists to guarantee.
-        check!(
-            hash(&["ab"]) != hash(&["a", "b"]),
-            "a split is not the same as a join"
-        );
-        check!(hash(&["a", "b"]) != hash(&["b", "a"]), "order matters");
-        check!(hash(&["a"]) != hash(&[]), "a key is not nothing");
-    }
-
-    /// The compacted object key spans the whole input: the earliest start and
-    /// the latest end across every block, not the first block's range. The
-    /// blocks below are deliberately out of order so a key built from
-    /// position rather than from the extremes is visibly wrong.
-    #[test]
-    fn a_compacted_key_spans_the_whole_input_range() {
-        let block = |min_ts, max_ts| BlockMeta {
-            tenant: "t".to_string(),
-            object_key: String::new(),
+    fn a_compacted_key_names_the_range_the_level_and_the_inputs() {
+        let job = |inputs: &[&str], level: u32, min_ts, max_ts| CompactionJob {
+            tenant: "tenant".to_string(),
+            input_keys: inputs.iter().map(|key| (*key).to_string()).collect(),
+            output_level: BlockLevel(level),
             min_ts,
             max_ts,
             row_count: 0,
-            fingerprints: vec![],
         };
-        let inputs = vec!["a".to_string(), "b".to_string()];
-        let digest = format!("{:016x}", super::fnv1a(&inputs));
-
-        let blocks = [block(300, 400), block(100, 500), block(200, 250)];
-        check!(
-            super::compacted_key("tenant", &blocks, &inputs)
-                == format!("blocks/tenant/compacted/100-500-{digest}.parquet")
+        let digest = format!(
+            "{:016x}",
+            input_key_fingerprint(&["a".to_string(), "b".to_string()])
         );
 
-        // A single block spans itself.
         check!(
-            super::compacted_key("tenant", &[block(7, 9)], &inputs)
-                == format!("blocks/tenant/compacted/7-9-{digest}.parquet")
+            super::compacted_key(&job(&["a", "b"], 1, 100, 500))
+                == format!("blocks/tenant/compacted/l1-100-500-{digest}.parquet")
         );
-
-        // No blocks leaves both ends at zero rather than failing.
         check!(
-            super::compacted_key("tenant", &[], &inputs)
-                == format!("blocks/tenant/compacted/0-0-{digest}.parquet")
+            super::compacted_key(&job(&["a", "b"], 3, 100, 500))
+                == format!("blocks/tenant/compacted/l3-100-500-{digest}.parquet"),
+            "the level is part of the name"
         );
-
-        // The digest covers the inputs, so a different input list is a
-        // different key even over the same range.
         check!(
-            super::compacted_key("tenant", &blocks, &["a".to_string()])
-                != super::compacted_key("tenant", &blocks, &inputs)
+            super::compacted_key(&job(&["a"], 1, 100, 500))
+                != super::compacted_key(&job(&["a", "b"], 1, 100, 500)),
+            "a different input list is a different key over the same range"
         );
     }
 
@@ -407,6 +335,26 @@ mod tests {
         );
     }
 
+    fn meta(object_key: &str, min_ts: i64, max_ts: i64, row_count: usize) -> BlockMeta {
+        BlockMeta {
+            tenant: "t".to_string(),
+            object_key: object_key.to_string(),
+            min_ts,
+            max_ts,
+            row_count,
+            fingerprints: Vec::new(),
+        }
+    }
+
+    fn wide_policy(max_blocks_per_job: usize, max_level: u32) -> CompactionPolicy {
+        CompactionPolicy::new(
+            max_blocks_per_job,
+            usize::MAX,
+            BlockLevel(max_level),
+            i64::MAX,
+        )
+    }
+
     #[test]
     fn plan_compactions_groups_blocks_by_tenant_in_time_order() {
         let mut index = ProfileIndex::new();
@@ -414,35 +362,72 @@ mod tests {
             "t",
             &[],
             &[
-                (
-                    BlockMeta {
-                        tenant: "t".to_string(),
-                        object_key: "b.parquet".to_string(),
-                        min_ts: 10,
-                        max_ts: 20,
-                        row_count: 1,
-                        fingerprints: Vec::new(),
-                    },
-                    vec![0],
-                ),
-                (
-                    BlockMeta {
-                        tenant: "t".to_string(),
-                        object_key: "a.parquet".to_string(),
-                        min_ts: 0,
-                        max_ts: 5,
-                        row_count: 1,
-                        fingerprints: Vec::new(),
-                    },
-                    vec![0],
-                ),
+                (meta("b.parquet", 10, 20, 1), vec![0]),
+                (meta("a.parquet", 0, 5, 1), vec![0]),
             ],
         );
 
-        let jobs = plan_compactions(&index, 2);
+        let jobs = plan_compactions(&index, wide_policy(2, 4));
 
         assert!(jobs.len() == 1);
         assert!(jobs[0].input_keys == vec!["a.parquet".to_string(), "b.parquet".to_string()]);
+        assert!(jobs[0].output_level == BlockLevel(1));
+    }
+
+    /// The planner has to stop. Each pass replaces at least two blocks with
+    /// one a level higher, and a block at the top of the ladder is never an
+    /// input again, so a compactor left running against a quiet index plans
+    /// nothing after a bounded number of passes.
+    #[tokio::test]
+    async fn repeated_passes_climb_the_ladder_and_then_plan_nothing() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut index = ProfileIndex::new();
+        let mut records = Vec::new();
+        for n in 0..4_i64 {
+            let rec = record_at("t", "api", 1, "main", 1_000 + n);
+            let labels = Labels::from_pairs(rec.labels.iter().cloned());
+            index.add_series("t", labels.fingerprint(), &labels);
+            let block = build_block(&store, "t", 0, std::slice::from_ref(&rec), (n, n))
+                .await
+                .unwrap()
+                .remove(0);
+            index.add_block(&block);
+            index.add_profile_block("t", &block.object_key, vec![STACKTRACE_PARTITION]);
+            records.push(rec);
+        }
+
+        let policy = wide_policy(2, 2);
+        let mut levels = Vec::new();
+        let mut passes = 0;
+        loop {
+            let metas = compact_once(&store, &mut index, policy).await.unwrap();
+            if metas.is_empty() {
+                break;
+            }
+            passes += 1;
+            assert!(passes <= 4, "compaction did not converge");
+            levels.push(
+                metas
+                    .iter()
+                    .map(|meta| index.block_level(&meta.object_key))
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        // Four blocks pair into two at level 1, then into one at level 2,
+        // which is the cap: the third pass plans nothing.
+        check!(levels == vec![vec![BlockLevel(1); 2], vec![BlockLevel(2)]]);
+        check!(passes == 2);
+        check!(BlockIndex::block_count(&index, "t") == 1);
+
+        // The surviving block still answers the query the four inputs did.
+        let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
+        let engine = FlameEngine::new(cold, EngineOpts::default());
+        let fg = engine
+            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+            .await
+            .unwrap();
+        check!(fg.total == 4);
     }
 
     fn record(tenant: &str, service: &str, value: i64, function: &str) -> ProfileRecord {
@@ -494,18 +479,15 @@ mod tests {
     }
 }
 
-mod collect_meta;
 mod compact_blocks;
 mod compact_blocks_with_policy;
 mod compact_once;
 mod compact_once_with_policy;
 mod compacted_key;
-mod compaction_job;
 mod destination_partitions;
 mod downsample_batches;
 mod downsample_key;
 mod downsample_policy;
-mod fnv1a;
 mod load_batches;
 mod load_symdb;
 mod plan_compactions;
@@ -513,18 +495,15 @@ mod remap_partitions;
 mod source_partitions;
 mod write_batches;
 
-use collect_meta::collect_meta;
 pub use compact_blocks::compact_blocks;
 pub use compact_blocks_with_policy::compact_blocks_with_policy;
 pub use compact_once::compact_once;
 pub use compact_once_with_policy::compact_once_with_policy;
 use compacted_key::compacted_key;
-pub use compaction_job::CompactionJob;
 use destination_partitions::destination_partitions;
 use downsample_batches::downsample_batches;
 use downsample_key::DownsampleKey;
 pub use downsample_policy::DownsamplePolicy;
-use fnv1a::fnv1a;
 use load_batches::load_batches;
 use load_symdb::load_symdb;
 pub use plan_compactions::plan_compactions;

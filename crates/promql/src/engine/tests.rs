@@ -11,6 +11,7 @@ use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryRes
 mod a_classic_histogram_answers_beside_a_native_sibling;
 mod a_comparison_keeps_the_metric_name_that_arithmetic_drops;
 mod a_fill_modifier_is_refused_on_a_set_operator;
+mod a_range_query_over_or_matchers_counts_a_doubly_matched_series_once;
 mod abusive_subquery_resolution_errors_before_looping;
 mod aggregate_genuine_nan_group_parity;
 mod anchored_increase_does_not_treat_a_flat_counter_step_as_a_reset;

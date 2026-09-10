@@ -1,15 +1,24 @@
 //! Writes columnar blocks to object storage as Parquet.
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::{cmp::Ordering, collections::BTreeSet, sync::Arc};
 
 use arrow::{
-    array::{Array, FixedSizeBinaryArray, Int64Array, UInt64Array},
+    array::{
+        Array, ArrayRef, DynComparator, FixedSizeBinaryArray, Int64Array, UInt32Array, UInt64Array,
+        make_comparator,
+    },
+    compute::{SortColumn, SortOptions, concat_batches, lexsort_to_indices, take_record_batch},
     datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use object_store::{ObjectStore, buffered::BufWriter, path::Path};
-use parquet::arrow::AsyncArrowWriter;
-use tracing::instrument;
+use parquet::{
+    arrow::{ArrowSchemaConverter, AsyncArrowWriter},
+    basic::{Compression, ZstdLevel},
+    file::{metadata::SortingColumn, properties::WriterProperties},
+    schema::types::{ColumnPath, SchemaDescriptor},
+};
+use tracing::{debug, instrument};
 
 use crate::{
     block::{BlockMeta, COL_FINGERPRINT, COL_TIMESTAMP, validate_against},
@@ -27,9 +36,23 @@ mod tests {
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
+    use bytes::Bytes;
     use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory, path::Path};
+    use parquet::{
+        arrow::arrow_reader::ParquetRecordBatchReaderBuilder,
+        file::{
+            properties::ReaderProperties,
+            reader::FileReader,
+            serialized_reader::{ReadOptionsBuilder, SerializedFileReader},
+        },
+    };
 
     use super::*;
+    use crate::{
+        block_index::RequiredColumn,
+        reader::read_block,
+        span_schema::{SCOL_SPAN_ID, SCOL_START_NANO, SCOL_TRACE_ID, span_block_decl},
+    };
 
     fn log_schema() -> Arc<Schema> {
         Arc::new(Schema::new(vec![
@@ -158,14 +181,414 @@ mod tests {
             matches!(err, Err(BlockStoreError::InvalidBlock(message)) if message.contains("schema"))
         );
     }
+
+    /// The two mandatory columns and nothing else, for the cases that care
+    /// about how a block is written rather than what it carries.
+    fn series_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
+            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
+        ]))
+    }
+
+    /// `rows` rows in the declared order: ten samples of each fingerprint.
+    fn sorted_series_batch(rows: usize) -> RecordBatch {
+        let rows = u64::try_from(rows).expect("a row count fits a u64");
+        let fp = UInt64Array::from_iter_values((0..rows).map(|row| row / 10));
+        let ts = Int64Array::from_iter_values(
+            (0..rows).map(|row| i64::try_from(row % 10).expect("a sample index fits an i64")),
+        );
+        RecordBatch::try_new(series_schema(), vec![Arc::new(fp), Arc::new(ts)])
+            .expect("the columns match the schema")
+    }
+
+    /// The bytes of the block at `object_key`.
+    async fn block_bytes(store: &Arc<dyn ObjectStore>, object_key: &str) -> Bytes {
+        store
+            .get(&Path::from(object_key))
+            .await
+            .expect("the block was written")
+            .bytes()
+            .await
+            .expect("the block reads back")
+    }
+
+    /// A row group's `sorting_columns` as plain tuples, which compare without
+    /// depending on how the Parquet crate derives equality for its own type.
+    fn sorting_of(properties: &WriterProperties) -> Option<Vec<(i32, bool, bool)>> {
+        properties.sorting_columns().map(|columns| {
+            columns
+                .iter()
+                .map(|column| (column.column_idx, column.descending, column.nulls_first))
+                .collect()
+        })
+    }
+
+    #[tokio::test]
+    async fn write_block_cuts_row_groups_at_the_declared_size() {
+        // One row past two full groups, so a writer that ignored the setting
+        // (one group of everything) and one that was off by a group are both
+        // distinguishable from the right answer.
+        let rows = BLOCK_ROW_GROUP_ROWS * 2 + 1;
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+
+        writer
+            .write_block(
+                "t",
+                "k.parquet",
+                series_schema(),
+                &[sorted_series_batch(rows)],
+            )
+            .await
+            .unwrap();
+
+        let bytes = block_bytes(&store, "k.parquet").await;
+        let metadata = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .unwrap()
+            .metadata()
+            .clone();
+        let group_rows = metadata
+            .row_groups()
+            .iter()
+            .map(|group| usize::try_from(group.num_rows()).unwrap())
+            .collect::<Vec<_>>();
+        assert2::assert!(group_rows == vec![BLOCK_ROW_GROUP_ROWS, BLOCK_ROW_GROUP_ROWS, 1]);
+    }
+
+    #[tokio::test]
+    async fn write_block_compresses_every_column_and_records_the_declared_order() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let schema = log_schema();
+
+        writer
+            .write_block("t", "k.parquet", schema.clone(), &[sample_batch(&schema)])
+            .await
+            .unwrap();
+
+        let bytes = block_bytes(&store, "k.parquet").await;
+        let metadata = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .unwrap()
+            .metadata()
+            .clone();
+        let group = &metadata.row_groups()[0];
+
+        let zstd = parquet::basic::Compression::ZSTD(ZstdLevel::try_new(BLOCK_ZSTD_LEVEL).unwrap());
+        let codecs = group
+            .columns()
+            .iter()
+            .map(parquet::file::metadata::ColumnChunkMetaData::compression)
+            .collect::<Vec<_>>();
+        assert2::assert!(codecs == vec![zstd, zstd, zstd]);
+
+        let sorting = group.sorting_columns().map(|columns| {
+            columns
+                .iter()
+                .map(|column| (column.column_idx, column.descending, column.nulls_first))
+                .collect::<Vec<_>>()
+        });
+        assert2::assert!(sorting == Some(vec![(0, false, true), (1, false, true)]));
+    }
+
+    /// A span-shaped block: two identity columns, one of which leads the sort
+    /// key and one of which is scattered through it.
+    fn span_shaped_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new(SCOL_TRACE_ID, DataType::FixedSizeBinary(16), false),
+            Field::new(SCOL_SPAN_ID, DataType::FixedSizeBinary(8), false),
+            Field::new(SCOL_START_NANO, DataType::Int64, false),
+        ]))
+    }
+
+    fn span_shaped_batch(traces: &[u8], spans: &[u8]) -> RecordBatch {
+        let trace_ids = FixedSizeBinaryArray::try_from_iter(
+            traces
+                .iter()
+                .map(|byte| [*byte; 16])
+                .collect::<Vec<_>>()
+                .iter()
+                .map(<[u8; 16]>::as_slice),
+        )
+        .unwrap();
+        let span_ids = FixedSizeBinaryArray::try_from_iter(
+            spans
+                .iter()
+                .map(|byte| [*byte; 8])
+                .collect::<Vec<_>>()
+                .iter()
+                .map(<[u8; 8]>::as_slice),
+        )
+        .unwrap();
+        let start =
+            Int64Array::from_iter_values((0..spans.len()).map(|row| i64::try_from(row).unwrap()));
+        RecordBatch::try_new(
+            span_shaped_schema(),
+            vec![Arc::new(trace_ids), Arc::new(span_ids), Arc::new(start)],
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn write_block_blooms_the_declared_identity_column_and_nothing_else() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let schema = span_shaped_schema();
+        let decl = BlockSchema {
+            required: vec![
+                RequiredColumn::new(SCOL_TRACE_ID, DataType::FixedSizeBinary(16), false),
+                RequiredColumn::new(SCOL_START_NANO, DataType::Int64, false),
+            ],
+            sort_key: vec![SCOL_TRACE_ID.to_string(), SCOL_START_NANO.to_string()],
+            bloom_columns: vec![SCOL_SPAN_ID.to_string()],
+        };
+
+        writer
+            .write_block_with_decl(
+                "t",
+                "k.parquet",
+                schema,
+                &[span_shaped_batch(&[1, 1, 2], &[7, 8, 9])],
+                &decl,
+                SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+            )
+            .await
+            .unwrap();
+
+        let bytes = block_bytes(&store, "k.parquet").await;
+        let options = ReadOptionsBuilder::new()
+            .with_reader_properties(
+                ReaderProperties::builder()
+                    .set_read_bloom_filter(true)
+                    .build(),
+            )
+            .build();
+        let reader = SerializedFileReader::new_with_options(bytes, options).unwrap();
+        let group = reader.get_row_group(0).unwrap();
+
+        let bloom = group
+            .get_column_bloom_filter(1)
+            .expect("the span id column carries a bloom filter");
+        // The span ids the batch holds, and one it does not. A bloom filter
+        // may say yes to an absent value, but not to this few.
+        assert2::assert!(bloom.check(&[7_u8; 8][..]));
+        assert2::assert!(bloom.check(&[9_u8; 8][..]));
+        assert2::assert!(!bloom.check(&[200_u8; 8][..]));
+
+        // The trace id leads the sort key and the start is its second key;
+        // row-group min/max prunes both, so neither should pay for a filter.
+        assert2::assert!(group.get_column_bloom_filter(0).is_none());
+        assert2::assert!(group.get_column_bloom_filter(2).is_none());
+    }
+
+    #[tokio::test]
+    async fn write_block_sorts_rows_the_caller_left_out_of_declared_order() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let schema = log_schema();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt64Array::from(vec![20_u64, 10, 20, 10])),
+                Arc::new(Int64Array::from(vec![300_i64, 100, 400, 200])),
+                Arc::new(StringArray::from(vec!["c", "a", "d", "b"])),
+            ],
+        )
+        .unwrap();
+
+        writer
+            .write_block("t", "k.parquet", schema.clone(), &[batch])
+            .await
+            .unwrap();
+
+        let batches = read_block(store, "k.parquet").await.unwrap();
+        let written = arrow::compute::concat_batches(&schema, &batches).unwrap();
+        assert2::assert!(
+            written
+                == RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(UInt64Array::from(vec![10_u64, 10, 20, 20])),
+                        Arc::new(Int64Array::from(vec![100_i64, 200, 300, 400])),
+                        Arc::new(StringArray::from(vec!["a", "b", "c", "d"])),
+                    ],
+                )
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn sorting_keeps_the_order_of_rows_the_declared_key_does_not_separate() {
+        // Traces order spans within a trace by a key their declaration does
+        // not name, so a sort that reshuffled equal keys would silently
+        // reorder them. Two rows share a fingerprint and a timestamp here and
+        // must come back in the order they were handed over.
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let schema = log_schema();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt64Array::from(vec![20_u64, 10, 10])),
+                Arc::new(Int64Array::from(vec![1_i64, 5, 5])),
+                Arc::new(StringArray::from(vec!["x", "first", "second"])),
+            ],
+        )
+        .unwrap();
+
+        writer
+            .write_block("t", "k.parquet", schema.clone(), &[batch])
+            .await
+            .unwrap();
+
+        let batches = read_block(store, "k.parquet").await.unwrap();
+        let written = arrow::compute::concat_batches(&schema, &batches).unwrap();
+        assert2::assert!(
+            written
+                == RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(UInt64Array::from(vec![10_u64, 10, 20])),
+                        Arc::new(Int64Array::from(vec![5_i64, 5, 1])),
+                        Arc::new(StringArray::from(vec!["first", "second", "x"])),
+                    ],
+                )
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_block_split_across_batches_is_ordered_across_the_boundary_too() {
+        // Each batch is sorted on its own, but the second starts below where
+        // the first ended. A check that only looked within a batch would call
+        // this sorted and record a `sorting_columns` the file does not honour.
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let schema = series_schema();
+        let first = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt64Array::from(vec![30_u64, 40])),
+                Arc::new(Int64Array::from(vec![1_i64, 2])),
+            ],
+        )
+        .unwrap();
+        let second = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt64Array::from(vec![10_u64, 20])),
+                Arc::new(Int64Array::from(vec![3_i64, 4])),
+            ],
+        )
+        .unwrap();
+
+        writer
+            .write_block("t", "k.parquet", schema.clone(), &[first, second])
+            .await
+            .unwrap();
+
+        let batches = read_block(store, "k.parquet").await.unwrap();
+        let written = arrow::compute::concat_batches(&schema, &batches).unwrap();
+        assert2::assert!(
+            written
+                == RecordBatch::try_new(
+                    schema,
+                    vec![
+                        Arc::new(UInt64Array::from(vec![10_u64, 20, 30, 40])),
+                        Arc::new(Int64Array::from(vec![3_i64, 4, 1, 2])),
+                    ],
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn sorting_columns_index_parquet_leaves_rather_than_arrow_fields() {
+        // One nested Arrow field ahead of the sort key contributes two
+        // Parquet leaves, so the fingerprint's column chunk is the third and
+        // not the second. Numbering the sort key by Arrow field index would
+        // name the wrong columns here.
+        let nested = DataType::Struct(
+            vec![
+                Field::new("name", DataType::Utf8, true),
+                Field::new("at", DataType::Int64, true),
+            ]
+            .into(),
+        );
+        let schema: SchemaRef = Arc::new(Schema::new(vec![
+            Field::new("events", nested, true),
+            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
+            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
+        ]));
+
+        let properties = block_writer_properties(&schema, &series_block_schema()).unwrap();
+
+        assert2::assert!(sorting_of(&properties) == Some(vec![(2, false, true), (3, false, true)]));
+    }
+
+    #[test]
+    fn properties_reject_a_declaration_naming_a_column_the_schema_lacks() {
+        let schema: SchemaRef = series_schema();
+        let decl = BlockSchema {
+            required: vec![RequiredColumn::new(
+                crate::COL_FINGERPRINT,
+                DataType::UInt64,
+                false,
+            )],
+            sort_key: vec![crate::COL_FINGERPRINT.to_string()],
+            bloom_columns: vec!["not_a_column".to_string()],
+        };
+
+        let err = block_writer_properties(&schema, &decl);
+
+        assert2::assert!(
+            matches!(err, Err(BlockStoreError::InvalidBlock(message)) if message.contains("not_a_column"))
+        );
+    }
+
+    #[test]
+    fn the_span_declaration_blooms_the_span_id_alone() {
+        // `span_id` is not part of the span sort key, so it reaches the
+        // writer only through the declaration's bloom list, and the trace id
+        // that leads the sort key must not also be paying for a filter.
+        let schema = crate::span_schema::span_block_schema();
+        let decl = span_block_decl();
+
+        let properties = block_writer_properties(&schema, &decl).unwrap();
+
+        assert2::assert!(decl.bloom_columns == vec![SCOL_SPAN_ID]);
+        let trace_id = schema.index_of(SCOL_TRACE_ID).unwrap();
+        let start = schema.index_of(SCOL_START_NANO).unwrap();
+        assert2::assert!(
+            sorting_of(&properties)
+                == Some(vec![
+                    (i32::try_from(trace_id).unwrap(), false, true),
+                    (i32::try_from(start).unwrap(), false, true),
+                ])
+        );
+    }
 }
 
+mod block_row_group_rows;
 mod block_writer;
+mod block_writer_properties;
+mod block_zstd_level;
+mod is_sorted_by_key;
+mod key_columns;
+mod sort_batches_by_key;
+mod sort_key_options;
 mod summarize;
 mod summary_columns;
 mod validate_batch_schemas;
 
+pub use block_row_group_rows::BLOCK_ROW_GROUP_ROWS;
 pub use block_writer::BlockWriter;
+pub use block_writer_properties::block_writer_properties;
+pub use block_zstd_level::BLOCK_ZSTD_LEVEL;
+use is_sorted_by_key::is_sorted_by_key;
+use key_columns::key_columns;
+use sort_batches_by_key::sort_batches_by_key;
+use sort_key_options::SORT_KEY_OPTIONS;
 use summarize::summarize;
 pub use summary_columns::SummaryColumns;
 use validate_batch_schemas::validate_batch_schemas;

@@ -1,8 +1,9 @@
 use super::{
     Arc, BlockMeta, BlockWriter, ByteSize, ObjectStore, SCOL_START_NANO, SCOL_TRACE_ID,
-    SummaryColumns, TraceBlockStats, TraceIndex, TracesError, concat_batches,
-    read_block_with_max_bytes, recompute_nested_sets, recompute_trace_level_columns,
-    span_block_decl, span_block_schema, tag_metadata, trace_bloom,
+    SummaryColumns, TraceBlockStats, TraceIndex, TracesError, align_batch_to_block_schema,
+    concat_batches, merged_promoted_attrs, read_block_with_max_bytes, recompute_nested_sets,
+    recompute_trace_level_columns, span_block_decl, span_block_schema_with_promoted_attrs,
+    tag_metadata, trace_bloom,
 };
 
 /// Merge existing span blocks with a caller-supplied on-disk read limit.
@@ -33,11 +34,26 @@ pub async fn compact_block_keys_with_max_bytes(
         return Err(TracesError::Block("cannot compact empty block set".into()));
     }
 
-    let schema = span_block_schema();
+    // The inputs' own schemas decide the output's. A block written while
+    // `--promote-span-attr` was set is wider than the base schema, and an
+    // input set can straddle a change to those flags, so the output carries
+    // the union of every input's promoted columns and each input is widened to
+    // match. Rebuilding the base schema here instead would fail outright on
+    // the first promoted input.
+    let promoted_attrs = merged_promoted_attrs(&batches)?;
+    let schema = span_block_schema_with_promoted_attrs(&promoted_attrs);
+    let batches = batches
+        .iter()
+        .map(|batch| align_batch_to_block_schema(batch, &schema))
+        .collect::<Result<Vec<_>, _>>()?;
     let concatenated =
         concat_batches(&schema, &batches).map_err(|err| TracesError::Block(err.to_string()))?;
     let concatenated = recompute_nested_sets(&concatenated)?;
     let concatenated = recompute_trace_level_columns(&concatenated)?;
+    // Concatenation interleaves the inputs' traces, so the merged rows are not
+    // in the declared `[trace_id, start_unix_nano]` order. `write_block_with_decl`
+    // is what puts them there: it sorts a caller whose rows are out of order,
+    // which is exactly a merge of blocks.
     let meta = writer
         .write_block_with_decl(
             tenant,
@@ -63,6 +79,7 @@ pub async fn compact_block_keys_with_max_bytes(
             tag_names,
             tag_values,
         },
+        meta.row_count,
     );
 
     Ok(meta)

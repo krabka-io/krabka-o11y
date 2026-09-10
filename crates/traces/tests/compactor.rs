@@ -1,11 +1,17 @@
 use std::sync::Arc;
 
-use arrow::array::{FixedSizeBinaryArray, Int32Array};
+use arrow::{
+    array::{Array, DictionaryArray, FixedSizeBinaryArray, Int32Array, Int64Array, StringArray},
+    datatypes::Int32Type,
+    record_batch::RecordBatch,
+};
 use assert2::check;
-use krabka_blockstore::{BlockWriter, TraceIndex, read_block};
+use krabka_blockstore::{
+    BlockWriter, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID, TraceIndex, read_block,
+};
 use krabka_traces::{
     AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode,
-    blockbuilder::build_blocks,
+    blockbuilder::{build_blocks, build_blocks_with_promoted_attrs},
     compactor::{compact_block_keys, compacted_object_key},
     ids::{MaxOffset, MinOffset, WindowStartNs},
 };
@@ -200,4 +206,250 @@ async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
     check!(parent_id.value(child) == left.value(root));
     check!(left.value(root) < left.value(child));
     check!(right.value(child) < right.value(root));
+}
+
+fn rec_with_method(
+    trace_id: [u8; 16],
+    span_id: u8,
+    parent: Option<u8>,
+    start_ns: i64,
+    method: &str,
+) -> SpanRecord {
+    let mut record = rec(trace_id, span_id, parent, start_ns);
+    record.span.span_attrs = vec![KeyValue {
+        key: "http.method".into(),
+        value: AttrValue::Str(method.into()),
+    }];
+    record
+}
+
+/// Read a promoted string column, which the write path dictionary-encodes.
+fn promoted_strings(batch: &RecordBatch, column: &str) -> Vec<Option<String>> {
+    let dictionary = batch
+        .column_by_name(column)
+        .unwrap_or_else(|| panic!("block has no `{column}` column"))
+        .as_any()
+        .downcast_ref::<DictionaryArray<Int32Type>>()
+        .expect("a dictionary column");
+    let values = dictionary
+        .values()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("string dictionary values");
+    (0..dictionary.len())
+        .map(|row| {
+            (!dictionary.is_null(row)).then(|| {
+                let key = usize::try_from(dictionary.keys().value(row)).expect("a dictionary key");
+                values.value(key).to_string()
+            })
+        })
+        .collect()
+}
+
+fn int64_values(batch: &RecordBatch, column: &str) -> Vec<i64> {
+    batch
+        .column_by_name(column)
+        .unwrap_or_else(|| panic!("block has no `{column}` column"))
+        .as_any()
+        .downcast_ref::<Int64Array>()
+        .expect("an i64 column")
+        .values()
+        .to_vec()
+}
+
+fn trace_ids(batch: &RecordBatch) -> Vec<Vec<u8>> {
+    let ids = batch
+        .column_by_name(SCOL_TRACE_ID)
+        .expect("block has no trace id column")
+        .as_any()
+        .downcast_ref::<FixedSizeBinaryArray>()
+        .expect("a fixed-size binary column");
+    (0..ids.len()).map(|row| ids.value(row).to_vec()).collect()
+}
+
+/// Promoted attribute columns are an operator-configurable ingest feature, and
+/// a block written with them has a schema strictly wider than the base one.
+/// Compaction used to rebuild the base schema at this point, so the first
+/// promoted block it read failed to concatenate and the tenant lost compaction
+/// -- and with it the late-span merge -- without any signal.
+#[tokio::test]
+async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(store.clone());
+    let mut index = TraceIndex::new();
+    let promoted = [PromotedSpanAttr::string("http.method")];
+
+    let first = build_blocks_with_promoted_attrs(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &[rec_with_method([1; 16], 1, None, 100, "GET")],
+        (10, 10),
+        &promoted,
+    )
+    .await
+    .unwrap();
+    let late = build_blocks_with_promoted_attrs(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &[rec_with_method([1; 16], 2, Some(1), 200, "POST")],
+        (20, 20),
+        &promoted,
+    )
+    .await
+    .unwrap();
+
+    let output_key = compacted_object_key(
+        "tenant-a",
+        7,
+        MinOffset(10),
+        MaxOffset(20),
+        WindowStartNs(100),
+    );
+    compact_block_keys(
+        store.clone(),
+        &writer,
+        &mut index,
+        "tenant-a",
+        &[first[0].object_key.clone(), late[0].object_key.clone()],
+        &output_key,
+    )
+    .await
+    .expect("a promoted block compacts");
+
+    let batches = read_block(store, &output_key).await.unwrap();
+    let batch = &batches[0];
+    check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
+    check!(
+        promoted_strings(batch, "attr.http.method")
+            == vec![Some("GET".to_string()), Some("POST".to_string())]
+    );
+}
+
+/// An operator can add `--promote-span-attr` between two flushes, and the
+/// compactor then sees inputs that disagree about the block schema. The output
+/// carries the union of their columns: dropping the promoted column of the
+/// half that has one would lose the dedicated column outright, and leaving it
+/// null for the other half would claim the attribute is absent from rows that
+/// carry it.
+#[tokio::test]
+async fn compacting_inputs_written_under_different_promotion_flags_fills_the_column() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(store.clone());
+    let mut index = TraceIndex::new();
+
+    let before = build_blocks(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &[rec_with_method([1; 16], 1, None, 100, "GET")],
+        (10, 10),
+    )
+    .await
+    .unwrap();
+    let after = build_blocks_with_promoted_attrs(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &[rec_with_method([1; 16], 2, Some(1), 200, "POST")],
+        (20, 20),
+        &[PromotedSpanAttr::string("http.method")],
+    )
+    .await
+    .unwrap();
+
+    let output_key = compacted_object_key(
+        "tenant-a",
+        7,
+        MinOffset(10),
+        MaxOffset(20),
+        WindowStartNs(100),
+    );
+    compact_block_keys(
+        store.clone(),
+        &writer,
+        &mut index,
+        "tenant-a",
+        &[before[0].object_key.clone(), after[0].object_key.clone()],
+        &output_key,
+    )
+    .await
+    .expect("mixed inputs compact");
+
+    let batches = read_block(store, &output_key).await.unwrap();
+    let batch = &batches[0];
+    check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
+    check!(
+        promoted_strings(batch, "attr.http.method")
+            == vec![Some("GET".to_string()), Some("POST".to_string())],
+        "the row from the unpromoted block is filled from its generic attributes"
+    );
+}
+
+/// The span block declares `[trace_id, start_unix_nano]` as its sort key, and
+/// the block's trace-id bounds are only usable for pruning if the rows are
+/// really in that order. Concatenating inputs interleaves their traces, so the
+/// compactor has to restore the order rather than inherit the read order.
+#[tokio::test]
+async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(store.clone());
+    let mut index = TraceIndex::new();
+
+    // Each input holds one span of each trace, so neither input's row order
+    // nor their concatenation is the declared order.
+    let first = build_blocks(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &[rec([2; 16], 1, None, 300), rec([1; 16], 2, None, 100)],
+        (10, 10),
+    )
+    .await
+    .unwrap();
+    let second = build_blocks(
+        &writer,
+        &mut index,
+        "tenant-a",
+        7,
+        &[rec([2; 16], 3, Some(1), 400), rec([1; 16], 4, Some(2), 200)],
+        (20, 20),
+    )
+    .await
+    .unwrap();
+
+    let output_key = compacted_object_key(
+        "tenant-a",
+        7,
+        MinOffset(10),
+        MaxOffset(20),
+        WindowStartNs(100),
+    );
+    compact_block_keys(
+        store.clone(),
+        &writer,
+        &mut index,
+        "tenant-a",
+        &[first[0].object_key.clone(), second[0].object_key.clone()],
+        &output_key,
+    )
+    .await
+    .unwrap();
+
+    let batches = read_block(store, &output_key).await.unwrap();
+    let batch = &batches[0];
+    check!(
+        trace_ids(batch) == vec![vec![1_u8; 16], vec![1; 16], vec![2; 16], vec![2; 16]],
+        "rows are grouped by trace id, ascending"
+    );
+    check!(
+        int64_values(batch, SCOL_START_NANO) == vec![100, 200, 300, 400],
+        "and ordered by start within each trace"
+    );
 }

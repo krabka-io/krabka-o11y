@@ -1,6 +1,6 @@
 use super::{ByteSize, gibibytes};
 
-/// Maximum on-disk byte size of a Parquet block accepted by [`read_block`].
+/// Maximum on-disk byte size of a Parquet block accepted by [`read_block`](crate::read_block).
 ///
 /// Blocks come from shared object storage and, per the threat model, may be
 /// corrupt or maliciously oversized. A stream of an unbounded Parquet file

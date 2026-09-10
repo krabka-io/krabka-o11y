@@ -9,6 +9,7 @@ pub mod scalar_math;
 
 use std::{any::Any, sync::Arc, time::Duration};
 
+use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 use promql_parser::{
@@ -128,6 +129,7 @@ mod extended_selector_modifier;
 mod is_ident_char;
 mod is_ident_start;
 mod is_zero;
+mod labeled_series;
 mod matching_delimiter;
 mod ms_to_seconds;
 mod normalize_duration_expressions;
@@ -140,6 +142,7 @@ mod seconds_to_duration_literal;
 mod skip_ws;
 mod starts_offset_keyword;
 mod strip_extended_selector_modifiers;
+mod timed_value;
 mod top_level_colon;
 mod wrap_extended_selectors;
 
@@ -154,6 +157,7 @@ pub use extended_selector_modifier::ExtendedSelectorModifier;
 use is_ident_char::is_ident_char;
 use is_ident_start::is_ident_start;
 use is_zero::is_zero;
+pub use labeled_series::LabeledSeries;
 use matching_delimiter::matching_delimiter;
 use ms_to_seconds::ms_to_seconds;
 use normalize_duration_expressions::normalize_duration_expressions;
@@ -166,5 +170,6 @@ use seconds_to_duration_literal::seconds_to_duration_literal;
 use skip_ws::skip_ws;
 use starts_offset_keyword::starts_offset_keyword;
 use strip_extended_selector_modifiers::strip_extended_selector_modifiers;
+pub use timed_value::TimedValue;
 use top_level_colon::top_level_colon;
 use wrap_extended_selectors::wrap_extended_selectors;

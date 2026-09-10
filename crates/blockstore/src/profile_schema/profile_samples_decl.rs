@@ -16,5 +16,9 @@ pub fn profile_samples_decl() -> BlockSchema {
             PCOL_PROFILE_TYPE.to_string(),
             COL_TIMESTAMP.to_string(),
         ],
+        // None. Every column a Pyroscope query looks up by equality -- the
+        // series and the profile type -- is in the sort key, and
+        // `ProfileIndex` prunes by both before a block is read.
+        bloom_columns: Vec::new(),
     }
 }

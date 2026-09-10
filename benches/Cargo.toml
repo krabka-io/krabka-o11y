@@ -57,6 +57,12 @@ pedantic = { level = "warn", priority = -1 }
 # not lend its table to another workspace.
 [dependencies]
 arrow = { version = "59", default-features = false, features = ["ipc"] }
+# The log scan benchmark drives a `SessionContext`, which is DataFusion's own
+# type rather than anything //crates/blockstore re-exports. Pinned to the same
+# git revision //Cargo.toml pins, for the same reason every other version here
+# repeats the workspace's: a second workspace does not inherit the first one's
+# table.
+datafusion = { git = "https://github.com/apache/datafusion", rev = "0062b4b409a1c556c84746b840fd65e1cdd151c9", version = "54" }
 krabka-blockstore = { path = "../crates/blockstore" }
 krabka-pprof = { path = "../crates/pprof" }
 krabka-promql = { path = "../crates/promql" }
@@ -90,6 +96,10 @@ harness = false
 
 [[bench]]
 name = "blockstore_read"
+harness = false
+
+[[bench]]
+name = "log_object_store_scan"
 harness = false
 
 [[bench]]

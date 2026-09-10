@@ -5,7 +5,10 @@ use std::{
     fs::{self, File},
     io::{self, Cursor},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use async_trait::async_trait;
@@ -19,10 +22,12 @@ use datafusion::{
         error::ArrowError,
     },
     catalog::Session,
+    common::config::{ParquetOptions, TableParquetOptions},
     datasource::{
-        MemTable, TableProvider,
+        TableProvider,
         file_format::parquet::ParquetFormat,
         listing::{ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl},
+        object_store::ObjectStoreUrl,
         provider::TableProviderFilterPushDown,
     },
     error::DataFusionError,
@@ -41,7 +46,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::instrument;
+use url::Url;
 use xxhash_rust::xxh3::xxh3_64;
+
+use crate::reader::DEFAULT_BLOCK_READ_MAX;
 
 #[cfg(test)]
 mod tests {
@@ -53,9 +61,16 @@ mod tests {
         let path = super::log_index_manifest_path("/var/lib/krabka");
         assert2::check!(path == std::path::Path::new("/var/lib/krabka/index/logs/manifest.json"));
     }
+    use std::fmt::Write as _;
+
     use assert2::check;
     use datafusion::prelude::{col, lit};
-    use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
+    use futures::stream::BoxStream;
+    use object_store::{
+        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta,
+        PutMultipartOptions, PutOptions, PutPayload, PutResult, local::LocalFileSystem,
+        memory::InMemory, path::Path as ObjectPath,
+    };
 
     use super::*;
 
@@ -469,7 +484,7 @@ mod tests {
         );
         let provider = LogBlockTableProvider::try_new_object_store(
             Arc::new(LocalFileSystem::new()) as Arc<dyn ObjectStore>,
-            ObjectPath::from("logs"),
+            &ObjectPath::from("logs"),
             std::slice::from_ref(&block),
         )
         .unwrap();
@@ -511,7 +526,7 @@ mod tests {
         check!(
             LogBlockTableProvider::try_new_object_store(
                 Arc::new(LocalFileSystem::new()) as Arc<dyn ObjectStore>,
-                ObjectPath::from("logs"),
+                &ObjectPath::from("logs"),
                 &[],
             )
             .is_err()
@@ -800,6 +815,360 @@ mod tests {
         }
     }
 
+    /// The object-store scan reads a fraction of the block, not all of it.
+    ///
+    /// This is the whole of the change and the only assertion that can see it:
+    /// both the old scan and the new one return the same rows, so a row count
+    /// separates nothing. The old scan `get`s every block whole and decodes
+    /// every row before the projection or the predicate is applied, so its
+    /// byte count is the block's size exactly. A real Parquet scan fetches the
+    /// footer and the column chunks the query projects, and here the query
+    /// projects the narrowest of four columns while `structured_metadata`
+    /// holds almost all of the bytes.
+    #[tokio::test]
+    async fn object_store_scan_reads_far_less_than_the_whole_block() {
+        /// Rows in the fixture block.
+        ///
+        /// Large enough that the Parquet footer -- which the reader prefetches
+        /// at a fixed size, whatever the block holds -- is a small part of it,
+        /// so what the ratio below measures is the column data.
+        const BLOCK_ROWS: i64 = 40_000;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let counted = Arc::new(CountingObjectStore::new(Arc::clone(&store)));
+        let prefix = ObjectPath::from("observability");
+        let key = BlockKey::new(
+            "tenant-a",
+            0,
+            0,
+            BLOCK_ROWS - 1,
+            TimeRange::new(0, BLOCK_ROWS).unwrap(),
+        );
+        let descriptor = write_log_block_to_object_store(
+            store.as_ref(),
+            &prefix,
+            &key,
+            wide_metadata_rows(BLOCK_ROWS),
+        )
+        .await
+        .unwrap();
+        let block_bytes = descriptor.size.bytes_u64();
+
+        let ctx = SessionContext::new();
+        register_log_blocks_from_object_store(
+            &ctx,
+            "logs",
+            Arc::clone(&counted) as Arc<dyn ObjectStore>,
+            &prefix,
+            std::slice::from_ref(&descriptor),
+        )
+        .unwrap();
+        let batches = ctx
+            .sql("select timestamp_ns from logs where timestamp_ns = 4242")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        let matched: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let read_bytes = counted.bytes_read();
+        check!(matched == 1);
+        check!(
+            read_bytes * 4 < block_bytes,
+            "scan read {read_bytes} of the block's {block_bytes} bytes"
+        );
+    }
+
+    /// The query's predicate reaches the Parquet scan, and nothing re-applies
+    /// it above.
+    ///
+    /// `supports_filters_pushdown` answers `Inexact` for the three scalar
+    /// columns, which is a claim that the scan *may* use a predicate and the
+    /// caller must not assume it did. Under the old object-store source that
+    /// claim was empty: the predicate landed on a `MemTable` built from every
+    /// row of every planned block, so it pruned no I/O at all. The plan is
+    /// where the difference is visible -- the scan is a Parquet
+    /// `DataSourceExec` carrying the predicate, and `DataFusion` has dropped
+    /// the `FilterExec` the `Inexact` answer put there because the scan took
+    /// the predicate over exactly.
+    #[tokio::test]
+    async fn object_store_scan_carries_the_predicate_into_the_parquet_source() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let prefix = ObjectPath::from("observability");
+        let key = BlockKey::new("tenant-a", 0, 0, 999, TimeRange::new(0, 9_999).unwrap());
+        let descriptor = write_log_block_to_object_store(
+            store.as_ref(),
+            &prefix,
+            &key,
+            wide_metadata_rows(1_000),
+        )
+        .await
+        .unwrap();
+        let fingerprint = series_fingerprint(&labels([("service", "api")]));
+
+        let ctx = SessionContext::new();
+        register_log_blocks_from_object_store(
+            &ctx,
+            "logs",
+            store,
+            &prefix,
+            std::slice::from_ref(&descriptor),
+        )
+        .unwrap();
+        let plan = ctx
+            .sql(&format!(
+                "select series_fingerprint, timestamp_ns, line, structured_metadata \
+                 from logs \
+                 where timestamp_ns >= 100 and timestamp_ns <= 199 \
+                 and series_fingerprint in ({fingerprint}) \
+                 order by series_fingerprint, timestamp_ns"
+            ))
+            .await
+            .unwrap()
+            .create_physical_plan()
+            .await
+            .unwrap();
+        let rendered = datafusion::physical_plan::displayable(plan.as_ref())
+            .indent(true)
+            .to_string();
+
+        check!(
+            rendered.contains("file_type=parquet"),
+            "plan was:\n{rendered}"
+        );
+        check!(
+            rendered.contains("predicate=timestamp_ns@1 >= 100"),
+            "plan was:\n{rendered}"
+        );
+        check!(
+            rendered.contains(&format!("series_fingerprint@0 = {fingerprint}")),
+            "plan was:\n{rendered}"
+        );
+        check!(!rendered.contains("FilterExec"), "plan was:\n{rendered}");
+    }
+
+    /// A block larger than the cap is an error, not an out-of-memory kill.
+    ///
+    /// A tiny cap stands in for the production one so the test need not write
+    /// a gibibyte; a cap at exactly the block's size is the other side of the
+    /// same boundary, and it reads.
+    #[tokio::test]
+    async fn object_store_scan_rejects_a_block_over_the_read_cap() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let prefix = ObjectPath::from("observability");
+        let key = BlockKey::new("tenant-a", 0, 0, 9, TimeRange::new(0, 99).unwrap());
+        let descriptor =
+            write_log_block_to_object_store(store.as_ref(), &prefix, &key, wide_metadata_rows(10))
+                .await
+                .unwrap();
+
+        let over_cap = scan_with_block_read_max(
+            Arc::clone(&store),
+            &prefix,
+            &descriptor,
+            ByteSize::from_bytes(1),
+        )
+        .await;
+        let at_cap = scan_with_block_read_max(store, &prefix, &descriptor, descriptor.size)
+            .await
+            .unwrap();
+
+        check!(over_cap.is_err());
+        check!(at_cap == 10);
+    }
+
+    /// The two sources answer the same question the same way.
+    ///
+    /// The local source has always been a `ListingTable`. The object-store
+    /// source is one now, and the rows it returns for the query the querier
+    /// actually issues -- projection, time bounds, fingerprint set and all --
+    /// have to be the rows the local source returns for it.
+    #[tokio::test]
+    async fn object_store_and_local_sources_return_the_same_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let prefix = ObjectPath::from("observability");
+        let key = BlockKey::new("tenant-a", 0, 0, 999, TimeRange::new(0, 9_999).unwrap());
+        let rows = wide_metadata_rows(1_000);
+        let local = write_log_block(dir.path(), &key, rows.clone()).unwrap();
+        let remote = write_log_block_to_object_store(store.as_ref(), &prefix, &key, rows)
+            .await
+            .unwrap();
+        let query = "select series_fingerprint, timestamp_ns, line, structured_metadata \
+                     from logs where timestamp_ns >= 100 and timestamp_ns <= 199 \
+                     order by series_fingerprint, timestamp_ns";
+
+        let local_ctx = SessionContext::new();
+        register_log_blocks(&local_ctx, "logs", dir.path(), std::slice::from_ref(&local)).unwrap();
+        let local_rows = collected_log_rows(&local_ctx, query).await;
+
+        let remote_ctx = SessionContext::new();
+        register_log_blocks_from_object_store(
+            &remote_ctx,
+            "logs",
+            store,
+            &prefix,
+            std::slice::from_ref(&remote),
+        )
+        .unwrap();
+        let remote_rows = collected_log_rows(&remote_ctx, query).await;
+
+        check!(local_rows.len() == 100);
+        check!(remote_rows == local_rows);
+    }
+
+    /// Rows whose `structured_metadata` is most of their bytes.
+    ///
+    /// The metadata values are distinct and hash-derived, so Parquet cannot
+    /// dictionary-encode them away and the column stays the bulk of the block.
+    /// That is what makes "how many bytes did the scan read" a question with
+    /// two different answers.
+    fn wide_metadata_rows(count: i64) -> Vec<LogRow> {
+        let fingerprint = series_fingerprint(&labels([("service", "api")]));
+        (0..count)
+            .map(|row| {
+                let mut payload = String::new();
+                for part in 0..8 {
+                    write!(payload, "{:016x}", xxh3_64(&(row * 8 + part).to_le_bytes()))
+                        .expect("writing to a String cannot fail");
+                }
+                LogRow::new(
+                    fingerprint,
+                    row,
+                    format!("line {row}"),
+                    metadata([("payload", payload.as_str())]),
+                )
+            })
+            .collect()
+    }
+
+    /// Every row `query` returns, as the `LogRow`s the columns encode.
+    async fn collected_log_rows(ctx: &SessionContext, query: &str) -> Vec<LogRow> {
+        ctx.sql(query)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+            .iter()
+            .flat_map(|batch| batch_to_rows(batch).unwrap())
+            .collect()
+    }
+
+    /// Rows read back through a provider capped at `block_read_max`.
+    async fn scan_with_block_read_max(
+        store: Arc<dyn ObjectStore>,
+        prefix: &ObjectPath,
+        block: &BlockDescriptor,
+        block_read_max: ByteSize,
+    ) -> Result<usize, DataFusionError> {
+        let provider = LogBlockTableProvider::try_new_object_store_with_block_read_max(
+            store,
+            prefix,
+            std::slice::from_ref(block),
+            block_read_max,
+        )
+        .unwrap();
+        let ctx = SessionContext::new();
+        ctx.register_table("logs", Arc::new(provider))?;
+        let batches = ctx.sql("select * from logs").await?.collect().await?;
+        Ok(batches.iter().map(RecordBatch::num_rows).sum())
+    }
+
+    /// An object store that records how many bytes its reads fetched.
+    #[derive(Debug)]
+    struct CountingObjectStore {
+        inner: Arc<dyn ObjectStore>,
+        bytes_read: AtomicU64,
+    }
+
+    impl CountingObjectStore {
+        fn new(inner: Arc<dyn ObjectStore>) -> Self {
+            Self {
+                inner,
+                bytes_read: AtomicU64::new(0),
+            }
+        }
+
+        fn bytes_read(&self) -> u64 {
+            self.bytes_read.load(Ordering::Relaxed)
+        }
+    }
+
+    impl std::fmt::Display for CountingObjectStore {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(formatter, "CountingObjectStore({})", self.inner)
+        }
+    }
+
+    #[async_trait]
+    impl ObjectStore for CountingObjectStore {
+        async fn put_opts(
+            &self,
+            location: &ObjectPath,
+            payload: PutPayload,
+            options: PutOptions,
+        ) -> object_store::Result<PutResult> {
+            self.inner.put_opts(location, payload, options).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &ObjectPath,
+            options: PutMultipartOptions,
+        ) -> object_store::Result<Box<dyn MultipartUpload>> {
+            self.inner.put_multipart_opts(location, options).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &ObjectPath,
+            options: GetOptions,
+        ) -> object_store::Result<GetResult> {
+            // A `head` is a `get_opts` that transfers no payload, and the scan
+            // makes one per block on purpose. Counting its nominal range as
+            // bytes read would drown out the measurement.
+            let is_head = options.head;
+            let result = self.inner.get_opts(location, options).await?;
+            if !is_head {
+                self.bytes_read
+                    .fetch_add(result.range.end - result.range.start, Ordering::Relaxed);
+            }
+            Ok(result)
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&ObjectPath>,
+        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&ObjectPath>,
+        ) -> object_store::Result<ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &ObjectPath,
+            to: &ObjectPath,
+            options: CopyOptions,
+        ) -> object_store::Result<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
+
+        fn delete_stream(
+            &self,
+            locations: BoxStream<'static, object_store::Result<ObjectPath>>,
+        ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
+            self.inner.delete_stream(locations)
+        }
+    }
+
     struct LogIndexFixture {
         labels_index: LabelIndex,
         block_index: BlockIndex,
@@ -871,12 +1240,15 @@ mod block_store_error;
 mod collect_tenant_log_index_shard_ranges;
 mod encode_log_block;
 mod filter_references_only_pushdown_columns;
+mod head_log_block_within_cap;
+mod head_log_blocks_within_cap;
 mod label_index;
 mod label_predicate;
 mod labels;
 mod list_tenant_log_index_shard_ranges_from_object_store;
 mod list_tenant_log_index_shard_ranges_overlapping_query_from_object_store;
 mod log_block_object_path;
+mod log_block_object_store_url;
 mod log_block_schema;
 mod log_block_table_provider;
 mod log_block_table_source;
@@ -886,6 +1258,7 @@ mod log_index_manifest_path;
 mod log_index_manifest_relative_path;
 mod log_index_manifest_version;
 mod log_index_shard_catalog;
+mod log_listing_options;
 mod log_row;
 mod log_tenant_index_manifest_object_path;
 mod log_tenant_index_shard_catalog_object_path;
@@ -895,6 +1268,7 @@ mod log_tenant_index_shard_manifest_object_path;
 mod log_tenant_index_shards_object_prefix;
 mod manifest_series;
 mod match_op;
+mod object_store_log_listing_table;
 mod parse_log_tenant_index_shard_range_from_object_path;
 mod planned_log_listing_table;
 mod read_log_block;
@@ -937,12 +1311,15 @@ pub use block_store_error::BlockStoreError;
 use collect_tenant_log_index_shard_ranges::collect_tenant_log_index_shard_ranges;
 use encode_log_block::encode_log_block;
 use filter_references_only_pushdown_columns::filter_references_only_pushdown_columns;
+use head_log_block_within_cap::head_log_block_within_cap;
+use head_log_blocks_within_cap::head_log_blocks_within_cap;
 pub use label_index::LabelIndex;
 pub use label_predicate::LabelPredicate;
 pub use labels::{Labels, labels};
 pub use list_tenant_log_index_shard_ranges_from_object_store::list_tenant_log_index_shard_ranges_from_object_store;
 pub use list_tenant_log_index_shard_ranges_overlapping_query_from_object_store::list_tenant_log_index_shard_ranges_overlapping_query_from_object_store;
 pub use log_block_object_path::log_block_object_path;
+use log_block_object_store_url::next_log_block_object_store_url;
 use log_block_schema::log_block_schema;
 pub use log_block_table_provider::LogBlockTableProvider;
 use log_block_table_source::LogBlockTableSource;
@@ -952,6 +1329,7 @@ pub use log_index_manifest_path::log_index_manifest_path;
 use log_index_manifest_relative_path::LOG_INDEX_MANIFEST_RELATIVE_PATH;
 use log_index_manifest_version::LOG_INDEX_MANIFEST_VERSION;
 use log_index_shard_catalog::LogIndexShardCatalog;
+use log_listing_options::log_listing_options;
 pub use log_row::LogRow;
 pub use log_tenant_index_manifest_object_path::log_tenant_index_manifest_object_path;
 pub use log_tenant_index_shard_catalog_object_path::log_tenant_index_shard_catalog_object_path;
@@ -961,6 +1339,7 @@ pub use log_tenant_index_shard_manifest_object_path::log_tenant_index_shard_mani
 pub use log_tenant_index_shards_object_prefix::log_tenant_index_shards_object_prefix;
 use manifest_series::ManifestSeries;
 pub use match_op::MatchOp;
+use object_store_log_listing_table::object_store_log_listing_table;
 use parse_log_tenant_index_shard_range_from_object_path::parse_log_tenant_index_shard_range_from_object_path;
 use planned_log_listing_table::planned_log_listing_table;
 pub use read_log_block::read_log_block;

@@ -169,7 +169,7 @@ async fn log_block_table_provider_scans_planned_object_store_blocks() {
     .unwrap();
 
     let provider =
-        LogBlockTableProvider::try_new_object_store(store, prefix, std::slice::from_ref(&planned))
+        LogBlockTableProvider::try_new_object_store(store, &prefix, std::slice::from_ref(&planned))
             .unwrap();
     assert2::assert!(provider.planned_blocks() == std::slice::from_ref(&planned));
 
@@ -211,7 +211,7 @@ async fn registers_planned_object_store_blocks_as_datafusion_table() {
     .unwrap();
 
     let ctx = SessionContext::new();
-    register_log_blocks_from_object_store(&ctx, "logs", store, prefix, &[planned]).unwrap();
+    register_log_blocks_from_object_store(&ctx, "logs", store, &prefix, &[planned]).unwrap();
     let batches = ctx
         .sql(
             "select timestamp_ns, line \

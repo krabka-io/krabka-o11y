@@ -14,6 +14,7 @@ use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
     bloom::ShardedTraceBloom,
+    compaction::{BlockLevel, BlockLineage, BlockLineageIndex, CompactionCandidate},
     error::{BlockStoreError, Result},
     index_snapshot::{
         DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockRemovals,
@@ -250,8 +251,8 @@ mod tests {
         );
         let old_keys = vec!["b1".to_string(), "b2".to_string()];
 
-        idx.replace_trace_blocks("t", &old_keys, replacement.clone());
-        idx.replace_trace_blocks("t", &old_keys, replacement.clone());
+        idx.replace_trace_blocks("t", &old_keys, replacement.clone(), 3);
+        idx.replace_trace_blocks("t", &old_keys, replacement.clone(), 3);
 
         let blocks = idx.trace_blocks("t");
         assert2::assert!(
@@ -470,6 +471,7 @@ mod tests {
             "t",
             &strings(&["b1", "b2"]),
             stats("c1", 0, 300, &[1, 2, 3], &[]),
+            3,
         );
         idx.save_latest_snapshot(&store, "index/traces.json")
             .await
@@ -555,6 +557,121 @@ mod tests {
 
         let loaded = TraceIndex::load(&store, "index/empty-shards.json").await;
         assert2::assert!(loaded.is_err());
+    }
+
+    #[test]
+    fn a_compacted_trace_block_records_its_level_and_its_inputs() {
+        let mut idx = TraceIndex::new();
+        idx.add_trace_block_with_rows("t", stats("b1", 0, 100, &[1], &[]), 10);
+        idx.add_trace_block_with_rows("t", stats("b2", 200, 300, &[2], &[]), 20);
+
+        check!(idx.block_level("b1") == BlockLevel::INGESTED);
+        idx.replace_trace_blocks(
+            "t",
+            &strings(&["b1", "b2"]),
+            stats("c1", 0, 300, &[1, 2], &[]),
+            30,
+        );
+
+        check!(
+            idx.block_lineage("c1")
+                == Some(&BlockLineage {
+                    level: BlockLevel(1),
+                    row_count: 30,
+                    sources: strings(&["b1", "b2"]),
+                })
+        );
+        // The inputs are gone, so their lineage goes with them.
+        check!(idx.block_lineage("b1").is_none());
+
+        // A second round climbs one more rung.
+        idx.add_trace_block_with_rows("t", stats("b3", 300, 400, &[3], &[]), 5);
+        idx.replace_trace_blocks(
+            "t",
+            &strings(&["c1", "b3"]),
+            stats("c2", 0, 400, &[1, 2, 3], &[]),
+            35,
+        );
+        check!(idx.block_level("c2") == BlockLevel(2));
+    }
+
+    #[test]
+    fn compaction_candidates_carry_the_level_and_row_count_in_a_stable_order() {
+        let mut idx = TraceIndex::new();
+        idx.add_trace_block_with_rows("zeta", stats("z1", 0, 100, &[1], &[]), 7);
+        idx.add_trace_block_with_rows("alpha", stats("a2", 200, 300, &[2], &[]), 20);
+        idx.add_trace_block_with_rows("alpha", stats("a1", 0, 100, &[3], &[]), 10);
+        idx.replace_trace_blocks(
+            "alpha",
+            &strings(&["a1", "a2"]),
+            stats("a0", 0, 300, &[2, 3], &[]),
+            30,
+        );
+
+        check!(
+            idx.compaction_candidates()
+                == vec![
+                    CompactionCandidate {
+                        tenant: "alpha".to_string(),
+                        object_key: "a0".to_string(),
+                        min_ts: 0,
+                        max_ts: 300,
+                        row_count: 30,
+                        level: BlockLevel(1),
+                    },
+                    CompactionCandidate {
+                        tenant: "zeta".to_string(),
+                        object_key: "z1".to_string(),
+                        min_ts: 0,
+                        max_ts: 100,
+                        row_count: 7,
+                        level: BlockLevel::INGESTED,
+                    },
+                ]
+        );
+    }
+
+    /// A level that did not survive the snapshot would restart the ladder at
+    /// zero after every save, and the planner would compact the same rows for
+    /// as long as the compactor ran.
+    #[tokio::test]
+    async fn levels_and_row_counts_survive_a_snapshot_round_trip() {
+        use object_store::{ObjectStore, memory::InMemory};
+
+        let store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
+        let mut idx = seed();
+        idx.save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        idx.replace_trace_blocks(
+            "t",
+            &strings(&["b1", "b2"]),
+            stats("c1", 0, 300, &[1, 2, 3], &[]),
+            42,
+        );
+        idx.save_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+
+        let loaded = TraceIndex::load_latest_snapshot(&store, "index/traces.json")
+            .await
+            .unwrap();
+        check!(loaded.block_level("c1") == BlockLevel(1));
+        check!(
+            loaded.compaction_candidates()
+                == vec![CompactionCandidate {
+                    tenant: "t".to_string(),
+                    object_key: "c1".to_string(),
+                    min_ts: 0,
+                    max_ts: 300,
+                    row_count: 42,
+                    level: BlockLevel(1),
+                }]
+        );
+        // The replaced blocks left no lineage behind, so the snapshot does not
+        // grow once per block ever written.
+        check!(loaded.block_lineage("b1").is_none());
     }
 }
 

@@ -1,14 +1,12 @@
 use super::{
-    Arc, BTreeMap, LabelIndex, MetricQuery, MetricWindow, ObjectPath, ObjectStore, QueryError,
-    QueryHotTail, StreamPlan, TimeRange, Value, append_matching_hot_metric_record,
-    apply_absent_over_time, collect_object_store_metric_log_batches, eval_times,
-    format_metric_samples, loki_matrix_response_with_warnings, merge_metric_samples,
-    metric_samples_from_batches,
+    Arc, BTreeMap, ColdBlockScan, LabelIndex, MetricQuery, MetricWindow, QueryError, QueryHotTail,
+    StreamPlan, TimeRange, Value, append_matching_hot_metric_record, apply_absent_over_time,
+    collect_object_store_metric_log_batches, eval_times, format_metric_samples,
+    loki_matrix_response_with_warnings, merge_metric_samples, metric_samples_from_batches,
 };
 
 pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes(
-    store: Arc<dyn ObjectStore>,
-    prefix: &ObjectPath,
+    cold: ColdBlockScan<'_>,
     plan: &StreamPlan,
     query: &MetricQuery,
     label_index: &LabelIndex,
@@ -25,29 +23,46 @@ pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_f
     let mut warnings = Vec::new();
 
     if !plan.blocks.is_empty() && !plan.fingerprints.is_empty() {
-        for block in &plan.blocks {
-            let Ok(batches) = collect_object_store_metric_log_batches(
-                Arc::clone(&store),
-                prefix,
-                block,
-                plan,
-                query,
-                eval_range,
-            )
-            .await
-            else {
-                warnings.push(format!("failed to read block {}", block.key.object_key()));
-                continue;
-            };
-            let block_samples = metric_samples_from_batches(
-                &batches,
-                plan,
-                query,
-                label_index,
-                &eval_times,
-                hot_tail.delete_filters,
-            )?;
-            merge_metric_samples(&mut samples, block_samples);
+        // One object-store round trip per planned block, so fetching them one
+        // at a time puts the store's latency on the query's critical path once
+        // per block. A range query behind a Grafana graph panel plans as many
+        // blocks as its window covers, and every one of them was serial.
+        // Blocks are merged into `samples` in planned order once a batch
+        // lands, so the batching only changes when the reads happen, not what
+        // they add up to.
+        for block_batch in plan.blocks.chunks(cold.block_fetch_concurrency.get()) {
+            let results = futures_util::future::join_all(block_batch.iter().map(|block| {
+                let store = Arc::clone(&cold.store);
+                async move {
+                    let result = collect_object_store_metric_log_batches(
+                        store,
+                        cold.prefix,
+                        block,
+                        plan,
+                        query,
+                        eval_range,
+                    )
+                    .await;
+                    (block, result)
+                }
+            }))
+            .await;
+
+            for (block, result) in results {
+                let Ok(batches) = result else {
+                    warnings.push(format!("failed to read block {}", block.key.object_key()));
+                    continue;
+                };
+                let block_samples = metric_samples_from_batches(
+                    &batches,
+                    plan,
+                    query,
+                    label_index,
+                    &eval_times,
+                    hot_tail.delete_filters,
+                )?;
+                merge_metric_samples(&mut samples, block_samples);
+            }
         }
     }
 

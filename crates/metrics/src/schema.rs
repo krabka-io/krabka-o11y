@@ -203,6 +203,7 @@ mod tests {
                         RequiredColumn::new(CCOL_INGEST_UNIX_NANOS, DataType::Int64, false),
                     ],
                     sort_key: vec![COL_FINGERPRINT.to_string(), COL_TIMESTAMP.to_string()],
+                    bloom_columns: vec![],
                 }
         );
     }

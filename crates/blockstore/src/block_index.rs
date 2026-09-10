@@ -22,6 +22,7 @@ mod tests {
                         RequiredColumn::new("timestamp", DataType::Int64, false),
                     ],
                     sort_key: vec!["series_fingerprint".to_string(), "timestamp".to_string()],
+                    bloom_columns: vec![],
                 }
         );
     }

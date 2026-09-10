@@ -5,7 +5,10 @@ use std::{
 };
 
 use clap::{Parser, ValueEnum};
-use krabka_blockstore::{IndexSnapshotRetain, ProfileIndex};
+use krabka_blockstore::{
+    BlockLevel, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL,
+    DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, ProfileIndex,
+};
 use krabka_client_consumer::ConsumerFetchMaxBytes;
 use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
@@ -859,6 +862,7 @@ mod alloc;
 mod build_object_store;
 mod cli;
 mod client_resource_policy;
+mod compaction_policy_from_cli;
 mod configured_object_store;
 mod debuginfod_config;
 mod load_profiles_limits_overrides_config;
@@ -871,10 +875,12 @@ mod parse_non_empty_string;
 mod parse_positive_time_or_legacy;
 mod parse_positive_time_or_legacy_millis;
 mod parse_positive_time_or_legacy_nanos;
+mod parse_positive_u32;
 mod parse_positive_usize;
 mod parse_positive_whole_byte_size;
 mod role_shutdown_token;
 mod run;
+mod run_compaction_pass;
 mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
 mod target;
@@ -886,6 +892,7 @@ mod target;
 use build_object_store::build_object_store;
 use cli::Cli;
 use client_resource_policy::client_resource_policy;
+use compaction_policy_from_cli::compaction_policy_from_cli;
 use configured_object_store::ConfiguredObjectStore;
 use debuginfod_config::debuginfod_config;
 use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
@@ -898,10 +905,12 @@ use parse_non_empty_string::parse_non_empty_string;
 use parse_positive_time_or_legacy::parse_positive_time_or_legacy;
 use parse_positive_time_or_legacy_millis::parse_positive_time_or_legacy_millis;
 use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
+use parse_positive_u32::parse_positive_u32;
 use parse_positive_usize::parse_positive_usize;
 use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
 use role_shutdown_token::role_shutdown_token;
 use run::run;
+use run_compaction_pass::run_compaction_pass;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;
 use target::Target;

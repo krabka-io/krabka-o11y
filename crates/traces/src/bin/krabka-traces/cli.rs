@@ -1,11 +1,12 @@
 use super::{
-    ArgAction, ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, IndexSnapshotRetain,
-    MetricsFlags, Parser, SocketAddr, Target, Time, UnixNano, parse,
-    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    ArgAction, ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_BLOCKS_PER_JOB,
+    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, MetricsFlags, Parser,
+    SocketAddr, Target, Time, UnixNano, parse, parse_client_dispatch_queue_capacity,
+    parse_client_frame_max, parse_consumer_fetch_size, parse_min_two_usize,
     parse_non_negative_time_or_secs, parse_non_negative_whole_byte_size_or_bytes,
     parse_positive_time_or_millis, parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64,
-    parse_positive_time_or_secs, parse_positive_usize, parse_positive_whole_byte_size,
-    parse_scan_concat_max, parse_unix_nano,
+    parse_positive_time_or_secs, parse_positive_u32, parse_positive_usize,
+    parse_positive_whole_byte_size, parse_scan_concat_max, parse_unix_nano,
 };
 
 #[derive(Debug, Parser)]
@@ -202,21 +203,42 @@ pub(crate) struct Cli {
     #[command(flatten)]
     pub(crate) metrics: MetricsFlags,
     #[arg(
-        long = "compaction-start",
-        visible_alias = "compaction-start-ns",
-        env = "KRABKA_TRACES_COMPACTION_START",
-        default_value = "0ns",
-        value_parser = parse_unix_nano
+        long,
+        env = "KRABKA_TRACES_COMPACTION_MAX_BLOCKS_PER_JOB",
+        default_value_t = DEFAULT_MAX_BLOCKS_PER_JOB,
+        value_parser = parse_min_two_usize
     )]
-    pub(crate) compaction_start: UnixNano,
+    pub(crate) compaction_max_blocks_per_job: usize,
     #[arg(
-        long = "compaction-end",
-        visible_alias = "compaction-end-ns",
-        env = "KRABKA_TRACES_COMPACTION_END",
-        default_value = "max",
-        value_parser = parse_unix_nano
+        long,
+        env = "KRABKA_TRACES_COMPACTION_TARGET_ROWS",
+        default_value_t = DEFAULT_TARGET_ROWS_PER_BLOCK,
+        value_parser = parse_positive_usize
     )]
-    pub(crate) compaction_end: UnixNano,
+    pub(crate) compaction_target_rows: usize,
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_COMPACTION_MAX_LEVEL",
+        default_value_t = DEFAULT_MAX_LEVEL.get(),
+        value_parser = parse_positive_u32
+    )]
+    pub(crate) compaction_max_level: u32,
+    #[arg(
+        long = "compaction-level-window",
+        visible_alias = "compaction-level-window-secs",
+        env = "KRABKA_TRACES_COMPACTION_LEVEL_WINDOW",
+        default_value = "2h",
+        value_parser = parse_positive_time_or_secs
+    )]
+    pub(crate) compaction_level_window: Time,
+    #[arg(
+        long = "compaction-interval",
+        visible_alias = "compaction-interval-secs",
+        env = "KRABKA_TRACES_COMPACTION_INTERVAL",
+        default_value = "5m",
+        value_parser = parse_positive_time_or_secs
+    )]
+    pub(crate) compaction_interval: Time,
     #[arg(
         long,
         env = "KRABKA_TRACES_QUERIER_URL",

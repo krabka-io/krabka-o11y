@@ -1,5 +1,5 @@
 use super::{
-    Arc, BTreeSet, Extension, InstantManipulate, InstantSelectorPlan, LabeledSample, LogicalPlan,
+    Arc, BTreeSet, Extension, InstantManipulate, InstantSelectorPlan, LabeledSeries, LogicalPlan,
     MemTable, PromqlError, Result, SeriesDivide, SeriesNormalize, TIME_COLUMN, Time, TimeExt,
     VALUE_COLUMN, build_leaf_batch, leaf_schema, prom_session_context,
 };
@@ -7,8 +7,10 @@ use super::{
 /// Builds the leaf table and operator chain for a bare instant-vector selector.
 ///
 /// The chain evaluates the selector at `eval_time_ms` with the given
-/// `lookback_delta`. `samples` are the float samples of the matched series over
-/// the scan window `(eval_time_ms - lookback_delta, eval_time_ms]`. The caller
+/// `lookback_delta`. `series` are the matched series and their float samples
+/// over the scan window `(eval_time_ms - lookback_delta, eval_time_ms]`, in
+/// ascending fingerprint order with each series' samples in timestamp order —
+/// which is the contiguous, time-ordered run [`SeriesDivide`] needs. The caller
 /// must filter out the stale-NaN markers before the values reach
 /// [`InstantManipulate`]. This matches the staleness handling of the
 /// interpreter.
@@ -17,7 +19,7 @@ use super::{
 ///
 /// Returns an error if this function cannot build the Arrow batch or the table.
 pub async fn plan_instant_vector_selector(
-    samples: Vec<LabeledSample>,
+    series: Vec<LabeledSeries>,
     eval_time_ms: i64,
     lookback_delta: Time,
 ) -> Result<InstantSelectorPlan> {
@@ -25,27 +27,18 @@ pub async fn plan_instant_vector_selector(
     // the label columns carried through the operator chain.
     let mut label_names: BTreeSet<String> = BTreeSet::new();
     let mut labels_by_fp = std::collections::BTreeMap::new();
-    for sample in &samples {
-        for (name, _) in sample.labels.iter() {
+    for one in &series {
+        for (name, _) in one.labels.iter() {
             label_names.insert(name.clone());
         }
         labels_by_fp
-            .entry(sample.fp)
-            .or_insert_with(|| sample.labels.clone());
+            .entry(one.fp)
+            .or_insert_with(|| (*one.labels).clone());
     }
     let label_names: Vec<String> = label_names.into_iter().collect();
 
-    // Sort the rows so each series forms a contiguous, time-ordered run. The
-    // fingerprint key groups series; SeriesDivide then splits on label columns.
-    let mut rows = samples;
-    rows.sort_by(|left, right| {
-        left.fp
-            .cmp(&right.fp)
-            .then_with(|| left.ts_ms.cmp(&right.ts_ms))
-    });
-
     let schema = leaf_schema(&label_names);
-    let batch = build_leaf_batch(Arc::clone(&schema), &label_names, &rows)?;
+    let batch = build_leaf_batch(Arc::clone(&schema), &label_names, &series)?;
 
     let ctx = prom_session_context();
     let table = MemTable::try_new(schema, vec![vec![batch]])

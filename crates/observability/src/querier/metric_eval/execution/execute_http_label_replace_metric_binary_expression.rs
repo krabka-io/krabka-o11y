@@ -21,14 +21,13 @@ pub(crate) async fn execute_http_label_replace_metric_binary_expression(
             matching,
             right,
         } => {
-            let mut left = execute_http_metric_binary_operand(
+            let left = Box::pin(execute_http_metric_binary_operand(
                 state, tenant, time_range, step, kind, &left, query_text,
-            )
-            .await?;
-            let right = execute_http_metric_binary_operand(
+            ));
+            let right = Box::pin(execute_http_metric_binary_operand(
                 state, tenant, time_range, step, kind, &right, query_text,
-            )
-            .await?;
+            ));
+            let (mut left, right) = futures_util::future::try_join(left, right).await?;
             apply_metric_binary_arithmetic_to_loki_result(&mut left, &right, op, matching.as_ref());
             retain_metric_binary_on_labels(&mut left, matching.as_ref());
             Ok(left)
@@ -40,14 +39,13 @@ pub(crate) async fn execute_http_label_replace_metric_binary_expression(
             matching,
             right,
         } => {
-            let mut left = execute_http_metric_binary_operand(
+            let left = Box::pin(execute_http_metric_binary_operand(
                 state, tenant, time_range, step, kind, &left, query_text,
-            )
-            .await?;
-            let right = execute_http_metric_binary_operand(
+            ));
+            let right = Box::pin(execute_http_metric_binary_operand(
                 state, tenant, time_range, step, kind, &right, query_text,
-            )
-            .await?;
+            ));
+            let (mut left, right) = futures_util::future::try_join(left, right).await?;
             apply_metric_binary_comparison_to_loki_result(
                 &mut left,
                 &right,
@@ -64,14 +62,13 @@ pub(crate) async fn execute_http_label_replace_metric_binary_expression(
             matching,
             right,
         } => {
-            let mut left = execute_http_metric_binary_operand(
+            let left = Box::pin(execute_http_metric_binary_operand(
                 state, tenant, time_range, step, kind, &left, query_text,
-            )
-            .await?;
-            let right = execute_http_metric_binary_operand(
+            ));
+            let right = Box::pin(execute_http_metric_binary_operand(
                 state, tenant, time_range, step, kind, &right, query_text,
-            )
-            .await?;
+            ));
+            let (mut left, right) = futures_util::future::try_join(left, right).await?;
             apply_metric_binary_set_to_loki_result(&mut left, &right, op, matching.as_ref());
             Ok(left)
         }
