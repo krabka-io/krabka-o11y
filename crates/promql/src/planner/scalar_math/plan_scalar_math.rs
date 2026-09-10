@@ -1,7 +1,7 @@
 use super::{
-    Arc, BTreeSet, Expr, FunctionRegistry, LabeledValue, Labels, LogicalPlanBuilder, MemTable,
-    PromqlError, Result, SAMPLE_TIME_COLUMN, ScalarMathOp, ScalarMathPlan, VALUE_COLUMN,
-    build_leaf_batch, col, is_metadata_label, leaf_schema, lit, prom_session_context,
+    Arc, BTreeSet, Expr, FunctionRegistry, LabeledValue, Labels, LogicalPlanBuilder, PromqlError,
+    Result, SAMPLE_TIME_COLUMN, ScalarMathOp, ScalarMathPlan, VALUE_COLUMN, build_leaf_batch, col,
+    is_metadata_label, leaf_scan, leaf_schema, lit, prom_session_context,
 };
 
 /// Builds the leaf table and projection that evaluates `op([bounds...,] value)`.
@@ -41,13 +41,7 @@ pub async fn plan_scalar_math(
     let batch = build_leaf_batch(Arc::clone(&schema), &label_names, &rows)?;
 
     let ctx = prom_session_context();
-    let table = MemTable::try_new(schema, vec![vec![batch]])
-        .map_err(|error| PromqlError::Exec(error.to_string()))?;
-    ctx.register_table("prom_scalar_math_leaf", Arc::new(table))?;
-    let leaf = ctx
-        .table("prom_scalar_math_leaf")
-        .await?
-        .into_optimized_plan()?;
+    let leaf = leaf_scan("prom_scalar_math_leaf", schema, batch)?;
 
     let udf = ctx
         .udf(op.udf_name())

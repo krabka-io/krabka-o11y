@@ -1,14 +1,16 @@
 //! Level-based compaction planning, shared by every signal.
 //!
-//! A block carries a [`BlockLevel`]: zero when a block builder wrote it from
-//! ingested data, one more than its inputs when a compaction produced it.
+//! A block record carries a [`BlockLevel`]: zero when a block builder wrote it
+//! from ingested data, one more than its inputs when a compaction produced it.
+//! [`level_above`] is that rule, and an index applies it when it swaps a
+//! compaction's inputs for its output.
 //! [`plan_compactions`] groups blocks of the same tenant, level and time
 //! bucket into [`CompactionJob`]s under a [`CompactionPolicy`], and the policy
 //! is what makes the planning terminate rather than rewrite the same rows for
 //! as long as the process runs.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fmt::{Display, Formatter},
 };
 
@@ -303,65 +305,17 @@ mod tests {
 
     #[test]
     fn a_compacted_block_sits_one_level_above_the_highest_of_its_sources() {
-        let mut lineage = BlockLineageIndex::default();
-        lineage.record_ingested("a", 10);
-        lineage.record_ingested("b", 20);
-        lineage.record_compacted("ab", &["a".to_string(), "b".to_string()], 30);
-        lineage.record_compacted("abc", &["ab".to_string(), "c".to_string()], 35);
-
-        check!(lineage.level("a") == BlockLevel::INGESTED);
-        check!(lineage.level("ab") == BlockLevel(1));
-        // "c" has no record, so it reads as level zero; the highest source
-        // still decides.
-        check!(lineage.level("abc") == BlockLevel(2));
-        check!(
-            lineage.lineage("ab")
-                == Some(&BlockLineage {
-                    level: BlockLevel(1),
-                    row_count: 30,
-                    sources: vec!["a".to_string(), "b".to_string()],
-                })
-        );
-        check!(lineage.row_count("a") == 10);
-        check!(lineage.row_count("missing") == 0);
-
-        // A block that replaced nothing is not one rung above nothing.
-        lineage.record_compacted("fresh", &[], 5);
-        check!(lineage.level("fresh") == BlockLevel::INGESTED);
-    }
-
-    /// Snapshot merging re-adds every block it knows, including compacted
-    /// ones. Registering a block that already has lineage must not reset it,
-    /// or the ladder would collapse back to level zero on every save and the
-    /// planner would never stop.
-    #[test]
-    fn re_registering_a_compacted_block_does_not_demote_it() {
-        let mut lineage = BlockLineageIndex::default();
-        lineage.record_compacted("ab", &["a".to_string(), "b".to_string()], 30);
-        lineage.record_ingested("ab", 30);
-        check!(lineage.level("ab") == BlockLevel(1));
-    }
-
-    #[test]
-    fn forgetting_and_retaining_bound_the_map() {
-        let mut lineage = BlockLineageIndex::default();
-        lineage.record_ingested("a", 1);
-        lineage.record_ingested("b", 1);
-        lineage.record_ingested("c", 1);
-        check!(lineage.len() == 3);
-
-        lineage.forget(["a"]);
-        check!(lineage.lineage("a").is_none());
-
-        lineage.retain_keys(&BTreeSet::from(["b".to_string()]));
-        check!(lineage.len() == 1);
-        check!(lineage.lineage("b").is_some());
-
-        let mut other = BlockLineageIndex::default();
-        other.record_compacted("b", &["x".to_string()], 9);
-        lineage.merge_from(&other);
-        check!(lineage.level("b") == BlockLevel(1), "the other side wins");
-        check!(!lineage.is_empty());
+        for (sources, want) in [
+            (vec![], BlockLevel::INGESTED),
+            (
+                vec![BlockLevel::INGESTED, BlockLevel::INGESTED],
+                BlockLevel(1),
+            ),
+            (vec![BlockLevel(1), BlockLevel::INGESTED], BlockLevel(2)),
+            (vec![BlockLevel(3), BlockLevel(1)], BlockLevel(4)),
+        ] {
+            check!(level_above(sources) == want);
+        }
     }
 
     #[test]
@@ -427,18 +381,15 @@ mod tests {
 }
 
 mod block_level;
-mod block_lineage;
-mod block_lineage_index;
 mod compaction_candidate;
 mod compaction_job;
 mod compaction_policy;
 mod input_key_fingerprint;
 mod job_from_run;
+mod level_above;
 mod plan_compactions;
 
 pub use block_level::BlockLevel;
-pub use block_lineage::BlockLineage;
-pub use block_lineage_index::BlockLineageIndex;
 pub use compaction_candidate::CompactionCandidate;
 pub use compaction_job::CompactionJob;
 pub use compaction_policy::{
@@ -447,4 +398,5 @@ pub use compaction_policy::{
 };
 pub use input_key_fingerprint::input_key_fingerprint;
 use job_from_run::job_from_run;
+pub use level_above::level_above;
 pub use plan_compactions::plan_compactions;

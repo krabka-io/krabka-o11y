@@ -349,6 +349,7 @@ mod tests {
             max_ts: 2_000,
             row_count: 2,
             fingerprints: vec![7, 9],
+            level: krabka_blockstore::BlockLevel::INGESTED,
         };
         let manifest = super::CompactionIndexManifest::from_block_meta(
             super::MetricBlockKind::Float,

@@ -38,6 +38,17 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}
           repository-cache: true
+      # This job builds and tests every target, and it ran the runner out of
+      # disk: the link died as `clang++: linker command failed due to signal`
+      # with `zstd: cannot write block: No space left on device` beside it.
+      # ENOSPC wears that disguise consistently here -- an LLVM crash report in
+      # `coverage`, a Bus error in `cargo`. The runner ships ~25 GB of
+      # toolchains no Bazel action touches.
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          df -h /
       # `--severity` defaults to `auto`, which the CLI resolves to `fail` on CI
       # and `info` off it -- so this gates here and only reports locally.
       - name: format

@@ -1,10 +1,10 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockLineage, BlockLineageIndex, BlockMeta,
-    BlockStoreError, ByteSize, CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize,
-    HashMap, IndexSnapshotBytes, IndexSnapshotRetain, ObjectStore, ObjectStoreExt, Path,
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, ByteSize,
+    CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, HashMap, IndexSnapshotBytes,
+    IndexSnapshotRetain, ObjectStore, ObjectStoreExt, Path, PendingBlockAdditions,
     PendingBlockRemovals, PutPayload, Result, Serialize, ShardedTraceBloom, TenantTraceIndex,
-    TraceBlockStats, instrument, latest_index_snapshot_path, put_index_snapshot,
-    read_index_snapshot_bytes,
+    TraceBlockStats, instrument, latest_index_snapshot_path, level_above, put_index_snapshot,
+    read_index_snapshot_bytes, trace_block_fingerprint,
 };
 
 /// How an oversized or unreadable trace-index snapshot names itself in errors.
@@ -14,14 +14,14 @@ const SNAPSHOT_LABEL: &str = "trace index snapshot";
 #[derive(Default, Serialize, Deserialize)]
 pub struct TraceIndex {
     pub(crate) tenants: HashMap<String, TenantTraceIndex>,
-    /// Compaction level and lineage per block. Kept beside the block records
-    /// rather than inside [`TraceBlockStats`], which describes what a block
-    /// contains rather than where it came from.
-    pub(crate) lineage: BlockLineageIndex,
     /// Blocks this writer dropped and has yet to make durable. Not persisted:
     /// see [`PendingBlockRemovals`].
     #[serde(skip)]
     pending_removals: PendingBlockRemovals,
+    /// Blocks this writer registered and has yet to make durable. Not
+    /// persisted: see [`PendingBlockAdditions`].
+    #[serde(skip)]
+    pending_additions: PendingBlockAdditions,
 }
 
 impl TraceIndex {
@@ -30,23 +30,15 @@ impl TraceIndex {
         Self::default()
     }
 
-    pub fn add_trace_block(&mut self, tenant: &str, stats: TraceBlockStats) {
-        self.add_trace_block_with_rows(tenant, stats, 0);
-    }
-
-    /// Registers a freshly built block along with its row count.
+    /// Registers a block, whose record says how many rows it holds and how
+    /// many rounds of compaction produced it.
     ///
-    /// The row count is what lets the compaction planner tell a block that has
-    /// reached its size target, and so needs no further merging, from one that
-    /// has not. A caller that does not have it uses [`Self::add_trace_block`].
-    pub fn add_trace_block_with_rows(
-        &mut self,
-        tenant: &str,
-        stats: TraceBlockStats,
-        row_count: usize,
-    ) {
+    /// A block builder writes [`BlockLevel::INGESTED`] records; only
+    /// [`Self::replace_trace_blocks`] promotes one, because only it is told
+    /// what the block replaced.
+    pub fn add_trace_block(&mut self, tenant: &str, stats: TraceBlockStats) {
         self.pending_removals.forget(tenant, &stats.object_key);
-        self.lineage.record_ingested(&stats.object_key, row_count);
+        self.pending_additions.record(&stats.object_key);
         let tenant_index = self.tenants.entry(tenant.to_string()).or_default();
         tenant_index
             .blocks
@@ -54,16 +46,23 @@ impl TraceIndex {
         tenant_index.blocks.push(stats);
     }
 
-    /// How many rounds of compaction produced `object_key`.
+    /// How many rounds of compaction produced `object_key`, or
+    /// [`BlockLevel::INGESTED`] for a block the index does not hold.
     #[must_use]
     pub fn block_level(&self, object_key: &str) -> BlockLevel {
-        self.lineage.level(object_key)
+        self.block_record(object_key)
+            .map_or(BlockLevel::INGESTED, |block| block.level)
     }
 
-    /// The level, row count and immediate inputs recorded for `object_key`.
-    #[must_use]
-    pub fn block_lineage(&self, object_key: &str) -> Option<&BlockLineage> {
-        self.lineage.lineage(object_key)
+    /// The record of `object_key`, whichever tenant holds it. Object keys are
+    /// unique across tenants.
+    fn block_record(&self, object_key: &str) -> Option<&TraceBlockStats> {
+        self.tenants.values().find_map(|tenant_index| {
+            tenant_index
+                .blocks
+                .iter()
+                .find(|block| block.object_key == object_key)
+        })
     }
 
     /// Every block in the index, as the compaction planner sees it.
@@ -81,8 +80,8 @@ impl TraceIndex {
                         object_key: block.object_key.clone(),
                         min_ts: block.min_ts,
                         max_ts: block.max_ts,
-                        row_count: self.lineage.row_count(&block.object_key),
-                        level: self.lineage.level(&block.object_key),
+                        row_count: block.row_count,
+                        level: block.level,
                     })
             })
             .collect();
@@ -111,30 +110,48 @@ impl TraceIndex {
         tenants
     }
 
+    /// Swaps the `old_keys` blocks for `replacement`, and returns the level
+    /// the replacement was stamped with.
+    ///
+    /// The level is not a parameter: it is one rung above the highest of the
+    /// blocks being retired, and those are named here already because naming
+    /// them is what retires them. A compactor therefore cannot register its
+    /// output at a level that contradicts its inputs, and cannot register it
+    /// without saying what they were.
     pub fn replace_trace_blocks(
         &mut self,
         tenant: &str,
         old_keys: &[String],
         mut replacement: TraceBlockStats,
-        row_count: usize,
-    ) {
-        // Recorded before the inputs are forgotten, because the replacement's
-        // level is one above the highest of theirs.
-        self.lineage
-            .record_compacted(&replacement.object_key, old_keys, row_count);
+    ) -> BlockLevel {
+        // Read before the inputs are dropped, and never below what the
+        // replacement key already sits at: a snapshot merge re-registers
+        // blocks whose inputs are long gone, and re-deriving from nothing
+        // would demote a compacted block back to level zero every save.
+        replacement.level = level_above(old_keys.iter().map(|key| self.block_level(key)))
+            .max(self.block_level(&replacement.object_key));
+        let level = replacement.level;
         let old_keys: BTreeSet<&str> = old_keys.iter().map(String::as_str).collect();
-        self.lineage.forget(
-            old_keys
-                .iter()
-                .copied()
-                .filter(|key| *key != replacement.object_key.as_str()),
-        );
-        self.pending_removals
-            .record(tenant, old_keys.iter().copied());
+        // Pinned to the records being dropped, and so read before they are.
+        // A removal that named only the key would also drop a block another
+        // writer has since written under that key.
+        let retired: Vec<(&str, u64)> = self
+            .tenants
+            .get(tenant)
+            .into_iter()
+            .flat_map(|tenant_index| tenant_index.blocks.iter())
+            .filter(|block| old_keys.contains(block.object_key.as_str()))
+            .map(|block| (block.object_key.as_str(), trace_block_fingerprint(block)))
+            .collect();
+        self.pending_removals.record(tenant, retired);
+        for key in old_keys.iter().copied() {
+            self.pending_additions.forget(key);
+        }
         // A compaction may reuse the key of a block it replaces. That block is
         // live again, so it must not be replayed as a removal.
         self.pending_removals
             .forget(tenant, &replacement.object_key);
+        self.pending_additions.record(&replacement.object_key);
         let tenant_index = self.tenants.entry(tenant.to_string()).or_default();
 
         let mut carried_tag_names = BTreeSet::new();
@@ -165,6 +182,7 @@ impl TraceIndex {
                 .extend(values);
         }
         tenant_index.blocks.push(replacement);
+        level
     }
 
     #[must_use]
@@ -278,58 +296,85 @@ impl TraceIndex {
         retain: IndexSnapshotRetain,
     ) -> Result<String> {
         let removals = self.pending_removals.pending();
+        let additions = self.pending_additions.pending();
         let snapshot_key = put_index_snapshot(
             store,
             key,
             retain,
             DEFAULT_INDEX_SNAPSHOT_MAX,
             SNAPSHOT_LABEL,
-            |base| self.merged_snapshot_bytes(base, &removals),
+            |base| self.merged_snapshot_bytes(base, &removals, &additions),
         )
         .await?;
         self.pending_removals.commit(&removals);
+        self.pending_additions.commit(&additions);
         Ok(snapshot_key)
     }
 
     /// Folds this index into the snapshot `base` and serialises the result.
     ///
-    /// The merge is a union keyed by object key, with this index winning, plus
-    /// a replay of `removals`. Union alone would lose nothing this writer owns
-    /// but would resurrect every block it compacted away, because the base
-    /// still names them.
+    /// The base is the state of the whole system; this writer contributes what
+    /// only it knows. That is `additions`, the blocks it has registered since
+    /// its last successful write, plus a replay of `removals`.
+    ///
+    /// Contributing every block this index names instead would be the wider
+    /// bug. A writer that read a block from a snapshot and has held it in
+    /// memory ever since has no removal to replay when a *concurrent*
+    /// compactor retires that block, so a full union would put the compaction's
+    /// input back beside its output and the querier would read both. Anything
+    /// this writer has already published is in the chain the base descends
+    /// from, so leaving it out loses nothing.
+    ///
+    /// A `base` of `None` is the exception: there is no chain, so there is no
+    /// concurrent writer whose removal could be undone, and everything this
+    /// index names is contributed.
     fn merged_snapshot_bytes(
         &self,
         base: Option<&[u8]>,
-        removals: &BTreeMap<String, BTreeSet<String>>,
+        removals: &BTreeMap<String, BTreeMap<String, u64>>,
+        additions: &BTreeSet<String>,
     ) -> Result<Vec<u8>> {
-        let mut merged = match base {
-            Some(bytes) => Self::from_snapshot_bytes(bytes)?,
-            None => Self::new(),
+        let (mut merged, contribute_all) = match base {
+            Some(bytes) => (Self::from_snapshot_bytes(bytes)?, false),
+            None => (Self::new(), true),
         };
+        for (tenant, removed) in removals {
+            let live = merged.tenants.get(tenant);
+            for (object_key, fingerprint) in removed {
+                let unchanged = live
+                    .and_then(|tenant_index| {
+                        tenant_index
+                            .blocks
+                            .iter()
+                            .find(|block| block.object_key == *object_key)
+                    })
+                    .is_some_and(|block| trace_block_fingerprint(block) == *fingerprint);
+                if !unchanged {
+                    return Err(BlockStoreError::InvalidBlock(format!(
+                        "trace compaction input `{object_key}` changed before its replacement was published"
+                    )));
+                }
+            }
+        }
         for (tenant, tenant_index) in &self.tenants {
             for block in &tenant_index.blocks {
-                merged.add_trace_block(tenant, block.clone());
+                if contribute_all || additions.contains(&block.object_key) {
+                    merged.add_trace_block(tenant, block.clone());
+                }
             }
         }
-        // This writer's view of a block's level wins over the base's, and the
-        // union above must not leave a compacted block reading as level zero.
-        merged.lineage.merge_from(&self.lineage);
         for (tenant, removed) in removals {
             if let Some(tenant_index) = merged.tenants.get_mut(tenant) {
-                tenant_index
-                    .blocks
-                    .retain(|block| !removed.contains(&block.object_key));
+                // Only the record the removal pinned itself to is dropped. A
+                // block written under the same key since is a different block,
+                // and dropping it would hide an object nothing else names.
+                tenant_index.blocks.retain(|block| {
+                    removed
+                        .get(&block.object_key)
+                        .is_none_or(|fingerprint| *fingerprint != trace_block_fingerprint(block))
+                });
             }
         }
-        // Lineage outlives nothing: a record for a block no longer in the
-        // index would make the snapshot grow once per block ever written.
-        let live: BTreeSet<String> = merged
-            .tenants
-            .values()
-            .flat_map(|tenant_index| tenant_index.blocks.iter())
-            .map(|block| block.object_key.clone())
-            .collect();
-        merged.lineage.retain_keys(&live);
         Ok(serde_json::to_vec(&merged)?)
     }
 
@@ -438,6 +483,8 @@ impl BlockIndex for TraceIndex {
                 bloom: ShardedTraceBloom::match_all_with_tempo_defaults(),
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: meta.row_count,
+                level: meta.level,
             },
         );
     }

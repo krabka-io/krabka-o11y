@@ -5,6 +5,17 @@ use super::{
     ProfilesError, RecordBatch, UInt64Type, encode_profile_samples,
 };
 
+/// Sums the samples of `batches` into `policy`-wide time buckets.
+///
+/// The rows come back ordered by [`DownsampleKey`], which is the block's
+/// declared sort order followed by the rest of the key, so a caller that feeds
+/// this whole time buckets at a time gets an output it can stream straight to
+/// the block writer.
+///
+/// # Errors
+/// Returns [`ProfilesError::Block`] when the resolution is not positive, when
+/// a batch is not shaped like a profile-samples block, or when the summed rows
+/// cannot be encoded.
 pub(crate) fn downsample_batches(
     batches: &[RecordBatch],
     policy: DownsamplePolicy,
@@ -65,8 +76,8 @@ pub(crate) fn downsample_batches(
                 .saturating_mul(policy.resolution_ns);
             let key = DownsampleKey {
                 series_fingerprint: fingerprints.value(row),
-                timestamp,
                 profile_type: profile_values.value(profile_pos).to_string(),
+                timestamp,
                 stacktrace_id: stacktrace_ids.value(row),
                 stacktrace_partition: partitions.value(row),
                 span_id: (!span_identifiers.is_null(row)).then(|| span_identifiers.value(row)),

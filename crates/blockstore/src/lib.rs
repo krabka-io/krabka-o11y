@@ -18,6 +18,7 @@ mod index_snapshot;
 mod labels;
 mod log_blockstore;
 mod matcher;
+mod merge;
 mod nested_set;
 mod profile_block;
 mod profile_index;
@@ -36,9 +37,9 @@ pub use block::{
 pub use block_index::{BlockIndex, BlockSchema, RequiredColumn, series_block_schema};
 pub use bloom::{ShardedTraceBloom, fnv1_32};
 pub use compaction::{
-    BlockLevel, BlockLineage, BlockLineageIndex, CompactionCandidate, CompactionJob,
-    CompactionPolicy, DEFAULT_LEVEL_WINDOW_NS, DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL,
-    DEFAULT_TARGET_ROWS_PER_BLOCK, input_key_fingerprint, plan_compactions,
+    BlockLevel, CompactionCandidate, CompactionJob, CompactionPolicy, DEFAULT_LEVEL_WINDOW_NS,
+    DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
+    input_key_fingerprint, level_above, plan_compactions,
 };
 pub use error::{BlockReadFailure, BlockSkipReason, BlockStoreError, Result, SkippedBlock};
 pub use index::{
@@ -77,6 +78,10 @@ pub use log_blockstore::{
 pub use matcher::{
     LabelMatcher, MatchOp, QUERY_SHARD_LABEL, QueryShardSelector, parse_query_shard_selector,
 };
+pub use merge::{
+    BlockBatchStream, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, SortedMerge, open_block_stream,
+    versioned_compaction_key,
+};
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
 pub use profile_block::{ProfileSampleRow, encode_profile_samples};
 pub use profile_index::{LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileIndex};
@@ -110,5 +115,6 @@ pub use span_schema::{
 pub use store::{BlockScan, BlockStore, ScanReport, ScanTableRequest};
 pub use trace_index::{TraceBlockStats, TraceIndex};
 pub use writer::{
-    BLOCK_ROW_GROUP_ROWS, BLOCK_ZSTD_LEVEL, BlockWriter, SummaryColumns, block_writer_properties,
+    BLOCK_ROW_GROUP_ROWS, BLOCK_ZSTD_LEVEL, BlockStreamWriter, BlockWriter, SummaryColumns,
+    block_writer_properties,
 };

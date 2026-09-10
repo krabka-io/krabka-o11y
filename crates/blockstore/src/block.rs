@@ -4,6 +4,7 @@ use arrow::datatypes::Schema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    compaction::BlockLevel,
     error::{BlockStoreError, Result},
     labels::SeriesFingerprint,
 };

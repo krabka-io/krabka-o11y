@@ -1,5 +1,5 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockIndex, BlockMeta, BlockStoreError, ByteSize,
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, ByteSize,
     DEFAULT_INDEX_SHARD_WIDTH, Deserialize, LabelMatcher, Labels, MAX_INDEX_SNAPSHOT_BYTES,
     ObjectStore, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint, TenantIndex,
     load_index_shards, matcher_matches_empty, save_index_shards,
@@ -369,6 +369,15 @@ impl Index {
         for meta in add {
             tenant_index.blocks.insert(meta);
         }
+    }
+
+    /// How many rounds of compaction produced `object_key`, whichever tenant
+    /// holds it. Object keys are unique across tenants.
+    #[must_use]
+    pub fn block_level(&self, object_key: &str) -> Option<BlockLevel> {
+        self.tenants
+            .values()
+            .find_map(|tenant_index| tenant_index.blocks.level_of(object_key))
     }
 
     /// Every block across every tenant, as [`BlockMeta`]. Use

@@ -6,6 +6,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
 };
 
@@ -17,12 +18,13 @@ use tracing::instrument;
 use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
-    compaction::{BlockLevel, BlockLineage, BlockLineageIndex, CompactionCandidate},
-    error::Result,
+    compaction::{BlockLevel, CompactionCandidate, level_above},
+    error::{BlockStoreError, Result},
     index::Index,
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockRemovals,
-        latest_index_snapshot_path, put_index_snapshot, read_index_snapshot_bytes,
+        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockAdditions,
+        PendingBlockRemovals, latest_index_snapshot_path, put_index_snapshot,
+        read_index_snapshot_bytes,
     },
     labels::{Labels, SeriesFingerprint},
     matcher::LabelMatcher,
@@ -111,6 +113,7 @@ mod tests {
                 max_ts: 199,
                 row_count: 10,
                 fingerprints: vec![cpu_checkout_fp],
+                level: BlockLevel::INGESTED,
             },
             BlockMeta {
                 tenant: "t".to_string(),
@@ -119,6 +122,7 @@ mod tests {
                 max_ts: 399,
                 row_count: 20,
                 fingerprints: vec![heap_checkout_fp],
+                level: BlockLevel::INGESTED,
             },
             BlockMeta {
                 tenant: "t".to_string(),
@@ -127,6 +131,7 @@ mod tests {
                 max_ts: 250,
                 row_count: 30,
                 fingerprints: vec![cpu_payments_fp],
+                level: BlockLevel::INGESTED,
             },
         ] {
             <ProfileIndex as BlockIndex>::add_block(&mut index, &meta);
@@ -325,6 +330,7 @@ mod tests {
                         max_ts: 199,
                         row_count: 10,
                         fingerprints: vec![cpu_checkout],
+                        level: BlockLevel::INGESTED,
                     },
                     BlockMeta {
                         tenant: "t".to_string(),
@@ -333,6 +339,7 @@ mod tests {
                         max_ts: 250,
                         row_count: 30,
                         fingerprints: vec![cpu_payments],
+                        level: BlockLevel::INGESTED,
                     },
                     BlockMeta {
                         tenant: "t".to_string(),
@@ -341,6 +348,7 @@ mod tests {
                         max_ts: 399,
                         row_count: 20,
                         fingerprints: vec![heap_checkout],
+                        level: BlockLevel::INGESTED,
                     },
                 ]
         );
@@ -394,6 +402,7 @@ mod tests {
             max_ts: 10,
             row_count: 1,
             fingerprints: vec![fp],
+            level: BlockLevel::INGESTED,
         });
         index.add_profile_block("t", "old.parquet", vec![0]);
 
@@ -408,6 +417,7 @@ mod tests {
                     max_ts: 10,
                     row_count: 1,
                     fingerprints: vec![fp],
+                    level: BlockLevel::INGESTED,
                 },
                 vec![99],
             )],
@@ -576,6 +586,7 @@ mod tests {
                 max_ts: 199,
                 row_count: 5,
                 fingerprints: vec![shipping_fp],
+                level: BlockLevel::INGESTED,
             },
         );
         fresh.add_profile_block("t", "cpu-shipping.parquet", vec![7]);
@@ -630,6 +641,7 @@ mod tests {
                     max_ts: 399,
                     row_count: 30,
                     fingerprints: vec![cpu_checkout_fp, heap_checkout_fp],
+                    level: BlockLevel::INGESTED,
                 },
                 vec![9],
             )],
@@ -649,6 +661,191 @@ mod tests {
                 .is_empty()
         );
         check!(loaded.stacktrace_partitions("compacted.parquet") == vec![9]);
+    }
+
+    /// The race the trace index has too, and the one a compactor running every
+    /// few minutes makes routine.
+    ///
+    /// A writer that read a block from a snapshot and has held it in memory
+    /// since has no removal to replay when a *concurrent* compactor retires
+    /// that block. A merge that contributed every block the writer names would
+    /// put the compaction's input back beside its output, and every sample in
+    /// it would be read twice until the writer restarted. Only blocks
+    /// registered since the writer's last successful write are contributed, so
+    /// the swap survives.
+    #[tokio::test]
+    async fn a_stale_writer_does_not_resurrect_the_block_a_compactor_replaced() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (mut writer, cpu_checkout_fp, ..) = seed_with_blocks();
+        writer.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
+        writer
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        // Another process loads that snapshot and swaps the block out.
+        let mut compactor = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        compactor.replace_profile_blocks(
+            "t",
+            &strings(&["cpu-checkout.parquet"]),
+            &[(
+                BlockMeta {
+                    tenant: "t".to_string(),
+                    object_key: "compacted.parquet".to_string(),
+                    min_ts: 100,
+                    max_ts: 199,
+                    row_count: 10,
+                    fingerprints: vec![cpu_checkout_fp],
+                    level: BlockLevel::INGESTED,
+                },
+                vec![9],
+            )],
+        );
+        compactor
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        // The first writer still names the replaced block, and writes another.
+        let shipping = profile_labels("process_cpu", CPU_TYPE, "shipping");
+        let shipping_fp = shipping.fingerprint();
+        writer.add_series("t", shipping_fp, &shipping);
+        <ProfileIndex as BlockIndex>::add_block(
+            &mut writer,
+            &BlockMeta {
+                tenant: "t".to_string(),
+                object_key: "cpu-shipping.parquet".to_string(),
+                min_ts: 500,
+                max_ts: 599,
+                row_count: 5,
+                fingerprints: vec![shipping_fp],
+                level: BlockLevel::INGESTED,
+            },
+        );
+        writer.add_profile_block("t", "cpu-shipping.parquet", vec![7]);
+        writer
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        check!(
+            block_keys(&loaded)
+                == strings(&[
+                    "compacted.parquet",
+                    "cpu-payments.parquet",
+                    "cpu-shipping.parquet",
+                    "heap-checkout.parquet",
+                ])
+        );
+        check!(
+            loaded
+                .stacktrace_partitions("cpu-checkout.parquet")
+                .is_empty()
+        );
+        check!(loaded.stacktrace_partitions("cpu-shipping.parquet") == vec![7]);
+    }
+
+    /// The other direction, and the one that rules out publishing a stale
+    /// compaction output.
+    ///
+    /// Object keys are derived from what a block holds, not minted, so the same
+    /// key can be handed out again for a different set of inputs. A removal
+    /// recorded by name alone would drop the block written under that key
+    /// since, and every later snapshot would carry the drop forward: a live
+    /// object nothing names any more. Publishing both it and the stale
+    /// compaction output would double-count the retired samples, so the whole
+    /// replacement must instead be rejected.
+    #[tokio::test]
+    async fn a_reused_input_key_rejects_the_stale_profile_compaction() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (mut published, cpu_checkout_fp, ..) = seed_with_blocks();
+        published.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
+        published
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        // The compactor retires the block, but has not published yet.
+        let mut compactor = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        compactor.replace_profile_blocks(
+            "t",
+            &strings(&["cpu-checkout.parquet"]),
+            &[(
+                BlockMeta {
+                    tenant: "t".to_string(),
+                    object_key: "compacted.parquet".to_string(),
+                    min_ts: 100,
+                    max_ts: 199,
+                    row_count: 10,
+                    fingerprints: vec![cpu_checkout_fp],
+                    level: BlockLevel::INGESTED,
+                },
+                vec![9],
+            )],
+        );
+
+        // A third writer mints the same key for a different block and gets
+        // there first.
+        let mut reuser = ProfileIndex::new();
+        let shipping = profile_labels("process_cpu", CPU_TYPE, "shipping");
+        let shipping_fp = shipping.fingerprint();
+        reuser.add_series("t", shipping_fp, &shipping);
+        <ProfileIndex as BlockIndex>::add_block(
+            &mut reuser,
+            &BlockMeta {
+                tenant: "t".to_string(),
+                object_key: "cpu-checkout.parquet".to_string(),
+                min_ts: 900,
+                max_ts: 999,
+                row_count: 3,
+                fingerprints: vec![shipping_fp],
+                level: BlockLevel::INGESTED,
+            },
+        );
+        reuser.add_profile_block("t", "cpu-checkout.parquet", vec![5]);
+        reuser
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let result = compactor
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await;
+
+        assert2::assert!(matches!(
+            result,
+            Err(BlockStoreError::InvalidBlock(message))
+                if message.contains("cpu-checkout.parquet")
+        ));
+
+        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        check!(
+            block_keys(&loaded)
+                == strings(&[
+                    "cpu-checkout.parquet",
+                    "cpu-payments.parquet",
+                    "heap-checkout.parquet",
+                ])
+        );
+        // The live record under the reused key is the new one.
+        check!(loaded.stacktrace_partitions("cpu-checkout.parquet") == vec![5]);
+        check!(
+            loaded.candidate_blocks_for_series("t", &BTreeSet::from([shipping_fp]), 900, 999)
+                == strings(&["cpu-checkout.parquet"])
+        );
     }
 
     #[tokio::test]
@@ -718,12 +915,12 @@ mod tests {
     }
 
     #[test]
-    fn a_compacted_profile_block_records_its_level_and_its_inputs() {
+    fn a_compacted_profile_block_records_its_level_on_its_own_record() {
         let (mut index, cpu_checkout_fp, heap_checkout_fp, _) = seed_with_blocks();
         index.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
         check!(index.block_level("cpu-checkout.parquet") == BlockLevel::INGESTED);
 
-        index.replace_profile_blocks(
+        let level = index.replace_profile_blocks(
             "t",
             &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
             &[(
@@ -734,20 +931,50 @@ mod tests {
                     max_ts: 399,
                     row_count: 30,
                     fingerprints: vec![cpu_checkout_fp, heap_checkout_fp],
+                    // What the writer stamped. The index promotes it, so
+                    // handing over a level here cannot get the ladder wrong.
+                    level: BlockLevel::INGESTED,
                 },
                 vec![9],
             )],
         );
 
+        check!(level == BlockLevel(1));
+        check!(index.block_level("compacted.parquet") == BlockLevel(1));
+        // The inputs are gone, and the level went with the records rather than
+        // outliving them in a map of its own.
+        check!(index.block_level("cpu-checkout.parquet") == BlockLevel::INGESTED);
         check!(
-            index.block_lineage("compacted.parquet")
-                == Some(&BlockLineage {
-                    level: BlockLevel(1),
-                    row_count: 30,
-                    sources: strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
-                })
+            index
+                .all_blocks()
+                .iter()
+                .all(|meta| meta.object_key != "cpu-checkout.parquet")
         );
-        check!(index.block_lineage("cpu-checkout.parquet").is_none());
+    }
+
+    /// A pending removal pins itself to the fingerprint of the record it
+    /// retired. The level is part of that record, so a block and its compacted
+    /// replacement under one key must not agree on a fingerprint -- a removal
+    /// that matched both would drop a live object nothing else names.
+    #[test]
+    fn the_record_fingerprint_tells_two_profile_blocks_apart_by_level() {
+        let ingested = BlockMeta {
+            tenant: "t".to_string(),
+            object_key: "cpu-checkout.parquet".to_string(),
+            min_ts: 100,
+            max_ts: 199,
+            row_count: 10,
+            fingerprints: vec![7],
+            level: BlockLevel::INGESTED,
+        };
+        let compacted = BlockMeta {
+            level: BlockLevel(1),
+            ..ingested.clone()
+        };
+
+        let of = |meta: &BlockMeta| profile_block_fingerprint(meta, &[1]);
+        check!(of(&ingested) == of(&ingested.clone()));
+        check!(of(&ingested) != of(&compacted));
     }
 
     #[test]
@@ -809,6 +1036,7 @@ mod tests {
                     max_ts: 399,
                     row_count: 30,
                     fingerprints: vec![cpu_checkout_fp, heap_checkout_fp],
+                    level: BlockLevel::INGESTED,
                 },
                 vec![9],
             )],
@@ -823,16 +1051,23 @@ mod tests {
             .unwrap();
         check!(loaded.block_level("compacted.parquet") == BlockLevel(1));
         check!(loaded.block_level("cpu-payments.parquet") == BlockLevel::INGESTED);
-        check!(loaded.block_lineage("cpu-checkout.parquet").is_none());
+        check!(
+            loaded
+                .all_blocks()
+                .iter()
+                .all(|meta| meta.object_key != "cpu-checkout.parquet")
+        );
     }
 }
 
 mod label_profile_type;
 mod max_profile_index_snapshot_bytes;
+mod profile_block_fingerprint;
 mod profile_index_type;
 mod tenant_profile_extras;
 
 pub use label_profile_type::LABEL_PROFILE_TYPE;
 pub use max_profile_index_snapshot_bytes::MAX_PROFILE_INDEX_SNAPSHOT_BYTES;
+use profile_block_fingerprint::profile_block_fingerprint;
 pub use profile_index_type::ProfileIndex;
 use tenant_profile_extras::TenantProfileExtras;

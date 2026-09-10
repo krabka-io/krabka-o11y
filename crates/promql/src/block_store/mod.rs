@@ -1,6 +1,6 @@
 //! `MetricStore` adapter backed by `krabka-blockstore`.
 
-use krabka_blockstore::{BlockMeta, BlockStore};
+use krabka_blockstore::{BlockLevel, BlockMeta, BlockStore};
 use krabka_metrics::{CompactionIndexManifest, MetricBlockKind};
 
 mod store_impl;

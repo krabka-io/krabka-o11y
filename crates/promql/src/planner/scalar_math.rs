@@ -29,7 +29,6 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::{
-    catalog::MemTable,
     execution::FunctionRegistry,
     logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, col, lit},
     prelude::SessionContext,
@@ -38,6 +37,7 @@ use krabka_blockstore::Labels;
 
 use crate::{
     PromqlError, error::Result, extension::planner::prom_session_context, functions::ScalarMathOp,
+    planner::leaf::leaf_scan,
 };
 
 #[cfg(test)]

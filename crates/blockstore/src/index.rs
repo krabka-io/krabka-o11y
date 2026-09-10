@@ -21,6 +21,7 @@ use tracing::instrument;
 use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
+    compaction::BlockLevel,
     error::{BlockStoreError, Result},
     labels::{Labels, SeriesFingerprint},
     matcher::{LabelMatcher, MatchOp, QUERY_SHARD_LABEL, parse_query_shard_selector},
@@ -145,6 +146,7 @@ mod tests {
             max_ts: 100,
             row_count: 1,
             fingerprints: vec![api_prod],
+            level: BlockLevel::INGESTED,
         });
         idx.add_block(&BlockMeta {
             tenant: "t".into(),
@@ -153,6 +155,7 @@ mod tests {
             max_ts: 300,
             row_count: 1,
             fingerprints: vec![web_prod],
+            level: BlockLevel::INGESTED,
         });
 
         for (_name, min_ts, max_ts, expected) in [
@@ -636,6 +639,7 @@ mod tests {
             max_ts: 100,
             row_count: 1,
             fingerprints: vec![api_prod],
+            level: BlockLevel::INGESTED,
         });
         let got = idx.candidate_blocks_for_series("t", &BTreeSet::from([api_prod]), 0, 150);
         assert2::assert!(got == vec!["b1.parquet".to_string()]);
@@ -651,6 +655,7 @@ mod tests {
             max_ts: 100,
             row_count: 1,
             fingerprints: vec![],
+            level: BlockLevel::INGESTED,
         });
         idx.add_block(&BlockMeta {
             tenant: "t".into(),
@@ -659,6 +664,7 @@ mod tests {
             max_ts: 350,
             row_count: 1,
             fingerprints: vec![],
+            level: BlockLevel::INGESTED,
         });
 
         for (_name, tenant, min_ts, max_ts, want) in [
@@ -685,6 +691,7 @@ mod tests {
             max_ts: 200,
             row_count: 1,
             fingerprints: vec![],
+            level: BlockLevel::INGESTED,
         });
 
         for (_name, min_ts, max_ts, want) in [
@@ -713,6 +720,7 @@ mod tests {
             max_ts: 100,
             row_count: 7,
             fingerprints: vec![],
+            level: BlockLevel::INGESTED,
         });
         idx.add_block(&BlockMeta {
             tenant: "u".into(),
@@ -721,6 +729,7 @@ mod tests {
             max_ts: 9,
             row_count: 3,
             fingerprints: vec![],
+            level: BlockLevel::INGESTED,
         });
 
         let mut blocks = idx.all_blocks_unscoped();
@@ -735,6 +744,7 @@ mod tests {
                         max_ts: 100,
                         row_count: 7,
                         fingerprints: vec![],
+                        level: BlockLevel::INGESTED,
                     },
                     BlockMeta {
                         tenant: "u".to_string(),
@@ -743,6 +753,7 @@ mod tests {
                         max_ts: 9,
                         row_count: 3,
                         fingerprints: vec![],
+                        level: BlockLevel::INGESTED,
                     },
                 ]
         );
@@ -757,6 +768,7 @@ mod tests {
                     max_ts: 100,
                     row_count: 7,
                     fingerprints: vec![],
+                    level: BlockLevel::INGESTED,
                 }]
         );
     }
@@ -796,6 +808,7 @@ mod tests {
                 max_ts: 100,
                 row_count: 1,
                 fingerprints: vec![],
+                level: BlockLevel::INGESTED,
             },
         );
         <Index as BlockIndex>::add_block(
@@ -807,6 +820,7 @@ mod tests {
                 max_ts: 300,
                 row_count: 1,
                 fingerprints: vec![],
+                level: BlockLevel::INGESTED,
             },
         );
 
@@ -828,6 +842,7 @@ mod tests {
             max_ts: 100,
             row_count: 1,
             fingerprints: vec![api_prod],
+            level: BlockLevel::INGESTED,
         };
 
         idx.add_block(&meta);
@@ -835,6 +850,36 @@ mod tests {
 
         let got = idx.candidate_blocks("t", &BTreeSet::from([api_prod]), 0, 100);
         assert2::assert!(got == vec!["b1.parquet".to_string()]);
+    }
+
+    /// The shard bytes are the only copy of a block's level, so an encoding
+    /// that dropped it would restart the compaction ladder at zero on every
+    /// save and the planner would rewrite the same rows for as long as it ran.
+    #[tokio::test]
+    async fn a_block_level_survives_the_shard_encoding() {
+        use object_store::memory::InMemory;
+
+        let compacted = BlockMeta {
+            tenant: "t".into(),
+            object_key: "c1.parquet".into(),
+            min_ts: 0,
+            max_ts: 50,
+            row_count: 9,
+            fingerprints: vec![labels(&[("app", "api"), ("env", "prod")]).fingerprint()],
+            level: BlockLevel(3),
+        };
+        let mut index = seed();
+        index.add_block(&compacted);
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        index
+            .save_with_shard_width(&store, "index/metrics.json", 100)
+            .await
+            .unwrap();
+        let loaded = Index::load(&store, "index/metrics.json").await.unwrap();
+
+        assert2::assert!(loaded.all_blocks_unscoped() == vec![compacted]);
+        assert2::assert!(loaded.block_level("c1.parquet") == Some(BlockLevel(3)));
     }
 
     #[tokio::test]
@@ -870,6 +915,7 @@ mod tests {
                         fingerprints: vec![
                             labels(&[("app", "api"), ("env", "prod")]).fingerprint()
                         ],
+                        level: BlockLevel::INGESTED,
                     },
                     BlockMeta {
                         tenant: "t".to_string(),
@@ -880,6 +926,7 @@ mod tests {
                         fingerprints: vec![
                             labels(&[("app", "web"), ("env", "prod")]).fingerprint()
                         ],
+                        level: BlockLevel::INGESTED,
                     },
                 ]
         );
@@ -1083,6 +1130,7 @@ mod tests {
                 max_ts: block * 100 + 99,
                 row_count: 10_000,
                 fingerprints: fingerprints.clone(),
+                level: BlockLevel::INGESTED,
             });
         }
 
@@ -1178,6 +1226,7 @@ mod tests {
                     .copied()
                     .filter(|_| next() % 3 == 0)
                     .collect(),
+                level: BlockLevel::INGESTED,
             };
             index.add_block(&meta);
             blocks.push(meta);
@@ -1223,6 +1272,7 @@ mod tests {
             max_ts: 100,
             row_count: 2,
             fingerprints: vec![api_prod, web_prod],
+            level: BlockLevel::INGESTED,
         });
         index.add_block(&BlockMeta {
             tenant: "t".into(),
@@ -1231,6 +1281,7 @@ mod tests {
             max_ts: 100,
             row_count: 1,
             fingerprints: vec![web_prod],
+            level: BlockLevel::INGESTED,
         });
 
         assert2::assert!(index.block_count("t") == 1);
@@ -1284,6 +1335,7 @@ mod tests {
             max_ts: 50,
             row_count: 1,
             fingerprints: vec![api_prod],
+            level: BlockLevel::INGESTED,
         });
         index.add_block(&BlockMeta {
             tenant: "t".into(),
@@ -1292,6 +1344,7 @@ mod tests {
             max_ts: 1_050,
             row_count: 1,
             fingerprints: vec![web_prod],
+            level: BlockLevel::INGESTED,
         });
 
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());

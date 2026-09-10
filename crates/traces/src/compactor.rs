@@ -11,19 +11,22 @@ use arrow::{
         ListArray, StringArray, StructArray,
     },
     compute::concat_batches,
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
+use futures::StreamExt;
 use krabka_blockstore::{
-    BlockMeta, BlockWriter, CompactionJob, CompactionPolicy, DEFAULT_BLOCK_READ_MAX,
-    SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL, SCOL_ATTR_VALUE_DOUBLE,
-    SCOL_ATTR_VALUE_INT, SCOL_CHILD_COUNT, SCOL_DURATION_NANOS, SCOL_EVENTS,
-    SCOL_INSTRUMENTATION_NAME, SCOL_INSTRUMENTATION_VERSION, SCOL_LINKS, SCOL_NAME,
-    SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID,
-    SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID, SCOL_START_NANO,
-    SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, ShardedTraceBloom,
-    SummaryColumns, TraceBlockStats, TraceIndex, input_key_fingerprint,
-    plan_compactions as plan_level_compactions, read_block_with_max_bytes, span_block_decl,
-    span_block_schema_with_promoted_attrs,
+    BlockMeta, BlockStoreError, BlockStreamWriter, BlockWriter, CompactionJob, CompactionPolicy,
+    DEFAULT_BLOCK_READ_MAX, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, SCOL_ATTR_KEYS,
+    SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL, SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT,
+    SCOL_CHILD_COUNT, SCOL_DURATION_NANOS, SCOL_EVENTS, SCOL_INSTRUMENTATION_NAME,
+    SCOL_INSTRUMENTATION_VERSION, SCOL_LINKS, SCOL_NAME, SCOL_NESTED_SET_LEFT,
+    SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID, SCOL_ROOT_SERVICE_NAME,
+    SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID, SCOL_START_NANO, SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID,
+    SCOL_TRACE_START_NANO, ShardedTraceBloom, SortedMerge, SummaryColumns, TraceBlockStats,
+    TraceIndex, input_key_fingerprint, open_block_stream,
+    plan_compactions as plan_level_compactions, span_block_decl,
+    span_block_schema_with_promoted_attrs, versioned_compaction_key,
 };
 #[cfg(test)]
 use krabka_blockstore::{read_block, span_block_schema};
@@ -33,7 +36,6 @@ use object_store::ObjectStore;
 use crate::{
     blockbuilder::prefixed_object_key,
     error::TracesError,
-    ids::{MaxOffset, MinOffset, WindowStartNs},
     span::{
         batch::RESOURCE_ATTR_PREFIX,
         promoted::{align_batch_to_block_schema, merged_promoted_attrs},
@@ -44,7 +46,7 @@ use crate::{
 mod tests {
     use assert2::check;
     use krabka_blockstore::{BlockIndex, BlockLevel};
-    use object_store::memory::InMemory;
+    use object_store::{ObjectStoreExt, memory::InMemory};
 
     use super::*;
     use crate::span::{
@@ -89,6 +91,111 @@ mod tests {
         // A root's nested-set parent is the -1 sentinel, not a row or a zero.
         check!(ints(SCOL_PARENT_ID) == vec![-1, 1, 1, 1, 2]);
         check!(ints(SCOL_CHILD_COUNT) == vec![3, 1, 0, 0, 0]);
+    }
+
+    /// Two traces in one batch number their spans from the same counter, so a
+    /// child count derived from that numbering credits each root with the
+    /// other's children as well as its own. Counting where the tree is built
+    /// is what keeps them apart, and this is the case that tells the two
+    /// apart: both roots are numbered 1.
+    #[test]
+    fn child_counts_are_counted_within_each_trace_rather_than_across_the_batch() {
+        let in_trace = |trace: u8, span_id: [u8; 8], parent: Option<[u8; 8]>| Span {
+            trace_id: [trace; 16],
+            ..mk_span(span_id, parent, 0, 1_000, "op", "api")
+        };
+        let batch = span_batch(&[
+            in_trace(1, [1; 8], None),
+            in_trace(1, [2; 8], Some([1; 8])),
+            in_trace(2, [3; 8], None),
+            in_trace(2, [4; 8], Some([3; 8])),
+            in_trace(2, [5; 8], Some([3; 8])),
+        ])
+        .expect("the spans form a batch");
+
+        let out = super::recompute_nested_sets(&batch).expect("the trees are numbered");
+        let counts = out
+            .column_by_name(SCOL_CHILD_COUNT)
+            .expect("the column is present")
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .expect("the column is i32")
+            .values()
+            .to_vec();
+
+        check!(counts == vec![1, 0, 2, 0, 0]);
+    }
+
+    /// The buffer's job is to hand on whole traces and hold back the one that
+    /// might still grow, so a cut lands on a trace boundary and never inside a
+    /// trace.
+    #[test]
+    fn the_trace_group_buffer_cuts_between_traces_and_holds_the_last_one_back() {
+        let batch = |trace: u8, spans: usize| {
+            span_batch(
+                &(0..spans)
+                    .map(|span| Span {
+                        trace_id: [trace; 16],
+                        ..mk_span(
+                            [u8::try_from(span).expect("a small index"); 8],
+                            None,
+                            i64::try_from(span).expect("a small index"),
+                            1,
+                            "op",
+                            "api",
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .expect("the spans form a batch")
+        };
+        let schema = span_block_schema();
+        let mut buffer = TraceGroupBuffer::new(schema);
+
+        buffer.push(batch(1, 2));
+        check!(
+            buffer.take_complete(4).expect("the buffer cuts").is_none(),
+            "nothing is due below the row threshold"
+        );
+        buffer.push(batch(2, 3));
+        let complete = buffer
+            .take_complete(4)
+            .expect("the buffer cuts")
+            .expect("trace 1 is complete");
+
+        check!(complete.num_rows() == 2, "trace 1 alone, trace 2 held back");
+        check!(
+            buffer.take_complete(4).expect("the buffer cuts").is_none(),
+            "what is left is one still-open trace"
+        );
+        let rest = buffer
+            .take_rest()
+            .expect("the buffer drains")
+            .expect("trace 2 is left");
+        check!(rest.num_rows() == 3);
+        check!(buffer.take_rest().expect("the buffer drains").is_none());
+    }
+
+    /// A single trace larger than the batch threshold cannot be cut, and must
+    /// be kept whole rather than split into two halves that would each be
+    /// numbered as a tree of their own.
+    #[test]
+    fn a_trace_larger_than_the_threshold_is_kept_whole() {
+        let spans = (0..6_u8)
+            .map(|span| mk_span([span; 8], None, i64::from(span), 1, "op", "api"))
+            .collect::<Vec<_>>();
+        let mut buffer = TraceGroupBuffer::new(span_block_schema());
+        buffer.push(span_batch(&spans).expect("the spans form a batch"));
+
+        check!(buffer.take_complete(2).expect("the buffer cuts").is_none());
+        check!(
+            buffer
+                .take_rest()
+                .expect("the buffer drains")
+                .expect("the trace is left")
+                .num_rows()
+                == 6
+        );
     }
 
     /// A span naming itself as its parent is treated as a root rather than as
@@ -285,7 +392,7 @@ mod tests {
         .await;
         assert2::assert!(rejected.is_err());
 
-        compact_block_keys(
+        let meta = compact_block_keys(
             store.clone(),
             &writer,
             &mut index,
@@ -296,7 +403,7 @@ mod tests {
         .await
         .unwrap();
 
-        let batches = read_block(store, "compacted.parquet").await.unwrap();
+        let batches = read_block(store, &meta.object_key).await.unwrap();
         let batch = &batches[0];
         check!(batch.num_rows() == 2);
         let trace_start = int64_column(batch, SCOL_TRACE_START_NANO).unwrap();
@@ -417,6 +524,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
     }
@@ -450,6 +559,8 @@ mod tests {
                 bloom,
                 tag_names: BTreeSet::new(),
                 tag_values: BTreeMap::new(),
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
 
@@ -492,6 +603,156 @@ mod tests {
             check!(index.tag_values("tenant", tag, 0, 2_000) == vec![want.to_string()]);
         }
     }
+
+    #[tokio::test]
+    async fn a_reused_trace_input_key_cannot_overwrite_an_existing_compaction_output() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let input_key = "reused.parquet";
+
+        let write_input = |name: &'static str| {
+            let writer = &writer;
+            async move {
+                writer
+                    .write_block_with_decl(
+                        "tenant",
+                        input_key,
+                        span_block_schema(),
+                        &[span_batch(&[mk_span([1; 8], None, 1_000, 10, name, "api")])
+                            .expect("the span forms a batch")],
+                        &span_block_decl(),
+                        SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+                    )
+                    .await
+                    .expect("the input block is written");
+            }
+        };
+        write_input("old").await;
+        let mut old_index = TraceIndex::new();
+        let old = compact_block_keys(
+            store.clone(),
+            &writer,
+            &mut old_index,
+            "tenant",
+            &[input_key.to_string()],
+            "compacted.parquet",
+        )
+        .await
+        .expect("the old input compacts");
+        let old_bytes = store
+            .get(&object_store::path::Path::from(old.object_key.clone()))
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+
+        write_input("new").await;
+        let mut new_index = TraceIndex::new();
+        let new = compact_block_keys(
+            store.clone(),
+            &writer,
+            &mut new_index,
+            "tenant",
+            &[input_key.to_string()],
+            "compacted.parquet",
+        )
+        .await
+        .expect("the replacement input compacts");
+
+        check!(old.object_key != new.object_key);
+        check!(
+            store
+                .get(&object_store::path::Path::from(old.object_key))
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+                == old_bytes,
+            "the stale pass's object remains untouched"
+        );
+    }
+
+    /// The declared trace order is `[trace_id, start_unix_nano]`, so two
+    /// sibling spans starting on the same nanosecond are rows the key cannot
+    /// separate -- and their row order is exactly what `recompute_nested_sets`
+    /// numbers them in. A merge that let the run holding a trace's earlier
+    /// rows carry on through the tie would renumber the pair against what the
+    /// pre-compaction blocks showed, a difference `/api/traces` hands straight
+    /// to Grafana. The tie belongs to the earliest input block, as it does
+    /// anywhere else the declared key runs out.
+    #[tokio::test]
+    async fn sibling_spans_tied_on_the_sort_key_keep_their_block_order_through_a_compaction() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let write = |key: &'static str, spans: Vec<Span>| {
+            let writer = &writer;
+            async move {
+                let batch = span_batch(&spans).expect("the spans form a batch");
+                writer
+                    .write_block_with_decl(
+                        "tenant",
+                        key,
+                        span_block_schema(),
+                        &[batch],
+                        &span_block_decl(),
+                        SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+                    )
+                    .await
+                    .expect("the block is written");
+            }
+        };
+
+        write(
+            "tied-a.parquet",
+            vec![mk_span([4; 8], Some([2; 8]), 2_000, 10, "a", "api")],
+        )
+        .await;
+        // The second block also holds the root, whose earlier start makes it
+        // the run the merge picks first -- the shape in which a merge can
+        // over-run a tie it did not win.
+        write(
+            "tied-b.parquet",
+            vec![
+                mk_span([2; 8], None, 1_000, 100, "GET /", "api"),
+                mk_span([3; 8], Some([2; 8]), 2_000, 10, "b", "api"),
+            ],
+        )
+        .await;
+
+        let mut index = TraceIndex::new();
+        let meta = compact_block_keys(
+            store.clone(),
+            &writer,
+            &mut index,
+            "tenant",
+            &["tied-a.parquet".to_string(), "tied-b.parquet".to_string()],
+            "tied.parquet",
+        )
+        .await
+        .expect("the blocks compact");
+
+        let batches = read_block(store, &meta.object_key)
+            .await
+            .expect("the block reads");
+        let tied = &batches[0];
+        let span_ids = fixed_column(tied, SCOL_SPAN_ID, 8).expect("the column is present");
+        let left = tied
+            .column_by_name(SCOL_NESTED_SET_LEFT)
+            .expect("the column is present")
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .expect("the column is i32");
+        let numbering = (0..tied.num_rows())
+            .map(|row| (span_ids.value(row)[0], left.value(row)))
+            .collect::<Vec<_>>();
+
+        check!(
+            numbering == vec![(2, 1), (4, 2), (3, 4)],
+            "the root, then the tied sibling from the earlier block, then the later block's"
+        );
+    }
 }
 
 mod attr_value;
@@ -506,7 +767,7 @@ mod compact_block_keys;
 mod compact_block_keys_with_max_bytes;
 mod compact_once;
 mod compact_once_with_policy;
-mod compacted_object_key;
+mod compacted_block_stats;
 mod first_string_list_value;
 mod fixed_column;
 mod float64_array;
@@ -518,6 +779,8 @@ mod metadata_value_array;
 mod optional_list_column;
 mod plan_compactions;
 mod planned_compacted_object_key;
+mod push_tag_metadata;
+mod push_trace_ids;
 mod recompute_nested_sets;
 mod recompute_trace_level_columns;
 mod replace_int32_columns;
@@ -529,8 +792,7 @@ mod struct_fixed_field;
 mod struct_i64_field;
 mod struct_list_field;
 mod struct_string_field;
-mod tag_metadata;
-mod trace_bloom;
+mod trace_group_buffer;
 
 use attr_value::attr_value;
 use collect_attr_metadata::collect_attr_metadata;
@@ -543,7 +805,7 @@ pub use compact_block_keys::compact_block_keys;
 pub use compact_block_keys_with_max_bytes::compact_block_keys_with_max_bytes;
 pub use compact_once::compact_once;
 pub use compact_once_with_policy::compact_once_with_policy;
-pub use compacted_object_key::compacted_object_key;
+use compacted_block_stats::CompactedBlockStats;
 use first_string_list_value::first_string_list_value;
 use fixed_column::fixed_column;
 use insert_tag_value::insert_tag_value;
@@ -553,6 +815,8 @@ use metadata_value_array::MetadataValueArray;
 use optional_list_column::optional_list_column;
 pub use plan_compactions::plan_compactions;
 pub use planned_compacted_object_key::planned_compacted_object_key;
+use push_tag_metadata::push_tag_metadata;
+use push_trace_ids::push_trace_ids;
 use recompute_nested_sets::recompute_nested_sets;
 use recompute_trace_level_columns::recompute_trace_level_columns;
 use replace_int32_columns::replace_int32_columns;
@@ -563,5 +827,4 @@ use struct_fixed_field::struct_fixed_field;
 use struct_i64_field::struct_i64_field;
 use struct_list_field::struct_list_field;
 use struct_string_field::struct_string_field;
-use tag_metadata::tag_metadata;
-use trace_bloom::trace_bloom;
+use trace_group_buffer::TraceGroupBuffer;

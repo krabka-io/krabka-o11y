@@ -44,7 +44,8 @@ mod tests {
     };
     use datafusion::{
         catalog::MemTable,
-        logical_expr::{Extension, LogicalPlan},
+        datasource::provider_as_source,
+        logical_expr::{Extension, LogicalPlan, LogicalPlanBuilder},
     };
 
     use super::*;
@@ -72,13 +73,13 @@ mod tests {
         .unwrap();
 
         let ctx = prom_session_context();
+        // The leaf table rides in the scan's own `TableSource` rather than the
+        // catalog, exactly as `crate::planner` builds it, so nothing is
+        // registered on the shared context.
         let table = MemTable::try_new(schema.clone(), vec![vec![batch]]).unwrap();
-        ctx.register_table("leaf", Arc::new(table)).unwrap();
-        let leaf = ctx
-            .table("leaf")
-            .await
+        let leaf = LogicalPlanBuilder::scan("leaf", provider_as_source(Arc::new(table)), None)
             .unwrap()
-            .into_optimized_plan()
+            .build()
             .unwrap();
 
         let divide = LogicalPlan::Extension(Extension {
