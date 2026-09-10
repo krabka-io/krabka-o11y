@@ -7,13 +7,13 @@ use arrow::{
 };
 use assert2::check;
 use krabka_blockstore::{
-    BlockWriter, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID, TraceIndex, read_block,
+    BlockMeta, BlockWriter, CompactionJob, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID,
+    TraceIndex, level_above, read_block,
 };
 use krabka_traces::{
     AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode,
     blockbuilder::{build_blocks, build_blocks_with_promoted_attrs},
-    compactor::{compact_block_keys, compacted_object_key},
-    ids::{MaxOffset, MinOffset, WindowStartNs},
+    compactor::{compact_block_keys, planned_compacted_object_key},
 };
 use object_store::{ObjectStore, memory::InMemory};
 
@@ -41,6 +41,35 @@ fn span(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> S
         instrumentation_scope: "test".into(),
         instrumentation_version: String::new(),
     }
+}
+
+/// The input keys and the output key of the compaction production would plan
+/// over `inputs`.
+///
+/// The compactor names its output with `planned_compacted_object_key`, which
+/// folds the input keys into the name so two jobs over the same tenant and time
+/// range cannot mint the same key and clobber each other's object in the store.
+/// Deriving the key any other way here would let these tests pass on a key
+/// shape production never writes.
+fn planned_job_keys(tenant: &str, inputs: &[&BlockMeta]) -> (Vec<String>, String) {
+    let job = CompactionJob {
+        tenant: tenant.to_string(),
+        input_keys: inputs.iter().map(|meta| meta.object_key.clone()).collect(),
+        output_level: level_above(inputs.iter().map(|meta| meta.level)),
+        min_ts: inputs
+            .iter()
+            .map(|meta| meta.min_ts)
+            .min()
+            .unwrap_or_default(),
+        max_ts: inputs
+            .iter()
+            .map(|meta| meta.max_ts)
+            .max()
+            .unwrap_or_default(),
+        row_count: inputs.iter().map(|meta| meta.row_count).sum(),
+    };
+    let output_key = planned_compacted_object_key(&job);
+    (job.input_keys, output_key)
 }
 
 fn rec(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> SpanRecord {
@@ -76,14 +105,7 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
     )
     .await
     .unwrap();
-    let input_keys = vec![first[0].object_key.clone(), late[0].object_key.clone()];
-    let output_key = compacted_object_key(
-        "tenant-a",
-        7,
-        MinOffset(10),
-        MaxOffset(20),
-        WindowStartNs(100),
-    );
+    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
 
     let meta = compact_block_keys(
         store.clone(),
@@ -149,14 +171,7 @@ async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
     )
     .await
     .unwrap();
-    let input_keys = vec![first[0].object_key.clone(), late[0].object_key.clone()];
-    let output_key = compacted_object_key(
-        "tenant-a",
-        7,
-        MinOffset(10),
-        MaxOffset(20),
-        WindowStartNs(100),
-    );
+    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
 
     compact_block_keys(
         store.clone(),
@@ -302,19 +317,13 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
     .await
     .unwrap();
 
-    let output_key = compacted_object_key(
-        "tenant-a",
-        7,
-        MinOffset(10),
-        MaxOffset(20),
-        WindowStartNs(100),
-    );
+    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
     compact_block_keys(
         store.clone(),
         &writer,
         &mut index,
         "tenant-a",
-        &[first[0].object_key.clone(), late[0].object_key.clone()],
+        &input_keys,
         &output_key,
     )
     .await
@@ -363,19 +372,13 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
     .await
     .unwrap();
 
-    let output_key = compacted_object_key(
-        "tenant-a",
-        7,
-        MinOffset(10),
-        MaxOffset(20),
-        WindowStartNs(100),
-    );
+    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&before[0], &after[0]]);
     compact_block_keys(
         store.clone(),
         &writer,
         &mut index,
         "tenant-a",
-        &[before[0].object_key.clone(), after[0].object_key.clone()],
+        &input_keys,
         &output_key,
     )
     .await
@@ -424,19 +427,13 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
     .await
     .unwrap();
 
-    let output_key = compacted_object_key(
-        "tenant-a",
-        7,
-        MinOffset(10),
-        MaxOffset(20),
-        WindowStartNs(100),
-    );
+    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &second[0]]);
     compact_block_keys(
         store.clone(),
         &writer,
         &mut index,
         "tenant-a",
-        &[first[0].object_key.clone(), second[0].object_key.clone()],
+        &input_keys,
         &output_key,
     )
     .await

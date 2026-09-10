@@ -29,6 +29,7 @@ pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, 
     // reached by the per-trace DFS has no parent. 0 is an invalid parent (left
     // values start at 1).
     let mut parent_id = vec![-1_i32; batch.num_rows()];
+    let mut child_count = vec![0_i32; batch.num_rows()];
 
     for rows in by_trace.values() {
         let mut pos = HashMap::new();
@@ -77,6 +78,13 @@ pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, 
                     counter += 1;
                     stack.push(Frame::Exit { row });
                     if let Some(children) = children.get(&row) {
+                        // Counted here, where the tree is walked, rather than
+                        // from the `left` numbering afterwards: the counter
+                        // restarts at 1 for every trace, so in a batch holding
+                        // more than one trace their roots share a `left` of 1
+                        // and each would be credited with the other's
+                        // children.
+                        child_count[row] = i32::try_from(children.len()).unwrap_or(i32::MAX);
                         for child in children.iter().rev() {
                             stack.push(Frame::Enter {
                                 row: *child,
@@ -93,18 +101,6 @@ pub(crate) fn recompute_nested_sets(batch: &RecordBatch) -> Result<RecordBatch, 
         }
     }
 
-    let child_count = left
-        .iter()
-        .map(|node_left| {
-            i32::try_from(
-                parent_id
-                    .iter()
-                    .filter(|parent| *parent == node_left)
-                    .count(),
-            )
-            .unwrap_or(i32::MAX)
-        })
-        .collect::<Vec<_>>();
     replace_int32_columns(
         batch,
         &[

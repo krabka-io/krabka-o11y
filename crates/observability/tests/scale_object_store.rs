@@ -403,7 +403,7 @@ async fn one_million_spans_locate_by_trace_id_without_reading_every_block() {
 
         let key = format!("traces/{TENANT}/{block:06}.parquet");
         let batch = encode_span_rows(&rows).expect("the span rows encode");
-        writer
+        let meta = writer
             .write_block_with_decl(
                 TENANT,
                 &key,
@@ -426,6 +426,8 @@ async fn one_million_spans_locate_by_trace_id_without_reading_every_block() {
                 bloom,
                 tag_names: tag_values.keys().cloned().collect(),
                 tag_values,
+                row_count: meta.row_count,
+                level: meta.level,
             },
         );
     }

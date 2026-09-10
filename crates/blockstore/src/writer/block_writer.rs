@@ -1,7 +1,7 @@
 use super::{
-    Arc, AsyncArrowWriter, BlockMeta, BlockSchema, BufWriter, ObjectStore, Path, RecordBatch,
-    Result, SchemaRef, SummaryColumns, block_writer_properties, debug, instrument,
-    is_sorted_by_key, series_block_schema, sort_batches_by_key, summarize, validate_against,
+    Arc, AsyncArrowWriter, BlockMeta, BlockSchema, BlockStreamWriter, BufWriter, ObjectStore, Path,
+    RecordBatch, Result, SchemaRef, SortKeyCheck, SummaryColumns, block_writer_properties, debug,
+    instrument, is_sorted_by_key, series_block_schema, sort_batches_by_key, validate_against,
     validate_batch_schemas,
 };
 
@@ -53,7 +53,10 @@ impl BlockWriter {
     /// statistics, and the bloom filters describe the file that was actually
     /// written. A caller that hands over rows already in the declared order
     /// pays one comparison pass for the check and nothing else; a caller that
-    /// merges blocks, and so cannot be in order, has its rows sorted here.
+    /// cannot be in order has its rows sorted here, at the cost of holding
+    /// the whole block in memory to do it. A caller that can produce the rows
+    /// in order incrementally -- a merge of blocks that are each already
+    /// sorted -- should use [`Self::open_block`] instead and pay neither.
     ///
     /// Returns [`BlockMeta`] computed from the declared summary columns.
     #[instrument(
@@ -74,7 +77,6 @@ impl BlockWriter {
     ) -> Result<BlockMeta> {
         validate_against(&schema, decl)?;
         validate_batch_schemas(&schema, batches)?;
-        let properties = block_writer_properties(&schema, decl)?;
 
         let sorted = if decl.sort_key.is_empty() || is_sorted_by_key(batches, &decl.sort_key)? {
             None
@@ -89,23 +91,67 @@ impl BlockWriter {
         };
         let batches = sorted.as_ref().map_or(batches, std::slice::from_ref);
 
-        let (min_ts, max_ts, row_count, fingerprints) = summarize(batches, &summary)?;
-
-        let path = Path::from(object_key);
-        let object_writer = BufWriter::new(self.store.clone(), path);
-        let mut writer = AsyncArrowWriter::try_new(object_writer, schema, Some(properties))?;
+        // The order is settled above, either by the caller or by the sort, so
+        // the stream writer has nothing left to check.
+        let mut block = self.open(tenant, object_key, schema, decl, summary, None)?;
         for batch in batches {
-            writer.write(batch).await?;
+            block.write_batch(batch).await?;
         }
-        writer.close().await?;
+        block.finish().await
+    }
 
-        Ok(BlockMeta {
-            tenant: tenant.to_string(),
-            object_key: object_key.to_string(),
-            min_ts,
-            max_ts,
-            row_count,
-            fingerprints,
-        })
+    /// Opens a block to be written one batch at a time.
+    ///
+    /// The block is physically identical to one [`Self::write_block_with_decl`]
+    /// writes and its [`BlockMeta`] is derived from the same columns, but
+    /// nothing is held resident: the summary accumulates as the batches pass
+    /// and the encoded bytes leave a row group at a time. That makes the
+    /// memory a compaction needs a function of its output rather than of the
+    /// blocks it reads.
+    ///
+    /// The caller owes the writer rows in the declared sort order, across
+    /// batch boundaries as well as within a batch, and
+    /// [`BlockStreamWriter::write_batch`] rejects a batch that breaks it. See
+    /// [`BlockStreamWriter`] for why that is an error rather than a silent
+    /// sort.
+    ///
+    /// # Errors
+    /// Returns an error when `schema` does not satisfy `decl`, when the
+    /// declaration names a column the schema lacks, or when the Parquet writer
+    /// cannot be created.
+    pub fn open_block(
+        &self,
+        tenant: &str,
+        object_key: &str,
+        schema: SchemaRef,
+        decl: &BlockSchema,
+        summary: SummaryColumns,
+    ) -> Result<BlockStreamWriter> {
+        let order = SortKeyCheck::new(&decl.sort_key);
+        self.open(tenant, object_key, schema, decl, summary, Some(order))
+    }
+
+    fn open(
+        &self,
+        tenant: &str,
+        object_key: &str,
+        schema: SchemaRef,
+        decl: &BlockSchema,
+        summary: SummaryColumns,
+        order: Option<SortKeyCheck>,
+    ) -> Result<BlockStreamWriter> {
+        validate_against(&schema, decl)?;
+        let properties = block_writer_properties(&schema, decl)?;
+        let object_writer = BufWriter::new(self.store.clone(), Path::from(object_key));
+        let writer = AsyncArrowWriter::try_new(object_writer, schema.clone(), Some(properties))?;
+        Ok(BlockStreamWriter::new(
+            writer,
+            tenant,
+            object_key,
+            schema,
+            summary,
+            order,
+            &decl.sort_key,
+        ))
     }
 }

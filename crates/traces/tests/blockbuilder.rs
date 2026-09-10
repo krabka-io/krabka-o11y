@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc, Mutex as StdMutex,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{
+        Arc, Mutex as StdMutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use arrow::{
@@ -11,7 +14,8 @@ use assert2::check;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use krabka_blockstore::{
-    BlockWriter, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID, TraceIndex, read_block,
+    BlockLevel, BlockWriter, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom,
+    TraceBlockStats, TraceIndex, read_block,
 };
 use krabka_client_consumer::ConsumerRecord;
 use krabka_traces::{
@@ -30,7 +34,7 @@ use object_store::{
     ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
     path::Path,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 
 fn span(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> Span {
@@ -1435,4 +1439,305 @@ async fn retention_still_prunes_when_four_builders_write_at_once() {
     );
     // Three of the four lost the race for a generation and wrote again.
     check!(barrier.snapshot_put_count() > 4);
+}
+
+/// Object store that holds one trace-index snapshot `put` until the test lets
+/// it go.
+///
+/// [`IndexSnapshotBarrierStore`] makes two writers overlap but leaves the order
+/// they land in to the scheduler. A compaction race needs more than overlap: it
+/// needs the *other* writer's snapshot to land while this one is already inside
+/// its write, holding bytes it merged from a base that has since gone stale.
+/// This store hands the test a signal when it is holding a put and waits for
+/// one back, so that interleaving is a fact of the test rather than a hope
+/// about the scheduler, and no sleep is involved.
+struct SnapshotHandoffStore {
+    inner: Arc<InMemory>,
+    snapshot_prefix: String,
+    held: StdMutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
+    snapshot_puts: AtomicUsize,
+}
+
+/// The two ends of one held snapshot write.
+struct SnapshotHandoff {
+    /// Resolves once a snapshot write is waiting at the door.
+    reached: oneshot::Receiver<()>,
+    /// Lets that write through.
+    release: oneshot::Sender<()>,
+}
+
+impl SnapshotHandoffStore {
+    fn new(snapshot_prefix: &str) -> Self {
+        Self {
+            inner: Arc::new(InMemory::new()),
+            snapshot_prefix: snapshot_prefix.to_string(),
+            held: StdMutex::new(None),
+            snapshot_puts: AtomicUsize::new(0),
+        }
+    }
+
+    /// Arms the store to hold the next snapshot write.
+    ///
+    /// Seeding a starting generation is a snapshot write like any other, so
+    /// arming is separate from construction: a test seeds first and arms once
+    /// the writer it wants to catch is the next one through.
+    fn arm(&self) -> SnapshotHandoff {
+        let (reached_tx, reached) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        *self.held.lock().expect("handoff lock") = Some((reached_tx, release_rx));
+        SnapshotHandoff { reached, release }
+    }
+
+    /// Snapshot writes attempted, retries included.
+    fn snapshot_put_count(&self) -> usize {
+        self.snapshot_puts.load(Ordering::SeqCst)
+    }
+}
+
+impl std::fmt::Debug for SnapshotHandoffStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SnapshotHandoffStore")
+    }
+}
+
+impl std::fmt::Display for SnapshotHandoffStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SnapshotHandoffStore")
+    }
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for SnapshotHandoffStore {
+    async fn put_opts(
+        &self,
+        location: &Path,
+        payload: PutPayload,
+        opts: PutOptions,
+    ) -> object_store::Result<PutResult> {
+        if location.as_ref().starts_with(&self.snapshot_prefix) {
+            self.snapshot_puts.fetch_add(1, Ordering::SeqCst);
+            // Taken, not held: the lock must not span the wait, or the writer
+            // that is meant to overtake this one could not reach the store.
+            let held = self.held.lock().expect("handoff lock").take();
+            if let Some((reached, release)) = held {
+                let _ = reached.send(());
+                let _ = release.await;
+            }
+        }
+        self.inner.put_opts(location, payload, opts).await
+    }
+
+    async fn put_multipart_opts(
+        &self,
+        location: &Path,
+        opts: PutMultipartOptions,
+    ) -> object_store::Result<Box<dyn MultipartUpload>> {
+        self.inner.put_multipart_opts(location, opts).await
+    }
+
+    async fn get_opts(
+        &self,
+        location: &Path,
+        options: GetOptions,
+    ) -> object_store::Result<GetResult> {
+        self.inner.get_opts(location, options).await
+    }
+
+    fn delete_stream(
+        &self,
+        locations: BoxStream<'static, object_store::Result<Path>>,
+    ) -> BoxStream<'static, object_store::Result<Path>> {
+        self.inner.delete_stream(locations)
+    }
+
+    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+        self.inner.list(prefix)
+    }
+
+    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
+        self.inner.list_with_delimiter(prefix).await
+    }
+
+    async fn copy_opts(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: CopyOptions,
+    ) -> object_store::Result<()> {
+        self.inner.copy_opts(from, to, options).await
+    }
+}
+
+/// A trace-block record with a bloom that holds exactly `trace_ids`.
+fn trace_block_stats(
+    object_key: &str,
+    min_ts: i64,
+    max_ts: i64,
+    trace_ids: &[[u8; 16]],
+) -> TraceBlockStats {
+    let mut bloom = ShardedTraceBloom::new(1, 64, 0.01);
+    for trace_id in trace_ids {
+        bloom.insert(trace_id);
+    }
+    TraceBlockStats {
+        object_key: object_key.to_string(),
+        min_ts,
+        max_ts,
+        bloom,
+        tag_names: BTreeSet::new(),
+        tag_values: BTreeMap::new(),
+        row_count: 0,
+        level: BlockLevel::INGESTED,
+    }
+}
+
+/// The M3 race, in the order that makes it bite.
+///
+/// A block builder and a compactor each hold their own in-memory `TraceIndex`,
+/// both naming the same ingested block. The compactor replaces that block, and
+/// its snapshot lands while the builder is already inside a write it merged
+/// from the older base. The builder has no removal to replay, because it never
+/// made one, so a merge that contributed every block the builder names would
+/// union the compaction's input back in beside its output, and every trace in
+/// it would be read twice until the builder restarted.
+///
+/// The builder's write loses the conditional create and merges again, this time
+/// against the compactor's snapshot, and contributes only the block it has
+/// written since its last successful write.
+#[tokio::test]
+async fn a_builder_merge_does_not_resurrect_the_block_a_compactor_replaced() {
+    let handoff_store = Arc::new(SnapshotHandoffStore::new("index/traces"));
+    let store: Arc<dyn ObjectStore> = Arc::clone(&handoff_store) as Arc<dyn ObjectStore>;
+    let config = block_builder_config();
+
+    // The builder publishes one block, so builder and compactor both name it
+    // from the same durable snapshot.
+    let mut builder_index = TraceIndex::new();
+    flush_one_window(&store, &config, &mut builder_index, 3, 10, [1; 16], 100).await;
+    let input_key = block_key(3, 10, 100);
+    check!(indexed_block_keys(&builder_index) == vec![input_key.clone()]);
+
+    // The compactor is another process: it loads that snapshot and swaps the
+    // ingested block for a compacted one.
+    let compacted_key = "traces/tenant-a/compacted/l1-100-100-000000000000002a.parquet";
+    let mut compactor_index = TraceIndex::load_latest_snapshot(&store, &config.index_key)
+        .await
+        .unwrap();
+    compactor_index.replace_trace_blocks(
+        "tenant-a",
+        std::slice::from_ref(&input_key),
+        trace_block_stats(compacted_key, 100, 100, &[[1; 16]]),
+    );
+
+    // The builder starts its next save and is held inside the put, having
+    // already merged a base that still names the input block.
+    let handoff = handoff_store.arm();
+    let builder = async {
+        flush_one_window(&store, &config, &mut builder_index, 3, 11, [2; 16], 200).await;
+    };
+    let compactor = async {
+        handoff.reached.await.unwrap();
+        compactor_index
+            .save_latest_snapshot(&store, &config.index_key)
+            .await
+            .unwrap();
+        handoff.release.send(()).unwrap();
+    };
+    tokio::join!(builder, compactor);
+
+    let next_key = block_key(3, 11, 200);
+    let reloaded = TraceIndex::load_latest_snapshot(&store, &config.index_key)
+        .await
+        .unwrap();
+    check!(indexed_block_keys(&reloaded) == vec![next_key, compacted_key.to_string()]);
+    // The compacted-away input is gone, so its trace is found once.
+    check!(
+        reloaded.candidate_blocks_for_trace("tenant-a", &[1; 16], 0, 1_000)
+            == vec![compacted_key.to_string()]
+    );
+    // Seed, the builder's rejected write, the compactor's, the builder's
+    // retry: the interleaving happened rather than the two writes lining up.
+    check!(handoff_store.snapshot_put_count() == 4);
+}
+
+/// The other direction, and the one that rules out a plain tombstone.
+///
+/// Object keys are derived from what a block holds, not minted, so the same key
+/// can be handed out again for a different input set, which is exactly what
+/// `planned_compacted_object_key` allows. Here a writer publishes a new block under the
+/// key a compactor has just retired, and the compactor's merge lands after it.
+///
+/// A removal recorded by name alone would drop that block, and the drop would
+/// be carried forward by every later snapshot: a live object nothing names any
+/// more. Pinning the removal to the record it retired makes it simply not
+/// match.
+#[tokio::test]
+async fn a_block_written_again_under_a_retired_key_survives_the_compactor_merge() {
+    let handoff_store = Arc::new(SnapshotHandoffStore::new("index/traces"));
+    let store: Arc<dyn ObjectStore> = Arc::clone(&handoff_store) as Arc<dyn ObjectStore>;
+    let index_key = "index/traces.json";
+    let reused_key = "traces/tenant-a/compacted/l1-100-200-0000000000000001.parquet";
+    let output_key = "traces/tenant-a/compacted/l2-100-200-0000000000000002.parquet";
+
+    // Generation zero names the block the compactor is about to retire.
+    let mut seed = TraceIndex::new();
+    seed.add_trace_block(
+        "tenant-a",
+        trace_block_stats(reused_key, 100, 200, &[[1; 16]]),
+    );
+    seed.save_latest_snapshot(&store, index_key).await.unwrap();
+
+    let mut compactor_index = TraceIndex::load_latest_snapshot(&store, index_key)
+        .await
+        .unwrap();
+    compactor_index.replace_trace_blocks(
+        "tenant-a",
+        &[reused_key.to_string()],
+        trace_block_stats(output_key, 100, 200, &[[1; 16]]),
+    );
+
+    // A second writer mints the same key for a different set of traces and a
+    // later time range, and publishes it while the compactor is held.
+    let mut reuser = TraceIndex::new();
+    reuser.add_trace_block(
+        "tenant-a",
+        trace_block_stats(reused_key, 300, 400, &[[9; 16]]),
+    );
+
+    let handoff = handoff_store.arm();
+    let compactor = async {
+        compactor_index
+            .save_latest_snapshot(&store, index_key)
+            .await
+            .unwrap();
+    };
+    let reuser_write = async {
+        handoff.reached.await.unwrap();
+        reuser
+            .save_latest_snapshot(&store, index_key)
+            .await
+            .unwrap();
+        handoff.release.send(()).unwrap();
+    };
+    tokio::join!(compactor, reuser_write);
+
+    let reloaded = TraceIndex::load_latest_snapshot(&store, index_key)
+        .await
+        .unwrap();
+    check!(indexed_block_keys(&reloaded) == vec![reused_key.to_string(), output_key.to_string()]);
+    // The live block under the reused key is the new one: its traces and its
+    // time range, not the retired record's.
+    check!(
+        reloaded.candidate_blocks_for_trace("tenant-a", &[9; 16], 300, 400)
+            == vec![reused_key.to_string()]
+    );
+    // And the retired record really is retired: over its own range the trace it
+    // held resolves to the compaction output alone.
+    check!(
+        reloaded.candidate_blocks_for_trace("tenant-a", &[1; 16], 100, 200)
+            == vec![output_key.to_string()]
+    );
+    // Seed, the compactor's rejected write, the reuser's, the compactor's
+    // retry.
+    check!(handoff_store.snapshot_put_count() == 4);
 }

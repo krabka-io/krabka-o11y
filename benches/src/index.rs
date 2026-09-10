@@ -2,7 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use krabka_blockstore::{BlockMeta, Index, Labels, ShardedTraceBloom, TraceBlockStats, TraceIndex};
+use krabka_blockstore::{
+    BlockLevel, BlockMeta, Index, Labels, ShardedTraceBloom, TraceBlockStats, TraceIndex,
+};
 
 use crate::Seeded;
 
@@ -76,6 +78,7 @@ pub fn populated_index(series: usize, blocks: usize) -> Index {
             max_ts: start + span - 1,
             row_count: series,
             fingerprints: fingerprints.clone(),
+            level: BlockLevel::INGESTED,
         });
     }
     index
@@ -126,6 +129,8 @@ pub fn populated_trace_index(blocks: usize, traces: usize) -> TraceIndex {
                 bloom,
                 tag_names: tag_values.keys().cloned().collect(),
                 tag_values,
+                row_count: 0,
+                level: BlockLevel::INGESTED,
             },
         );
     }

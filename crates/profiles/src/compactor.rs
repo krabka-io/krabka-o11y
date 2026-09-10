@@ -7,19 +7,21 @@ use std::{
 
 use arrow::{
     array::{Array, ArrayRef, AsArray, BinaryArray, UInt64Array},
-    datatypes::{Int32Type, Int64Type, UInt64Type},
+    compute::concat_batches,
+    datatypes::{Int32Type, Int64Type, SchemaRef, UInt64Type},
     record_batch::RecordBatch,
 };
+use futures::StreamExt;
 use krabka_blockstore::{
-    BlockMeta, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, CompactionJob, CompactionPolicy,
-    PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION,
-    PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, ProfileIndex, ProfileSampleRow, SummaryColumns,
-    encode_profile_samples, input_key_fingerprint, plan_compactions as plan_level_compactions,
-    profile_samples_decl,
+    BlockMeta, BlockStoreError, BlockStreamWriter, BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP,
+    CompactionJob, CompactionPolicy, DEFAULT_BLOCK_READ_MAX, MERGE_BATCH_ROWS,
+    MERGE_READ_BATCH_ROWS, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
+    PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, ProfileIndex,
+    ProfileSampleRow, SortedMerge, SummaryColumns, encode_profile_samples, input_key_fingerprint,
+    open_block_stream, plan_compactions as plan_level_compactions, profile_samples_decl,
 };
 use krabka_pprof::SymbolDb;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::{blockbuilder::STACKTRACE_PARTITION, error::ProfilesError};
 
@@ -343,6 +345,7 @@ mod tests {
             max_ts,
             row_count,
             fingerprints: Vec::new(),
+            level: BlockLevel::INGESTED,
         }
     }
 
@@ -488,12 +491,11 @@ mod destination_partitions;
 mod downsample_batches;
 mod downsample_key;
 mod downsample_policy;
-mod load_batches;
 mod load_symdb;
 mod plan_compactions;
 mod remap_partitions;
+mod sample_group_buffer;
 mod source_partitions;
-mod write_batches;
 
 pub use compact_blocks::compact_blocks;
 pub use compact_blocks_with_policy::compact_blocks_with_policy;
@@ -504,9 +506,8 @@ use destination_partitions::destination_partitions;
 use downsample_batches::downsample_batches;
 use downsample_key::DownsampleKey;
 pub use downsample_policy::DownsamplePolicy;
-use load_batches::load_batches;
 use load_symdb::load_symdb;
 pub use plan_compactions::plan_compactions;
 use remap_partitions::remap_partitions;
+use sample_group_buffer::SampleGroupBuffer;
 use source_partitions::source_partitions;
-use write_batches::write_batches;

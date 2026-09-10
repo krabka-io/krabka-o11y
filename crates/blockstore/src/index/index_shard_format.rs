@@ -10,4 +10,4 @@ pub(crate) const INDEX_SHARD_MAGIC: [u8; 4] = *b"KBIX";
 ///
 /// One version, no fallback: Krabka is greenfield, so a shard written by an
 /// older build is deleted, not migrated.
-pub(crate) const INDEX_SHARD_FORMAT_VERSION: u8 = 1;
+pub(crate) const INDEX_SHARD_FORMAT_VERSION: u8 = 2;
