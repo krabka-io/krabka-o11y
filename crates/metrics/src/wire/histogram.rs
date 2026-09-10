@@ -109,33 +109,56 @@ mod tests {
     }
 
     /// Schema -53 is the custom-bucket form. Its boundaries live in
-    /// `custom_values` and must cover every populated bucket, and it carries
-    /// no negative side at all.
+    /// `custom_values`, which must cover every populated bucket but the last --
+    /// that one is the implicit `+Inf` bucket and has no upper bound to state.
+    /// A custom-bucket histogram carries no negative side at all.
     #[test]
-    fn custom_bucket_histograms_need_bounds_for_every_bucket() {
+    fn custom_bucket_histograms_need_bounds_for_every_bucket_but_the_last() {
         let nhcb = |positive: &[BucketSpan], counts: &[f64], custom: Option<&[f64]>| {
             validate_spans_and_counts(-53, positive, counts, &[], &[], custom)
         };
 
-        // As many bounds as buckets is enough, and more is fine.
+        // One bound short of the bucket count is the normal shape: a classic
+        // histogram with bounds 1 and 2 converts to three buckets, the last of
+        // them `+Inf`. As many bounds as buckets is fine too, and more is fine.
+        check!(nhcb(&[bucket_span(0, 3)], &[1.0, 2.0, 3.0], Some(&[1.0, 2.0])).is_ok());
         check!(nhcb(&[bucket_span(0, 2)], &[1.0, 2.0], Some(&[1.0, 2.0])).is_ok());
         check!(nhcb(&[bucket_span(0, 2)], &[1.0, 2.0], Some(&[1.0, 2.0, 3.0])).is_ok());
 
-        // One bound short is not.
-        let err = nhcb(&[bucket_span(0, 2)], &[1.0, 2.0], Some(&[1.0]))
+        // Two bounds short is not.
+        let err = nhcb(&[bucket_span(0, 3)], &[1.0, 2.0, 3.0], Some(&[1.0]))
             .unwrap_err()
             .to_string();
         check!(
-            err.contains("2 populated buckets but only 1 custom values"),
+            err.contains("spans 3 buckets but only 1 custom values"),
             "got: {err}"
         );
 
-        // No custom values at all counts as none rather than as unbounded.
-        let err = nhcb(&[bucket_span(0, 1)], &[1.0], None)
+        // A span offset skips over buckets that still need bounds behind them,
+        // so it counts towards the span length the same way a length does. Two
+        // bounds cover a span of three; the same one bucket pushed one place
+        // further out spans four and no longer fits. The pinned Prometheus
+        // image answers both shapes exactly this way -- it accepts the first
+        // and refuses the second with "only 2 custom bounds defined which is
+        // insufficient to cover total span length of 4".
+        check!(nhcb(&[bucket_span(2, 1)], &[1.0], Some(&[1.0, 2.0])).is_ok());
+        let err = nhcb(&[bucket_span(3, 1)], &[1.0], Some(&[1.0, 2.0]))
             .unwrap_err()
             .to_string();
         check!(
-            err.contains("1 populated buckets but only 0 custom values"),
+            err.contains("spans 4 buckets but only 2 custom values"),
+            "got: {err}"
+        );
+
+        // No custom values at all still admits one bucket: that is the `+Inf`
+        // bucket, and a classic histogram whose only bucket is `+Inf` converts
+        // to exactly this. Two buckets with no bounds is refused.
+        check!(nhcb(&[bucket_span(0, 1)], &[1.0], None).is_ok());
+        let err = nhcb(&[bucket_span(0, 2)], &[1.0, 2.0], None)
+            .unwrap_err()
+            .to_string();
+        check!(
+            err.contains("spans 2 buckets but only 0 custom values"),
             "got: {err}"
         );
 
@@ -448,16 +471,17 @@ mod tests {
 
     #[test]
     fn nhcb_histogram_rejects_too_few_custom_values() {
-        // NHCB with 2 populated positive buckets but only 1 custom boundary.
+        // NHCB with 3 populated positive buckets but only 1 custom boundary.
+        // Two buckets would be legal: the last one is the implicit `+Inf`.
         let histogram = pb::v2::Histogram {
             schema: -53,
             positive_spans: vec![pb::v2::BucketSpan {
                 offset: 0,
-                length: 2,
+                length: 3,
             }],
-            positive_counts: vec![1.0, 2.0],
+            positive_counts: vec![1.0, 2.0, 3.0],
             custom_values: vec![0.5],
-            count: Some(pb::v2::histogram::Count::CountFloat(3.0)),
+            count: Some(pb::v2::histogram::Count::CountFloat(6.0)),
             ..Default::default()
         };
 
@@ -490,6 +514,95 @@ mod tests {
 
         assert!(matches!(err, WireError::Invalid(_)));
         assert!(format!("{err}").contains("must not carry negative buckets"));
+    }
+
+    /// An integer histogram's buckets arrive as a run of deltas that is summed
+    /// into an `i64`. `i64::MAX` is the last total that run can reach; a step
+    /// past it, from either end, is malformed input and has to come back as a
+    /// decode error rather than a panic or a wrapped bucket count.
+    #[test]
+    fn a_delta_run_decodes_up_to_i64_max_and_no_further() {
+        // `i64::MAX` rounded to the nearest `f64`, which is 2^63 exactly.
+        const I64_MAX_AS_F64: f64 = 9.223_372_036_854_776e18;
+
+        let v1 = |deltas: Vec<i64>| pb::v1::Histogram {
+            schema: 0,
+            positive_spans: vec![pb::v1::BucketSpan {
+                offset: 0,
+                length: u32::try_from(deltas.len()).unwrap(),
+            }],
+            positive_deltas: deltas,
+            ..Default::default()
+        };
+
+        // Landing exactly on the boundary is a decode, not an error, and the
+        // second bucket holds the same absolute count as the first.
+        let native = v1_histogram_to_native(&v1(vec![i64::MAX, 0])).unwrap();
+        check!(native.positive_counts == vec![I64_MAX_AS_F64, I64_MAX_AS_F64]);
+
+        // One more than the boundary is not.
+        for deltas in [
+            vec![i64::MAX, 1],
+            vec![i64::MIN, -1],
+            vec![1, i64::MAX, i64::MAX],
+        ] {
+            let err = v1_histogram_to_native(&v1(deltas.clone())).unwrap_err();
+
+            check!(matches!(err, WireError::Invalid(_)), "deltas {deltas:?}");
+            check!(
+                format!("{err}").contains("overflows i64"),
+                "deltas {deltas:?}: {err}"
+            );
+            check!(err.status_code() == 400, "deltas {deltas:?}");
+        }
+
+        // The v2 message decodes through the same delta run, on the negative
+        // side as well as the positive one.
+        let v2 = pb::v2::Histogram {
+            schema: 0,
+            negative_spans: vec![pb::v2::BucketSpan {
+                offset: 0,
+                length: 2,
+            }],
+            negative_deltas: vec![i64::MAX, 1],
+            ..Default::default()
+        };
+        let err = v2_histogram_to_native(&v2).unwrap_err();
+        check!(matches!(err, WireError::Invalid(_)));
+        check!(format!("{err}").contains("overflows i64"), "{err}");
+    }
+
+    /// The 44-byte `remote_write` body a fuzzer found. It holds one series,
+    /// labelled `up`, carrying a v1 histogram whose two `positive_deltas` are
+    /// each `i64::MAX`: the running bucket count overflows on the second. The
+    /// bytes are spelled out rather than re-encoded, so the test drives what
+    /// actually reaches the ingest handler.
+    #[test]
+    fn the_fuzzed_overflowing_histogram_body_is_a_400_not_a_panic() {
+        use krabka_units::prelude::mebibytes;
+
+        use crate::wire::decode_v1;
+
+        const BODY: &[u8] = &[
+            // Snappy block: 42 bytes uncompressed, as one 42-byte literal.
+            0x2a, 0xa4, //
+            // WriteRequest.timeseries, 40 bytes.
+            0x0a, 0x28, //
+            // TimeSeries.labels: {__name__="up"}.
+            0x0a, 0x0e, 0x0a, 0x08, b'_', b'_', b'n', b'a', b'm', b'e', b'_', b'_', 0x12, 0x02,
+            b'u', b'p', //
+            // TimeSeries.histograms, 22 bytes.
+            0x22, 0x16, //
+            // Histogram.positive_deltas, twice, each the zigzag of `i64::MAX`.
+            0x60, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, //
+            0x60, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
+        ];
+
+        let err = decode_v1(BODY, mebibytes(1)).unwrap_err();
+
+        assert!(matches!(err, WireError::Invalid(_)));
+        check!(format!("{err}").contains("overflows i64"), "{err}");
+        check!(err.status_code() == 400);
     }
 }
 

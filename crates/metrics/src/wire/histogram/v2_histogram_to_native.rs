@@ -8,9 +8,9 @@ use super::{
 pub fn v2_histogram_to_native(histogram: &pb::v2::Histogram) -> Result<NativeHistogram, WireError> {
     let schema = schema_i8(histogram.schema)?;
     let positive_spans = v2_spans(&histogram.positive_spans);
-    let positive_counts = counts(&histogram.positive_counts, &histogram.positive_deltas);
+    let positive_counts = counts(&histogram.positive_counts, &histogram.positive_deltas)?;
     let negative_spans = v2_spans(&histogram.negative_spans);
-    let negative_counts = counts(&histogram.negative_counts, &histogram.negative_deltas);
+    let negative_counts = counts(&histogram.negative_counts, &histogram.negative_deltas)?;
     let custom_values =
         (!histogram.custom_values.is_empty()).then(|| histogram.custom_values.clone());
     validate_spans_and_counts(

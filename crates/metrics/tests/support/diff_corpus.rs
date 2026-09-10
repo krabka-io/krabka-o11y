@@ -12,19 +12,6 @@ pub struct SeedPoint {
     pub samples: &'static [(i64, f64)],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct QueryCase {
-    pub name: &'static str,
-    pub promql: &'static str,
-    pub kind: QueryKind,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum QueryKind {
-    Instant { time: i64 },
-    Range { start: i64, end: i64, step: i64 },
-}
-
 #[must_use]
 pub fn seed_dataset() -> Vec<SeedPoint> {
     vec![
@@ -77,61 +64,6 @@ pub fn seed_dataset() -> Vec<SeedPoint> {
             metric: "native_histogram_marker",
             labels: &[("job", "api")],
             samples: &[(0, 1.0), (15_000, 1.0), (30_000, 1.0), (45_000, 1.0)],
-        },
-    ]
-}
-
-#[must_use]
-pub fn query_corpus() -> Vec<QueryCase> {
-    vec![
-        QueryCase {
-            name: "counter_rate_by_method",
-            promql: "sum by (method) (rate(http_requests_total[30s]))",
-            kind: QueryKind::Instant { time: 45_000 },
-        },
-        QueryCase {
-            name: "classic_histogram_quantile",
-            promql: "histogram_quantile(0.9, sum by (le) (rate(http_request_duration_seconds_bucket[30s])))",
-            kind: QueryKind::Instant { time: 45_000 },
-        },
-        QueryCase {
-            name: "counter_increase",
-            promql: "increase(http_requests_total[45s])",
-            kind: QueryKind::Instant { time: 45_000 },
-        },
-        QueryCase {
-            name: "binary_on_group_left",
-            promql: "http_requests_total{method=\"GET\"} / on (job) group_left cpu_temperature_celsius",
-            kind: QueryKind::Instant { time: 45_000 },
-        },
-        QueryCase {
-            name: "topk_gauge",
-            promql: "topk(1, cpu_temperature_celsius)",
-            kind: QueryKind::Instant { time: 45_000 },
-        },
-        QueryCase {
-            name: "over_time",
-            promql: "avg_over_time(cpu_temperature_celsius[45s])",
-            kind: QueryKind::Instant { time: 45_000 },
-        },
-        QueryCase {
-            name: "at_offset",
-            promql: "up @ 30000 offset 15s",
-            kind: QueryKind::Instant { time: 45_000 },
-        },
-        QueryCase {
-            name: "subquery",
-            promql: "max_over_time(rate(http_requests_total[30s])[45s:15s])",
-            kind: QueryKind::Instant { time: 45_000 },
-        },
-        QueryCase {
-            name: "range_rate",
-            promql: "rate(http_requests_total[30s])",
-            kind: QueryKind::Range {
-                start: 15_000,
-                end: 45_000,
-                step: 15_000,
-            },
         },
     ]
 }

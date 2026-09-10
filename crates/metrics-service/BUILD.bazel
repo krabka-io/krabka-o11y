@@ -2,6 +2,37 @@ load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
 
 package(default_visibility = ["//visibility:public"])
 
+# The vendored Prometheus `promql/promqltest` corpus, which
+# `tests/support/promql_corpus.rs` reads to build the differential corpus. It
+# lives with //crates/promql, which runs the same files in process; naming every
+# file here rather than globbing keeps the two suites' view of the corpus one
+# list, and `promql_corpus` fails when the directory holds a `.test` file it does
+# not name. Under Bazel that check sees only the files named here, so it catches
+# a file this list has and Rust does not; the reverse -- a newly vendored file in
+# neither -- is caught by the `cargo` lane, which reads the directory itself.
+PROMQL_CORPUS = ["//crates/promql:tests/testdata/%s.test" % stem for stem in [
+    "aggregators",
+    "at_modifier",
+    "collision",
+    "duration_expression",
+    "extended_vectors",
+    "functions",
+    "histograms",
+    "info",
+    "limit",
+    "literals",
+    "name_label_dropping",
+    "native_histograms",
+    "operators",
+    "range_queries",
+    "ranges",
+    "selectors",
+    "staleness",
+    "subquery",
+    "trig_functions",
+    "type_and_unit",
+]]
+
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
 exports_files(["Cargo.toml"])
 
@@ -17,7 +48,7 @@ crate_binary(
 crate_tests(
     # The shipped clock rule bundle. `clock_rules_bundle` loads it from this
     # path and evaluates it, so the suite reads the file a deployment ships.
-    data = ["rules/krabka-clock.yaml"],
+    data = ["rules/krabka-clock.yaml"] + PROMQL_CORPUS,
     # Suites that drive a real Grafana-stack component and compare against
     # it, with the images each one starts. //bazel/images pins those by
     # digest and //bazel/defs.bzl loads them before the suite runs.
@@ -26,9 +57,11 @@ crate_tests(
         "diff_prometheus": ["prometheus"],
         "grafana_integration": ["grafana"],
     },
-    # The differential corpus lives with //crates/metrics and these suites
+    # The hand-written seed dataset lives with //crates/metrics and these suites
     # reach it with `#[path]`; naming it here puts it at that same relative
-    # path inside the sandbox.
+    # path inside the sandbox. The corpus-driven differential corpus is a
+    # sibling of the suites themselves, under tests/support/, so `crate_tests`
+    # picks it up as an ordinary helper module.
     extra_srcs = {
         stem: ["//crates/metrics:tests/support/diff_corpus.rs"]
         for stem in [
