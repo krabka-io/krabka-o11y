@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, InstantSample, LabelModifier, SampleValue, TokenType, aggregate_labels,
-    compare_k_aggregate_samples, labels_key,
+    BTreeMap, InstantSample, LabelModifier, SampleValue, T_TOPK, TokenType, aggregate_labels,
+    compare_k_aggregate_samples, emit_info, histogram_ignored_in_aggregation_info, labels_key,
 };
 
 /// Shared `topk`/`bottomk` core over an already-evaluated instant vector.
@@ -28,6 +28,7 @@ pub(crate) fn apply_k_aggregate(
     let mut groups = BTreeMap::<String, Vec<InstantSample>>::new();
     for sample in samples {
         if matches!(sample.value, SampleValue::Histogram(_)) {
+            emit_info(histogram_ignored_in_aggregation_info(k_aggregate_name(op)));
             continue;
         }
         let labels = aggregate_labels(&sample.labels, modifier);
@@ -41,4 +42,12 @@ pub(crate) fn apply_k_aggregate(
         out.extend(group);
     }
     out
+}
+
+/// The `topk`/`bottomk` name that Prometheus spells in an annotation.
+fn k_aggregate_name(op: TokenType) -> &'static str {
+    if op.id() == T_TOPK {
+        return "topk";
+    }
+    "bottomk"
 }

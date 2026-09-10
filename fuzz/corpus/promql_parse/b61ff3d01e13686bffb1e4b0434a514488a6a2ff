@@ -1,0 +1,1 @@
+http_requests_total{group="canary"} / on(instance,job) http_requests_total{group="production"}

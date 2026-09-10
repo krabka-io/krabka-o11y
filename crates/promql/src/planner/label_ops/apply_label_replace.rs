@@ -1,4 +1,4 @@
-use super::{InstantSample, PromqlError, Regex, Result};
+use super::{InstantSample, PromqlError, Regex, Result, set_label_value};
 
 /// Applies `label_replace(v, dst_label, replacement, src_label, regex)` to an
 /// already-assembled instant vector.
@@ -8,10 +8,12 @@ use super::{InstantSample, PromqlError, Regex, Result};
 /// the destination label to `replacement` with `$1` and `${name}` capture-group
 /// expansion. A series that does not match passes through unchanged. This
 /// function keeps `__name__` unless `dst_label == "__name__"`; these functions
-/// never drop the metric name themselves. An empty expansion writes
-/// `dst_label=""`, because the interpreter's `Labels::insert` keeps
-/// empty-valued labels. The empty entry then takes part in later collision
-/// checks exactly as the interpreter sees it.
+/// never drop the metric name themselves. An empty expansion REMOVES
+/// `dst_label`, because Prometheus writes the result through
+/// `labels.Builder.Set`, which deletes a label rather than store it empty. The
+/// removal then takes part in later collision checks exactly as Prometheus sees
+/// it, which is what makes `label_replace(testmetric, "src", "", "", "")` a
+/// duplicate-labelset failure.
 ///
 /// # Errors
 ///
@@ -37,7 +39,7 @@ pub fn apply_label_replace(
             if let Some(captures) = regex.captures(sample.labels.get(src_label).unwrap_or("")) {
                 let mut value = String::new();
                 captures.expand(replacement, &mut value);
-                sample.labels.insert(dst_label, value);
+                sample.labels = set_label_value(&sample.labels, dst_label, &value);
             }
             sample
         })

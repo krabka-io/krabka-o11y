@@ -30,6 +30,7 @@ use crate::{
 
 mod aggregate_grouping;
 mod binary_operand_is_plannable;
+mod float_scalar_math_values;
 mod instant_expr_is_plannable;
 mod is_extended_range_fold_call;
 mod label_ops_kind;
@@ -54,6 +55,7 @@ mod validate_extended_selector_modifier;
 
 pub(super) use aggregate_grouping::aggregate_grouping;
 use binary_operand_is_plannable::binary_operand_is_plannable;
+pub(super) use float_scalar_math_values::float_scalar_math_values;
 pub(super) use instant_expr_is_plannable::instant_expr_is_plannable;
 pub(super) use is_extended_range_fold_call::is_extended_range_fold_call;
 pub(super) use label_ops_kind::LabelOpsKind;

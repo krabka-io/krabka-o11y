@@ -9,4 +9,7 @@ pub struct IngestQuery {
     pub units: String,
     pub from_ms: Option<i64>,
     pub until_ms: Option<i64>,
+    /// The `?spyName=` profiler that produced the upload. Pyroscope stores it
+    /// as the `pyroscope_spy` series label and defaults it to `unknown`.
+    pub spy_name: String,
 }

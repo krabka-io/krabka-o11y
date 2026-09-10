@@ -1,7 +1,7 @@
 use crate::{
-    HttpQueryError, LokiDirection, QuerierState, QueryKind, QueryParams, TimeRange, Value,
-    add_loki_query_stats, apply_label_join_to_loki_result, apply_label_replace_to_loki_result,
-    execute_http_label_replace_metric_binary_expression,
+    HttpQueryError, LokiDirection, LokiStreamEncoding, QuerierState, QueryKind, QueryParams,
+    TimeRange, Value, add_loki_query_stats, apply_label_join_to_loki_result,
+    apply_label_replace_to_loki_result, execute_http_label_replace_metric_binary_expression,
     execute_http_metric_binary_arithmetic_query, execute_http_metric_binary_comparison_query,
     execute_http_metric_binary_set_query, execute_http_metric_expression_query,
     execute_http_metric_query, execute_http_metric_scalar_arithmetic_query,

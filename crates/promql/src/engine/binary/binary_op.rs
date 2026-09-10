@@ -152,22 +152,33 @@ impl BinaryOp {
             (Self::Mul, ScalarSide::Left | ScalarSide::Right) => scalar,
             (Self::Div, ScalarSide::Right) => 1.0 / scalar,
             _ => {
-                if self.is_comparison() {
-                    // Prometheus ignores the histogram operand in a comparison
-                    // against a float, dropping the sample and raising an info.
-                    let (lhs, rhs) = match scalar_side {
-                        ScalarSide::Left => ("float", "histogram"),
-                        ScalarSide::Right => ("histogram", "float"),
-                    };
-                    emit_info(incompatible_types_in_binop_info(lhs, self.symbol(), rhs));
-                }
+                // Every operator but `*` and `histogram / scalar` is undefined
+                // between a histogram and a float: Prometheus drops the sample
+                // and raises an info saying so.
+                let (lhs, rhs) = match scalar_side {
+                    ScalarSide::Left => ("float", "histogram"),
+                    ScalarSide::Right => ("histogram", "float"),
+                };
+                emit_info(incompatible_types_in_binop_info(lhs, self.symbol(), rhs));
                 return None;
             }
         };
+        let mut out = scaled_native_histogram(histogram, factor);
+        if matches!((self, scalar_side), (Self::Div, ScalarSide::Right))
+            && matches!(scalar.classify(), std::num::FpCategory::Zero)
+        {
+            // `FloatHistogram.Div` removes the buckets outright when it divides
+            // by zero: a histogram of nothing but infinities says less than one
+            // with no buckets at all.
+            out.positive_spans.clear();
+            out.positive_counts.clear();
+            out.negative_spans.clear();
+            out.negative_counts.clear();
+        }
         Some(InstantSample {
             labels: labels_without_metric_name(labels),
             ts_ms,
-            value: SampleValue::Histogram(scaled_native_histogram(histogram, factor)),
+            value: SampleValue::Histogram(out),
         })
     }
 

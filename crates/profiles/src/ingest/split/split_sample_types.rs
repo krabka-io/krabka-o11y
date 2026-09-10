@@ -71,6 +71,15 @@ pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, Profi
                 .get(idx)
                 .copied()
                 .ok_or_else(|| ProfilesError::Decode(format!("sample value[{idx}] missing")))?;
+            // A pprof with several sample types has samples that belong to
+            // only some of them. A Go heap profile's live objects add nothing
+            // to `alloc_space`. Pyroscope drops such a sample from the series
+            // it adds nothing to, so a stack that is zero here never reaches
+            // the flamegraph. If krabka kept it, krabka's flamegraph would
+            // hold nodes that Pyroscope's does not, at the same total.
+            if value == 0 {
+                continue;
+            }
             let timestamp_ns = raw
                 .sample_timestamps_ns
                 .get(sample_idx)

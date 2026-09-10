@@ -1,16 +1,16 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fmt,
     str::FromStr,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
+use bytes::Bytes;
 use futures::StreamExt as _;
-use krabka_units::{ByteSize, mebibytes};
-use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload, path::Path};
+use krabka_units::{ByteSize, convert::ByteSizeExt, mebibytes};
+use object_store::{
+    ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, path::Path,
+};
 use refined_type::rule::GreaterUsize;
 use tracing::instrument;
 
@@ -54,22 +54,28 @@ mod tests {
 
 mod default_index_snapshot_max;
 mod default_index_snapshot_retain;
+mod index_snapshot_base;
 mod index_snapshot_prefix_for_key;
 mod index_snapshot_retain;
 mod latest_index_snapshot_path;
 mod list_index_snapshot_objects;
-mod next_snapshot_key;
+mod pending_block_removals;
 mod prune_old_index_snapshots;
 mod put_index_snapshot;
-mod snapshot_counter;
+mod read_index_snapshot_bytes;
+mod snapshot_generation_from_path;
+mod snapshot_key_for_generation;
 
 pub use default_index_snapshot_max::DEFAULT_INDEX_SNAPSHOT_MAX;
 pub use default_index_snapshot_retain::DEFAULT_INDEX_SNAPSHOT_RETAIN;
+use index_snapshot_base::read_index_snapshot_base;
 pub use index_snapshot_prefix_for_key::index_snapshot_prefix_for_key;
 pub use index_snapshot_retain::IndexSnapshotRetain;
 pub use latest_index_snapshot_path::latest_index_snapshot_path;
 pub use list_index_snapshot_objects::list_index_snapshot_objects;
-use next_snapshot_key::next_snapshot_key;
+pub(crate) use pending_block_removals::PendingBlockRemovals;
 use prune_old_index_snapshots::prune_old_index_snapshots;
-pub use put_index_snapshot::put_index_snapshot;
-use snapshot_counter::SNAPSHOT_COUNTER;
+pub(crate) use put_index_snapshot::put_index_snapshot;
+pub(crate) use read_index_snapshot_bytes::{IndexSnapshotBytes, read_index_snapshot_bytes};
+use snapshot_generation_from_path::snapshot_generation_from_path;
+use snapshot_key_for_generation::snapshot_key_for_generation;

@@ -1,6 +1,8 @@
 use super::{
     AggregateOp, AggregateState, BTreeMap, InstantSample, LabelModifier, PromqlError, Result,
-    SampleValue, aggregate_labels, labels_key,
+    SampleValue, aggregate_labels, emit_info, emit_warning,
+    histogram_counter_reset_collision_warning, histogram_ignored_in_aggregation_info, labels_key,
+    mixed_floats_histograms_agg_warning,
 };
 
 /// Shared simple-aggregation core over an already-evaluated instant vector.
@@ -27,8 +29,8 @@ use super::{
 /// - `count`/`group` (`counts_histograms`): every sample is counted, whatever
 ///   its type. Histograms go through [`AggregateState::push_observation`].
 /// - `min`/`max`/`stddev`/`stdvar` (`ignores_histograms`): histogram samples are
-///   dropped with no annotation, exactly as the interpreter ignores them. This
-///   matches Prometheus.
+///   dropped, and the query carries a `HistogramIgnoredInAggregationInfo` to say
+///   so, because the answer was computed over less than the input.
 ///
 /// This function returns `Err` only for the unreachable case of a histogram
 /// sample under an op that does not aggregate, count, or ignore histograms.
@@ -58,7 +60,9 @@ pub(crate) fn apply_simple_aggregate(
                 state.push_histogram(histogram)?;
             }
             SampleValue::Histogram(_) if op.counts_histograms() => state.push_observation(),
-            SampleValue::Histogram(_) if op.ignores_histograms() => {}
+            SampleValue::Histogram(_) if op.ignores_histograms() => {
+                emit_info(histogram_ignored_in_aggregation_info(op.name()));
+            }
             SampleValue::Histogram(_) => {
                 return Err(PromqlError::Plan(
                     "native histogram reached an invalid aggregate classification".to_string(),
@@ -70,6 +74,14 @@ pub(crate) fn apply_simple_aggregate(
     Ok(groups
         .into_values()
         .filter_map(|state| {
+            if state.has_counter_reset_collision() {
+                emit_warning(histogram_counter_reset_collision_warning("aggregation"));
+            }
+            if state.invalid_mixed_sample_type {
+                // A group that took in both a float and a histogram has no sum
+                // and no mean: Prometheus drops it and warns.
+                emit_warning(mixed_floats_histograms_agg_warning());
+            }
             op.finish(&state).map(|value| InstantSample {
                 labels: state.labels,
                 ts_ms: time_ms,

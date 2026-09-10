@@ -78,6 +78,33 @@ mod tests {
         assert2::assert!(matches!(err, PromqlError::Parse(_)));
     }
 
+    /// A subquery's colon is found by scanning the bracket content, and the
+    /// slice that splits range from step is taken with the index that scan
+    /// returns. The two have to agree about what an index counts. `x[é:]` is
+    /// the smallest query where a character index and a byte index differ, so
+    /// it is the one that decides it: malformed either way, it must come back
+    /// as a parse error rather than panic inside a multi-byte character.
+    #[test]
+    fn a_subquery_range_holding_a_multibyte_character_is_a_parse_error() {
+        for query in ["x[é:]", "x[é:1m]", "x[1m:é]", "x[é]", "x[é1m:é1m]"] {
+            let err = parse_promql(query).unwrap_err();
+
+            assert2::assert!(matches!(err, PromqlError::Parse(_)), "query `{query}`");
+        }
+    }
+
+    /// The colon index is relative to the bracket content, not to the query,
+    /// and a multi-byte character earlier in the query must not move it. Both
+    /// of these are well-formed subqueries and have to keep parsing.
+    #[test]
+    fn a_multibyte_character_outside_the_brackets_leaves_a_subquery_alone() {
+        let expr = parse_promql(r#"x{label="é"}[10m:1m]"#).unwrap();
+        assert2::assert!(expr.to_string() == r#"x{label="é"}[10m:1m]"#);
+
+        let expr = parse_promql(r#"x{label="é"}[10m:]"#).unwrap();
+        assert2::assert!(expr.to_string() == r#"x{label="é"}[10m:]"#);
+    }
+
     #[test]
     fn parse_promql_preserves_unparenthesized_offset_precedence() {
         let expr = parse_promql_with_duration_context(

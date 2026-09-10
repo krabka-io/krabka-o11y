@@ -1,5 +1,6 @@
 use super::{
-    IngestFormat, IngestQuery, ProfilesError, parse_unix_time_ms, split_app_labels, urldecode,
+    DEFAULT_SPY_NAME, IngestFormat, IngestQuery, ProfilesError, parse_unix_time_ms,
+    split_app_labels, urldecode,
 };
 
 ///
@@ -13,6 +14,7 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
     let mut units = "count".to_string();
     let mut from_ms = None;
     let mut until_ms = None;
+    let mut spy_name = DEFAULT_SPY_NAME.to_string();
 
     for pair in query.split('&').filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -53,6 +55,9 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
             "until" => {
                 until_ms = Some(parse_unix_time_ms(&value)?);
             }
+            "spyName" if !value.is_empty() => {
+                spy_name = value;
+            }
             _ => {}
         }
     }
@@ -69,5 +74,6 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
         units,
         from_ms,
         until_ms,
+        spy_name,
     })
 }

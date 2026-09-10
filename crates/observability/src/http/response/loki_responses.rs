@@ -6,15 +6,20 @@ use crate::{
     FormattedMetricSeries, HeaderMap, HttpQueryError, Labels, LokiDirection, MetricValue,
     RecordBatch, Response, Schema, StringArray, TimeUnit, TimestampNanosecondArray, Value, json,
     loki_parquet_batch_response, loki_parquet_label_array, loki_success_value,
-    parse_metric_sample_value,
+    parse_metric_sample_value, sort_loki_stream_values,
 };
 
 mod accept_parameter_is_zero_quality;
 mod accept_part_allows_loki_parquet;
+mod add_loki_encoding_flags;
+mod add_loki_tail_encoding_flags;
 mod apply_loki_stream_end_bound;
 mod apply_loki_stream_interval;
 mod apply_loki_stream_limit;
 mod apply_loki_stream_options;
+mod categorize_labels_encoding_flag;
+mod categorized_loki_stream_results;
+mod loki_encoding_flags;
 mod loki_matrix_response;
 mod loki_matrix_response_with_warnings;
 mod loki_metric_parquet_kind;
@@ -25,6 +30,11 @@ mod loki_parquet_labels;
 mod loki_parquet_metric_sample;
 mod loki_parquet_metric_timestamp_ns;
 mod loki_parquet_response;
+mod loki_response_encoding_flags_header;
+mod loki_stream_encoding;
+mod loki_stream_encoding_for_headers;
+mod loki_stream_entry;
+mod loki_stream_results;
 mod loki_streams_parquet_response;
 mod loki_streams_response;
 mod loki_streams_response_with_warnings;
@@ -34,10 +44,15 @@ mod wants_loki_parquet;
 
 pub(crate) use accept_parameter_is_zero_quality::accept_parameter_is_zero_quality;
 pub(crate) use accept_part_allows_loki_parquet::accept_part_allows_loki_parquet;
+pub(crate) use add_loki_encoding_flags::add_loki_encoding_flags;
+pub(crate) use add_loki_tail_encoding_flags::add_loki_tail_encoding_flags;
 pub(crate) use apply_loki_stream_end_bound::apply_loki_stream_end_bound;
 pub(crate) use apply_loki_stream_interval::apply_loki_stream_interval;
 pub(crate) use apply_loki_stream_limit::apply_loki_stream_limit;
 pub(crate) use apply_loki_stream_options::apply_loki_stream_options;
+pub(crate) use categorize_labels_encoding_flag::CATEGORIZE_LABELS_ENCODING_FLAG;
+pub(crate) use categorized_loki_stream_results::categorized_loki_stream_results;
+pub(crate) use loki_encoding_flags::loki_encoding_flags;
 pub(crate) use loki_matrix_response::loki_matrix_response;
 pub(crate) use loki_matrix_response_with_warnings::loki_matrix_response_with_warnings;
 pub(crate) use loki_metric_parquet_kind::LokiMetricParquetKind;
@@ -48,6 +63,11 @@ pub(crate) use loki_parquet_labels::loki_parquet_labels;
 pub(crate) use loki_parquet_metric_sample::loki_parquet_metric_sample;
 pub(crate) use loki_parquet_metric_timestamp_ns::loki_parquet_metric_timestamp_ns;
 pub(crate) use loki_parquet_response::loki_parquet_response;
+pub(crate) use loki_response_encoding_flags_header::LOKI_RESPONSE_ENCODING_FLAGS_HEADER;
+pub(crate) use loki_stream_encoding::LokiStreamEncoding;
+pub(crate) use loki_stream_encoding_for_headers::loki_stream_encoding_for_headers;
+pub(crate) use loki_stream_entry::LokiStreamEntry;
+pub(crate) use loki_stream_results::loki_stream_results;
 pub(crate) use loki_streams_parquet_response::loki_streams_parquet_response;
 pub(crate) use loki_streams_response::loki_streams_response;
 pub(crate) use loki_streams_response_with_warnings::loki_streams_response_with_warnings;

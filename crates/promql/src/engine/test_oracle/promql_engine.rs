@@ -214,7 +214,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         aggregate: &AggregateExpr,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let k = aggregate_k(aggregate)?;
+        let k = self.eval_k_parameter(tenant, aggregate, time_ms).await?;
         let input = self
             .eval_instant_expr(tenant, &aggregate.expr, time_ms)
             .await?;
@@ -241,9 +241,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         aggregate: &AggregateExpr,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let k = self
-            .eval_limitk_parameter(tenant, aggregate, time_ms)
-            .await?;
+        let k = self.eval_k_parameter(tenant, aggregate, time_ms).await?;
         if k == 0 {
             return Ok(QueryResult::InstantVector(Vec::new()));
         }
@@ -302,7 +300,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         aggregate: &AggregateExpr,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let quantile = aggregate_quantile(aggregate)?;
+        let quantile = self
+            .eval_aggregate_scalar_parameter(tenant, aggregate, time_ms)
+            .await?;
         let input = self
             .eval_instant_expr(tenant, &aggregate.expr, time_ms)
             .await?;
@@ -332,7 +332,11 @@ impl<S: MetricStore> PromqlEngine<S> {
                 "count_values requires a label-name parameter".to_string(),
             ));
         };
-        let Expr::StringLiteral(label_name) = param.as_ref() else {
+        let mut param = param.as_ref();
+        while let Expr::Paren(paren) = param {
+            param = paren.expr.as_ref();
+        }
+        let Expr::StringLiteral(label_name) = param else {
             return Err(PromqlError::Plan(
                 "count_values label-name parameter must be a string".to_string(),
             ));

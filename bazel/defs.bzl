@@ -253,6 +253,7 @@ def crate_tests(
         rustc_env = {},
         manual = [],
         no_harness = [],
+        scale = [],
         doc_tests = True,
         mutants = True,
         mutants_jobs = 4,
@@ -279,6 +280,15 @@ def crate_tests(
       rustc_env: extra compile-time environment, e.g. `CARGO_MANIFEST_DIR`.
       manual: test stems to tag `manual` — Docker-driven or otherwise
         non-hermetic suites, the Bazel equivalent of their `#[ignore]`.
+      scale: test stems that are scale suites -- a few tests at the cardinality
+        and volume the design targets (10k series, 1M spans, a compaction over
+        many blocks), against a real object store rather than an in-process
+        one. Each stem must also appear in `docker`, because that is what gives
+        it a container; `scale` adds the `scale` tag to the target that runs, so
+        //.bazelrc can select it apart from the differential suites, which have
+        a different budget and a different purpose. It also marks the suite's
+        non-container variant `manual`, so `bazel test //...` neither builds nor
+        runs a binary whose fixtures are measured in millions of rows.
       no_harness: test stems declared `harness = false` in Cargo.toml. Each
         one is a `datatest_stable::harness!` with no `#[test]` in it, so the
         libtest harness must be off -- built with it, rustc supplies a `main`
@@ -303,6 +313,16 @@ def crate_tests(
         with nothing wrong.
       unit_tags: extra tags for the unit-test target.
     """
+
+    for stem in scale:
+        if stem not in docker:
+            fail(
+                ("crate_tests: `%s` is in `scale` and not in `docker`. A scale " +
+                 "suite runs against a real object store, so it needs the image " +
+                 "that supplies one; without an entry in `docker` no target " +
+                 "carrying the `scale` tag is emitted at all, and the suite is " +
+                 "simply never run.") % stem,
+            )
 
     # `harness = false` is written in Cargo.toml and repeated here, and nothing
     # else connects the two. A stem in one and not the other builds under the
@@ -423,7 +443,7 @@ def crate_tests(
             # off as a clean run -- so the flakiness stays visible instead of
             # being hidden by a `#[ignore]`.
             flaky = stem in cpu_heavy and not wrapped,
-            tags = (["manual"] if stem in manual or wrapped else []) +
+            tags = (["manual"] if stem in manual or wrapped or stem in scale else []) +
                    (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else []),
             use_libtest_harness = not wrapped,
             # One call, not two concatenated: an integration test links the
@@ -509,11 +529,15 @@ def crate_tests(
                     for image in docker[stem]
                 }
             ),
+            # `scale` on top of `docker` for a scale suite, so //.bazelrc can
+            # select the two sets apart. A scale run is minutes of ingest before
+            # its first assertion; the differential suites are the nightly
+            # container job's budget and this must not be spent inside it.
             tags = [
                 "docker",
                 "external",
                 "no-sandbox",
-            ],
+            ] + (["scale"] if stem in scale else []),
         )
 
     # The same tests again against each feature variant of the library. Building
@@ -564,7 +588,7 @@ def crate_tests(
                 rustc_env = rustc_env,
                 rustc_flags = WORKSPACE_RUSTC_FLAGS,
                 flaky = stem in cpu_heavy and not wrapped,
-                tags = (["manual"] if stem in manual or wrapped else []) +
+                tags = (["manual"] if stem in manual or wrapped or stem in scale else []) +
                        (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else []),
                 use_libtest_harness = not wrapped,
                 deps = all_crate_deps(normal = True, normal_dev = True) +

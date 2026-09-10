@@ -94,17 +94,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         let Some(samples) = self.label_ops_inner_vector(tenant, arg, time_ms).await? else {
             return Ok(None);
         };
-        // The interpreter's `timestamp` keeps every sample (it does not filter
-        // floats vs histograms — it uses only the timestamp). `label_ops_inner_vector`
-        // already rejects histogram-bearing bare selectors, but a nested inner
-        // could still surface a histogram sample; fall back wholesale so the
-        // interpreter (which would keep it) stays the source of truth.
-        if samples
-            .iter()
-            .any(|sample| matches!(sample.value, SampleValue::Histogram(_)))
-        {
-            return Ok(None);
-        }
+        // `funcTimestamp` reads only the sample's timestamp, so it keeps a
+        // histogram sample exactly like a float one.
         let out = samples
             .into_iter()
             .map(|sample| InstantSample {
@@ -185,13 +176,16 @@ impl<S: MetricStore> PromqlEngine<S> {
         else {
             return Ok(None);
         };
-        let value = if samples.len() == 1 {
-            match samples.into_iter().next().expect("single sample").value {
-                SampleValue::Float(value) => value,
-                SampleValue::Histogram(_) => f64::NAN,
-            }
-        } else {
-            f64::NAN
+        // `funcScalar` counts only the float samples: a vector of one float and
+        // any number of histograms still yields that float, and only a count of
+        // floats other than one yields NaN.
+        let mut floats = samples.into_iter().filter_map(|sample| match sample.value {
+            SampleValue::Float(value) => Some(value),
+            SampleValue::Histogram(_) => None,
+        });
+        let value = match (floats.next(), floats.next()) {
+            (Some(value), None) => value,
+            _ => f64::NAN,
         };
         Ok(Some(PlannedInstant::PrecomputedScalar {
             ts_ms: time_ms,

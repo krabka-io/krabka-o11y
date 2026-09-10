@@ -15,7 +15,7 @@ pub(crate) fn classic_histogram_fraction(
         return 0.0;
     }
 
-    let buckets = normalized_classic_histogram_buckets(buckets);
+    let (buckets, _) = normalized_classic_histogram_buckets(buckets);
     if !buckets.last().is_some_and(|bucket| {
         bucket.upper_bound.is_infinite() && bucket.upper_bound.is_sign_positive()
     }) {

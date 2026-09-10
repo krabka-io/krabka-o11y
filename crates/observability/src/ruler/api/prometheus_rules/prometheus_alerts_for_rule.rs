@@ -1,6 +1,7 @@
 use super::{
-    HttpQueryError, QuerierState, QueryKind, QueryParams, Value, execute_http_query_for_tenant,
-    loki_yaml_mapping, prometheus_alerts_from_query_result, yaml_string_field,
+    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, Value,
+    execute_http_query_for_tenant, loki_yaml_mapping, prometheus_alerts_from_query_result,
+    yaml_string_field,
 };
 
 pub(crate) async fn prometheus_alerts_for_rule(
@@ -30,7 +31,14 @@ pub(crate) async fn prometheus_alerts_for_rule(
         direction: None,
         delay_for: None,
     };
-    let result = execute_http_query_for_tenant(state, tenant, &params, QueryKind::Instant).await?;
+    let result = execute_http_query_for_tenant(
+        state,
+        tenant,
+        &params,
+        QueryKind::Instant,
+        LokiStreamEncoding::Folded,
+    )
+    .await?;
     Ok(prometheus_alerts_from_query_result(
         &state.alert_states,
         tenant,

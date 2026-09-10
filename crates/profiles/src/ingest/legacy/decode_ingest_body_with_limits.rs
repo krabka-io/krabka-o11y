@@ -26,30 +26,46 @@ pub async fn decode_ingest_body_with_limits(
         });
     }
 
-    let profile = match query.format {
-        IngestFormat::Groups => {
-            folded_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&body))?
-        }
-        IngestFormat::Lines => {
-            lines_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&body))?
-        }
-        IngestFormat::Trie => trie_to_pprof(&query.name, &query.units, &body, limits)?,
-        IngestFormat::Tree => tree_to_pprof(&query.name, &query.units, &body, limits)?,
-        IngestFormat::Speedscope => speedscope_to_pprof(&query.name, &query.units, &body)?,
+    // A pprof body carries its own sample types, so it keeps them and takes the
+    // metric name that follows from them. The stack formats carry none, and
+    // Pyroscope reads every one of them as a CPU profile.
+    let (profile, metric_name) = match query.format {
         IngestFormat::Pprof => {
-            return Err(ProfilesError::Invalid(
-                "legacy pprof ingest requires multipart `profile` part".to_string(),
-            ));
+            let profile = PprofProfile::decode(&maybe_gunzip(&body, max)?)?;
+            let metric_name = pprof_metric_name(&profile).ok_or_else(|| {
+                ProfilesError::Decode("pprof profile declares no sample_type".to_string())
+            })?;
+            (profile, metric_name)
         }
+        IngestFormat::Groups => legacy_cpu_profile(
+            folded_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&body))?,
+            query,
+        ),
+        IngestFormat::Lines => legacy_cpu_profile(
+            lines_to_pprof(&query.name, &query.units, &String::from_utf8_lossy(&body))?,
+            query,
+        ),
+        IngestFormat::Trie => legacy_cpu_profile(
+            trie_to_pprof(&query.name, &query.units, &body, limits)?,
+            query,
+        ),
+        IngestFormat::Tree => legacy_cpu_profile(
+            tree_to_pprof(&query.name, &query.units, &body, limits)?,
+            query,
+        ),
+        IngestFormat::Speedscope => legacy_cpu_profile(
+            speedscope_to_pprof(&query.name, &query.units, &body)?,
+            query,
+        ),
         IngestFormat::Jfr => {
             return Err(ProfilesError::Invalid(
                 "legacy jfr ingest requires multipart `jfr` part".to_string(),
             ));
         }
     };
-    let profile = apply_query_time(apply_query_sample_rate(profile, query.sample_rate), query)?;
+    let profile = apply_query_time(profile, query)?;
     Ok(RawProfile {
-        labels: query_labels(query, Vec::new()),
+        labels: query_labels(query, &metric_name, Vec::new()),
         profile,
         delta: false,
         sample_timestamps_ns: Vec::new(),

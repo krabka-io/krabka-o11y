@@ -26,12 +26,17 @@ pub(crate) fn apply_binary_sample_value(
                 ));
                 return Ok(None);
             }
-            Ok(apply_histogram_float_binary(
-                right,
-                *left,
-                op,
-                ScalarSide::Left,
-            ))
+            let out = apply_histogram_float_binary(right, *left, op, ScalarSide::Left);
+            if out.is_none() {
+                // `+`, `-`, `%`, `^` and `atan2` are undefined between a float
+                // and a histogram: Prometheus drops the pair and says why.
+                emit_info(incompatible_types_in_binop_info(
+                    "float",
+                    op.symbol(),
+                    "histogram",
+                ));
+            }
+            Ok(out)
         }
         (SampleValue::Histogram(left), SampleValue::Float(right)) => {
             if op.is_comparison() {
@@ -42,12 +47,15 @@ pub(crate) fn apply_binary_sample_value(
                 ));
                 return Ok(None);
             }
-            Ok(apply_histogram_float_binary(
-                left,
-                *right,
-                op,
-                ScalarSide::Right,
-            ))
+            let out = apply_histogram_float_binary(left, *right, op, ScalarSide::Right);
+            if out.is_none() {
+                emit_info(incompatible_types_in_binop_info(
+                    "histogram",
+                    op.symbol(),
+                    "float",
+                ));
+            }
+            Ok(out)
         }
     }
 }

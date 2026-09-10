@@ -1,12 +1,14 @@
 use super::{
-    Duration, TailStream, WebSocket, apply_loki_tail_frame_limit, eligible_tail_record_count,
-    execute_tail_query_with_frontier_and_deletes, json, send_tail_frame, sleep,
-    tail_frame_is_empty,
+    Duration, TailStream, WebSocket, add_loki_tail_encoding_flags, apply_loki_tail_frame_limit,
+    eligible_tail_record_count, execute_tail_query_with_frontier_and_deletes, json,
+    send_tail_frame, sleep, tail_frame_is_empty,
 };
 
 pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
     let Some(source) = tail.source else {
-        let _ = send_tail_frame(&mut socket, json!({ "streams": [] })).await;
+        let mut frame = json!({ "streams": [] });
+        add_loki_tail_encoding_flags(&mut frame, &tail.encoding_flags);
+        let _ = send_tail_frame(&mut socket, frame).await;
         return;
     };
     let mut sent_records = 0;
@@ -32,11 +34,15 @@ pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
                     &records[sent_records..eligible_end],
                     &frontier,
                     &tail.delete_filters,
+                    tail.encoding,
                 );
                 sent_records = eligible_end;
-                let frame = apply_loki_tail_frame_limit(frame, tail.limit);
-                if !tail_frame_is_empty(&frame) && !send_tail_frame(&mut socket, frame).await {
-                    return;
+                let mut frame = apply_loki_tail_frame_limit(frame, tail.limit);
+                if !tail_frame_is_empty(&frame) {
+                    add_loki_tail_encoding_flags(&mut frame, &tail.encoding_flags);
+                    if !send_tail_frame(&mut socket, frame).await {
+                        return;
+                    }
                 }
             }
         }

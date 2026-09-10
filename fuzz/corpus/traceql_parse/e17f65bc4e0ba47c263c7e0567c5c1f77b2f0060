@@ -1,0 +1,1 @@
+{ .svc = "x" } | compare({ status = error }, 10)

@@ -1,6 +1,6 @@
 use super::{
-    HttpQueryError, LokiDirection, QuerierState, QueryKind, QueryParams, TimeRange, Value,
-    add_loki_query_stats, execute_http_metric_binary_arithmetic_query,
+    HttpQueryError, LokiDirection, LokiStreamEncoding, QuerierState, QueryKind, QueryParams,
+    TimeRange, Value, add_loki_query_stats, execute_http_metric_binary_arithmetic_query,
     execute_http_metric_binary_comparison_query, execute_http_metric_binary_set_query,
     execute_http_metric_expression_query, execute_http_metric_query,
     execute_http_metric_scalar_arithmetic_query, execute_http_metric_scalar_comparison_query,
@@ -20,6 +20,7 @@ pub(crate) async fn execute_http_remaining_query(
     kind: QueryKind,
     time_range: TimeRange,
     stream_options: (LokiDirection, Option<usize>, Option<i64>),
+    encoding: LokiStreamEncoding,
 ) -> Result<Value, HttpQueryError> {
     let (direction, limit, interval) = stream_options;
     if let Some(inner_query) = strip_outer_parenthesized_expression(&params.query) {
@@ -145,6 +146,7 @@ pub(crate) async fn execute_http_remaining_query(
                     None
                 },
             ),
+            encoding,
         )
         .await
         .map_err(|error| match error {

@@ -27,6 +27,10 @@ pub fn decode_otlp(
                 let profile = otlp_profile_to_pprof(profile, dict)?;
                 let mut labels = Labels::new();
                 labels.insert("service_name", service_name.clone());
+                // Pyroscope marks every series that arrived over OTLP, and
+                // exposes the label like any other one.
+                // `grafana/pyroscope:2.2.1` returns it from `LabelNames`.
+                labels.insert("__otel__", "true");
                 if let Some(profile_id) = profile_id {
                     labels.insert("__profile_id__", profile_id);
                 }

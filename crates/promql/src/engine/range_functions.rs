@@ -4,9 +4,19 @@ use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 
 use super::{
-    RangeEval, add_compatible_native_histogram, labels::labels_without_metric_name,
-    native_histograms_are_range_compatible, result_utils::quantile_value,
-    scale_native_histogram_values, selector::timestamp_seconds,
+    RangeEval, add_compatible_native_histogram,
+    annotations::{
+        emit_info, emit_warning, histogram_counter_reset_collision_warning,
+        histogram_ignored_in_mixed_range_info, mismatched_custom_buckets_info,
+        mixed_exponential_custom_warning, mixed_floats_histograms_warning,
+        native_histogram_not_counter_warning, native_histogram_not_gauge_warning,
+    },
+    histogram::native_histogram_detect_reset,
+    labels::labels_without_metric_name,
+    native_histograms_are_range_compatible,
+    result_utils::quantile_value,
+    scale_native_histogram_values,
+    selector::timestamp_seconds,
 };
 #[cfg(feature = "experimental-functions")]
 use crate::error::{PromqlError, Result};
@@ -21,8 +31,8 @@ mod apply_outer_range_fn;
 mod boundary_value;
 mod compact_histogram_spans;
 mod count_changes;
-mod count_histogram_resets;
 mod count_resets;
+mod count_step_transitions;
 mod counter_corrected_values;
 mod counter_delta;
 mod deriv_sample_from_series;
@@ -41,11 +51,14 @@ mod histogram_range_samples;
 mod histogram_reset_between;
 mod histogram_reset_indices;
 mod instant_delta;
+mod instant_delta_histogram;
 mod instant_delta_sample_from_series;
 mod instant_smoothed_boundary_value;
 mod interpolate_boundary;
 mod irate_fn;
 mod kahan_sum_inc;
+mod native_histograms_equal;
+mod note_histograms_ignored_in_range;
 mod outer_range_fn;
 mod outer_range_sample_from_series;
 mod over_time_fn;
@@ -53,6 +66,7 @@ mod over_time_histogram_sample;
 mod over_time_mad;
 mod over_time_mean;
 mod over_time_sample_from_series;
+mod over_time_sum;
 mod over_time_variance;
 mod predict_linear;
 mod predict_linear_sample_from_series;
@@ -74,8 +88,8 @@ pub(super) use apply_outer_range_fn::apply_outer_range_fn;
 use boundary_value::boundary_value;
 use compact_histogram_spans::compact_histogram_spans;
 use count_changes::count_changes;
-use count_histogram_resets::count_histogram_resets;
 use count_resets::count_resets;
+use count_step_transitions::count_step_transitions;
 use counter_corrected_values::counter_corrected_values;
 use counter_delta::counter_delta;
 use deriv_sample_from_series::deriv_sample_from_series;
@@ -96,11 +110,14 @@ use histogram_range_samples::histogram_range_samples;
 use histogram_reset_between::histogram_reset_between;
 use histogram_reset_indices::histogram_reset_indices;
 use instant_delta::instant_delta;
+use instant_delta_histogram::instant_delta_histogram;
 use instant_delta_sample_from_series::instant_delta_sample_from_series;
 pub(super) use instant_smoothed_boundary_value::instant_smoothed_boundary_value;
 use interpolate_boundary::interpolate_boundary;
 pub(super) use irate_fn::IrateFn;
 pub(super) use kahan_sum_inc::kahan_sum_inc;
+use native_histograms_equal::native_histograms_equal;
+use note_histograms_ignored_in_range::note_histograms_ignored_in_range;
 pub(super) use outer_range_fn::OuterRangeFn;
 use outer_range_sample_from_series::outer_range_sample_from_series;
 pub(super) use over_time_fn::OverTimeFn;
@@ -108,6 +125,7 @@ use over_time_histogram_sample::over_time_histogram_sample;
 use over_time_mad::over_time_mad;
 use over_time_mean::over_time_mean;
 use over_time_sample_from_series::over_time_sample_from_series;
+use over_time_sum::over_time_sum;
 use over_time_variance::over_time_variance;
 use predict_linear::predict_linear;
 use predict_linear_sample_from_series::predict_linear_sample_from_series;

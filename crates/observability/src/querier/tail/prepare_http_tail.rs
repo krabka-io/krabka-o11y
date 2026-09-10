@@ -1,8 +1,9 @@
 use super::{
     CompactionFrontier, CompactionFrontierSource, HeaderMap, HttpQueryError,
     LOKI_DEFAULT_TAIL_LIMIT, QuerierState, QueryParams, TailStream, active_log_delete_filters,
-    authorized_tenant, optional_start_end_range, parse_query, plan_stream_query,
-    validate_loki_tail_delay_for, validate_query_length_limit,
+    authorized_tenant, loki_encoding_flags, loki_stream_encoding_for_headers,
+    optional_start_end_range, parse_query, plan_stream_query, validate_loki_tail_delay_for,
+    validate_query_length_limit,
 };
 
 pub(crate) async fn prepare_http_tail(
@@ -42,5 +43,7 @@ pub(crate) async fn prepare_http_tail(
         delete_filters,
         limit: Some(params.limit.unwrap_or(LOKI_DEFAULT_TAIL_LIMIT)),
         delay_for,
+        encoding: loki_stream_encoding_for_headers(headers),
+        encoding_flags: loki_encoding_flags(headers),
     })
 }

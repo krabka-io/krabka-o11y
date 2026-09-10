@@ -1,6 +1,6 @@
 use super::{
-    CompactionFrontier, FsPath, LabelIndex, QueryError, StreamPlan, Value, WalLogRecord,
-    execute_stream_query_with_hot_tail_frontier_and_deletes,
+    CompactionFrontier, FsPath, LabelIndex, LokiStreamEncoding, QueryError, StreamPlan, Value,
+    WalLogRecord, execute_stream_query_with_hot_tail_frontier_and_deletes,
 };
 
 /// # Errors
@@ -19,6 +19,7 @@ pub async fn execute_stream_query_with_hot_tail(
         hot_tail,
         &CompactionFrontier::new(compacted_through_ns),
         &[],
+        LokiStreamEncoding::Folded,
     )
     .await
 }

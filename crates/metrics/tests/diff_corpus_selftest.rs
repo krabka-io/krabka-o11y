@@ -33,14 +33,10 @@ fn real_value_difference_is_detected() {
 }
 
 #[test]
-fn corpus_is_nonempty_and_covers_key_functions() {
-    let queries = query_corpus();
-
-    check!(queries.iter().any(|case| case.promql.contains("rate(")));
-    check!(
-        queries
-            .iter()
-            .any(|case| case.promql.contains("histogram_quantile"))
-    );
+fn the_hand_written_seed_dataset_is_nonempty() {
+    // This dataset is no longer the differential corpus -- that is now read
+    // from the vendored `.test` files, in
+    // `crates/metrics-service/tests/support/promql_corpus.rs`. It stays because
+    // `grafana_integration` asserts panel values against it.
     assert!(!seed_dataset().is_empty());
 }

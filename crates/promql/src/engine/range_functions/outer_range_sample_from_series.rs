@@ -12,12 +12,17 @@ use super::{
 /// The fold matches what each interpreter `eval_*_call` does per series. This
 /// function returns `None` for a no-value window, and the result drops that
 /// series.
+///
+/// `range_end_ms` is where the WINDOW ends, which an `@` modifier or an offset
+/// moves; `eval_ms` is where the QUERY is evaluated. Only `predict_linear`
+/// needs to tell them apart, and it predicts from the evaluation time.
 pub(crate) fn outer_range_sample_from_series(
     series: &RangeSeries,
     range_end_ms: i64,
     range: Time,
     outer: OuterRangeFn,
     modifier: Option<ExtendedSelectorModifier>,
+    eval_ms: i64,
 ) -> Option<(Labels, SampleValue)> {
     match outer {
         OuterRangeFn::Range(kind) => {
@@ -25,12 +30,8 @@ pub(crate) fn outer_range_sample_from_series(
                 .map(|value| (labels_without_metric_name(&series.labels), value))
         }
         OuterRangeFn::InstantDelta(kind) => {
-            instant_delta_sample_from_series(series, range_end_ms, range, kind).map(|value| {
-                (
-                    labels_without_metric_name(&series.labels),
-                    SampleValue::Float(value),
-                )
-            })
+            instant_delta_sample_from_series(series, range_end_ms, range, kind)
+                .map(|value| (labels_without_metric_name(&series.labels), value))
         }
         OuterRangeFn::Deriv => deriv_sample_from_series(series, range_end_ms, range).map(|value| {
             (
@@ -59,12 +60,14 @@ pub(crate) fn outer_range_sample_from_series(
             )
         }
         OuterRangeFn::PredictLinear(duration) => {
-            predict_linear_sample_from_series(series, range_end_ms, range, duration).map(|value| {
-                (
-                    labels_without_metric_name(&series.labels),
-                    SampleValue::Float(value),
-                )
-            })
+            predict_linear_sample_from_series(series, range_end_ms, range, duration, eval_ms).map(
+                |value| {
+                    (
+                        labels_without_metric_name(&series.labels),
+                        SampleValue::Float(value),
+                    )
+                },
+            )
         }
         #[cfg(feature = "experimental-functions")]
         OuterRangeFn::DoubleExponentialSmoothing { smoothing, trend } => {

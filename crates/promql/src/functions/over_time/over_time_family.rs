@@ -1,6 +1,6 @@
 use super::{
-    Extremum, fold_extremum, last_value_by_timestamp, over_time_mean, over_time_variance,
-    quantile_value,
+    Extremum, fold_extremum, last_value_by_timestamp, over_time_mean, over_time_sum,
+    over_time_variance, quantile_value,
 };
 
 /// Which `*_over_time` function an [`OverTimeUdf`] evaluates.
@@ -69,7 +69,7 @@ impl OverTimeFamily {
             return None;
         }
         let value = match self {
-            Self::Sum => values.iter().sum(),
+            Self::Sum => over_time_sum(values),
             Self::Avg => over_time_mean(values),
             Self::Count => values.iter().map(|_| 1.0).sum(),
             Self::Min => fold_extremum(values, Extremum::Min),

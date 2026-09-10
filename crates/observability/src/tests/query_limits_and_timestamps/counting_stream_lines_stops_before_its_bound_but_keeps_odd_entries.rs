@@ -20,7 +20,12 @@ pub(crate) fn counting_stream_lines_stops_before_its_bound_but_keeps_odd_entries
                     labels,
                     timestamps
                         .iter()
-                        .map(|ts| [(*ts).to_string(), "line".to_string()])
+                        .map(|ts| LokiStreamEntry {
+                            timestamp_ns: (*ts).to_string(),
+                            line: "line".to_string(),
+                            structured_metadata: Labels::default(),
+                            parsed: Labels::default(),
+                        })
                         .collect::<Vec<_>>(),
                 )
             })

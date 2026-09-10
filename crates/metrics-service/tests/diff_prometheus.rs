@@ -1,6 +1,13 @@
 //! Docker-backed differential probe against real Prometheus.
 //!
-//! Cargo ignores this test by default, because it pulls and runs
+//! The corpus is the vendored upstream `promql/promqltest` suite, replayed
+//! through two HTTP APIs rather than through one engine: `support/promql_corpus.rs`
+//! turns every `load` block into a `remote_write` body and every `eval` line
+//! into a query, both engines are handed the same bytes, and the two answers are
+//! compared. What the `.test` file says the answer *should* be is never read --
+//! the oracle here is the running Prometheus, not the file.
+//!
+//! Cargo ignores the differential by default, because it pulls and runs
 //! `mirror.gcr.io/prom/prometheus`.
 //! Run with:
 //!
@@ -8,14 +15,17 @@
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use assert2::assert;
 use bytes::Bytes;
-use diff_corpus::{QueryKind, assert_query_equal, query_corpus, seed_dataset};
+use diff_corpus::seed_dataset;
+use futures::StreamExt;
 use krabka_metrics::{
     WalRecord,
     distributor::{DistributorState, ProduceError, WalSink},
     wire::pb,
 };
 use krabka_promql::WalHead;
+use promql_corpus::{CorpusCase, PromqlCorpus, QueryKind};
 use prost::Message;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -26,8 +36,19 @@ use testcontainers::{
 };
 use tokio::sync::oneshot;
 
+// `seed_dataset` is the small hand-written dataset that `grafana_integration`
+// asserts against; this suite reuses it for the plain remote-write smoke test
+// below, and reuses `normalize` through `promql_corpus`. The rest of the module
+// belongs to the other suites.
+#[allow(dead_code)]
 #[path = "../../metrics/tests/support/diff_corpus.rs"]
 mod diff_corpus;
+
+// `without_files` belongs to `diff_mimir`, which has an upstream that cannot be
+// asked about every file; this suite runs the corpus whole.
+#[allow(dead_code)]
+#[path = "support/promql_corpus.rs"]
+mod promql_corpus;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -40,6 +61,67 @@ const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
 
 const TENANT: &str = "compliance";
 const PROMETHEUS_PORT: u16 = 9090;
+
+/// Samples per `remote_write` request.
+///
+/// The whole corpus is a few hundred thousand samples, which is past what
+/// either receiver will decode in one body.
+const SAMPLES_PER_BATCH: usize = 20_000;
+
+/// Queries in flight against one engine.
+///
+/// The corpus is large enough that a serial walk of it dominates the run, and
+/// small enough that neither side needs protecting from twelve at once.
+const QUERY_CONCURRENCY: usize = 12;
+
+/// The Prometheus feature flags the corpus needs.
+///
+/// Every one of these gates a *file* of the vendored corpus rather than
+/// changing how the rest of `PromQL` behaves: `info()` and the
+/// `double_exponential_smoothing` family are experimental functions,
+/// `duration_expression.test` needs duration expressions, `extended_vectors.test`
+/// needs the extended range selectors, `type_and_unit.test` needs `__type__` and
+/// `__unit__` to be understood rather than treated as ordinary labels, and the
+/// histogram corpora need native histograms.
+const PROMETHEUS_FEATURES: &str = "native-histograms,promql-experimental-functions,\
+     promql-duration-expr,promql-extended-range-selectors,type-and-unit-labels";
+
+/// The corpus builds, and every case it declines to run says why.
+///
+/// This runs without Docker, so a corpus that has drifted away from the
+/// vendored `.test` files fails the ordinary `bazel test //...` rather than
+/// waiting for the container job.
+#[test]
+fn the_differential_corpus_is_large_and_every_skip_is_explained() {
+    let corpus = promql_corpus::promql_corpus();
+    println!(
+        "corpus: {} series, {} samples, {} cases, {} skipped",
+        corpus.series.len(),
+        corpus.sample_count(),
+        corpus.cases.len(),
+        corpus.skipped.len()
+    );
+
+    // The corpus this replaced held nine queries over eleven series. The floor
+    // is not the exact count -- vendoring a further upstream file should not
+    // fail the build -- but it is far enough above nine that a corpus which
+    // quietly stopped loading cannot pass.
+    assert!(corpus.cases.len() > 1_000);
+    assert!(corpus.series.len() > 100);
+    assert!(corpus.skipped.iter().all(|case| !case.reason.is_empty()));
+
+    // A skipped case is still nameable, and no name is claimed twice.
+    let mut names: Vec<&str> = corpus
+        .cases
+        .iter()
+        .map(|case| case.name.as_str())
+        .chain(corpus.skipped.iter().map(|case| case.name.as_str()))
+        .collect();
+    let total = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert!(names.len() == total);
+}
 
 #[tokio::test]
 async fn krabka_remote_write_endpoint_feeds_query_store() -> TestResult {
@@ -55,7 +137,7 @@ async fn krabka_remote_write_endpoint_feeds_query_store() -> TestResult {
         &remote_write,
     )
     .await?;
-    wait_for_query_ready(&client, &krabka.base_url, Some(TENANT), "up").await?;
+    wait_for_query_ready(&client, &krabka.base_url, Some(TENANT), "up", 45_000).await?;
 
     krabka.shutdown();
     Ok(())
@@ -64,48 +146,111 @@ async fn krabka_remote_write_endpoint_feeds_query_store() -> TestResult {
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
+    let corpus = promql_corpus::promql_corpus();
     let client = reqwest::Client::new();
     let prometheus = start_prometheus().await?;
     let prometheus_base = mapped_base_url(&prometheus, PROMETHEUS_PORT).await?;
     wait_for_http_ok(&client, &prometheus_base, "/-/ready").await?;
 
     let krabka = start_krabka_query_server().await?;
-    let remote_write = remote_write_body();
-    post_remote_write(
-        &client,
-        &krabka.base_url,
-        "/api/v1/write",
-        Some(TENANT),
-        &remote_write,
-    )
-    .await?;
-    post_remote_write(
-        &client,
-        &prometheus_base,
-        "/api/v1/write",
-        None,
-        &remote_write,
-    )
-    .await?;
-    wait_for_query_ready(&client, &krabka.base_url, Some(TENANT), "up").await?;
-    wait_for_query_ready(&client, &prometheus_base, None, "up").await?;
+    seed_both(&client, &krabka.base_url, &prometheus_base, &corpus).await?;
 
-    for case in query_corpus() {
-        let krabka_json = query_case(
-            &client,
-            &krabka.base_url,
-            Some(TENANT),
-            case.kind,
-            case.promql,
-        )
-        .await?;
-        let prometheus_json =
-            query_case(&client, &prometheus_base, None, case.kind, case.promql).await?;
-        assert_query_equal(case.name, &krabka_json, &prometheus_json);
+    let mismatches = run_corpus(&client, &krabka.base_url, &prometheus_base, &corpus).await?;
+    promql_corpus::write_report("diff_prometheus", &corpus, &mismatches, &[]);
+    krabka.shutdown();
+
+    let verdict = promql_corpus::check_divergences(&corpus, &mismatches, &[], &[]);
+    assert!(
+        verdict.is_none(),
+        "the differential and the known-divergence list disagree:\n{}",
+        verdict.unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// Writes the whole corpus to both engines, in batch order.
+async fn seed_both(
+    client: &reqwest::Client,
+    krabka_base: &str,
+    prometheus_base: &str,
+    corpus: &PromqlCorpus,
+) -> TestResult {
+    let batches = promql_corpus::remote_write_batches(&corpus.series, SAMPLES_PER_BATCH);
+    println!(
+        "diff_prometheus: seeding {} series / {} samples in {} batches",
+        corpus.series.len(),
+        corpus.sample_count(),
+        batches.len()
+    );
+    // The upstream first: it is the stricter receiver of the two, and a corpus
+    // shape it refuses is a fault in the seed rather than in Krabka.
+    for batch in &batches {
+        post_remote_write(client, prometheus_base, "/api/v1/write", None, batch).await?;
+        post_remote_write(client, krabka_base, "/api/v1/write", Some(TENANT), batch).await?;
     }
 
-    krabka.shutdown();
+    let (probe, at) = corpus_probe(corpus).ok_or("the corpus seeded no float samples")?;
+    wait_for_query_ready(client, krabka_base, Some(TENANT), &probe, at).await?;
+    wait_for_query_ready(client, prometheus_base, None, &probe, at).await?;
     Ok(())
+}
+
+/// A selector and timestamp that must return something once the seed has
+/// landed, taken from the corpus rather than assumed.
+fn corpus_probe(corpus: &PromqlCorpus) -> Option<(String, i64)> {
+    let series = corpus
+        .series
+        .iter()
+        .find(|series| !series.floats.is_empty())?;
+    let selector = series
+        .labels
+        .iter()
+        .map(|(name, value)| format!("{name}={}", quoted(value)))
+        .collect::<Vec<_>>()
+        .join(",");
+    Some((format!("{{{selector}}}"), series.floats.first()?.0))
+}
+
+fn quoted(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Runs every case against both engines and returns the disagreements.
+async fn run_corpus(
+    client: &reqwest::Client,
+    krabka_base: &str,
+    prometheus_base: &str,
+    corpus: &PromqlCorpus,
+) -> TestResult<Vec<(String, String)>> {
+    let started = std::time::Instant::now();
+    let mut mismatches: Vec<(String, String)> = futures::stream::iter(corpus.cases.iter())
+        .map(|case| async move {
+            let krabka = query_case(client, krabka_base, "", Some(TENANT), case).await;
+            let upstream = query_case(client, prometheus_base, "", None, case).await;
+            let detail = match (krabka, upstream) {
+                (Ok(krabka), Ok(upstream)) => {
+                    promql_corpus::compare_case(case, &krabka, &upstream)
+                }
+                (krabka, upstream) => Some(format!(
+                    "{} `{}`: transport failure\n      krabka:   {krabka:?}\n      upstream: {upstream:?}",
+                    case.name, case.promql
+                )),
+            };
+            detail.map(|detail| (case.name.clone(), detail))
+        })
+        .buffer_unordered(QUERY_CONCURRENCY)
+        .filter_map(|mismatch| async move { mismatch })
+        .collect()
+        .await;
+    mismatches.sort();
+    println!(
+        "diff_prometheus: {} cases in {:.1}s, {} skipped, {} disagreed",
+        corpus.cases.len(),
+        started.elapsed().as_secs_f64(),
+        corpus.skipped.len(),
+        mismatches.len()
+    );
+    Ok(mismatches)
 }
 
 async fn start_prometheus() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
@@ -131,7 +276,12 @@ async fn start_prometheus() -> TestResult<testcontainers::ContainerAsync<Generic
                 "--config.file=/etc/prometheus/prometheus.yml",
                 "--storage.tsdb.path=/prometheus",
                 "--web.enable-remote-write-receiver",
-                "--enable-feature=native-histograms",
+                &format!("--enable-feature={PROMETHEUS_FEATURES}"),
+                // The corpus lays its segments out over roughly three weeks of
+                // simulated time, starting at the epoch. The default fifteen
+                // days of retention would make the oldest segments eligible for
+                // deletion the moment the head is first compacted.
+                "--storage.tsdb.retention.time=1000d",
             ])
             .start(),
     )
@@ -241,9 +391,11 @@ async fn post_remote_write(
     if let Some(tenant) = tenant {
         request = request.header("X-Scope-OrgID", tenant);
     }
-    let status = request.send().await?.status();
+    let response = request.send().await?;
+    let status = response.status();
     if !(status == StatusCode::OK || status == StatusCode::NO_CONTENT) {
-        return Err(format!("remote_write to {base}{path} returned {status}").into());
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("remote_write to {base}{path} returned {status}: {detail}").into());
     }
     Ok(())
 }
@@ -269,10 +421,11 @@ async fn wait_for_query_ready(
     base: &str,
     tenant: Option<&str>,
     query: &str,
+    at_ms: i64,
 ) -> TestResult {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
-        let json = query_instant(client, base, tenant, query, 45_000).await?;
+        let json = query_instant(client, base, "/api/v1/query", tenant, query, at_ms).await?;
         if json["data"]["result"]
             .as_array()
             .is_some_and(|result| !result.is_empty())
@@ -287,14 +440,32 @@ async fn wait_for_query_ready(
 async fn query_case(
     client: &reqwest::Client,
     base: &str,
+    prefix: &str,
     tenant: Option<&str>,
-    kind: QueryKind,
-    promql: &str,
+    case: &CorpusCase,
 ) -> TestResult<Value> {
-    match kind {
-        QueryKind::Instant { time } => query_instant(client, base, tenant, promql, time).await,
+    match case.kind {
+        QueryKind::Instant { time } => {
+            query_instant(
+                client,
+                base,
+                &format!("{prefix}/api/v1/query"),
+                tenant,
+                &case.promql,
+                time,
+            )
+            .await
+        }
         QueryKind::Range { start, end, step } => {
-            query_range(client, base, tenant, promql, start, end, step).await
+            query_range(
+                client,
+                base,
+                &format!("{prefix}/api/v1/query_range"),
+                tenant,
+                &case.promql,
+                (start, end, step),
+            )
+            .await
         }
     }
 }
@@ -302,13 +473,14 @@ async fn query_case(
 async fn query_instant(
     client: &reqwest::Client,
     base: &str,
+    path: &str,
     tenant: Option<&str>,
     promql: &str,
     time_ms: i64,
 ) -> TestResult<Value> {
     let mut request = client.get(query_url(
         base,
-        "/api/v1/query",
+        path,
         &[
             ("query", promql.to_string()),
             ("time", seconds_param(time_ms)),
@@ -317,21 +489,21 @@ async fn query_instant(
     if let Some(tenant) = tenant {
         request = request.header("X-Scope-OrgID", tenant);
     }
-    Ok(request.send().await?.error_for_status()?.json().await?)
+    json_body(request).await
 }
 
 async fn query_range(
     client: &reqwest::Client,
     base: &str,
+    path: &str,
     tenant: Option<&str>,
     promql: &str,
-    start_ms: i64,
-    end_ms: i64,
-    step_ms: i64,
+    range: (i64, i64, i64),
 ) -> TestResult<Value> {
+    let (start_ms, end_ms, step_ms) = range;
     let mut request = client.get(query_url(
         base,
-        "/api/v1/query_range",
+        path,
         &[
             ("query", promql.to_string()),
             ("start", seconds_param(start_ms)),
@@ -342,7 +514,20 @@ async fn query_range(
     if let Some(tenant) = tenant {
         request = request.header("X-Scope-OrgID", tenant);
     }
-    Ok(request.send().await?.error_for_status()?.json().await?)
+    json_body(request).await
+}
+
+/// The JSON body of a query response, whatever its status.
+///
+/// A corpus case the upstream file marks `expect fail` is answered with 400 or
+/// 422 and a body that says which kind of failure it was, and that body is the
+/// thing being compared. `error_for_status` would throw it away.
+async fn json_body(request: reqwest::RequestBuilder) -> TestResult<Value> {
+    let response = request.send().await?;
+    let status = response.status();
+    let text = response.text().await?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("{status} response was not JSON: {error}: {text}").into())
 }
 
 fn query_url(base: &str, path: &str, params: &[(&str, String)]) -> String {

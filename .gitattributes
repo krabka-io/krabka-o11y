@@ -29,3 +29,11 @@ crates/gres-conformance/corpus-regress/int4/int4.out       -whitespace
 *.jar      binary
 *.png      binary
 *.ico      binary
+
+# Fuzz seeds are arbitrary bytes, and two things go wrong when git guesses.
+# It calls a file binary only when it finds a NUL in the first 8k, so a seed
+# that is merely not valid UTF-8 is treated as text: `* text=auto eol=lf` above
+# then rewrites its CRLF pairs, silently changing the input a fuzz target
+# replays, and `git diff` prints its bytes -- which is how `aspect lint` came to
+# fail while parsing diff output as UTF-8.
+fuzz/corpus/**  binary

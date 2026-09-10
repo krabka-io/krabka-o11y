@@ -1,0 +1,32 @@
+# Mutation survivor baseline, read by tools/mutants-ratchet.py.
+#
+# One line per crate that defines a `cargo_mutants_test` target:
+#
+#     <crate> <survivors>
+#
+# The nightly sweep fails a crate whose survivor count is above the number
+# here. It passes a crate whose count is below, and asks for the number to be
+# lowered. Lower it in the same change that killed the mutants.
+#
+# `unseeded` means no number is checked in yet. The ratchet is dormant for
+# that crate: the sweep reports its survivor count and gates nothing on it.
+# The structural checks in tools/mutants-ratchet.py still apply, so a crate
+# with no number is still unable to report a killed shard as a clean sweep.
+#
+# Every crate below reads `unseeded` because no full sweep has run since the
+# ratchet was written. A sweep is a nightly job of several hours, and a number
+# written from anywhere else would be a guess. Do not guess one. Take the
+# count from the nightly run, which prints the line to check in:
+#
+#     tools/mutants-ratchet.py <crate> --record
+#
+blockstore       unseeded
+logql            unseeded
+metrics          unseeded
+metrics-service  unseeded
+observability    unseeded
+pprof            unseeded
+profiles         unseeded
+promql           unseeded
+traceql          unseeded
+traces           unseeded

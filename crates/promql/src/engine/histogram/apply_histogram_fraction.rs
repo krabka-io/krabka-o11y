@@ -1,7 +1,7 @@
 use super::{
     BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
-    classic_histogram_fraction, float_sample_value, labels_key, labels_without_metric_and_label,
-    labels_without_metric_name, native_histogram_fraction, parse_classic_bucket_bound,
+    classic_bucket_bound, classic_histogram_fraction, float_sample_value, labels_key,
+    labels_without_metric_and_label, labels_without_metric_name, native_histogram_fraction,
     record_metric_name, warn_mixed_histograms,
 };
 
@@ -43,15 +43,19 @@ pub(crate) fn apply_histogram_fraction(
                 InstantSample {
                     labels,
                     ts_ms: sample.ts_ms,
-                    value: SampleValue::Float(native_histogram_fraction(lower, upper, &hist)),
+                    value: SampleValue::Float(native_histogram_fraction(
+                        lower,
+                        upper,
+                        &hist,
+                        sample.labels.get("__name__").unwrap_or(""),
+                    )),
                 },
             );
             continue;
         }
-        let Some(le) = sample.labels.get("le") else {
+        let Some(upper_bound) = classic_bucket_bound(&sample.labels) else {
             continue;
         };
-        let upper_bound = parse_classic_bucket_bound(le)?;
         let count = float_sample_value(&sample)?;
         let labels = labels_without_metric_and_label(&sample.labels, "le");
         let key = labels_key(&labels);

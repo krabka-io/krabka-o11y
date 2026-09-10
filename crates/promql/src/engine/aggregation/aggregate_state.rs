@@ -1,17 +1,25 @@
-use super::{Labels, NativeHistogram, Result, add_compatible_native_histogram, kahan_sum_inc};
+use super::{
+    CounterResetHints, Labels, NativeHistogram, Result, add_compatible_native_histogram,
+    kahan_sum_inc,
+};
 
 pub(crate) struct AggregateState {
     pub(crate) labels: Labels,
     pub(crate) count: usize,
     pub(crate) count_f64: f64,
+    /// Kahan-compensated running sum for `sum`, which is `sum + sum_comp`.
     pub(crate) sum: f64,
-    /// Incremental Kahan-compensated mean for `avg`, which is
-    /// `avg_mean + avg_comp`. This matches Prometheus. The naive `sum / count`
-    /// overflows to +/-Inf for groups with a very large magnitude. The
-    /// incremental form stays finite, and once it does saturate it keeps the
-    /// same-sign-infinity handling.
+    pub(crate) sum_comp: f64,
+    /// Kahan-compensated running mean for `avg`. Prometheus takes the DIRECT
+    /// mean -- the compensated sum over the count -- because that is the more
+    /// accurate of the two, and falls back to an incremental mean only once the
+    /// running sum would overflow to an infinity. `avg_incremental` records that
+    /// the fallback has happened; until it does, the answer comes from
+    /// `avg_sum`, and after it, from `avg_mean`. Both share `avg_comp`.
+    pub(crate) avg_sum: f64,
     pub(crate) avg_mean: f64,
     pub(crate) avg_comp: f64,
+    pub(crate) avg_incremental: bool,
     /// Welford running mean and `M2` accumulators for `stddev`/`stdvar`, each
     /// Kahan-compensated. The naive `E[x^2] - E[x]^2` form has catastrophic
     /// cancellation for groups of large, close values, and it then gives a
@@ -35,6 +43,8 @@ pub(crate) struct AggregateState {
     pub(crate) max: f64,
     pub(crate) histogram: Option<NativeHistogram>,
     pub(crate) invalid_mixed_sample_type: bool,
+    /// The counter-reset hints the group's histograms have stated.
+    pub(crate) counter_reset_hints: CounterResetHints,
 }
 
 impl AggregateState {
@@ -44,8 +54,11 @@ impl AggregateState {
             count: 0,
             count_f64: 0.0,
             sum: 0.0,
+            sum_comp: 0.0,
+            avg_sum: 0.0,
             avg_mean: 0.0,
             avg_comp: 0.0,
+            avg_incremental: false,
             var_mean: 0.0,
             var_mean_comp: 0.0,
             var_aux: 0.0,
@@ -55,29 +68,39 @@ impl AggregateState {
             max: f64::NAN,
             histogram: None,
             invalid_mixed_sample_type: false,
+            counter_reset_hints: CounterResetHints::default(),
         }
     }
 
     pub(crate) fn push_float(&mut self, value: f64) {
         self.push_observation();
-        self.sum += value;
+        (self.sum, self.sum_comp) = kahan_sum_inc(value, self.sum, self.sum_comp);
 
-        // Incremental Kahan-compensated mean for `avg` (Prometheus' `avg_over`-
-        // style fold), keeping the running mean finite past naive-sum overflow.
-        // Once the mean is infinite, a same-sign infinity or any finite sample
-        // leaves it unchanged (only a flip to the opposite infinity / a NaN moves
-        // it), exactly as Prometheus' `avg` aggregation does.
-        let keep_infinite_mean = self.avg_mean.is_infinite()
-            && ((value.is_infinite() && (value > 0.0) == (self.avg_mean > 0.0))
-                || (!value.is_infinite() && !value.is_nan()));
-        if !keep_infinite_mean {
-            let (mean, comp) = kahan_sum_inc(
-                value / self.count_f64 - self.avg_mean / self.count_f64,
-                self.avg_mean,
-                self.avg_comp,
+        // `avg` sums directly and divides once at the end, and only switches to
+        // an incremental mean when that sum would saturate to an infinity --
+        // carrying the mean and its compensation across at the switch. The
+        // first sample SEEDS the sum rather than being added to it, so a group
+        // whose only sample is an infinity does not read as an overflow.
+        if self.count_f64 <= 1.0 {
+            self.avg_sum = value;
+        } else if !self.avg_incremental {
+            let (sum, comp) = kahan_sum_inc(value, self.avg_sum, self.avg_comp);
+            if sum.is_infinite() {
+                self.avg_incremental = true;
+                self.avg_mean = self.avg_sum / (self.count_f64 - 1.0);
+                self.avg_comp /= self.count_f64 - 1.0;
+            } else {
+                self.avg_sum = sum;
+                self.avg_comp = comp;
+            }
+        }
+        if self.avg_incremental {
+            let weight = (self.count_f64 - 1.0) / self.count_f64;
+            (self.avg_mean, self.avg_comp) = kahan_sum_inc(
+                value / self.count_f64,
+                weight * self.avg_mean,
+                weight * self.avg_comp,
             );
-            self.avg_mean = mean;
-            self.avg_comp = comp;
         }
 
         // Welford + Kahan variance accumulation for `stddev`/`stdvar`.
@@ -126,6 +149,7 @@ impl AggregateState {
             self.mark_invalid_mixed_sample_type();
             return Ok(());
         }
+        self.counter_reset_hints.observe(histogram.reset_hint);
         self.push_observation();
         match &mut self.histogram {
             Some(existing) => add_compatible_native_histogram(existing, &histogram)?,
@@ -141,6 +165,19 @@ impl AggregateState {
 
     pub(crate) fn has_histogram(&self) -> bool {
         self.histogram.is_some()
+    }
+
+    /// Whether the group summed histograms that disagree about a counter reset.
+    pub(crate) fn has_counter_reset_collision(&self) -> bool {
+        self.counter_reset_hints.collide()
+    }
+
+    /// The group's `avg`, from whichever of the two folds is live.
+    pub(crate) fn mean(&self) -> f64 {
+        if self.avg_incremental {
+            return self.avg_mean + self.avg_comp;
+        }
+        self.avg_sum / self.count_f64 + self.avg_comp / self.count_f64
     }
 
     pub(crate) fn population_variance(&self) -> f64 {

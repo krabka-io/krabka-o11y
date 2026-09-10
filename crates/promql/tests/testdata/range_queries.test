@@ -94,7 +94,7 @@ eval instant at 2m some_metric[2m]
   expect range vector from 1m to 2m step 60s
     some_metric{env="1"} 1 2
     some_metric{env="2"} 2 4
-    some_metric{env="3"} {{count:1 counter_reset_hint:unknown}} {{count:2 counter_reset_hint:unknown}}
+    some_metric{env="3"} {{count:1 counter_reset_hint:not_reset}} {{count:2 counter_reset_hint:not_reset}}
 
 eval instant at 3m some_metric_with_stale_marker[3m]
     expect range vector from 1m to 3m step 60s

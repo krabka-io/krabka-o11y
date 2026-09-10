@@ -21,7 +21,9 @@ images whose pinned digest carries no version to name it by.
 
 IMAGES = {
     "grafana": "mirror.gcr.io/grafana/grafana:11.6.1",
+    "loki": "mirror.gcr.io/grafana/loki:3.5.1",
     "mimir": "mirror.gcr.io/grafana/mimir:2.16.1",
+    "minio": "mirror.gcr.io/minio/minio:latest",
     "prometheus": "mirror.gcr.io/prom/prometheus:v3.8.0",
     "pyroscope": "mirror.gcr.io/grafana/pyroscope:latest",
     "tempo": "mirror.gcr.io/grafana/tempo:latest",

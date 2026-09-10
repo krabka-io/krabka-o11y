@@ -1,0 +1,1 @@
+histogram_fraction(-10, -5, range_entirely_below_all_buckets_bucket)

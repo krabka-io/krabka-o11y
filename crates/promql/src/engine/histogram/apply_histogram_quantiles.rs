@@ -1,8 +1,8 @@
 #[cfg(feature = "experimental-functions")]
 use super::{
     BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
-    classic_histogram_quantile, float_sample_value, labels_key, labels_without_metric_and_label,
-    labels_without_metric_name, native_histogram_quantile, parse_classic_bucket_bound,
+    classic_bucket_bound, classic_histogram_quantile, float_sample_value, labels_key,
+    labels_without_metric_and_label, labels_without_metric_name, native_histogram_quantile,
 };
 
 /// Applies the experimental `histogram_quantiles(label, v, phi...)` fold.
@@ -44,10 +44,9 @@ pub(crate) fn apply_histogram_quantiles(
             );
             continue;
         }
-        let Some(le) = sample.labels.get("le") else {
+        let Some(upper_bound) = classic_bucket_bound(&sample.labels) else {
             continue;
         };
-        let upper_bound = parse_classic_bucket_bound(le)?;
         let count = float_sample_value(&sample)?;
         let labels = labels_without_metric_and_label(&sample.labels, "le");
         groups
@@ -67,13 +66,16 @@ pub(crate) fn apply_histogram_quantiles(
         if mixed_histogram_keys.contains(&key) {
             continue;
         }
+        let metric = labels.get("__name__").unwrap_or("").to_string();
         out.extend(quantiles.iter().map(|quantile| {
             let mut labels = labels.clone();
             labels.insert(label_name, quantile.to_string());
             InstantSample {
                 labels,
                 ts_ms,
-                value: SampleValue::Float(native_histogram_quantile(*quantile, &histogram)),
+                value: SampleValue::Float(native_histogram_quantile(
+                    *quantile, &histogram, &metric,
+                )),
             }
         }));
     }
@@ -88,7 +90,7 @@ pub(crate) fn apply_histogram_quantiles(
             InstantSample {
                 labels,
                 ts_ms: time_ms,
-                value: SampleValue::Float(classic_histogram_quantile(*quantile, &mut buckets)),
+                value: SampleValue::Float(classic_histogram_quantile(*quantile, &mut buckets).0),
             }
         }));
     }

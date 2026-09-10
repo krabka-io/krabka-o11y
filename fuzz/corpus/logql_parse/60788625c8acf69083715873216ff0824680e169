@@ -1,0 +1,1 @@
+label_replace(rate({app="web"}[5m]),"a","b","c","d")

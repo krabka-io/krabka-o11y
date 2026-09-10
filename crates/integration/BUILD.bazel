@@ -1,0 +1,16 @@
+load("//bazel:defs.bzl", "crate_library", "crate_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+# Consumed by `crate.from_cargo` (see //MODULE.bazel).
+exports_files(["Cargo.toml"])
+
+crate_library(name = "integration")
+
+crate_tests(
+    lib = "integration",
+    # The library holds no code to mutate -- it is the `//!` doc that says why
+    # this crate is allowed to depend on more than one signal. A sweep over it
+    # would generate no mutants and report on nothing.
+    mutants = False,
+)

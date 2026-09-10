@@ -27,14 +27,13 @@ pub(crate) async fn instant_avg_over_time_holds_an_infinite_mean_until_it_is_con
             vec![f64::NEG_INFINITY, -5.0],
             f64::NEG_INFINITY,
         ),
-        // The 1e-16 rounds away as the running mean absorbs it, and only the
-        // compensation still holds it. Adding that back lands on the nearest
-        // double to two thirds; subtracting it, or dropping it, lands one ulp
-        // either side.
+        // `1.0 + 0.1 + 0.1` rounds up to `1.2000000000000002`, and only the
+        // compensation carries the lost bit back. Adding it lands the mean on
+        // `0.4`; subtracting it, or dropping it, lands one ulp either side.
         (
             "the compensation is added back, not subtracted",
-            vec![1.0, 1e-16, 1.0],
-            0.666_666_666_666_666_7,
+            vec![1.0, 0.1, 0.1],
+            0.4,
         ),
     ] {
         let mut store = InMemoryMetricStore::new();

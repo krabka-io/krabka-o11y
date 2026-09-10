@@ -2,7 +2,19 @@
 resolver = "2"
 members = ["crates/*"]
 # The cargo-mutants pin that Bazel builds //tools/mutants from is not a member.
-exclude = ["tools/mutants"]
+# Neither is //fuzz, which cargo-fuzz builds on nightly with `-Z` flags while
+# every other build here is pinned to the stable toolchain in
+# //rust-toolchain.toml. It is a workspace of its own, so the `crates/*` glob
+# above would not reach it either; naming it says so rather than leaving it to
+# the glob.
+#
+# //benches is out for a different reason: Criterion is a dev-dependency, and
+# Cargo hands a crate's dev-dependencies to its tests as well as to its
+# benchmarks -- so declaring it in a member manifest would link Criterion into
+# every test binary that crate builds, under Cargo and under Bazel both. Kept
+# outside, `cargo test --workspace` and `bazel test //...` never see it. See
+# //benches/README.md.
+exclude = ["tools/mutants", "fuzz", "benches"]
 
 [workspace.package]
 version = "0.4.0"

@@ -1,0 +1,13 @@
+[
+      {
+        "traceId": "0000000000000001",
+        "id": "0000000000000002",
+        "name": "get /",
+        "timestamp": 1000,
+        "duration": 500,
+        "kind": "SERVER",
+        "localEndpoint": { "serviceName": "api" },
+        "tags": { "http.method": "GET" },
+        "annotations": [{ "timestamp": 1100, "value": "cache miss" }]
+      }
+    ]

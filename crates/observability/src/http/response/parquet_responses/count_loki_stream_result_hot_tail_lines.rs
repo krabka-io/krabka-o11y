@@ -18,7 +18,7 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines(
         {
             continue;
         }
-        let Some((stream_labels, current_line)) = matching_loki_stream_entry(
+        let Some((stream_labels, entry)) = matching_loki_stream_entry(
             &plan.query,
             &record.labels,
             &record.line,
@@ -27,7 +27,7 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines(
         ) else {
             continue;
         };
-        let key = (stream_labels, record.timestamp_ns.to_string(), current_line);
+        let key = (stream_labels, entry.timestamp_ns, entry.line);
         hot_counts
             .entry(key)
             .and_modify(|count| *count = count.saturating_add(1))

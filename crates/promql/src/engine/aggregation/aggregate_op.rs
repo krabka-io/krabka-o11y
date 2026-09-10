@@ -45,14 +45,14 @@ impl AggregateOp {
         Some(match self {
             Self::Sum => match &state.histogram {
                 Some(histogram) => SampleValue::Histogram(histogram.clone()),
-                None => SampleValue::Float(state.sum),
+                None => SampleValue::Float(state.sum + state.sum_comp),
             },
             Self::Avg => match &state.histogram {
                 Some(histogram) => SampleValue::Histogram(scaled_native_histogram(
                     histogram,
                     1.0 / state.count_f64,
                 )),
-                None => SampleValue::Float(state.avg_mean + state.avg_comp),
+                None => SampleValue::Float(state.mean()),
             },
             Self::Count => SampleValue::Float(state.count_f64),
             Self::Group => SampleValue::Float(1.0),
@@ -61,6 +61,20 @@ impl AggregateOp {
             Self::Stddev => SampleValue::Float(state.population_variance().sqrt()),
             Self::Stdvar => SampleValue::Float(state.population_variance()),
         })
+    }
+
+    /// The operator's own name, as Prometheus spells it in an annotation.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Avg => "avg",
+            Self::Count => "count",
+            Self::Group => "group",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::Stddev => "stddev",
+            Self::Stdvar => "stdvar",
+        }
     }
 
     pub(crate) fn ignores_histograms(self) -> bool {

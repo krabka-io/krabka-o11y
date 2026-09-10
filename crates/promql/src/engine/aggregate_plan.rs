@@ -12,9 +12,8 @@ use super::aggregation::{apply_limit_ratio_aggregate, apply_limitk_aggregate};
 use super::{
     PromqlEngine,
     aggregation::{
-        AggregateOp, aggregate_k, aggregate_quantile, apply_count_values_aggregate,
-        apply_k_aggregate, apply_quantile_aggregate, apply_simple_aggregate,
-        apply_stddev_stdvar_aggregate,
+        AggregateOp, apply_count_values_aggregate, apply_k_aggregate, apply_quantile_aggregate,
+        apply_simple_aggregate, apply_stddev_stdvar_aggregate,
     },
     planned::{InstantShape, OperatorInstant, PlannedInstant},
     planner_support::{
@@ -225,7 +224,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 // does (propagate, do not swallow into `Ok(None)` — the planner is
                 // total, so `Ok(None)` would surface the generic "planner returned
                 // no result" error instead of the real validation error).
-                let k = aggregate_k(aggregate)?;
+                let k = self.eval_k_parameter(tenant, aggregate, time_ms).await?;
                 let Some(samples) = self
                     .param_aggregate_inner_vector(tenant, &aggregate.expr, time_ms)
                     .await?
@@ -247,7 +246,9 @@ impl<S: MetricStore> PromqlEngine<S> {
                 // result" error). An out-of-range / NaN phi is NOT an error —
                 // `apply_quantile_aggregate` returns signed `±Inf` / `NaN` plus an
                 // `InvalidQuantileWarning`, matching Prometheus.
-                let quantile = aggregate_quantile(aggregate)?;
+                let quantile = self
+                    .eval_aggregate_scalar_parameter(tenant, aggregate, time_ms)
+                    .await?;
                 let Some(samples) = self
                     .param_aggregate_inner_vector(tenant, &aggregate.expr, time_ms)
                     .await?
@@ -272,7 +273,14 @@ impl<S: MetricStore> PromqlEngine<S> {
                         "count_values requires a label-name parameter".to_string(),
                     ));
                 };
-                let Expr::StringLiteral(label_name) = param.as_ref() else {
+                // `count_values((("v")), x)` means `count_values("v", x)`:
+                // Prometheus keeps the parentheses in the AST and reads through
+                // them, so read through them here too.
+                let mut param = param.as_ref();
+                while let Expr::Paren(paren) = param {
+                    param = paren.expr.as_ref();
+                }
+                let Expr::StringLiteral(label_name) = param else {
                     return Err(PromqlError::Plan(
                         "count_values label-name parameter must be a string".to_string(),
                     ));
@@ -329,9 +337,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 // A non-integer / non-resolvable `k` is a hard error: propagate the
                 // SAME canonical message the interpreter's `eval_limitk_parameter`
                 // raises (do not swallow into `Ok(None)`).
-                let k = self
-                    .eval_limitk_parameter(tenant, aggregate, time_ms)
-                    .await?;
+                let k = self.eval_k_parameter(tenant, aggregate, time_ms).await?;
                 if k == 0 {
                     return Ok(Some(PlannedInstant::Precomputed(Vec::new())));
                 }

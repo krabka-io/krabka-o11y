@@ -1,6 +1,7 @@
 use super::{
-    BTreeMap, InstantSample, LabelModifier, Labels, SampleValue, aggregate_labels, emit_warning,
-    invalid_quantile_warning, is_valid_quantile, labels_key, quantile_value,
+    BTreeMap, InstantSample, LabelModifier, Labels, SampleValue, aggregate_labels, emit_info,
+    emit_warning, histogram_ignored_in_aggregation_info, invalid_quantile_warning,
+    is_valid_quantile, labels_key, quantile_value,
 };
 
 /// Shared `quantile(phi, v)` core over an already-evaluated instant vector.
@@ -28,6 +29,7 @@ pub(crate) fn apply_quantile_aggregate(
     let mut groups: BTreeMap<String, (Labels, Vec<f64>)> = BTreeMap::new();
     for sample in samples {
         let SampleValue::Float(value) = sample.value else {
+            emit_info(histogram_ignored_in_aggregation_info("quantile"));
             continue;
         };
         let labels = aggregate_labels(&sample.labels, modifier);

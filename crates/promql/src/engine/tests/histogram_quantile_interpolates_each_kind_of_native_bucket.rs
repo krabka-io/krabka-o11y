@@ -8,6 +8,10 @@ use super::*;
 /// ratio were all free, and in a bucket starting at 1.0 dividing by the lower
 /// bound is the same as multiplying by it, so the positive arm needs a bucket
 /// that starts somewhere else.
+///
+/// The quantiles below the median are found by walking up from the smallest
+/// bucket, and those at or above it by walking down from the largest, as
+/// Prometheus does, so the set spans both directions.
 #[tokio::test]
 pub(crate) async fn histogram_quantile_interpolates_each_kind_of_native_bucket() {
     let mut store = InMemoryMetricStore::new();
@@ -48,8 +52,9 @@ pub(crate) async fn histogram_quantile_interpolates_each_kind_of_native_bucket()
         // Lands inside the zero bucket, not on an edge -- at the edge the
         // interpolation returns the upper bound whatever the lower one is.
         (0.35, -0.400_000_000_000_000_36),
-        // And exactly at its top edge.
-        (0.5, 0.5),
+        // At the median the walk turns around and comes down from the top
+        // bucket instead, which lands it on the lower bound of `1..2`.
+        (0.5, 1.0),
         // Lands in 1..2 and then in 2..4: geometric.
         (0.75, 1.681_792_830_507_429),
         (0.9, 2.639_015_821_545_789_3),

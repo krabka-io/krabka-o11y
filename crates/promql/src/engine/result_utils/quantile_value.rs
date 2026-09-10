@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use super::ToPrimitive;
 
 pub(crate) fn quantile_value(quantile: f64, values: &mut [f64]) -> Option<f64> {
@@ -17,7 +19,19 @@ pub(crate) fn quantile_value(quantile: f64, values: &mut [f64]) -> Option<f64> {
     if quantile > 1.0 {
         return Some(f64::INFINITY);
     }
-    values.sort_by(f64::total_cmp);
+    // Prometheus sorts with `vectorByValueHeap.Less`, which calls a NaN LESS
+    // than every other value, so a NaN sample is the smallest one in the window
+    // and a quantile that lands between it and its neighbour interpolates to
+    // NaN. `total_cmp` would instead sort a positive NaN last.
+    values.sort_by(|left, right| {
+        if left.is_nan() {
+            return Ordering::Less;
+        }
+        if right.is_nan() {
+            return Ordering::Greater;
+        }
+        left.total_cmp(right)
+    });
     if values.len() == 1 {
         return Some(values[0]);
     }

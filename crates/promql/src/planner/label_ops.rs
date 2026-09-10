@@ -77,17 +77,32 @@ mod tests {
     }
 
     #[test]
-    fn label_replace_empty_replacement_writes_empty_label() {
+    fn label_replace_empty_replacement_removes_the_label() {
         let out = apply_label_replace(
-            vec![sample(&[("__name__", "m"), ("src", "abc")], 1.0)],
+            vec![sample(
+                &[("__name__", "m"), ("src", "abc"), ("dst", "old")],
+                1.0,
+            )],
             "dst",
             "",
             "src",
             ".*",
         )
         .unwrap();
-        // The interpreter's `Labels::insert` keeps an empty-valued label.
-        assert2::assert!(out[0].labels.get("dst") == Some(""));
+        // Prometheus writes through `labels.Builder.Set`, which deletes a label
+        // set to the empty string rather than store it empty.
+        assert2::assert!(out == vec![sample(&[("__name__", "m"), ("src", "abc")], 1.0)]);
+    }
+
+    #[test]
+    fn label_join_empty_join_removes_the_label() {
+        let out = apply_label_join(
+            vec![sample(&[("a", "1"), ("dst", "old")], 1.0)],
+            "dst",
+            "",
+            &["missing".to_string(), "alsomissing".to_string()],
+        );
+        assert2::assert!(out == vec![sample(&[("a", "1")], 1.0)]);
     }
 
     #[test]
@@ -184,6 +199,9 @@ mod apply_sort;
 mod apply_sort_by_label;
 mod compare_label_values;
 mod labels_key;
+mod natural_chunks;
+mod natural_less;
+mod set_label_value;
 mod sort_order;
 mod sort_value;
 
@@ -193,5 +211,8 @@ pub use apply_sort::apply_sort;
 pub use apply_sort_by_label::apply_sort_by_label;
 use compare_label_values::compare_label_values;
 use labels_key::labels_key;
+use natural_chunks::natural_chunks;
+use natural_less::natural_less;
+use set_label_value::set_label_value;
 pub use sort_order::SortOrder;
 use sort_value::sort_value;

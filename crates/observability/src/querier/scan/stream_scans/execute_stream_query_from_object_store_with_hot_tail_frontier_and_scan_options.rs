@@ -1,5 +1,5 @@
 use super::{
-    Arc, BTreeMap, LabelIndex, Labels, LokiDirection, ObjectPath, ObjectStore,
+    Arc, BTreeMap, LabelIndex, Labels, LokiDirection, LokiStreamEntry, ObjectPath, ObjectStore,
     ObjectStoreStreamScan, QueryError, QueryHotTail, StreamPlan, StreamScanOptions,
     append_matching_hot_log_record, append_matching_log_batches,
     collect_object_store_stream_log_batches, loki_streams_response,
@@ -28,12 +28,12 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
         }
         sort_loki_stream_values(&mut streams);
         return Ok(ObjectStoreStreamScan {
-            value: loki_streams_response(streams),
+            value: loki_streams_response(streams, options.encoding),
             scanned_blocks: Vec::new(),
         });
     }
 
-    let mut streams: BTreeMap<Labels, Vec<[String; 2]>> = BTreeMap::new();
+    let mut streams: BTreeMap<Labels, Vec<LokiStreamEntry>> = BTreeMap::new();
     let mut warnings = Vec::new();
     let mut scanned_blocks = Vec::new();
 
@@ -98,7 +98,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
     sort_loki_stream_values(&mut streams);
 
     Ok(ObjectStoreStreamScan {
-        value: loki_streams_response_with_warnings(streams, &warnings),
+        value: loki_streams_response_with_warnings(streams, &warnings, options.encoding),
         scanned_blocks,
     })
 }

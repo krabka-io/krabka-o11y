@@ -4029,6 +4029,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabka-integration"
+version = "0.4.0"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "axum",
+ "bytes",
+ "hex",
+ "krabka-blockstore",
+ "krabka-metrics",
+ "krabka-observability",
+ "krabka-profiles",
+ "krabka-promql",
+ "krabka-traces",
+ "krabka-units",
+ "object_store",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "krabka-kraft-core"
 version = "0.4.0"
 source = "git+https://github.com/krabka-io/krabka-broker?rev=32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617#32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617"
@@ -4084,6 +4107,7 @@ dependencies = [
  "krabka-blockstore",
  "krabka-units",
  "num-traits",
+ "proptest",
  "regex",
  "serde_json",
  "thiserror 2.0.20",
@@ -4231,6 +4255,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "krabka-blockstore",
+ "krabka-broker",
  "krabka-client-admin",
  "krabka-client-consumer",
  "krabka-client-core",
@@ -4249,12 +4274,14 @@ dependencies = [
  "prometheus-client",
  "prost 0.14.4",
  "regex",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "serde_yaml",
  "snap",
  "temp-env",
  "tempfile",
+ "testcontainers",
  "thiserror 2.0.20",
  "tikv-jemallocator",
  "time",
@@ -4316,6 +4343,7 @@ dependencies = [
  "futures",
  "jfrs",
  "krabka-blockstore",
+ "krabka-broker",
  "krabka-client-admin",
  "krabka-client-consumer",
  "krabka-client-core",
