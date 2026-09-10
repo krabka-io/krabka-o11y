@@ -46,12 +46,20 @@ impl LogIngestLimiter for BrokerBackedIngestLimiter {
                     tenant: tenant.to_string(),
                     reason: error.to_string(),
                 })?;
-            let quota = admin.describe_user_quotas(tenant).await.map_err(|error| {
-                IngestLimitError::Unavailable {
-                    tenant: tenant.to_string(),
-                    reason: error.to_string(),
+            let quota = match admin.describe_user_quotas(tenant).await {
+                Ok(quota) => quota,
+                Err(AdminError::Broker {
+                    api: "DescribeClientQuotas",
+                    code: 35,
+                    ..
+                }) => BTreeMap::new(),
+                Err(error) => {
+                    return Err(IngestLimitError::Unavailable {
+                        tenant: tenant.to_string(),
+                        reason: error.to_string(),
+                    });
                 }
-            })?;
+            };
             (acls, quota)
         };
         check_tenant_wal_write_acl(tenant, &self.wal_topic, &acls)?;
