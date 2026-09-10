@@ -1660,19 +1660,20 @@ async fn a_builder_merge_does_not_resurrect_the_block_a_compactor_replaced() {
     check!(handoff_store.snapshot_put_count() == 4);
 }
 
-/// The other direction, and the one that rules out a plain tombstone.
+/// The other direction, and the one that rules out publishing a stale
+/// compaction output.
 ///
 /// Object keys are derived from what a block holds, not minted, so the same key
 /// can be handed out again for a different input set, which is exactly what
 /// `planned_compacted_object_key` allows. Here a writer publishes a new block under the
 /// key a compactor has just retired, and the compactor's merge lands after it.
 ///
-/// A removal recorded by name alone would drop that block, and the drop would
-/// be carried forward by every later snapshot: a live object nothing names any
-/// more. Pinning the removal to the record it retired makes it simply not
-/// match.
+/// A removal recorded by name alone would drop the reused block. Keeping both
+/// records would double-count the retired contents through the compaction
+/// output. The conditional snapshot retry must instead detect that its pinned
+/// input record changed and reject the whole replacement.
 #[tokio::test]
-async fn a_block_written_again_under_a_retired_key_survives_the_compactor_merge() {
+async fn a_reused_input_key_rejects_the_stale_compactor_output() {
     let handoff_store = Arc::new(SnapshotHandoffStore::new("index/traces"));
     let store: Arc<dyn ObjectStore> = Arc::clone(&handoff_store) as Arc<dyn ObjectStore>;
     let index_key = "index/traces.json";
@@ -1709,7 +1710,6 @@ async fn a_block_written_again_under_a_retired_key_survives_the_compactor_merge(
         compactor_index
             .save_latest_snapshot(&store, index_key)
             .await
-            .unwrap();
     };
     let reuser_write = async {
         handoff.reached.await.unwrap();
@@ -1719,25 +1719,30 @@ async fn a_block_written_again_under_a_retired_key_survives_the_compactor_merge(
             .unwrap();
         handoff.release.send(()).unwrap();
     };
-    tokio::join!(compactor, reuser_write);
+    let (compactor_result, ()) = tokio::join!(compactor, reuser_write);
+
+    assert2::assert!(matches!(
+        compactor_result,
+        Err(krabka_blockstore::BlockStoreError::InvalidBlock(message))
+            if message.contains(reused_key)
+    ));
 
     let reloaded = TraceIndex::load_latest_snapshot(&store, index_key)
         .await
         .unwrap();
-    check!(indexed_block_keys(&reloaded) == vec![reused_key.to_string(), output_key.to_string()]);
+    check!(indexed_block_keys(&reloaded) == vec![reused_key.to_string()]);
     // The live block under the reused key is the new one: its traces and its
     // time range, not the retired record's.
     check!(
         reloaded.candidate_blocks_for_trace("tenant-a", &[9; 16], 300, 400)
             == vec![reused_key.to_string()]
     );
-    // And the retired record really is retired: over its own range the trace it
-    // held resolves to the compaction output alone.
+    // The stale output was never published, so the retired record's trace is
+    // absent rather than duplicated beside the reused input.
     check!(
-        reloaded.candidate_blocks_for_trace("tenant-a", &[1; 16], 100, 200)
-            == vec![output_key.to_string()]
+        reloaded.candidate_blocks_for_trace("tenant-a", &[1; 16], 100, 200) == Vec::<String>::new()
     );
-    // Seed, the compactor's rejected write, the reuser's, the compactor's
-    // retry.
-    check!(handoff_store.snapshot_put_count() == 4);
+    // Seed, the compactor's rejected conditional write, and the reuser's
+    // winning write. Revalidation rejects the retry before another put.
+    check!(handoff_store.snapshot_put_count() == 3);
 }
