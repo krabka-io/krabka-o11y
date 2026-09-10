@@ -131,7 +131,7 @@ pub(crate) struct Cli {
     )]
     pub(crate) ruler_alertmanager_url: Vec<String>,
     /// Label in `name=value` form added when an alert does not define it.
-    #[arg(long, env = "KRABKA_METRICS_RULER_EXTERNAL_LABEL", value_parser = parse_external_label, value_delimiter = ',')]
+    #[arg(long, env = "KRABKA_METRICS_RULER_EXTERNAL_LABEL", value_parser = parse_external_label)]
     pub(crate) ruler_external_label: Vec<(String, String)>,
     /// Generator URL template. `{alertname}` expands to the outgoing alert name.
     #[arg(long, env = "KRABKA_METRICS_RULER_GENERATOR_URL_TEMPLATE")]

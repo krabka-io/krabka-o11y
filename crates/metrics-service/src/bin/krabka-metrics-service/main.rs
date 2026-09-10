@@ -122,7 +122,9 @@ mod tests {
             "--ruler-alertmanager-url",
             "http://am-0/api/v2/alerts,http://am-1/api/v2/alerts",
             "--ruler-external-label",
-            "cluster=prod,region=eu-west-1",
+            "cluster=prod",
+            "--ruler-external-label",
+            "location=Paris, France",
             "--ruler-generator-url-template",
             "https://metrics.example/alerts/{alertname}",
         ])
@@ -133,13 +135,28 @@ mod tests {
             cli.ruler_external_label
                 == [
                     ("cluster".to_string(), "prod".to_string()),
-                    ("region".to_string(), "eu-west-1".to_string()),
+                    ("location".to_string(), "Paris, France".to_string()),
                 ]
         );
         assert2::assert!(
             cli.ruler_generator_url_template.as_deref()
                 == Some("https://metrics.example/alerts/{alertname}")
         );
+    }
+
+    #[test]
+    fn rejects_invalid_external_label_names() {
+        for label in ["bad-label=prod", "9region=prod", "region.name=prod"] {
+            let result = Cli::try_parse_from([
+                "krabka-metrics-service",
+                "--target",
+                "ruler",
+                "--ruler-external-label",
+                label,
+            ]);
+
+            assert2::assert!(result.is_err(), "accepted invalid label {label:?}");
+        }
     }
 
     #[test]
