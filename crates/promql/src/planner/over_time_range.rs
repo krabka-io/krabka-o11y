@@ -32,7 +32,6 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use datafusion::{
-    catalog::MemTable,
     execution::FunctionRegistry,
     logical_expr::{Expr, Extension, LogicalPlan, LogicalPlanBuilder, col, lit},
     prelude::SessionContext,
@@ -40,7 +39,7 @@ use datafusion::{
 use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_units::prelude::*;
 
-use super::LabeledSeries;
+use super::{LabeledSeries, StepGrid, leaf::leaf_scan};
 use crate::{
     PromqlError,
     error::Result,
@@ -85,7 +84,8 @@ mod tests {
         family: OverTimeFamily,
         phi: f64,
     ) -> Vec<(String, f64)> {
-        let plan = plan_over_time_range_selector(samples, eval_time_ms, range, family, phi)
+        let grid = StepGrid::instant(eval_time_ms, range.millis_i64());
+        let plan = plan_over_time_range_selector(samples, grid, range, family, phi)
             .await
             .unwrap();
         let batches = plan
@@ -199,7 +199,7 @@ mod tests {
         let samples = vec![labeled("a", &[(0, 5.0)])];
         let plan = plan_over_time_range_selector(
             samples,
-            120_000,
+            StepGrid::instant(120_000, 120_000),
             millis(120_000),
             OverTimeFamily::Sum,
             0.0,

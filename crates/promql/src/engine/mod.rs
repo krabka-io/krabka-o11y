@@ -11,6 +11,7 @@ mod assembly;
 mod binary;
 mod binary_plan;
 mod execution;
+mod grid_leaf;
 mod histogram;
 mod histogram_plan;
 mod info;
@@ -31,6 +32,7 @@ mod scalar_eval;
 mod selector;
 mod selector_eval;
 mod selector_plan;
+mod step_vectors;
 mod store_scans;
 #[cfg(test)]
 mod test_oracle;

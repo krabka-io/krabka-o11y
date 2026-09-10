@@ -1,26 +1,32 @@
 use super::{
     Arc, BTreeSet, Extension, InstantManipulate, InstantSelectorPlan, LabeledSeries, LogicalPlan,
-    MemTable, PromqlError, Result, SeriesDivide, SeriesNormalize, TIME_COLUMN, Time, TimeExt,
-    VALUE_COLUMN, build_leaf_batch, leaf_schema, prom_session_context,
+    Result, SeriesDivide, SeriesNormalize, StepGrid, TIME_COLUMN, Time, TimeExt, VALUE_COLUMN,
+    build_leaf_batch, leaf_scan, leaf_schema, prom_session_context,
 };
 
 /// Builds the leaf table and operator chain for a bare instant-vector selector.
 ///
-/// The chain evaluates the selector at `eval_time_ms` with the given
-/// `lookback_delta`. `series` are the matched series and their float samples
-/// over the scan window `(eval_time_ms - lookback_delta, eval_time_ms]`, in
-/// ascending fingerprint order with each series' samples in timestamp order —
-/// which is the contiguous, time-ordered run [`SeriesDivide`] needs. The caller
-/// must filter out the stale-NaN markers before the values reach
-/// [`InstantManipulate`]. This matches the staleness handling of the
-/// interpreter.
+/// The chain evaluates the selector at every instant of `grid` with the given
+/// `lookback_delta`, emitting one row per (series, grid instant) that has a
+/// sample in its lookback window. An instant query passes a one-point grid; the
+/// range driver passes the query's whole step grid, so one plan covers every
+/// step. [`InstantManipulate`] walks the grid with a single monotonic cursor per
+/// series, so a step's selection is the same one a one-point grid at that
+/// instant would make.
+///
+/// `series` are the matched series and their float samples over the scan window
+/// `(grid.start - lookback_delta, grid.end]`, in ascending fingerprint
+/// order with each series' samples in timestamp order — which is the
+/// contiguous, time-ordered run [`SeriesDivide`] needs. The caller must filter
+/// out the stale-NaN markers before the values reach [`InstantManipulate`]. This
+/// matches the staleness handling of the interpreter.
 ///
 /// # Errors
 ///
 /// Returns an error if this function cannot build the Arrow batch or the table.
 pub async fn plan_instant_vector_selector(
     series: Vec<LabeledSeries>,
-    eval_time_ms: i64,
+    grid: StepGrid,
     lookback_delta: Time,
 ) -> Result<InstantSelectorPlan> {
     // Collect the distinct label names across all matched series; these become
@@ -41,10 +47,7 @@ pub async fn plan_instant_vector_selector(
     let batch = build_leaf_batch(Arc::clone(&schema), &label_names, &series)?;
 
     let ctx = prom_session_context();
-    let table = MemTable::try_new(schema, vec![vec![batch]])
-        .map_err(|error| PromqlError::Exec(error.to_string()))?;
-    ctx.register_table("prom_leaf", Arc::new(table))?;
-    let leaf = ctx.table("prom_leaf").await?.into_optimized_plan()?;
+    let leaf = leaf_scan("prom_leaf", schema, batch)?;
 
     // SeriesDivide on every label column splits the sorted input into exact
     // per-series batches.
@@ -55,7 +58,7 @@ pub async fn plan_instant_vector_selector(
         }),
     });
     // SeriesNormalize sorts each per-series batch by timestamp. The offset is
-    // already folded into eval_time_ms by the caller, so it is zero here.
+    // already folded into the grid by the caller, so it is zero here.
     let normalize = LogicalPlan::Extension(Extension {
         node: Arc::new(SeriesNormalize {
             offset_ms: 0,
@@ -64,14 +67,13 @@ pub async fn plan_instant_vector_selector(
             input: divide,
         }),
     });
-    // InstantManipulate selects, for the single eval step, the latest sample
-    // within (eval_time - lookback, eval_time], dropping NaN.
+    // InstantManipulate selects, for each grid instant, the latest sample
+    // within (instant - lookback, instant], dropping NaN.
     let instant = LogicalPlan::Extension(Extension {
         node: Arc::new(InstantManipulate {
-            start_ms: eval_time_ms,
-            end_ms: eval_time_ms,
-            // A single grid step: any positive stride covers exactly one point.
-            step_ms: lookback_delta.millis_i64().max(1),
+            start_ms: grid.start,
+            end_ms: grid.end,
+            step_ms: grid.step,
             lookback_delta_ms: lookback_delta.millis_i64(),
             time_index: TIME_COLUMN.to_string(),
             field_column: VALUE_COLUMN.to_string(),

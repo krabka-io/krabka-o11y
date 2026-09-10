@@ -10,6 +10,7 @@ use super::{
     check_resolution_points,
     planner_support::range_expr_routes_through_planner,
     row_cache::{RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner},
+    step_vectors::{RANGE_STEP_VECTORS, StepVectorCache, StepVectorCacheInner},
 };
 #[cfg(feature = "experimental-functions")]
 use super::{QUERY_RANGE_CONTEXT, QueryRangeContext};
@@ -17,6 +18,7 @@ use crate::{
     DurationExprContext, PromqlError,
     error::Result,
     parse_promql_with_duration_context,
+    planner::StepGrid,
     result::{Annotations, QueryResult, RangeSeries, SampleValue},
     store::MetricStore,
 };
@@ -257,53 +259,68 @@ impl<S: MetricStore> PromqlEngine<S> {
                 histograms: std::collections::HashMap::new(),
                 labels: std::collections::HashMap::new(),
             }));
-        RANGE_SCAN_CACHE
-            .scope(cache, async move {
-                let mut by_fp: BTreeMap<SeriesFingerprint, RangeSeries> = BTreeMap::new();
-                let mut step_time_ms = start_ms;
-                while step_time_ms <= end_ms {
-                    let Some(planned) = self.plan_instant_expr(tenant, expr, step_time_ms).await?
-                    else {
-                        // This step's shape is not planner-supported (e.g. a histogram
-                        // series appeared in-window). Abandon the operator path for the
-                        // whole query so the interpreter produces a consistent result.
-                        return Ok(None);
-                    };
-                    match self.assemble_planned_instant(planned, step_time_ms).await? {
-                        QueryResult::InstantVector(samples) => {
-                            for sample in samples {
-                                let fp = sample.labels.fingerprint();
-                                by_fp
-                                    .entry(fp)
-                                    .or_insert_with(|| RangeSeries {
-                                        labels: sample.labels.clone(),
-                                        samples: Vec::new(),
-                                    })
-                                    .samples
-                                    .push((step_time_ms, sample.value));
-                            }
-                        }
-                        QueryResult::Scalar { value, .. } => {
-                            let labels = Labels::new();
+        // Plan each operator leaf once over the whole grid rather than once per
+        // step, and let the loop read the memo. Scoped like the scan cache
+        // above, so a nested range evaluation (a subquery's own grid) shadows it
+        // and restores this one on exit.
+        let step_vectors: StepVectorCache =
+            std::sync::Arc::new(std::sync::Mutex::new(StepVectorCacheInner {
+                grid: StepGrid {
+                    start: start_ms,
+                    end: end_ms,
+                    step: step.millis_i64(),
+                },
+                points: 0,
+                leaves: std::collections::HashMap::new(),
+            }));
+        let driver = async move {
+            let mut by_fp: BTreeMap<SeriesFingerprint, RangeSeries> = BTreeMap::new();
+            let mut step_time_ms = start_ms;
+            while step_time_ms <= end_ms {
+                let Some(planned) = self.plan_instant_expr(tenant, expr, step_time_ms).await?
+                else {
+                    // This step's shape is not planner-supported (e.g. a histogram
+                    // series appeared in-window). Abandon the operator path for the
+                    // whole query so the interpreter produces a consistent result.
+                    return Ok(None);
+                };
+                match self.assemble_planned_instant(planned, step_time_ms).await? {
+                    QueryResult::InstantVector(samples) => {
+                        for sample in samples {
+                            let fp = sample.labels.fingerprint();
                             by_fp
-                                .entry(labels.fingerprint())
+                                .entry(fp)
                                 .or_insert_with(|| RangeSeries {
-                                    labels,
+                                    labels: sample.labels.clone(),
                                     samples: Vec::new(),
                                 })
                                 .samples
-                                .push((step_time_ms, SampleValue::Float(value)));
-                        }
-                        QueryResult::Str { .. } | QueryResult::RangeMatrix(_) => {
-                            // The planner only ever assembles an instant vector or a
-                            // scalar; neither of these can arise. Fall back defensively.
-                            return Ok(None);
+                                .push((step_time_ms, sample.value));
                         }
                     }
-                    step_time_ms = step_time_ms.saturating_add(step.millis_i64());
+                    QueryResult::Scalar { value, .. } => {
+                        let labels = Labels::new();
+                        by_fp
+                            .entry(labels.fingerprint())
+                            .or_insert_with(|| RangeSeries {
+                                labels,
+                                samples: Vec::new(),
+                            })
+                            .samples
+                            .push((step_time_ms, SampleValue::Float(value)));
+                    }
+                    QueryResult::Str { .. } | QueryResult::RangeMatrix(_) => {
+                        // The planner only ever assembles an instant vector or a
+                        // scalar; neither of these can arise. Fall back defensively.
+                        return Ok(None);
+                    }
                 }
-                Ok(Some(by_fp.into_values().collect()))
-            })
+                step_time_ms = step_time_ms.saturating_add(step.millis_i64());
+            }
+            Ok(Some(by_fp.into_values().collect()))
+        };
+        RANGE_SCAN_CACHE
+            .scope(cache, RANGE_STEP_VECTORS.scope(step_vectors, driver))
             .await
     }
 
