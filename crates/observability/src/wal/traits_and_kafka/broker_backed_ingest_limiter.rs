@@ -41,13 +41,20 @@ impl LogIngestLimiter for BrokerBackedIngestLimiter {
     async fn check(&self, tenant: &str, records: &[WalLogRecord]) -> Result<(), IngestLimitError> {
         let (acls, quota) = {
             let mut admin = self.admin.lock().await;
-            let acls = admin
-                .describe_acls(&AclEntryFilter::default())
-                .await
-                .map_err(|error| IngestLimitError::Unavailable {
-                    tenant: tenant.to_string(),
-                    reason: error.to_string(),
-                })?;
+            let acls = match admin.describe_acls(&AclEntryFilter::default()).await {
+                Ok(acls) => acls,
+                Err(AdminError::Broker {
+                    api: "DescribeAcls",
+                    code: 54,
+                    ..
+                }) => Vec::new(),
+                Err(error) => {
+                    return Err(IngestLimitError::Unavailable {
+                        tenant: tenant.to_string(),
+                        reason: error.to_string(),
+                    });
+                }
+            };
             let quota = match admin.describe_user_quotas(tenant).await {
                 Ok(quota) => quota,
                 Err(
