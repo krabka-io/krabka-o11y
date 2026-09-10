@@ -134,10 +134,7 @@ impl BlockStreamWriter {
                 return Err(error);
             }
         };
-        if let Err(error) = writer.finish().await {
-            writer.into_inner().abort().await?;
-            return Err(error.into());
-        }
+        writer.finish().await?;
 
         Ok(BlockMeta {
             tenant: self.tenant,
