@@ -541,10 +541,9 @@ impl ProfileIndex {
                     let fingerprint = profile_block_fingerprint(meta, &partitions);
                     base_blocks
                         .get(&meta.object_key)
-                        .map(|(base_meta, base_partitions)| {
+                        .is_none_or(|(base_meta, base_partitions)| {
                             profile_block_fingerprint(base_meta, base_partitions) != fingerprint
                         })
-                        .unwrap_or(true)
                 })
                 .map(|meta| meta.object_key)
                 .collect()
