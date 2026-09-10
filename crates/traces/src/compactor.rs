@@ -604,7 +604,6 @@ mod tests {
         }
     }
 
-
     /// The declared trace order is `[trace_id, start_unix_nano]`, so two
     /// sibling spans starting on the same nanosecond are rows the key cannot
     /// separate -- and their row order is exactly what `recompute_nested_sets`
@@ -684,7 +683,6 @@ mod tests {
             "the root, then the tied sibling from the earlier block, then the later block's"
         );
     }
-
 }
 
 mod attr_value;
