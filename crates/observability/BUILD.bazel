@@ -14,6 +14,12 @@ crate_binary(
     lib = ":observability",
 )
 
+crate_binary(
+    name = "krabka-o11y-bootstrap",
+    crate_root = "src/bin/krabka-o11y-bootstrap.rs",
+    lib = ":observability",
+)
+
 crate_tests(
     # `compactor` asserts on wall-clock behaviour: several cases wrap the
     # runtime in a one-second `tokio::time::timeout` and give it a 250ms retry
