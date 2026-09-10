@@ -1,10 +1,10 @@
 use super::{
-    ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, QueryError, QueryRow, StreamPlan,
-    is_deleted_log_entry, matching_loki_stream_entry,
+    ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, LokiStreamEntry, QueryError, QueryRow,
+    StreamPlan, is_deleted_log_entry, matching_loki_stream_entry,
 };
 
 pub(crate) fn append_matching_log_row(
-    streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,
+    streams: &mut BTreeMap<Labels, Vec<LokiStreamEntry>>,
     plan: &StreamPlan,
     label_index: &LabelIndex,
     row: QueryRow<'_>,
@@ -38,13 +38,10 @@ pub(crate) fn append_matching_log_row(
     ) {
         return Ok(());
     }
-    if let Some((stream_labels, current_line)) =
+    if let Some((stream_labels, entry)) =
         matching_loki_stream_entry(&plan.query, labels, line, structured_metadata, timestamp_ns)
     {
-        streams
-            .entry(stream_labels)
-            .or_default()
-            .push([timestamp_ns.to_string(), current_line]);
+        streams.entry(stream_labels).or_default().push(entry);
     }
 
     Ok(())

@@ -1,8 +1,8 @@
 use super::{
-    Arc, HttpQueryError, LokiDirection, QuerierState, QueryHotTail, StreamScanOptions, TimeRange,
-    Value, active_log_delete_filters, add_loki_query_stats_for_stream_blocks_with_hot_tail,
-    add_loki_query_stats_for_stream_plan, add_loki_query_stats_for_stream_plan_with_hot_tail,
-    apply_loki_stream_options,
+    Arc, HttpQueryError, LokiDirection, LokiStreamEncoding, QuerierState, QueryHotTail,
+    StreamScanOptions, TimeRange, Value, active_log_delete_filters,
+    add_loki_query_stats_for_stream_blocks_with_hot_tail, add_loki_query_stats_for_stream_plan,
+    add_loki_query_stats_for_stream_plan_with_hot_tail, apply_loki_stream_options,
     execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options,
     execute_stream_query_with_deletes, execute_stream_query_with_hot_tail_frontier_and_deletes,
     hot_tail_snapshot, parse_query, plan_stream_query, validate_loki_interval,
@@ -15,6 +15,7 @@ pub(crate) async fn execute_http_stream_query(
     tenant: &str,
     time_range: TimeRange,
     options: (LokiDirection, Option<usize>, Option<i64>, Option<i64>),
+    encoding: LokiStreamEncoding,
 ) -> Result<Value, HttpQueryError> {
     let (direction, limit, interval, end_exclusive) = options;
     validate_loki_interval(interval)?;
@@ -43,7 +44,8 @@ pub(crate) async fn execute_http_stream_query(
                 delete_filters: &delete_filters,
             },
             StreamScanOptions::from_stream_options(direction, limit, interval, end_exclusive)
-                .with_block_fetch_concurrency(state.cold_block_fetch_concurrency),
+                .with_block_fetch_concurrency(state.cold_block_fetch_concurrency)
+                .with_encoding(encoding),
         )
         .await
         .map_err(HttpQueryError::from)?;
@@ -69,6 +71,7 @@ pub(crate) async fn execute_http_stream_query(
             &records,
             &frontier,
             &delete_filters,
+            encoding,
         )
         .await
         .map_err(HttpQueryError::from)?;
@@ -78,10 +81,15 @@ pub(crate) async fn execute_http_stream_query(
             response, &plan, &records, &frontier,
         ));
     }
-    let response =
-        execute_stream_query_with_deletes(&state.root, &plan, &state.label_index, &delete_filters)
-            .await
-            .map_err(HttpQueryError::from)?;
+    let response = execute_stream_query_with_deletes(
+        &state.root,
+        &plan,
+        &state.label_index,
+        &delete_filters,
+        encoding,
+    )
+    .await
+    .map_err(HttpQueryError::from)?;
     let response = apply_loki_stream_options(response, direction, limit, interval, end_exclusive);
     Ok(add_loki_query_stats_for_stream_plan(response, &plan))
 }

@@ -1,6 +1,6 @@
 use super::{
-    HttpQueryError, QuerierState, QueryKind, QueryParams, Value, add_loki_query_stats,
-    apply_label_join_to_loki_result, apply_label_replace_to_loki_result,
+    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, Value,
+    add_loki_query_stats, apply_label_join_to_loki_result, apply_label_replace_to_loki_result,
     execute_http_label_replace_metric_binary_expression, execute_http_metric_expression_query,
     execute_http_metric_query, execute_http_remaining_query, execute_http_sort_vector_expression,
     loki_direction, loki_instant_scalar_or_vector_response, loki_range_vector_response,
@@ -16,6 +16,7 @@ pub(crate) async fn execute_http_query_for_tenant(
     tenant: &str,
     params: &QueryParams,
     kind: QueryKind,
+    encoding: LokiStreamEncoding,
 ) -> Result<Value, HttpQueryError> {
     let time_range = time_range(params, kind)?;
     validate_loki_range_query_range_limit(kind, time_range)?;
@@ -122,6 +123,7 @@ pub(crate) async fn execute_http_query_for_tenant(
         kind,
         time_range,
         (direction, limit, interval),
+        encoding,
     )
     .await
 }

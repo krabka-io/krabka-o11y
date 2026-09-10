@@ -645,6 +645,9 @@ async fn executes_stream_query_with_json_field_filter_over_structured_metadata()
                     "resultType": "streams",
                     "result": [
                         {
+                            // The metadata the filter matched on is folded
+                            // into the stream's labels, which is where Loki's
+                            // default encoding leaves it.
                             "stream": {
                                 "app": "api",
                                 "detected_level": "unknown",

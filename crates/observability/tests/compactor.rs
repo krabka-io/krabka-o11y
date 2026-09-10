@@ -26,8 +26,8 @@ use krabka_client_consumer::ConsumerError;
 use krabka_observability::{
     CompactionFrontier, CompactionOffsetCommitter, KafkaWalHeader, KafkaWalRecord, LogWalConsumer,
     Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig, ServiceDependencies,
-    SharedCompactionFrontier, WalConsumerError, WalLogRecord, WalPosition, build_kafka_wal_record,
-    build_service_router, compact_kafka_wal_records_to_object_store,
+    ServiceRuntimeError, SharedCompactionFrontier, WalConsumerError, WalLogRecord, WalPosition,
+    build_kafka_wal_record, build_service_router, compact_kafka_wal_records_to_object_store,
     compact_log_block_to_object_store, compact_next_kafka_wal_batch_to_object_store,
     compact_wal_records_to_object_store, read_compaction_frontier_from_object_store,
     run_compactor_once, run_compactor_until_idle, run_compactor_until_shutdown, serve_service,
@@ -1796,6 +1796,198 @@ async fn compactor_service_listener_serves_http_while_polling_wal() {
     assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok"]);
 }
 
+#[tokio::test]
+async fn compaction_interrupted_between_block_write_and_index_save_loses_nothing_on_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let prefix = ObjectPath::from("observability/logs");
+    let key = BlockKey::new("tenant-a", 6, 42, 42, TimeRange::new(10, 10).unwrap());
+    let config = compactor_config("observability/logs");
+    let block_path = log_block_object_path(&prefix, &key).to_string();
+
+    // The compactor writes the output block first and the tenant's shard
+    // manifest second. Failing every write of that manifest cuts the run in
+    // exactly the gap between the two: the block is durable, nothing names it.
+    let interrupted_store = FailingPutObjectStore::fail_every_matching_put(
+        LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
+        "shards/time=10-10/manifest.json",
+    );
+    let interrupted_commits = SharedCommitLog::default();
+    let interrupted = ServiceDependencies::default().with_wal_consumer(
+        RecordingWalConsumer::recording_commits_to(
+            vec![vec![kafka_wal_record(
+                &wal_record_without_position(10, "api ok"),
+                6,
+                42,
+            )]],
+            &interrupted_commits,
+        ),
+    );
+
+    run_compactor_until_idle(&config, interrupted, Some(&interrupted_store))
+        .await
+        .unwrap_err();
+
+    // The block survived the interruption...
+    assert!(interrupted_store.failed_put_count() == 1);
+    assert!(list_log_block_paths(&interrupted_store, &prefix).await == vec![block_path.clone()]);
+    // ...as an orphan: no shard names it, so no query can reach its rows.
+    assert!(
+        list_tenant_log_index_shard_ranges_from_object_store(
+            &interrupted_store,
+            &prefix,
+            "tenant-a"
+        )
+        .await
+        .unwrap()
+            == Vec::new()
+    );
+    // The input is safely unconsumed, so the restart below re-reads it.
+    assert!(interrupted_commits.lock().unwrap().is_empty());
+
+    // Restart against the same data, with the injected failure gone.
+    let restart_store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let restart_commits = SharedCommitLog::default();
+    let restarted = ServiceDependencies::default().with_wal_consumer(
+        RecordingWalConsumer::recording_commits_to(
+            vec![
+                vec![kafka_wal_record(
+                    &wal_record_without_position(10, "api ok"),
+                    6,
+                    42,
+                )],
+                Vec::new(),
+            ],
+            &restart_commits,
+        ),
+    );
+    let descriptors = run_compactor_until_idle(&config, restarted, Some(&restart_store))
+        .await
+        .unwrap();
+
+    // The restart finished the work: one block, named by one shard, readable.
+    assert!(
+        descriptors
+            .iter()
+            .map(|descriptor| descriptor.key.clone())
+            .collect::<Vec<_>>()
+            == vec![key.clone()]
+    );
+    assert!(
+        list_tenant_log_index_shard_ranges_from_object_store(&restart_store, &prefix, "tenant-a")
+            .await
+            .unwrap()
+            == vec![key.time_range]
+    );
+    let rows = read_log_block_from_object_store(&restart_store, &prefix, &key)
+        .await
+        .unwrap();
+    assert!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok"]);
+
+    // The interrupted run left no second, unreferenced copy behind: the block
+    // key is derived from the tenant, partition, offsets and time range, so the
+    // replay rewrites the same object rather than adding one.
+    assert!(list_log_block_paths(&restart_store, &prefix).await == vec![block_path]);
+    assert!(
+        restart_commits.lock().unwrap().as_slice()
+            == [WalPosition {
+                partition: PartitionIndex(6),
+                offset: Offset(42),
+            }]
+    );
+}
+
+#[tokio::test]
+async fn compactor_service_stops_serving_when_its_wal_consumer_loop_panics() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
+    let config = compactor_config("observability/logs");
+    let trigger = Arc::new(tokio::sync::Notify::new());
+    let dependencies = ServiceDependencies::default().with_wal_consumer(PanickingWalConsumer {
+        trigger: Arc::clone(&trigger),
+    });
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_store = Arc::clone(&store);
+    let server = tokio::spawn(async move {
+        serve_service_listener(listener, config, dependencies, Some(server_store.as_ref())).await
+    });
+
+    // The consumer is parked on the trigger, so the service is demonstrably
+    // serving while a live consumer sits behind it.
+    assert!(get_ready(addr).await.starts_with("HTTP/1.1 200 OK"));
+
+    // Now kill the consumer loop underneath it.
+    trigger.notify_one();
+    let joined = server.await.unwrap_err();
+
+    // The panic took the whole role down rather than being reaped behind a
+    // still-listening port. A compactor that kept answering here would be
+    // reporting itself healthy with nothing draining the WAL.
+    assert!(joined.is_panic());
+    assert!(TcpStream::connect(addr).await.is_err());
+}
+
+/// The querier's WAL hot-tail loop is the one consumer loop this service
+/// really does `tokio::spawn`, and a spawned task that panics is reaped
+/// silently by default: the `JoinHandle` carries the panic, and dropping it
+/// throws the panic away. A querier that did that would keep answering
+/// `/ready` with 200 and keep serving whatever the hot tail last held, with
+/// nothing reading the WAL behind it.
+#[tokio::test]
+async fn querier_service_stops_serving_when_its_spawned_wal_consumer_loop_panics() {
+    let dir = tempfile::tempdir().unwrap();
+    // The querier reads a local manifest at startup; an empty one is enough to
+    // get the role serving so the consumer loop is what this test varies.
+    write_log_index_manifest(dir.path(), &LabelIndex::default(), &BlockIndex::default()).unwrap();
+    let config = ServiceConfig {
+        target: Role::Querier,
+        listen_addr: "127.0.0.1:0".parse().unwrap(),
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier".to_string(),
+        data_root: dir.path().to_path_buf(),
+        querier_index_source: QuerierIndexSource::LocalManifest,
+        ..ServiceConfig::default()
+    };
+    let trigger = Arc::new(tokio::sync::Notify::new());
+    let dependencies = ServiceDependencies::default().with_wal_consumer(PanickingWalConsumer {
+        trigger: Arc::clone(&trigger),
+    });
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server =
+        tokio::spawn(
+            async move { serve_service_listener(listener, config, dependencies, None).await },
+        );
+
+    // Parked on the trigger, the hot-tail loop is alive and the querier is ready.
+    assert!(get_ready(addr).await.starts_with("HTTP/1.1 200 OK"));
+
+    trigger.notify_one();
+    let error = server.await.unwrap().unwrap_err();
+
+    // The role names the dead task and stops, instead of reaping the panic and
+    // serving on.
+    assert!(matches!(
+        error,
+        ServiceRuntimeError::CriticalTask("querier WAL hot-tail")
+    ));
+    assert!(TcpStream::connect(addr).await.is_err());
+}
+
+/// One `GET /ready`, read to end over a `Connection: close` request.
+async fn get_ready(addr: std::net::SocketAddr) -> String {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(
+            format!("GET /ready HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    response
+}
+
 #[derive(Debug)]
 struct FailingPutObjectStore<S> {
     inner: Arc<S>,
@@ -1820,6 +2012,18 @@ impl<S> FailingPutObjectStore<S> {
             failed_puts_remaining: std::sync::Mutex::new(1),
             failed_puts: std::sync::atomic::AtomicUsize::new(0),
             matching_path: Some(matching_path.to_string()),
+        }
+    }
+
+    /// Fails every matching `put`, not just the first.
+    ///
+    /// `fail_first_matching_put` models a transient error that a retry rides
+    /// out. This models the write never landing at all, which is how a run
+    /// interrupted at that write looks to everything downstream of it.
+    fn fail_every_matching_put(inner: S, matching_path: &str) -> Self {
+        Self {
+            failed_puts_remaining: std::sync::Mutex::new(usize::MAX),
+            ..Self::fail_first_matching_put(inner, matching_path)
         }
     }
 
@@ -1947,11 +2151,19 @@ impl CompactionOffsetCommitter for RecordingCommitter {
     }
 }
 
+/// Offsets committed by a consumer the test has handed to `ServiceDependencies`.
+///
+/// `with_wal_consumer` takes the consumer by value, so `committed` is out of
+/// reach once a runtime owns it. Sharing the log keeps "did this run consume
+/// the input?" observable after the run.
+type SharedCommitLog = Arc<std::sync::Mutex<Vec<WalPosition>>>;
+
 #[derive(Default)]
 struct RecordingWalConsumer {
     batches: Vec<Vec<KafkaWalRecord>>,
     committed: Vec<WalPosition>,
     failed_commits_remaining: usize,
+    commit_log: Option<SharedCommitLog>,
 }
 
 impl RecordingWalConsumer {
@@ -1960,12 +2172,23 @@ impl RecordingWalConsumer {
             batches,
             committed: Vec::new(),
             failed_commits_remaining: 0,
+            commit_log: None,
         }
     }
 
     fn failing_first_commit(batches: Vec<Vec<KafkaWalRecord>>) -> Self {
         Self {
             failed_commits_remaining: 1,
+            ..Self::new(batches)
+        }
+    }
+
+    fn recording_commits_to(
+        batches: Vec<Vec<KafkaWalRecord>>,
+        commit_log: &SharedCommitLog,
+    ) -> Self {
+        Self {
+            commit_log: Some(Arc::clone(commit_log)),
             ..Self::new(batches)
         }
     }
@@ -1988,9 +2211,51 @@ impl LogWalConsumer for RecordingWalConsumer {
                 ConsumerError::CoordinatorUnavailable,
             ));
         }
+        if let Some(commit_log) = self.commit_log.as_ref() {
+            commit_log.lock().unwrap().push(position);
+        }
         self.committed.push(position);
         Ok(())
     }
+}
+
+/// WAL consumer whose poll loop panics on demand.
+///
+/// `poll` waits for the test to fire the trigger and then panics inside
+/// whichever role's consume loop is driving it. Gating on the trigger rather
+/// than on a sleep pins the interleaving exactly: the service is known to have
+/// served a request before the consumer behind it dies.
+struct PanickingWalConsumer {
+    trigger: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl LogWalConsumer for PanickingWalConsumer {
+    async fn poll(&mut self, _timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
+        self.trigger.notified().await;
+        panic!("injected WAL consumer panic");
+    }
+
+    async fn commit_compacted(&mut self, _position: WalPosition) -> Result<(), WalConsumerError> {
+        Ok(())
+    }
+}
+
+/// Every `.parquet` object under `prefix`, that is every log block the store
+/// physically holds, whether or not an index names it.
+async fn list_log_block_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> Vec<String> {
+    use futures_util::StreamExt as _;
+
+    let mut listing = store.list(Some(prefix));
+    let mut paths = Vec::new();
+    while let Some(meta) = listing.next().await {
+        let location = meta.unwrap().location;
+        if location.as_ref().ends_with(".parquet") {
+            paths.push(location.to_string());
+        }
+    }
+    paths.sort();
+    paths
 }
 
 fn wal_record(timestamp_ns: i64, offset: i64, line: &str) -> WalLogRecord {

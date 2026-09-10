@@ -1,5 +1,5 @@
 use super::{
-    CompactionFrontier, StreamPlan, Value, WalLogRecord,
+    CompactionFrontier, LokiStreamEncoding, StreamPlan, Value, WalLogRecord,
     execute_tail_query_with_frontier_and_deletes,
 };
 
@@ -9,5 +9,11 @@ pub fn execute_tail_query_with_frontier(
     hot_tail: &[WalLogRecord],
     frontier: &CompactionFrontier,
 ) -> Value {
-    execute_tail_query_with_frontier_and_deletes(plan, hot_tail, frontier, &[])
+    execute_tail_query_with_frontier_and_deletes(
+        plan,
+        hot_tail,
+        frontier,
+        &[],
+        LokiStreamEncoding::Folded,
+    )
 }

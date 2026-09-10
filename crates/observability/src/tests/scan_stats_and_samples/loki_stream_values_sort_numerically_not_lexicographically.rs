@@ -7,7 +7,12 @@ use super::*;
 /// entry does not claim to be the oldest line in the stream.
 #[test]
 pub(crate) fn loki_stream_values_sort_numerically_not_lexicographically() {
-    let entry = |timestamp: &str| [timestamp.to_string(), "line".to_string()];
+    let entry = |timestamp: &str| LokiStreamEntry {
+        timestamp_ns: timestamp.to_string(),
+        line: "line".to_string(),
+        structured_metadata: Labels::default(),
+        parsed: Labels::default(),
+    };
     let mut streams = BTreeMap::new();
     let mut labels = Labels::default();
     labels.insert("app".to_string(), "api".to_string());
@@ -26,7 +31,7 @@ pub(crate) fn loki_stream_values_sort_numerically_not_lexicographically() {
 
     let order = streams[&labels]
         .iter()
-        .map(|[timestamp, _]| timestamp.as_str())
+        .map(|entry| entry.timestamp_ns.as_str())
         .collect::<Vec<_>>();
     check!(
         order == vec!["2", "999", "1000", "10000", "nonsense"],

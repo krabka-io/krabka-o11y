@@ -1,4 +1,8 @@
-use super::prelude::{BTreeMap, Labels, METRIC_DECIMAL_SCALE, MetricValue, check};
+use super::prelude::{
+    BTreeMap, HeaderMap, Labels, LokiStreamEncoding, LokiStreamEntry, METRIC_DECIMAL_SCALE,
+    MetricValue, add_loki_encoding_flags, add_loki_tail_encoding_flags, check, json,
+    loki_encoding_flags, loki_stream_encoding_for_headers,
+};
 
 mod a_decimal_seconds_timestamp_scales_its_fraction_to_nanos;
 mod a_form_component_decodes_its_escapes_or_refuses_them;
@@ -7,7 +11,9 @@ mod a_metric_square_root_floors_and_refuses_what_has_no_root;
 mod a_metric_subtraction_stays_exact_across_denominators;
 mod a_metric_value_renders_without_trailing_zeros;
 mod a_sample_timestamp_offers_every_reading_its_encoding_allows;
+mod a_stream_entry_is_two_elements_until_a_request_categorizes_labels;
 mod a_word_boundary_needs_whitespace_or_an_end_on_both_sides;
+mod encoding_flags_are_echoed_verbatim_but_only_categorize_labels_acts;
 mod loki_scan_stats_report_only_the_sources_that_contributed;
 mod loki_stream_values_sort_numerically_not_lexicographically;
 mod only_a_wholly_parenthesised_expression_is_unwrapped;

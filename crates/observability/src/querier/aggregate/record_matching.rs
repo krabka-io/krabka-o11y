@@ -1,10 +1,10 @@
 use datafusion::arrow::array::Array as _;
 
 use crate::{
-    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, LabelIndex, Labels, MapArray, MetricQuery,
-    MetricSamples, MetricValue, MetricWindow, PipelineStage, QueryError, RangeAggregation,
-    SeriesFingerprint, StreamPlan, StreamQuery, StringArray, UNWRAP_SAMPLE_VALUE_LABEL,
-    WalLogRecord, is_unwrapped_metric_query,
+    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, LabelIndex, Labels, LokiStreamEntry,
+    MapArray, MetricQuery, MetricSamples, MetricValue, MetricWindow, PipelineStage, QueryError,
+    RangeAggregation, SeriesFingerprint, StreamPlan, StreamQuery, StringArray,
+    UNWRAP_SAMPLE_VALUE_LABEL, WalLogRecord, is_unwrapped_metric_query,
 };
 
 mod append_matching_hot_log_record;

@@ -1,9 +1,14 @@
-use super::prelude::{BTreeMap, Labels, MetricValue, check};
+use super::prelude::{
+    BTreeMap, CompactionFrontier, LabelIndex, Labels, LokiStreamEncoding, MetricValue, StreamPlan,
+    TimeRange, WalLogRecord, check, execute_tail_query_with_frontier_and_deletes, json,
+    parse_query,
+};
 
 mod a_bytes_literal_needs_a_number_and_a_unit_it_knows;
 mod a_loki_duration_composes_only_the_units_it_needs;
 mod a_loki_vector_sample_reads_its_value_and_not_its_timestamp;
 mod a_prometheus_duration_literal_runs_from_larger_units_to_smaller;
+mod a_tail_frame_carries_the_encoding_the_tail_request_asked_for;
 mod a_tail_frame_limit_is_spent_across_streams_in_order;
 mod a_tail_holds_back_records_newer_than_its_delay;
 mod consuming_a_hot_metric_sample_spends_its_budget_once_per_unit;

@@ -2,9 +2,10 @@ use base64::Engine;
 
 use super::{PrometheusRulesFilters, loki_rule_group_name, prometheus_alerts_from_query_result};
 use crate::{
-    HttpQueryError, Labels, LokiRuleNamespaces, QuerierState, QueryKind, QueryParams,
-    URL_SAFE_NO_PAD, Value, execute_http_query_for_tenant, json, parse_loki_timestamp_query_param,
-    parse_prometheus_duration, parse_query, parse_usize_query_param,
+    HttpQueryError, Labels, LokiRuleNamespaces, LokiStreamEncoding, QuerierState, QueryKind,
+    QueryParams, URL_SAFE_NO_PAD, Value, execute_http_query_for_tenant, json,
+    parse_loki_timestamp_query_param, parse_prometheus_duration, parse_query,
+    parse_usize_query_param,
 };
 
 mod expand_prometheus_alert_template;

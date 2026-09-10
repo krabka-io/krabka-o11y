@@ -1,10 +1,10 @@
 use super::{
-    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, Labels, StreamPlan, WalLogRecord,
-    is_deleted_log_entry, matching_loki_stream_entry,
+    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, Labels, LokiStreamEntry, StreamPlan,
+    WalLogRecord, is_deleted_log_entry, matching_loki_stream_entry,
 };
 
 pub(crate) fn append_matching_hot_log_record(
-    streams: &mut BTreeMap<Labels, Vec<[String; 2]>>,
+    streams: &mut BTreeMap<Labels, Vec<LokiStreamEntry>>,
     plan: &StreamPlan,
     record: &WalLogRecord,
     frontier: &CompactionFrontier,
@@ -28,16 +28,13 @@ pub(crate) fn append_matching_hot_log_record(
         return;
     }
 
-    if let Some((stream_labels, current_line)) = matching_loki_stream_entry(
+    if let Some((stream_labels, entry)) = matching_loki_stream_entry(
         &plan.query,
         &record.labels,
         &record.line,
         &record.structured_metadata,
         record.timestamp_ns,
     ) {
-        streams
-            .entry(stream_labels)
-            .or_default()
-            .push([record.timestamp_ns.to_string(), current_line]);
+        streams.entry(stream_labels).or_default().push(entry);
     }
 }

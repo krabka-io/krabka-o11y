@@ -86,7 +86,14 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
         # exists to remove: a differential test that disagrees with a moving
         # target reports a difference nobody changed.
         ("grafana", "mirror.gcr.io/grafana/grafana", "sha256:95173c11b36f53a423ce47f00baee3f913a3e403f202a83c8bc3c7115a2cfdd0"),
+        ("loki", "mirror.gcr.io/grafana/loki", "sha256:a74594532eec4cc313401beedc4dd2708c43674c032084b1aeb87c14a5be1745"),
         ("mimir", "mirror.gcr.io/grafana/mimir", "sha256:5bdf62ac23417da24c320f399972c7334b6438a410ad2c73d27736228066cf43"),
+        # The object store the `scale` suites run against. Not a differential
+        # oracle: nothing here compares an answer against MinIO. It is a real
+        # S3 API in front of real storage, which is what makes a scale run
+        # measure request counts, retries and multipart behaviour rather than
+        # the behaviour of an in-process `InMemory` map.
+        ("minio", "mirror.gcr.io/minio/minio", "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"),
         ("prometheus", "mirror.gcr.io/prom/prometheus", "sha256:67abe619da66a6b14cc0e185205f93a29d5b03cedd1aaa06930745b21f95a374"),
         ("pyroscope", "mirror.gcr.io/grafana/pyroscope", "sha256:b65dffe6719cf91dcb7dcbb9790c439be164220f051a41a8477e06acfea1bbf9"),
         ("tempo", "mirror.gcr.io/grafana/tempo", "sha256:a095c183ca7d433062dd2780d715df8bc15fca9656a9167eb1ab59c78de09681"),
@@ -96,7 +103,9 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 use_repo(
     oci,
     "grafana",
+    "loki",
     "mimir",
+    "minio",
     "prometheus",
     "pyroscope",
     "tempo",

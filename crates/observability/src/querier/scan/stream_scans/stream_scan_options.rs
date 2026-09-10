@@ -1,4 +1,7 @@
-use super::{BTreeMap, Labels, LokiDirection, NonZeroUsize, count_stream_map_lines};
+use super::{
+    BTreeMap, Labels, LokiDirection, LokiStreamEncoding, LokiStreamEntry, NonZeroUsize,
+    count_stream_map_lines,
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct StreamScanOptions {
@@ -7,6 +10,7 @@ pub(crate) struct StreamScanOptions {
     pub(crate) end_exclusive: Option<i64>,
     pub(crate) allow_limit_short_circuit: bool,
     pub(crate) block_fetch_concurrency: NonZeroUsize,
+    pub(crate) encoding: LokiStreamEncoding,
 }
 
 impl StreamScanOptions {
@@ -18,6 +22,7 @@ impl StreamScanOptions {
             allow_limit_short_circuit: false,
             block_fetch_concurrency: NonZeroUsize::new(8)
                 .expect("default block fetch concurrency is nonzero"),
+            encoding: LokiStreamEncoding::Folded,
         }
     }
 
@@ -34,6 +39,7 @@ impl StreamScanOptions {
             allow_limit_short_circuit: limit.is_some() && interval.is_none(),
             block_fetch_concurrency: NonZeroUsize::new(8)
                 .expect("default block fetch concurrency is nonzero"),
+            encoding: LokiStreamEncoding::Folded,
         }
     }
 
@@ -42,7 +48,12 @@ impl StreamScanOptions {
         self
     }
 
-    pub(crate) fn reached_limit(self, streams: &BTreeMap<Labels, Vec<[String; 2]>>) -> bool {
+    pub(crate) fn with_encoding(mut self, encoding: LokiStreamEncoding) -> Self {
+        self.encoding = encoding;
+        self
+    }
+
+    pub(crate) fn reached_limit(self, streams: &BTreeMap<Labels, Vec<LokiStreamEntry>>) -> bool {
         self.allow_limit_short_circuit
             && self
                 .limit

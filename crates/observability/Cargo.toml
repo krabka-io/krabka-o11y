@@ -61,19 +61,44 @@ tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling",
 [dev-dependencies]
 assert2 = { workspace = true }
 flate2 = { workspace = true }
+# `ingest_roundtrip` boots a real Krabka broker in-process and drives
+# push -> WAL -> compactor -> query through it, the way krabka-metrics and
+# krabka-traces already do. Test-only, hence dev-dependencies.
+krabka-broker = { version = "0.4.0" }
 mutants = { workspace = true }
 # OTel stack for the `set_remote_parent_from_wal_records` re-parenting test --
 # mirrors the export-less tracer subscriber `krabka-traces` uses for the same
 # check. Test-only, hence dev-dependencies.
 opentelemetry = { workspace = true, features = ["trace"] }
 opentelemetry_sdk = { workspace = true, features = ["trace"] }
+# `loki_differential` speaks HTTP to a real Loki container and to this crate's
+# own router over a loopback listener, so both sides go through one client.
+reqwest = { workspace = true }
 temp-env = "0.3"
 tempfile.workspace = true
+testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
 tokio-tungstenite = { workspace = true }
 tower = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+# The scale suite. `test = false` keeps `cargo test` and `cargo test
+# --workspace` from building this binary at all, which is what stops the
+# `cargo` job on every pull request paying for a suite it would then skip on
+# the `#[ignore]`. It stays reachable by name:
+#
+#     cargo test -p krabka-observability --test scale_object_store -- --ignored
+#
+# Under Bazel the same separation is the `scale` tag in BUILD.bazel, which
+# //.bazelrc excludes from `bazel test //...` and selects with `--config=scale`.
+[[test]]
+name = "scale_object_store"
+test = false
+
+[[test]]
+name = "soak_ingest_query"
+test = false
 
 [lints]
 workspace = true

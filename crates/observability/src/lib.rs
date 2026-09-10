@@ -328,10 +328,13 @@ pub(crate) use self::{
         },
         response::{
             loki_responses::{
-                LOKI_PARQUET_CONTENT_TYPE, apply_loki_stream_options, loki_matrix_response,
-                loki_matrix_response_with_warnings, loki_parquet_response, loki_streams_response,
-                loki_streams_response_with_warnings, loki_vector_response_from_matrix,
-                unix_ns_string_to_loki_seconds, wants_loki_parquet,
+                LOKI_PARQUET_CONTENT_TYPE, LokiStreamEncoding, LokiStreamEntry,
+                add_loki_encoding_flags, add_loki_tail_encoding_flags, apply_loki_stream_options,
+                loki_encoding_flags, loki_matrix_response, loki_matrix_response_with_warnings,
+                loki_parquet_response, loki_stream_encoding_for_headers, loki_stream_results,
+                loki_streams_response, loki_streams_response_with_warnings,
+                loki_vector_response_from_matrix, unix_ns_string_to_loki_seconds,
+                wants_loki_parquet,
             },
             parquet_responses::{
                 add_loki_query_stats, add_loki_query_stats_for_metric_plan,
