@@ -1,3 +1,5 @@
+use krabka_client_core::ClientError;
+
 use super::{
     AclEntryFilter, AdminClient, AdminError, BTreeMap, ByteRate, ByteRateExt, ByteSize,
     ByteSizeExt, ClientResourcePolicy, IngestLimitError, IngestQuotaBucket, LogIngestLimiter,
@@ -48,11 +50,14 @@ impl LogIngestLimiter for BrokerBackedIngestLimiter {
                 })?;
             let quota = match admin.describe_user_quotas(tenant).await {
                 Ok(quota) => quota,
-                Err(AdminError::Broker {
-                    api: "DescribeClientQuotas",
-                    code: 35,
-                    ..
-                }) => BTreeMap::new(),
+                Err(
+                    AdminError::Broker {
+                        api: "DescribeClientQuotas",
+                        code: 35,
+                        ..
+                    }
+                    | AdminError::Transport(ClientError::IncompatibleVersion { api_key: 48, .. }),
+                ) => BTreeMap::new(),
                 Err(error) => {
                     return Err(IngestLimitError::Unavailable {
                         tenant: tenant.to_string(),
