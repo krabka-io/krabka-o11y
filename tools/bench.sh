@@ -79,6 +79,16 @@ for bench in "${benches[@]}"; do
 done
 cargo bench --manifest-path "${manifest}" --locked "${build[@]}" --no-run
 
+# Criterion keeps a benchmark's previous `new/estimates.json` until that
+# benchmark writes again, and //tools/bench-ratchet.py reads whatever estimates
+# files it finds. A benchmark dropped from its `criterion_group!` would
+# therefore go on satisfying the inventory check from its own stale output --
+# and CI restores `target` from a cache, so the staleness survives the runner.
+# Clearing the directory first means every estimate the ratchet reads was
+# produced by this run.
+criterion_dir="$(dirname "${manifest}")/target/criterion"
+rm -rf "${criterion_dir}"
+
 failed=()
 for bench in "${benches[@]}"; do
   echo

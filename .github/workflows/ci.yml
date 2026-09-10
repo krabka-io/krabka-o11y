@@ -333,7 +333,29 @@ jobs:
       # silent: the job stayed green and Codecov reported the previous run's
       # numbers, or none. An upload that does not arrive is a coverage result
       # nobody has, so it fails here.
-      - uses: codecov/codecov-action@v7
+      #
+      # The upload needs a token that this repository does not have: `main` is
+      # protected, Codecov refuses a tokenless upload to a protected branch, and
+      # the first run with `fail_ci_if_error: true` reported `Token length: 0`
+      # and `Token required because branch is protected`. So no coverage has
+      # ever reached Codecov, and the old `false` is why nobody knew. Failing
+      # every pull request over a missing repository secret teaches nothing, so
+      # the upload is skipped when there is no token -- loudly, as a warning in
+      # the job summary rather than as silence. Set `CODECOV_TOKEN` and the
+      # upload runs, and a rejected one fails the job as it should.
+      - id: codecov_token
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${CODECOV_TOKEN}" ]; then
+            echo "present=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "present=false" >>"${GITHUB_OUTPUT}"
+            echo "::warning title=Coverage not uploaded::CODECOV_TOKEN is not set, and Codecov refuses a tokenless upload to a protected branch. The report was produced but discarded; //codecov.yml gates nothing until the secret exists."
+          fi
+      - if: steps.codecov_token.outputs.present == 'true'
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: bazel-out/_coverage/_coverage_report.dat
@@ -524,7 +546,7 @@ jobs:
             bazel query 'kind("cargo_mutants_test rule", //crates/...)' |
               jq -R -s -c 'split("\n") | map(select(length > 0)) |
                 map({target: ., name: (. | split("/")[3] | split(":")[0])}) |
-                map(. + {minutes: (if (["promql","observability","traces"] | index(.name)) then 180 else 60 end)})'
+                map(. as $crate | $crate + {minutes: (if (["promql","observability","traces"] | index($crate.name)) then 180 else 60 end)})'
           )"
           echo "crates=${crates}" >>"${GITHUB_OUTPUT}"
           echo "Selected: ${crates}"
