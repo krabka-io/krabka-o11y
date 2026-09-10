@@ -100,13 +100,10 @@ impl BlockStreamWriter {
         if let Err(error) = self.summary.push(batch, &self.columns) {
             return self.abandon(error).await;
         }
-        if let Err(error) = self
-            .writer
-            .as_mut()
-            .expect("an active block has a writer")
-            .write(batch)
-            .await
-        {
+        let Some(writer) = self.writer.as_mut() else {
+            return Err(self.poisoned());
+        };
+        if let Err(error) = writer.write(batch).await {
             return self.abandon(error.into()).await;
         }
         self.batches += 1;
@@ -126,7 +123,9 @@ impl BlockStreamWriter {
         // Ask the summary first: it is what knows whether the block has any
         // rows, and closing an empty one would leave a queryless object at the
         // key instead of leaving the upload unfinished.
-        let mut writer = self.writer.take().expect("an active block has a writer");
+        let Some(mut writer) = self.writer.take() else {
+            return Err(self.poisoned());
+        };
         let (min_ts, max_ts, row_count, fingerprints) = match self.summary.finish() {
             Ok(summary) => summary,
             Err(error) => {
