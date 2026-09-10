@@ -87,7 +87,7 @@ pub async fn compact_block_keys_with_max_bytes(
 
     let mut buffer = TraceGroupBuffer::new(schema);
     let mut stats = CompactedBlockStats::new();
-    let writes: Result<(), TracesError> = async {
+    let drained: Result<(), TracesError> = async {
         while let Some(merged) = merge
             .next_batch()
             .await
@@ -104,7 +104,7 @@ pub async fn compact_block_keys_with_max_bytes(
         Ok(())
     }
     .await;
-    if let Err(error) = writes {
+    if let Err(error) = drained {
         block
             .abort()
             .await

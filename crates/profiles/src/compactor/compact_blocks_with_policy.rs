@@ -158,6 +158,31 @@ fn validate_compaction_schema(
     }
     Ok(())
 }
+async fn next_merged(merge: &mut SortedMerge) -> Result<Option<RecordBatch>, ProfilesError> {
+    merge
+        .next_batch()
+        .await
+        .map_err(|err| ProfilesError::Block(err.to_string()))
+}
+
+async fn write(block: &mut BlockStreamWriter, batch: &RecordBatch) -> Result<(), ProfilesError> {
+    block
+        .write_batch(batch)
+        .await
+        .map_err(|err| ProfilesError::Block(err.to_string()))
+}
+
+/// Sums a run of complete time buckets and writes the result.
+async fn write_downsampled(
+    block: &mut BlockStreamWriter,
+    batch: &RecordBatch,
+    policy: DownsamplePolicy,
+) -> Result<(), ProfilesError> {
+    for summed in downsample_batches(std::slice::from_ref(batch), policy)? {
+        write(block, &summed).await?;
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -186,30 +211,4 @@ mod tests {
             matches!(result, Err(ProfilesError::Block(message)) if message.contains("b.parquet"))
         );
     }
-}
-
-async fn next_merged(merge: &mut SortedMerge) -> Result<Option<RecordBatch>, ProfilesError> {
-    merge
-        .next_batch()
-        .await
-        .map_err(|err| ProfilesError::Block(err.to_string()))
-}
-
-async fn write(block: &mut BlockStreamWriter, batch: &RecordBatch) -> Result<(), ProfilesError> {
-    block
-        .write_batch(batch)
-        .await
-        .map_err(|err| ProfilesError::Block(err.to_string()))
-}
-
-/// Sums a run of complete time buckets and writes the result.
-async fn write_downsampled(
-    block: &mut BlockStreamWriter,
-    batch: &RecordBatch,
-    policy: DownsamplePolicy,
-) -> Result<(), ProfilesError> {
-    for summed in downsample_batches(std::slice::from_ref(batch), policy)? {
-        write(block, &summed).await?;
-    }
-    Ok(())
 }
