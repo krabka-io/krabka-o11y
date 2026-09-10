@@ -17,6 +17,7 @@ use tracing::instrument;
 use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
+    compaction::{BlockLevel, BlockLineage, BlockLineageIndex, CompactionCandidate},
     error::Result,
     index::Index,
     index_snapshot::{
@@ -714,6 +715,115 @@ mod tests {
             panic!("expected ObjectStore error for missing profile index snapshot");
         };
         assert_eq!(msg, expected);
+    }
+
+    #[test]
+    fn a_compacted_profile_block_records_its_level_and_its_inputs() {
+        let (mut index, cpu_checkout_fp, heap_checkout_fp, _) = seed_with_blocks();
+        index.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
+        check!(index.block_level("cpu-checkout.parquet") == BlockLevel::INGESTED);
+
+        index.replace_profile_blocks(
+            "t",
+            &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
+            &[(
+                BlockMeta {
+                    tenant: "t".to_string(),
+                    object_key: "compacted.parquet".to_string(),
+                    min_ts: 100,
+                    max_ts: 399,
+                    row_count: 30,
+                    fingerprints: vec![cpu_checkout_fp, heap_checkout_fp],
+                },
+                vec![9],
+            )],
+        );
+
+        check!(
+            index.block_lineage("compacted.parquet")
+                == Some(&BlockLineage {
+                    level: BlockLevel(1),
+                    row_count: 30,
+                    sources: strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
+                })
+        );
+        check!(index.block_lineage("cpu-checkout.parquet").is_none());
+    }
+
+    #[test]
+    fn profile_compaction_candidates_take_their_bounds_from_the_series_postings() {
+        let (index, ..) = seed_with_blocks();
+        check!(
+            index.compaction_candidates()
+                == vec![
+                    CompactionCandidate {
+                        tenant: "t".to_string(),
+                        object_key: "cpu-checkout.parquet".to_string(),
+                        min_ts: 100,
+                        max_ts: 199,
+                        row_count: 10,
+                        level: BlockLevel::INGESTED,
+                    },
+                    CompactionCandidate {
+                        tenant: "t".to_string(),
+                        object_key: "cpu-payments.parquet".to_string(),
+                        min_ts: 150,
+                        max_ts: 250,
+                        row_count: 30,
+                        level: BlockLevel::INGESTED,
+                    },
+                    CompactionCandidate {
+                        tenant: "t".to_string(),
+                        object_key: "heap-checkout.parquet".to_string(),
+                        min_ts: 300,
+                        max_ts: 399,
+                        row_count: 20,
+                        level: BlockLevel::INGESTED,
+                    },
+                ]
+        );
+    }
+
+    /// A level that did not survive the snapshot would restart the ladder at
+    /// zero after every save, and the planner would compact the same rows for
+    /// as long as the compactor ran.
+    #[tokio::test]
+    async fn profile_levels_survive_a_snapshot_round_trip() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (mut index, cpu_checkout_fp, heap_checkout_fp, _) = seed_with_blocks();
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        index.replace_profile_blocks(
+            "t",
+            &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
+            &[(
+                BlockMeta {
+                    tenant: "t".to_string(),
+                    object_key: "compacted.parquet".to_string(),
+                    min_ts: 100,
+                    max_ts: 399,
+                    row_count: 30,
+                    fingerprints: vec![cpu_checkout_fp, heap_checkout_fp],
+                },
+                vec![9],
+            )],
+        );
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        check!(loaded.block_level("compacted.parquet") == BlockLevel(1));
+        check!(loaded.block_level("cpu-payments.parquet") == BlockLevel::INGESTED);
+        check!(loaded.block_lineage("cpu-checkout.parquet").is_none());
     }
 }
 

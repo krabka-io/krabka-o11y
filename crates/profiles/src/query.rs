@@ -14,7 +14,7 @@ use axum::{
     routing::get,
 };
 use connectrpc_axum::message::{Code, ConnectError, ConnectRequest, ConnectResponse};
-use krabka_blockstore::{LABEL_PROFILE_TYPE, LabelMatcher, MatchOp};
+use krabka_blockstore::{LABEL_PROFILE_TYPE, LabelMatcher, MatchOp, span_id_hex_from_u64};
 use krabka_pprof::{
     COL_FINGERPRINT, COL_TIMESTAMP, EngineOpts, FlameEngine, FlameGraph, InMemoryProfileStore,
     LabeledHeatmap, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE,
@@ -1816,7 +1816,10 @@ overrides:
             .and_then(serde_json::Value::as_object)
             .unwrap_or_else(|| panic!("missing span exemplar: {response}"));
 
-        check!(exemplar.get("spanId").and_then(serde_json::Value::as_str) == Some("2a"));
+        check!(
+            exemplar.get("spanId").and_then(serde_json::Value::as_str) == Some("000000000000002a"),
+            "a span id is sixteen hex digits, the same string a trace carries"
+        );
         check!(exemplar.get("timestamp").and_then(json_i64) == Some(10));
         check!(exemplar.get("value").and_then(json_i64) == Some(7));
     }
@@ -1868,7 +1871,7 @@ overrides:
             .filter_map(|exemplar| exemplar.get("spanId").and_then(serde_json::Value::as_str))
             .collect();
 
-        assert!(span_ids == vec!["2a"], "{response}");
+        assert!(span_ids == vec!["000000000000002a"], "{response}");
     }
 
     #[tokio::test]
@@ -2084,7 +2087,10 @@ overrides:
             .and_then(serde_json::Value::as_object)
             .unwrap_or_else(|| panic!("missing heatmap span exemplar: {response}"));
 
-        check!(exemplar.get("spanId").and_then(serde_json::Value::as_str) == Some("2a"));
+        check!(
+            exemplar.get("spanId").and_then(serde_json::Value::as_str) == Some("000000000000002a"),
+            "a span id is sixteen hex digits, the same string a trace carries"
+        );
         check!(exemplar.get("timestamp").and_then(json_i64) == Some(10));
         check!(exemplar.get("value").and_then(json_i64) == Some(7));
     }

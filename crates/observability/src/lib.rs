@@ -76,16 +76,17 @@ use krabka_client_producer::{
 };
 use krabka_logql::{
     ComparisonOp, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, FieldValue,
-    LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilterOp, LogfmtParserConfig,
-    MatchOp, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricBinarySetOp,
-    MetricLabelJoin, MetricQuery, MetricScalarArithmetic, MetricScalarArithmeticOp,
-    MetricScalarComparison, MetricVectorGroupModifier, MetricVectorMatching, ParseError,
-    ParserStage, PipelineStage, PlanError, Quantile, RangeAggregation, StreamPlan, StreamQuery,
-    UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion, VectorAggregation, VectorAggregationOp,
-    VectorGrouping, parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
-    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
-    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
-    parse_query, plan_stream_query,
+    LabelFormatAssignment, LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilter,
+    LineFilterOp, LogfmtParserConfig, MatchOp, MetricBinaryArithmetic, MetricBinaryComparison,
+    MetricBinarySet, MetricBinarySetOp, MetricLabelJoin, MetricQuery, MetricScalarArithmetic,
+    MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
+    MetricVectorMatching, ParseError, ParserStage, PipelineStage, PlanError, Quantile,
+    RangeAggregation, StreamPlan, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion,
+    VectorAggregation, VectorAggregationOp, VectorGrouping, parse_metric_binary_arithmetic_query,
+    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
+    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
+    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
+    plan_stream_query,
 };
 use krabka_units::{
     ByteRate, ByteSize, Time,
@@ -456,11 +457,11 @@ pub(crate) use self::{
                 execute_tail_query_with_frontier_and_deletes,
             },
             object_store_scans::{
-                execute_metric_query_range_from_object_store_with_hot_tail_frontier,
+                ColdBlockScan, execute_metric_query_range_from_object_store_with_hot_tail_frontier,
                 execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
             },
             stream_scans::{
-                QueryHotTail, StreamScanOptions,
+                QueryHotTail, StreamScanOptions, default_block_fetch_concurrency,
                 execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options,
                 execute_stream_query_with_deletes,
                 execute_stream_query_with_hot_tail_frontier_and_deletes, metric_scan_range,

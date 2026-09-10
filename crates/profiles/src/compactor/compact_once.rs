@@ -1,4 +1,7 @@
-use super::{Arc, BlockMeta, ObjectStore, ProfileIndex, ProfilesError, compact_once_with_policy};
+use super::{
+    Arc, BlockMeta, CompactionPolicy, ObjectStore, ProfileIndex, ProfilesError,
+    compact_once_with_policy,
+};
 
 ///
 /// # Errors
@@ -6,7 +9,7 @@ use super::{Arc, BlockMeta, ObjectStore, ProfileIndex, ProfilesError, compact_on
 pub async fn compact_once(
     store: &Arc<dyn ObjectStore>,
     index: &mut ProfileIndex,
-    max_blocks_per_job: usize,
+    policy: CompactionPolicy,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
-    compact_once_with_policy(store, index, max_blocks_per_job, None).await
+    compact_once_with_policy(store, index, policy, None).await
 }

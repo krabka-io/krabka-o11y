@@ -11,17 +11,28 @@ pub(crate) async fn execute_http_metric_binary_arithmetic_query(
     kind: QueryKind,
     arithmetic: MetricBinaryArithmetic,
 ) -> Result<Value, HttpQueryError> {
-    let mut left = execute_http_metric_query(
+    // Both operands are whole queries over the same window and neither reads
+    // the other, so awaiting the left one to completion before starting the
+    // right one put two full cold scans end to end for every `a / b` panel.
+    // Boxed because holding two query futures at once is what makes this one
+    // large, and the handlers above inherit whatever size it has.
+    let left = Box::pin(execute_http_metric_query(
         state,
         tenant,
         time_range,
         step,
         kind,
         arithmetic.left.clone(),
-    )
-    .await?;
-    let right =
-        execute_http_metric_query(state, tenant, time_range, step, kind, arithmetic.right).await?;
+    ));
+    let right = Box::pin(execute_http_metric_query(
+        state,
+        tenant,
+        time_range,
+        step,
+        kind,
+        arithmetic.right,
+    ));
+    let (mut left, right) = futures_util::future::try_join(left, right).await?;
     apply_metric_binary_arithmetic_to_loki_result(
         &mut left,
         &right,

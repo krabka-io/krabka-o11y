@@ -27,7 +27,7 @@ use std::{
 };
 
 use arrow::{
-    array::{ArrayRef, Float64Array, Int64Array, StringArray},
+    array::{ArrayRef, Float64Array, Int64Array, StringBuilder},
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
@@ -40,6 +40,7 @@ use datafusion::{
 use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_units::prelude::*;
 
+use super::LabeledSeries;
 use crate::{
     PromqlError,
     error::Result,
@@ -54,27 +55,31 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    use arrow::array::StringArray;
     use assert2::check;
 
     use super::*;
+    use crate::planner::TimedValue;
 
     fn approx_eq(left: f64, right: f64) -> bool {
         (left - right).abs() < 1e-9
     }
 
-    fn labeled(job: &str, ts_ms: i64, value: f64) -> LabeledSample {
+    fn labeled(job: &str, samples: &[(i64, f64)]) -> LabeledSeries {
         let mut labels = Labels::new();
         labels.insert("job", job);
-        LabeledSample {
+        LabeledSeries {
             fp: labels.fingerprint(),
-            labels,
-            ts_ms,
-            value,
+            labels: Arc::new(labels),
+            samples: samples
+                .iter()
+                .map(|&(ts_ms, value)| TimedValue { ts_ms, value })
+                .collect(),
         }
     }
 
     async fn run(
-        samples: Vec<LabeledSample>,
+        samples: Vec<LabeledSeries>,
         eval_time_ms: i64,
         range: Time,
         family: OverTimeFamily,
@@ -115,7 +120,7 @@ mod tests {
     /// `avg_over_time` over the engine's basic window (3,5 -> 4.0) runs the full chain.
     #[tokio::test]
     async fn avg_over_time_plan_reduces_window() {
-        let samples = vec![labeled("a", 60_000, 3.0), labeled("a", 120_000, 5.0)];
+        let samples = vec![labeled("a", &[(60_000, 3.0), (120_000, 5.0)])];
         let got = run(samples, 120_000, millis(120_000), OverTimeFamily::Avg, 0.0).await;
         check!(got.len() == 1);
         check!(got[0].0 == "a");
@@ -149,11 +154,12 @@ mod tests {
     #[tokio::test]
     async fn quantile_over_time_plan_threads_phi() {
         let values = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
-        let samples = values
+        let points = values
             .iter()
             .enumerate()
-            .map(|(i, v)| labeled("a", (i64::try_from(i).unwrap() + 1) * 60_000, *v))
-            .collect();
+            .map(|(i, v)| ((i64::try_from(i).unwrap() + 1) * 60_000, *v))
+            .collect::<Vec<_>>();
+        let samples = vec![labeled("a", &points)];
         let got = run(
             samples,
             480_000,
@@ -169,7 +175,7 @@ mod tests {
     /// `present_over_time` gives 1.0 when the window has samples.
     #[tokio::test]
     async fn present_over_time_plan_signals_presence() {
-        let samples = vec![labeled("a", 60_000, 42.0)];
+        let samples = vec![labeled("a", &[(60_000, 42.0)])];
         let got = run(
             samples,
             120_000,
@@ -190,7 +196,7 @@ mod tests {
 
         // A sample on the left edge (ts == range_start) is excluded by the
         // left-open window, leaving the window empty.
-        let samples = vec![labeled("a", 0, 5.0)];
+        let samples = vec![labeled("a", &[(0, 5.0)])];
         let plan = plan_over_time_range_selector(
             samples,
             120_000,
@@ -220,7 +226,6 @@ mod tests {
 }
 
 mod build_leaf_batch;
-mod labeled_sample;
 mod leaf_schema;
 mod over_time_family_from_function_name;
 mod over_time_range_plan;
@@ -230,7 +235,6 @@ mod time_column;
 mod value_column;
 
 use build_leaf_batch::build_leaf_batch;
-pub use labeled_sample::LabeledSample;
 use leaf_schema::leaf_schema;
 pub use over_time_family_from_function_name::over_time_family_from_function_name;
 pub use over_time_range_plan::OverTimeRangePlan;

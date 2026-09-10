@@ -11,6 +11,7 @@
 mod block;
 mod block_index;
 mod bloom;
+mod compaction;
 mod error;
 mod index;
 mod index_snapshot;
@@ -23,6 +24,7 @@ mod profile_index;
 mod profile_schema;
 mod reader;
 mod span_block;
+mod span_id;
 mod span_schema;
 mod store;
 mod trace_index;
@@ -33,8 +35,17 @@ pub use block::{
 };
 pub use block_index::{BlockIndex, BlockSchema, RequiredColumn, series_block_schema};
 pub use bloom::{ShardedTraceBloom, fnv1_32};
-pub use error::{BlockStoreError, Result};
-pub use index::{Index, MAX_INDEX_SNAPSHOT_BYTES};
+pub use compaction::{
+    BlockLevel, BlockLineage, BlockLineageIndex, CompactionCandidate, CompactionJob,
+    CompactionPolicy, DEFAULT_LEVEL_WINDOW_NS, DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL,
+    DEFAULT_TARGET_ROWS_PER_BLOCK, input_key_fingerprint, plan_compactions,
+};
+pub use error::{BlockReadFailure, BlockSkipReason, BlockStoreError, Result, SkippedBlock};
+pub use index::{
+    DEFAULT_INDEX_SHARD_WIDTH, Index, IndexShardRange, MAX_INDEX_SHARDS_PER_TENANT,
+    MAX_INDEX_SNAPSHOT_BYTES, index_shard_object_key, index_shard_tenant_prefix,
+    index_shards_prefix_for_key, index_unbound_series_object_key,
+};
 pub use index_snapshot::{
     DEFAULT_INDEX_SNAPSHOT_MAX, DEFAULT_INDEX_SNAPSHOT_RETAIN, IndexSnapshotRetain,
     index_snapshot_prefix_for_key,
@@ -74,13 +85,17 @@ pub use profile_schema::{
     PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, profile_samples_decl, profile_samples_schema,
 };
 pub use reader::{
-    DEFAULT_BLOCK_READ_MAX, RowGroupMeta, read_block, read_block_row_groups,
-    read_block_row_groups_with_max_bytes, read_block_with_max_bytes, read_row_group_metadata,
-    read_row_group_metadata_with_max_bytes,
+    BlockMetadataCache, DEFAULT_BLOCK_METADATA_CACHE_MAX, DEFAULT_BLOCK_READ_MAX, RowGroupMeta,
+    read_block, read_block_row_groups, read_block_row_groups_with_max_bytes,
+    read_block_with_max_bytes, read_row_group_metadata, read_row_group_metadata_with_max_bytes,
 };
 pub use span_block::{
     AttrValue, SpanAttr, SpanEvent, SpanLink, SpanRow, encode_span_rows,
     encode_span_rows_with_promoted_attrs,
+};
+pub use span_id::{
+    span_id_be_bytes_from_u64, span_id_hex_from_u64, span_id_u64_from_be_bytes,
+    span_id_u64_from_be_slice,
 };
 pub use span_schema::{
     PromotedSpanAttr, PromotedSpanAttrType, SCOL_ATTR_IS_ARRAY, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,
@@ -92,6 +107,8 @@ pub use span_schema::{
     SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, SpanKind, StatusCode,
     span_block_decl, span_block_schema, span_block_schema_with_promoted_attrs,
 };
-pub use store::{BlockStore, ScanTableRequest};
+pub use store::{BlockScan, BlockStore, ScanReport, ScanTableRequest};
 pub use trace_index::{TraceBlockStats, TraceIndex};
-pub use writer::{BlockWriter, SummaryColumns};
+pub use writer::{
+    BLOCK_ROW_GROUP_ROWS, BLOCK_ZSTD_LEVEL, BlockWriter, SummaryColumns, block_writer_properties,
+};

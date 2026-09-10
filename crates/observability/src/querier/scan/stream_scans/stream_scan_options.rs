@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, Labels, LokiDirection, LokiStreamEncoding, LokiStreamEntry, NonZeroUsize,
-    count_stream_map_lines,
+    count_stream_map_lines, default_block_fetch_concurrency,
 };
 
 #[derive(Clone, Copy)]
@@ -20,8 +20,7 @@ impl StreamScanOptions {
             limit: None,
             end_exclusive: None,
             allow_limit_short_circuit: false,
-            block_fetch_concurrency: NonZeroUsize::new(8)
-                .expect("default block fetch concurrency is nonzero"),
+            block_fetch_concurrency: default_block_fetch_concurrency(),
             encoding: LokiStreamEncoding::Folded,
         }
     }
@@ -37,8 +36,7 @@ impl StreamScanOptions {
             limit,
             end_exclusive,
             allow_limit_short_circuit: limit.is_some() && interval.is_none(),
-            block_fetch_concurrency: NonZeroUsize::new(8)
-                .expect("default block fetch concurrency is nonzero"),
+            block_fetch_concurrency: default_block_fetch_concurrency(),
             encoding: LokiStreamEncoding::Folded,
         }
     }

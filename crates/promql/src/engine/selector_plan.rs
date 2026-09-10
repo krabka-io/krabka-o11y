@@ -8,18 +8,11 @@ use super::{
 };
 use crate::{
     error::Result,
-    extension::is_stale_nan,
     functions::OverTimeFamily,
     planner::{
-        leaf::{InstantSelectorPlan, LabeledSample, plan_instant_vector_selector},
-        over_time_range::{
-            LabeledSample as OverTimeLabeledSample, OverTimeRangePlan,
-            plan_over_time_range_selector,
-        },
-        rate_range::{
-            LabeledSample as RateLabeledSample, RateRangePlan, RateUdfKind,
-            plan_rate_range_selector,
-        },
+        leaf::{InstantSelectorPlan, plan_instant_vector_selector},
+        over_time_range::{OverTimeRangePlan, plan_over_time_range_selector},
+        rate_range::{RateRangePlan, RateUdfKind, plan_rate_range_selector},
     },
     store::MetricStore,
 };
@@ -49,35 +42,15 @@ impl<S: MetricStore> PromqlEngine<S> {
         )?;
         let start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
         let matcher_sets = label_matcher_sets(selector);
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
+        // Stale-NaN markers are intentionally kept here: InstantManipulate drops
+        // the selected sample only when it is a stale-NaN marker, which
+        // suppresses a series whose latest in-window sample is a stale marker
+        // while preserving a genuine NaN value (matching interpreter staleness
+        // handling). Pre-filtering markers here would instead reveal an older
+        // sample and diverge from Prometheus.
+        let samples = self
+            .labeled_series_sets(tenant, &matcher_sets, start_ms, eval_time_ms, false)
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
-            .await?;
-
-        // Carry the matched series' labels onto each sample. Stale-NaN markers
-        // are intentionally kept here: InstantManipulate drops the selected
-        // sample only when it is a stale-NaN marker, which suppresses a series
-        // whose latest in-window sample is a stale marker while preserving a
-        // genuine NaN value (matching interpreter staleness handling).
-        // Pre-filtering markers here would instead reveal an older sample and
-        // diverge from Prometheus.
-        let mut samples = Vec::with_capacity(rows.len());
-        for row in rows {
-            if row.ts_ms <= start_ms || row.ts_ms > eval_time_ms {
-                continue;
-            }
-            let Some(labels) = labels_by_fp.get(&row.fp).cloned() else {
-                continue;
-            };
-            samples.push(LabeledSample {
-                fp: row.fp,
-                labels,
-                ts_ms: row.ts_ms,
-                value: row.value,
-            });
-        }
 
         let InstantSelectorPlan {
             ctx,
@@ -111,12 +84,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         )?;
         let start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
         let matcher_sets = label_matcher_sets(selector);
-        let hist_rows = self
-            .scan_histogram_row_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
-            .await?;
-        Ok(hist_rows
-            .into_iter()
-            .any(|row| row.ts_ms > start_ms && row.ts_ms <= eval_time_ms))
+        self.histogram_rows_present_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
+            .await
     }
 
     /// Returns `true` when a matrix selector matches at least one histogram
@@ -143,12 +112,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         )?;
         let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
         let matcher_sets = label_matcher_sets(&selector.vs);
-        let hist_rows = self
-            .scan_histogram_row_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms)
-            .await?;
-        Ok(hist_rows
-            .into_iter()
-            .any(|row| row.ts_ms > range_start_ms && row.ts_ms <= eval_end_ms))
+        self.histogram_rows_present_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms)
+            .await
     }
 
     /// Builds the rate-family range-selector operator plan without executing it.
@@ -177,35 +142,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         )?;
         let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
         let matcher_sets = label_matcher_sets(&selector.vs);
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms)
+        // Stale-NaN markers are dropped over the exact range window, matching
+        // `eval_matrix_selector`; genuine NaN is carried through (the operator
+        // chain does not filter NaN), as the interpreter does.
+        let samples = self
+            .labeled_series_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms, true)
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms)
-            .await?;
-
-        // Build per-sample labeled rows over the exact range window. Stale-NaN
-        // markers are dropped here, matching `eval_matrix_selector`; genuine NaN
-        // is carried through (the operator chain does not filter NaN), as the
-        // interpreter does.
-        let mut samples = Vec::with_capacity(rows.len());
-        for row in rows {
-            if row.ts_ms <= range_start_ms || row.ts_ms > eval_end_ms {
-                continue;
-            }
-            if is_stale_nan(row.value) {
-                continue;
-            }
-            let Some(labels) = labels_by_fp.get(&row.fp).cloned() else {
-                continue;
-            };
-            samples.push(RateLabeledSample {
-                fp: row.fp,
-                labels,
-                ts_ms: row.ts_ms,
-                value: row.value,
-            });
-        }
 
         let RateRangePlan {
             ctx,
@@ -244,34 +186,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         )?;
         let range_start_ms = eval_end_ms.saturating_sub(range.millis_i64());
         let matcher_sets = label_matcher_sets(&selector.vs);
-        let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms)
+        // Stale-NaN markers are dropped over the exact range window, matching
+        // `eval_matrix_selector`; genuine NaN is carried through, as the
+        // interpreter does.
+        let samples = self
+            .labeled_series_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms, true)
             .await?;
-        let rows = self
-            .scan_float_row_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms)
-            .await?;
-
-        // Build per-sample labeled rows over the exact range window. Stale-NaN
-        // markers are dropped here, matching `eval_matrix_selector`; genuine NaN
-        // is carried through, as the interpreter does.
-        let mut samples = Vec::with_capacity(rows.len());
-        for row in rows {
-            if row.ts_ms <= range_start_ms || row.ts_ms > eval_end_ms {
-                continue;
-            }
-            if is_stale_nan(row.value) {
-                continue;
-            }
-            let Some(labels) = labels_by_fp.get(&row.fp).cloned() else {
-                continue;
-            };
-            samples.push(OverTimeLabeledSample {
-                fp: row.fp,
-                labels,
-                ts_ms: row.ts_ms,
-                value: row.value,
-            });
-        }
 
         let OverTimeRangePlan {
             ctx,

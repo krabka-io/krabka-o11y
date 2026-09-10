@@ -1,8 +1,9 @@
 use super::{
-    ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, IndexSnapshotRetain, Parser, SocketAddr,
+    ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_BLOCKS_PER_JOB,
+    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, Parser, SocketAddr,
     Target, Time, parse, parse_client_dispatch_queue_capacity, parse_client_frame_max,
     parse_consumer_fetch_size, parse_min_two_usize, parse_non_empty_string,
-    parse_positive_time_or_legacy_millis, parse_positive_time_or_legacy_nanos,
+    parse_positive_time_or_legacy_millis, parse_positive_time_or_legacy_nanos, parse_positive_u32,
     parse_positive_usize, parse_positive_whole_byte_size,
 };
 
@@ -190,8 +191,26 @@ pub(crate) struct Cli {
         value_parser = parse_non_empty_string
     )]
     pub(crate) query_wal_tail_group_id: String,
-    #[arg(long, env = "KRABKA_PROFILES_COMPACTOR_MAX_BLOCKS_PER_JOB", default_value_t = 8, value_parser = parse_min_two_usize)]
+    #[arg(long, env = "KRABKA_PROFILES_COMPACTOR_MAX_BLOCKS_PER_JOB", default_value_t = DEFAULT_MAX_BLOCKS_PER_JOB, value_parser = parse_min_two_usize)]
     pub(crate) compactor_max_blocks_per_job: usize,
+    #[arg(long, env = "KRABKA_PROFILES_COMPACTOR_TARGET_ROWS", default_value_t = DEFAULT_TARGET_ROWS_PER_BLOCK, value_parser = parse_positive_usize)]
+    pub(crate) compactor_target_rows: usize,
+    #[arg(long, env = "KRABKA_PROFILES_COMPACTOR_MAX_LEVEL", default_value_t = DEFAULT_MAX_LEVEL.get(), value_parser = parse_positive_u32)]
+    pub(crate) compactor_max_level: u32,
+    #[arg(
+        long,
+        env = "KRABKA_PROFILES_COMPACTOR_LEVEL_WINDOW",
+        default_value = "2h",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) compactor_level_window: Time,
+    #[arg(
+        long,
+        env = "KRABKA_PROFILES_COMPACTOR_INTERVAL",
+        default_value = "5m",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) compactor_interval: Time,
     #[arg(
         long = "compactor-downsample-resolution",
         visible_alias = "compactor-downsample-resolution-ns",

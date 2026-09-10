@@ -3,7 +3,7 @@
 //! The generated OTLP types live in this crate, so the edge converts them into
 //! the pprof wire model owned by `krabka-pprof`.
 
-use krabka_blockstore::Labels;
+use krabka_blockstore::{Labels, span_id_u64_from_be_slice};
 use krabka_pprof::PprofProfile;
 
 use crate::{error::ProfilesError, ingest::RawProfile, wire::pb};

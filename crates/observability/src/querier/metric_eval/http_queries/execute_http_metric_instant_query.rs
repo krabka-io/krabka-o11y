@@ -1,6 +1,7 @@
 use super::{
-    ActiveLogDeleteFilter, Arc, HttpQueryError, MetricQuery, QuerierState, QueryHotTail,
-    StreamPlan, Value, execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes,
+    ActiveLogDeleteFilter, Arc, ColdBlockScan, HttpQueryError, MetricQuery, QuerierState,
+    QueryHotTail, StreamPlan, Value,
+    execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes,
     execute_metric_query_with_deletes, execute_metric_query_with_hot_tail_frontier_and_deletes,
     hot_tail_snapshot, loki_vector_response_from_matrix,
 };
@@ -14,8 +15,11 @@ pub(crate) async fn execute_http_metric_instant_query(
     let response = if let Some(cold_store) = &state.cold_store {
         let (records, frontier) = hot_tail_snapshot(state, plan.time_range);
         execute_metric_query_from_object_store_with_hot_tail_frontier_and_deletes(
-            Arc::clone(&cold_store.store),
-            &cold_store.prefix,
+            ColdBlockScan {
+                store: Arc::clone(&cold_store.store),
+                prefix: &cold_store.prefix,
+                block_fetch_concurrency: state.cold_block_fetch_concurrency,
+            },
             plan,
             query,
             &state.label_index,

@@ -21,7 +21,7 @@ use datafusion::{catalog::MemTable, prelude::SessionContext};
 use krabka_blockstore::{
     BlockIndex, BlockStore, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL,
     SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT, SCOL_EVENTS, SCOL_LINKS, TraceIndex,
-    span_block_schema,
+    span_block_schema, span_block_schema_with_promoted_attrs,
 };
 use krabka_traceql::{
     ATTR_PREFIX, AttrValue, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,
@@ -38,7 +38,13 @@ use krabka_units::{
     convert::{ByteSizeExt as _, TimeExt},
 };
 
-use crate::{querier::live::LiveTier, span::batch::RESOURCE_ATTR_PREFIX};
+use crate::{
+    querier::live::LiveTier,
+    span::{
+        batch::RESOURCE_ATTR_PREFIX,
+        promoted::{block_promoted_attrs, promoted_attr_column, promoted_span_attr_from_field},
+    },
+};
 
 #[cfg(test)]
 mod tests {
@@ -656,7 +662,7 @@ mod tests {
         AttrValue as BlockAttrValue, BlockWriter, NestedSet as BlockNestedSet, PromotedSpanAttr,
         SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SpanAttr, SpanKind as BlockSpanKind,
         SpanRow, StatusCode as BlockStatusCode, SummaryColumns, TraceBlockStats, encode_span_rows,
-        span_block_decl, span_block_schema,
+        encode_span_rows_with_promoted_attrs, span_block_decl, span_block_schema,
     };
     use krabka_traceql::{
         COL_CHILD_COUNT, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, EngineOpts,
@@ -2066,6 +2072,132 @@ mod tests {
         );
     }
 
+    /// A sharded scan reads one block's row groups directly, so the batches it
+    /// decodes carry the block's own schema. A block written while
+    /// `--promote-span-attr` was set is wider than the base schema, and a scan
+    /// that rebuilt the base schema here rejected such a block outright: the
+    /// feature turned every sharded query over a promoted block into an error.
+    #[tokio::test]
+    async fn cold_scan_reads_a_row_group_job_from_a_block_with_promoted_columns() {
+        let object_store = Arc::new(InMemory::new());
+        let blocks = Arc::new(BlockStore::new(
+            object_store.clone(),
+            Url::parse("memory:///").unwrap(),
+        ));
+        let promoted = [PromotedSpanAttr::string("http.method")];
+        let first = encode_span_rows_with_promoted_attrs(
+            &[block_attr_span_row(
+                [1; 16],
+                [1; 8],
+                "first-rg",
+                false,
+                vec!["GET".into()],
+            )],
+            &promoted,
+        )
+        .unwrap();
+        let second = encode_span_rows_with_promoted_attrs(
+            &[block_attr_span_row(
+                [2; 16],
+                [2; 8],
+                "second-rg",
+                false,
+                vec!["POST".into()],
+            )],
+            &promoted,
+        )
+        .unwrap();
+        let props = WriterProperties::builder()
+            .set_max_row_group_row_count(Some(1))
+            .set_write_batch_size(1)
+            .build();
+        let object_writer = BufWriter::new(
+            object_store.clone(),
+            Path::from("blocks/promoted-row-groups.parquet"),
+        );
+        let mut writer = AsyncArrowWriter::try_new(
+            object_writer,
+            span_block_schema_with_promoted_attrs(&promoted),
+            Some(props),
+        )
+        .unwrap();
+        writer.write(&first).await.unwrap();
+        writer.write(&second).await.unwrap();
+        writer.close().await.unwrap();
+
+        let mut index = TraceIndex::new();
+        index.add_trace_block(
+            "tenant",
+            TraceBlockStats {
+                object_key: "blocks/promoted-row-groups.parquet".into(),
+                min_ts: 0,
+                max_ts: 10,
+                bloom: ShardedTraceBloom::with_tempo_defaults(1),
+                tag_names: BTreeSet::new(),
+                tag_values: BTreeMap::new(),
+            },
+        );
+        let store = KrabkaSpanStore::new(blocks, shared(index), None);
+        let options = ScanOptions {
+            job: Some(ScanJob {
+                object_key: "blocks/promoted-row-groups.parquet".into(),
+                row_group_start: 1,
+                row_group_end: 2,
+            }),
+            ..ScanOptions::default()
+        };
+
+        let scan = store
+            .scan_with_options("tenant", &[], 0, 10, &options)
+            .await
+            .expect("a promoted block scans");
+        let batches = collect_table(&scan.ctx, &scan.span_table).await.unwrap();
+        let names = batches
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .column_by_name(krabka_traceql::COL_NAME)
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap()
+                    .iter()
+                    .map(|value| value.unwrap().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert2::assert!(names == vec!["second-rg"]);
+
+        // The promoted column is read as the attribute it holds, so a matcher
+        // over it selects the same rows a generic attribute would.
+        let rows = |matchers: Vec<SpanMatcher>| {
+            let store = &store;
+            let options = &options;
+            async move {
+                let scan = store
+                    .scan_with_options("tenant", &matchers, 0, 10, options)
+                    .await
+                    .expect("a promoted block scans");
+                collect_table(&scan.ctx, &scan.span_table)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(RecordBatch::num_rows)
+                    .sum::<usize>()
+            }
+        };
+        let method = |value: &str| {
+            vec![matcher(
+                MatchScope::Span,
+                "http.method",
+                MatchCmp::Eq,
+                MatchValue::Str(value.to_string()),
+            )]
+        };
+        assert2::assert!(rows(method("POST")).await == 1);
+        assert2::assert!(rows(method("GET")).await == 0, "that row group is not read");
+    }
+
     #[tokio::test]
     async fn cold_scan_rejects_backend_row_group_job_for_other_tenant() {
         let object_store = Arc::new(InMemory::new());
@@ -2815,6 +2947,101 @@ mod tests {
         );
     }
 
+    /// Promoted attribute columns are written into blocks but not into the
+    /// live tier, so one scan meets batches that disagree about the schema.
+    /// The merge widens the live rows rather than failing or dropping the
+    /// column, and rebuilds the dedicated column from the generic attribute
+    /// lists so it describes every row it covers.
+    #[tokio::test]
+    async fn a_promoted_cold_block_and_the_live_tier_scan_together() {
+        let object_store = Arc::new(InMemory::new());
+        let blocks = Arc::new(BlockStore::new(
+            object_store.clone(),
+            Url::parse("memory:///").unwrap(),
+        ));
+        let writer = BlockWriter::new(object_store);
+        let promoted = [PromotedSpanAttr::int("http.status_code")];
+        let root = span_with_nested_refs();
+        let mut child = span_with_nested_refs();
+        child.span_id = [3; 8];
+        child.parent_span_id = Some(root.span_id);
+        child.start_ns = root.start_ns + 10;
+
+        let cold = span_batch_with_promoted_attrs(std::slice::from_ref(&root), &promoted).unwrap();
+        let meta = writer
+            .write_block_with_decl(
+                "tenant",
+                "blocks/promoted-cold.parquet",
+                span_block_schema_with_promoted_attrs(&promoted),
+                &[cold],
+                &span_block_decl(),
+                SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+            )
+            .await
+            .unwrap();
+        let mut bloom = ShardedTraceBloom::with_tempo_defaults(1);
+        bloom.insert(&root.trace_id);
+        let mut index = TraceIndex::new();
+        index.add_trace_block(
+            "tenant",
+            TraceBlockStats {
+                object_key: meta.object_key,
+                min_ts: meta.min_ts,
+                max_ts: meta.max_ts,
+                bloom,
+                tag_names: BTreeSet::new(),
+                tag_values: BTreeMap::new(),
+            },
+        );
+        let live = LiveTier::new(Arc::new(FakeLiveSource {
+            trace: None,
+            batches: vec![span_batch(std::slice::from_ref(&child)).unwrap()],
+            values: vec![],
+            frontier_ns: child.start_ns,
+        }));
+        let store = KrabkaSpanStore::new(blocks, shared(index), Some(live));
+
+        let scan = store
+            .scan_with_options("tenant", &[], 0, 10_000, &ScanOptions::default())
+            .await
+            .expect("the two tiers merge");
+        let batches = collect_table(&scan.ctx, &scan.span_table).await.unwrap();
+        let rows: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        check!(rows == 2, "both tiers' spans survive the merge");
+        for batch in &batches {
+            let column = batch
+                .column_by_name("attr.http.status_code")
+                .expect("the promoted column survives the merge");
+            check!(
+                column.null_count() == 0,
+                "the live rows are filled from their generic attributes, not nulled"
+            );
+        }
+
+        let matched = store
+            .scan_with_options(
+                "tenant",
+                &[matcher(
+                    MatchScope::Span,
+                    "http.status_code",
+                    MatchCmp::Eq,
+                    MatchValue::Int(504),
+                )],
+                0,
+                10_000,
+                &ScanOptions::default(),
+            )
+            .await
+            .expect("the two tiers merge");
+        let matched: usize = collect_table(&matched.ctx, &matched.span_table)
+            .await
+            .unwrap()
+            .iter()
+            .map(RecordBatch::num_rows)
+            .sum();
+        check!(matched == 2, "and both are matchable on the promoted key");
+    }
+
     async fn event_intrinsic_fixture() -> (TraceqlEngine<KrabkaSpanStore>, [[u8; 16]; 4]) {
         let object_store = Arc::new(InMemory::new());
         let blocks = Arc::new(BlockStore::new(
@@ -3519,6 +3746,7 @@ mod batch_attr_matches_with_resource;
 mod block_attr_values;
 mod block_attr_values_for_key;
 mod block_err;
+mod block_span_schema;
 mod bool_array_value;
 mod bool_attr_values;
 mod bool_matches;
@@ -3626,6 +3854,7 @@ use batch_attr_matches_with_resource::batch_attr_matches_with_resource;
 use block_attr_values::block_attr_values;
 use block_attr_values_for_key::block_attr_values_for_key;
 use block_err::block_err;
+use block_span_schema::block_span_schema;
 use bool_array_value::bool_array_value;
 use bool_attr_values::bool_attr_values;
 use bool_matches::bool_matches;

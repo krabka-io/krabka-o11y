@@ -1,14 +1,43 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockEntry, BlockIndex, BlockMeta, BlockStoreError, ByteSize,
-    ByteSizeExt, Deserialize, LabelMatcher, Labels, MAX_INDEX_SNAPSHOT_BYTES, ObjectStore,
-    ObjectStoreExt, Path, PutPayload, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint,
-    TenantIndex, instrument, matcher_matches_empty,
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockMeta, BlockStoreError, ByteSize,
+    DEFAULT_INDEX_SHARD_WIDTH, Deserialize, LabelMatcher, Labels, MAX_INDEX_SNAPSHOT_BYTES,
+    ObjectStore, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint, TenantIndex,
+    load_index_shards, matcher_matches_empty, save_index_shards,
 };
 
 /// Multi-tenant in-memory index for label resolution and block pruning.
 ///
 /// This is the metrics and logs series index. The profiles index and the
 /// traces index embed it for shared label posting and matcher resolution.
+///
+/// # On disk
+///
+/// An index is not one object. Each tenant's blocks are cut onto a time grid
+/// and each grid slot is a shard object of its own, carrying the blocks that
+/// cross it, the series those blocks hold, and the block-to-series pairs. It
+/// holds nothing about any other slot. A query over an hour therefore lists a
+/// tenant's prefix, keeps the one or two shards whose span meets the hour, and
+/// reads only those; it never holds the rest of the tenant, let alone the rest
+/// of the fleet. This is the layout the logs path already uses, in
+/// [`crate::log_blockstore`], reached for here for the same reason and kept
+/// deliberately close to it.
+///
+/// The price of the shape is that a series is written into every shard whose
+/// blocks carry it. That duplication is the mechanism, not an oversight: a
+/// single shared series dictionary would be one object every querier has to
+/// load whatever it asked for, which is the resident-memory problem this
+/// layout exists to solve.
+///
+/// The bytes are a compact binary encoding rather than JSON: a per-shard
+/// dictionary for label names and values, varints for counts and ordinals,
+/// deltas for timestamps, and no storage at all for the label postings and
+/// label-value sets, which are functions of the series and are rebuilt on
+/// load.
+///
+/// [`Index::save`] republishes every shard and sweeps the ones the new layout
+/// does not name. It is not a compare-and-swap: the generation-numbered
+/// publication in [`crate::index_snapshot`] swaps a single object, and a
+/// many-object index needs a manifest for it to swap instead.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Index {
     pub(crate) tenants: BTreeMap<String, TenantIndex>,
@@ -21,49 +50,18 @@ impl Index {
     }
 
     pub fn add_series(&mut self, tenant: &str, fp: SeriesFingerprint, labels: &Labels) {
-        let tenant_index = self.tenants.entry(tenant.to_string()).or_default();
-        if tenant_index.series.contains_key(&fp) {
-            return;
-        }
-        tenant_index.series.insert(fp, labels.clone());
-
-        for (name, value) in labels.iter() {
-            tenant_index
-                .postings
-                .entry(name.clone())
-                .or_default()
-                .entry(value.clone())
-                .or_default()
-                .insert(fp);
-            tenant_index
-                .values
-                .entry(name.clone())
-                .or_default()
-                .insert(value.clone());
-        }
+        self.tenants
+            .entry(tenant.to_string())
+            .or_default()
+            .add_series(fp, labels);
     }
 
     pub fn add_block(&mut self, meta: &BlockMeta) {
-        let tenant_index = self.tenants.entry(meta.tenant.clone()).or_default();
-        if let Some(entry) = tenant_index
+        self.tenants
+            .entry(meta.tenant.clone())
+            .or_default()
             .blocks
-            .iter_mut()
-            .find(|entry| entry.object_key == meta.object_key)
-        {
-            entry.min_ts = meta.min_ts;
-            entry.max_ts = meta.max_ts;
-            entry.row_count = meta.row_count;
-            entry.fingerprints = meta.fingerprints.iter().copied().collect();
-            return;
-        }
-
-        tenant_index.blocks.push(BlockEntry {
-            object_key: meta.object_key.clone(),
-            min_ts: meta.min_ts,
-            max_ts: meta.max_ts,
-            row_count: meta.row_count,
-            fingerprints: meta.fingerprints.iter().copied().collect(),
-        });
+            .insert(meta);
     }
 
     /// # Errors
@@ -126,33 +124,14 @@ impl Index {
             return Vec::new();
         };
 
-        tenant_index
-            .blocks
-            .iter()
-            .filter(|block| block.min_ts <= max_ts && block.max_ts >= min_ts)
-            .filter(|block| block.fingerprints.iter().any(|fp| fps.contains(fp)))
-            .map(|block| block.object_key.clone())
-            .collect()
+        tenant_index.blocks.candidate_blocks(fps, min_ts, max_ts)
     }
 
     #[must_use]
     pub fn all_blocks(&self, tenant: &str) -> Vec<BlockMeta> {
         self.tenants
             .get(tenant)
-            .map(|tenant_index| {
-                tenant_index
-                    .blocks
-                    .iter()
-                    .map(|block| BlockMeta {
-                        tenant: tenant.to_string(),
-                        object_key: block.object_key.clone(),
-                        min_ts: block.min_ts,
-                        max_ts: block.max_ts,
-                        row_count: block.row_count,
-                        fingerprints: block.fingerprints.iter().copied().collect(),
-                    })
-                    .collect()
-            })
+            .map(|tenant_index| tenant_index.blocks.metas(tenant))
             .unwrap_or_default()
     }
 
@@ -357,15 +336,7 @@ impl Index {
     /// range.
     #[must_use]
     pub fn block_time_bounds(&self, tenant: &str, min_ts: i64, max_ts: i64) -> Option<(i64, i64)> {
-        let tenant_index = self.tenants.get(tenant)?;
-        tenant_index
-            .blocks
-            .iter()
-            .filter(|block| block.min_ts <= max_ts && block.max_ts >= min_ts)
-            .fold(None, |acc, block| match acc {
-                Some((min, max)) => Some((min.min(block.min_ts), max.max(block.max_ts))),
-                None => Some((block.min_ts, block.max_ts)),
-            })
+        self.tenants.get(tenant)?.blocks.time_bounds(min_ts, max_ts)
     }
 
     /// Folds every series and block of `other` into this index.
@@ -379,15 +350,11 @@ impl Index {
             for (fingerprint, labels) in &tenant_index.series {
                 self.add_series(tenant, *fingerprint, labels);
             }
-            for block in &tenant_index.blocks {
-                self.add_block(&BlockMeta {
-                    tenant: tenant.clone(),
-                    object_key: block.object_key.clone(),
-                    min_ts: block.min_ts,
-                    max_ts: block.max_ts,
-                    row_count: block.row_count,
-                    fingerprints: block.fingerprints.iter().copied().collect(),
-                });
+            // One pass over the other side's postings rebuilds every block's
+            // series set, so a merge inverts the map once rather than once per
+            // block.
+            for meta in tenant_index.blocks.metas(tenant) {
+                self.add_block(&meta);
             }
         }
     }
@@ -396,18 +363,11 @@ impl Index {
     /// swap.
     pub fn replace_blocks(&mut self, tenant: &str, remove_keys: &[String], add: &[BlockMeta]) {
         let tenant_index = self.tenants.entry(tenant.to_string()).or_default();
-        let remove_keys = remove_keys.iter().collect::<BTreeSet<_>>();
         tenant_index
             .blocks
-            .retain(|block| !remove_keys.contains(&block.object_key));
+            .remove(&remove_keys.iter().collect::<BTreeSet<_>>());
         for meta in add {
-            tenant_index.blocks.push(BlockEntry {
-                object_key: meta.object_key.clone(),
-                min_ts: meta.min_ts,
-                max_ts: meta.max_ts,
-                row_count: meta.row_count,
-                fingerprints: meta.fingerprints.iter().copied().collect(),
-            });
+            tenant_index.blocks.insert(meta);
         }
     }
 
@@ -417,16 +377,7 @@ impl Index {
     pub fn all_blocks_unscoped(&self) -> Vec<BlockMeta> {
         self.tenants
             .iter()
-            .flat_map(|(tenant, tenant_index)| {
-                tenant_index.blocks.iter().map(move |block| BlockMeta {
-                    tenant: tenant.clone(),
-                    object_key: block.object_key.clone(),
-                    min_ts: block.min_ts,
-                    max_ts: block.max_ts,
-                    row_count: block.row_count,
-                    fingerprints: block.fingerprints.iter().copied().collect(),
-                })
-            })
+            .flat_map(|(tenant, tenant_index)| tenant_index.blocks.metas(tenant))
             .collect()
     }
 
@@ -445,89 +396,108 @@ impl Index {
         let Some(tenant_index) = self.tenants.get(tenant) else {
             return Vec::new();
         };
-        tenant_index
-            .blocks
-            .iter()
-            .filter(|block| block.min_ts <= max_ts && block.max_ts >= min_ts)
-            .map(|block| block.object_key.clone())
-            .collect()
+        tenant_index.blocks.blocks_in_range(min_ts, max_ts)
     }
 
-    /// Persists the index as a JSON snapshot to object storage.
-    #[instrument(
-        skip_all,
-        fields(object_key = %object_key, len = tracing::field::Empty),
-        err
-    )]
+    /// Persists the index as time-sharded objects under the shard prefix of
+    /// `object_key`, at the default shard width.
+    ///
     /// # Errors
-    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
+    /// Returns an error when object-store I/O fails.
     pub async fn save(&self, store: &Arc<dyn ObjectStore>, object_key: &str) -> Result<()> {
-        let bytes = serde_json::to_vec(self)?;
-        tracing::Span::current().record("len", bytes.len());
-        let path = Path::from(object_key);
-        store.put(&path, PutPayload::from(bytes)).await?;
-        Ok(())
+        self.save_with_shard_width(store, object_key, DEFAULT_INDEX_SHARD_WIDTH)
+            .await
     }
 
-    /// Loads an index JSON snapshot from object storage.
+    /// Persists the index with `shard_width` ticks to a shard.
     ///
-    /// The loader `head()`s the object first and rejects it when it is larger
-    /// than [`MAX_INDEX_SNAPSHOT_BYTES`], so a corrupt or oversized snapshot
-    /// from shared storage cannot OOM the process during the buffered read.
+    /// The index carries no unit of its own. The metrics path counts
+    /// milliseconds through it and the profiles path counts nanoseconds, so
+    /// [`DEFAULT_INDEX_SHARD_WIDTH`] can be right for only one of them. A
+    /// caller that knows its unit says so here. A width that is wrong by
+    /// orders of magnitude is widened until the tenant fits
+    /// [`super::MAX_INDEX_SHARDS_PER_TENANT`] shards. The cost of not saying is
+    /// therefore coarse shards, not a million objects.
     ///
     /// # Errors
-    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
+    /// Returns an error when object-store I/O fails.
+    pub async fn save_with_shard_width(
+        &self,
+        store: &Arc<dyn ObjectStore>,
+        object_key: &str,
+        shard_width: i64,
+    ) -> Result<()> {
+        save_index_shards(self, store, object_key, shard_width).await
+    }
+
+    /// Loads every shard of an index, across every tenant.
+    ///
+    /// This is the whole-fleet load, and it is the one a query should not be
+    /// doing: see [`Index::load_for_range`]. An index with no shards loads as
+    /// an empty index rather than an error, because a first save has not
+    /// happened yet and that is not a failure.
+    ///
+    /// # Errors
+    /// Returns an error when object-store I/O fails or a shard is malformed.
     pub async fn load(store: &Arc<dyn ObjectStore>, object_key: &str) -> Result<Self> {
         Self::load_with_cap(store, object_key, MAX_INDEX_SNAPSHOT_BYTES).await
     }
 
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(object_key = %object_key),
-        err
-    )]
+    /// Loads one tenant's shards that overlap `[min_ts, max_ts]`.
+    ///
+    /// A shard carries its span in its key, so the loader lists the shards
+    /// outside the window and then does not read them. This is the load a
+    /// query wants. What it holds is proportional to the range it asked about,
+    /// not to the fleet.
+    ///
+    /// # Errors
+    /// Returns an error when object-store I/O fails or a shard is malformed.
+    pub async fn load_for_range(
+        store: &Arc<dyn ObjectStore>,
+        object_key: &str,
+        tenant: &str,
+        min_ts: i64,
+        max_ts: i64,
+    ) -> Result<Self> {
+        Self::load_for_range_with_cap(
+            store,
+            object_key,
+            tenant,
+            min_ts,
+            max_ts,
+            MAX_INDEX_SNAPSHOT_BYTES,
+        )
+        .await
+    }
+
     pub(crate) async fn load_with_cap(
         store: &Arc<dyn ObjectStore>,
         object_key: &str,
         max_bytes: ByteSize,
     ) -> Result<Self> {
-        let path = Path::from(object_key);
-        let bytes = match krabka_object_store::read_capped(store, &path, max_bytes.bytes_u64())
-            .await
-        {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                return Err(match error {
-                    krabka_object_store::ObjectStoreError::TooLarge {
-                        size, max_bytes, ..
-                    } => BlockStoreError::InvalidBlock(format!(
-                        "index snapshot `{object_key}` is {size} bytes, exceeds cap of {max_bytes} bytes"
-                    )),
-                    krabka_object_store::ObjectStoreError::Backend(message)
-                    | krabka_object_store::ObjectStoreError::InvalidConfig(message) => {
-                        BlockStoreError::ObjectStore(message)
-                    }
-                    krabka_object_store::ObjectStoreError::Io(error) => {
-                        BlockStoreError::ObjectStore(error.to_string())
-                    }
-                    not_found @ krabka_object_store::ObjectStoreError::NotFound(_) => {
-                        match store.head(&path).await {
-                            Ok(_) => BlockStoreError::ObjectStore(not_found.to_string()),
-                            Err(missing) => BlockStoreError::ObjectStore(missing.to_string()),
-                        }
-                    }
-                    // Write-side variants: `read_capped` cannot raise them, but
-                    // they are part of the enum, so surface them like any other
-                    // backend failure rather than widening the read path.
-                    conflict @ (krabka_object_store::ObjectStoreError::AlreadyExists(_)
-                    | krabka_object_store::ObjectStoreError::Precondition { .. }) => {
-                        BlockStoreError::ObjectStore(conflict.to_string())
-                    }
-                });
-            }
-        };
-        Ok(serde_json::from_slice(&bytes)?)
+        load_index_shards(store, object_key, None, None, max_bytes).await
+    }
+
+    /// [`Index::load_for_range`] with an explicit per-shard byte cap.
+    ///
+    /// # Errors
+    /// Returns an error when object-store I/O fails or a shard is malformed.
+    pub async fn load_for_range_with_cap(
+        store: &Arc<dyn ObjectStore>,
+        object_key: &str,
+        tenant: &str,
+        min_ts: i64,
+        max_ts: i64,
+        max_bytes: ByteSize,
+    ) -> Result<Self> {
+        load_index_shards(
+            store,
+            object_key,
+            Some(tenant),
+            Some((min_ts, max_ts)),
+            max_bytes,
+        )
+        .await
     }
 }
 

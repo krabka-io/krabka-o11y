@@ -1,6 +1,7 @@
 use super::{
     Array, AsArray, BTreeMap, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_SPAN_ID,
     PCOL_TOTAL_VALUE, ProfileError, UInt64Type, heatmap_slot_timestamp, label_pairs, pb,
+    span_id_hex_from_u64,
 };
 
 pub(crate) async fn heatmap_span_exemplars_from_scan(
@@ -50,7 +51,7 @@ pub(crate) async fn heatmap_span_exemplars_from_scan(
                 .push(pb::querier::v1::Exemplar {
                     timestamp,
                     profile_id: String::new(),
-                    span_id: format!("{:x}", span_ids.value(row)),
+                    span_id: span_id_hex_from_u64(span_ids.value(row)),
                     value: totals.value(row),
                     labels: labels.clone(),
                 });

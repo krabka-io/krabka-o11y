@@ -10,6 +10,14 @@ use super::planned::PlannedInstant;
 use super::scalar::{DurationHelper, ScalarExtremaFn, scalar_call_to_planned};
 use crate::{PromqlError, error::Result, result::QueryResult, store::MetricStore};
 
+/// The largest `f64` Prometheus will convert to an `int64` for a `k` parameter.
+///
+/// This is `maxInt64` in `promql/engine.go`: `2^63 - 1024`, the last `f64`
+/// below `2^63` and so the last one an `int64` can hold. Prometheus refuses a
+/// parameter that is greater than or EQUAL to it, and `usize` alone does not
+/// refuse it -- a `u64` reaches almost twice as far.
+const MAX_INT64_PARAMETER: f64 = 9_223_372_036_854_774_784.0;
+
 impl<S: MetricStore> PromqlEngine<S> {
     /// Plans the EXPERIMENTAL non-leaf functions onto the operator path.
     ///
@@ -107,6 +115,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         value
             .trunc()
             .to_usize()
+            .filter(|_| value < MAX_INT64_PARAMETER)
             .ok_or_else(|| PromqlError::Plan(format!("Scalar value {value} overflows int64")))
     }
 

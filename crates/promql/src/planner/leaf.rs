@@ -15,7 +15,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use arrow::{
-    array::{ArrayRef, Float64Array, Int64Array, StringArray},
+    array::{ArrayRef, Float64Array, Int64Array, StringBuilder},
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
@@ -27,6 +27,7 @@ use datafusion::{
 use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_units::prelude::*;
 
+use super::LabeledSeries;
 use crate::{
     PromqlError,
     error::Result,
@@ -38,7 +39,6 @@ use crate::{
 
 mod build_leaf_batch;
 mod instant_selector_plan;
-mod labeled_sample;
 mod leaf_schema;
 mod plan_instant_vector_selector;
 mod sample_time_column;
@@ -47,7 +47,6 @@ mod value_column;
 
 use build_leaf_batch::build_leaf_batch;
 pub use instant_selector_plan::InstantSelectorPlan;
-pub use labeled_sample::LabeledSample;
 use leaf_schema::leaf_schema;
 pub use plan_instant_vector_selector::plan_instant_vector_selector;
 pub use sample_time_column::SAMPLE_TIME_COLUMN;

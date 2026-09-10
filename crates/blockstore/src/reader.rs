@@ -4,9 +4,13 @@ use std::{ops::Range, sync::Arc};
 
 use arrow::record_batch::RecordBatch;
 use bytes::Bytes;
+use datafusion::{
+    datasource::physical_plan::parquet::metadata::CachedParquetMetaData,
+    execution::cache::cache_manager::{CachedFileMetadataEntry, FileMetadataCache},
+};
 use futures::{FutureExt, TryFutureExt, TryStreamExt, future::BoxFuture};
 use krabka_units::prelude::*;
-use object_store::{GetOptions, GetRange, ObjectStore, ObjectStoreExt, path::Path};
+use object_store::{GetOptions, GetRange, ObjectMeta, ObjectStore, ObjectStoreExt, path::Path};
 use parquet::{
     arrow::{
         ParquetRecordBatchStreamBuilder,
@@ -18,7 +22,7 @@ use parquet::{
 };
 use tracing::instrument;
 
-use crate::error::{BlockStoreError, Result};
+use crate::error::{BlockReadFailure, BlockStoreError, Result};
 
 #[cfg(test)]
 mod tests {
@@ -30,7 +34,7 @@ mod tests {
         record_batch::RecordBatch,
     };
     use object_store::{
-        ObjectStore, PutPayload, buffered::BufWriter, memory::InMemory, path::Path,
+        ObjectMeta, ObjectStore, PutPayload, buffered::BufWriter, memory::InMemory, path::Path,
     };
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
 
@@ -234,6 +238,200 @@ mod tests {
         assert2::assert!(project(&meta) == vec![(0, true), (1, true)]);
     }
 
+    fn empty_cache() -> BlockMetadataCache {
+        BlockMetadataCache::new(Arc::new(
+            datafusion::execution::cache::default_cache::DefaultCache::new(1024 * 1024),
+        ))
+    }
+
+    async fn write_test_block(store: &Arc<dyn ObjectStore>, key: &str, lines: &[&str]) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
+            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
+            Field::new("line", DataType::Utf8, true),
+        ]));
+        let rows = i64::try_from(lines.len()).unwrap();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt64Array::from_iter_values(std::iter::repeat_n(
+                    7_u64,
+                    lines.len(),
+                ))),
+                Arc::new(Int64Array::from_iter_values(0..rows)),
+                Arc::new(StringArray::from(lines.to_vec())),
+            ],
+        )
+        .unwrap();
+        BlockWriter::new(store.clone())
+            .write_block("t", key, schema, &[batch])
+            .await
+            .unwrap();
+    }
+
+    /// A read of one named block knows which block it was reading, so the key
+    /// belongs in the error rather than in a message the caller has to parse
+    /// back out — and the backend error has to survive whole, or a caller
+    /// cannot tell a missing object from a store that is down.
+    #[tokio::test]
+    async fn an_unreadable_block_names_itself_and_keeps_its_cause() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        write_test_block(&store, "present.parquet", &["x"]).await;
+        store
+            .put(
+                &Path::from("garbage.parquet"),
+                PutPayload::from(b"PAR1 not really a parquet block".to_vec()),
+            )
+            .await
+            .unwrap();
+        // A real block's leading bytes, cut short: the footer it points at is
+        // not there.
+        let whole = store
+            .get(&Path::from("present.parquet"))
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        store
+            .put(
+                &Path::from("truncated.parquet"),
+                PutPayload::from(whole[..whole.len() / 2].to_vec()),
+            )
+            .await
+            .unwrap();
+
+        let mut got = Vec::new();
+        for key in ["absent.parquet", "garbage.parquet", "truncated.parquet"] {
+            let error = read_row_group_metadata(store.clone(), key)
+                .await
+                .expect_err("an unreadable block is an error");
+            let (object_key, failure) = error
+                .unreadable_block()
+                .expect("the error is about one block");
+            got.push((
+                object_key.to_string(),
+                failure.skip_reason(),
+                failure.is_missing(),
+            ));
+        }
+
+        assert2::assert!(
+            got == [
+                (
+                    "absent.parquet".to_string(),
+                    Some(crate::BlockSkipReason::Missing),
+                    true
+                ),
+                (
+                    "garbage.parquet".to_string(),
+                    Some(crate::BlockSkipReason::Corrupt),
+                    false
+                ),
+                (
+                    "truncated.parquet".to_string(),
+                    Some(crate::BlockSkipReason::Corrupt),
+                    false
+                ),
+            ]
+        );
+    }
+
+    /// The second read of a block's footer is served from the cache: same
+    /// `Arc`, no second decode.
+    #[tokio::test]
+    async fn a_cached_footer_is_read_once() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        write_test_block(&store, "b.parquet", &["x", "y"]).await;
+        let cache = empty_cache();
+
+        let first = block_metadata(&store, "b.parquet", DEFAULT_BLOCK_READ_MAX, Some(&cache))
+            .await
+            .unwrap();
+        let second = block_metadata(&store, "b.parquet", DEFAULT_BLOCK_READ_MAX, Some(&cache))
+            .await
+            .unwrap();
+
+        assert2::assert!(cache.len() == 1);
+        assert2::assert!(Arc::ptr_eq(&first, &second));
+
+        // Without a cache nothing is remembered, and each read decodes afresh.
+        let uncached = block_metadata(&store, "b.parquet", DEFAULT_BLOCK_READ_MAX, None)
+            .await
+            .unwrap();
+        assert2::assert!(!Arc::ptr_eq(&first, &uncached));
+    }
+
+    /// The validator is the point of the key. An entry whose object no longer
+    /// matches is not served, and is not left occupying the budget either.
+    #[tokio::test]
+    async fn a_changed_object_invalidates_its_entry() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        write_test_block(&store, "b.parquet", &["x", "y"]).await;
+        let cache = empty_cache();
+        let metadata = block_metadata(&store, "b.parquet", DEFAULT_BLOCK_READ_MAX, Some(&cache))
+            .await
+            .unwrap();
+        let meta = store.head(&Path::from("b.parquet")).await.unwrap();
+        assert2::assert!(cache.get(&meta).is_some());
+
+        let cases = [
+            (
+                "a different size",
+                ObjectMeta {
+                    size: meta.size + 1,
+                    ..meta.clone()
+                },
+            ),
+            (
+                "a different etag",
+                ObjectMeta {
+                    e_tag: Some("rewritten".to_string()),
+                    ..meta.clone()
+                },
+            ),
+            (
+                "a different version",
+                ObjectMeta {
+                    version: Some("2".to_string()),
+                    ..meta.clone()
+                },
+            ),
+        ];
+        for (case, changed) in cases {
+            cache.put(&meta, Arc::clone(&metadata));
+            assert2::assert!(cache.get(&changed).is_none(), "{case}");
+            // The stale entry is dropped rather than left to the LRU.
+            assert2::assert!(cache.is_empty(), "{case}");
+        }
+    }
+
+    /// Rewriting a block in place — which materializing a delete request does
+    /// — must not be answered from the footer of the bytes that used to be
+    /// there.
+    #[tokio::test]
+    async fn a_rewritten_block_is_read_afresh() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        write_test_block(&store, "b.parquet", &["x", "y"]).await;
+        let cache = empty_cache();
+        let before = block_metadata(&store, "b.parquet", DEFAULT_BLOCK_READ_MAX, Some(&cache))
+            .await
+            .unwrap();
+
+        write_test_block(&store, "b.parquet", &["a", "b", "c", "d"]).await;
+        let after = block_metadata(&store, "b.parquet", DEFAULT_BLOCK_READ_MAX, Some(&cache))
+            .await
+            .unwrap();
+
+        assert2::assert!(before.file_metadata().num_rows() == 2);
+        assert2::assert!(after.file_metadata().num_rows() == 4);
+    }
+
+    #[test]
+    fn the_footer_cache_bound_is_a_documented_default() {
+        assert2::assert!(DEFAULT_BLOCK_METADATA_CACHE_MAX == mebibytes(128));
+    }
+
     #[tokio::test]
     async fn read_block_row_groups_reads_only_selected_groups() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -293,26 +491,42 @@ mod tests {
     }
 }
 
+mod block_metadata;
+mod block_metadata_cache;
+mod cached_block;
+mod default_block_metadata_cache_max;
 mod default_block_read_max;
 mod head_within_cap;
 mod object_store_reader;
 mod read_block;
 mod read_block_row_groups;
+mod read_block_row_groups_cached;
 mod read_block_row_groups_with_max_bytes;
 mod read_block_with_max_bytes;
 mod read_row_group_metadata;
 mod read_row_group_metadata_with_max_bytes;
 mod row_group_meta;
+mod row_group_metadata;
+mod same_object;
 mod to_parquet_error;
+mod unreadable;
 
+pub(crate) use block_metadata::block_metadata;
+pub use block_metadata_cache::BlockMetadataCache;
+use cached_block::CachedBlock;
+pub use default_block_metadata_cache_max::DEFAULT_BLOCK_METADATA_CACHE_MAX;
 pub use default_block_read_max::DEFAULT_BLOCK_READ_MAX;
 use head_within_cap::head_within_cap;
 use object_store_reader::ObjectStoreReader;
 pub use read_block::read_block;
 pub use read_block_row_groups::read_block_row_groups;
+pub(crate) use read_block_row_groups_cached::read_block_row_groups_cached;
 pub use read_block_row_groups_with_max_bytes::read_block_row_groups_with_max_bytes;
 pub use read_block_with_max_bytes::read_block_with_max_bytes;
 pub use read_row_group_metadata::read_row_group_metadata;
 pub use read_row_group_metadata_with_max_bytes::read_row_group_metadata_with_max_bytes;
 pub use row_group_meta::RowGroupMeta;
+pub(crate) use row_group_metadata::row_group_metadata;
+use same_object::same_object;
 use to_parquet_error::to_parquet_error;
+use unreadable::unreadable;

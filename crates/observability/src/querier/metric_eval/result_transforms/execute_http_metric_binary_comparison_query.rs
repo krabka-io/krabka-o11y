@@ -11,17 +11,23 @@ pub(crate) async fn execute_http_metric_binary_comparison_query(
     kind: QueryKind,
     comparison: MetricBinaryComparison,
 ) -> Result<Value, HttpQueryError> {
-    let mut left = execute_http_metric_query(
+    let left = Box::pin(execute_http_metric_query(
         state,
         tenant,
         time_range,
         step,
         kind,
         comparison.left.clone(),
-    )
-    .await?;
-    let right =
-        execute_http_metric_query(state, tenant, time_range, step, kind, comparison.right).await?;
+    ));
+    let right = Box::pin(execute_http_metric_query(
+        state,
+        tenant,
+        time_range,
+        step,
+        kind,
+        comparison.right,
+    ));
+    let (mut left, right) = futures_util::future::try_join(left, right).await?;
     apply_metric_binary_comparison_to_loki_result(
         &mut left,
         &right,

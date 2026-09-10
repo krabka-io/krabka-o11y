@@ -1,12 +1,10 @@
 use super::{
-    Arc, LabelIndex, MetricQuery, ObjectPath, ObjectStore, QueryError, QueryHotTail, StreamPlan,
-    TimeRange, Value,
+    ColdBlockScan, LabelIndex, MetricQuery, QueryError, QueryHotTail, StreamPlan, TimeRange, Value,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
 };
 
 pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_frontier(
-    store: Arc<dyn ObjectStore>,
-    prefix: &ObjectPath,
+    cold: ColdBlockScan<'_>,
     plan: &StreamPlan,
     query: &MetricQuery,
     label_index: &LabelIndex,
@@ -14,8 +12,7 @@ pub(crate) async fn execute_metric_query_range_from_object_store_with_hot_tail_f
     hot_tail: QueryHotTail<'_>,
 ) -> Result<Value, QueryError> {
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes(
-        store,
-        prefix,
+        cold,
         plan,
         query,
         label_index,

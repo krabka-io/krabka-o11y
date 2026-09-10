@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod batch;
 pub mod nested_set;
+pub(crate) mod promoted;
 
 #[cfg(test)]
 mod tests {

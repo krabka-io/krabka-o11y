@@ -100,7 +100,12 @@ opentelemetry = { version = "0.32", default-features = false, features = ["trace
 # signal; `tonic-prost` carries the prost codec for tonic 0.14.
 opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "gen-tonic-messages", "metrics", "trace"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "logs"] }
-parquet = { version = "59", default-features = false, features = ["arrow", "async", "object_store"] }
+# `zstd` is the codec `BlockWriter` writes every block with, and it has to be
+# named here. Cargo unions features across the graph, so datafusion's own
+# `parquet` dependency happens to turn it on and a `cargo test` run passes
+# without it; rules_rs resolves this table instead, and under Bazel the
+# writer failed at runtime with "Disabled feature at compile time: zstd".
+parquet = { version = "59", default-features = false, features = ["arrow", "async", "object_store", "zstd"] }
 pbjson = "0.9"
 prometheus-client = "0.25"
 # PromQL parser only; Krabka supplies the PromQL-to-DataFusion planner.

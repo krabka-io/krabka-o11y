@@ -78,8 +78,8 @@ impl<S: MetricStore> PromqlEngine<S> {
                 if matches!(&value, SampleValue::Float(value) if is_stale_nan(*value)) {
                     return None;
                 }
-                labels_by_fp.get(&fp).cloned().map(|labels| InstantSample {
-                    labels,
+                labels_by_fp.get(&fp).map(|labels| InstantSample {
+                    labels: (**labels).clone(),
                     ts_ms,
                     value,
                 })
@@ -128,8 +128,8 @@ impl<S: MetricStore> PromqlEngine<S> {
                 let timestamps = rows.iter().map(|(ts_ms, _)| *ts_ms).collect::<Vec<_>>();
                 let values = rows.iter().map(|(_, value)| *value).collect::<Vec<_>>();
                 let value = instant_smoothed_boundary_value(&timestamps, &values, eval_time_ms)?;
-                labels_by_fp.get(&fp).cloned().map(|labels| InstantSample {
-                    labels,
+                labels_by_fp.get(&fp).map(|labels| InstantSample {
+                    labels: (**labels).clone(),
                     ts_ms: time_ms,
                     value: SampleValue::Float(value),
                 })
@@ -210,11 +210,11 @@ impl<S: MetricStore> PromqlEngine<S> {
 
         let mut out = Vec::new();
         for (fp, samples) in samples_by_fp {
-            let Some(labels) = labels_by_fp.get(&fp).cloned() else {
+            let Some(labels) = labels_by_fp.get(&fp) else {
                 continue;
             };
             out.push(RangeSeries {
-                labels,
+                labels: (**labels).clone(),
                 samples: samples.into_iter().collect(),
             });
         }

@@ -1,6 +1,6 @@
 use super::{
-    Arc, CompactionFrontier, LabelIndex, MetricQuery, ObjectPath, ObjectStore, QueryError,
-    QueryHotTail, StreamPlan, TimeRange, Value,
+    Arc, ColdBlockScan, CompactionFrontier, LabelIndex, MetricQuery, ObjectPath, ObjectStore,
+    QueryError, QueryHotTail, StreamPlan, TimeRange, Value, default_block_fetch_concurrency,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier,
 };
 
@@ -16,8 +16,11 @@ pub async fn execute_metric_query_range_from_object_store(
     step_ns: i64,
 ) -> Result<Value, QueryError> {
     execute_metric_query_range_from_object_store_with_hot_tail_frontier(
-        store,
-        prefix,
+        ColdBlockScan {
+            store,
+            prefix,
+            block_fetch_concurrency: default_block_fetch_concurrency(),
+        },
         plan,
         query,
         label_index,

@@ -12,11 +12,12 @@
 //! second linear. A run where the first has become linear too is an index that
 //! has stopped being an index.
 
-use std::hint::black_box;
+use std::{hint::black_box, sync::Arc};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use krabka_blockstore::{LabelMatcher, MatchOp};
+use krabka_blockstore::{Index, LabelMatcher, MatchOp};
 use krabka_o11y_benches::index::{BLOCK_SPAN_MS, TENANT, populated_index, populated_trace_index};
+use object_store::{ObjectStore, memory::InMemory};
 
 /// Series counts to sweep. A hundred thousand is the order of magnitude a
 /// single Prometheus replica carries, and nothing in this workspace had ever
@@ -149,5 +150,64 @@ fn index_prune(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, index_prune);
+/// Loading: how much of a tenant's index a query has to fetch and hold.
+///
+/// The index is stored as one object per tenant per day, so a query over an
+/// hour reads one of them and a query over the whole retention reads all of
+/// them. The two benchmarks below are the same load against the same store,
+/// differing only in whether the caller names its time range, and the gap
+/// between them is what the sharding buys. It should widen with the retention:
+/// a whole-index load is linear in the days stored, and a one-day load is flat.
+/// A run where both are linear is a layout that has stopped sharding.
+fn index_load(criterion: &mut Criterion) {
+    /// Series in the loading fixture. Smaller than the pruning sweep's
+    /// hundred thousand, because every block here holds all of them and the
+    /// whole-index arm has to decode the lot on every iteration.
+    const SERIES: usize = 5_000;
+    /// Two-hour blocks in a day, which is one shard's worth.
+    const BLOCKS_PER_DAY: usize = 12;
+    /// Retentions to sweep, in days.
+    const DAYS: [usize; 3] = [1, 7, 30];
+    const KEY: &str = "index/metrics.json";
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a current-thread runtime has nothing to fail on");
+    let mut group = criterion.benchmark_group("index_load");
+
+    for days in DAYS {
+        let index = populated_index(SERIES, days * BLOCKS_PER_DAY);
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        runtime
+            .block_on(index.save(&store, KEY))
+            .expect("an in-memory store accepts the shards");
+        let day_ms = BLOCK_SPAN_MS * i64::try_from(BLOCKS_PER_DAY).expect("a day fits an i64");
+
+        group.throughput(Throughput::Elements(
+            u64::try_from(days).expect("a day count fits a u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::new("whole_index", days),
+            &days,
+            |bencher, _| {
+                bencher.to_async(&runtime).iter(|| async {
+                    let index = Index::load(&store, KEY).await.expect("the index loads");
+                    black_box(index)
+                });
+            },
+        );
+        group.bench_with_input(BenchmarkId::new("one_day", days), &days, |bencher, _| {
+            bencher.to_async(&runtime).iter(|| async {
+                let index = Index::load_for_range(&store, KEY, TENANT, 0, day_ms - 1)
+                    .await
+                    .expect("the index loads");
+                black_box(index)
+            });
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, index_prune, index_load);
 criterion_main!(benches);

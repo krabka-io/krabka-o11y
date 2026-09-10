@@ -19,5 +19,8 @@ pub fn clock_reading_decl() -> BlockSchema {
             RequiredColumn::new(CCOL_INGEST_UNIX_NANOS, DataType::Int64, false),
         ],
         sort_key: vec![COL_FINGERPRINT.to_string(), COL_TIMESTAMP.to_string()],
+        // None: the two columns a clock query looks up by equality are the
+        // sort key, which row-group min/max prunes exactly.
+        bloom_columns: Vec::new(),
     }
 }

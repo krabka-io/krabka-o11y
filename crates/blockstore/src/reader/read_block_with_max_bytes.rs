@@ -1,6 +1,6 @@
 use super::{
     Arc, ByteSize, ObjectStore, ObjectStoreReader, ParquetRecordBatchStreamBuilder, Path,
-    RecordBatch, Result, TryStreamExt, head_within_cap, instrument,
+    RecordBatch, Result, TryStreamExt, head_within_cap, instrument, unreadable,
 };
 
 /// Reads every `RecordBatch` with a caller-supplied on-disk size limit.
@@ -24,7 +24,12 @@ pub async fn read_block_with_max_bytes(
     head_within_cap(&store, &path, object_key, max_bytes).await?;
     let reader = ObjectStoreReader::new(store, path);
     let stream = ParquetRecordBatchStreamBuilder::new(reader)
-        .await?
-        .build()?;
-    Ok(stream.try_collect::<Vec<_>>().await?)
+        .await
+        .map_err(|error| unreadable(object_key, error))?
+        .build()
+        .map_err(|error| unreadable(object_key, error))?;
+    stream
+        .try_collect::<Vec<_>>()
+        .await
+        .map_err(|error| unreadable(object_key, error))
 }

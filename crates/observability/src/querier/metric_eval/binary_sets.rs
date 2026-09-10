@@ -1,8 +1,8 @@
 use crate::{
-    ActiveLogDeleteFilter, Arc, BTreeSet, ComparisonOp, HttpQueryError, Labels, MetricBinarySetOp,
-    MetricQuery, MetricScalarArithmetic, MetricScalarArithmeticOp, MetricScalarComparison,
-    MetricValue, MetricVectorGroupModifier, MetricVectorMatching, Ordering, ParseError,
-    QuerierState, QueryHotTail, StreamPlan, TimeRange, Value,
+    ActiveLogDeleteFilter, Arc, BTreeSet, ColdBlockScan, ComparisonOp, HttpQueryError, Labels,
+    MetricBinarySetOp, MetricQuery, MetricScalarArithmetic, MetricScalarArithmeticOp,
+    MetricScalarComparison, MetricValue, MetricVectorGroupModifier, MetricVectorMatching, Ordering,
+    ParseError, QuerierState, QueryHotTail, StreamPlan, TimeRange, Value,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
     execute_metric_query_range_with_deletes,
     execute_metric_query_range_with_hot_tail_frontier_and_deletes, format_metric_value,

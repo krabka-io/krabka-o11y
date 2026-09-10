@@ -437,6 +437,10 @@ fn stream_cases(timeline: &Timeline) -> Vec<Case> {
             r#"{app="fmt"} | logfmt | label_format svc=`{{.service}}-{{.status}}`"#,
         ),
         (
+            "label_format_overwrites_a_stream_label",
+            r#"{app="fmt"} | logfmt | label_format app="renamed""#,
+        ),
+        (
             "line_format_template",
             r#"{app="fmt"} | logfmt | line_format `{{.service}}/{{.status}}`"#,
         ),
@@ -462,6 +466,14 @@ fn stream_cases(timeline: &Timeline) -> Vec<Case> {
 /// parser stage produced (`| json`, `| logfmt`), a label `label_format` wrote,
 /// and -- in `worker` -- a stream whose only categorised label is the
 /// `detected_level` that Loki's own discovery added.
+///
+/// The last five ask what happens when a pipeline stage writes a name that is
+/// already taken, which is where the two encodings could most easily disagree
+/// about which stream an entry belongs to. A `label_format` destination is
+/// parsed whatever it overwrote -- a series label, a series label rewritten to
+/// the string it already held, or a piece of structured metadata -- and the
+/// name leaves the stream. A parser stage instead never overwrites: it writes
+/// `<name>_extracted` and the original stays where it was.
 fn categorized_stream_cases(timeline: &Timeline) -> Vec<Case> {
     [
         ("categorized_selector_api_stream", r#"{app="api"}"#),
@@ -472,6 +484,26 @@ fn categorized_stream_cases(timeline: &Timeline) -> Vec<Case> {
         (
             "categorized_label_format_rename",
             r#"{app="fmt"} | logfmt | label_format svc=service"#,
+        ),
+        (
+            "categorized_label_format_overwrites_a_stream_label",
+            r#"{app="fmt"} | logfmt | label_format app="renamed""#,
+        ),
+        (
+            "categorized_label_format_overwrites_a_stream_label_from_a_parsed_one",
+            r#"{app="fmt"} | logfmt | label_format app=service"#,
+        ),
+        (
+            "categorized_label_format_rewrites_a_stream_label_unchanged",
+            r#"{app="fmt"} | logfmt | label_format env="stage""#,
+        ),
+        (
+            "categorized_label_format_overwrites_structured_metadata",
+            r#"{app="meta"} | label_format shard="z""#,
+        ),
+        (
+            "categorized_parser_field_collides_with_a_stream_label",
+            r#"{app="fmt"} | logfmt app="service""#,
         ),
         (
             "categorized_structured_metadata_filter",

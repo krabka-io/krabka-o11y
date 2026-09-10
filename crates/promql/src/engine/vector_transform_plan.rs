@@ -441,11 +441,11 @@ impl<S: MetricStore> PromqlEngine<S> {
             if is_stale_nan(value) {
                 continue;
             }
-            let Some(labels) = labels_by_fp.get(&fp).cloned() else {
+            let Some(labels) = labels_by_fp.get(&fp) else {
                 continue;
             };
             samples.push(ScalarMathLabeledValue {
-                labels,
+                labels: (**labels).clone(),
                 ts_ms,
                 value,
             });

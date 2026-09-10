@@ -117,6 +117,7 @@ mod tests {
                         PCOL_PROFILE_TYPE.to_string(),
                         COL_TIMESTAMP.to_string(),
                     ],
+                    bloom_columns: vec![],
                 }
         );
     }

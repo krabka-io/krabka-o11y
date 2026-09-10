@@ -1,4 +1,4 @@
-use super::{ProfilesError, pb};
+use super::{ProfilesError, pb, span_id_u64_from_be_slice};
 
 pub(crate) type OtlpSampleLinks = (Vec<Option<u64>>, Vec<Option<Vec<u8>>>);
 
@@ -21,10 +21,12 @@ pub(crate) fn otlp_sample_links(
         let span_id = if link.span_id.is_empty() {
             None
         } else {
-            let bytes: [u8; 8] = link.span_id.as_slice().try_into().map_err(|_| {
+            // The one reading of a span id both signals share. A profile
+            // stores the `u64`, a trace stores these bytes, and a span-scoped
+            // profile query joins them.
+            Some(span_id_u64_from_be_slice(&link.span_id).ok_or_else(|| {
                 ProfilesError::Invalid("OTLP link span_id must be 8 bytes".to_string())
-            })?;
-            Some(u64::from_be_bytes(bytes))
+            })?)
         };
         let trace_id = (!link.trace_id.is_empty()).then(|| link.trace_id.clone());
         span_ids.push(span_id);

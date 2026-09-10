@@ -7,15 +7,14 @@
 //! break a correctness test, because a query that scans everything still
 //! returns the right answer.
 //!
-//! The two lines coincide today, at every size below. That is not a fault in
-//! the measurement: `BlockWriter` builds its Parquet writer from a default
-//! `WriterProperties`, whose maximum row group is 1,048,576 rows, so every
-//! block this file writes is a single row group and reading "one row group" is
-//! reading all of it. Row-group pruning therefore does nothing until a block
-//! passes a million rows. The number is worth having written down, and the two
-//! lines are worth keeping side by side: the day the writer starts cutting row
-//! groups, this is where the gap appears, and if it does not appear then, the
-//! pruning is not reaching the reader.
+//! The two lines used to coincide at every size below, because `BlockWriter`
+//! built its Parquet writer from a default `WriterProperties` whose maximum
+//! row group is 1,048,576 rows: every block this file writes was a single row
+//! group, so reading "one row group" was reading all of it. The writer now
+//! derives its properties from the block declaration and cuts a row group
+//! every `BLOCK_ROW_GROUP_ROWS` rows, and the gap opens from the first size
+//! that spans more than one group. If the two lines ever converge again, the
+//! pruning has stopped reaching the reader.
 
 use std::{hint::black_box, sync::Arc};
 

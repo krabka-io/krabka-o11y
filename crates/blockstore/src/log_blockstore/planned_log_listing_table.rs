@@ -18,10 +18,8 @@ pub(crate) fn planned_log_listing_table(
             .map_err(BlockStoreError::from)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let listing_options =
-        ListingOptions::new(Arc::new(ParquetFormat::default())).with_file_extension(".parquet");
     let config = ListingTableConfig::new_with_multi_paths(table_paths)
-        .with_listing_options(listing_options)
+        .with_listing_options(log_listing_options())
         .with_schema(schema);
     Ok(ListingTable::try_new(config)?)
 }

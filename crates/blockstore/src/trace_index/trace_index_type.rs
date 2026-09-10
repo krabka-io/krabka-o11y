@@ -1,9 +1,10 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockIndex, BlockMeta, BlockStoreError, ByteSize,
-    DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, HashMap, IndexSnapshotBytes, IndexSnapshotRetain,
-    ObjectStore, ObjectStoreExt, Path, PendingBlockRemovals, PutPayload, Result, Serialize,
-    ShardedTraceBloom, TenantTraceIndex, TraceBlockStats, instrument, latest_index_snapshot_path,
-    put_index_snapshot, read_index_snapshot_bytes,
+    Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockLineage, BlockLineageIndex, BlockMeta,
+    BlockStoreError, ByteSize, CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize,
+    HashMap, IndexSnapshotBytes, IndexSnapshotRetain, ObjectStore, ObjectStoreExt, Path,
+    PendingBlockRemovals, PutPayload, Result, Serialize, ShardedTraceBloom, TenantTraceIndex,
+    TraceBlockStats, instrument, latest_index_snapshot_path, put_index_snapshot,
+    read_index_snapshot_bytes,
 };
 
 /// How an oversized or unreadable trace-index snapshot names itself in errors.
@@ -13,6 +14,10 @@ const SNAPSHOT_LABEL: &str = "trace index snapshot";
 #[derive(Default, Serialize, Deserialize)]
 pub struct TraceIndex {
     pub(crate) tenants: HashMap<String, TenantTraceIndex>,
+    /// Compaction level and lineage per block. Kept beside the block records
+    /// rather than inside [`TraceBlockStats`], which describes what a block
+    /// contains rather than where it came from.
+    pub(crate) lineage: BlockLineageIndex,
     /// Blocks this writer dropped and has yet to make durable. Not persisted:
     /// see [`PendingBlockRemovals`].
     #[serde(skip)]
@@ -26,12 +31,70 @@ impl TraceIndex {
     }
 
     pub fn add_trace_block(&mut self, tenant: &str, stats: TraceBlockStats) {
+        self.add_trace_block_with_rows(tenant, stats, 0);
+    }
+
+    /// Registers a freshly built block along with its row count.
+    ///
+    /// The row count is what lets the compaction planner tell a block that has
+    /// reached its size target, and so needs no further merging, from one that
+    /// has not. A caller that does not have it uses [`Self::add_trace_block`].
+    pub fn add_trace_block_with_rows(
+        &mut self,
+        tenant: &str,
+        stats: TraceBlockStats,
+        row_count: usize,
+    ) {
         self.pending_removals.forget(tenant, &stats.object_key);
+        self.lineage.record_ingested(&stats.object_key, row_count);
         let tenant_index = self.tenants.entry(tenant.to_string()).or_default();
         tenant_index
             .blocks
             .retain(|block| block.object_key != stats.object_key);
         tenant_index.blocks.push(stats);
+    }
+
+    /// How many rounds of compaction produced `object_key`.
+    #[must_use]
+    pub fn block_level(&self, object_key: &str) -> BlockLevel {
+        self.lineage.level(object_key)
+    }
+
+    /// The level, row count and immediate inputs recorded for `object_key`.
+    #[must_use]
+    pub fn block_lineage(&self, object_key: &str) -> Option<&BlockLineage> {
+        self.lineage.lineage(object_key)
+    }
+
+    /// Every block in the index, as the compaction planner sees it.
+    #[must_use]
+    pub fn compaction_candidates(&self) -> Vec<CompactionCandidate> {
+        let mut candidates: Vec<CompactionCandidate> = self
+            .tenants
+            .iter()
+            .flat_map(|(tenant, tenant_index)| {
+                tenant_index
+                    .blocks
+                    .iter()
+                    .map(move |block| CompactionCandidate {
+                        tenant: tenant.clone(),
+                        object_key: block.object_key.clone(),
+                        min_ts: block.min_ts,
+                        max_ts: block.max_ts,
+                        row_count: self.lineage.row_count(&block.object_key),
+                        level: self.lineage.level(&block.object_key),
+                    })
+            })
+            .collect();
+        // `tenants` is a hash map, so its iteration order is not stable across
+        // runs. The planner's output has to be, or two compactor passes over
+        // the same index would disagree about which blocks pair up.
+        candidates.sort_by(|left, right| {
+            left.tenant
+                .cmp(&right.tenant)
+                .then_with(|| left.object_key.cmp(&right.object_key))
+        });
+        candidates
     }
 
     #[must_use]
@@ -53,8 +116,19 @@ impl TraceIndex {
         tenant: &str,
         old_keys: &[String],
         mut replacement: TraceBlockStats,
+        row_count: usize,
     ) {
+        // Recorded before the inputs are forgotten, because the replacement's
+        // level is one above the highest of theirs.
+        self.lineage
+            .record_compacted(&replacement.object_key, old_keys, row_count);
         let old_keys: BTreeSet<&str> = old_keys.iter().map(String::as_str).collect();
+        self.lineage.forget(
+            old_keys
+                .iter()
+                .copied()
+                .filter(|key| *key != replacement.object_key.as_str()),
+        );
         self.pending_removals
             .record(tenant, old_keys.iter().copied());
         // A compaction may reuse the key of a block it replaces. That block is
@@ -237,6 +311,9 @@ impl TraceIndex {
                 merged.add_trace_block(tenant, block.clone());
             }
         }
+        // This writer's view of a block's level wins over the base's, and the
+        // union above must not leave a compacted block reading as level zero.
+        merged.lineage.merge_from(&self.lineage);
         for (tenant, removed) in removals {
             if let Some(tenant_index) = merged.tenants.get_mut(tenant) {
                 tenant_index
@@ -244,6 +321,15 @@ impl TraceIndex {
                     .retain(|block| !removed.contains(&block.object_key));
             }
         }
+        // Lineage outlives nothing: a record for a block no longer in the
+        // index would make the snapshot grow once per block ever written.
+        let live: BTreeSet<String> = merged
+            .tenants
+            .values()
+            .flat_map(|tenant_index| tenant_index.blocks.iter())
+            .map(|block| block.object_key.clone())
+            .collect();
+        merged.lineage.retain_keys(&live);
         Ok(serde_json::to_vec(&merged)?)
     }
 

@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use arrow::compute::concat_batches;
+use arrow::{compute::concat_batches, record_batch::RecordBatch};
 use krabka_blockstore::{
     BlockMeta, BlockWriter, IndexSnapshotRetain, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID,
     ShardedTraceBloom, SummaryColumns, TraceBlockStats, TraceIndex, span_block_decl,

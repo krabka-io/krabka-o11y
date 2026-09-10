@@ -1,5 +1,7 @@
 //! Jaeger push-door decoding.
 
+use krabka_blockstore::span_id_be_bytes_from_u64;
+
 use crate::{
     ids::{TraceIdHigh, TraceIdLow},
     span::{AttrValue, KeyValue, LinkRecord, Span, SpanKind, StatusCode},

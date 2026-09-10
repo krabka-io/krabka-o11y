@@ -1,16 +1,17 @@
 use datafusion::arrow::array::Array as _;
 
 use crate::{
-    ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, LabelIndex, Labels, LokiStreamEntry,
-    MapArray, MetricQuery, MetricSamples, MetricValue, MetricWindow, PipelineStage, QueryError,
-    RangeAggregation, SeriesFingerprint, StreamPlan, StreamQuery, StringArray,
-    UNWRAP_SAMPLE_VALUE_LABEL, WalLogRecord, is_unwrapped_metric_query,
+    ActiveLogDeleteFilter, BTreeMap, BTreeSet, CompactionFrontier, LabelFormatAssignment,
+    LabelIndex, Labels, LokiStreamEntry, MapArray, MetricQuery, MetricSamples, MetricValue,
+    MetricWindow, PipelineStage, QueryError, RangeAggregation, SeriesFingerprint, StreamPlan,
+    StreamQuery, StringArray, UNWRAP_SAMPLE_VALUE_LABEL, WalLogRecord, is_unwrapped_metric_query,
 };
 
 mod append_matching_hot_log_record;
 mod append_matching_hot_metric_record;
 mod append_matching_metric_row;
 mod is_deleted_log_entry;
+mod label_format_destinations;
 mod matching_loki_metric_sample;
 mod matching_loki_stream_entry;
 mod parse_decimal_sample_exponent;
@@ -26,6 +27,7 @@ pub(crate) use append_matching_hot_log_record::append_matching_hot_log_record;
 pub(crate) use append_matching_hot_metric_record::append_matching_hot_metric_record;
 pub(crate) use append_matching_metric_row::append_matching_metric_row;
 pub(crate) use is_deleted_log_entry::is_deleted_log_entry;
+pub(crate) use label_format_destinations::label_format_destinations;
 pub(crate) use matching_loki_metric_sample::matching_loki_metric_sample;
 pub(crate) use matching_loki_stream_entry::matching_loki_stream_entry;
 pub(crate) use parse_decimal_sample_exponent::parse_decimal_sample_exponent;

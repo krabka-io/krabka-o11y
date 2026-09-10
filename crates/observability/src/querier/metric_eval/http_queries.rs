@@ -1,6 +1,6 @@
 use crate::{
-    ActiveLogDeleteFilter, Arc, HttpQueryError, LokiDirection, LokiStreamEncoding, MetricQuery,
-    QuerierState, QueryHotTail, StreamPlan, StreamScanOptions, TimeRange, Value,
+    ActiveLogDeleteFilter, Arc, ColdBlockScan, HttpQueryError, LokiDirection, LokiStreamEncoding,
+    MetricQuery, QuerierState, QueryHotTail, StreamPlan, StreamScanOptions, TimeRange, Value,
     active_log_delete_filters, add_loki_query_stats_for_stream_blocks_with_hot_tail,
     add_loki_query_stats_for_stream_plan, add_loki_query_stats_for_stream_plan_with_hot_tail,
     apply_loki_stream_options,
