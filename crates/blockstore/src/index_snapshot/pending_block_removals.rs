@@ -1,4 +1,4 @@
-use super::{BTreeMap, Mutex, MutexGuard, PoisonError};
+use super::{BTreeMap, Mutex, MutexGuard, PendingRemoval, PoisonError};
 
 /// Blocks a writer has dropped from its own in-memory index but has not yet
 /// folded into a durable snapshot, each pinned to the record it dropped.
@@ -18,6 +18,10 @@ use super::{BTreeMap, Mutex, MutexGuard, PoisonError};
 /// between a record this writer held and the record the merge base carries, so
 /// they never have to be stable across builds or across hosts.
 ///
+/// The retired record's time span travels with it for a separate reason: the
+/// published index is cut on a time grid, and the span is what tells the merge
+/// which shards of it to fetch. See [`PendingRemoval`].
+///
 /// Nothing is persisted: once a write lands, the base no longer names the
 /// removed blocks, so the set is cleared.
 ///
@@ -25,21 +29,24 @@ use super::{BTreeMap, Mutex, MutexGuard, PoisonError};
 /// save has.
 #[derive(Default)]
 pub(crate) struct PendingBlockRemovals {
-    by_tenant: Mutex<BTreeMap<String, BTreeMap<String, u64>>>,
+    by_tenant: Mutex<BTreeMap<String, BTreeMap<String, PendingRemoval>>>,
 }
 
 impl PendingBlockRemovals {
-    /// Records that the `(object key, record fingerprint)` pairs in `blocks` no
+    /// Records that the `(object key, retired record)` pairs in `blocks` no
     /// longer belong to `tenant`.
     pub(crate) fn record<'key>(
         &self,
         tenant: &str,
-        blocks: impl IntoIterator<Item = (&'key str, u64)>,
+        blocks: impl IntoIterator<Item = (&'key str, PendingRemoval)>,
     ) {
         let mut guard = self.lock();
         let pending = guard.entry(tenant.to_string()).or_default();
-        for (key, fingerprint) in blocks {
-            pending.insert(key.to_string(), fingerprint);
+        for (key, removal) in blocks {
+            pending.insert(key.to_string(), removal);
+        }
+        if pending.is_empty() {
+            guard.remove(tenant);
         }
     }
 
@@ -56,22 +63,22 @@ impl PendingBlockRemovals {
         }
     }
 
-    /// The removals a snapshot write must replay, as object key to the
-    /// fingerprint of the record that was removed.
-    pub(crate) fn pending(&self) -> BTreeMap<String, BTreeMap<String, u64>> {
+    /// The removals a snapshot write must replay, as object key to the record
+    /// that was removed.
+    pub(crate) fn pending(&self) -> BTreeMap<String, BTreeMap<String, PendingRemoval>> {
         self.lock().clone()
     }
 
     /// Drops the removals a snapshot write has now made durable.
     ///
-    /// A removal re-recorded under a different fingerprint while the write was
-    /// in flight retires a different record, so it survives the commit.
-    pub(crate) fn commit(&self, applied: &BTreeMap<String, BTreeMap<String, u64>>) {
+    /// A removal re-recorded against a different record while the write was in
+    /// flight retires a different record, so it survives the commit.
+    pub(crate) fn commit(&self, applied: &BTreeMap<String, BTreeMap<String, PendingRemoval>>) {
         let mut guard = self.lock();
         for (tenant, blocks) in applied {
             if let Some(pending) = guard.get_mut(tenant) {
-                for (key, fingerprint) in blocks {
-                    if pending.get(key) == Some(fingerprint) {
+                for (key, removal) in blocks {
+                    if pending.get(key) == Some(removal) {
                         pending.remove(key);
                     }
                 }
@@ -82,7 +89,7 @@ impl PendingBlockRemovals {
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, BTreeMap<String, u64>>> {
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, BTreeMap<String, PendingRemoval>>> {
         // A panic while holding the lock leaves the set intact: every method
         // here is a plain map edit. Recovering beats poisoning the whole index.
         self.by_tenant

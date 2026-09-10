@@ -15,9 +15,11 @@ use super::{
 /// prefix where it is.
 ///
 /// Two writers saving the same key concurrently still clobber each other, as
-/// they did when the index was one object. Publishing through a
-/// compare-and-swap is [`crate::index_snapshot`]'s job and needs a manifest
-/// object it can swap; see the module documentation on [`Index`].
+/// they did when the index was one object. The compare-and-swap publication in
+/// [`crate::index_snapshot`] swaps a manifest that names content-addressed
+/// shard payloads instead, which is what the traces and profiles indexes use;
+/// the metrics path has not been moved onto it. See the module documentation
+/// on [`Index`].
 #[instrument(
     skip_all,
     fields(key = %key, width = width, shards = tracing::field::Empty, len = tracing::field::Empty),

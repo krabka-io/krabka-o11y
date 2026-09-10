@@ -1,28 +1,44 @@
 use super::{
     Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, ByteSize,
-    CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Deserialize, Index, IndexSnapshotBytes,
-    IndexSnapshotRetain, LABEL_PROFILE_TYPE, LabelMatcher, Labels, ObjectStore, ObjectStoreExt,
-    Path, PendingBlockAdditions, PendingBlockRemovals, PutPayload, Result, Serialize,
-    SeriesFingerprint, TenantProfileExtras, instrument, latest_index_snapshot_path, level_above,
-    profile_block_fingerprint, put_index_snapshot, read_index_snapshot_bytes,
+    CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Index, IndexShardRange, IndexSnapshotRetain,
+    LABEL_PROFILE_TYPE, LabelMatcher, Labels, ObjectStore, PROFILE_INDEX_SHARD_WIDTH,
+    PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, ProfileShard, Result,
+    SeriesFingerprint, SnapshotManifest, TenantProfileExtras, UNBOUNDED_SHARD_RANGE,
+    decode_profile_shard, encode_profile_shard, instrument, level_above, profile_block_fingerprint,
+    put_manifest_snapshot, put_shard_payload, read_latest_snapshot_manifest, read_shard_payload,
+    shard_payload_content_hash, shard_payload_object_key, shard_ranges_for_span,
 };
 
 /// How an oversized or unreadable profile-index snapshot names itself in errors.
 const SNAPSHOT_LABEL: &str = "profile index snapshot";
 
 /// Profile-specific index state over the reusable series postings index.
-#[derive(Default, Serialize, Deserialize)]
+///
+/// # On disk
+///
+/// A published profile index is not one object. Each tenant's blocks are cut
+/// onto a time grid a day wide, and each slot is a
+/// payload object of its own: the shared index's own shard encoding for the
+/// blocks, the series their postings reach and the postings themselves, plus
+/// the stacktrace partitions of those blocks. A payload is named by the hash
+/// of its own bytes, so it is immutable, and the object a generation swaps is
+/// a small manifest listing `(tenant, span, content hash)`.
+///
+/// A flush therefore writes the payloads of the shards its own blocks fall in,
+/// plus the manifest, and names every other shard by the key the previous
+/// generation already used. A reader that knows its time range fetches only
+/// the payloads that meet it: see
+/// [`ProfileIndex::load_latest_snapshot_for_range_with_max_bytes`].
+#[derive(Default)]
 pub struct ProfileIndex {
     pub(crate) series: Index,
     pub(crate) extras: BTreeMap<String, TenantProfileExtras>,
     pub(crate) block_partitions: BTreeMap<String, Vec<u64>>,
     /// Blocks this writer dropped and has yet to make durable. Not persisted:
     /// see [`PendingBlockRemovals`].
-    #[serde(skip)]
     pending_removals: PendingBlockRemovals,
     /// Blocks this writer registered and has yet to make durable. Not
     /// persisted: see [`PendingBlockAdditions`].
-    #[serde(skip)]
     pending_additions: PendingBlockAdditions,
 }
 
@@ -311,21 +327,25 @@ impl ProfileIndex {
         // A removal that named only the key would also drop a block another
         // writer has since written under that key.
         let dropped: BTreeSet<&str> = remove_keys.iter().map(String::as_str).collect();
-        let retired: Vec<(String, u64)> = self
+        let retired: Vec<(String, PendingRemoval)> = self
             .all_blocks()
             .into_iter()
             .filter(|meta| meta.tenant == tenant && dropped.contains(meta.object_key.as_str()))
             .map(|meta| {
                 let partitions = self.stacktrace_partitions(&meta.object_key);
-                let fingerprint = profile_block_fingerprint(&meta, &partitions);
-                (meta.object_key, fingerprint)
+                let removal = PendingRemoval {
+                    fingerprint: profile_block_fingerprint(&meta, &partitions),
+                    min_ts: meta.min_ts,
+                    max_ts: meta.max_ts,
+                };
+                (meta.object_key, removal)
             })
             .collect();
         self.pending_removals.record(
             tenant,
             retired
                 .iter()
-                .map(|(key, fingerprint)| (key.as_str(), *fingerprint)),
+                .map(|(key, removal)| (key.as_str(), *removal)),
         );
         for key in &dropped {
             self.pending_additions.forget(key);
@@ -410,33 +430,8 @@ impl ProfileIndex {
     pub fn all_blocks(&self) -> Vec<BlockMeta> {
         self.series.all_blocks_unscoped()
     }
-
-    /// Every block's record fingerprint, grouped by tenant, as a snapshot
-    /// merge needs it to tell a retired block from one written under the same
-    /// key since.
-    fn block_fingerprints_by_tenant(&self) -> BTreeMap<String, BTreeMap<String, u64>> {
-        let mut by_tenant: BTreeMap<String, BTreeMap<String, u64>> = BTreeMap::new();
-        for meta in self.all_blocks() {
-            let partitions = self.stacktrace_partitions(&meta.object_key);
-            let fingerprint = profile_block_fingerprint(&meta, &partitions);
-            by_tenant
-                .entry(meta.tenant.clone())
-                .or_default()
-                .insert(meta.object_key, fingerprint);
-        }
-        by_tenant
-    }
-
-    #[instrument(skip_all, fields(key = %key, len = tracing::field::Empty), err)]
-    /// # Errors
-    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-    pub async fn save(&self, store: &Arc<dyn ObjectStore>, key: &str) -> Result<()> {
-        let bytes = serde_json::to_vec(self)?;
-        tracing::Span::current().record("len", bytes.len());
-        store.put(&Path::from(key), PutPayload::from(bytes)).await?;
-        Ok(())
-    }
-
+    /// Publishes this writer's contribution as the next generation.
+    ///
     /// # Errors
     /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
     pub async fn save_latest_snapshot(
@@ -456,15 +451,36 @@ impl ProfileIndex {
         key: &str,
         retain: IndexSnapshotRetain,
     ) -> Result<String> {
-        let removals = self.pending_removals.pending();
-        let additions = self.pending_additions.pending();
-        let snapshot_key = put_index_snapshot(
+        self.save_latest_snapshot_with_retain_and_max_bytes(
             store,
             key,
             retain,
             DEFAULT_INDEX_SNAPSHOT_MAX,
+        )
+        .await
+    }
+
+    /// # Errors
+    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
+    pub async fn save_latest_snapshot_with_retain_and_max_bytes(
+        &self,
+        store: &Arc<dyn ObjectStore>,
+        key: &str,
+        retain: IndexSnapshotRetain,
+        max_bytes: ByteSize,
+    ) -> Result<String> {
+        let removals = self.pending_removals.pending();
+        let additions = self.pending_additions.pending();
+        let snapshot_key = put_manifest_snapshot(
+            store,
+            key,
+            retain,
+            max_bytes,
             SNAPSHOT_LABEL,
-            |base| self.merged_snapshot_bytes(base, &removals, &additions),
+            |base| async {
+                self.merged_manifest(store, key, base, &removals, &additions, max_bytes)
+                    .await
+            },
         )
         .await?;
         self.pending_removals.commit(&removals);
@@ -472,14 +488,12 @@ impl ProfileIndex {
         Ok(snapshot_key)
     }
 
-    /// Folds this index into the snapshot `base` and serialises the result.
+    /// Folds this index into the manifest `base` and returns the manifest that
+    /// replaces it.
     ///
-    /// Series, postings and profile types are grow-only, so their union is
-    /// their join. Blocks and their stacktrace partitions are another matter:
-    /// the base is the state of the whole system, and this writer contributes
-    /// only what it alone knows. That is `additions`, the blocks it has
-    /// registered since its last successful write, plus a replay of
-    /// `removals`.
+    /// The base is the state of the whole system; this writer contributes what
+    /// only it knows. That is `additions`, the blocks it has registered since
+    /// its last successful write, plus a replay of `removals`.
     ///
     /// Contributing every block this index names instead would be the wider
     /// bug. A writer that read a block from a snapshot and has held it in
@@ -492,154 +506,218 @@ impl ProfileIndex {
     /// A `base` of `None` is the exception: there is no chain, so there is no
     /// concurrent writer whose removal could be undone, and everything this
     /// index names is contributed.
-    fn merged_snapshot_bytes(
+    ///
+    /// Series travel with the blocks that carry them, so a shard the merge did
+    /// not touch keeps its own series and this writer contributes none of its
+    /// own beyond the ones its contributed blocks reach. A series no block
+    /// carries yet has no span, so it goes into the tenant's unbounded shard.
+    ///
+    /// Profile types are not published at all: they are a function of the
+    /// `__profile_type__` label of the series, so a load replays them rather
+    /// than reading them, exactly as the shared index does for its label
+    /// postings.
+    #[instrument(
+        level = "debug",
+        skip_all,
+        fields(key = %key, fetched = tracing::field::Empty, written = tracing::field::Empty),
+        err
+    )]
+    async fn merged_manifest(
         &self,
-        base: Option<&[u8]>,
-        removals: &BTreeMap<String, BTreeMap<String, u64>>,
+        store: &Arc<dyn ObjectStore>,
+        key: &str,
+        base: Option<SnapshotManifest>,
+        removals: &BTreeMap<String, BTreeMap<String, PendingRemoval>>,
         additions: &BTreeSet<String>,
-    ) -> Result<Vec<u8>> {
-        let (mut merged, contribute_all) = match base {
-            Some(bytes) => (Self::from_snapshot_bytes(bytes)?, false),
-            None => (Self::new(), true),
-        };
-        // Read before the union folds this writer's blocks in: a block this
-        // writer has published that the base no longer names was retired by
-        // somebody else, and must not come back.
-        let base_blocks = merged
-            .all_blocks()
-            .into_iter()
-            .map(|meta| {
-                let partitions = merged.stacktrace_partitions(&meta.object_key);
-                (meta.object_key.clone(), (meta, partitions))
-            })
-            .collect::<BTreeMap<_, _>>();
-        for (tenant, removed) in removals {
-            for (object_key, fingerprint) in removed {
-                let unchanged = base_blocks
-                    .get(object_key)
-                    .is_some_and(|(meta, partitions)| {
-                        meta.tenant == *tenant
-                            && profile_block_fingerprint(meta, partitions) == *fingerprint
-                    });
+        max_bytes: ByteSize,
+    ) -> Result<SnapshotManifest> {
+        let contribute_all = base.is_none();
+        let base = base.unwrap_or_default();
+        let mut fetched_shards = 0_usize;
+        let mut written_shards = 0_usize;
+
+        let mut tenants: BTreeSet<&str> = base.tenants().map(String::as_str).collect();
+        tenants.extend(self.series.tenant_names().map(String::as_str));
+        tenants.extend(removals.keys().map(String::as_str));
+
+        let mut manifest = SnapshotManifest::new();
+        for tenant in tenants {
+            let contributed: Vec<BlockMeta> = self
+                .series
+                .all_blocks(tenant)
+                .into_iter()
+                .filter(|meta| contribute_all || additions.contains(&meta.object_key))
+                .collect();
+            let removed = removals.get(tenant);
+            let unbound = self.series.unbound_series(tenant);
+
+            // The spans a contribution or a removal reaches into. Every shard
+            // that meets one of them has to be read, because the record it
+            // replaces or retires can only be in one of those.
+            let mut touched: Vec<IndexShardRange> = Vec::new();
+            for meta in &contributed {
+                touched.extend(shard_ranges_for_span(
+                    meta.min_ts,
+                    meta.max_ts,
+                    PROFILE_INDEX_SHARD_WIDTH,
+                ));
+            }
+            for removal in removed.into_iter().flat_map(BTreeMap::values) {
+                touched.extend(shard_ranges_for_span(
+                    removal.min_ts,
+                    removal.max_ts,
+                    PROFILE_INDEX_SHARD_WIDTH,
+                ));
+            }
+            if !unbound.is_empty() {
+                touched.push(UNBOUNDED_SHARD_RANGE);
+            }
+
+            let mut shards: BTreeMap<IndexShardRange, ProfileShard> = BTreeMap::new();
+            let mut carried: BTreeMap<IndexShardRange, String> = BTreeMap::new();
+            for shard in base.shards_of(tenant) {
+                let range = shard.range();
+                if touched
+                    .iter()
+                    .any(|touched| range.overlaps(touched.start, touched.end))
+                {
+                    let object_key = shard_payload_object_key(key, tenant, range, &shard.content);
+                    let bytes = read_shard_payload(store, &object_key, max_bytes).await?;
+                    fetched_shards += 1;
+                    let (_, decoded) = decode_profile_shard(&object_key, &bytes)?;
+                    let held = shards.entry(range).or_default();
+                    held.index.merge_from(&decoded.index);
+                    held.partitions.extend(decoded.partitions);
+                } else {
+                    carried.insert(range, shard.content.clone());
+                }
+            }
+
+            // Read before anything is applied: a removal whose pinned record
+            // is not the one the base carries retires a block that is no
+            // longer there, and publishing over it would either hide a live
+            // block or double-count a retired one.
+            for (object_key, removal) in removed.into_iter().flatten() {
+                let unchanged = shards.values().any(|shard| {
+                    shard
+                        .index
+                        .all_blocks(tenant)
+                        .into_iter()
+                        .find(|meta| meta.object_key == *object_key)
+                        .is_some_and(|meta| {
+                            let partitions = shard
+                                .partitions
+                                .get(object_key)
+                                .cloned()
+                                .unwrap_or_default();
+                            profile_block_fingerprint(&meta, &partitions) == removal.fingerprint
+                        })
+                });
                 if !unchanged {
                     return Err(BlockStoreError::InvalidBlock(format!(
                         "profile compaction input `{object_key}` changed before its replacement was published"
                     )));
                 }
             }
-        }
-        let stale: BTreeSet<String> = if contribute_all {
-            BTreeSet::new()
-        } else {
-            self.all_blocks()
-                .into_iter()
-                .filter(|meta| {
-                    if additions.contains(&meta.object_key) {
-                        return false;
+
+            for (object_key, removal) in removed.into_iter().flatten() {
+                // Only the record the removal pinned itself to is dropped. A
+                // block written under the same key since is a different block,
+                // and dropping it would hide an object nothing else names.
+                for shard in shards.values_mut() {
+                    let matches = shard
+                        .index
+                        .all_blocks(tenant)
+                        .into_iter()
+                        .find(|meta| meta.object_key == *object_key)
+                        .is_some_and(|meta| {
+                            let partitions = shard
+                                .partitions
+                                .get(object_key)
+                                .cloned()
+                                .unwrap_or_default();
+                            profile_block_fingerprint(&meta, &partitions) == removal.fingerprint
+                        });
+                    if matches {
+                        shard
+                            .index
+                            .replace_blocks(tenant, std::slice::from_ref(object_key), &[]);
+                        shard.partitions.remove(object_key);
                     }
-                    let partitions = self.stacktrace_partitions(&meta.object_key);
-                    let fingerprint = profile_block_fingerprint(meta, &partitions);
-                    base_blocks
-                        .get(&meta.object_key)
-                        .is_none_or(|(base_meta, base_partitions)| {
-                            profile_block_fingerprint(base_meta, base_partitions) != fingerprint
-                        })
-                })
-                .map(|meta| meta.object_key)
-                .collect()
-        };
-        merged.series.merge_from(&self.series);
-        for (tenant, extras) in &self.extras {
-            let target = merged.extras.entry(tenant.clone()).or_default();
-            for (profile_type, fingerprints) in &extras.profile_types {
-                target
-                    .profile_types
-                    .entry(profile_type.clone())
-                    .or_default()
-                    .extend(fingerprints.iter().copied());
-            }
-        }
-        for (object_key, partitions) in &self.block_partitions {
-            if stale.contains(object_key) {
-                continue;
-            }
-            merged
-                .block_partitions
-                .insert(object_key.clone(), partitions.clone());
-        }
-        // `Index::merge_from` takes the other side's record for an equal key,
-        // so restore the base's newer record when the key was reused. A key
-        // absent from the base was retired and stays absent. Only block
-        // records change: the series postings behind them are grow-only.
-        if !stale.is_empty() {
-            let mut stale_by_tenant: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for meta in self.all_blocks() {
-                if stale.contains(&meta.object_key) {
-                    stale_by_tenant
-                        .entry(meta.tenant)
-                        .or_default()
-                        .push(meta.object_key);
                 }
             }
-            for (tenant, keys) in stale_by_tenant {
-                let replacements = keys
+
+            for meta in contributed {
+                let partitions = self.stacktrace_partitions(&meta.object_key);
+                for shard in shards.values_mut() {
+                    shard
+                        .index
+                        .replace_blocks(tenant, std::slice::from_ref(&meta.object_key), &[]);
+                    shard.partitions.remove(&meta.object_key);
+                }
+                for range in
+                    shard_ranges_for_span(meta.min_ts, meta.max_ts, PROFILE_INDEX_SHARD_WIDTH)
+                {
+                    let shard = shards.entry(range).or_default();
+                    for fingerprint in &meta.fingerprints {
+                        if let Some(labels) = self.series.series_labels(tenant, *fingerprint) {
+                            shard.index.add_series(tenant, *fingerprint, labels);
+                        }
+                    }
+                    shard.index.add_block(&meta);
+                    shard
+                        .partitions
+                        .insert(meta.object_key.clone(), partitions.clone());
+                }
+            }
+
+            if !unbound.is_empty() {
+                let shard = shards.entry(UNBOUNDED_SHARD_RANGE).or_default();
+                for (fingerprint, labels) in &unbound {
+                    shard.index.add_series(tenant, *fingerprint, labels);
+                }
+            }
+
+            for (range, content) in carried {
+                manifest.insert(tenant, range, content);
+            }
+            for (range, shard) in shards {
+                if shard.index.block_count(tenant) == 0 && shard.index.series_count(tenant) == 0 {
+                    // Nothing left in the slot, so the manifest stops naming
+                    // it and the sweep reclaims what it named.
+                    continue;
+                }
+                let bytes = encode_profile_shard(tenant, &shard);
+                let content = shard_payload_content_hash(&bytes);
+                // A shard a merge read and put back unchanged encodes to the
+                // same bytes and so to the same key, and the object is already
+                // there. Not writing it is the difference between a flush that
+                // rewrites what it touched and one that rewrites what it read.
+                if base
+                    .shards_of(tenant)
                     .iter()
-                    .filter_map(|key| base_blocks.get(key).map(|(meta, _)| meta.clone()))
-                    .collect::<Vec<_>>();
-                merged.series.replace_blocks(&tenant, &keys, &replacements);
-                for object_key in &keys {
-                    if let Some((_, partitions)) = base_blocks.get(object_key) {
-                        merged
-                            .block_partitions
-                            .insert(object_key.clone(), partitions.clone());
-                    } else {
-                        merged.block_partitions.remove(object_key);
-                    }
+                    .any(|shard| shard.range() == range && shard.content == content)
+                {
+                    manifest.insert(tenant, range, content);
+                    continue;
                 }
+                put_shard_payload(store, key, tenant, range, &content, bytes).await?;
+                written_shards += 1;
+                manifest.insert(tenant, range, content);
             }
         }
-        let live_fingerprints = merged.block_fingerprints_by_tenant();
-        for (tenant, removed) in removals {
-            // Only the record the removal pinned itself to is dropped. A block
-            // written under the same key since is a different block, and
-            // dropping it would hide an object nothing else names.
-            let live = live_fingerprints.get(tenant);
-            let removed_keys: Vec<String> = removed
-                .iter()
-                .filter(|(object_key, fingerprint)| {
-                    live.and_then(|live| live.get(*object_key)) == Some(*fingerprint)
-                })
-                .map(|(object_key, _)| object_key.clone())
-                .collect();
-            merged.series.replace_blocks(tenant, &removed_keys, &[]);
-            for object_key in &removed_keys {
-                merged.block_partitions.remove(object_key);
-            }
-        }
-        Ok(serde_json::to_vec(&merged)?)
+
+        manifest.sort();
+        tracing::Span::current().record("fetched", fetched_shards);
+        tracing::Span::current().record("written", written_shards);
+        Ok(manifest)
     }
 
-    /// Parses a stored snapshot.
-    fn from_snapshot_bytes(bytes: &[u8]) -> Result<Self> {
-        Ok(serde_json::from_slice(bytes)?)
-    }
-
-    /// # Errors
-    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-    pub async fn load(store: &Arc<dyn ObjectStore>, key: &str) -> Result<Self> {
-        Self::load_with_max_bytes(store, key, DEFAULT_INDEX_SNAPSHOT_MAX).await
-    }
-
-    /// # Errors
-    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
-    pub async fn load_with_max_bytes(
-        store: &Arc<dyn ObjectStore>,
-        key: &str,
-        max_bytes: ByteSize,
-    ) -> Result<Self> {
-        Self::load_path_with_max_bytes(store, &Path::from(key), max_bytes).await
-    }
-
+    /// Loads the whole published index, across every tenant and every shard.
+    ///
+    /// This is the whole-fleet load, and it is the one a query should not be
+    /// doing: see [`Self::load_latest_snapshot_for_range_with_max_bytes`].
+    ///
     /// # Errors
     /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
     pub async fn load_latest_snapshot(store: &Arc<dyn ObjectStore>, key: &str) -> Result<Self> {
@@ -653,14 +731,50 @@ impl ProfileIndex {
         key: &str,
         max_bytes: ByteSize,
     ) -> Result<Self> {
-        if let Some(path) = latest_index_snapshot_path(store, key).await? {
-            return Self::load_path_with_max_bytes(store, &path, max_bytes).await;
-        }
-        Self::load_with_max_bytes(store, key, max_bytes).await
+        let Some(manifest) =
+            read_latest_snapshot_manifest(store, key, max_bytes, SNAPSHOT_LABEL).await?
+        else {
+            return Err(BlockStoreError::ObjectStore(format!(
+                "no {SNAPSHOT_LABEL} published under `{key}`"
+            )));
+        };
+        Self::from_manifest(store, key, &manifest, None, max_bytes).await
     }
 
-    /// Loads the newest snapshot, returning an empty index only when neither a
-    /// versioned snapshot nor the legacy index object exists.
+    /// Loads only the shards of one tenant that meet `[min_ts, max_ts]`.
+    ///
+    /// A shard's span is in the manifest, so the loader decides from the
+    /// manifest alone which payloads it has to fetch and never touches the
+    /// rest. This is the load a query wants: what it holds is proportional to
+    /// the range it asked about, not to the retention.
+    ///
+    /// # Errors
+    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
+    pub async fn load_latest_snapshot_for_range_with_max_bytes(
+        store: &Arc<dyn ObjectStore>,
+        key: &str,
+        tenant: &str,
+        min_ts: i64,
+        max_ts: i64,
+        max_bytes: ByteSize,
+    ) -> Result<Self> {
+        let Some(manifest) =
+            read_latest_snapshot_manifest(store, key, max_bytes, SNAPSHOT_LABEL).await?
+        else {
+            return Ok(Self::new());
+        };
+        Self::from_manifest(
+            store,
+            key,
+            &manifest,
+            Some((tenant, min_ts, max_ts)),
+            max_bytes,
+        )
+        .await
+    }
+
+    /// Loads the newest snapshot, returning an empty index when the key has no
+    /// generation yet.
     ///
     /// # Errors
     /// Returns an error when listing or reading object storage fails, or when
@@ -670,31 +784,81 @@ impl ProfileIndex {
         key: &str,
         max_bytes: ByteSize,
     ) -> Result<Self> {
-        if let Some(path) = latest_index_snapshot_path(store, key).await? {
-            return Self::load_path_with_max_bytes(store, &path, max_bytes).await;
-        }
-        let path = Path::from(key);
-        match store.head(&path).await {
-            Ok(_) => Self::load_path_with_max_bytes(store, &path, max_bytes).await,
-            Err(object_store::Error::NotFound { .. }) => Ok(Self::new()),
-            Err(error) => Err(error.into()),
-        }
+        let Some(manifest) =
+            read_latest_snapshot_manifest(store, key, max_bytes, SNAPSHOT_LABEL).await?
+        else {
+            return Ok(Self::new());
+        };
+        Self::from_manifest(store, key, &manifest, None, max_bytes).await
     }
 
+    /// Reads the payloads `manifest` names and folds them into one index.
+    ///
+    /// `window`, when given, keeps one tenant and the shards whose span meets
+    /// the range; everything else is listed in the manifest and then not read.
     #[instrument(
         level = "debug",
         skip_all,
-        fields(path = %path),
+        fields(key = %key, listed = tracing::field::Empty, read = tracing::field::Empty),
         err
     )]
-    pub(crate) async fn load_path_with_max_bytes(
+    async fn from_manifest(
         store: &Arc<dyn ObjectStore>,
-        path: &Path,
+        key: &str,
+        manifest: &SnapshotManifest,
+        window: Option<(&str, i64, i64)>,
         max_bytes: ByteSize,
     ) -> Result<Self> {
-        match read_index_snapshot_bytes(store, path, max_bytes, SNAPSHOT_LABEL).await? {
-            IndexSnapshotBytes::Present(bytes) => Self::from_snapshot_bytes(&bytes),
-            IndexSnapshotBytes::Absent(missing) => Err(missing),
+        let mut listed = 0_usize;
+        let mut read = 0_usize;
+        let mut index = Self::new();
+        for tenant in manifest.tenants() {
+            if window.is_some_and(|(wanted, _, _)| wanted != tenant) {
+                continue;
+            }
+            for shard in manifest.shards_of(tenant) {
+                listed += 1;
+                let range = shard.range();
+                if window.is_some_and(|(_, min_ts, max_ts)| !range.overlaps(min_ts, max_ts)) {
+                    continue;
+                }
+                let object_key = shard_payload_object_key(key, tenant, range, &shard.content);
+                let bytes = read_shard_payload(store, &object_key, max_bytes).await?;
+                read += 1;
+                let (_, decoded) = decode_profile_shard(&object_key, &bytes)?;
+                index.series.merge_from(&decoded.index);
+                index.block_partitions.extend(decoded.partitions);
+            }
+        }
+        index.rebuild_profile_types();
+        // A load publishes nothing: everything it read is already durable, so
+        // the next merge owes the base none of it.
+        index.pending_additions = PendingBlockAdditions::default();
+        tracing::Span::current().record("listed", listed);
+        tracing::Span::current().record("read", read);
+        Ok(index)
+    }
+
+    /// Replays the `__profile_type__` postings from the series.
+    ///
+    /// The map is wholly derived from the series labels, which is why it is
+    /// not published: storing it would be a second copy to keep in step, and
+    /// the shared index does not store its label postings either.
+    fn rebuild_profile_types(&mut self) {
+        self.extras.clear();
+        for tenant in self.series.tenant_names().cloned().collect::<Vec<_>>() {
+            for (fingerprint, labels) in self.series.series_pairs(&tenant) {
+                let Some(profile_type) = labels.get(LABEL_PROFILE_TYPE) else {
+                    continue;
+                };
+                self.extras
+                    .entry(tenant.clone())
+                    .or_default()
+                    .profile_types
+                    .entry(profile_type.to_string())
+                    .or_default()
+                    .insert(fingerprint);
+            }
         }
     }
 }

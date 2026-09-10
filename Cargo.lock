@@ -4272,6 +4272,7 @@ dependencies = [
  "opentelemetry_sdk",
  "parquet",
  "prometheus-client",
+ "proptest",
  "prost 0.14.4",
  "regex",
  "reqwest 0.13.4",

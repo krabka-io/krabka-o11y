@@ -1,8 +1,8 @@
 use super::{
     Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, ByteSize,
-    DEFAULT_INDEX_SHARD_WIDTH, Deserialize, LabelMatcher, Labels, MAX_INDEX_SNAPSHOT_BYTES,
-    ObjectStore, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint, TenantIndex,
-    load_index_shards, matcher_matches_empty, save_index_shards,
+    DEFAULT_INDEX_SHARD_WIDTH, Deserialize, IndexShardPayload, LabelMatcher, Labels,
+    MAX_INDEX_SNAPSHOT_BYTES, ObjectStore, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint,
+    TenantIndex, encode_index_shard, load_index_shards, matcher_matches_empty, save_index_shards,
 };
 
 /// Multi-tenant in-memory index for label resolution and block pruning.
@@ -35,9 +35,11 @@ use super::{
 /// load.
 ///
 /// [`Index::save`] republishes every shard and sweeps the ones the new layout
-/// does not name. It is not a compare-and-swap: the generation-numbered
-/// publication in [`crate::index_snapshot`] swaps a single object, and a
-/// many-object index needs a manifest for it to swap instead.
+/// does not name, and it is not a compare-and-swap: two writers saving the
+/// same key clobber each other. The traces and profiles indexes publish
+/// through a generation-numbered manifest instead, and this index carries the
+/// piece they reuse to do it -- see `Index::encode_tenant_as_shard`. Moving
+/// the metrics path onto the same publication is the work this leaves.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Index {
     pub(crate) tenants: BTreeMap<String, TenantIndex>,
@@ -406,6 +408,114 @@ impl Index {
             return Vec::new();
         };
         tenant_index.blocks.blocks_in_range(min_ts, max_ts)
+    }
+
+    /// Number of series recorded for a tenant, bound to a block or not.
+    pub(crate) fn series_count(&self, tenant: &str) -> usize {
+        self.tenants
+            .get(tenant)
+            .map_or(0, |tenant_index| tenant_index.series.len())
+    }
+
+    /// Every tenant this index holds anything for, in name order.
+    pub(crate) fn tenant_names(&self) -> impl Iterator<Item = &String> {
+        self.tenants.keys()
+    }
+
+    /// Encodes one tenant of this index as a single shard payload.
+    ///
+    /// The caller is the manifest-backed publication in
+    /// [`crate::index_snapshot`], which holds one of these per grid slot and
+    /// asks for the bytes so it can name the object by their hash. Every live
+    /// block of the tenant goes in, along with every series the index holds
+    /// for it, so a payload built this way and read back by
+    /// [`super::decode_index_shard`] is the same index again.
+    ///
+    /// Series that no block carries survive the round trip with no postings,
+    /// which is what lets the unbounded shard hold them.
+    pub(crate) fn encode_tenant_as_shard(&self, tenant: &str) -> Vec<u8> {
+        let empty = TenantIndex::default();
+        let tenant_index = self.tenants.get(tenant).unwrap_or(&empty);
+        let ordinals = tenant_index
+            .blocks
+            .ordinals_overlapping(i64::MIN, i64::MAX)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        // A shard is a document of its own, so its blocks are renumbered from
+        // zero and its postings point at those numbers.
+        let local = ordinals
+            .iter()
+            .enumerate()
+            .map(|(local, ordinal)| {
+                (
+                    *ordinal,
+                    u32::try_from(local).expect("a shard holds fewer blocks than the tenant"),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let postings = tenant_index
+            .blocks
+            .postings_for(&ordinals)
+            .into_iter()
+            .map(|(fingerprint, ordinals)| {
+                let ordinals = ordinals
+                    .iter()
+                    .filter_map(|ordinal| local.get(ordinal).copied())
+                    .collect::<Vec<_>>();
+                (fingerprint, ordinals)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let blocks = ordinals
+            .iter()
+            .map(|ordinal| tenant_index.blocks.entry(*ordinal))
+            .collect();
+        encode_index_shard(&IndexShardPayload {
+            tenant,
+            series: &tenant_index.series,
+            selected: tenant_index.series.keys().copied().collect(),
+            blocks,
+            postings,
+        })
+    }
+
+    /// Every series of `tenant`, as the pairs the index stores.
+    ///
+    /// The fingerprint comes from the map rather than from recomputing
+    /// [`Labels::fingerprint`], so a caller that indexes by it agrees with
+    /// every other lookup in the index.
+    pub(crate) fn series_pairs(&self, tenant: &str) -> Vec<(SeriesFingerprint, Labels)> {
+        self.tenants
+            .get(tenant)
+            .map(|tenant_index| {
+                tenant_index
+                    .series
+                    .iter()
+                    .map(|(fingerprint, labels)| (*fingerprint, labels.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The labels behind one fingerprint.
+    pub(crate) fn series_labels(&self, tenant: &str, fp: SeriesFingerprint) -> Option<&Labels> {
+        self.tenants.get(tenant)?.series.get(&fp)
+    }
+
+    /// Series of `tenant` that no live block carries.
+    ///
+    /// These have no span, so the time grid has nowhere to put them and they
+    /// go into the tenant's unbounded shard instead.
+    pub(crate) fn unbound_series(&self, tenant: &str) -> Vec<(SeriesFingerprint, Labels)> {
+        let Some(tenant_index) = self.tenants.get(tenant) else {
+            return Vec::new();
+        };
+        let bound = tenant_index.blocks.live_fingerprints();
+        tenant_index
+            .series
+            .iter()
+            .filter(|(fingerprint, _)| !bound.contains(*fingerprint))
+            .map(|(fingerprint, labels)| (*fingerprint, labels.clone()))
+            .collect()
     }
 
     /// Persists the index as time-sharded objects under the shard prefix of

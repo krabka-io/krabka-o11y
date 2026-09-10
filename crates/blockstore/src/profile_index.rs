@@ -11,7 +11,7 @@ use std::{
 };
 
 use krabka_units::prelude::*;
-use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
+use object_store::ObjectStore;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
@@ -20,11 +20,13 @@ use crate::{
     block_index::BlockIndex,
     compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
-    index::Index,
+    index::{ByteReader, Index, IndexShardRange, decode_index_shard, push_uvarint},
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotBytes, IndexSnapshotRetain, PendingBlockAdditions,
-        PendingBlockRemovals, latest_index_snapshot_path, put_index_snapshot,
-        read_index_snapshot_bytes,
+        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, PendingBlockAdditions,
+        PendingBlockRemovals, PendingRemoval, SnapshotManifest, UNBOUNDED_SHARD_RANGE,
+        put_manifest_snapshot, put_shard_payload, read_latest_snapshot_manifest,
+        read_shard_payload, shard_payload_content_hash, shard_payload_object_key,
+        shard_ranges_for_span,
     },
     labels::{Labels, SeriesFingerprint},
     matcher::LabelMatcher,
@@ -33,6 +35,7 @@ use crate::{
 #[cfg(test)]
 mod tests {
     use assert2::check;
+    use object_store::{ObjectStoreExt as _, path::Path};
 
     use super::*;
     use crate::{
@@ -85,6 +88,34 @@ mod tests {
         index.add_series("t", cpu.fingerprint(), &cpu);
         index.add_series("t", heap.fingerprint(), &heap);
         index
+    }
+
+    /// Registers one block carrying `seed`'s series, with stacktrace
+    /// partitions of its own.
+    ///
+    /// The partitions live beside the block record in the shard the block
+    /// falls in, so a block has to exist for them to be published at all. The
+    /// production flush registers the block and then its partitions, in that
+    /// order, which is what this reproduces.
+    fn seed_partitioned_block(index: &mut ProfileIndex) {
+        let fingerprints = index
+            .matching_fingerprints("t", &[])
+            .expect("an empty matcher set selects every series")
+            .into_iter()
+            .collect::<Vec<_>>();
+        <ProfileIndex as BlockIndex>::add_block(
+            index,
+            &BlockMeta {
+                tenant: "t".to_string(),
+                object_key: "blocks/p1.parquet".to_string(),
+                min_ts: 0,
+                max_ts: 100,
+                row_count: 3,
+                fingerprints,
+                level: BlockLevel::INGESTED,
+            },
+        );
+        index.add_profile_block("t", "blocks/p1.parquet", vec![0, 1]);
     }
 
     fn seed_with_blocks() -> (
@@ -435,10 +466,13 @@ mod tests {
         use object_store::memory::InMemory;
 
         let mut index = seed();
-        index.add_profile_block("t", "blocks/p1.parquet", vec![0, 1]);
+        seed_partitioned_block(&mut index);
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        index.save(&store, "index/profiles.json").await.unwrap();
-        let loaded = ProfileIndex::load(&store, "index/profiles.json")
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
             .await
             .unwrap();
         assert2::assert!(loaded.profile_types("t") == strings(&[HEAP_TYPE, CPU_TYPE]));
@@ -459,9 +493,14 @@ mod tests {
         .unwrap();
         assert2::assert!(empty.profile_types("tenant-a").is_empty());
 
+        // The object a generation swaps is the manifest, so that is what a
+        // reader has to refuse to guess at.
         store
             .put(
-                &Path::from("index/profiles.json"),
+                &Path::from(format!(
+                    "{}/00000000000000000000.json",
+                    crate::index_snapshot_prefix_for_key("index/profiles.json")
+                )),
                 PutPayload::from(b"not-json".to_vec()),
             )
             .await
@@ -476,11 +515,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn latest_snapshot_round_trips_without_rewriting_legacy_key() {
+    async fn latest_snapshot_round_trips_without_writing_the_key_itself() {
         use object_store::memory::InMemory;
 
         let mut index = seed();
-        index.add_profile_block("t", "blocks/p1.parquet", vec![0, 1]);
+        seed_partitioned_block(&mut index);
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
 
         let snapshot_key = index
@@ -848,24 +887,167 @@ mod tests {
         );
     }
 
+    /// One day, in the milliseconds the profiles index counts.
+    const PROFILE_DAY_MS: i64 = 24 * 60 * 60 * 1_000;
+
+    /// Registers one block a day for `days`, each carrying its own series.
+    fn seed_days(index: &mut ProfileIndex, days: i64) {
+        for day in 0..days {
+            let labels = profile_labels("process_cpu", CPU_TYPE, &format!("service-{day}"));
+            let fingerprint = labels.fingerprint();
+            index.add_series("t", fingerprint, &labels);
+            <ProfileIndex as BlockIndex>::add_block(
+                index,
+                &BlockMeta {
+                    tenant: "t".to_string(),
+                    object_key: format!("blocks/day-{day}.parquet"),
+                    min_ts: day * PROFILE_DAY_MS,
+                    max_ts: day * PROFILE_DAY_MS + PROFILE_DAY_MS - 1,
+                    row_count: 100,
+                    fingerprints: vec![fingerprint],
+                    level: BlockLevel::INGESTED,
+                },
+            );
+            index.add_profile_block(
+                "t",
+                &format!("blocks/day-{day}.parquet"),
+                vec![day.cast_unsigned()],
+            );
+        }
+    }
+
+    async fn payload_object_keys(store: &Arc<dyn ObjectStore>) -> Vec<String> {
+        use futures::StreamExt as _;
+
+        let mut listing = store.list(Some(&Path::from("index/profiles/payloads")));
+        let mut keys = Vec::new();
+        while let Some(meta) = listing.next().await {
+            keys.push(meta.unwrap().location.to_string());
+        }
+        keys.sort();
+        keys
+    }
+
+    /// A flush publishes the shards its own blocks fall in, and names the rest
+    /// by the keys the previous generation gave them.
+    ///
+    /// Payloads are immutable and content-addressed, so a shard that changed
+    /// is a new object and a shard that did not is the object that was already
+    /// there. Counting the objects therefore counts the shards a flush
+    /// rewrote.
+    #[tokio::test]
+    async fn a_flush_publishes_only_the_shards_its_own_blocks_fall_in() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut index = ProfileIndex::new();
+        seed_days(&mut index, 30);
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+        let before = payload_object_keys(&store).await;
+        check!(before.len() == 30, "one shard a day");
+
+        seed_days(&mut index, 31);
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let after = payload_object_keys(&store).await;
+        // Exactly one new object: the thirty-first day. The thirty shards that
+        // did not change were carried into the new manifest by key.
+        check!(after.len() == before.len() + 1);
+        for key in &before {
+            check!(after.contains(key), "{key} was republished");
+        }
+    }
+
+    /// A reader that knows its time range fetches the payloads that meet it and
+    /// no others, and what it gets back is the same records the whole-index
+    /// load has for that range.
+    #[tokio::test]
+    async fn a_query_about_one_day_loads_one_days_shard() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut index = ProfileIndex::new();
+        seed_days(&mut index, 30);
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let day = 7;
+        let scoped = ProfileIndex::load_latest_snapshot_for_range_with_max_bytes(
+            &store,
+            "index/profiles.json",
+            "t",
+            day * PROFILE_DAY_MS,
+            day * PROFILE_DAY_MS + PROFILE_DAY_MS - 1,
+            crate::DEFAULT_INDEX_SNAPSHOT_MAX,
+        )
+        .await
+        .unwrap();
+
+        check!(block_keys(&scoped) == strings(&["blocks/day-7.parquet"]));
+        check!(scoped.stacktrace_partitions("blocks/day-7.parquet") == vec![7]);
+        // The series of the day it read, and none of the other twenty-nine.
+        check!(
+            scoped.label_values("t", "service_name") == strings(&["service-7"]),
+            "a scoped load holds the range it asked about"
+        );
+    }
+
+    /// Profile types are a function of the `__profile_type__` label, so they
+    /// are replayed on load rather than published. A load that did not replay
+    /// them would answer `/label-values` with nothing.
+    #[tokio::test]
+    async fn profile_types_are_replayed_from_the_series_rather_than_stored() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut index = seed();
+        seed_partitioned_block(&mut index);
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        check!(loaded.profile_types("t") == strings(&[HEAP_TYPE, CPU_TYPE]));
+        let cpu = profile_labels("process_cpu", CPU_TYPE, "checkout");
+        check!(
+            loaded.fingerprints_for_profile_type("t", CPU_TYPE)
+                == BTreeSet::from([cpu.fingerprint()])
+        );
+    }
+
     #[tokio::test]
     async fn load_rejects_over_cap_snapshot() {
         use object_store::memory::InMemory;
 
         let index = seed();
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        index.save(&store, "index/profiles.json").await.unwrap();
+        let snapshot_key = index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
 
         // A tiny cap stands in for the production cap so the test need not
-        // materialize an over-cap object; the real snapshot is well above 1 byte.
+        // materialize an over-cap object; the real manifest is well above 1 byte.
         let size = store
-            .head(&Path::from("index/profiles.json"))
+            .head(&Path::from(snapshot_key.clone()))
             .await
             .unwrap()
             .size;
         assert2::assert!(size > 1);
 
-        let got = ProfileIndex::load_with_max_bytes(
+        let got = ProfileIndex::load_latest_snapshot_with_max_bytes(
             &store,
             "index/profiles.json",
             krabka_units::bytes(1),
@@ -876,15 +1058,15 @@ mod tests {
         };
         assert2::assert!(
             msg == format!(
-                "profile index snapshot `index/profiles.json` is {size} bytes, exceeds cap of 1 bytes"
+                "profile index snapshot `{snapshot_key}` is {size} bytes, exceeds cap of 1 bytes"
             )
         );
 
         // A cap at/above the real size still loads.
-        let loaded = ProfileIndex::load_with_max_bytes(
+        let loaded = ProfileIndex::load_latest_snapshot_with_max_bytes(
             &store,
             "index/profiles.json",
-            ByteSize::from_bytes(size),
+            crate::DEFAULT_INDEX_SNAPSHOT_MAX,
         )
         .await
         .unwrap();
@@ -893,23 +1075,39 @@ mod tests {
         assert2::assert!(profile_types == strings(&[HEAP_TYPE, CPU_TYPE]));
     }
 
+    /// A payload the manifest names is not allowed to be missing.
+    ///
+    /// The orphan sweep leaves anything a retained manifest names alone, so an
+    /// absent payload is a torn write or an outside deletion. Answering from
+    /// the shards that are left would hide a block that exists.
     #[tokio::test]
-    async fn load_missing_snapshot_preserves_object_store_error_text() {
+    async fn load_missing_shard_payload_preserves_object_store_error_text() {
+        use futures::StreamExt as _;
         use object_store::memory::InMemory;
 
+        let mut index = seed();
+        seed_partitioned_block(&mut index);
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let path = Path::from("index/missing-profiles.json");
-        let expected = store.head(&path).await.unwrap_err().to_string();
+        index
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
 
-        let got = ProfileIndex::load_with_max_bytes(
-            &store,
-            "index/missing-profiles.json",
-            crate::DEFAULT_INDEX_SNAPSHOT_MAX,
-        )
-        .await;
+        let prefix = Path::from("index/profiles/payloads");
+        let payload = store
+            .list(Some(&prefix))
+            .next()
+            .await
+            .expect("the manifest names at least one payload")
+            .unwrap()
+            .location;
+        store.delete(&payload).await.unwrap();
+        let expected = store.head(&payload).await.unwrap_err().to_string();
+
+        let got = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json").await;
 
         let Err(BlockStoreError::ObjectStore(msg)) = got else {
-            panic!("expected ObjectStore error for missing profile index snapshot");
+            panic!("expected ObjectStore error for a missing profile shard payload");
         };
         assert_eq!(msg, expected);
     }
@@ -1060,14 +1258,24 @@ mod tests {
     }
 }
 
+mod decode_profile_shard;
+mod encode_profile_shard;
 mod label_profile_type;
 mod max_profile_index_snapshot_bytes;
 mod profile_block_fingerprint;
+mod profile_index_shard_width;
 mod profile_index_type;
+mod profile_shard;
+mod profile_shard_format;
 mod tenant_profile_extras;
 
+use decode_profile_shard::decode_profile_shard;
+use encode_profile_shard::encode_profile_shard;
 pub use label_profile_type::LABEL_PROFILE_TYPE;
 pub use max_profile_index_snapshot_bytes::MAX_PROFILE_INDEX_SNAPSHOT_BYTES;
 use profile_block_fingerprint::profile_block_fingerprint;
+use profile_index_shard_width::PROFILE_INDEX_SHARD_WIDTH;
 pub use profile_index_type::ProfileIndex;
+use profile_shard::ProfileShard;
+use profile_shard_format::{PROFILE_SHARD_FORMAT_VERSION, PROFILE_SHARD_MAGIC};
 use tenant_profile_extras::TenantProfileExtras;
