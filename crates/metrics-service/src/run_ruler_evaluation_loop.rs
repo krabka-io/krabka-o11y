@@ -13,18 +13,19 @@ pub async fn run_ruler_evaluation_loop<S, W, A, R, Stop>(
     tenant: String,
     shard: RulerShard,
     interval: Time,
-    mut should_stop: Stop,
+    stop: Stop,
 ) -> Result<(), krabka_promql::PromqlError>
 where
     S: MetricStore,
     W: RecordingRuleWalSink,
     A: AlertmanagerSink,
     R: RulerStateSink,
-    Stop: FnMut() -> bool,
+    Stop: std::future::Future<Output = ()>,
 {
     let (wal_sink, alert_sink, state_sink) = sinks;
     let mut alert_state = RulerAlertState::default();
     let mut group_state = RulerGroupState::default();
+    tokio::pin!(stop);
     loop {
         let eval_time_ms = current_time_ms();
         evaluate_ruler_once(
@@ -38,10 +39,10 @@ where
         )
         .await?;
 
-        if should_stop() {
-            break;
+        tokio::select! {
+            () = &mut stop => break,
+            () = tokio::time::sleep(interval.to_std()) => {}
         }
-        tokio::time::sleep(interval.to_std()).await;
     }
     Ok(())
 }

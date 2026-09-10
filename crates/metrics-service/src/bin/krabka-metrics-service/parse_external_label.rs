@@ -1,3 +1,6 @@
+#[derive(Clone, Debug)]
+pub(crate) struct ExternalLabels(pub(crate) Vec<(String, String)>);
+
 pub(crate) fn parse_external_label(value: &str) -> Result<(String, String), String> {
     let (name, value) = value
         .split_once('=')
@@ -14,4 +17,15 @@ pub(crate) fn parse_external_label(value: &str) -> Result<(String, String), Stri
         return Err(format!("invalid Prometheus label name {name:?}"));
     }
     Ok((name.to_string(), value.to_string()))
+}
+
+pub(crate) fn parse_external_labels_env(value: &str) -> Result<ExternalLabels, String> {
+    serde_json::from_str::<Vec<String>>(value)
+        .map_err(|error| {
+            format!("external labels environment value must be a JSON array: {error}")
+        })?
+        .iter()
+        .map(|label| parse_external_label(label))
+        .collect::<Result<Vec<_>, _>>()
+        .map(ExternalLabels)
 }

@@ -2,6 +2,23 @@ use std::{collections::BTreeMap, time::Duration};
 
 use super::{AlertmanagerSink, RulerWalError, alertmanager_payload};
 
+pub(crate) struct AlertmanagerDeliveryError {
+    message: String,
+    retryable: bool,
+}
+
+impl AlertmanagerDeliveryError {
+    pub(crate) fn is_retryable(&self) -> bool {
+        self.retryable
+    }
+}
+
+impl std::fmt::Display for AlertmanagerDeliveryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
 fn encode_url_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -75,20 +92,18 @@ impl AlertmanagerHttpSink {
             }
         }
     }
-}
 
-#[async_trait::async_trait]
-impl AlertmanagerSink for AlertmanagerHttpSink {
-    async fn dispatch_alerts(
+    pub(crate) async fn deliver(
         &self,
         mut alerts: Vec<krabka_promql::AlertmanagerAlert>,
-    ) -> Result<(), RulerWalError> {
+    ) -> Result<(), AlertmanagerDeliveryError> {
         if alerts.is_empty() {
             return Ok(());
         }
         self.enrich(&mut alerts);
         let payload = alertmanager_payload(alerts);
         let mut failures = Vec::new();
+        let mut retryable = false;
         for (endpoint_index, endpoint) in self.endpoints.iter().enumerate() {
             for attempt in 1..=self.max_attempts {
                 match self
@@ -100,13 +115,23 @@ impl AlertmanagerSink for AlertmanagerHttpSink {
                     .await
                 {
                     Ok(response) if response.status().is_success() => return Ok(()),
-                    Ok(response) => failures.push(format!(
-                        "endpoint {}: HTTP {}",
-                        endpoint_index + 1,
-                        response.status()
-                    )),
-                    Err(_) => {
+                    Ok(response) => {
+                        let status = response.status();
+                        failures.push(format!("endpoint {}: HTTP {status}", endpoint_index + 1));
+                        if status.is_client_error()
+                            && status != reqwest::StatusCode::REQUEST_TIMEOUT
+                            && status != reqwest::StatusCode::TOO_MANY_REQUESTS
+                        {
+                            break;
+                        }
+                        retryable = true;
+                    }
+                    Err(error) => {
+                        retryable |= !error.is_builder();
                         failures.push(format!("endpoint {}: request failed", endpoint_index + 1));
+                        if error.is_builder() {
+                            break;
+                        }
                     }
                 }
                 if attempt < self.max_attempts {
@@ -114,9 +139,24 @@ impl AlertmanagerSink for AlertmanagerHttpSink {
                 }
             }
         }
-        Err(RulerWalError::Append(format!(
-            "all alertmanager endpoints failed after bounded retries: {}",
-            failures.join("; ")
-        )))
+        Err(AlertmanagerDeliveryError {
+            message: format!(
+                "all alertmanager endpoints failed after bounded retries: {}",
+                failures.join("; ")
+            ),
+            retryable,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl AlertmanagerSink for AlertmanagerHttpSink {
+    async fn dispatch_alerts(
+        &self,
+        alerts: Vec<krabka_promql::AlertmanagerAlert>,
+    ) -> Result<(), RulerWalError> {
+        self.deliver(alerts)
+            .await
+            .map_err(|error| RulerWalError::Append(error.to_string()))
     }
 }

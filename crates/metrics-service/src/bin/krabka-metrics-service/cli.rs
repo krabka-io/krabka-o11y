@@ -1,7 +1,8 @@
 use super::{
-    ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, Parser, PathBuf, RULER_STATE_TOPIC,
-    SocketAddr, Target, Time, WAL_TOPIC, parse, parse_client_dispatch_queue_capacity,
-    parse_client_frame_max, parse_external_label, parse_positive_usize, parse_remote_read_max_body,
+    ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, ExternalLabels, Parser, PathBuf,
+    RULER_STATE_TOPIC, SocketAddr, Target, Time, WAL_TOPIC, parse,
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_external_label,
+    parse_external_labels_env, parse_positive_usize, parse_remote_read_max_body,
 };
 
 #[derive(Debug, Parser)]
@@ -139,8 +140,16 @@ pub(crate) struct Cli {
     )]
     pub(crate) ruler_alertmanager_queue_capacity: usize,
     /// Label in `name=value` form added when an alert does not define it.
-    #[arg(long, env = "KRABKA_METRICS_RULER_EXTERNAL_LABEL", value_parser = parse_external_label)]
+    #[arg(long, value_parser = parse_external_label)]
     pub(crate) ruler_external_label: Vec<(String, String)>,
+    /// External labels from a JSON array in the environment.
+    #[arg(
+        long = "ruler-external-label-env",
+        env = "KRABKA_METRICS_RULER_EXTERNAL_LABEL",
+        hide = true,
+        value_parser = parse_external_labels_env
+    )]
+    pub(crate) ruler_external_label_env: Option<ExternalLabels>,
     /// Generator URL template. `{alertname}` expands to the outgoing alert name.
     #[arg(long, env = "KRABKA_METRICS_RULER_GENERATOR_URL_TEMPLATE")]
     pub(crate) ruler_generator_url_template: Option<String>,

@@ -3,6 +3,7 @@ use super::{
     RulerWalError,
 };
 
+#[derive(Clone)]
 pub enum RulerAlertmanagerSink {
     Http(QueuedAlertmanagerSink),
     Noop(NoopAlertmanagerSink),
@@ -42,6 +43,17 @@ impl RulerAlertmanagerSink {
                 queue_capacity,
                 std::time::Duration::from_secs(5),
             ))
+        }
+    }
+
+    /// Close and drain the Alertmanager delivery queue.
+    ///
+    /// # Errors
+    /// Returns an error if the drain times out or the worker does not complete.
+    pub async fn shutdown(&self) -> Result<(), RulerWalError> {
+        match self {
+            Self::Http(sink) => sink.shutdown(std::time::Duration::from_secs(30)).await,
+            Self::Noop(_) => Ok(()),
         }
     }
 }

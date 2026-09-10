@@ -127,6 +127,8 @@ mod tests {
             "cluster=prod",
             "--ruler-external-label",
             "location=Paris, France",
+            "--ruler-external-label",
+            "route=blue;green",
             "--ruler-generator-url-template",
             "https://metrics.example/alerts/{alertname}",
         ])
@@ -139,6 +141,7 @@ mod tests {
                 == [
                     ("cluster".to_string(), "prod".to_string()),
                     ("location".to_string(), "Paris, France".to_string()),
+                    ("route".to_string(), "blue;green".to_string()),
                 ]
         );
         assert2::assert!(
@@ -160,6 +163,29 @@ mod tests {
 
             assert2::assert!(result.is_err(), "accepted invalid label {label:?}");
         }
+    }
+
+    #[test]
+    fn parses_multiple_external_labels_from_the_environment() {
+        let lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = lock.lock().expect("environment lock");
+
+        temp_env::with_var(
+            "KRABKA_METRICS_RULER_EXTERNAL_LABEL",
+            Some(r#"["cluster=prod","location=Paris, France","route=blue;green"]"#),
+            || {
+                let cli = Cli::try_parse_from(["krabka-metrics-service", "--target", "ruler"])
+                    .expect("parse environment");
+                assert2::assert!(
+                    cli.ruler_external_label_env.unwrap().0
+                        == [
+                            ("cluster".to_string(), "prod".to_string()),
+                            ("location".to_string(), "Paris, France".to_string()),
+                            ("route".to_string(), "blue;green".to_string()),
+                        ]
+                );
+            },
+        );
     }
 
     #[test]
@@ -614,7 +640,7 @@ use cli::Cli;
 use load_runtime_overrides::load_runtime_overrides;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
-use parse_external_label::parse_external_label;
+use parse_external_label::{ExternalLabels, parse_external_label, parse_external_labels_env};
 use parse_positive_usize::parse_positive_usize;
 use parse_remote_read_max_body::parse_remote_read_max_body;
 use query_engine_opts::query_engine_opts;
