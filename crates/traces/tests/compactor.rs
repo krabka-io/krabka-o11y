@@ -118,14 +118,12 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
     .await
     .unwrap();
 
+    check!((meta.row_count, meta.min_ts, meta.max_ts) == (2, 100, 200));
     check!(
-        (
-            meta.object_key.as_str(),
-            meta.row_count,
-            meta.min_ts,
-            meta.max_ts
-        ) == (output_key.as_str(), 2, 100, 200)
+        meta.object_key
+            .starts_with(output_key.trim_end_matches(".parquet"))
     );
+    let output_key = meta.object_key;
     check!(
         index.candidate_blocks_for_trace("tenant-a", &[1; 16], 0, 1_000)
             == vec![output_key.clone()]
@@ -173,7 +171,7 @@ async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
     .unwrap();
     let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
 
-    compact_block_keys(
+    let meta = compact_block_keys(
         store.clone(),
         &writer,
         &mut index,
@@ -184,7 +182,7 @@ async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
     .await
     .unwrap();
 
-    let batches = read_block(store, &output_key).await.unwrap();
+    let batches = read_block(store, &meta.object_key).await.unwrap();
     let batch = &batches[0];
     let span_ids = batch
         .column_by_name(krabka_blockstore::SCOL_SPAN_ID)
@@ -318,7 +316,7 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
     .unwrap();
 
     let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
-    compact_block_keys(
+    let meta = compact_block_keys(
         store.clone(),
         &writer,
         &mut index,
@@ -329,7 +327,7 @@ async fn compacting_promoted_blocks_keeps_the_promoted_column_and_its_values() {
     .await
     .expect("a promoted block compacts");
 
-    let batches = read_block(store, &output_key).await.unwrap();
+    let batches = read_block(store, &meta.object_key).await.unwrap();
     let batch = &batches[0];
     check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
     check!(
@@ -373,7 +371,7 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
     .unwrap();
 
     let (input_keys, output_key) = planned_job_keys("tenant-a", &[&before[0], &after[0]]);
-    compact_block_keys(
+    let meta = compact_block_keys(
         store.clone(),
         &writer,
         &mut index,
@@ -384,7 +382,7 @@ async fn compacting_inputs_written_under_different_promotion_flags_fills_the_col
     .await
     .expect("mixed inputs compact");
 
-    let batches = read_block(store, &output_key).await.unwrap();
+    let batches = read_block(store, &meta.object_key).await.unwrap();
     let batch = &batches[0];
     check!(int64_values(batch, SCOL_START_NANO) == vec![100, 200]);
     check!(
@@ -428,7 +426,7 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
     .unwrap();
 
     let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &second[0]]);
-    compact_block_keys(
+    let meta = compact_block_keys(
         store.clone(),
         &writer,
         &mut index,
@@ -439,7 +437,7 @@ async fn a_compacted_block_is_ordered_by_trace_id_then_start() {
     .await
     .unwrap();
 
-    let batches = read_block(store, &output_key).await.unwrap();
+    let batches = read_block(store, &meta.object_key).await.unwrap();
     let batch = &batches[0];
     check!(
         trace_ids(batch) == vec![vec![1_u8; 16], vec![1; 16], vec![2; 16], vec![2; 16]],

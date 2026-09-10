@@ -1,7 +1,7 @@
 use super::{
     Arc, BlockBatchStream, BlockObjectReader, BlockReadFailure, BlockStoreError, ByteSize,
-    ByteSizeExt, ObjectStore, ObjectStoreExt, ParquetRecordBatchStreamBuilder, Path, Result,
-    SchemaRef, StreamExt, TryStreamExt,
+    ByteSizeExt, ObjectMeta, ObjectStore, ObjectStoreExt, ParquetRecordBatchStreamBuilder, Path,
+    Result, SchemaRef, StreamExt, TryStreamExt,
 };
 
 /// Opens the block at `object_key` as a stream of batches, and reports the
@@ -29,7 +29,7 @@ pub async fn open_block_stream(
     object_key: &str,
     max_bytes: ByteSize,
     batch_rows: usize,
-) -> Result<(SchemaRef, BlockBatchStream)> {
+) -> Result<(ObjectMeta, SchemaRef, BlockBatchStream)> {
     let path = Path::from(object_key);
     let meta = store.head(&path).await.map_err(|error| {
         BlockStoreError::block_unreadable(object_key, BlockReadFailure::ObjectStore(error))
@@ -42,7 +42,7 @@ pub async fn open_block_stream(
         )));
     }
 
-    let reader = BlockObjectReader::new(store, meta);
+    let reader = BlockObjectReader::new(store, meta.clone());
     let builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
         .map_err(|error| {
@@ -60,5 +60,5 @@ pub async fn open_block_stream(
             BlockStoreError::block_unreadable(&key, BlockReadFailure::Parquet(error))
         })
         .boxed();
-    Ok((schema, batches))
+    Ok((meta, schema, batches))
 }

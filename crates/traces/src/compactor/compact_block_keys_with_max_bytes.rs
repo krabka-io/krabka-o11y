@@ -4,7 +4,7 @@ use super::{
     SCOL_TRACE_ID, SortedMerge, StreamExt, SummaryColumns, TraceGroupBuffer, TraceIndex,
     TracesError, align_batch_to_block_schema, merged_promoted_attrs, open_block_stream,
     recompute_nested_sets, recompute_trace_level_columns, span_block_decl,
-    span_block_schema_with_promoted_attrs,
+    span_block_schema_with_promoted_attrs, versioned_compaction_key,
 };
 
 /// Merge existing span blocks with a caller-supplied on-disk read limit.
@@ -39,12 +39,14 @@ pub async fn compact_block_keys_with_max_bytes(
     // columns and each input is widened to match. Rebuilding the base schema
     // here instead would fail outright on the first promoted input.
     let mut schemas = Vec::with_capacity(input_keys.len());
+    let mut input_versions = Vec::with_capacity(input_keys.len());
     let mut runs = Vec::with_capacity(input_keys.len());
     for key in input_keys {
-        let (schema, batches) =
+        let (meta, schema, batches) =
             open_block_stream(store.clone(), key, block_read_max, MERGE_READ_BATCH_ROWS)
                 .await
                 .map_err(|err| TracesError::Block(err.to_string()))?;
+        input_versions.push(meta);
         schemas.push(schema);
         runs.push(batches);
     }
@@ -73,12 +75,13 @@ pub async fn compact_block_keys_with_max_bytes(
         .collect::<Vec<_>>();
 
     let decl = span_block_decl();
+    let output_key = versioned_compaction_key(output_key, &input_versions);
     let mut merge = SortedMerge::new(schema.clone(), &decl.sort_key, runs, MERGE_BATCH_ROWS)
         .map_err(|err| TracesError::Block(err.to_string()))?;
     let mut block = writer
         .open_block(
             tenant,
-            output_key,
+            &output_key,
             schema.clone(),
             &decl,
             SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),

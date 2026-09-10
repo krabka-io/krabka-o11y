@@ -8,7 +8,11 @@
 //! wants, which is what lets the whole compaction cost its output rather than
 //! the sum of its inputs.
 
-use std::{ops::Range, sync::Arc};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::Range,
+    sync::Arc,
+};
 
 use arrow::{
     array::ArrayRef,
@@ -272,7 +276,7 @@ mod tests {
             .await
             .expect("the block is written");
 
-        let (schema, batches) = open_block_stream(
+        let (_, schema, batches) = open_block_stream(
             Arc::clone(&store),
             "b.parquet",
             DEFAULT_BLOCK_READ_MAX,
@@ -361,7 +365,7 @@ mod tests {
 
         let mut runs = Vec::new();
         for index in 0..inputs.len() {
-            let (_, batches) = open_block_stream(
+            let (_, _, batches) = open_block_stream(
                 Arc::clone(&store),
                 &format!("in-{index}.parquet"),
                 DEFAULT_BLOCK_READ_MAX,
@@ -425,6 +429,8 @@ use block_object_reader::BlockObjectReader;
 pub use merge_batch_rows::MERGE_BATCH_ROWS;
 pub use merge_read_batch_rows::MERGE_READ_BATCH_ROWS;
 pub use open_block_stream::open_block_stream;
+mod versioned_compaction_key;
 use run_cursor::RunCursor;
 pub use sorted_merge::SortedMerge;
 use to_parquet_error::to_parquet_error;
+pub use versioned_compaction_key::versioned_compaction_key;

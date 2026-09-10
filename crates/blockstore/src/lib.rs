@@ -80,6 +80,7 @@ pub use matcher::{
 };
 pub use merge::{
     BlockBatchStream, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, SortedMerge, open_block_stream,
+    versioned_compaction_key,
 };
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
 pub use profile_block::{ProfileSampleRow, encode_profile_samples};

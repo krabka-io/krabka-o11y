@@ -4,7 +4,7 @@ use super::{
     ObjectStoreExt, Path, ProfileIndex, ProfilesError, PutPayload, RecordBatch, SampleGroupBuffer,
     SchemaRef, SortedMerge, StreamExt, SummaryColumns, SymbolDb, destination_partitions,
     downsample_batches, load_symdb, open_block_stream, profile_samples_decl, remap_partitions,
-    source_partitions,
+    source_partitions, versioned_compaction_key,
 };
 
 /// Merges profile blocks into one, optionally summing their samples into
@@ -36,12 +36,14 @@ pub async fn compact_blocks_with_policy(
     let mut out_symbols = SymbolDb::new();
     let mut out_partitions = BTreeSet::new();
     let mut schema = None;
+    let mut input_versions = Vec::with_capacity(input_keys.len());
     let mut runs = Vec::with_capacity(input_keys.len());
 
     for (block_idx, block_key) in input_keys.iter().enumerate() {
         let source_partitions = source_partitions(index, block_key);
         let partition_map = destination_partitions(block_idx, &source_partitions)?;
-        let symdb = load_symdb(store, block_key).await?;
+        let (symdb_meta, symdb) = load_symdb(store, block_key).await?;
+        input_versions.push(symdb_meta);
         for (source, dest) in &partition_map {
             out_symbols
                 .copy_partition_from(&symdb, *source, *dest)
@@ -49,7 +51,7 @@ pub async fn compact_blocks_with_policy(
             out_partitions.insert(*dest);
         }
 
-        let (block_schema, batches) = open_block_stream(
+        let (meta, block_schema, batches) = open_block_stream(
             Arc::clone(store),
             block_key,
             DEFAULT_BLOCK_READ_MAX,
@@ -57,6 +59,7 @@ pub async fn compact_blocks_with_policy(
         )
         .await
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
+        input_versions.push(meta);
         validate_compaction_schema(&mut schema, block_schema, block_key)?;
         runs.push(
             batches
@@ -71,12 +74,13 @@ pub async fn compact_blocks_with_policy(
     let schema =
         schema.ok_or_else(|| ProfilesError::Block("cannot compact empty block set".into()))?;
     let decl = profile_samples_decl();
+    let output_key = versioned_compaction_key(output_key, &input_versions);
     let mut merge = SortedMerge::new(schema.clone(), &decl.sort_key, runs, MERGE_BATCH_ROWS)
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
     let mut block = BlockWriter::new(Arc::clone(store))
         .open_block(
             tenant,
-            output_key,
+            &output_key,
             schema.clone(),
             &decl,
             SummaryColumns::series(),

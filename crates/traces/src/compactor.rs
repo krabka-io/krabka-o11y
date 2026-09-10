@@ -26,7 +26,7 @@ use krabka_blockstore::{
     SCOL_TRACE_START_NANO, ShardedTraceBloom, SortedMerge, SummaryColumns, TraceBlockStats,
     TraceIndex, input_key_fingerprint, open_block_stream,
     plan_compactions as plan_level_compactions, span_block_decl,
-    span_block_schema_with_promoted_attrs,
+    span_block_schema_with_promoted_attrs, versioned_compaction_key,
 };
 #[cfg(test)]
 use krabka_blockstore::{read_block, span_block_schema};
@@ -46,7 +46,7 @@ use crate::{
 mod tests {
     use assert2::check;
     use krabka_blockstore::{BlockIndex, BlockLevel};
-    use object_store::memory::InMemory;
+    use object_store::{ObjectStoreExt, memory::InMemory};
 
     use super::*;
     use crate::span::{
@@ -392,7 +392,7 @@ mod tests {
         .await;
         assert2::assert!(rejected.is_err());
 
-        compact_block_keys(
+        let meta = compact_block_keys(
             store.clone(),
             &writer,
             &mut index,
@@ -403,7 +403,7 @@ mod tests {
         .await
         .unwrap();
 
-        let batches = read_block(store, "compacted.parquet").await.unwrap();
+        let batches = read_block(store, &meta.object_key).await.unwrap();
         let batch = &batches[0];
         check!(batch.num_rows() == 2);
         let trace_start = int64_column(batch, SCOL_TRACE_START_NANO).unwrap();
@@ -604,6 +604,76 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_reused_trace_input_key_cannot_overwrite_an_existing_compaction_output() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = BlockWriter::new(store.clone());
+        let input_key = "reused.parquet";
+
+        let write_input = |name: &'static str| {
+            let writer = &writer;
+            async move {
+                writer
+                    .write_block_with_decl(
+                        "tenant",
+                        input_key,
+                        span_block_schema(),
+                        &[span_batch(&[mk_span([1; 8], None, 1_000, 10, name, "api")])
+                            .expect("the span forms a batch")],
+                        &span_block_decl(),
+                        SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+                    )
+                    .await
+                    .expect("the input block is written");
+            }
+        };
+        write_input("old").await;
+        let mut old_index = TraceIndex::new();
+        let old = compact_block_keys(
+            store.clone(),
+            &writer,
+            &mut old_index,
+            "tenant",
+            &[input_key.to_string()],
+            "compacted.parquet",
+        )
+        .await
+        .expect("the old input compacts");
+        let old_bytes = store
+            .get(&object_store::path::Path::from(old.object_key.clone()))
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+
+        write_input("new").await;
+        let mut new_index = TraceIndex::new();
+        let new = compact_block_keys(
+            store.clone(),
+            &writer,
+            &mut new_index,
+            "tenant",
+            &[input_key.to_string()],
+            "compacted.parquet",
+        )
+        .await
+        .expect("the replacement input compacts");
+
+        check!(old.object_key != new.object_key);
+        check!(
+            store
+                .get(&object_store::path::Path::from(old.object_key))
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+                == old_bytes,
+            "the stale pass's object remains untouched"
+        );
+    }
+
     /// The declared trace order is `[trace_id, start_unix_nano]`, so two
     /// sibling spans starting on the same nanosecond are rows the key cannot
     /// separate -- and their row order is exactly what `recompute_nested_sets`
@@ -652,7 +722,7 @@ mod tests {
         .await;
 
         let mut index = TraceIndex::new();
-        compact_block_keys(
+        let meta = compact_block_keys(
             store.clone(),
             &writer,
             &mut index,
@@ -663,7 +733,7 @@ mod tests {
         .await
         .expect("the blocks compact");
 
-        let batches = read_block(store, "tied.parquet")
+        let batches = read_block(store, &meta.object_key)
             .await
             .expect("the block reads");
         let tied = &batches[0];
