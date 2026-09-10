@@ -1,0 +1,75 @@
+# Codecov configuration for krabka-o11y.
+#
+# The `coverage` job in //.github/workflows/ci.yml runs `bazel coverage
+# //crates/...` and uploads the merged LCOV file. Before this file existed
+# Codecov applied its own defaults, so no status could fail and a pull request
+# that added two thousand uncovered lines was green.
+#
+# Read the reported percentage with one thing in mind. //.bazelrc sets
+#
+#     coverage --test_tag_filters=-docker,-timing-sensitive
+#
+# so the coverage run skips two sets of tests that `bazel test` runs. The six
+# container suites are skipped because they need a Docker daemon and several
+# hundred megabytes of images. `//crates/observability:compactor_test` is
+# skipped because it asserts on wall-clock behaviour, and the instrumentation
+# makes it miss its own deadlines. That exclusion is new: M1 added the first
+# `timing-sensitive` target, and before that the filter matched nothing.
+#
+# The code those suites cover is still in the report, and every line of it
+# reads as uncovered. The number therefore understates what the workspace
+# actually tests, and it understates it by an amount nobody has measured. A
+# `project` target set against it would be a target set against an unknown, so
+# `project` stays informational here until somebody measures the gap.
+
+codecov:
+  # A report from a failed build measures a build that did not finish.
+  require_ci_to_pass: true
+
+coverage:
+  precision: 1
+  round: down
+  range: "50...90"
+  status:
+    # Informational, and deliberately so. See the note above: the reported
+    # percentage is lower than the real one, and by an unknown amount. This
+    # status reports the direction of travel and fails nothing. Give it a
+    # target once the gap is measured.
+    project:
+      default:
+        target: auto
+        informational: true
+
+    # The gate. New and changed lines need coverage, whatever the whole-project
+    # number reads.
+    #
+    # 80 percent rather than 100 percent, for the same reason `project` is
+    # informational: a change to the ingest path or to the compactor can be
+    # covered only by a suite this run skips, and its lines then read as
+    # uncovered here. 80 percent leaves room for that and still fails a change
+    # that brings no tests at all. Raise it when the exclusions no longer hide
+    # real coverage.
+    patch:
+      default:
+        target: 80%
+        threshold: 0%
+        # A pull request that touches no instrumented file, such as a change to
+        # docs or to a workflow, has no patch to measure. That is a pass, not a
+        # failure.
+        if_not_found: success
+        # A broken or missing upload must be loud. It is the failure this file
+        # exists to stop being silent.
+        if_ci_failed: error
+
+# Integration test sources are compiled into the instrumented binaries, so they
+# appear in the report as ordinary files. Counting them would let a change that
+# adds a large test file and no test of its new code pass the `patch` target on
+# the test file alone.
+ignore:
+  - "crates/*/tests/**"
+
+comment:
+  layout: "condensed_header, diff, files"
+  # Post the comment even when the numbers did not move. A pull request with no
+  # comment reads as an upload that did not arrive.
+  require_changes: false

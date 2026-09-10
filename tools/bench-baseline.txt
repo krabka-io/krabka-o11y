@@ -1,0 +1,110 @@
+# Wall-clock baseline for the Criterion benchmarks, read by
+# tools/bench-ratchet.py.
+#
+# One line per benchmark id that //benches is expected to produce:
+#
+#     <benchmark id> <nanoseconds>
+#
+# The nightly `bench` job fails a benchmark whose mean is more than 1.5 times
+# the number here. It passes one below the number and asks for the number to be
+# lowered. Lower it in the same change that made the benchmark faster.
+#
+# This file is also the inventory. `cargo bench` exits 0 when it measures
+# nothing, so a benchmark that drops out of its `criterion_group!` is
+# indistinguishable from one that ran. The ratchet fails on an id listed here
+# that produced no estimate, and on an estimate whose id is not listed here.
+# Those checks apply whether or not a number is set, which is why a benchmark
+# with no number yet still cannot report a target that measured nothing as a
+# clean run.
+#
+# `unseeded` means no number is checked in yet. The numeric gate is dormant for
+# that id: the run reports its mean and gates nothing on it.
+#
+# EVERY ID BELOW READS `unseeded`, AND THAT IS DELIBERATE.
+#
+# A baseline here is a wall-clock number, so it is a statement about one machine
+# under one load, and it is valid only for that machine. The numbers this suite
+# has actually produced were measured on a shared, contended build box with
+# sixteen cores and other work running beside it. They are useful -- they are in
+# the pull request that added this file, and they say which operations are
+# linear in what -- and they are not a baseline. Writing them in would arm the
+# gate against the noise of whatever machine ran next.
+#
+# Seeding this needs a CI runner that is quiet, dedicated, and the same one
+# every night. GitHub-hosted runners are none of those: two shared vCPUs on a
+# host with no admission control. Until such a runner exists, the honest
+# baseline is no baseline, and the structural checks above are what this file
+# buys. Do not guess a number. Take it from that runner, which prints the lines
+# to check in:
+#
+#     tools/bench.sh && tools/bench-ratchet.py --record
+#
+# See //benches/README.md for the reasoning in full.
+
+blockstore_read/metadata/10000            unseeded
+blockstore_read/metadata/100000           unseeded
+blockstore_read/metadata/1000000          unseeded
+blockstore_read/one_row_group/10000       unseeded
+blockstore_read/one_row_group/100000      unseeded
+blockstore_read/one_row_group/1000000     unseeded
+blockstore_read/whole_block/10000         unseeded
+blockstore_read/whole_block/100000        unseeded
+blockstore_read/whole_block/1000000       unseeded
+blockstore_write/parquet/10000            unseeded
+blockstore_write/parquet/100000           unseeded
+blockstore_write/parquet/1000000          unseeded
+index_prune/candidate_blocks/12           unseeded
+index_prune/candidate_blocks/360          unseeded
+index_prune/candidate_blocks/90           unseeded
+index_prune/label_values/1000             unseeded
+index_prune/label_values/10000            unseeded
+index_prune/label_values/100000           unseeded
+index_prune/resolve_one_job/1000          unseeded
+index_prune/resolve_one_job/10000         unseeded
+index_prune/resolve_one_job/100000        unseeded
+index_prune/resolve_one_series/1000       unseeded
+index_prune/resolve_one_series/10000      unseeded
+index_prune/resolve_one_series/100000     unseeded
+index_prune/resolve_regex/1000            unseeded
+index_prune/resolve_regex/10000           unseeded
+index_prune/resolve_regex/100000          unseeded
+index_prune/trace_prune_by_tag/12         unseeded
+index_prune/trace_prune_by_tag/360        unseeded
+index_prune/trace_prune_by_tag/90         unseeded
+pprof_merge/depth/16                      unseeded
+pprof_merge/depth/4                       unseeded
+pprof_merge/depth/64                      unseeded
+pprof_merge/stacks/1000                   unseeded
+pprof_merge/stacks/10000                  unseeded
+pprof_merge/stacks/100000                 unseeded
+pprof_merge/to_flamegraph/1000            unseeded
+pprof_merge/to_flamegraph/10000           unseeded
+pprof_merge/to_flamegraph/100000          unseeded
+promql_range/parse/rate                   unseeded
+promql_range/parse/selector               unseeded
+promql_range/parse/sum_by_job             unseeded
+promql_range/rate/100                     unseeded
+promql_range/rate/1000                    unseeded
+promql_range/rate/10000                   unseeded
+promql_range/selector/100                 unseeded
+promql_range/selector/1000                unseeded
+promql_range/selector/10000               unseeded
+promql_range/sum_by_job/100               unseeded
+promql_range/sum_by_job/1000              unseeded
+promql_range/sum_by_job/10000             unseeded
+traceql_filter/attr_eq/1000               unseeded
+traceql_filter/attr_eq/10000              unseeded
+traceql_filter/attr_eq/100000             unseeded
+traceql_filter/conjunction/1000           unseeded
+traceql_filter/conjunction/10000          unseeded
+traceql_filter/conjunction/100000         unseeded
+traceql_filter/descendant/1000            unseeded
+traceql_filter/descendant/10000           unseeded
+traceql_filter/descendant/100000          unseeded
+traceql_filter/intrinsic_duration/1000    unseeded
+traceql_filter/intrinsic_duration/10000   unseeded
+traceql_filter/intrinsic_duration/100000  unseeded
+traceql_filter/parse/attr_eq              unseeded
+traceql_filter/parse/conjunction          unseeded
+traceql_filter/parse/descendant           unseeded
+traceql_filter/parse/intrinsic_duration   unseeded

@@ -1,0 +1,142 @@
+# Criterion benchmarks for the hot paths: block write and read, index pruning,
+# PromQL range evaluation, TraceQL span filtering, and pprof tree merge.
+#
+# This is a workspace of its own, not a member of the root one, for the same
+# reason //fuzz is: what it needs must not reach the builds that gate a pull
+# request. Criterion is a dev-dependency wherever it is declared, and Cargo
+# hands a crate's dev-dependencies to its tests as well as to its benches --
+# so `criterion` in //crates/blockstore/Cargo.toml would be linked into every
+# test binary that crate builds, under Cargo *and* under Bazel, where
+# `crate_tests` reads the same table through `all_crate_deps(normal_dev =
+# True)`. `cargo test --workspace` and `bazel test //...` would both get
+# slower to buy nothing they run.
+#
+# Kept out here instead, the benchmarks are invisible to both. `crates/*` does
+# not match this directory, `crate.from_cargo` in //MODULE.bazel resolves
+# //Cargo.lock rather than the lockfile beside this file, and `cargo metadata`
+# on the root workspace reports the same ten members it did before. No BUILD
+# file mentions benchmarks and none needs to: //bazel/defs.bzl has no macro
+# for a `[[bench]]`, and adding one would put the cost back where this
+# separation takes it out of.
+#
+# What runs them is //tools/bench.sh, from the `bench` job in
+# //.github/workflows/ci.yml -- a scheduled job, like the mutation sweep and
+# the fuzz run, for the same reason: the work is unbounded and a pull request
+# cannot afford it. The pull-request half is `bench-build`, which compiles the
+# targets and runs nothing, exactly as `fuzz-build` does for //fuzz.
+#
+# The cost of the separation is the `[patch.crates-io]` table below. Cargo
+# reads `[patch]` only from the workspace root it is building, so the sibling
+# revisions have to be repeated here. //tools/check-fuzz-patch.sh checks this
+# copy and //fuzz's against //Cargo.toml, and the `tools` job on every pull
+# request runs it.
+[package]
+name = "krabka-o11y-benches"
+version = "0.0.0"
+publish = false
+edition = "2024"
+# The workspace MSRV, repeated. Cargo's resolver reads it, and with it the
+# lockfile beside this file picks the same dependency versions as //Cargo.lock
+# rather than the newest ones the registry offers.
+rust-version = "1.97.1"
+license = "Apache-2.0"
+authors = ["The Krabka Authors"]
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+# The fixture builders in `src/` are a library rather than a module each bench
+# includes, so that a bench file holds the measurement and nothing else, and so
+# that the generators have one definition to keep honest. The version pins
+# repeat //Cargo.toml's `[workspace.dependencies]`, because a workspace does
+# not lend its table to another workspace.
+[dependencies]
+arrow = { version = "59", default-features = false, features = ["ipc"] }
+krabka-blockstore = { path = "../crates/blockstore" }
+krabka-pprof = { path = "../crates/pprof" }
+krabka-promql = { path = "../crates/promql" }
+krabka-traceql = { path = "../crates/traceql" }
+krabka-units = { version = "0.4.0" }
+object_store = { version = "0.13", features = ["aws", "gcp"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+# `async_tokio` so a bench body can be an `async` block driven by a runtime
+# Criterion enters once per iteration rather than by a hand-rolled `block_on`
+# inside `iter()`, which would time runtime construction as part of the
+# measurement.
+criterion = { version = "0.7", features = ["async_tokio", "html_reports"] }
+
+# Debug info is the bulk of what a release-profile build of the DataFusion pin
+# writes, and nothing here reads it: a Criterion run reports wall clock, and a
+# profile of a bench is taken by rebuilding it with symbols on purpose. Off, so
+# the build fits a runner's disk -- the `cargo` job sets the same thing through
+# the environment for the same reason.
+[profile.bench]
+debug = false
+
+# Each benchmark is one `[[bench]]`, and its name is also the name of the
+# Criterion group inside it. That is what makes a benchmark id begin with its
+# target's name, which is how //tools/bench-ratchet.py's `--bench` narrows a
+# partial run to the ids that run belongs to.
+[[bench]]
+name = "blockstore_write"
+harness = false
+
+[[bench]]
+name = "blockstore_read"
+harness = false
+
+[[bench]]
+name = "index_prune"
+harness = false
+
+[[bench]]
+name = "promql_range"
+harness = false
+
+[[bench]]
+name = "traceql_filter"
+harness = false
+
+[[bench]]
+name = "pprof_merge"
+harness = false
+
+[patch.crates-io]
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-broker = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-kraft-core = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-log = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-logfmt = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-object-store = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-raft = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-records-legacy = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-remote-storage = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-remote-storage-topic = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-telemetry = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-throttle = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+krabka-verified = { git = "https://github.com/krabka-io/krabka-broker", rev = "32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617" }
+# `krabka-broker` depends on `krabka-schema-serde`, so the git dependency
+# above needs it patched here too. Resolved from krabka-schema-registry, the
+# same source the broker itself patches, so the broker gets the copy it was
+# built against.
+krabka-schema-serde = { git = "https://github.com/krabka-io/krabka-schema-registry", rev = "ee9c3933fb1d71735846e7e5e33ea6ab3a694dc5" }
+krabka-client-admin = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-consumer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-core = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-client-producer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "f0c86c1ccdecd1776e32349764d7d2efe5dae347" }
+krabka-compression = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-ids = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-metadata = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-protocol = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-security = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-trace-context = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-units = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }
+krabka-voters = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }

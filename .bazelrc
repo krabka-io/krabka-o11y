@@ -54,7 +54,7 @@ coverage --instrumentation_filter=^//crates[:/]
 # Both exclusions, because `--test_tag_filters` is last-wins rather than
 # additive: naming only `-timing-sensitive` here replaced the `-docker` set for
 # `test` above, and the coverage run started trying to drive containers.
-coverage --test_tag_filters=-docker,-timing-sensitive
+coverage --test_tag_filters=-docker,-scale,-timing-sensitive
 
 # Download a JDK rather than resolving the machine's. `jvm_tiered_storage` runs
 # a small Java probe against Kafka's own storage classes; without this the
@@ -67,8 +67,18 @@ build --java_runtime_version=remotejdk_21
 # images; `bazel test //...` on a machine without one should not fail.
 #
 #     bazel test --config=docker //...
-test --test_tag_filters=-docker
-test:docker --test_tag_filters=docker
+#
+# The `scale` suites are container suites too, and they are excluded from the
+# `docker` set rather than run beside it. A differential suite boots a component
+# and compares a few hundred answers against it, which is minutes. A scale suite
+# ingests ten thousand series or a million spans before its first assertion,
+# which is the nightly container job's whole budget. Two tag sets, two jobs, two
+# budgets.
+#
+#     bazel test --config=scale //...
+test --test_tag_filters=-docker,-scale
+test:docker --test_tag_filters=docker,-scale
+test:scale --test_tag_filters=scale
 
 # The mutation rules ship no cargo-mutants binary of their own; point them at
 # the one built from //tools/mutants' lockfile.

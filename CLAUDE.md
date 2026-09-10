@@ -34,6 +34,8 @@ cargo clippy -p krabka-promql --all-targets -- -D warnings
 | `bazel test //crates/<crate>:<crate>_mutants` | Rebuilds the crate once per mutant; 180-min budget for promql/observability/traces |
 | `tools/mutants-sweep.sh` | 10-hour timeout; has OOM-killed a 31 GB machine twice |
 | `bazel coverage //crates/...` | Separate 90-min job; evicts the normal build cache |
+| `tools/bench.sh` | Criterion over //benches, minutes per target; builds the DataFusion pin at opt-level 3 into a second target dir. `tools/bench.sh --quick` is the local mode |
+| `bazel test --config=scale //crates/...` | The `scale` suites: 10k series, 1M spans, a 24-block compaction, and a bounded ingest-and-query soak, all against a real MinIO. Its own nightly job |
 
 ## Compatibility
 

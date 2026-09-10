@@ -181,6 +181,131 @@ jobs:
         with:
           tool: cargo-deny@0.20.2
       - run: cargo deny --locked check advisories bans licenses sources
+  # The repository's own Python tools, checked against synthetic input.
+  #
+  # //tools/mutants-ratchet.py decides whether the nightly sweep passes, and the
+  # sweep runs for hours, so a fault in the ratchet is found a day after the
+  # change that caused it and on a job nobody watches. Its `--self-test` builds
+  # the shard logs a sweep writes, including the killed and refusing shards that
+  # a real run cannot be asked to produce, and checks the verdict for each. It
+  # needs no Bazel, no toolchain and about a second, so it runs on every pull
+  # request.
+  tools:
+    name: tool self-tests
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: tools/mutants-ratchet.py --self-test
+      # //tools/bench-ratchet.py reads a Criterion run and decides whether the
+      # benchmarks may pass. Its `--self-test` drives those checks against
+      # synthetic estimates files, so it needs no benchmark run -- which is the
+      # point: the `bench` job below is nightly, and a ratchet developed only
+      # against it would be checked once a day.
+      - run: tools/bench-ratchet.py --self-test
+      # //tools/fuzz-corpus.py writes the seed corpora under //fuzz/corpus, and
+      # its `--self-test` checks the varint, zigzag, snappy and protobuf
+      # encoders it writes them with against encodings the formats fix. It
+      # reads nothing from the repository, so it runs on a bare checkout.
+      - run: tools/fuzz-corpus.py --self-test
+      # `--check` regenerates the corpora and fails on a seed that is missing
+      # or has moved, so a fixture edit that changes what the seeds mine cannot
+      # leave a stale corpus behind. It checks the fuzz targets against
+      # //fuzz/Cargo.toml as well: a target file with no `[[bin]]` entry is a
+      # file cargo-fuzz never builds and never runs, which reads as covered
+      # surface and is not.
+      - run: tools/fuzz-corpus.py --check
+      # //fuzz is a workspace of its own, so it repeats the sibling pins from
+      # //Cargo.toml. sync-siblings.yml bumps one copy and knows nothing about
+      # the other. This fails on the drift.
+      - run: tools/check-fuzz-patch.sh
+  # The fuzz targets, compiled. //fuzz is outside the root workspace and
+  # outside Bazel, so neither the `ci` job nor the `cargo` job builds it, and a
+  # decoder signature that changes leaves a target that no longer compiles with
+  # nothing to say so until the next scheduled run.
+  #
+  # `cargo clippy` rather than `cargo fuzz build`, and that is the whole
+  # difference between this job and the `fuzz` job below. A fuzz build is
+  # codegen for fourteen binaries on top of the DataFusion pin, instrumented,
+  # and it does not fit the budget of a pull request. A clippy run reaches
+  # every call the targets make, which is the breakage this job is for, and it
+  # is the only lint //fuzz gets: no Bazel target covers this directory, so the
+  # clippy aspect that gates the crates never reads it.
+  #
+  # This job and the `fuzz` job below are the only two in the file that use a
+  # nightly toolchain. cargo-fuzz passes `-Z` flags that stable does not take,
+  # and //fuzz/README.md says why the channel floats instead of being pinned to
+  # a date.
+  fuzz-build:
+    name: fuzz targets compile
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    # A cold run checks the whole DataFusion pin. A warm one takes minutes.
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+      - run: cargo clippy --manifest-path fuzz/Cargo.toml --locked --all-targets -- -D warnings
+  # The benchmarks, compiled. //benches is outside the root workspace and
+  # outside Bazel for the reason its Cargo.toml gives -- Criterion is a
+  # dev-dependency, and a dev-dependency of a crate under //crates would be
+  # linked into every test binary that crate builds, in both build systems --
+  # so neither the `ci` job nor the `cargo` job compiles it, and a signature
+  # that changes leaves a benchmark that no longer builds with nothing to say
+  # so until the next scheduled run.
+  #
+  # `cargo clippy` rather than `tools/bench.sh`, and that is the whole
+  # difference between this job and the `bench` job below. Running the
+  # benchmarks is unbounded work that a pull request cannot afford, and the
+  # numbers a shared runner produces under a pull request's load would not be
+  # worth having if it could. A clippy run reaches every call the benchmarks
+  # make, which is the breakage this job is for, and it is the only lint
+  # //benches gets: no Bazel target covers this directory, so the clippy aspect
+  # that gates the crates never reads it.
+  #
+  # This job is additive. It does not touch the `ci` or `cargo` jobs, which run
+  # concurrently with it on their own runners and build exactly what they built
+  # before -- //Cargo.toml and //Cargo.lock are unchanged, and `crates/*` does
+  # not match //benches.
+  bench-build:
+    name: benchmarks compile
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    # A cold run checks the whole DataFusion pin. A warm one takes minutes.
+    timeout-minutes: 60
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v7
+      # Stable, from `rust-toolchain.toml`, unlike the fuzz jobs above: nothing
+      # here needs nightly, and the benchmarks measure what the pinned
+      # toolchain compiles.
+      - id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)"
+          if [ -z "${channel}" ]; then
+            echo "::error::rust-toolchain.toml names no channel"
+            exit 1
+          fi
+          echo "channel=${channel}" >>"${GITHUB_OUTPUT}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: benches
+      - run: cargo clippy --manifest-path benches/Cargo.toml --locked --all-targets -- -D warnings
   # LCOV over the first-party crates. Separate from `ci` because instrumented
   # binaries are a different build, so sharing that job's cache would only
   # evict it.
@@ -198,12 +323,22 @@ jobs:
           disk-cache: ${{ github.workflow }}-coverage
           repository-cache: true
       - run: bazel coverage //crates/...
+      # //codecov.yml holds the targets this upload is measured against: a
+      # `patch` status that gates, and a `project` status that reports. Read
+      # that file before reading a percentage from it -- the coverage run skips
+      # the container suites and the timing-sensitive ones, so the number is
+      # lower than the truth.
+      #
+      # `fail_ci_if_error` was false, which made a rejected or lost upload
+      # silent: the job stayed green and Codecov reported the previous run's
+      # numbers, or none. An upload that does not arrive is a coverage result
+      # nobody has, so it fails here.
       - uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: bazel-out/_coverage/_coverage_report.dat
           disable_search: true
-          fail_ci_if_error: false
+          fail_ci_if_error: true
   # rustdoc for every crate, kept as an artifact. The `ci` job already builds
   # these -- a `rust_doc` per crate is an ordinary target -- so this exists to
   # publish the output, and to keep rendering the whole set even when `aspect
@@ -261,7 +396,13 @@ jobs:
       - id: select
         run: |
           set -euo pipefail
-          all() { bazel query 'attr(tags, "docker", //crates/...)'; }
+          # `except` the scale suites. They are container suites and carry
+          # the `docker` tag, so without this they land in this job -- whose
+          # budget is 60 minutes for a differential run, not the ingest of ten
+          # thousand series. The `scale` job below is theirs.
+          all() {
+            bazel query 'attr(tags, "docker", //crates/...) except attr(tags, "scale", //crates/...)'
+          }
 
           event="${{ github.event_name }}"
           if [ "${event}" = "schedule" ] || [ "${event}" = "workflow_dispatch" ]; then
@@ -288,7 +429,7 @@ jobs:
                 if [ "${#files[@]}" -eq 0 ]; then
                   targets=""
                 else
-                  targets="$(bazel query "attr(tags, 'docker', rdeps(//crates/..., set(${files[*]})))")"
+                  targets="$(bazel query "attr(tags, 'docker', rdeps(//crates/..., set(${files[*]}))) except attr(tags, 'scale', //crates/...)")"
                 fi
               fi
             fi
@@ -345,10 +486,19 @@ jobs:
   # nothing at all rather than reporting a failure -- the totals line
   # (caught + missed + unviable == total) is the only place that shows.
   #
-  # `continue-on-error`: survivors are the expected state, not an exception --
-  # `cargo_mutants_test` runs only `#[cfg(test)]` unit tests, so every mutant the
-  # `tests/*.rs` suites would have killed is reported as one. The job exists to
-  # produce a list to read. Make it blocking once the score is worth defending.
+  # The job used to carry `continue-on-error: true`, because survivors are the
+  # expected state rather than an exception: `cargo_mutants_test` runs only
+  # `#[cfg(test)]` unit tests, so every mutant the `tests/*.rs` suites would
+  # have killed is reported as one, and `bazel test` on a mutants target exits
+  # non-zero for each of them. That made the exit code useless as a verdict,
+  # and nothing else read the run, so both failure modes above were invisible.
+  #
+  # //tools/mutants-ratchet.py is the verdict now. It reads the shard logs the
+  # run leaves in `bazel-testlogs` and fails the job on a totals line that does
+  # not add up, on a shard that reported nothing, and on a survivor count above
+  # the crate's line in //tools/mutants-baseline.txt. Every crate in that file
+  # reads `unseeded` today, so the survivor half is dormant until a nightly run
+  # produces a number to check in. The structural half gates from the first run.
   mutants-select:
     name: select mutants targets
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -381,7 +531,6 @@ jobs:
   mutants:
     name: mutants · ${{ matrix.crate.name }}
     needs: mutants-select
-    continue-on-error: true
     runs-on: ubuntu-latest
     # A bound, not an estimate. A crate that cannot finish inside it is saying
     # its shard count is too low, and that is worth being told.
@@ -398,4 +547,203 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-mutants
           repository-cache: true
-      - run: bazel test ${{ matrix.crate.target }}
+      # The sweep's exit code says "at least one mutant survived", which is not
+      # the question this job asks, so it is dropped and the shard logs are read
+      # instead. `|| true` hides a build failure as well, and the ratchet is
+      # what reports it: a run that failed before its first shard leaves no
+      # shard log, and the step below fails on that.
+      - name: sweep
+        run: bazel test ${{ matrix.crate.target }} || true
+      # The verdict. `--test_output=errors` has already printed each surviving
+      # mutant above, so what this adds is the count, the totals-line check and
+      # the baseline comparison.
+      - name: ratchet
+        run: tools/mutants-ratchet.py ${{ matrix.crate.name }}
+  # The fuzz targets, run. Scheduled rather than a gate on a pull request, for
+  # the same reason as the mutation sweep above: the work is unbounded, and
+  # what a pull request can afford is the compile check the `fuzz-build` job
+  # does.
+  #
+  # //tools/fuzz.sh holds the flags, so a local run and this job run the same
+  # way. It builds every target once, then gives each one its own bounded
+  # budget, so a slow target cannot take the whole run. It copies //fuzz/corpus
+  # into a scratch directory first, so a run never edits the checked-in seeds.
+  #
+  # Sixty seconds a target is a short budget, and most of this job is the
+  # build. What that buys every night is the seed corpus re-run, which is the
+  # regression half, plus a short exploration from wherever the seeds reach.
+  # Nothing carries over between runs: each night starts from the checked-in
+  # seeds again. Caching the grown corpus between runs would find more, and it
+  # would need a cache policy this job does not have yet.
+  #
+  # A run that finds nothing is the expected result and says the decoders held
+  # for that budget. It is not a proof, and the budget is what a scheduled job
+  # can report on rather than a number with a meaning of its own.
+  #
+  # libFuzzer writes the input for a finding under fuzz/artifacts/<target>/.
+  # That upload is the whole report, so it runs even when the step above
+  # failed, which is the only case that produces one.
+  fuzz:
+    name: fuzz
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # A bound, not an estimate, the same way the `mutants` jobs treat theirs.
+    # A cold run links fourteen instrumented binaries on top of the DataFusion
+    # pin; a warm one spends most of the time fuzzing.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly
+          components: rust-src
+      # Thirteen instrumented binaries on top of the DataFusion pin, each one
+      # statically linked. A runner ships ~25 GB of toolchains this build never
+      # touches, and the link step is where a full disk shows up -- as `ld
+      # terminated with signal 7 [Bus error]`, which reads like a compiler bug.
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          df -h /
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+      # `cargo install` rather than taiki-e/install-action, which the
+      # `cargo-deny` job above uses. That action does not list cargo-fuzz, so
+      # it falls through to cargo-binstall, which finds no prebuilt binary for
+      # this tool and compiles it anyway. Naming the version here says what is
+      # installed, and //fuzz/README.md names the same one.
+      - name: cargo-fuzz
+        run: cargo install cargo-fuzz --locked --version 0.13.2
+      - name: run
+        run: tools/fuzz.sh 60
+      - name: findings
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          # `warn`, not `error`. The step above also fails when the build
+          # fails, and a build that never ran a target leaves nothing to
+          # upload. That is a real result, and it is already reported by the
+          # step that failed.
+          if-no-files-found: warn
+  # The benchmarks, run. Scheduled rather than a gate on a pull request, for
+  # the same reason as the mutation sweep and the fuzz run above: the work is
+  # unbounded, and what a pull request can afford is the compile check the
+  # `bench-build` job does.
+  #
+  # //tools/bench.sh holds the flags, so a local run and this job run the same
+  # way. It bounds every benchmark to ten samples over five seconds, which is
+  # not a tight budget by Criterion's standards -- the defaults are 100 samples
+  # over five seconds each, and //benches declares over sixty ids. What the
+  # bound buys is a run that finishes; what it costs is a wider confidence
+  # interval, which the ratchet reads and treats as a reason to skip a
+  # benchmark rather than as a reason to fail it.
+  #
+  # The artifact is the whole Criterion output directory: the estimates the
+  # ratchet reads, and the HTML report a person reads after the ratchet has
+  # said which line moved. It uploads even when the run failed, because a
+  # partial run is still the report for the benchmarks that did finish.
+  #
+  # A note on what this job's numbers are worth. It runs on a GitHub-hosted
+  # runner, which is a shared virtual machine with two cores and no control
+  # over what else is on the host. Wall clock from such a machine is fine for
+  # spotting an order-of-magnitude change and worthless as an absolute figure.
+  # That is why //tools/bench-baseline.txt is unseeded: see //benches/README.md
+  # for what seeding it would need.
+  bench:
+    name: benchmarks
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # A bound, not an estimate, the same way the `mutants` and `fuzz` jobs
+    # treat theirs. A cold run builds the whole DataFusion pin at opt-level 3.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)"
+          if [ -z "${channel}" ]; then
+            echo "::error::rust-toolchain.toml names no channel"
+            exit 1
+          fi
+          echo "channel=${channel}" >>"${GITHUB_OUTPUT}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      # A release build of the DataFusion pin plus six benchmark binaries. The
+      # `cargo` and `fuzz` jobs both ran the disk out without this, and ENOSPC
+      # during linking surfaces as `ld terminated with signal 7 [Bus error]`.
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          df -h /
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: benches
+      - name: run
+        run: tools/bench.sh
+      # Always, not `if: failure()`: this is the report, not a finding.
+      - name: report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report
+          path: benches/target/criterion/
+          # `warn`, not `error`. A run that failed before its first benchmark
+          # leaves nothing to upload, and the step that failed has already
+          # said so.
+          if-no-files-found: warn
+      # The verdict. The step above has printed each benchmark's own numbers;
+      # what this adds is the inventory check and the baseline comparison.
+      - name: ratchet
+        run: tools/bench-ratchet.py
+  # The scale suites: the block store at the cardinality and volume the design
+  # targets, against a real object store.
+  #
+  # Scheduled, and separate from the `docker` job above even though these are
+  # container suites too. A differential suite boots a component and compares a
+  # few hundred answers against it. A scale suite writes ten thousand series or
+  # a million spans before its first assertion, which is the container job's
+  # whole budget. Two tag sets, two jobs, two budgets -- see //.bazelrc, which
+  # states the same split.
+  #
+  # These assert on shape, not on wall clock: how many blocks a prune selected,
+  # how many objects a compaction left, whether every row survived. A runner
+  # under load makes them slow, not red, which is what lets them be a scheduled
+  # gate rather than a scheduled report.
+  scale:
+    name: scale · ${{ matrix.suite.name }}
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # A bound, not an estimate, the same way the jobs above treat theirs.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Named rather than queried. There are a handful of these by design,
+        # and a matrix computed by a `needs` job would cost a second runner and
+        # twenty minutes of Bazel start-up to learn what this list already says.
+        # `bazel test --config=scale //crates/...` runs the same set for anyone
+        # who would rather not name them.
+        suite:
+          - name: object_store
+            target: //crates/observability:scale_object_store_docker_test
+          # The soak. Same tag and same container as the suite above, its own
+          # runner because it holds a wall-clock budget of its own and would
+          # otherwise spend the other suite's.
+          - name: soak
+            target: //crates/observability:soak_ingest_query_docker_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-scale
+          repository-cache: true
+      - run: bazel test --config=scale ${{ matrix.suite.target }}
