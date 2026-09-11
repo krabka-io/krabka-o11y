@@ -1118,7 +1118,15 @@ rules:
             None,
             1,
             Duration::ZERO,
-            Duration::from_millis(20),
+            // The stalled endpoint hangs forever, so it misses any deadline and
+            // the length of this one only decides how long the test waits for
+            // it. The healthy endpoint has to fit inside the same budget --
+            // connecting a fresh `reqwest::Client` and completing a round trip
+            // -- and at 20ms it did not on a loaded CI runner, so both
+            // endpoints failed and the test read as a broken isolation rather
+            // than a missed deadline. A second is far longer than a loopback
+            // request needs and still bounded.
+            Duration::from_secs(1),
         );
 
         sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
