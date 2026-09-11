@@ -32,7 +32,6 @@ use krabka_telemetry::OtlpConfig;
 use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt as _},
-    fmt::Human as _,
     parse,
 };
 #[cfg(test)]
@@ -896,6 +895,8 @@ overrides:
             ("query-frontend", true),
             ("compactor", false),
             ("symbolizer", false),
+            // `all` runs four of those roles, and asks once for the process.
+            ("all", true),
         ];
 
         for (target, refuses) in roles {
@@ -942,17 +943,38 @@ overrides:
     }
 }
 
+/// `--target all` end to end: a push at the ingest door answered at the query
+/// door, and a `SIGTERM` that stops all six roles. Both drive the real `run`
+/// in a child process, which is why they live in the bin crate rather than
+/// under `tests/`.
+#[cfg(all(test, unix))]
+mod all_in_one;
+
 /// A `SIGTERM` sent to the real querier composition has to end the process,
 /// not merely reach a handler. The suite runs the role in a child and asserts
 /// on its exit status.
 #[cfg(all(test, unix))]
 mod sigterm_exits_the_querier;
 
+/// `Target` is private to this binary, so the one place its clap spellings can
+/// be checked against the shared role vocabulary is here.
+#[cfg(test)]
+mod target_names_match_the_role_vocabulary;
+
+mod all_stage;
 mod alloc;
+mod bind_all_stage_server;
+mod block_builder_config;
+mod block_builder_stage;
+mod build_all_stages;
+mod build_distributor_state;
 mod build_object_store;
+mod build_profile_read_path;
 mod cli;
 mod client_resource_policy;
+mod compaction_loop;
 mod compaction_policy_from_cli;
+mod compactor_stage;
 mod configured_object_store;
 mod debuginfod_config;
 mod load_profiles_limits_overrides_config;
@@ -968,22 +990,41 @@ mod parse_positive_time_or_legacy_nanos;
 mod parse_positive_u32;
 mod parse_positive_usize;
 mod parse_positive_whole_byte_size;
+mod profile_read_path;
+mod read_path_stage;
 mod require_role_topics;
 mod role_shutdown_token;
 mod run;
+mod run_all;
+mod run_block_builder;
 mod run_compaction_pass;
+mod run_compactor;
+mod run_distributor;
+mod run_querier;
+mod run_query_frontend;
+mod run_symbolizer;
 mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
+mod symbolizer_stage;
 mod target;
 
 // `alloc` deliberately has no `use` line. `#[global_allocator]` registers
 // the static by attribute, so naming it here imports something nothing
 // reads -- which is a warning, not a link to the allocator.
 
+use all_stage::AllStage;
+use bind_all_stage_server::bind_all_stage_server;
+use block_builder_config::block_builder_config;
+use block_builder_stage::block_builder_stage;
+use build_all_stages::build_all_stages;
+use build_distributor_state::build_distributor_state;
 use build_object_store::build_object_store;
+use build_profile_read_path::build_profile_read_path;
 use cli::Cli;
 use client_resource_policy::client_resource_policy;
+use compaction_loop::compaction_loop;
 use compaction_policy_from_cli::compaction_policy_from_cli;
+use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
 use debuginfod_config::debuginfod_config;
 use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
@@ -999,16 +1040,25 @@ use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
 use parse_positive_u32::parse_positive_u32;
 use parse_positive_usize::parse_positive_usize;
 use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
+use profile_read_path::ProfileReadPath;
+use read_path_stage::read_path_stage;
 use require_role_topics::require_role_topics;
 use role_shutdown_token::role_shutdown_token;
 use run::run;
+use run_all::run_all;
+use run_block_builder::run_block_builder;
 use run_compaction_pass::run_compaction_pass;
+use run_compactor::run_compactor;
+use run_distributor::run_distributor;
+use run_querier::run_querier;
+use run_query_frontend::run_query_frontend;
+use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;
+use symbolizer_stage::symbolizer_stage;
 use target::Target;
 
 #[tokio::main]
-#[allow(clippy::too_many_lines)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(

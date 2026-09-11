@@ -327,7 +327,7 @@ async fn status_memberlist_endpoint_reports_memberlist_not_configured() {
     let querier = loki_router(state);
     let distributor = distributor_router(InMemoryWalSink::default());
     let compactor = build_service_router(
-        &test_service_config(Role::Compactor, tempfile::tempdir().unwrap().keep()),
+        &test_service_config(Role::BlockBuilder, tempfile::tempdir().unwrap().keep()),
         ServiceDependencies::default(),
         None,
     )
@@ -356,7 +356,7 @@ async fn status_ring_aliases_return_loki_ring_pages() {
     let querier = loki_router(state);
     let distributor = distributor_router(InMemoryWalSink::default());
     let compactor = build_service_router(
-        &test_service_config(Role::Compactor, tempfile::tempdir().unwrap().keep()),
+        &test_service_config(Role::BlockBuilder, tempfile::tempdir().unwrap().keep()),
         ServiceDependencies::default(),
         None,
     )
@@ -447,12 +447,12 @@ async fn status_metrics_endpoint_returns_prometheus_text_for_distributor_router(
 #[tokio::test]
 async fn compactor_router_exposes_loki_status_and_ring_endpoints() {
     let config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -513,6 +513,9 @@ async fn compactor_router_exposes_loki_status_and_ring_endpoints() {
     assert!(metrics_response.status() == StatusCode::OK);
     let metrics = text_body(metrics_response).await;
     assert!(metrics.contains("krabka_observability_service_up"));
+    // `compactor`, not `block-builder`: these are `Loki`'s ops strings, and a
+    // `Loki` dashboard keyed on them is what they exist for. See
+    // `BLOCK_BUILDER_OPS`.
     assert!(metrics.contains(r#"component="compactor""#));
 
     let config_response = app

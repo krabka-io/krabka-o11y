@@ -8,8 +8,8 @@
 //! is still waiting for.
 
 use crate::{
-    Arc, AtomicBool, AtomicOrdering, Extension, IntoResponse, PanicSafeShared, Response, Router,
-    StatusCode, get,
+    Arc, AtomicBool, AtomicOrdering, Extension, IntoResponse, PanicSafeShared, Response, RoleKind,
+    Router, StatusCode, get,
 };
 
 mod draining_gate;
@@ -17,6 +17,8 @@ mod readiness_gate;
 mod readiness_router;
 mod ready;
 mod role_readiness;
+#[cfg(test)]
+mod tests;
 
 pub use draining_gate::DRAINING_GATE;
 pub use readiness_gate::ReadinessGate;

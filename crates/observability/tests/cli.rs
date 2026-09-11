@@ -1,5 +1,5 @@
 use assert2::assert;
-use clap::Parser;
+use clap::{Parser, ValueEnum as _};
 use krabka_observability::{
     QuerierIndexSource, Role, ServiceConfig, build_service_dependencies, run,
 };
@@ -9,14 +9,40 @@ use krabka_units::{bytes, kibibytes, millis, nanos};
 fn parses_explicit_service_targets() {
     for (target, expected) in [
         ("distributor", Role::Distributor),
-        ("compactor", Role::Compactor),
+        ("block-builder", Role::BlockBuilder),
         ("querier", Role::Querier),
+        ("all", Role::All),
     ] {
         let config =
             ServiceConfig::try_parse_from(["krabka-observability", "--target", target]).unwrap();
 
         assert!(config.target == expected);
         assert!(run(config).unwrap().role == expected);
+    }
+}
+
+/// One stage, one spelling. A `--target` value that drifted from the shared
+/// vocabulary would put a second name on a stage an operator already runs
+/// under another signal, which is exactly the hazard the vocabulary removes.
+/// The check goes through clap rather than through the enum's `Debug`, because
+/// the string clap accepts is the one a manifest carries.
+#[test]
+fn every_target_is_spelled_as_the_shared_vocabulary_spells_it() {
+    for role in Role::value_variants() {
+        let possible = role
+            .to_possible_value()
+            .expect("every role is a possible value");
+        assert!(possible.get_name() == role.kind().as_str(), "{role:?}");
+        assert!(
+            ServiceConfig::try_parse_from([
+                "krabka-observability",
+                "--target",
+                role.kind().as_str(),
+            ])
+            .expect("the shared name parses")
+            .target
+                == *role
+        );
     }
 }
 
@@ -98,7 +124,7 @@ fn parses_querier_object_store_shard_catalog_config() {
                 object_store_url: Some("s3://krabka-observability".to_string()),
                 wal_bootstrap_server: None,
                 wal_topic: "__krabka_observability_logs_wal".to_string(),
-                wal_group_id: "krabka-observability-compactor".to_string(),
+                wal_group_id: "krabka-observability-block-builder".to_string(),
                 data_root: "/var/lib/krabka-observability".into(),
                 querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
                 tenant: Some("tenant-a".to_string()),
@@ -141,7 +167,7 @@ fn parses_distributor_wal_config() {
                 object_store_url: None,
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
                 wal_topic: "__krabka_observability_logs_wal".to_string(),
-                wal_group_id: "krabka-observability-compactor".to_string(),
+                wal_group_id: "krabka-observability-block-builder".to_string(),
                 data_root: ".".into(),
                 querier_index_source: QuerierIndexSource::LocalManifest,
                 tenant: None,
@@ -160,17 +186,17 @@ fn parses_distributor_wal_config() {
 }
 
 #[test]
-fn parses_compactor_wal_consumer_config() {
+fn parses_block_builder_wal_consumer_config() {
     let config = ServiceConfig::try_parse_from([
         "krabka-observability",
         "--target",
-        "compactor",
+        "block-builder",
         "--wal-bootstrap-server",
         "127.0.0.1:9092",
         "--wal-topic",
         "__krabka_observability_logs_wal",
         "--wal-group-id",
-        "krabka-observability-compactor",
+        "krabka-observability-block-builder",
         "--object-store-url",
         "file:///tmp/krabka-observability",
         "--index-prefix",
@@ -181,12 +207,12 @@ fn parses_compactor_wal_consumer_config() {
     assert!(
         config
             == ServiceConfig {
-                target: Role::Compactor,
+                target: Role::BlockBuilder,
                 listen_addr: "0.0.0.0:3100".parse().unwrap(),
                 object_store_url: Some("file:///tmp/krabka-observability".to_string()),
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
                 wal_topic: "__krabka_observability_logs_wal".to_string(),
-                wal_group_id: "krabka-observability-compactor".to_string(),
+                wal_group_id: "krabka-observability-block-builder".to_string(),
                 data_root: ".".into(),
                 querier_index_source: QuerierIndexSource::LocalManifest,
                 tenant: None,

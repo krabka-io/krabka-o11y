@@ -1,9 +1,7 @@
 use super::{
     Arc, ByteSize, DISTRIBUTOR_OPS, DRAINING_GATE, DistributorState, LogIngestLimiter, LogWalSink,
-    LogsServiceServer, OtlpGrpcLogsService, RoleReadiness, Router, ServiceMetrics, Time,
-    flush_ingester_chunks, format_query, format_query_post, get, get_prepare_shutdown, post,
-    push_logs, push_otlp_logs, set_prepare_shutdown, shutdown_ingester, unset_prepare_shutdown,
-    with_role_ops_routes,
+    RoleReadiness, Router, ServiceMetrics, Time, distributor_push_routes, format_query,
+    format_query_post, get, with_role_ops_routes,
 };
 
 pub(crate) fn distributor_router_with_sink(
@@ -15,13 +13,6 @@ pub(crate) fn distributor_router_with_sink(
     creation_grace_period: Option<Time>,
     metrics: ServiceMetrics,
 ) -> Router {
-    let grpc_logs_service = OtlpGrpcLogsService {
-        sink: Arc::clone(&sink),
-        ingest_limiter: Arc::clone(&ingest_limiter),
-        wal_append_timeout,
-        metrics: metrics.clone(),
-    };
-
     // The one gate this role owns. It starts met -- a distributor that has
     // bound its listener can take writes -- and an operator's drain request
     // drops it, which is the only thing `/ready` on this role reports.
@@ -30,30 +21,11 @@ pub(crate) fn distributor_router_with_sink(
     accepting_writes.mark_ready();
 
     with_role_ops_routes(Router::new(), DISTRIBUTOR_OPS, readiness)
-        .route("/flush", post(flush_ingester_chunks))
-        .route(
-            "/ingester/prepare_shutdown",
-            get(get_prepare_shutdown)
-                .post(set_prepare_shutdown)
-                .delete(unset_prepare_shutdown),
-        )
-        .route(
-            "/ingester/shutdown",
-            get(shutdown_ingester).post(shutdown_ingester),
-        )
         .route(
             "/loki/api/v1/format_query",
             get(format_query).post(format_query_post),
         )
-        .route("/loki/api/v1/push", post(push_logs))
-        .route("/api/prom/push", post(push_logs))
-        .route("/v1/logs", post(push_otlp_logs))
-        .route("/otlp/v1/logs", post(push_otlp_logs))
-        .route_service(
-            "/opentelemetry.proto.collector.logs.v1.LogsService/Export",
-            LogsServiceServer::new(grpc_logs_service),
-        )
-        .with_state(DistributorState {
+        .merge(distributor_push_routes(DistributorState {
             sink,
             ingest_limiter,
             prepare_shutdown: accepting_writes,
@@ -62,5 +34,5 @@ pub(crate) fn distributor_router_with_sink(
             reject_old_samples_max_age,
             creation_grace_period,
             metrics,
-        })
+        }))
 }

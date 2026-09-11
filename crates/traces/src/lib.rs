@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod all_in_one;
 pub mod blockbuilder;
 pub mod compactor;
 pub mod distributor;

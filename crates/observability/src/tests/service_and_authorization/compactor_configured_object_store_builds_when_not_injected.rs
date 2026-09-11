@@ -9,7 +9,7 @@ pub(crate) fn compactor_configured_object_store_builds_when_not_injected() {
     let config = ServiceConfig::parse_from([
         "krabka-observability",
         "--target",
-        "compactor",
+        "block-builder",
         "--object-store-url",
         &object_store_url,
     ]);

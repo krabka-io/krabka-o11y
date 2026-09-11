@@ -20,7 +20,7 @@ pub(crate) fn status_services(readiness: &RoleReadiness) -> Response {
     let pending = readiness.pending();
     let state = if pending.is_empty() {
         "Running"
-    } else if pending.contains(&DRAINING_GATE) {
+    } else if readiness.is_pending(DRAINING_GATE) {
         // An operator asked this process to leave rotation. `Loki` calls that
         // `Stopping`, and calling it `Starting` would send a runbook the wrong
         // way at the one moment it is being read.

@@ -7,6 +7,7 @@
 //! `ProfileIndex`.
 #![forbid(unsafe_code)]
 
+pub mod all;
 pub mod blockbuilder;
 pub mod cold_store;
 pub mod compactor;

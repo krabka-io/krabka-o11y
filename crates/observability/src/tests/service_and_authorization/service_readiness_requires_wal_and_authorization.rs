@@ -10,11 +10,11 @@ pub(crate) fn service_readiness_requires_wal_and_authorization() {
     let wal_tail = readiness.gate("wal-tail");
     let authorization = readiness.gate("query-authorization");
     assert2::assert!(!readiness.is_ready());
-    assert2::assert!(readiness.pending() == vec!["wal-tail", "query-authorization"]);
+    assert2::assert!(readiness.pending() == ["wal-tail", "query-authorization"]);
 
     wal_tail.mark_ready();
     assert2::assert!(!readiness.is_ready());
-    assert2::assert!(readiness.pending() == vec!["query-authorization"]);
+    assert2::assert!(readiness.pending() == ["query-authorization"]);
 
     authorization.mark_ready();
     assert2::assert!(readiness.is_ready());
@@ -23,5 +23,5 @@ pub(crate) fn service_readiness_requires_wal_and_authorization() {
     // rotation again, without asking for a restart.
     wal_tail.mark_unready();
     assert2::assert!(!readiness.is_ready());
-    assert2::assert!(readiness.pending() == vec!["wal-tail"]);
+    assert2::assert!(readiness.pending() == ["wal-tail"]);
 }

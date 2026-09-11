@@ -1,0 +1,27 @@
+# krabka-profiles --target=all
+#
+# Every profiles role in one process: distributor, block-builder, querier,
+# query-frontend, symbolizer and compactor. This is the shape to evaluate the
+# signal in -- a laptop, a demo, a small deployment -- rather than running the
+# three role files beside this one.
+#
+# `listen` carries both ingest and query, as Pyroscope's own port 4040 does:
+# the distributor's routes and the query surface do not overlap, so they are
+# merged onto one listener. The plain querier binds a loopback port of its
+# own, chosen by the kernel, so there is nothing here to configure and nothing
+# to collide.
+#
+# It is not in the compose stack or the kustomize base. Those run the roles
+# separately on purpose, because that is the topology a chart has to describe;
+# this file is here so the key names are checked by //deploy:role_config_test
+# and so there is one worked example of the target.
+target: all
+listen: 0.0.0.0:4040
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+object-store-url: s3://krabka-profiles
+# How long one stage of the stop may take before the next is asked to stop
+# anyway. The stop is staged: the distributor goes first, so nothing new
+# enters the WAL, and the block builder flushes behind it. Sized under the
+# pod's terminationGracePeriodSeconds.
+all-drain-stage-timeout: 30s

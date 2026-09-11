@@ -10,24 +10,30 @@ use super::{Arc, AtomicBool, AtomicOrdering};
 /// difference between readiness and liveness.
 ///
 /// The handle is cheap to clone and every clone names the same precondition.
+///
+/// The name is an [`Arc<str>`] rather than a `&'static str` because an
+/// all-in-one process registers the same precondition once per role, and
+/// `not ready: object-store, object-store` names neither of them. A gate taken
+/// from a role-scoped [`RoleReadiness`](super::RoleReadiness) carries the
+/// role in front of the name instead: `block-builder/object-store`.
 #[derive(Clone)]
 pub struct ReadinessGate {
-    name: &'static str,
+    name: Arc<str>,
     ready: Arc<AtomicBool>,
 }
 
 impl ReadinessGate {
-    pub(crate) fn unmet(name: &'static str) -> Self {
+    pub(crate) fn unmet(name: impl Into<Arc<str>>) -> Self {
         Self {
-            name,
+            name: name.into(),
             ready: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// The precondition's name, as `/ready` reports it while it is unmet.
     #[must_use]
-    pub fn name(&self) -> &'static str {
-        self.name
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Records that the precondition now holds.

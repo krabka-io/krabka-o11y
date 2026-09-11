@@ -153,7 +153,7 @@ mod tests {
             .expect("broker start");
         let bootstrap = broker.listen_addr().to_string();
 
-        for target in [Role::Distributor, Role::Compactor, Role::Querier] {
+        for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
             let config = config_for(target, Some(bootstrap.clone()));
             let error = require_role_topics(&config)
                 .await
@@ -163,7 +163,7 @@ mod tests {
 
         create_logs_wal_topic(&bootstrap).await;
 
-        for target in [Role::Distributor, Role::Compactor, Role::Querier] {
+        for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
             check!(
                 require_role_topics(&config_for(target, Some(bootstrap.clone())))
                     .await
@@ -178,7 +178,7 @@ mod tests {
     /// must not be the thing that stops it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_role_with_no_broker_configured_is_not_held_up_by_the_contract() {
-        for target in [Role::Distributor, Role::Compactor, Role::Querier] {
+        for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
             check!(
                 require_role_topics(&config_for(target, None)).await.is_ok(),
                 "{target:?}"

@@ -42,7 +42,7 @@ impl KafkaLogWalConsumer {
         let topic = topic.into();
         let consumer = Consumer::builder()
             .bootstrap(bootstrap)
-            .client_id("krabka-observability-compactor")
+            .client_id("krabka-observability-block-builder")
             .dispatch_queue_capacity(client_resource_policy.dispatch_queue_capacity.get())
             .frame_max(client_resource_policy.frame_max.size())
             .group_id(group_id)

@@ -62,7 +62,7 @@ fn minimal_service_config(target: Role) -> ServiceConfig {
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -134,7 +134,7 @@ async fn role_operations_routes_match_existing_behavior() {
         BlockIndex::default(),
     ));
     let compactor = build_service_router(
-        &minimal_service_config(Role::Compactor),
+        &minimal_service_config(Role::BlockBuilder),
         ServiceDependencies::default(),
         None,
     )
@@ -144,7 +144,7 @@ async fn role_operations_routes_match_existing_behavior() {
     for (name, app) in [
         ("distributor", distributor),
         ("querier", querier),
-        ("compactor", compactor),
+        ("block-builder", compactor),
     ] {
         let response = get_response(app.clone(), "/ready").await;
         assert!(response.status() == StatusCode::OK, "{name} /ready status");
@@ -303,7 +303,7 @@ async fn role_ring_alias_routes_remain_available() {
         BlockIndex::default(),
     ));
     let compactor = build_service_router(
-        &minimal_service_config(Role::Compactor),
+        &minimal_service_config(Role::BlockBuilder),
         ServiceDependencies::default(),
         None,
     )
@@ -335,7 +335,7 @@ async fn service_router_builds_distributor_role() {
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -401,7 +401,7 @@ async fn service_router_rejects_stale_loki_push_timestamp_without_wal_append() {
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -465,7 +465,7 @@ async fn service_router_rejects_missing_protobuf_timestamp_like_loki_without_wal
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -533,7 +533,7 @@ async fn service_router_rejects_future_loki_push_timestamp_without_wal_append() 
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -598,7 +598,7 @@ async fn service_router_rejects_future_otlp_timestamp_without_wal_append() {
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -674,7 +674,7 @@ async fn service_router_rejects_loki_push_over_configured_ingest_body_limit_with
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -737,7 +737,7 @@ async fn service_router_rejects_loki_push_over_ingest_quota_without_wal_append()
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -806,7 +806,7 @@ async fn service_router_times_out_loki_push_when_wal_append_stalls() {
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -873,7 +873,7 @@ async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -947,7 +947,7 @@ async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -1589,4 +1589,76 @@ fn expected_loki_ingester_stats_with(lines: u64) -> Value {
             "totalLinesProcessed": lines
         }
     })
+}
+
+/// One router, both halves of the surface.
+///
+/// `--target all` merges the distributor's write routes and the querier's read
+/// routes onto one listener, and each role also contributes an ops surface --
+/// `/ready`, `/config`, `/services` and the ring pages. Merged without care
+/// those ops routes collide and `axum` panics at construction, so a router
+/// that builds at all is already saying something. What it has to say as well
+/// is that neither half was lost: a `--target all` serving only the query
+/// routes would take no push, and one serving only the push routes would
+/// answer no query, and both would pass a probe.
+#[tokio::test]
+async fn the_all_in_one_router_serves_the_write_and_read_surfaces_together() {
+    // A real directory with a manifest in it: the querier half reads its local
+    // index from `--data-root` as it constructs its routes, and keeps its
+    // delete-request store and its rules there too.
+    let data_root = tempfile::tempdir().expect("data root");
+    write_log_index_manifest(
+        data_root.path(),
+        &LabelIndex::default(),
+        &BlockIndex::default(),
+    )
+    .expect("an empty local manifest");
+    let mut config = minimal_service_config(Role::All);
+    config.data_root = data_root.path().to_path_buf();
+    config.index_prefix = Some("logs".to_string());
+    let app = build_service_router(
+        &config,
+        ServiceDependencies::default().with_wal_sink(InMemoryWalSink::default()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let response = get_response(app.clone(), "/ready").await;
+    assert!(response.status() == StatusCode::OK);
+    assert!(text_body(response).await == "ready\n");
+
+    // `Loki` reports `all` from a process that runs every module, and a
+    // runbook pointed at this one should read the same.
+    let response = get_response(app.clone(), "/config").await;
+    assert!(text_body(response).await.contains("target: all"));
+
+    let pushed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/loki/api/v1/push")
+                .header("content-type", "application/json")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::from(
+                    r#"{"streams":[{"stream":{"app":"api"},"values":[["1","hello"]]}]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(pushed.status() != StatusCode::NOT_FOUND);
+
+    let queried = get_response(
+        app.clone(),
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0&end=10",
+    )
+    .await;
+    assert!(queried.status() != StatusCode::NOT_FOUND);
+
+    // The block builder's half of the surface. `Loki` serves delete requests
+    // from the role that writes durable storage, and so does this.
+    let deletes = get_response(app, "/loki/api/v1/delete").await;
+    assert!(deletes.status() != StatusCode::NOT_FOUND);
 }

@@ -15,8 +15,10 @@ use crate::{
     set_prepare_shutdown, shutdown_ingester, unset_prepare_shutdown, validate_ingest_body_limit,
 };
 
-mod compactor_ops;
+mod all_ops;
+mod block_builder_ops;
 mod distributor_ops;
+mod distributor_push_routes;
 mod distributor_router;
 mod distributor_router_with_sink;
 mod distributor_state;
@@ -47,8 +49,10 @@ mod querier_ops;
 mod role_ops;
 mod with_role_ops_routes;
 
-pub(crate) use compactor_ops::COMPACTOR_OPS;
+pub(crate) use all_ops::ALL_OPS;
+pub(crate) use block_builder_ops::BLOCK_BUILDER_OPS;
 pub(crate) use distributor_ops::DISTRIBUTOR_OPS;
+pub(crate) use distributor_push_routes::distributor_push_routes;
 pub use distributor_router::distributor_router;
 pub(crate) use distributor_router_with_sink::distributor_router_with_sink;
 pub use distributor_state::DistributorState;

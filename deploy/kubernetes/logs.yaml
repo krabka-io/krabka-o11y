@@ -121,17 +121,17 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: logs-compactor
+  name: logs-block-builder
 spec:
   strategy: {type: Recreate}
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: logs-compactor
+      app.kubernetes.io/name: logs-block-builder
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: logs-compactor
+        app.kubernetes.io/name: logs-block-builder
     spec:
       # The compaction batch in flight when SIGTERM arrives runs to
       # completion before the process exits, deliberately: a batch killed
@@ -171,7 +171,7 @@ spec:
         - name: role
           image: ghcr.io/krabka-io/krabka-o11y
           command: [krabka-observability]
-          args: [--config.file=/etc/krabka/logs-compactor.yaml]
+          args: [--config.file=/etc/krabka/logs-block-builder.yaml]
           envFrom:
             - secretRef: {name: krabka-object-store}
             - configMapRef: {name: krabka-object-store-endpoint}
@@ -215,12 +215,12 @@ spec:
         # WAL or the object store -- an emptyDir would lose a tenant's
         # outstanding deletes on every reschedule, silently.
         - name: state
-          persistentVolumeClaim: {claimName: logs-compactor}
+          persistentVolumeClaim: {claimName: logs-block-builder}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: logs-compactor
+  name: logs-block-builder
 spec:
   accessModes: [ReadWriteOnce]
   resources:

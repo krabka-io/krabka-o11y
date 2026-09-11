@@ -109,6 +109,57 @@ mod tests {
         check!(cli.listen == "0.0.0.0:4444");
     }
 
+    /// One vocabulary, one spelling.
+    ///
+    /// `--target` is what an operator types; `RoleKind::as_str` is what a
+    /// readiness gate prints, what a manifest carries, and what the other
+    /// three signals' binaries accept for the same stage. Nothing forces the
+    /// two to agree: clap derives its names from the variant identifiers and
+    /// `RoleKind` spells its own, so a stage renamed on one side and not the
+    /// other would give the same role two names, with no error anywhere and
+    /// only a deployment that silently does not start to show for it. This is
+    /// the check that makes them one name. It goes through clap rather than
+    /// reading the source, because clap's rendering is the thing an operator
+    /// meets.
+    #[test]
+    fn every_target_spells_its_role_the_way_the_rest_of_the_stack_does() {
+        let mut mismatched = Vec::new();
+        for target in Target::value_variants() {
+            let typed = target
+                .to_possible_value()
+                .expect("every --target variant is reachable from the command line")
+                .get_name()
+                .to_string();
+            if typed != target.kind().as_str() {
+                mismatched.push((typed.clone(), target.kind().as_str()));
+                continue;
+            }
+            // And the name round-trips: what clap prints is what clap parses.
+            let parsed = Cli::try_parse_from(["krabka-traces", "--target", &typed])
+                .map(|cli| cli.target)
+                .ok();
+            check!(parsed == Some(*target), "--target {typed}");
+        }
+        check!(mismatched.is_empty());
+    }
+
+    /// The composite is a target of this binary, not only of the vocabulary.
+    #[test]
+    fn all_is_a_target_and_names_the_composite_role() {
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "all"]).unwrap();
+
+        check!(cli.target == Target::All);
+        check!(cli.target.kind().is_composite());
+        check!(
+            Target::value_variants()
+                .iter()
+                .filter(|target| target.kind().is_composite())
+                .count()
+                == 1,
+            "only one target composes the others"
+        );
+    }
+
     #[test]
     fn non_dimensioned_cli_arguments_have_environment_backing() {
         let command = Cli::command();
@@ -1842,7 +1893,10 @@ mod tests {
 
         // The querier appears twice: it tails the WAL only with an embedded
         // live store, and reaches no broker without one.
-        let roles: [(&[&str], bool); 8] = [
+        let roles: [(&[&str], bool); 9] = [
+            // `all` runs every WAL client this binary has, so it refuses for
+            // the same reason all four of them do -- once, not four times.
+            (&["--target", "all"], true),
             (&["--target", "distributor"], true),
             (&["--target", "block-builder"], true),
             (&["--target", "live-store"], true),
@@ -1890,6 +1944,16 @@ mod tests {
     }
 }
 
+/// `--target all` in one child process, driven only through its ports. The
+/// module is in the binary crate so the child can call `run` on a real `Cli`,
+/// and so it builds under Bazel as well as Cargo -- an integration test would
+/// have needed `CARGO_BIN_EXE_krabka-traces`, which only Cargo defines.
+#[cfg(test)]
+mod all_in_one_serves_ingest_and_query;
+
+mod all_role_context;
+mod all_role_stage;
+mod all_role_stages;
 mod alloc;
 mod apply_metrics_generator_cli_overrides;
 mod block_store_gates;
@@ -1909,6 +1973,7 @@ mod indexed_live_source;
 mod ingest_rate_from_cli;
 mod live_i64_param;
 mod live_span_batches;
+mod log_role_outcome;
 mod max_trace_size;
 mod metrics_flags;
 mod parse_client_dispatch_queue_capacity;
@@ -1932,6 +1997,8 @@ mod parse_unix_nano;
 mod promoted_attrs_from_cli;
 mod require_role_topics;
 mod run;
+mod run_all;
+mod run_all_query_frontend;
 mod run_block_builder;
 mod run_compactor;
 mod run_compactor_once;
@@ -1940,6 +2007,7 @@ mod run_live_store;
 mod run_metrics_generator;
 mod run_querier;
 mod run_query_frontend;
+mod shared_object_store;
 mod target;
 mod wal_consumer;
 
@@ -1947,6 +2015,9 @@ mod wal_consumer;
 // the static by attribute, so naming it here imports something nothing
 // reads -- which is a warning, not a link to the allocator.
 
+use all_role_context::AllRoleContext;
+use all_role_stage::{AllRoleStage, all_role_stage};
+use all_role_stages::all_role_stages;
 use apply_metrics_generator_cli_overrides::apply_metrics_generator_cli_overrides;
 use block_store_gates::BlockStoreGates;
 use build_live_store_router::build_live_store_router;
@@ -1967,6 +2038,7 @@ use indexed_live_source::IndexedLiveSource;
 use ingest_rate_from_cli::ingest_rate_from_cli;
 use live_i64_param::live_i64_param;
 use live_span_batches::live_span_batches;
+use log_role_outcome::log_role_outcome;
 use max_trace_size::max_trace_size;
 use metrics_flags::MetricsFlags;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
@@ -1990,6 +2062,8 @@ use parse_unix_nano::parse_unix_nano;
 use promoted_attrs_from_cli::promoted_attrs_from_cli;
 use require_role_topics::require_role_topics;
 use run::run;
+use run_all::run_all;
+use run_all_query_frontend::run_all_query_frontend;
 use run_block_builder::run_block_builder;
 use run_compactor::run_compactor;
 use run_compactor_once::run_compactor_once;
@@ -1998,6 +2072,7 @@ use run_live_store::run_live_store;
 use run_metrics_generator::run_metrics_generator;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
+use shared_object_store::SharedObjectStore;
 use target::Target;
 use wal_consumer::wal_consumer;
 

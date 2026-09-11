@@ -1,11 +1,12 @@
 # Prometheus remote-write and OTLP ingest, compaction, and the PromQL query
 # API.
 #
-# Three roles across two binaries. `krabka-metrics` ingests and compacts;
-# `krabka-metrics-service` answers queries. `krabka-metrics --target=querier`
-# also exists and serves only `/api/v1/status/buildinfo` -- it is not the
-# querier, and deploying it in place of this one would answer every query with
-# a 404 rather than with data.
+# Three roles across two binaries. `krabka-metrics` ingests and writes blocks;
+# its
+# `--target` takes `distributor` and `block-builder`. `krabka-metrics-service`
+# answers queries, and owns `querier`, `query-frontend` and `ruler`. The two
+# sets do not overlap: `krabka-metrics --target=querier` refuses to start, and
+# the refusal names the binary below.
 apiVersion: v1
 kind: Service
 metadata:
@@ -115,16 +116,16 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: metrics-compactor
+  name: metrics-block-builder
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: metrics-compactor
+      app.kubernetes.io/name: metrics-block-builder
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: metrics-compactor
+        app.kubernetes.io/name: metrics-block-builder
     spec:
       # One poll, one flush of the accumulated buffer, and the offset commit
       # after it. A kill before that commit replays the batch; a kill during
@@ -163,7 +164,7 @@ spec:
         - name: role
           image: ghcr.io/krabka-io/krabka-o11y
           command: [krabka-metrics]
-          args: [--config.file=/etc/krabka/metrics-compactor.yaml]
+          args: [--config.file=/etc/krabka/metrics-block-builder.yaml]
           envFrom:
             - secretRef: {name: krabka-object-store}
             - configMapRef: {name: krabka-object-store-endpoint}

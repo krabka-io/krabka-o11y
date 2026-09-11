@@ -4,16 +4,25 @@ use krabka_observability::{
 
 use super::*;
 
+/// Answers `TraceQL` over blocks, and over whatever live tier it can reach.
+///
+/// `listener` is already bound. The caller binds it because under
+/// `--target all` the querier takes an ephemeral loopback port and the
+/// query-frontend in the same process has to be told which one it got; a
+/// listener that bound itself could only be asked after it had started
+/// serving. Nothing is served on it until the startup below finishes, so a
+/// probe arriving in that window waits rather than being answered wrongly.
 pub(crate) async fn run_querier(
     cli: Cli,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     shutdown: CancellationToken,
+    listener: tokio::net::TcpListener,
+    object_store: &SharedObjectStore,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let addr: SocketAddr = cli.listen.parse()?;
     // Registered before any of the work, and in the order the start meets it.
     // The object store, the index snapshot and the embedded live-store
-    // consumer are all built before the data port binds, so the honest report
+    // consumer are all built before the router is served, so the honest report
     // of this window lands on the admin port; the data port echoes the same
     // gates for the query-frontend that probes it.
     let gates = BlockStoreGates::register(&readiness);
@@ -32,6 +41,7 @@ pub(crate) async fn run_querier(
         live_store.clone(),
         &gates,
         readiness,
+        object_store,
     )
     .await?;
     // Both loops below decide what this querier can see. Supervised, so that a
@@ -93,7 +103,6 @@ pub(crate) async fn run_querier(
             }
         }
     });
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     tracing::info!(%bound, "traces querier listening");
     let server_shutdown = shutdown.clone();

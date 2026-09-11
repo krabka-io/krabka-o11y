@@ -2,7 +2,7 @@ use krabka_observability::RoleReadiness;
 use krabka_units::{Time, convert::TimeExt as _, fmt::Human as _};
 
 use super::{
-    CancellationToken, Cli, ServiceMetrics, build_object_store, compaction_policy_from_cli,
+    CancellationToken, Cli, ServiceMetrics, SharedObjectStore, compaction_policy_from_cli,
     run_compactor_once,
 };
 
@@ -16,12 +16,13 @@ pub(crate) async fn run_compactor(
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     shutdown: CancellationToken,
+    object_store: &SharedObjectStore,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // The one thing a compactor cannot work without. Each pass loads the index
     // itself, so there is no index gate to hold: a pass that cannot read one
     // fails and the next tick retries.
     let object_store_gate = readiness.gate("object-store");
-    let configured = build_object_store(&cli, metrics.object_store.clone())?;
+    let configured = object_store.get(&cli, metrics.object_store.clone()).await?;
     object_store_gate.mark_ready();
     let policy = compaction_policy_from_cli(&cli);
     tracing::info!(

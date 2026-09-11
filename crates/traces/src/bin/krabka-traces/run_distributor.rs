@@ -5,11 +5,21 @@ use super::{
     distributor, ingest_rate_from_cli,
 };
 
+/// Accepts pushes on every ingest protocol traces speaks, and writes the WAL.
+///
+/// `serve_primary_listen` is false only under `--target all`, where `--listen`
+/// is the query-frontend's Tempo API port and cannot also be the
+/// distributor's. Nothing is lost by dropping it there: the primary listener
+/// serves [`distributor::serve`]'s router, and `--otlp-http-listen` serves the
+/// *same* router from the same state, so every route reachable on `--listen`
+/// is reachable on 4318. The six protocol ports below are unaffected, because
+/// those are the ports a collector is configured with.
 pub(crate) async fn run_distributor(
     cli: Cli,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     shutdown: CancellationToken,
+    serve_primary_listen: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Nowhere to put a push until the WAL producer has a broker, and the seven
     // ingest listeners below all bind after it. The admin port is already up,
@@ -37,7 +47,6 @@ pub(crate) async fn run_distributor(
     state.shared_limits = state.limits.to_shared_limits();
     state.max_decompressed = cli.max_decompressed_bytes;
     let state = Arc::new(state);
-    let addr: SocketAddr = cli.listen.parse()?;
     let grpc_addr: SocketAddr = cli.grpc_listen.parse()?;
     let otlp_http_addr: SocketAddr = cli.otlp_http_listen.parse()?;
     let jaeger_grpc_addr: SocketAddr = cli.jaeger_grpc_listen.parse()?;
@@ -92,9 +101,12 @@ pub(crate) async fn run_distributor(
         distributor::serve(zipkin_addr, Arc::clone(&state), shutdown.clone()).await?;
     tasks.adopt("traces distributor Zipkin HTTP", zipkin);
     tracing::info!(%zipkin_bound, "traces distributor Zipkin HTTP listening");
-    let (bound, primary) = distributor::serve(addr, state, shutdown.clone()).await?;
-    tasks.adopt("traces distributor HTTP", primary);
-    tracing::info!(%bound, "traces distributor listening");
+    if serve_primary_listen {
+        let addr: SocketAddr = cli.listen.parse()?;
+        let (bound, primary) = distributor::serve(addr, state, shutdown.clone()).await?;
+        tasks.adopt("traces distributor HTTP", primary);
+        tracing::info!(%bound, "traces distributor listening");
+    }
 
     let outcome = tokio::select! {
         () = shutdown.cancelled() => Ok(()),

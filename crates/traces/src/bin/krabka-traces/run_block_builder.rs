@@ -1,15 +1,22 @@
 use krabka_observability::RoleReadiness;
 
 use super::{
-    Arc, BlockStoreGates, BlockWriter, CancellationToken, Cli, Mutex, ServiceMetrics, TraceIndex,
-    blockbuilder, build_object_store, promoted_attrs_from_cli, wal_consumer,
+    Arc, BlockStoreGates, BlockWriter, CancellationToken, Cli, Mutex, ServiceMetrics,
+    SharedObjectStore, TraceIndex, blockbuilder, promoted_attrs_from_cli, wal_consumer,
 };
 
+/// Consumes the traces WAL and writes blocks.
+///
+/// `object_store` is the process's store, not this role's: under
+/// `--target all` the querier reads back exactly what this role writes, and
+/// [`SharedObjectStore`] is what makes those the same store rather than two
+/// that happen to share a URL.
 pub(crate) async fn run_block_builder(
     cli: Cli,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     shutdown: CancellationToken,
+    object_store: &SharedObjectStore,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // The role has no data port, so the admin port is the only place these
     // report. It still needs them: a block builder that has not reached the
@@ -28,7 +35,7 @@ pub(crate) async fn run_block_builder(
     )
     .await?;
     wal_consumer_gate.mark_ready();
-    let configured = build_object_store(&cli, metrics.object_store.clone())?;
+    let configured = object_store.get(&cli, metrics.object_store.clone()).await?;
     gates.object_store.mark_ready();
     let writer =
         BlockWriter::new(configured.store.clone()).with_metrics(metrics.object_store.clone());

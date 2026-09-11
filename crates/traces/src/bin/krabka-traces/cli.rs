@@ -10,7 +10,7 @@ use super::{
     parse_scan_concat_max, parse_unix_nano,
 };
 
-#[derive(Debug, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(name = "krabka-traces")]
 #[command(about = "Tempo-compatible traces service for Krabka")]
 pub(crate) struct Cli {
@@ -395,4 +395,21 @@ pub(crate) struct Cli {
     pub(crate) metrics_generator_poll_error_backoff: Time,
     #[arg(long, env = "KRABKA_TRACES_CONFIG")]
     pub(crate) config: Option<String>,
+    /// How long one role of `--target all` gets to stop before the next one is
+    /// asked to. Default: `30s`.
+    ///
+    /// The stop is staged, so this is a per-stage budget and not a budget for
+    /// the process: seven roles can take seven times this long. It wants to be
+    /// short enough that the whole stop fits inside an orchestrator's
+    /// termination grace period, and long enough that the block builder can
+    /// finish the flush and the offset commit it is in the middle of -- a
+    /// stage abandoned mid-flush is spans that were accepted and are in no
+    /// block.
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_ALL_DRAIN_STAGE_TIMEOUT",
+        default_value = "30s",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) all_drain_stage_timeout: Time,
 }

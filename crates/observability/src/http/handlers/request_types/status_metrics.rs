@@ -1,7 +1,11 @@
 use super::{IntoResponse, Response, StatusCode};
 
 pub(crate) fn status_metrics(component: &'static str) -> Response {
-    let compactor_running = usize::from(component == "compactor");
+    // `Loki` sets this to 1 on any process that runs its compactor, which for
+    // Krabka means the role that writes durable storage -- the block builder
+    // -- and the all-in-one that contains it. A `Loki` dashboard keyed on this
+    // gauge would otherwise report a stack with no compactor running at all.
+    let compactor_running = usize::from(matches!(component, "compactor" | "all"));
     (
         StatusCode::OK,
         [("content-type", "text/plain; version=0.0.4; charset=utf-8")],

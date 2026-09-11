@@ -1,6 +1,6 @@
 use super::{
     Cli, RoleReadiness, ServiceMetrics, Target, readiness_router, require_role_topics,
-    run_compactor, run_distributor, run_querier, run_query_frontend, run_ruler,
+    run_block_builder, run_distributor,
 };
 
 /// Starts the role `cli` selects and serves until it stops.
@@ -13,10 +13,14 @@ use super::{
 /// Returns an error when the topic contract does not hold, when the admin port
 /// cannot bind, or when the role itself fails.
 pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    // The role in the vocabulary every signal shares, not this binary's own
+    // spelling of it. An operator reading four services' logs should see one
+    // word for one stage.
+    tracing::info!(role = %cli.target.kind(), "krabka-metrics starting");
     let metrics = ServiceMetrics::new();
     // The admin port binds before the role reaches its broker or object
     // store, so `/ready` there is 503 for exactly as long as the role's
-    // remaining startup takes. The compactor has no data port at all, and
+    // remaining startup takes. The block builder has no data port at all, and
     // this is the only place it can be asked.
     let readiness = RoleReadiness::new();
     let admin = krabka_telemetry::profiling::spawn_admin_with_config(
@@ -35,10 +39,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         require_role_topics(&cli).await?;
         match cli.target {
             Target::Distributor => run_distributor(cli, metrics, readiness).await?,
-            Target::Compactor => run_compactor(cli, metrics, readiness).await?,
-            Target::Querier => run_querier(cli, readiness).await?,
-            Target::QueryFrontend => run_query_frontend(cli, readiness).await?,
-            Target::Ruler => run_ruler(cli, readiness).await?,
+            Target::BlockBuilder => run_block_builder(cli, metrics, readiness).await?,
         }
         Ok::<(), Box<dyn std::error::Error>>(())
     };

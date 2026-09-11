@@ -22,6 +22,9 @@ use super::{
 /// A refresh that merely fails is not an exit: the loop logs it, keeps the
 /// last good frontier, and tries again on the next tick. Only cancellation
 /// (a clean return) and a panic end the task.
+/// Dropping the handle is the defect this signature exists to prevent, so it is
+/// a compile error rather than a review catch.
+#[must_use]
 #[cfg_attr(test, mutants::skip)]
 pub(crate) fn spawn_compaction_frontier_refresher(
     store: Arc<dyn ObjectStore>,

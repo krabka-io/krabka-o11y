@@ -48,7 +48,7 @@ pub struct ServiceConfig {
     #[arg(
         long,
         env = "KRABKA_OBSERVABILITY_WAL_GROUP_ID",
-        default_value = "krabka-observability-compactor"
+        default_value = "krabka-observability-block-builder"
     )]
     pub wal_group_id: String,
 
@@ -160,6 +160,16 @@ pub struct ServiceConfig {
     #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", default_value = "10ms", value_parser = krabka_units::parse::positive_time)]
     pub compactor_idle_interval: Time,
 
+    /// How long one stage of a `--target all` stop may take before the next
+    /// stage is asked to stop anyway.
+    ///
+    /// The stop is staged so that the data port drains before the block
+    /// builder empties the WAL behind it. A stage that hangs would otherwise
+    /// hold the whole process past an orchestrator's grace period and be
+    /// killed mid-write, which is the failure the staging exists to avoid.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_ALL_DRAIN_STAGE_TIMEOUT", default_value = "30s", value_parser = krabka_units::parse::positive_time)]
+    pub all_drain_stage_timeout: Time,
+
     #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_INITIAL_BACKOFF", default_value = "10ms", value_parser = krabka_units::parse::positive_time)]
     pub compactor_object_store_initial_backoff: Time,
 
@@ -209,7 +219,7 @@ impl Default for ServiceConfig {
             object_store_url: None,
             wal_bootstrap_server: None,
             wal_topic: "__krabka_observability_logs_wal".to_string(),
-            wal_group_id: "krabka-observability-compactor".to_string(),
+            wal_group_id: "krabka-observability-block-builder".to_string(),
             data_root: PathBuf::from("."),
             querier_index_source: QuerierIndexSource::LocalManifest,
             tenant: None,
@@ -235,6 +245,7 @@ impl Default for ServiceConfig {
             compactor_max_records_per_batch: NonZeroUsize::new(4096)
                 .expect("default compactor batch size is nonzero"),
             compactor_idle_interval: millis(10),
+            all_drain_stage_timeout: secs(30),
             compactor_object_store_initial_backoff: millis(10),
             compactor_object_store_max_backoff: millis(500),
             querier_frontier_refresh_interval: secs(5),

@@ -1,7 +1,8 @@
 # krabka-metrics-service --target=querier
 #
-# The PromQL query API. `krabka-metrics --target=querier` is a stub that serves
-# only `/api/v1/status/buildinfo`; this binary is the querier.
+# The PromQL query API. The querier, the query-frontend and the ruler are roles
+# of this binary; `krabka-metrics` is the write path and refuses all three,
+# naming this binary when it does.
 #
 # `wal-bootstrap` is what makes the answer include the last few minutes. It is
 # optional to clap and not optional in practice: without it the WAL-head task

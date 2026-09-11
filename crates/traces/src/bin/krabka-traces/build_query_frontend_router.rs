@@ -9,7 +9,9 @@ pub(crate) async fn build_query_frontend_router(
 
     let addr: SocketAddr = cli.listen.parse()?;
     let cfg = frontend_config_from_cli(cli, addr)?;
-    let catalog = build_trace_index_catalog(cli, &ServiceMetrics::new(), None).await?;
+    let catalog =
+        build_trace_index_catalog(cli, &ServiceMetrics::new(), None, &SharedObjectStore::new())
+            .await?;
     let backend = HttpQuerier::new(cfg.request_timeout.to_std())?;
     // The router test double skips the probe loop: the configured endpoints
     // are the membership, all ready.

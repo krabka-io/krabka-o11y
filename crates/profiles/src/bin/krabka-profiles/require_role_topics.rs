@@ -28,11 +28,20 @@ pub(crate) async fn require_role_topics(cli: &Cli) -> Result<(), TopicContractEr
 impl Target {
     /// Whether this role opens a WAL client. The match is exhaustive so a new
     /// role has to answer the question rather than inherit an answer.
+    ///
+    /// `all` answers once for the process rather than once per role it
+    /// composes: it runs four roles that open WAL clients, and asking the
+    /// broker the same question four times would turn one contract violation
+    /// into four indistinguishable start failures.
     pub(crate) fn touches_the_wal(self) -> bool {
         match self {
             // The querier and the query-frontend both tail the WAL for their
             // hot tier.
-            Self::Distributor | Self::BlockBuilder | Self::Querier | Self::QueryFrontend => true,
+            Self::Distributor
+            | Self::BlockBuilder
+            | Self::Querier
+            | Self::QueryFrontend
+            | Self::All => true,
             Self::Compactor | Self::Symbolizer => false,
         }
     }

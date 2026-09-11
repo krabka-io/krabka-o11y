@@ -143,6 +143,7 @@ mod log_level;
 mod panic_containment;
 mod querier;
 mod readiness;
+mod role;
 mod ruler;
 mod service;
 mod service_runtime;
@@ -194,14 +195,16 @@ pub use querier::{
     execute_tail_query_with_frontier, metric_plan_scan_sql, stream_plan_scan_sql,
 };
 pub use readiness::{DRAINING_GATE, ReadinessGate, RoleReadiness, readiness_router, ready};
+pub use role::RoleKind;
 pub use service::{
     ActiveLogDeleteFilterError, ClientResourcePolicy, LogDeleteRequestStoreError,
     LokiRuleStoreError, ServiceDependencies, ServiceStatus, SharedLogDeleteRequests, run,
 };
 pub use service_runtime::{
-    build_service_router, serve_service, serve_service_listener, shutdown_signal,
+    build_service_router, serve_all_service_listener, serve_service, serve_service_listener,
+    shutdown_signal,
 };
-pub use supervision::{CriticalTaskError, SupervisedTasks};
+pub use supervision::{CriticalTaskError, StagedDrain, SupervisedTasks};
 pub use wal::{
     BufferedLogHotTail, HotTailPollError, InMemoryWalSink, IngestLimitError, KafkaLogWalConsumer,
     KafkaLogWalSink, LogHotTail, LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink,
@@ -262,10 +265,10 @@ pub(crate) use self::{
             rfc3339_seconds, validate_ingest_timestamp_ns, validate_loki_timestamp_window,
         },
         router::{
-            COMPACTOR_OPS, LokiProtoLabelPair, LokiProtoPushRequest, LokiProtoTimestamp,
-            LokiPushRequest, LokiTypedPushRequest, OtlpAnyValue, OtlpKeyValue, OtlpLogRecord,
-            OtlpLogsRequest, QUERIER_OPS, RoleOps, distributor_router_with_sink,
-            with_role_ops_routes,
+            ALL_OPS, BLOCK_BUILDER_OPS, LokiProtoLabelPair, LokiProtoPushRequest,
+            LokiProtoTimestamp, LokiPushRequest, LokiTypedPushRequest, OtlpAnyValue, OtlpKeyValue,
+            OtlpLogRecord, OtlpLogsRequest, QUERIER_OPS, RoleOps, distributor_push_routes,
+            distributor_router_with_sink, with_role_ops_routes,
         },
         value_conversion::{
             hex_string, metadata_value_to_string, otlp_value_to_json, parse_structured_metadata,
@@ -372,10 +375,10 @@ pub(crate) use self::{
             query_stats::loki_query_stats,
         },
         router::{
-            compactor_router_with_delete_requests, flush_ingester_chunks, get_prepare_shutdown,
-            log_level, log_level_post, loki_router_with_readiness, memberlist_status, role_config,
-            role_metrics, role_ring, role_services, set_prepare_shutdown, shutdown_ingester,
-            unset_prepare_shutdown,
+            compactor_router_with_delete_requests, delete_request_routes, flush_ingester_chunks,
+            get_prepare_shutdown, log_level, log_level_post, loki_query_routes, memberlist_status,
+            role_config, role_metrics, role_ring, role_services, set_prepare_shutdown,
+            shutdown_ingester, unset_prepare_shutdown,
         },
     },
     querier::{

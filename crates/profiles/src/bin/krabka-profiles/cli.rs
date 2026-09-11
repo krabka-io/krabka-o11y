@@ -29,6 +29,21 @@ pub(crate) struct Cli {
     pub(crate) listen: SocketAddr,
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
+    /// How long each role gets to finish when `--target all` stops. Default:
+    /// `30s`.
+    ///
+    /// The roles stop one at a time and in order, so this is a per-role budget
+    /// rather than the whole stop's. A role that overruns it is left behind
+    /// rather than allowed to hold the stop open: an orchestrator's grace
+    /// period is finite, and a process that spends all of it inside one role
+    /// is killed before the roles behind that one have stopped at all.
+    #[arg(
+        long,
+        env = "KRABKA_PROFILES_ALL_DRAIN_STAGE_TIMEOUT",
+        default_value = "30s",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) all_drain_stage_timeout: Time,
     #[arg(
         long,
         env = "KRABKA_PROFILES_BOOTSTRAP",

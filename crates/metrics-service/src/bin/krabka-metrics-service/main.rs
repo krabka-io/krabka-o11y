@@ -38,7 +38,7 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use assert2::check;
-    use clap::Parser;
+    use clap::{Parser, ValueEnum as _};
 
     use super::*;
 
@@ -55,6 +55,30 @@ mod tests {
         assert2::check!(cli.listen.port() == 4041);
         assert2::check!(cli.admin_listen_addr.ip().is_unspecified());
         assert2::check!(cli.admin_listen_addr.port() == 9404);
+    }
+
+    /// One stage, one spelling. A `--target` value that drifted from the
+    /// shared vocabulary would put a second name on a stage an operator
+    /// already runs under another signal, which is exactly the hazard the
+    /// vocabulary removes. The check goes through clap rather than through the
+    /// enum's `Debug`, because the string clap accepts is the one a manifest
+    /// carries.
+    #[test]
+    fn every_target_is_spelled_as_the_shared_vocabulary_spells_it() {
+        for target in Target::value_variants() {
+            let possible = target
+                .to_possible_value()
+                .expect("every target is a possible value");
+            assert2::check!(possible.get_name() == target.kind().as_str(), "{target:?}");
+            assert2::check!(
+                Cli::try_parse_from(
+                    ["krabka-metrics-service", "--target", target.kind().as_str(),]
+                )
+                .expect("the shared name parses")
+                .target
+                    == *target
+            );
+        }
     }
 
     #[test]
@@ -827,6 +851,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // against an uncompacted state topic loses every pending alert at
             // the retention window; neither reports itself.
             require_role_topics(&cli).await?;
+            // The role in the vocabulary every signal shares, not this
+            // binary's own spelling of it. An operator reading four services'
+            // logs should see one word for one stage.
+            tracing::info!(role = %cli.target.kind(), "krabka-metrics-service starting");
             match cli.target {
                 Target::Querier => run_querier(cli, metrics, readiness).await?,
                 Target::QueryFrontend => run_query_frontend(cli, metrics, readiness).await?,

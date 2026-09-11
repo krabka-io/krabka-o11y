@@ -1,7 +1,7 @@
 use axum::response::IntoResponse;
 
 use crate::{
-    Bytes, COMPACTOR_OPS, CompactorDeleteState, DRAINING_GATE, DistributorState, Extension,
+    BLOCK_BUILDER_OPS, Bytes, CompactorDeleteState, DRAINING_GATE, DistributorState, Extension,
     HttpQueryError, LogLevelControl, LogLevelError, QUERIER_OPS, QuerierState, RawQuery, Response,
     RoleOps, RoleReadiness, Router, SharedLogDeleteRequests, State, StatusCode,
     api_prom_label_names, api_prom_label_names_post, api_prom_label_values,
@@ -23,12 +23,14 @@ use crate::{
 };
 
 mod compactor_router_with_delete_requests;
+mod delete_request_routes;
 mod flush_ingester_chunks;
 mod get_prepare_shutdown;
 mod log_level;
 mod log_level_failed_response;
 mod log_level_post;
 mod loki_config_target;
+mod loki_query_routes;
 mod loki_router;
 mod loki_router_with_readiness;
 mod loki_service_modules;
@@ -49,12 +51,14 @@ mod status_services;
 mod unset_prepare_shutdown;
 
 pub(crate) use compactor_router_with_delete_requests::compactor_router_with_delete_requests;
+pub(crate) use delete_request_routes::delete_request_routes;
 pub(crate) use flush_ingester_chunks::flush_ingester_chunks;
 pub(crate) use get_prepare_shutdown::get_prepare_shutdown;
 pub(crate) use log_level::log_level;
 pub(crate) use log_level_failed_response::log_level_failed_response;
 pub(crate) use log_level_post::log_level_post;
 pub(crate) use loki_config_target::LOKI_CONFIG_TARGET;
+pub(crate) use loki_query_routes::loki_query_routes;
 pub use loki_router::loki_router;
 pub(crate) use loki_router_with_readiness::loki_router_with_readiness;
 pub(crate) use loki_service_modules::LOKI_SERVICE_MODULES;

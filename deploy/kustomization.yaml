@@ -27,10 +27,10 @@ configMapGenerator:
   - name: krabka-roles
     files:
       - roles/metrics-distributor.yaml
-      - roles/metrics-compactor.yaml
+      - roles/metrics-block-builder.yaml
       - roles/metrics-querier.yaml
       - roles/logs-distributor.yaml
-      - roles/logs-compactor.yaml
+      - roles/logs-block-builder.yaml
       - roles/logs-querier.yaml
       - roles/traces-distributor.yaml
       - roles/traces-block-builder.yaml

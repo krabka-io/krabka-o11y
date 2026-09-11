@@ -82,6 +82,23 @@ impl ServiceDependencies {
         self
     }
 
+    /// The same dependencies with the WAL consumer taken out.
+    ///
+    /// The querier takes whichever consumer it is handed as its hot tail. In a
+    /// process that runs only the querier that is the right reading, and it is
+    /// how a test injects a pre-connected consumer. In an all-in-one it is a
+    /// trap: the consumer in there is the block builder's, in the block
+    /// builder's group, and a querier polling it would take records off the
+    /// topic that the block builder then never sees and never writes to a
+    /// block. The records are acknowledged, queryable for as long as they sit
+    /// in the querier's hot tail, and gone. This is how the all-in-one hands
+    /// the querier its own deferred connect instead.
+    #[must_use]
+    pub(crate) fn without_wal_consumer(mut self) -> Self {
+        self.wal_consumer = None;
+        self
+    }
+
     #[must_use]
     pub fn with_ingest_limiter(mut self, limiter: impl LogIngestLimiter) -> Self {
         self.ingest_limiter = Some(Arc::new(limiter));

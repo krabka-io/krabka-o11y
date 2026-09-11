@@ -2334,12 +2334,12 @@ fn kafka_header(key: &str, value: &str) -> KafkaWalHeader {
 
 fn compactor_config(index_prefix: &str) -> ServiceConfig {
     ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,

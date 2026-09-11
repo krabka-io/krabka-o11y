@@ -105,12 +105,12 @@ fn run_compactor_child(root: std::path::PathBuf) {
             .await
             .expect("bind the compactor listener");
         let config = ServiceConfig {
-            target: Role::Compactor,
+            target: Role::BlockBuilder,
             listen_addr: "127.0.0.1:0".parse().expect("listen address"),
             object_store_url: None,
             wal_bootstrap_server: None,
             wal_topic: "__krabka_observability_logs_wal".to_string(),
-            wal_group_id: "krabka-observability-compactor".to_string(),
+            wal_group_id: "krabka-observability-block-builder".to_string(),
             data_root: root.join("data"),
             querier_index_source: QuerierIndexSource::LocalManifest,
             tenant: None,

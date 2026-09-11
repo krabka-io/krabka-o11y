@@ -23,7 +23,7 @@ per signal above them.
 | `krabka-promql` | PromQL: Prometheus' metric query language, with a conformance corpus |
 | `krabka-traceql` | TraceQL: Grafana Tempo's trace query language |
 | `krabka-pprof` | The pprof profile format, read and written |
-| `krabka-metrics` | Prometheus remote-write ingest |
+| `krabka-metrics` | Prometheus remote-write ingest, and the block builder behind it |
 | `krabka-metrics-service` | The PromQL query API, answering what Grafana and Prometheus ask |
 | `krabka-traces` | OTLP trace ingest and TraceQL serving |
 | `krabka-profiles` | Continuous-profiling ingest and pprof serving |
@@ -61,6 +61,17 @@ Bazel builds the image from the same targets `bazel test //...` tests:
 
 ```bash
 bazel run //bazel/images/krabka:load     # loads krabka-o11y:dev into Docker
+```
+
+Every signal names its stages with one vocabulary -- `distributor`,
+`block-builder`, `querier`, `query-frontend`, `compactor`, and the ones only
+one signal has -- taken from Loki, Mimir, Tempo and Pyroscope. `--target all`
+runs every role of a signal in one process on one port, which is the shape to
+evaluate the stack in:
+
+```bash
+docker run --rm ghcr.io/krabka-io/krabka-o11y@sha256:<digest> \
+  krabka-observability --target=all --wal-bootstrap-server=broker:9092
 ```
 
 [`deploy/`](deploy) holds a Docker Compose stack and a kustomize base that run

@@ -13,11 +13,12 @@ pub(crate) async fn build_trace_index_catalog(
     cli: &Cli,
     metrics: &ServiceMetrics,
     gates: Option<&BlockStoreGates>,
+    object_store: &SharedObjectStore,
 ) -> Result<TraceIndexCatalog, Box<dyn std::error::Error + Send + Sync>> {
     if cli.target_bytes_per_job == ByteSize::from_bytes(0) {
         return Ok(TraceIndexCatalog::new(std::collections::BTreeMap::new()));
     }
-    let configured = build_object_store(cli, metrics.object_store.clone())?;
+    let configured = object_store.get(cli, metrics.object_store.clone()).await?;
     if let Some(gates) = gates {
         gates.object_store.mark_ready();
     }

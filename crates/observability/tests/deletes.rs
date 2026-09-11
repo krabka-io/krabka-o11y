@@ -32,12 +32,12 @@ use tower::ServiceExt as _;
 async fn compactor_delete_endpoint_tracks_and_cancels_delete_requests() {
     let dir = tempfile::tempdir().unwrap().keep();
     let config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -135,12 +135,12 @@ async fn compactor_delete_endpoint_tracks_and_cancels_delete_requests() {
 async fn compactor_delete_endpoint_accepts_form_post_query_with_raw_ampersand() {
     let dir = tempfile::tempdir().unwrap().keep();
     let config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: dir,
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -197,12 +197,12 @@ async fn compactor_delete_endpoint_accepts_form_post_query_with_raw_ampersand() 
 #[tokio::test]
 async fn compactor_delete_endpoint_rejects_invalid_requests() {
     let config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -283,12 +283,12 @@ async fn compactor_delete_endpoint_rejects_invalid_requests() {
 async fn compactor_delete_requests_filter_querier_stream_results() {
     let delete_requests = SharedLogDeleteRequests::default();
     let compactor_config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -435,12 +435,12 @@ async fn compactor_delete_requests_persist_for_configured_querier() {
     write_log_index_manifest(&dir, &label_index, &block_index).unwrap();
 
     let compactor_config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: dir.clone(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -532,12 +532,12 @@ async fn compactor_delete_requests_persist_for_configured_querier() {
 async fn compactor_delete_requests_filter_querier_metric_results() {
     let delete_requests = SharedLogDeleteRequests::default();
     let compactor_config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -663,12 +663,12 @@ async fn compactor_delete_requests_filter_querier_metric_results() {
 async fn compactor_delete_requests_filter_querier_tail_results() {
     let delete_requests = SharedLogDeleteRequests::default();
     let compactor_config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -989,7 +989,7 @@ async fn compactor_delete_requests_filter_querier_detected_fields_results() {
 }
 
 async fn create_secret_delete_request(delete_requests: &SharedLogDeleteRequests) {
-    let compactor_config = test_service_config(Role::Compactor, ".");
+    let compactor_config = test_service_config(Role::BlockBuilder, ".");
     let compactor_app = build_service_router(
         &compactor_config,
         ServiceDependencies::default().with_delete_requests(delete_requests.clone()),

@@ -51,6 +51,78 @@ drain, the probes, and the stop behaviour recorded below were measured on it.
 The two share the image and the role configuration, so what is untested here is
 the probe, volume, and lifecycle wiring that only Kubernetes has.
 
+## Roles
+
+Every signal names its stages the same way, and the names are the ones Loki,
+Mimir, Tempo and Pyroscope use. A stage that exists in more than one signal is
+spelled identically in all of them, so a chart author learns one topology
+rather than four.
+
+| Role | What it does | Signals that have it |
+| --- | --- | --- |
+| `distributor` | Accepts pushes, applies limits, writes the WAL | all four |
+| `block-builder` | Consumes the WAL, writes blocks to object storage | all four |
+| `live-store` | Serves the window no block covers yet | traces |
+| `querier` | Answers a query over blocks and the live tier | all four |
+| `query-frontend` | Shards a query, fans out, merges | traces, profiles, metrics |
+| `compactor` | Merges blocks already in object storage, enforces retention | traces, profiles |
+| `ruler` | Evaluates recording and alerting rules | metrics |
+| `metrics-generator` | Derives metrics from spans and remote-writes them | traces |
+| `symbolizer` | Resolves profile addresses to function names | profiles |
+| `all` | Every role of that signal, in one process | logs, traces, profiles |
+
+The table's `metrics` column means the two metrics binaries together.
+
+The gaps are real, not oversights. Only traces keeps the recent window as a
+role of its own; a logs or metrics querier tails the WAL itself. Only metrics
+evaluates rules and only profiles resolves symbols. Logs and metrics have no
+`compactor`: logs folds retention and delete materialisation into its block
+builder, as Loki does, and nothing yet merges metric blocks that are already
+in object storage, so the metrics retention sweep rides in its block builder
+too.
+
+`block-builder` is the name that settled the one collision worth naming. Metrics
+and logs used to call this stage `compactor`, while traces and profiles used
+that word for the object-storage block merger -- one word, two jobs, depending
+on which binary was being read. Mimir and Tempo both spell the WAL-consuming
+stage `block-builder` on the Kafka ingest path this stack is built on, and all
+four upstreams reserve `compactor` for the merger.
+
+### One process
+
+`--target all` runs every role of a signal in one process, the way Loki's,
+Mimir's, Tempo's and Pyroscope's single binaries do. It is the shape to
+evaluate the stack in.
+
+There are no new ports to configure. Logs and profiles serve push and query on
+one listener, as `Loki` and `Pyroscope` do. Traces gives `--listen` to the
+query-frontend, keeps the ingest protocol ports, and has the querier and the
+live-store bind loopback ports the kernel chooses and the process wires up for
+itself.
+
+Readiness aggregates. `/ready` is 503 until every role of the process is up,
+and names the one holding it back: `not ready: block-builder/wal-consumer`.
+
+The stop is staged rather than simultaneous. The distributor goes first, so
+nothing new enters the WAL, and only then does the block builder flush what is
+behind it; the read path and the compactor go last, because neither holds
+anything a stop could lose. Stopping them together would leave the last
+acknowledged push in a WAL that, in a one-process stack, nothing restarts to
+read. `--all-drain-stage-timeout` bounds each stage, and should sit under the
+pod's `terminationGracePeriodSeconds`.
+
+[`roles/logs-all.yaml`](roles/logs-all.yaml),
+[`roles/traces-all.yaml`](roles/traces-all.yaml) and
+[`roles/profiles-all.yaml`](roles/profiles-all.yaml) are worked examples, and
+`//deploy:role_config_test` checks their keys against the binaries. The compose
+stack and the kustomize base run the roles separately on purpose: that is the
+topology a chart has to describe.
+
+Metrics has no `all`, and the reason is structural rather than an omission: it
+is the one signal whose roles are split across two binaries, `krabka-metrics`
+for the write path and `krabka-metrics-service` for the read path, so no single
+process holds them.
+
 ## Configuration
 
 Each role reads one YAML file from `roles/`. The keys are the binary's own long
@@ -104,17 +176,17 @@ is a TCP check on the admin port. A liveness probe on `/ready` restarts a role
 for being slow to load an index, which throws away the work it had loaded.
 
 **Grace periods are sized against what a drain does.** A distributor drains
-in-flight pushes that are already written to the WAL. A compactor finishes the
-batch in flight, because a batch killed halfway is replayed. The traces block
-builder waits up to one `block-builder-window` before it even notices the
+in-flight pushes that are already written to the WAL. A block builder finishes
+the batch in flight, because a batch killed halfway is replayed. The traces
+block builder waits up to one `block-builder-window` before it even notices the
 signal. The metrics-service ruler drains its alertmanager queue under a
 30-second bound.
 
 **Durable state gets a volume.** The broker's log directory holds the WAL and
 the consumer-group offsets that record how far each block builder has read. The
-logs compactor and the logs querier keep a local manifest and a delete-request
-store under `--data-root`. None of that is reconstructible, so none of it is on
-an `emptyDir`. Every other role gets an `emptyDir` for its working directory,
+logs block builder and the logs querier keep a local manifest and a
+delete-request store under `--data-root`. None of that is reconstructible, so
+none of it is on an `emptyDir`. Every other role gets an `emptyDir` for its working directory,
 because its state is in the broker and in the object store.
 
 **The topic contract is provisioned, not assumed.** `krabka-o11y-bootstrap`
@@ -148,4 +220,14 @@ membership probe asks it.
 **No probe reports how far behind a WAL consumer is.** A gate answers whether a
 consumer is attached, not whether it has caught up. A block builder that is
 attached and an hour behind reads as ready, and the lag is visible only in the
-metrics.
+metrics. This is true of `--target all` too, where one `/ready` now covers
+every role of the process.
+
+**Only the logs all-in-one empties the WAL on the way out.** Its stop ends with
+a pass that compacts whatever the block builder had not yet flushed, so a push
+the process accepted a moment earlier is in a block before it exits. The traces
+and profiles block builders flush what they have buffered and stop; a record
+produced after their last poll stays in the WAL, uncommitted, for the next start
+to replay. Nothing is durably lost either way -- offsets move only behind a
+flush -- but in those two signals the last records are not queryable until the
+process is started again.

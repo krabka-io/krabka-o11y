@@ -158,13 +158,13 @@ services:
       start_period: 120s
     stop_grace_period: 30s
 
-  metrics-compactor:
+  metrics-block-builder:
     !!merge <<: *krabka
-    command: [krabka-metrics, --config.file=/etc/krabka/metrics-compactor.yaml]
+    command: [krabka-metrics, --config.file=/etc/krabka/metrics-block-builder.yaml]
     depends_on: *needs-stack
     # No data port on this role, so the admin port is the only probe target.
     # It reports the `object-store` and `wal-consumer` gates, which is what
-    # "this compactor can do its job" means.
+    # "this block builder can do its job" means.
     healthcheck: &probe-admin
       test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:9404/ready"]
       interval: 5s
@@ -203,12 +203,12 @@ services:
       start_period: 120s
     stop_grace_period: 30s
 
-  logs-compactor:
+  logs-block-builder:
     !!merge <<: *krabka
-    command: [krabka-observability, --config.file=/etc/krabka/logs-compactor.yaml]
+    command: [krabka-observability, --config.file=/etc/krabka/logs-block-builder.yaml]
     volumes:
       - ../roles:/etc/krabka:ro
-      - logs-compactor-data:/var/lib/krabka
+      - logs-block-builder-data:/var/lib/krabka
     depends_on: *needs-stack
     healthcheck: *probe-3100
     # The compaction batch in flight when SIGTERM arrives runs to completion
@@ -313,5 +313,5 @@ services:
 volumes:
   broker-data:
   minio-data:
-  logs-compactor-data:
+  logs-block-builder-data:
   logs-querier-data:

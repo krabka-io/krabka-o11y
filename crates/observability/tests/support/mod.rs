@@ -288,7 +288,7 @@ pub async fn tenant_object_store_shard_catalog_service_fixture()
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: dir.clone(),
         querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
         tenant: Some("tenant-a".to_string()),
@@ -388,7 +388,7 @@ pub fn test_service_config(
     target: Role,
     data_root: impl Into<std::path::PathBuf>,
 ) -> ServiceConfig {
-    let index_prefix = if matches!(target, Role::Compactor) {
+    let index_prefix = if matches!(target, Role::BlockBuilder) {
         Some("observability/logs".to_string())
     } else {
         None

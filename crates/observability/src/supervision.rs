@@ -26,12 +26,14 @@
 //! problem, not the role's. Supervise what the role cannot serve correct
 //! answers without.
 
-use crate::{CancellationToken, Error, JoinHandle};
+use crate::{Arc, AtomicBool, AtomicOrdering, CancellationToken, Error, JoinHandle, Time, TimeExt};
 
 mod critical_task_error;
+mod staged_drain;
 mod supervised_tasks;
 #[cfg(test)]
 mod tests;
 
 pub use critical_task_error::CriticalTaskError;
+pub use staged_drain::StagedDrain;
 pub use supervised_tasks::SupervisedTasks;

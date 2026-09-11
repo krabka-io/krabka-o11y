@@ -15,6 +15,11 @@ use super::{Cli, Target};
 /// to validate a topic would make a broker they do not use a condition of
 /// their starting, which is a fault they do not have.
 ///
+/// This is called once per process, from [`run`](super::run), and not once per
+/// role. `--target all` runs four WAL clients behind one call: asking the
+/// contract four times would cost four round trips to say the same thing, and
+/// would let a process report the same misconfigured topic four times over.
+///
 /// # Errors
 /// Returns [`TopicContractError`] when no bootstrap address answers, or when a
 /// topic is absent.
@@ -30,7 +35,10 @@ pub(crate) async fn require_role_topics(cli: &Cli) -> Result<(), TopicContractEr
 /// has to answer the question rather than inherit an answer.
 fn touches_the_wal(cli: &Cli) -> bool {
     match cli.target {
-        Target::Distributor
+        // `All` runs the distributor, the block builder, the live-store and
+        // the metrics-generator, so it opens every WAL client this binary has.
+        Target::All
+        | Target::Distributor
         | Target::BlockBuilder
         | Target::LiveStore
         | Target::MetricsGenerator => true,

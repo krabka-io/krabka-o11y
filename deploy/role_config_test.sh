@@ -47,16 +47,19 @@ check() {
 }
 
 check "$metrics" metrics-distributor
-check "$metrics" metrics-compactor
+check "$metrics" metrics-block-builder
 check "$metrics_service" metrics-querier
 check "$observability" logs-distributor
-check "$observability" logs-compactor
+check "$observability" logs-block-builder
 check "$observability" logs-querier
+check "$observability" logs-all
 check "$traces" traces-distributor
 check "$traces" traces-block-builder
 check "$traces" traces-querier
+check "$traces" traces-all
 check "$profiles" profiles-distributor
 check "$profiles" profiles-block-builder
 check "$profiles" profiles-querier
+check "$profiles" profiles-all
 
 exit $failed

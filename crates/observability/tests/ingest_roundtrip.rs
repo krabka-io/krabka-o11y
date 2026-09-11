@@ -118,7 +118,7 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     let compactor_root = tempfile::tempdir().expect("compactor data root");
     let descriptors = run_compactor_until_idle(
         &roundtrip_config(
-            Role::Compactor,
+            Role::BlockBuilder,
             compactor_root.path().to_path_buf(),
             &bootstrap,
             &wal_topic,

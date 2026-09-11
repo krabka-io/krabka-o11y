@@ -1,7 +1,8 @@
 use super::{
     CancellationToken, CriticalTaskError, ObjectStore, Role, ServiceConfig, ServiceDependencies,
     ServiceRuntimeError, SupervisedTasks, TcpListener, build_service_router_with_shutdown,
-    contain_handler_panics, serve_compactor_service_listener, shutdown_signal,
+    contain_handler_panics, serve_all_service_listener, serve_compactor_service_listener,
+    shutdown_signal,
 };
 
 /// Serves a role on `listener` until it is asked to stop or one of its
@@ -24,9 +25,30 @@ pub async fn serve_service_listener(
     dependencies: ServiceDependencies,
     object_store: Option<&dyn ObjectStore>,
 ) -> Result<(), ServiceRuntimeError> {
-    if config.target == Role::Compactor {
+    if config.target == Role::BlockBuilder {
         return serve_compactor_service_listener(listener, config, dependencies, object_store)
             .await;
+    }
+    if config.target == Role::All {
+        let token = CancellationToken::new();
+        let token_sig = token.clone();
+        // Not supervised: this task is meant to finish, and finishing is how
+        // it does its job.
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            token_sig.cancel();
+        });
+        // Boxed: this future carries the whole all-in-one start-up, which is
+        // several KB, and would otherwise be inlined into every caller of
+        // `serve_service_listener` including the single-role ones.
+        return Box::pin(serve_all_service_listener(
+            listener,
+            config,
+            dependencies,
+            object_store,
+            token,
+        ))
+        .await;
     }
 
     let token = CancellationToken::new();
