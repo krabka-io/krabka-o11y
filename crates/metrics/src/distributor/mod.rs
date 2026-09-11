@@ -27,6 +27,7 @@ use krabka_blockstore::SeriesFingerprint;
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord};
 use krabka_ids::{Offset, PartitionIndex};
+use krabka_observability::wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined};
 use krabka_telemetry::propagation::current_trace_headers;
 use krabka_units::prelude::*;
 use opentelemetry_proto::tonic::{
@@ -2891,6 +2892,138 @@ overrides:
                 ..
             }
         ));
+    }
+
+    /// A sink that appends `accept` records and then fails every further
+    /// append. It reproduces the partial batch: the broker took some of one
+    /// request's records and refused the rest.
+    struct PartialSink {
+        accept: usize,
+        appended: Mutex<usize>,
+    }
+
+    impl PartialSink {
+        fn new(accept: usize) -> Self {
+            Self {
+                accept,
+                appended: Mutex::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WalSink for PartialSink {
+        async fn append(&self, _key: Bytes, _record: WalRecord) -> Result<(), ProduceError> {
+            let mut appended = self.appended.lock().expect("partial sink poisoned");
+            if *appended >= self.accept {
+                return Err(ProduceError::Append(
+                    "broker refused the record".to_string(),
+                ));
+            }
+            *appended += 1;
+            Ok(())
+        }
+    }
+
+    fn partial_push_request(body: Vec<u8>) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/push")
+            .header("Content-Type", "application/x-protobuf")
+            .header("Content-Encoding", "snappy")
+            .header("X-Scope-OrgID", "tenant-a")
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    /// A remote-write body whose records appended in part must not reach the
+    /// sender as a success. Prometheus retries the whole request on 5xx, which
+    /// is the behaviour this depends on, and it reads a 2xx as "every sample
+    /// landed". The status stays 500 and the body states how far the batch
+    /// got, so an operator reading the sender's log sees the partial extent.
+    #[tokio::test]
+    async fn a_partially_appended_batch_is_reported_as_a_failure_not_a_success() {
+        let sink = Arc::new(PartialSink::new(3));
+        let state = Arc::new(DistributorState::new(sink));
+
+        let response = router(state)
+            .oneshot(partial_push_request(v1_body_with_samples(10)))
+            .await
+            .unwrap();
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("reading the push response body");
+        let body = String::from_utf8(body.to_vec()).expect("the push error body is text");
+
+        check!(status == StatusCode::INTERNAL_SERVER_ERROR);
+        check!(
+            body == "wal append wrote 3 of 10 records: wal append failed: broker refused the record"
+        );
+    }
+
+    /// A failure must never carry the remote-write written-count headers. A
+    /// Prometheus 2.0 sender reads those to learn what landed, and a count on
+    /// a 500 would say a failed request wrote samples.
+    #[tokio::test]
+    async fn a_partially_appended_batch_carries_no_written_count_headers() {
+        let sink = Arc::new(PartialSink::new(3));
+        let state = Arc::new(DistributorState::new(sink));
+
+        let response = router(state)
+            .oneshot(partial_push_request(v1_body_with_samples(10)))
+            .await
+            .unwrap();
+
+        check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
+        check!(
+            response
+                .headers()
+                .get("X-Prometheus-Remote-Write-Samples-Written")
+                .is_none()
+        );
+    }
+
+    /// The partial batch has to be visible without reading a log line. It is
+    /// counted as a WAL append failure like any other, and a second time on
+    /// the shared produce instruments, which size what the sender's retry will
+    /// write twice.
+    #[tokio::test]
+    async fn a_partially_appended_batch_moves_the_produce_instruments() {
+        let sink = Arc::new(PartialSink::new(3));
+        let metrics = ServiceMetrics::new();
+        let state = Arc::new(DistributorState::new(sink).with_metrics(metrics.clone()));
+
+        let response = router(state)
+            .oneshot(partial_push_request(v1_body_with_samples(10)))
+            .await
+            .unwrap();
+
+        check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
+        check!(metrics.wal_append_failures.get() == 1);
+        check!(metrics.wal_produce.partial_batch_appends() == 1);
+        check!(metrics.wal_produce.unappended_records() == 7);
+    }
+
+    /// A batch that appended nothing is not partial. The sender's retry writes
+    /// each record one time, so the partial-batch family must stay at zero
+    /// while the failure is still counted and still a 500.
+    #[tokio::test]
+    async fn a_batch_that_appended_nothing_is_counted_as_a_clean_failure() {
+        let sink = Arc::new(PartialSink::new(0));
+        let metrics = ServiceMetrics::new();
+        let state = Arc::new(DistributorState::new(sink).with_metrics(metrics.clone()));
+
+        let response = router(state)
+            .oneshot(partial_push_request(v1_body_with_samples(10)))
+            .await
+            .unwrap();
+
+        check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
+        check!(metrics.wal_append_failures.get() == 1);
+        check!(metrics.wal_produce.partial_batch_appends() == 0);
+        check!(metrics.wal_produce.unappended_records() == 10);
     }
 }
 

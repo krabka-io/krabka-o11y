@@ -1,0 +1,10 @@
+# krabka-profiles --target=block-builder
+#
+# Unlike the traces block builder this one selects on shutdown first, so it
+# notices SIGTERM immediately and its drain is one final flush.
+target: block-builder
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+object-store-url: s3://krabka-profiles
+block-builder-flush-records: 4096
+block-builder-flush-max-age: 1m

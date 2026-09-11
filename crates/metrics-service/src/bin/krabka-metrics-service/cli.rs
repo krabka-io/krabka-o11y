@@ -178,6 +178,11 @@ pub(crate) struct Cli {
     pub(crate) ruler_state_topic: String,
     #[arg(long, env = "KRABKA_METRICS_WAL_BOOTSTRAP")]
     pub(crate) wal_bootstrap: Option<String>,
+    /// The Kafka consumer group the metrics querier's WAL head reader joins.
+    ///
+    /// This names the group. It does not scale the write path. See
+    /// `krabka_observability::wal_group_assignment` for what a change of a
+    /// group's membership costs.
     #[arg(
         long,
         env = "KRABKA_METRICS_WAL_GROUP_ID",

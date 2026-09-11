@@ -25,6 +25,8 @@ pub struct WalConsumerMetrics {
     last_consumed_offset: Family<WalPartitionLabel, Gauge>,
     polls: Family<WalPollOutcomeLabel, Counter>,
     receive_delay: Histogram,
+    partition_owned: Family<WalPartitionLabel, Gauge>,
+    partition_revocations: Family<WalPartitionLabel, Counter>,
 }
 
 impl WalConsumerMetrics {
@@ -64,6 +66,23 @@ impl WalConsumerMetrics {
              taken from the newest record in the poll.",
             this.receive_delay.clone(),
         );
+        registry.register(
+            "partition_owned",
+            "1 while the consumer group holds this topic partition on this \
+             member, 0 once the group has taken it away. Every partition of \
+             the role's WAL topic should read 1 on exactly one member at all \
+             times.",
+            this.partition_owned.clone(),
+        );
+        registry.register(
+            "partition_revocations",
+            "Times the consumer group has taken this topic partition away \
+             from this member. Any increase means records this member had \
+             polled and not yet written into a block were abandoned: see \
+             krabka_observability::wal_group_assignment. A group whose \
+             membership never changes never increments this.",
+            this.partition_revocations.clone(),
+        );
 
         this
     }
@@ -81,7 +100,39 @@ impl WalConsumerMetrics {
             last_consumed_offset: Family::default(),
             polls: Family::default(),
             receive_delay: Histogram::new(RECEIVE_DELAY_BUCKETS),
+            partition_owned: Family::default(),
+            partition_revocations: Family::default(),
         }
+    }
+
+    /// Records that the group has placed `partition` of `topic` on this member.
+    ///
+    /// Call it for the partitions of a first assignment as well as for the ones
+    /// a later assignment adds, so the gauge states the whole ownership set
+    /// rather than only its changes.
+    pub fn record_partition_assigned(&self, topic: &str, partition: i32) {
+        self.partition_owned
+            .get_or_create(&WalPartitionLabel {
+                topic: topic.to_owned(),
+                partition,
+            })
+            .set(1);
+    }
+
+    /// Records that the group has taken `partition` of `topic` away from this
+    /// member.
+    ///
+    /// The gauge drops to 0 and the counter moves. The counter is the one that
+    /// alerts: the gauge returns to 1 on whichever member picks the partition
+    /// up, so a dashboard reading only the gauge sees a group that looks
+    /// healthy moments after it dropped a member's buffered records.
+    pub fn record_partition_revoked(&self, topic: &str, partition: i32) {
+        let label = WalPartitionLabel {
+            topic: topic.to_owned(),
+            partition,
+        };
+        self.partition_owned.get_or_create(&label).set(0);
+        self.partition_revocations.get_or_create(&label).inc();
     }
 
     /// Records one poll that returned `records`, against the wall clock.
@@ -184,6 +235,28 @@ impl WalConsumerMetrics {
     #[must_use]
     pub fn last_consumed_offset(&self, topic: &str, partition: i32) -> i64 {
         self.last_consumed_offset
+            .get_or_create(&WalPartitionLabel {
+                topic: topic.to_owned(),
+                partition,
+            })
+            .get()
+    }
+
+    /// Whether this member currently holds one topic partition, as 1 or 0.
+    #[must_use]
+    pub fn partition_owned(&self, topic: &str, partition: i32) -> i64 {
+        self.partition_owned
+            .get_or_create(&WalPartitionLabel {
+                topic: topic.to_owned(),
+                partition,
+            })
+            .get()
+    }
+
+    /// The revocation count for one topic and partition.
+    #[must_use]
+    pub fn partition_revocations(&self, topic: &str, partition: i32) -> u64 {
+        self.partition_revocations
             .get_or_create(&WalPartitionLabel {
                 topic: topic.to_owned(),
                 partition,

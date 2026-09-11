@@ -20,6 +20,7 @@ use connectrpc_axum::{
     message::{Code, ConnectError, ConnectRequest, ConnectResponse},
 };
 use krabka_client_producer::{Header, Producer, ProducerRecord};
+use krabka_observability::wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined};
 use krabka_pprof::PprofProfile;
 use krabka_throttle::TokenBucket;
 #[cfg(test)]
@@ -569,6 +570,37 @@ mod tests {
         }
     }
 
+    /// A sink that appends `accept` records and then fails every further
+    /// append. It reproduces the partial batch: the broker took some of one
+    /// request's records and refused the rest.
+    struct PartialSink {
+        accept: usize,
+        appended: Mutex<usize>,
+    }
+
+    impl PartialSink {
+        fn new(accept: usize) -> Self {
+            Self {
+                accept,
+                appended: Mutex::new(0),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WalSink for PartialSink {
+        async fn append(&self, _rec: ProfileRecord) -> Result<(), ProfilesError> {
+            let mut appended = self.appended.lock().expect("partial sink poisoned");
+            if *appended >= self.accept {
+                return Err(ProfilesError::Produce(
+                    "simulated produce failure".to_string(),
+                ));
+            }
+            *appended += 1;
+            Ok(())
+        }
+    }
+
     fn state_with(sink: Arc<RecordingSink>) -> Arc<DistributorState> {
         Arc::new(DistributorState {
             sink,
@@ -659,6 +691,54 @@ mod tests {
             }],
             dictionary: Some(dictionary),
         }
+    }
+
+    /// An OTLP export whose records appended in part must not reach the client
+    /// as a success. Profiles have no query-time deduplication, so a client
+    /// that retries the whole export on a 500 writes the samples that already
+    /// landed a second time. The status is 500 and the body stays generic,
+    /// which is this crate's rule for every 5xx, so the partial extent is
+    /// reported on the produce instruments instead.
+    #[tokio::test]
+    async fn a_partially_appended_batch_is_reported_as_a_failure_not_a_success() {
+        let metrics = ServiceMetrics::new();
+        let state = Arc::new(DistributorState {
+            sink: Arc::new(PartialSink::new(1)),
+            limits: TenantLimitConfig::default(),
+            profile_overrides: OverridesProvider::new(Limits::default()),
+            active_series: Mutex::default(),
+            ingestion_buckets: Mutex::default(),
+            relabel: vec![],
+            max_decompressed: mebibytes(16),
+            max_tracked_tenants: 4096,
+            legacy_decode_limits: LegacyDecodeLimits::default(),
+            metrics: metrics.clone(),
+        });
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
+        .unwrap();
+        // Two resource profiles, so the request becomes two WAL records and
+        // the sink can take one of them.
+        let mut request = otlp_export_request();
+        let resource = request.resource_profiles[0].clone();
+        request.resource_profiles.push(resource);
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{bound}/v1development/profiles"))
+            .header("content-type", "application/x-protobuf")
+            .header("x-scope-orgid", "tenant-a")
+            .body(request.encode_to_vec())
+            .send()
+            .await
+            .unwrap();
+
+        check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
+        check!(metrics.wal_append_failures.get() == 1);
+        check!(metrics.wal_produce.partial_batch_appends() == 1);
+        check!(metrics.wal_produce.unappended_records() == 1);
     }
 
     #[tokio::test]
@@ -1341,7 +1421,17 @@ overrides:
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, ProfilesError::Produce(_)), "{err}");
+        assert!(
+            matches!(
+                err,
+                ProfilesError::ProduceBatch {
+                    appended: 0,
+                    total: 2,
+                    ..
+                }
+            ),
+            "{err}"
+        );
 
         // The reservation must have been rolled back: no leftover fingerprints.
         let active = state.active_series.lock().unwrap();

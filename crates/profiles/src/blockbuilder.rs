@@ -10,6 +10,9 @@ use krabka_blockstore::{
     profile_samples_decl, retry_object_store,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
+use krabka_observability::{
+    wal_consumer_metrics::WalConsumerMetrics, wal_group_assignment::WalAssignmentWatch,
+};
 use krabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};
 use krabka_units::{
     ByteSize, Time, convert::StdDurationExt as _, kibibytes, mebibytes, millis, secs,

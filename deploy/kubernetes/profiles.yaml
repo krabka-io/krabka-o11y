@@ -1,0 +1,295 @@
+# Pyroscope-compatible profile ingest, block building and querying.
+apiVersion: v1
+kind: Service
+metadata:
+  name: profiles-distributor
+spec:
+  selector:
+    app.kubernetes.io/name: profiles-distributor
+  ports:
+    - {name: http, port: 4040, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profiles-distributor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: profiles-distributor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: profiles-distributor
+    spec:
+      # In-flight pushes, already WAL-acknowledged.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # The topic contract, re-checked on every pod start. `provision_topics`
+        # creates what is missing, then describes every topic and fails when one
+        # does not meet the contract -- so a role cannot come up against a
+        # broker whose WAL topic is compacted, or absent. No service binary
+        # makes this check itself, which is why it is an init container rather
+        # than an assumption.
+        - name: topic-contract
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-o11y-bootstrap]
+          args:
+            - --bootstrap=broker:9092
+            - --partitions=1
+            - --state-partitions=1
+            - --replicas=1
+            - --retention-ms=900000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: role
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-profiles]
+          args: [--config.file=/etc/krabka/profiles-distributor.yaml]
+          envFrom:
+            - secretRef: {name: krabka-object-store}
+            - configMapRef: {name: krabka-object-store-endpoint}
+          ports:
+            - {name: http, containerPort: 4040}
+            - {name: admin, containerPort: 9404}
+          # Readiness on the data port wherever there is one. The admin
+          # server is a detached task with no graceful shutdown, so
+          # `:9404/ready` keeps answering 200 for the whole of a drain; the
+          # data port stops answering when the role stops serving.
+          startupProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          # Liveness is a socket check, never `/ready`. Nothing here serves a
+          # liveness route, and pointing liveness at readiness restarts a role
+          # for being slow to load an index -- which throws away what it had
+          # loaded and makes it slower.
+          livenessProbe:
+            tcpSocket: {port: admin}
+            periodSeconds: 10
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: roles, mountPath: /etc/krabka, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: state, mountPath: /var/lib/krabka}
+      volumes:
+        - name: roles
+          configMap: {name: krabka-roles}
+        - name: tmp
+          emptyDir: {}
+        # The working directory. Nothing durable is kept here for this
+        # role -- the WAL is in the broker, the blocks are in the object
+        # store -- so an emptyDir is the honest choice.
+        - name: state
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profiles-block-builder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: profiles-block-builder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: profiles-block-builder
+    spec:
+      # This builder selects on shutdown ahead of the poll, so it notices
+      # SIGTERM at once and its drain is one final flush.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # The topic contract, re-checked on every pod start. `provision_topics`
+        # creates what is missing, then describes every topic and fails when one
+        # does not meet the contract -- so a role cannot come up against a
+        # broker whose WAL topic is compacted, or absent. No service binary
+        # makes this check itself, which is why it is an init container rather
+        # than an assumption.
+        - name: topic-contract
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-o11y-bootstrap]
+          args:
+            - --bootstrap=broker:9092
+            - --partitions=1
+            - --state-partitions=1
+            - --replicas=1
+            - --retention-ms=900000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: role
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-profiles]
+          args: [--config.file=/etc/krabka/profiles-block-builder.yaml]
+          envFrom:
+            - secretRef: {name: krabka-object-store}
+            - configMapRef: {name: krabka-object-store-endpoint}
+          ports:
+            - {name: admin, containerPort: 9404}
+          # This role binds no data port, so the admin port is its only probe
+          # target. It is also the port carrying the role's readiness gates.
+          startupProbe:
+            httpGet: {path: /ready, port: admin}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /ready, port: admin}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: admin}
+            periodSeconds: 10
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: roles, mountPath: /etc/krabka, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: state, mountPath: /var/lib/krabka}
+      volumes:
+        - name: roles
+          configMap: {name: krabka-roles}
+        - name: tmp
+          emptyDir: {}
+        # The working directory. Nothing durable is kept here for this
+        # role -- the WAL is in the broker, the blocks are in the object
+        # store -- so an emptyDir is the honest choice.
+        - name: state
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: profiles-querier
+spec:
+  selector:
+    app.kubernetes.io/name: profiles-querier
+  ports:
+    - {name: http, port: 4040, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profiles-querier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: profiles-querier
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: profiles-querier
+    spec:
+      # In-flight queries -- in principle. This role does not exit on
+      # SIGTERM at all, so in practice every stop ends in SIGKILL at the end
+      # of this period. See the gaps section of deploy/README.md.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # The topic contract, re-checked on every pod start. `provision_topics`
+        # creates what is missing, then describes every topic and fails when one
+        # does not meet the contract -- so a role cannot come up against a
+        # broker whose WAL topic is compacted, or absent. No service binary
+        # makes this check itself, which is why it is an init container rather
+        # than an assumption.
+        - name: topic-contract
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-o11y-bootstrap]
+          args:
+            - --bootstrap=broker:9092
+            - --partitions=1
+            - --state-partitions=1
+            - --replicas=1
+            - --retention-ms=900000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: role
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-profiles]
+          args: [--config.file=/etc/krabka/profiles-querier.yaml]
+          envFrom:
+            - secretRef: {name: krabka-object-store}
+            - configMapRef: {name: krabka-object-store-endpoint}
+          ports:
+            - {name: http, containerPort: 4040}
+            - {name: admin, containerPort: 9404}
+          # Readiness on the data port wherever there is one. The admin
+          # server is a detached task with no graceful shutdown, so
+          # `:9404/ready` keeps answering 200 for the whole of a drain; the
+          # data port stops answering when the role stops serving.
+          startupProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          # Liveness is a socket check, never `/ready`. Nothing here serves a
+          # liveness route, and pointing liveness at readiness restarts a role
+          # for being slow to load an index -- which throws away what it had
+          # loaded and makes it slower.
+          livenessProbe:
+            tcpSocket: {port: admin}
+            periodSeconds: 10
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: roles, mountPath: /etc/krabka, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: state, mountPath: /var/lib/krabka}
+      volumes:
+        - name: roles
+          configMap: {name: krabka-roles}
+        - name: tmp
+          emptyDir: {}
+        # The working directory. Nothing durable is kept here for this
+        # role -- the WAL is in the broker, the blocks are in the object
+        # store -- so an emptyDir is the honest choice.
+        - name: state
+          emptyDir: {}

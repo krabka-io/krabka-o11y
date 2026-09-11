@@ -4,6 +4,9 @@
 //! The tests verify the querier's real scan-job contract, which is `block`,
 //! `rowGroupStart` and `rowGroupEnd`. They verify `X-Scope-OrgID`. They also
 //! verify that a 404 by-id response degrades to an empty partial.
+//!
+//! Every request names the querier it is for. The transport dials that
+//! address and picks nothing of its own.
 
 use std::{
     net::SocketAddr,
@@ -54,7 +57,7 @@ async fn http_querier_search_job_sends_scan_params_and_parses() {
         .with_state(seen.clone());
 
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(vec![addr.to_string()], Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
 
     let out = backend
         .search_job(&SearchJobRequest {
@@ -69,6 +72,7 @@ async fn http_querier_search_job_sends_scan_params_and_parses() {
                 row_group_start: 2,
                 row_group_end: 5,
             },
+            querier: addr.to_string(),
         })
         .await
         .unwrap();
@@ -105,7 +109,7 @@ async fn http_querier_live_shard_sends_no_scan_params() {
         )
         .with_state(seen.clone());
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(vec![addr.to_string()], Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
 
     backend
         .search_job(&SearchJobRequest {
@@ -116,6 +120,7 @@ async fn http_querier_live_shard_sends_no_scan_params() {
             limit: 20,
             spss: 3,
             shard: JobShard::Live,
+            querier: addr.to_string(),
         })
         .await
         .unwrap();
@@ -132,7 +137,7 @@ async fn http_querier_by_id_404_is_empty_partial() {
         get(|| async { (axum::http::StatusCode::NOT_FOUND, "trace not found") }),
     );
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(vec![addr.to_string()], Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
 
     let out = backend
         .trace_by_id_job(&TraceByIdJobRequest {
@@ -140,7 +145,7 @@ async fn http_querier_by_id_404_is_empty_partial() {
             trace_id: [9; 16],
             start_ns: 0,
             end_ns: 1,
-            querier: Some(0),
+            querier: addr.to_string(),
         })
         .await
         .unwrap();
@@ -169,7 +174,7 @@ async fn http_querier_by_id_parses_v2_envelope() {
         }),
     );
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(vec![addr.to_string()], Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
 
     let out = backend
         .trace_by_id_job(&TraceByIdJobRequest {
@@ -177,7 +182,7 @@ async fn http_querier_by_id_parses_v2_envelope() {
             trace_id: [10; 16],
             start_ns: 0,
             end_ns: 1,
-            querier: Some(0),
+            querier: addr.to_string(),
         })
         .await
         .unwrap();
@@ -202,7 +207,7 @@ async fn http_querier_tag_values_encodes_tag_path_segment() {
             )
             .with_state(seen.clone());
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(vec![addr.to_string()], Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
 
     // `#` interpolated raw would start a URL fragment and truncate the path
     // (the stub's `{tag}/values` route would never match). Path-segment
@@ -214,6 +219,7 @@ async fn http_querier_tag_values_encodes_tag_path_segment() {
             start_ns: 0,
             end_ns: 1,
             shard: JobShard::Live,
+            querier: addr.to_string(),
         })
         .await
         .unwrap();

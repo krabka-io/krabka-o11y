@@ -10,7 +10,7 @@
 //! `TraceByIdResponseJson`. Tag jobs return the typed tag bodies. The merge
 //! layer in `merge.rs` operates on these.
 
-use std::sync::Mutex;
+use std::{collections::BTreeSet, sync::Mutex};
 
 use async_trait::async_trait;
 use krabka_traceql::{ScopedTag, TagScope, TypedValue};
@@ -59,6 +59,7 @@ mod tests {
             limit: 20,
             spss: 3,
             shard: JobShard::Live,
+            querier: "q1:3200".to_string(),
         };
         let out = mock.search_job(&req).await.unwrap();
         assert2::assert!(
@@ -77,6 +78,7 @@ mod tests {
         assert2::assert!(mock.search_calls().len() == 1);
         assert2::assert!(mock.search_calls()[0].tenant.as_str() == "t1");
         assert2::assert!(matches!(mock.search_calls()[0].shard, JobShard::Live));
+        assert2::assert!(mock.search_calls()[0].querier.as_str() == "q1:3200");
     }
 
     #[tokio::test]
@@ -90,16 +92,33 @@ mod tests {
             limit: 20,
             spss: 3,
             shard: JobShard::Live,
+            querier: "q1:3200".to_string(),
         };
         let out = mock.search_job(&req).await.unwrap();
         assert2::assert!(out.traces == vec![]);
         assert2::assert!(out.metrics == Metrics::default());
     }
 
-    #[test]
-    fn querier_count_clamps_to_one() {
-        assert2::assert!(MockQuerier::with_querier_count(0).querier_count() == 1);
-        assert2::assert!(MockQuerier::with_querier_count(3).querier_count() == 3);
+    /// A querier that dies between the readiness probe and the job refuses
+    /// only its own work. The mock models that so a fan-out test can lose one
+    /// querier without losing the backend.
+    #[tokio::test]
+    async fn a_killed_querier_refuses_only_its_own_jobs() {
+        let mock = MockQuerier::new();
+        mock.fail_querier("dead:3200");
+        let job = |addr: &str| SearchJobRequest {
+            tenant: "t1".to_string(),
+            query: "{ }".to_string(),
+            start_ns: 0,
+            end_ns: 100,
+            limit: 20,
+            spss: 3,
+            shard: JobShard::Live,
+            querier: addr.to_string(),
+        };
+        assert2::assert!(mock.search_job(&job("live:3200")).await.is_ok());
+        let err = mock.search_job(&job("dead:3200")).await.unwrap_err();
+        assert2::assert!(matches!(err, BackendError::Transport(_)));
     }
 }
 

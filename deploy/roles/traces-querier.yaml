@@ -1,0 +1,11 @@
+# krabka-traces --target=querier
+#
+# `querier-live-store` makes this querier tail the WAL itself, so a search
+# covers spans that no block holds yet. Without it the live tier is empty and
+# a trace is invisible until the block builder flushes.
+target: querier
+listen: 0.0.0.0:3200
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+object-store-url: s3://krabka-traces
+querier-live-store: true

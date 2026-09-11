@@ -230,6 +230,7 @@ mod tests {
                     inspected_bytes: 300,
                     inspected_spans: 0,
                 },
+                warnings: vec![],
             }
         );
     }

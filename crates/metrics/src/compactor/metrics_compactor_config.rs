@@ -1,9 +1,12 @@
+use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
+
 use super::{
     Arc, AutoOffsetReset, BlockWriter, CompactionLoopConfig, Consumer, DEFAULT_FLUSH_MAX_AGE,
     DEFAULT_FLUSH_MAX_ROWS, DurableCompactionConsumer, MetricsCompactorBuildError,
     MetricsCompactorConfigError, MetricsCompactorRuntime, ObjectStore,
     ObjectStoreCompactionIndexSink, ObjectStoreMetrics, ObjectStoreRetryPolicy,
-    RetryingObjectStore, Time, TimeExt, consumer_build_error, secs, validate_non_empty,
+    RetryingObjectStore, Time, TimeExt, WalAssignmentConsumer, consumer_build_error, secs,
+    validate_non_empty,
 };
 
 /// Configuration for the metrics compactor role.
@@ -97,11 +100,21 @@ impl MetricsCompactorConfig {
         })
     }
 
+    /// Builds the compactor's WAL consumer and reports its group assignment
+    /// through `wal_consumer_metrics`.
+    ///
+    /// The metrics bundle is not optional. A compactor whose group takes a
+    /// partition away abandons the records it buffered for that partition, and
+    /// the instruments are the only place that says so. See
+    /// [`krabka_observability::wal_group_assignment`].
+    ///
     /// # Errors
-    /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+    /// Returns an error when the configuration is invalid, or when the consumer
+    /// cannot join its group.
     pub async fn build_consumer(
         &self,
-    ) -> Result<DurableCompactionConsumer<Consumer>, MetricsCompactorBuildError> {
+        wal_consumer_metrics: &WalConsumerMetrics,
+    ) -> Result<DurableCompactionConsumer<WalAssignmentConsumer>, MetricsCompactorBuildError> {
         self.validate()?;
         let consumer = Consumer::builder()
             .bootstrap(self.bootstrap.clone())
@@ -115,7 +128,7 @@ impl MetricsCompactorConfig {
             .await
             .map_err(|error| consumer_build_error(&error))?;
         Ok(DurableCompactionConsumer::new(
-            consumer,
+            WalAssignmentConsumer::new(consumer, wal_consumer_metrics),
             self.wal_topic.clone(),
         ))
     }

@@ -336,6 +336,7 @@ use build_blocks_with_options::build_blocks_with_options;
 pub use build_blocks_with_prefix::build_blocks_with_prefix;
 pub use build_blocks_with_promoted_attrs::build_blocks_with_promoted_attrs;
 use collect_tags::collect_tags;
+pub use consumer::BlockBuilderConsumer;
 pub use decode_consumer_records::decode_consumer_records;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
 pub use default_flush_max_records::DEFAULT_FLUSH_MAX_RECORDS;

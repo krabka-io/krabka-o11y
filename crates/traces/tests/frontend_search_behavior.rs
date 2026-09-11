@@ -28,7 +28,7 @@ use axum::{
 };
 use http_body_util::BodyExt as _;
 use krabka_traces::frontend::{
-    QueryFrontend,
+    MembershipView, QueryFrontend,
     config::FrontendConfig,
     http_backend::HttpQuerier,
     job::{BlockMetaInfo, RowGroupInfo, TraceIndexCatalog},
@@ -48,12 +48,15 @@ use tower::ServiceExt as _;
 /// carry a scheme and may use the comma form, plus a pre-resolved block catalog
 /// and a frontend config.
 fn build_router(querier_urls: &str, cfg: FrontendConfig, catalog: TraceIndexCatalog) -> Router {
-    let backend =
-        HttpQuerier::new(parse_addrs(querier_urls), cfg.request_timeout.to_std()).unwrap();
+    let backend = HttpQuerier::new(cfg.request_timeout.to_std()).unwrap();
+    // The membership the binary's probe loop would have published, with every
+    // configured querier ready.
+    let membership = MembershipView::fixed(parse_addrs(querier_urls));
     let qf = Arc::new(QueryFrontend::new(
         Arc::new(backend),
         Arc::new(catalog),
         cfg,
+        membership,
     ));
     router_with_backend(qf)
 }

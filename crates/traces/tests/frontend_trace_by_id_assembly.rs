@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use krabka_traces::frontend::{
-    QueryFrontend,
+    MembershipView, QueryFrontend,
     backend::{MockQuerier, TracePartial},
     config::FrontendConfig,
     job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
@@ -72,7 +72,7 @@ fn trace_partial(body: TraceByIdResponseJson) -> TracePartial {
 async fn trace_split_across_queriers_reassembles() {
     // 2 queriers: A holds spans 01,02; B holds spans 02,03 (02 overlaps).
     let catalog = MockCatalog::new(vec![block("b1", 0, 100)]);
-    let backend = MockQuerier::with_querier_count(2);
+    let backend = MockQuerier::new();
     backend.stub_trace(trace_partial(body(&["01", "02"])));
     backend.stub_trace(trace_partial(body(&["02", "03"])));
     let cfg = FrontendConfig {
@@ -81,9 +81,15 @@ async fn trace_split_across_queriers_reassembles() {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(Arc::new(backend), Arc::new(catalog), cfg);
+    let qf = QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(catalog),
+        cfg,
+        MembershipView::fixed(["qa:3200", "qb:3200"]),
+    );
 
-    let (trace, metrics, status) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
+    let (trace, metrics, status, warnings) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
+    assert2::assert!(warnings.is_empty());
     // One by-id job per querier.
     assert2::assert!(qf.backend_ref().trace_calls().len() == 2);
     let trace = trace.expect("assembled trace");
@@ -96,7 +102,7 @@ async fn trace_split_across_queriers_reassembles() {
 #[tokio::test]
 async fn oversized_trace_is_partial() {
     let catalog = MockCatalog::new(vec![block("b1", 0, 100)]);
-    let backend = MockQuerier::with_querier_count(1);
+    let backend = MockQuerier::new();
     backend.stub_trace(trace_partial(body(&["01", "02", "03"])));
     let cfg = FrontendConfig {
         hot_frontier_ns: i64::MAX,
@@ -104,24 +110,35 @@ async fn oversized_trace_is_partial() {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(Arc::new(backend), Arc::new(catalog), cfg);
+    let qf = QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(catalog),
+        cfg,
+        MembershipView::fixed(["qa:3200"]),
+    );
 
-    let (trace, _m, status) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
+    let (trace, _m, status, warnings) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
     assert2::assert!(trace.is_some());
+    assert2::assert!(warnings == vec!["trace exceeds max size; returned partially".to_string()]);
     assert2::assert!(matches!(status, TraceStatus::Partial));
 }
 
 #[tokio::test]
 async fn missing_trace_is_none() {
     let catalog = MockCatalog::new(vec![block("b1", 0, 100)]);
-    let backend = MockQuerier::with_querier_count(2);
+    let backend = MockQuerier::new();
     // Both queriers return empty (default partial).
     let cfg = FrontendConfig {
         max_concurrency: 1,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(Arc::new(backend), Arc::new(catalog), cfg);
-    let (trace, _m, status) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
+    let qf = QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(catalog),
+        cfg,
+        MembershipView::fixed(["qa:3200", "qb:3200"]),
+    );
+    let (trace, _m, status, _w) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
     assert2::assert!(trace.is_none());
     assert2::assert!(matches!(status, TraceStatus::Complete));
 }

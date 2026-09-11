@@ -68,6 +68,13 @@ register_toolchains("@toolchains_protoc_hub//:all")
 
 bazel_dep(name = "rules_oci", version = "2.3.0")
 
+# Both already resolve through rules_oci; //bazel/images/krabka uses them by
+# name, and bzlmod only puts a module's repositories in scope for the modules
+# that declare it. `tar` builds the image's one layer, `expand_template`
+# stamps the revision label.
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.0")
+bazel_dep(name = "tar.bzl", version = "0.10.4")
+
 # `sh_test`, for the wrapper that loads those images before a suite runs.
 bazel_dep(name = "rules_shell", version = "0.8.0")
 
@@ -100,8 +107,31 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
     ]
 ]
 
+# The base the krabka image is built on. See //bazel/images for what goes on
+# top of it.
+#
+# `cc` rather than `static`: the binaries this repository builds are glibc
+# binaries. The toolchain's sysroot caps them at GLIBC_2.28 and they still
+# carry the pre-2.34 `librt`/`libpthread`/`libdl` sonames, which Debian 12's
+# glibc 2.36 provides -- so the base is chosen to satisfy what the linker
+# already asked for rather than the other way round.
+#
+# `debug-nonroot` rather than `nonroot`: the debug variant adds busybox, and
+# nothing else. Without a shell in the image there is no way to express a
+# `docker compose` healthcheck at all -- compose runs the check inside the
+# container -- and a compose file with no healthcheck is the failure this
+# image exists to avoid: a dependent starting against a role that is listening
+# and not yet able to answer. busybox buys that, and an operator a way into a
+# stopped pod, for one statically linked multi-call binary of surface.
+oci.pull(
+    name = "distroless_cc",
+    digest = "sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc",
+    image = "gcr.io/distroless/cc-debian12",
+    platforms = ["linux/amd64"],
+)
 use_repo(
     oci,
+    "distroless_cc",
     "grafana",
     "loki",
     "mimir",

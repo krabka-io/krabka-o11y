@@ -1,6 +1,6 @@
 use super::{
     ClockWireError, IntoResponse, LimitError, OtlpError, ProduceError, Response, StatusCode,
-    WireError,
+    WalBatchError, WireError,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -26,6 +26,14 @@ pub(crate) enum PushError {
     Otlp(#[from] OtlpError),
     #[error(transparent)]
     Produce(#[from] ProduceError),
+    /// A WAL batch that appended in part or not at all.
+    ///
+    /// This is separate from [`Self::Produce`] because it carries how much of
+    /// the batch reached the broker. The status stays 500, so a Prometheus
+    /// sender retries the whole request, and the metrics read path drops the
+    /// duplicate samples that the retry writes.
+    #[error(transparent)]
+    ProduceBatch(#[from] WalBatchError<ProduceError>),
 }
 
 impl IntoResponse for PushError {
@@ -45,7 +53,7 @@ impl IntoResponse for PushError {
             Self::Otlp(error) => {
                 StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::BAD_REQUEST)
             }
-            Self::Produce(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Produce(_) | Self::ProduceBatch(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, self.to_string()).into_response()
     }

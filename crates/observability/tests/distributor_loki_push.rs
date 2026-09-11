@@ -23,7 +23,7 @@ use serde_json::json;
 use snap::raw::Encoder as SnappyEncoder;
 use support::{
     FailingWalSink, LokiProtoEntry, LokiProtoLabelPair, LokiProtoPushRequest, LokiProtoStream,
-    LokiProtoTimestamp, assert_loki_error, json_body, text_body,
+    LokiProtoTimestamp, PartialWalSink, assert_loki_error, json_body, text_body,
 };
 use tower::ServiceExt as _;
 
@@ -699,6 +699,53 @@ async fn loki_push_endpoint_returns_server_error_when_wal_append_fails() {
 
     assert!(response.status() == StatusCode::SERVICE_UNAVAILABLE);
     assert_loki_error(&json_body(response).await, "server_error", "wal sink");
+}
+
+/// A push whose entries appended in part must not reach the client as a
+/// success. Loki has no way to tell Promtail or Alloy that half a push landed,
+/// so both retry the whole push on a 5xx, and both read a 2xx as "every entry
+/// is durable". The status stays 503 and the error names how far the batch
+/// got, because the logs read path has no query-time deduplication: the retry
+/// writes the entries that already landed a second time, permanently.
+#[tokio::test]
+async fn loki_push_endpoint_reports_a_partial_wal_batch_as_a_failure() {
+    let app = distributor_router(PartialWalSink::new(2));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/loki/api/v1/push")
+                .header("X-Scope-OrgID", "tenant-a")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "streams": [
+                            {
+                                "stream": { "app": "api", "env": "prod" },
+                                "values": [
+                                    ["19", "one"],
+                                    ["20", "two"],
+                                    ["21", "three"],
+                                    ["22", "four"],
+                                    ["23", "five"]
+                                ]
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(response.status() == StatusCode::SERVICE_UNAVAILABLE);
+    assert_loki_error(
+        &json_body(response).await,
+        "server_error",
+        "wal append wrote 2 of 5 records",
+    );
 }
 
 #[tokio::test]

@@ -1,0 +1,83 @@
+# The object store every signal's blocks are written to. One replica on one
+# volume: enough to run the stack, not a storage tier.
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: minio
+          image: mirror.gcr.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          args: [server, /data]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef: {name: krabka-object-store, key: AWS_ACCESS_KEY_ID}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: krabka-object-store, key: AWS_SECRET_ACCESS_KEY}
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet: {path: /minio/health/ready, port: s3}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /minio/health/live, port: s3}
+            periodSeconds: 10
+            failureThreshold: 6
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 20Gi
+---
+# Creates the four buckets. Idempotent, so a re-apply is a no-op; a role whose
+# bucket is missing crash-loops until this has run, which is loud rather than
+# silent.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-buckets
+spec:
+  backoffLimit: 30
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: mirror.gcr.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          command: [/bin/sh, -c]
+          args:
+            - >-
+              mc alias set krabka http://minio:9000 "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" && mc mb --ignore-existing krabka/krabka-metrics krabka/krabka-logs krabka/krabka-traces krabka/krabka-profiles
+          envFrom:
+            - secretRef: {name: krabka-object-store}

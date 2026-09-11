@@ -19,6 +19,18 @@ pub enum ProfilesError {
     Wal(String),
     #[error("produce failed: {0}")]
     Produce(String),
+    /// A WAL batch that appended in part or not at all.
+    ///
+    /// This is separate from [`Self::Produce`] because it carries how much of
+    /// the batch reached the broker. The status stays 500, so a Pyroscope or
+    /// Alloy client retries the whole request. Profiles have no query-time
+    /// deduplication, so that retry writes what already landed a second time.
+    #[error("wal append wrote {appended} of {total} records: {message}")]
+    ProduceBatch {
+        appended: usize,
+        total: usize,
+        message: String,
+    },
     #[error("block build failed: {0}")]
     Block(String),
     #[error("pprof: {0}")]
@@ -42,7 +54,11 @@ impl ProfilesError {
             | Self::Pprof(_)
             | Self::TooLarge { .. } => 400,
             Self::Limit(err) => err.http_status(),
-            Self::Wal(_) | Self::Produce(_) | Self::Block(_) | Self::Internal(_) => 500,
+            Self::Wal(_)
+            | Self::Produce(_)
+            | Self::ProduceBatch { .. }
+            | Self::Block(_)
+            | Self::Internal(_) => 500,
         }
     }
 }
@@ -50,6 +66,17 @@ impl ProfilesError {
 impl From<krabka_pprof::ProfileError> for ProfilesError {
     fn from(err: krabka_pprof::ProfileError) -> Self {
         Self::Pprof(err.to_string())
+    }
+}
+
+impl From<krabka_observability::wal_produce::WalBatchError<ProfilesError>> for ProfilesError {
+    fn from(error: krabka_observability::wal_produce::WalBatchError<ProfilesError>) -> Self {
+        let (appended, total) = (error.appended(), error.total());
+        Self::ProduceBatch {
+            appended,
+            total,
+            message: error.into_source().to_string(),
+        }
     }
 }
 

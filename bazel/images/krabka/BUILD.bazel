@@ -1,0 +1,121 @@
+"""The krabka-o11y container image.
+
+One image, six binaries, no entrypoint: the role is named by the command, the
+way `command: ["krabka-metrics", "--target=distributor"]` reads in //deploy.
+That is the artefact this repository already publishes and the one the
+`krabka-o11y-demo` repository pins, and splitting it per binary would buy
+smaller pulls at the cost of six digests to keep in step across a stack whose
+roles are deployed together.
+
+It is built here rather than from a `Dockerfile`, because a Dockerfile would be
+a second build of the same artefact. `cargo build --release` inside a `rust:`
+image is neither the Bazel build CI gates nor the Cargo build a developer runs:
+it resolves `protoc` through the `protoc-bin-vendored` fallback, links with
+whatever that image carries rather than the hermetic `@llvm` toolchain, and
+applies none of the annotations //MODULE.bazel puts on `aws-lc-sys`,
+`tikv-jemalloc-sys`, `zstd-sys` and `datafusion-common`. The bytes that shipped
+were never the bytes that passed a test. `oci_image` packages the
+`rust_binary` outputs themselves, so they are.
+
+What is lost with the Dockerfile is buildkit's SBOM and provenance
+attestations. `.github/workflows/image.yml` restores provenance over the pushed
+digest with `actions/attest-build-provenance`; there is no SBOM today.
+"""
+
+load("@aspect_bazel_lib//lib:expand_template.bzl", "expand_template")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load", "oci_push")
+load("@tar.bzl//tar:tar.bzl", "tar")
+
+package(default_visibility = ["//visibility:public"])
+
+# The six binaries `cargo build` produces, under the names they are invoked by.
+BINARIES = {
+    "krabka-metrics": "//crates/metrics:krabka-metrics",
+    "krabka-metrics-service": "//crates/metrics-service:krabka-metrics-service",
+    "krabka-o11y-bootstrap": "//crates/observability:krabka-o11y-bootstrap",
+    "krabka-observability": "//crates/observability:krabka-observability",
+    "krabka-profiles": "//crates/profiles:krabka-profiles",
+    "krabka-traces": "//crates/traces:krabka-traces",
+}
+
+# `time=0` on every entry, and no `mtime` anywhere: the layer has to be a
+# function of the binaries alone, or two builds of one commit produce two
+# digests and "pin the digest" stops meaning "pin the code".
+tar(
+    name = "layer",
+    srcs = BINARIES.values(),
+    mtree = [
+        "usr/local/bin uid=0 gid=0 mode=0755 time=0 type=dir",
+    ] + [
+        "usr/local/bin/{} uid=0 gid=0 mode=0755 time=0 type=file content=$(location {})".format(
+            name,
+            label,
+        )
+        for name, label in BINARIES.items()
+    ] + [
+        # `--data-root` and a `file://` object store land here. The image
+        # declares it so a deployment that forgets to mount a volume writes to
+        # a directory that exists and is writable by the runtime user, rather
+        # than failing on the first flush.
+        "var/lib/krabka uid=65532 gid=65532 mode=0755 time=0 type=dir",
+    ],
+)
+
+# `--stamp --embed_label=<sha>` fills the revision in; an unstamped build says
+# so rather than claiming a commit it was not built from.
+expand_template(
+    name = "labels",
+    out = "labels.txt",
+    stamp_substitutions = {"REVISION": "{{BUILD_EMBED_LABEL}}"},
+    substitutions = {"REVISION": "unstamped"},
+    template = [
+        "org.opencontainers.image.title=krabka-o11y",
+        "org.opencontainers.image.description=The krabka observability stack: metrics, traces, profiles and logs",
+        "org.opencontainers.image.source=https://github.com/krabka-io/krabka-o11y",
+        "org.opencontainers.image.url=https://github.com/krabka-io/krabka-o11y",
+        "org.opencontainers.image.licenses=Apache-2.0",
+        "org.opencontainers.image.revision=REVISION",
+    ],
+)
+
+oci_image(
+    name = "image",
+    base = "@distroless_cc",
+    # Cleared, not left to the base. The `debug` variant's own entrypoint is
+    # `/busybox/sh`, so an inherited entrypoint would make every `command:` in
+    # a manifest a shell argument -- `krabka-metrics` would be read as a script
+    # to open, the container would exit 127, and a shell would be PID 1 in the
+    # cases where it did start.
+    entrypoint = [],
+    labels = ":labels",
+    tars = [":layer"],
+    # No entrypoint of our own either. Six binaries share the image and the
+    # deployment names the one it wants, so there is no honest default to pick;
+    # `docker run` with no command fails loudly rather than starting an
+    # arbitrary role.
+    #
+    # The consequence worth stating: whatever the deployment names becomes PID
+    # 1 directly, with no shell between it and the signal. Every one of the six
+    # installs a SIGTERM handler (see `shutdown_signal` in
+    # //crates/observability), which is what PID 1 has to do -- the kernel
+    # gives PID 1 no default terminate action, so an unhandled SIGTERM there is
+    # simply discarded and the container runs until the grace period expires
+    # and it is killed mid-flush.
+    user = "65532:65532",
+    workdir = "/var/lib/krabka",
+)
+
+# `bazel run //bazel/images/krabka:load` puts it in the local daemon.
+oci_load(
+    name = "load",
+    image = ":image",
+    repo_tags = ["krabka-o11y:dev"],
+)
+
+# `bazel run //bazel/images/krabka:push -- --tag=<tag>`; see
+# //.github/workflows/image.yml for the tags a release carries.
+oci_push(
+    name = "push",
+    image = ":image",
+    repository = "ghcr.io/krabka-io/krabka-o11y",
+)

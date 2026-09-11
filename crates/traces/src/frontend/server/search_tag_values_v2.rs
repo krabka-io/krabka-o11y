@@ -18,7 +18,7 @@ where
         Ok(bounds) => bounds,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let (values, _metrics) = match qf.tag_values(&tenant, &tag, start_ns, end_ns).await {
+    let (values, _metrics, warnings) = match qf.tag_values(&tenant, &tag, start_ns, end_ns).await {
         Ok(out) => out,
         Err(err) => return backend_error_response(&err),
     };
@@ -26,5 +26,9 @@ where
         .iter()
         .map(|v| json!({ "type": &v.type_, "value": &v.value }))
         .collect();
-    Json(json!({ "tagValues": tag_values, "metrics": { "inspectedBytes": "0" } })).into_response()
+    let mut body = json!({ "tagValues": tag_values, "metrics": { "inspectedBytes": "0" } });
+    if !warnings.is_empty() {
+        body["warnings"] = json!(warnings);
+    }
+    Json(body).into_response()
 }

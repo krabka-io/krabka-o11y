@@ -34,7 +34,7 @@ pub(crate) async fn run_compactor(
     config.flush_max_rows = cli.compactor_flush_max_rows;
     config.flush_max_age = cli.compactor_flush_max_age;
     let runtime = config.build_runtime(store.clone(), metrics.object_store.clone())?;
-    let mut consumer = config.build_consumer().await?;
+    let mut consumer = config.build_consumer(&metrics.wal_consumer).await?;
     wal_consumer_gate.mark_ready();
     let stopping = CancellationToken::new();
     let mut tasks = SupervisedTasks::new(stopping.clone());

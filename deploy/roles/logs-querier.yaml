@@ -1,0 +1,15 @@
+# krabka-observability --target=querier
+#
+# `wal-group-id` defaults to `krabka-observability-compactor` for every role.
+# Left at the default the querier and the compactor join one consumer group,
+# the broker splits the WAL partitions between them, and each then sees a
+# fraction of the log stream -- with no error anywhere. It is overridden here.
+target: querier
+listen-addr: 0.0.0.0:3100
+admin-listen-addr: 0.0.0.0:9404
+wal-bootstrap-server: broker:9092
+object-store-url: s3://krabka-logs
+index-prefix: logs
+querier-index-source: tenant-object-store-shards
+wal-group-id: krabka-observability-querier
+data-root: /var/lib/krabka

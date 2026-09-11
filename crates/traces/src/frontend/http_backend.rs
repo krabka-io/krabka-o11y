@@ -10,16 +10,15 @@
 //! no scan params, which gives the querier's hot/cold union scan. There is no
 //! `shard=live` param.
 //!
-//! By-id has no block scoping. It targets one querier by index and unions
-//! across the pool. `start` and `end` are epoch **seconds** on every endpoint.
+//! By-id has no block scoping. It targets one querier by address and unions
+//! across the ready pool. `start` and `end` are epoch **seconds** on every
+//! endpoint.
+//!
+//! The transport picks no targets. Every request carries the `host:port` the
+//! frontend assigned it to; see [`crate::frontend::membership`] and
+//! [`crate::frontend::assignment`].
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use krabka_units::convert::TimeExt as _;
@@ -33,6 +32,7 @@ use crate::frontend::{
     },
     config::FrontendConfig,
     job::{JobShard, TraceIndexCatalog},
+    membership::{HttpReadinessProbe, MembershipView, refresh_membership, run_membership_refresh},
     metrics_merge::MetricsResponseJson,
     wire::{SearchResponseJson, TraceByIdResponseJson},
 };

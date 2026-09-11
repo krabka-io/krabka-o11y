@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 
 use assert2::check;
 use krabka_traces::frontend::{
-    QueryFrontend,
+    MembershipView, QueryFrontend,
     backend::{MockQuerier, SearchPartial, TracePartial},
     config::FrontendConfig,
     job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
@@ -66,6 +66,7 @@ async fn server_round_trips_search_and_echo() {
         Arc::new(backend),
         Arc::new(catalog),
         cfg,
+        MembershipView::fixed(["q1:3200"]),
     ));
     let addr = spawn(router_with_backend(qf)).await;
     let client = reqwest::Client::new();
@@ -112,6 +113,7 @@ async fn server_search_requires_query() {
         Arc::new(backend),
         Arc::new(catalog),
         FrontendConfig::default(),
+        MembershipView::fixed(["q1:3200"]),
     ));
     let addr = spawn(router_with_backend(qf)).await;
     let client = reqwest::Client::new();
@@ -126,7 +128,7 @@ async fn server_search_requires_query() {
 #[tokio::test]
 async fn server_by_id_returns_v2_envelope() {
     let catalog = MockCatalog::new(vec![block("b1")]);
-    let backend = MockQuerier::with_querier_count(1);
+    let backend = MockQuerier::new();
     let mut span_rest = serde_json::Map::new();
     span_rest.insert("name".to_string(), serde_json::json!("op"));
     backend.stub_trace(TracePartial {
@@ -159,6 +161,7 @@ async fn server_by_id_returns_v2_envelope() {
         Arc::new(backend),
         Arc::new(catalog),
         cfg,
+        MembershipView::fixed(["q1:3200"]),
     ));
     let addr = spawn(router_with_backend(qf)).await;
     let client = reqwest::Client::new();
@@ -185,7 +188,7 @@ async fn server_by_id_returns_v2_envelope() {
 #[tokio::test]
 async fn server_by_id_404_when_missing() {
     let catalog = MockCatalog::new(vec![block("b1")]);
-    let backend = MockQuerier::with_querier_count(1);
+    let backend = MockQuerier::new();
     let cfg = FrontendConfig {
         hot_frontier_ns: i64::MAX,
         ..FrontendConfig::default()
@@ -194,6 +197,7 @@ async fn server_by_id_404_when_missing() {
         Arc::new(backend),
         Arc::new(catalog),
         cfg,
+        MembershipView::fixed(["q1:3200"]),
     ));
     let addr = spawn(router_with_backend(qf)).await;
     let client = reqwest::Client::new();
@@ -227,6 +231,7 @@ async fn server_tags_round_trip() {
         Arc::new(backend),
         Arc::new(catalog),
         cfg,
+        MembershipView::fixed(["q1:3200"]),
     ));
     let addr = spawn(router_with_backend(qf)).await;
     let client = reqwest::Client::new();

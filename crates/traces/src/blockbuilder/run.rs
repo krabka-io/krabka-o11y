@@ -10,7 +10,23 @@ use super::*;
 /// record reaches [`BlockBuilderConfig::flush_max_age`].
 ///
 /// The loop commits WAL offsets only after it durably writes the merged blocks.
-/// It drains the remaining buffer on shutdown, so no spans are lost.
+/// It drains the remaining buffer on shutdown, so an orderly stop loses no
+/// spans.
+///
+/// # Consumer group rebalances
+///
+/// A shutdown is the only assignment change this loop survives. The accumulator
+/// holds decoded windows per partition across polls, and the consumer group can
+/// take a partition away between two of them. `krabka-client-consumer` releases
+/// the partition from a background task and calls nothing in this process
+/// first, so the windows buffered for that partition are abandoned.
+///
+/// [`BlockBuilderConsumer`] reports each such revocation on
+/// `wal_consumer_partition_revocations` and in the log. It does not repair it:
+/// a later flush still writes a block for a partition this member no longer
+/// owns, under a key that is a function of this member's own offset range. See
+/// [`krabka_observability::wal_group_assignment`] for why no code here can do
+/// better, and for what the group id does and does not do.
 ///
 /// # Object-store failures
 ///

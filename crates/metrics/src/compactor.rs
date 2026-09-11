@@ -2315,6 +2315,7 @@ pub use compaction_wal_records_from_consumer_records::compaction_wal_records_fro
 pub use compaction_window_error::CompactionWindowError;
 pub use compaction_window_result::CompactionWindowResult;
 pub use compaction_write_error::CompactionWriteError;
+pub use consumer::WalAssignmentConsumer;
 use consumer_build_error::consumer_build_error;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
 pub use default_flush_max_rows::DEFAULT_FLUSH_MAX_ROWS;

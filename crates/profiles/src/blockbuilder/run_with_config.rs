@@ -9,6 +9,19 @@ use super::*;
 /// block and leave the offset behind it uncommitted, so the next start would
 /// replay that window: work silently lost on an ordinary rolling restart.
 ///
+/// # Consumer group rebalances
+///
+/// The drain covers a shutdown this loop is told about. It does not cover a
+/// consumer group that takes a partition away. The accumulator holds records
+/// across polls, and `krabka-client-consumer` releases a partition from a
+/// background task without calling anything in this process, so the records
+/// buffered for that partition are abandoned.
+///
+/// The loop reports each such revocation on
+/// `wal_consumer_partition_revocations` and in the log. It does not repair it.
+/// See [`krabka_observability::wal_group_assignment`] for why, and for what the
+/// group id does and does not do.
+///
 /// # Object-store failures
 ///
 /// An object store that fails in a way that could clear on its own -- a 503, a
@@ -69,6 +82,20 @@ pub async fn run_with_config(
         .await
         .map_err(|err| ProfilesError::Block(format!("consumer build failed: {err}")))?;
 
+    // Reports a group rebalance that takes WAL partitions away from this
+    // member. The builder buffers records across polls, so a revocation
+    // abandons whatever it holds for the lost partitions, and nothing in this
+    // process can flush them first. See
+    // `krabka_observability::wal_group_assignment`.
+    let mut assignment = WalAssignmentWatch::new(
+        config
+            .metrics
+            .as_ref()
+            .map_or_else(WalConsumerMetrics::unregistered, |metrics| {
+                metrics.wal_consumer.clone()
+            }),
+    );
+
     let mut accumulator =
         ConsumerRecordAccumulator::new(config.flush_records, config.flush_max_age);
     loop {
@@ -89,6 +116,10 @@ pub async fn run_with_config(
                 polled
             }
         };
+        // Read after the poll, so the snapshot is the one the fetch was served
+        // against. An empty poll is observed too: a member that lost every
+        // partition returns nothing and would otherwise look idle.
+        assignment.observe_consumer(&consumer).await;
         let draining = shutdown.is_cancelled();
         let now = Instant::now();
         accumulator.push(records, now);

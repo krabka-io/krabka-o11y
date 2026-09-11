@@ -248,12 +248,36 @@ pub(crate) struct Cli {
         value_parser = parse_positive_time_or_secs
     )]
     pub(crate) compaction_interval: Time,
+    /// Comma-separated querier URLs the query-frontend discovers from.
+    ///
+    /// These are names, not a fixed roster: the frontend re-resolves them
+    /// every `--querier-membership-refresh-interval`, so one headless-Service
+    /// name covers however many querier pods exist at that moment.
     #[arg(
         long,
         env = "KRABKA_TRACES_QUERIER_URL",
         default_value = "http://127.0.0.1:3200"
     )]
     pub(crate) querier_url: String,
+    /// How often the query-frontend re-resolves and re-probes its queriers.
+    ///
+    /// It bounds how long a dead querier keeps being assigned work, and how
+    /// long a newly started one goes unused.
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_QUERIER_MEMBERSHIP_REFRESH_INTERVAL",
+        default_value = "5s",
+        value_parser = parse_positive_time_or_secs
+    )]
+    pub(crate) querier_membership_refresh_interval: Time,
+    /// Per-querier timeout for one `/ready` probe.
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_QUERIER_READINESS_TIMEOUT",
+        default_value = "2s",
+        value_parser = parse_positive_time_or_secs
+    )]
+    pub(crate) querier_readiness_timeout: Time,
     #[arg(
         long = "live-frontier",
         visible_alias = "live-frontier-ns",

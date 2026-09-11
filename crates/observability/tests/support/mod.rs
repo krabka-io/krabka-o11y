@@ -108,6 +108,37 @@ impl LogWalSink for FailingWalSink {
     }
 }
 
+/// A sink that appends `accept` records and then fails every further append.
+///
+/// It reproduces the partial push: the broker took some of one request's
+/// entries and refused the rest.
+pub struct PartialWalSink {
+    accept: usize,
+    appended: std::sync::Mutex<usize>,
+}
+
+impl PartialWalSink {
+    #[must_use]
+    pub fn new(accept: usize) -> Self {
+        Self {
+            accept,
+            appended: std::sync::Mutex::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl LogWalSink for PartialWalSink {
+    async fn append(&self, _record: WalLogRecord) -> Result<(), WalSinkError> {
+        let mut appended = self.appended.lock().expect("partial wal sink poisoned");
+        if *appended >= self.accept {
+            return Err(WalSinkError::Append);
+        }
+        *appended += 1;
+        Ok(())
+    }
+}
+
 pub fn fixture() -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();

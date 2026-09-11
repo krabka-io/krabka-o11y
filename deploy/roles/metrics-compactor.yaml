@@ -1,0 +1,15 @@
+# krabka-metrics --target=compactor
+#
+# Reads the metrics WAL and writes blocks. No data port: `/ready` on the admin
+# port is the only probe target, and it reports the `object-store` and
+# `wal-consumer` gates.
+#
+# `object-store-url` carries no path. //crates/metrics' object-store builder
+# drops the prefix a URL names, so blocks go at the bucket root; the querier's
+# `manifest-prefix` is what separates them from another signal's.
+target: compactor
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+object-store-url: s3://krabka-metrics
+compactor-retention: 24h
+compactor-retention-sweep-interval: 5m

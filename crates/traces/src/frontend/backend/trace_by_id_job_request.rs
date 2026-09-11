@@ -9,8 +9,11 @@ pub struct TraceByIdJobRequest {
     pub trace_id: [u8; 16],
     pub start_ns: i64,
     pub end_ns: i64,
-    /// Index into the backend's querier pool to target, so that a fan-out
-    /// queries each querier exactly once. `None` lets the backend pick one,
-    /// round-robin.
-    pub querier: Option<usize>,
+    /// The `host:port` of the querier this job is assigned to, so that a
+    /// fan-out queries each ready querier exactly once.
+    ///
+    /// It is an address rather than an index into a pool: the pool changes
+    /// between refreshes, and an index into a list that has since shrunk names
+    /// a different querier than the one it was chosen for.
+    pub querier: String,
 }

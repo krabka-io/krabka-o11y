@@ -48,6 +48,13 @@ pub(crate) struct Cli {
         default_value = "file://./.krabka-metrics-blocks"
     )]
     pub(crate) object_store_url: String,
+    /// The Kafka consumer group the metrics compactor joins.
+    ///
+    /// This names the group. It does not scale the write path. The compactor
+    /// buffers WAL records across polls, and the group abandons that buffer for
+    /// every partition it moves, so the group's membership should not change
+    /// while it runs. Set the WAL topic's partition count to shard the write
+    /// path. See `krabka_observability::wal_group_assignment`.
     #[arg(
         long,
         env = "KRABKA_METRICS_COMPACTOR_GROUP_ID",
@@ -108,6 +115,11 @@ pub(crate) struct Cli {
         default_value = HA_TRACKER_TOPIC
     )]
     pub(crate) ha_tracker_topic: String,
+    /// The Kafka consumer group the HA tracker joins.
+    ///
+    /// This names the group. It does not scale the write path. See
+    /// `krabka_observability::wal_group_assignment` for what a change of a
+    /// group's membership costs.
     #[arg(
         long,
         env = "KRABKA_METRICS_HA_TRACKER_GROUP_ID",

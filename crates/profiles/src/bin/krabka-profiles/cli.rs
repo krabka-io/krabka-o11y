@@ -42,6 +42,13 @@ pub(crate) struct Cli {
         value_parser = parse_non_empty_string
     )]
     pub(crate) wal_topic: String,
+    /// The Kafka consumer group the profiles block builder joins.
+    ///
+    /// This names the group. It does not scale the write path. The block
+    /// builder buffers WAL records across polls, and the group abandons that
+    /// buffer for every partition it moves, so the group's membership should
+    /// not change while it runs. Set --wal-topic's partition count to shard the
+    /// write path. See `krabka_observability::wal_group_assignment`.
     #[arg(
         long,
         env = "KRABKA_PROFILES_BLOCK_BUILDER_GROUP_ID",
@@ -192,6 +199,11 @@ pub(crate) struct Cli {
     pub(crate) tenant_limits_config: Option<std::path::PathBuf>,
     #[arg(long, env = "KRABKA_PROFILES_LIMITS_OVERRIDES_CONFIG")]
     pub(crate) profiles_limits_overrides_config: Option<std::path::PathBuf>,
+    /// The Kafka consumer group the profiles query WAL tail joins.
+    ///
+    /// This names the group. It does not scale the write path. See
+    /// `krabka_observability::wal_group_assignment` for what a change of a
+    /// group's membership costs.
     #[arg(
         long,
         env = "KRABKA_PROFILES_QUERY_WAL_TAIL_GROUP_ID",

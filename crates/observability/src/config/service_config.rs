@@ -38,6 +38,13 @@ pub struct ServiceConfig {
     )]
     pub wal_topic: String,
 
+    /// The Kafka consumer group the logs compactor joins.
+    ///
+    /// This names the group. It does not scale the write path. The compactor
+    /// buffers WAL records across polls, and the group abandons that buffer for
+    /// every partition it moves, so the group's membership should not change
+    /// while it runs. Set --wal-topic's partition count to shard the write
+    /// path. See `krabka_observability::wal_group_assignment`.
     #[arg(
         long,
         env = "KRABKA_OBSERVABILITY_WAL_GROUP_ID",

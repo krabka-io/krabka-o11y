@@ -96,7 +96,10 @@ async fn remote_write_v1_lands_as_block() {
     let runtime = config
         .build_runtime(object_store.clone(), metrics.object_store.clone())
         .expect("compactor runtime");
-    let mut consumer = config.build_consumer().await.expect("compactor consumer");
+    let mut consumer = config
+        .build_consumer(&metrics.wal_consumer)
+        .await
+        .expect("compactor consumer");
     let result = run_compactor_consumer_loop(
         &mut consumer,
         &runtime.block_writer,
@@ -165,6 +168,9 @@ async fn check_instruments_moved(metrics: &ServiceMetrics) {
         "krabka_metrics_wal_consumer_last_consumed_offset{topic=\"__krabka_metrics_wal\",partition=\"0\"} 0",
         "krabka_metrics_wal_consumer_polls_total{outcome=\"records\"}",
         "krabka_metrics_wal_consumer_receive_delay_seconds_count 1",
+        // The compactor is the only member of its group, so it owns the
+        // partition it read.
+        "krabka_metrics_wal_consumer_partition_owned{topic=\"__krabka_metrics_wal\",partition=\"0\"} 1",
         // One flush ran, it succeeded, and it wrote one block.
         "krabka_metrics_compaction_runs_total{status=\"ok\"} 1",
         "krabka_metrics_compaction_duration_seconds_count 1",
@@ -185,6 +191,8 @@ async fn check_instruments_moved(metrics: &ServiceMetrics) {
     for absent in [
         "krabka_metrics_compaction_runs_total{status=\"error\"}",
         "krabka_metrics_wal_consumer_polls_total{outcome=\"error\"}",
+        // A group with one member never rebalances, so no partition moved.
+        "krabka_metrics_wal_consumer_partition_revocations_total",
     ] {
         check!(
             !buffer.contains(absent),

@@ -32,7 +32,7 @@ pub(crate) async fn run_block_builder(
     .await?;
     let index = Arc::new(Mutex::new(initial_index));
     blockbuilder::run(
-        consumer,
+        blockbuilder::BlockBuilderConsumer::new(consumer, &metrics.wal_consumer),
         writer,
         index,
         configured.store,

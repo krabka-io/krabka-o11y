@@ -1,6 +1,8 @@
+use std::future::Future;
+
 use super::{
-    Arc, Bytes, Header, PROFILES_WAL_TOPIC, Producer, ProducerRecord, ProfileRecord, ProfilesError,
-    WalSink, partition_key,
+    Arc, Bytes, Header, PROFILES_WAL_TOPIC, ProduceWindow, Producer, ProducerRecord, ProfileRecord,
+    ProfilesError, WalBatchError, WalSink, partition_key, write_batch_pipelined,
 };
 
 pub struct KafkaSink {
@@ -18,11 +20,16 @@ impl KafkaSink {
     pub fn with_topic(producer: Arc<Producer>, topic: String) -> Self {
         Self { producer, topic }
     }
-}
 
-#[async_trait::async_trait]
-impl WalSink for KafkaSink {
-    async fn append(&self, rec: ProfileRecord) -> Result<(), ProfilesError> {
+    /// Hands one record to the producer and returns the future for its ack.
+    ///
+    /// The two halves are separate because only the first decides order.
+    /// `Producer::send` appends the record to the partition accumulator, and
+    /// the returned future resolves when the broker acks it.
+    async fn enqueue(
+        &self,
+        rec: ProfileRecord,
+    ) -> Result<impl Future<Output = Result<(), ProfilesError>> + use<>, ProfilesError> {
         let key = partition_key(&rec.tenant, rec.series_fingerprint());
         let value = rec.encode()?;
         // Inject the current span's W3C trace context (traceparent/tracestate)
@@ -47,9 +54,25 @@ impl WalSink for KafkaSink {
                 ..Default::default()
             })
             .await;
-        ack.await
-            .map_err(|err| ProfilesError::Produce(err.to_string()))?
-            .map_err(|err| ProfilesError::Produce(err.to_string()))?;
-        Ok(())
+        Ok(async move {
+            ack.await
+                .map_err(|err| ProfilesError::Produce(err.to_string()))?
+                .map_err(|err| ProfilesError::Produce(err.to_string()))?;
+            Ok(())
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl WalSink for KafkaSink {
+    async fn append(&self, rec: ProfileRecord) -> Result<(), ProfilesError> {
+        self.enqueue(rec).await?.await
+    }
+
+    async fn append_batch(
+        &self,
+        records: Vec<ProfileRecord>,
+    ) -> Result<(), WalBatchError<ProfilesError>> {
+        write_batch_pipelined(records, ProduceWindow::default(), |rec| self.enqueue(rec)).await
     }
 }

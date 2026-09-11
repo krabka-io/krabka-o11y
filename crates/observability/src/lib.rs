@@ -22,6 +22,8 @@ use std::{
 pub mod compaction_metrics;
 pub mod topic_contract;
 pub mod wal_consumer_metrics;
+pub mod wal_group_assignment;
+pub mod wal_produce;
 
 use async_trait::async_trait;
 use axum::{

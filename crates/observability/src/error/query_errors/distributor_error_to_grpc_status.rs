@@ -12,7 +12,7 @@ pub(crate) fn distributor_error_to_grpc_status(error: &DistributorError) -> toni
         }
         DistributorError::IngestQuota(IngestLimitError::Unavailable { .. })
         | DistributorError::WalAppendTimeout
-        | DistributorError::WalSink(_) => tonic::Status::unavailable(message),
+        | DistributorError::WalBatch(_) => tonic::Status::unavailable(message),
         DistributorError::EmptyStreamLabels
         | DistributorError::InvalidOtlpAttribute
         | DistributorError::InvalidOtlpPayload

@@ -1,0 +1,13 @@
+# krabka-observability --target=compactor
+#
+# `index-prefix` and `object-store-url` are both refused-at-startup required
+# for this role. `data-root` holds the local manifest and the delete-request
+# store, so it needs real storage, not a scratch directory that a restart
+# empties.
+target: compactor
+listen-addr: 0.0.0.0:3100
+admin-listen-addr: 0.0.0.0:9404
+wal-bootstrap-server: broker:9092
+object-store-url: s3://krabka-logs
+index-prefix: logs
+data-root: /var/lib/krabka

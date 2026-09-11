@@ -12,6 +12,7 @@ use std::sync::Arc;
 use krabka_blockstore::ObjectStoreMetrics;
 use krabka_observability::{
     compaction_metrics::CompactionMetrics, wal_consumer_metrics::WalConsumerMetrics,
+    wal_produce::WalProduceMetrics,
 };
 use krabka_units::prelude::*;
 use prometheus_client::{

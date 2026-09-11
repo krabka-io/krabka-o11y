@@ -1,51 +1,37 @@
 use super::{
-    AtomicUsize, BackendError, Duration, MetricsJobRequest, MetricsPartial, MetricsResponseJson,
-    Ordering, QuerierBackend, SearchJobRequest, SearchPartial, SearchResponseJson, TENANT_HEADER,
-    TagNamesJobRequest, TagNamesPartial, TagValuesBody, TagValuesJobRequest, TagValuesPartial,
-    TagsBody, TraceByIdJobRequest, TraceByIdResponseJson, TracePartial, async_trait, build_url,
+    BackendError, Duration, MetricsJobRequest, MetricsPartial, MetricsResponseJson, QuerierBackend,
+    SearchJobRequest, SearchPartial, SearchResponseJson, TENANT_HEADER, TagNamesJobRequest,
+    TagNamesPartial, TagValuesBody, TagValuesJobRequest, TagValuesPartial, TagsBody,
+    TraceByIdJobRequest, TraceByIdResponseJson, TracePartial, async_trait, build_url,
     error_for_status, ns_to_seconds, push_shard_params, scope_param,
 };
 
-/// HTTP querier pool.
+/// The HTTP transport to one querier at a time.
 ///
-/// It round-robins `addrs` for search and tag jobs, and targets a specific
-/// querier by index for a by-id fan-out. Each request carries the tenant in
+/// It holds no addresses of its own. Each request names the `host:port` the
+/// frontend assigned it to, which is an address the membership saw ready
+/// within the last refresh; the transport dials it, with the tenant in
 /// `X-Scope-OrgID` and a per-request timeout.
+///
+/// It used to hold a `Vec<String>` and an atomic counter, and pick a target
+/// with `next.fetch_add(1) % addrs.len()`. That put a fixed 1/N of every
+/// query on an address that might be gone and offered no way to use one that
+/// had appeared.
 pub struct HttpQuerier {
     pub(crate) http: reqwest::Client,
-    pub(crate) addrs: Vec<String>,
-    pub(crate) next: AtomicUsize,
 }
 
 impl HttpQuerier {
-    /// Build the pool. Each entry in `addrs` is `host:port` with no scheme,
-    /// and `http://` is assumed.
+    /// Build the transport. `timeout` bounds one job.
     ///
     /// # Errors
-    /// Returns `BackendError::Transport` if `addrs` is empty or the client
-    /// cannot be built.
-    pub fn new(addrs: Vec<String>, timeout: Duration) -> Result<Self, BackendError> {
-        if addrs.is_empty() {
-            return Err(BackendError::Transport("no querier addresses".to_string()));
-        }
+    /// Returns `BackendError::Transport` if the client cannot be built.
+    pub fn new(timeout: Duration) -> Result<Self, BackendError> {
         let http = reqwest::Client::builder()
             .timeout(timeout)
             .build()
             .map_err(|e| BackendError::Transport(e.to_string()))?;
-        Ok(Self {
-            http,
-            addrs,
-            next: AtomicUsize::new(0),
-        })
-    }
-
-    pub(crate) fn next_addr(&self) -> &str {
-        let i = self.next.fetch_add(1, Ordering::Relaxed) % self.addrs.len();
-        &self.addrs[i]
-    }
-
-    pub(crate) fn addr_at(&self, idx: usize) -> &str {
-        &self.addrs[idx % self.addrs.len()]
+        Ok(Self { http })
     }
 
     pub(crate) fn map_send_err(e: &reqwest::Error) -> BackendError {
@@ -59,12 +45,8 @@ impl HttpQuerier {
 
 #[async_trait]
 impl QuerierBackend for HttpQuerier {
-    fn querier_count(&self) -> usize {
-        self.addrs.len()
-    }
-
     async fn search_job(&self, req: &SearchJobRequest) -> Result<SearchPartial, BackendError> {
-        let url = format!("http://{}/api/search", self.next_addr());
+        let url = format!("http://{}/api/search", req.querier);
         let mut params: Vec<(&str, String)> = vec![
             ("q", req.query.clone()),
             ("start", ns_to_seconds(req.start_ns)),
@@ -96,10 +78,7 @@ impl QuerierBackend for HttpQuerier {
         req: &TraceByIdJobRequest,
     ) -> Result<TracePartial, BackendError> {
         let hex = crate::frontend::wire::hex16(&req.trace_id);
-        let addr = req
-            .querier
-            .map_or_else(|| self.next_addr(), |i| self.addr_at(i));
-        let url = format!("http://{addr}/api/v2/traces/{hex}");
+        let url = format!("http://{}/api/v2/traces/{hex}", req.querier);
         let params: Vec<(&str, String)> = vec![
             ("start", ns_to_seconds(req.start_ns)),
             ("end", ns_to_seconds(req.end_ns)),
@@ -131,7 +110,7 @@ impl QuerierBackend for HttpQuerier {
         &self,
         req: &TagNamesJobRequest,
     ) -> Result<TagNamesPartial, BackendError> {
-        let url = format!("http://{}/api/v2/search/tags", self.next_addr());
+        let url = format!("http://{}/api/v2/search/tags", req.querier);
         let mut params: Vec<(&str, String)> = vec![
             ("start", ns_to_seconds(req.start_ns)),
             ("end", ns_to_seconds(req.end_ns)),
@@ -166,7 +145,7 @@ impl QuerierBackend for HttpQuerier {
         // `resource.service.name`); build it via `path_segments_mut` so any
         // special chars (`/`, `?`, `#`, space) are percent-encoded into a single
         // segment rather than corrupting the path/query when re-parsed.
-        let mut url = reqwest::Url::parse(&format!("http://{}", self.next_addr()))
+        let mut url = reqwest::Url::parse(&format!("http://{}", req.querier))
             .map_err(|e| BackendError::Transport(format!("invalid querier addr: {e}")))?;
         url.path_segments_mut()
             .map_err(|()| BackendError::Transport("querier url cannot be a base".to_string()))?
@@ -203,7 +182,7 @@ impl QuerierBackend for HttpQuerier {
 
     async fn metrics_job(&self, req: &MetricsJobRequest) -> Result<MetricsPartial, BackendError> {
         let path = if req.instant { "query" } else { "query_range" };
-        let url = format!("http://{}/api/metrics/{path}", self.next_addr());
+        let url = format!("http://{}/api/metrics/{path}", req.querier);
         let mut params: Vec<(&str, String)> = vec![
             ("q", req.query.clone()),
             ("start", ns_to_seconds(req.start_ns)),

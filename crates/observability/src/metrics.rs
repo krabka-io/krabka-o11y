@@ -24,7 +24,10 @@ use prometheus_client::{
 };
 use tokio::sync::Mutex;
 
-use crate::{compaction_metrics::CompactionMetrics, wal_consumer_metrics::WalConsumerMetrics};
+use crate::{
+    compaction_metrics::CompactionMetrics, wal_consumer_metrics::WalConsumerMetrics,
+    wal_produce::WalProduceMetrics,
+};
 
 #[cfg(test)]
 mod tests {

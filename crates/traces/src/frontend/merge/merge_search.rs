@@ -24,5 +24,8 @@ pub fn merge_search(partials: Vec<SearchPartial>, limit: usize, spss: usize) -> 
     SearchResponseJson {
         traces: merged,
         metrics,
+        // The merge sees only the partials that came back. What the fan-out
+        // could not reach is the frontend's to report, so it fills this in.
+        warnings: Vec::new(),
     }
 }

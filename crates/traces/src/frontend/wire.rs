@@ -56,6 +56,7 @@ mod tests {
                     matched: 1,
                 }],
             }],
+            warnings: vec![],
             metrics: Metrics {
                 total_jobs: 3,
                 completed_jobs: 3,
@@ -158,6 +159,7 @@ mod tests {
                     inspected_bytes: 5,
                     inspected_spans: 0,
                 },
+                warnings: vec![],
             }
         );
     }

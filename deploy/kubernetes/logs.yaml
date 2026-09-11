@@ -1,0 +1,341 @@
+# Loki-compatible log ingest, compaction and querying.
+apiVersion: v1
+kind: Service
+metadata:
+  name: logs-distributor
+spec:
+  selector:
+    app.kubernetes.io/name: logs-distributor
+  ports:
+    - {name: http, port: 3100, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logs-distributor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: logs-distributor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: logs-distributor
+    spec:
+      # Long enough for the preStop drain below plus the in-flight pushes
+      # that were accepted while it ran.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # The topic contract, re-checked on every pod start. `provision_topics`
+        # creates what is missing, then describes every topic and fails when one
+        # does not meet the contract -- so a role cannot come up against a
+        # broker whose WAL topic is compacted, or absent. No service binary
+        # makes this check itself, which is why it is an init container rather
+        # than an assumption.
+        - name: topic-contract
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-o11y-bootstrap]
+          args:
+            - --bootstrap=broker:9092
+            - --partitions=1
+            - --state-partitions=1
+            - --replicas=1
+            - --retention-ms=900000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: role
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-observability]
+          args: [--config.file=/etc/krabka/logs-distributor.yaml]
+          envFrom:
+            - secretRef: {name: krabka-object-store}
+            - configMapRef: {name: krabka-object-store-endpoint}
+          ports:
+            - {name: http, containerPort: 3100}
+            - {name: admin, containerPort: 9404}
+          # Readiness on the data port wherever there is one. The admin
+          # server is a detached task with no graceful shutdown, so
+          # `:9404/ready` keeps answering 200 for the whole of a drain; the
+          # data port stops answering when the role stops serving.
+          startupProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          # Liveness is a socket check, never `/ready`. Nothing here serves a
+          # liveness route, and pointing liveness at readiness restarts a role
+          # for being slow to load an index -- which throws away what it had
+          # loaded and makes it slower.
+          livenessProbe:
+            tcpSocket: {port: admin}
+            periodSeconds: 10
+            failureThreshold: 6
+          lifecycle:
+            preStop:
+              # Loki's `prepare_shutdown`, which is the drain Krabka
+              # implements: it clears the `accepting-writes` gate, `/ready` on
+              # the data port starts answering 503, and the endpoint is
+              # removed before SIGTERM arrives. Without it the pod keeps
+              # receiving pushes it is about to stop serving, and the
+              # orchestrator never learns otherwise -- the admin port, which
+              # has no gate for this role, answers 200 throughout.
+              exec:
+                command:
+                  - /busybox/sh
+                  - -c
+                  - /busybox/wget -q -O - --post-data= http://127.0.0.1:3100/ingester/prepare_shutdown; /busybox/sleep 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: roles, mountPath: /etc/krabka, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: state, mountPath: /var/lib/krabka}
+      volumes:
+        - name: roles
+          configMap: {name: krabka-roles}
+        - name: tmp
+          emptyDir: {}
+        # The working directory. Nothing durable is kept here for this
+        # role -- the WAL is in the broker, the blocks are in the object
+        # store -- so an emptyDir is the honest choice.
+        - name: state
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logs-compactor
+spec:
+  strategy: {type: Recreate}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: logs-compactor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: logs-compactor
+    spec:
+      # The compaction batch in flight when SIGTERM arrives runs to
+      # completion before the process exits, deliberately: a batch killed
+      # halfway is replayed from the WAL, and this is the time that replay
+      # costs if it is not allowed to finish.
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # The topic contract, re-checked on every pod start. `provision_topics`
+        # creates what is missing, then describes every topic and fails when one
+        # does not meet the contract -- so a role cannot come up against a
+        # broker whose WAL topic is compacted, or absent. No service binary
+        # makes this check itself, which is why it is an init container rather
+        # than an assumption.
+        - name: topic-contract
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-o11y-bootstrap]
+          args:
+            - --bootstrap=broker:9092
+            - --partitions=1
+            - --state-partitions=1
+            - --replicas=1
+            - --retention-ms=900000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: role
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-observability]
+          args: [--config.file=/etc/krabka/logs-compactor.yaml]
+          envFrom:
+            - secretRef: {name: krabka-object-store}
+            - configMapRef: {name: krabka-object-store-endpoint}
+          ports:
+            - {name: http, containerPort: 3100}
+            - {name: admin, containerPort: 9404}
+          # Readiness on the data port wherever there is one. The admin
+          # server is a detached task with no graceful shutdown, so
+          # `:9404/ready` keeps answering 200 for the whole of a drain; the
+          # data port stops answering when the role stops serving.
+          startupProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          # Liveness is a socket check, never `/ready`. Nothing here serves a
+          # liveness route, and pointing liveness at readiness restarts a role
+          # for being slow to load an index -- which throws away what it had
+          # loaded and makes it slower.
+          livenessProbe:
+            tcpSocket: {port: admin}
+            periodSeconds: 10
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: roles, mountPath: /etc/krabka, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: state, mountPath: /var/lib/krabka}
+      volumes:
+        - name: roles
+          configMap: {name: krabka-roles}
+        - name: tmp
+          emptyDir: {}
+        # `--data-root`. This role keeps the local manifest and the
+        # delete-request store here, and neither is reconstructible from the
+        # WAL or the object store -- an emptyDir would lose a tenant's
+        # outstanding deletes on every reschedule, silently.
+        - name: state
+          persistentVolumeClaim: {claimName: logs-compactor}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: logs-compactor
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logs-querier
+spec:
+  selector:
+    app.kubernetes.io/name: logs-querier
+  ports:
+    - {name: http, port: 3100, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logs-querier
+spec:
+  strategy: {type: Recreate}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: logs-querier
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: logs-querier
+    spec:
+      # In-flight queries.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # The topic contract, re-checked on every pod start. `provision_topics`
+        # creates what is missing, then describes every topic and fails when one
+        # does not meet the contract -- so a role cannot come up against a
+        # broker whose WAL topic is compacted, or absent. No service binary
+        # makes this check itself, which is why it is an init container rather
+        # than an assumption.
+        - name: topic-contract
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-o11y-bootstrap]
+          args:
+            - --bootstrap=broker:9092
+            - --partitions=1
+            - --state-partitions=1
+            - --replicas=1
+            - --retention-ms=900000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: role
+          image: ghcr.io/krabka-io/krabka-o11y
+          command: [krabka-observability]
+          args: [--config.file=/etc/krabka/logs-querier.yaml]
+          envFrom:
+            - secretRef: {name: krabka-object-store}
+            - configMapRef: {name: krabka-object-store-endpoint}
+          ports:
+            - {name: http, containerPort: 3100}
+            - {name: admin, containerPort: 9404}
+          # Readiness on the data port wherever there is one. The admin
+          # server is a detached task with no graceful shutdown, so
+          # `:9404/ready` keeps answering 200 for the whole of a drain; the
+          # data port stops answering when the role stops serving.
+          startupProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          # Liveness is a socket check, never `/ready`. Nothing here serves a
+          # liveness route, and pointing liveness at readiness restarts a role
+          # for being slow to load an index -- which throws away what it had
+          # loaded and makes it slower.
+          livenessProbe:
+            tcpSocket: {port: admin}
+            periodSeconds: 10
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: roles, mountPath: /etc/krabka, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: state, mountPath: /var/lib/krabka}
+      volumes:
+        - name: roles
+          configMap: {name: krabka-roles}
+        - name: tmp
+          emptyDir: {}
+        # `--data-root`. This role keeps the local manifest and the
+        # delete-request store here, and neither is reconstructible from the
+        # WAL or the object store -- an emptyDir would lose a tenant's
+        # outstanding deletes on every reschedule, silently.
+        - name: state
+          persistentVolumeClaim: {claimName: logs-querier}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: logs-querier
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi

@@ -60,16 +60,23 @@ pub async fn process_raw(
         return Err(err);
     }
 
-    for rec in pending {
-        if let Err(err) = state.sink.append(rec).await {
-            // The WAL append failed: count it as a WAL/produce failure (distinct
-            // from a 4xx client/validation rejection) and undo the series
-            // reservation so a transient produce error doesn't leak into the
-            // tenant's max-series budget.
-            state.metrics.record_wal_append_failure();
-            rollback_reserved_series(state, tenant, &reserved);
-            return Err(err);
-        }
+    // One pipelined batch, not one produce per record. The sink enqueues the
+    // records in this order, so one series' records stay ordered on the
+    // partition its key selects.
+    if let Err(error) = state.sink.append_batch(pending).await {
+        // The WAL append failed: count it as a WAL/produce failure (distinct
+        // from a 4xx client/validation rejection) and undo the series
+        // reservation so a transient produce error doesn't leak into the
+        // tenant's max-series budget.
+        state.metrics.record_wal_append_failure();
+        // Profiles have no query-time deduplication, so a retry of a request
+        // that appended in part writes those samples a second time.
+        state
+            .metrics
+            .wal_produce
+            .record_batch_failure(error.appended(), error.total());
+        rollback_reserved_series(state, tenant, &reserved);
+        return Err(ProfilesError::from(error));
     }
 
     Ok(())

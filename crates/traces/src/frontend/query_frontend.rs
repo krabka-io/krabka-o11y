@@ -1,34 +1,47 @@
 use super::{
-    Arc, BackendError, BlockCatalog, FrontendConfig, JobShard, Metrics, MetricsJobRequest,
-    MetricsResponseJson, QuerierBackend, SearchJobRequest, SearchPartial, SearchResponseJson,
-    TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest, TagValuesPartial,
-    TraceByIdJobRequest, TraceByIdResponseJson, TraceStatus, catalog_error, job, merge,
-    metrics_merge, queue,
+    Arc, AssignedJob, BackendError, BlockCatalog, FrontendConfig, JobShard, Membership,
+    MembershipView, Metrics, MetricsJobRequest, MetricsResponseJson, QuerierBackend,
+    SearchJobRequest, SearchPartial, SearchResponseJson, TagNamesJobRequest, TagNamesPartial,
+    TagValuesJobRequest, TagValuesPartial, TraceByIdJobRequest, TraceByIdResponseJson, TraceStatus,
+    assign_jobs, catalog_error, job, merge, metrics_merge, pick_querier, queue,
 };
 
 /// The query-frontend pipeline.
 ///
-/// It runs plan jobs -> queue (bounded fan-out) -> per-job search ->
-/// merge (limit/spss) -> render Tempo JSON. It sits in front of a
-/// [`QuerierBackend`] pool, with a [`BlockCatalog`] for block enumeration.
+/// It runs plan jobs -> assign to ready queriers -> queue (bounded fan-out) ->
+/// per-job search -> merge (limit/spss) -> render Tempo JSON. It sits in front
+/// of a [`QuerierBackend`] transport, with a [`BlockCatalog`] for block
+/// enumeration and a [`MembershipView`] for who may take work.
+///
+/// Every query takes **one** membership snapshot and uses it for planning,
+/// assignment and collection. A fan-out that planned against one view and
+/// collected against another could lose a shard with nothing left to blame it
+/// on.
 ///
 /// By-id does **not** fan per-block. The querier reassembles a trace across
-/// blocks and exposes no block-scoped by-id. By-id instead queries every
-/// querier in the pool and unions their v2 responses. That union is meaningful
-/// because different queriers' live-stores may hold different recent spans.
+/// blocks and exposes no block-scoped by-id. By-id instead queries every ready
+/// querier and unions their v2 responses. That union is meaningful because
+/// different queriers' live-stores hold different recent spans.
 pub struct QueryFrontend<B: QuerierBackend, C: BlockCatalog> {
     pub(crate) backend: Arc<B>,
     pub(crate) catalog: Arc<C>,
     pub(crate) cfg: FrontendConfig,
+    pub(crate) membership: MembershipView,
 }
 
 impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C> {
     #[must_use]
-    pub fn new(backend: Arc<B>, catalog: Arc<C>, cfg: FrontendConfig) -> Self {
+    pub fn new(
+        backend: Arc<B>,
+        catalog: Arc<C>,
+        cfg: FrontendConfig,
+        membership: MembershipView,
+    ) -> Self {
         Self {
             backend,
             catalog,
             cfg,
+            membership,
         }
     }
 
@@ -37,6 +50,12 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     #[must_use]
     pub fn backend_ref(&self) -> &B {
         &self.backend
+    }
+
+    /// The querier pool this frontend fans out over.
+    #[must_use]
+    pub fn membership(&self) -> &MembershipView {
+        &self.membership
     }
 
     /// The configured default trace limit.
@@ -51,12 +70,92 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         self.cfg.default_spss
     }
 
+    /// The membership snapshot this query will run against, or a transport
+    /// error when nothing is ready.
+    ///
+    /// An empty pool is a failure, not an empty result. Answering `200 []`
+    /// from no queriers at all is the most complete form of the silent loss
+    /// this whole path is built to avoid.
+    fn ready_pool(&self) -> Result<Arc<Membership>, BackendError> {
+        let snapshot = self.membership.load();
+        if snapshot.ready_count() == 0 {
+            return Err(BackendError::Transport(format!(
+                "no ready querier: {} known, none passing /ready",
+                snapshot.members().len()
+            )));
+        }
+        Ok(snapshot)
+    }
+
+    /// Warnings the client must see about queriers left out of this query.
+    ///
+    /// A cold block job is re-assignable: an excluded querier costs nothing,
+    /// because the block is in object storage and another querier reads it.
+    /// The hot tier is not. Each querier's live-store holds a different slice
+    /// of the recent spans, so a querier that is out of the fan-out takes its
+    /// slice with it, and no other querier can supply it. The warning is
+    /// therefore raised exactly when the plan included a live shard.
+    fn exclusion_warnings(snapshot: &Membership, planned_live: bool) -> Vec<String> {
+        if planned_live {
+            snapshot.exclusion_warnings()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The warning for a pool that changed while the query was in flight.
+    ///
+    /// Assignment is stable, so a cold job that already ran still covers its
+    /// block. A live shard is different: it had to reach every holder of the
+    /// hot tier, and a querier that joined after the snapshot was taken was
+    /// never asked. Rather than re-running the fan-out against a pool that may
+    /// change again, the answer says what it could not guarantee.
+    fn generation_warning(&self, snapshot: &Membership, planned_live: bool) -> Option<String> {
+        let now = self.membership.load();
+        (planned_live && now.generation() != snapshot.generation()).then(|| {
+            format!(
+                "the querier pool changed while this query ran (generation {} -> {}); the live tier fan-out may not have covered every querier",
+                snapshot.generation(),
+                now.generation()
+            )
+        })
+    }
+
+    /// Plan the shards for a window, and place each on a ready querier.
+    async fn plan_and_assign(
+        &self,
+        tenant: &str,
+        start_ns: i64,
+        end_ns: i64,
+        snapshot: &Membership,
+    ) -> Result<(Vec<AssignedJob>, u64, bool), BackendError> {
+        let blocks = self
+            .catalog
+            .blocks(tenant, start_ns, end_ns)
+            .await
+            .map_err(|e| catalog_error(&e))?;
+        let plan = job::plan_search_jobs(
+            &blocks,
+            end_ns,
+            self.cfg.hot_frontier_ns,
+            self.cfg.target_per_job,
+        );
+        let planned_live = plan.jobs.contains(&JobShard::Live);
+        let assigned = assign_jobs(plan.jobs, &snapshot.ready_addrs());
+        Ok((assigned, plan.total_blocks, planned_live))
+    }
+
     /// Run a `TraceQL` `/api/search` through the full pipeline.
     ///
     /// Search shards **partition** the data across the live tier and disjoint
     /// cold blocks, so a failed shard means missing results. Any job error
     /// therefore propagates. An invalid query fails on every shard and must
     /// surface. It must not silently return an empty 200.
+    ///
+    /// A querier that is *excluded* before planning is a different case from
+    /// one whose job failed. Its cold blocks go to another querier and cost
+    /// nothing, but the hot tier it held cannot be recovered from anywhere, so
+    /// the response carries a warning naming it.
     ///
     /// # Errors
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
@@ -69,24 +168,16 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         limit: usize,
         spss: usize,
     ) -> Result<SearchResponseJson, BackendError> {
-        let blocks = self
-            .catalog
-            .blocks(tenant, start_ns, end_ns)
-            .await
-            .map_err(|e| catalog_error(&e))?;
-        let plan = job::plan_search_jobs(
-            &blocks,
-            end_ns,
-            self.cfg.hot_frontier_ns,
-            self.cfg.target_per_job,
-        );
-        let total_jobs = plan.jobs.len() as u64;
-        let total_blocks = plan.total_blocks;
+        let snapshot = self.ready_pool()?;
+        let (assigned, total_blocks, planned_live) = self
+            .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
+            .await?;
+        let total_jobs = assigned.len() as u64;
 
         let backend = Arc::clone(&self.backend);
         let tenant_s = tenant.to_string();
         let query_s = query.to_string();
-        let results = queue::run_jobs(plan.jobs, self.cfg.max_concurrency, move |shard| {
+        let results = queue::run_jobs(assigned, self.cfg.max_concurrency, move |job| {
             let backend = Arc::clone(&backend);
             let req = SearchJobRequest {
                 tenant: tenant_s.clone(),
@@ -95,7 +186,8 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
                 end_ns,
                 limit,
                 spss,
-                shard,
+                shard: job.shard,
+                querier: job.querier,
             };
             async move { backend.search_job(&req).await }
         })
@@ -106,16 +198,24 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         // Seed plan-derived totals (per-job metrics carry completed/bytes).
         resp.metrics.total_jobs = total_jobs;
         resp.metrics.total_blocks = total_blocks;
+        resp.warnings = Self::exclusion_warnings(&snapshot, planned_live);
+        resp.warnings
+            .extend(self.generation_warning(&snapshot, planned_live));
         Ok(resp)
     }
 
-    /// Run a `/api/v2/traces/{id}` by-id lookup, with one job per querier.
+    /// Run a `/api/v2/traces/{id}` by-id lookup, with one job per ready
+    /// querier.
     ///
-    /// By-id queriers are **redundant** for a trace. Each one reassembles the
-    /// trace from object storage, and their live-stores differ only in recent
-    /// spans. This method therefore tolerates per-querier failures. It
-    /// assembles the trace from any successes, and an error propagates only
+    /// By-id queriers are **redundant** for a trace's cold half. Each one
+    /// reassembles it from object storage, and their live-stores differ only
+    /// in recent spans. This method therefore tolerates per-querier failures.
+    /// It assembles the trace from any successes, and an error propagates only
     /// when *every* querier failed.
+    ///
+    /// A querier missing from the fan-out still costs the recent spans only it
+    /// held, so the returned status is `PARTIAL` and the warnings say which
+    /// querier and why. Tempo's v2 envelope already carries both.
     ///
     /// # Errors
     /// Returns an error when every querier lookup fails.
@@ -125,21 +225,33 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         trace_id: [u8; 16],
         start_ns: i64,
         end_ns: i64,
-    ) -> Result<(Option<TraceByIdResponseJson>, Metrics, TraceStatus), BackendError> {
-        let queriers = self.backend.querier_count().max(1);
-        let jobs: Vec<usize> = (0..queriers).collect();
-        let total_jobs = jobs.len() as u64;
+    ) -> Result<
+        (
+            Option<TraceByIdResponseJson>,
+            Metrics,
+            TraceStatus,
+            Vec<String>,
+        ),
+        BackendError,
+    > {
+        let snapshot = self.ready_pool()?;
+        let targets: Vec<String> = snapshot
+            .ready_addrs()
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+        let total_jobs = targets.len() as u64;
 
         let backend = Arc::clone(&self.backend);
         let tenant_s = tenant.to_string();
-        let results = queue::run_jobs(jobs, self.cfg.max_concurrency, move |idx| {
+        let results = queue::run_jobs(targets, self.cfg.max_concurrency, move |querier| {
             let backend = Arc::clone(&backend);
             let req = TraceByIdJobRequest {
                 tenant: tenant_s.clone(),
                 trace_id,
                 start_ns,
                 end_ns,
-                querier: Some(idx),
+                querier,
             };
             async move { backend.trace_by_id_job(&req).await }
         })
@@ -147,10 +259,12 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
 
         let mut partials = Vec::new();
         let mut first_err = None;
+        let mut failed = Vec::new();
         for r in results {
             match r {
                 Ok(p) => partials.push(p),
                 Err(e) => {
+                    failed.push(e.to_string());
                     first_err.get_or_insert(e);
                 }
             }
@@ -161,12 +275,28 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             return Err(e);
         }
 
-        let (trace, mut metrics, status) = merge::assemble_trace(partials, self.cfg.max_trace);
+        let (trace, mut metrics, mut status) = merge::assemble_trace(partials, self.cfg.max_trace);
         metrics.total_jobs = total_jobs;
-        Ok((trace, metrics, status))
+
+        let mut warnings = Vec::new();
+        if matches!(status, TraceStatus::Partial) {
+            warnings.push("trace exceeds max size; returned partially".to_string());
+        }
+        // A by-id fan-out always reaches every ready querier, so the hot tier
+        // is covered unless a querier is out of the pool or its job failed.
+        warnings.extend(snapshot.exclusion_warnings());
+        warnings.extend(
+            failed
+                .into_iter()
+                .map(|e| format!("a querier lookup failed ({e}); spans only it held are missing")),
+        );
+        if !warnings.is_empty() {
+            status = TraceStatus::Partial;
+        }
+        Ok((trace, metrics, status, warnings))
     }
 
-    /// Run `/api/v2/search/tags`: fan over the planned shards, then union and
+    /// Run `/api/v2/search/tags`: fan over the assigned shards, then union and
     /// dedupe.
     ///
     /// # Errors
@@ -177,31 +307,24 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         scope: Option<krabka_traceql::TagScope>,
         start_ns: i64,
         end_ns: i64,
-    ) -> Result<(Vec<krabka_traceql::ScopedTag>, Metrics), BackendError> {
-        let blocks = self
-            .catalog
-            .blocks(tenant, start_ns, end_ns)
-            .await
-            .map_err(|e| catalog_error(&e))?;
-        let plan = job::plan_search_jobs(
-            &blocks,
-            end_ns,
-            self.cfg.hot_frontier_ns,
-            self.cfg.target_per_job,
-        );
-        let total_jobs = plan.jobs.len() as u64;
-        let total_blocks = plan.total_blocks;
+    ) -> Result<(Vec<krabka_traceql::ScopedTag>, Metrics, Vec<String>), BackendError> {
+        let snapshot = self.ready_pool()?;
+        let (assigned, total_blocks, planned_live) = self
+            .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
+            .await?;
+        let total_jobs = assigned.len() as u64;
 
         let backend = Arc::clone(&self.backend);
         let tenant_s = tenant.to_string();
-        let results = queue::run_jobs(plan.jobs, self.cfg.max_concurrency, move |shard| {
+        let results = queue::run_jobs(assigned, self.cfg.max_concurrency, move |job| {
             let backend = Arc::clone(&backend);
             let req = TagNamesJobRequest {
                 tenant: tenant_s.clone(),
                 scope,
                 start_ns,
                 end_ns,
-                shard,
+                shard: job.shard,
+                querier: job.querier,
             };
             async move { backend.tag_names_job(&req).await }
         })
@@ -211,11 +334,13 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let (tags, mut metrics) = merge::merge_tag_names(partials);
         metrics.total_jobs = total_jobs;
         metrics.total_blocks = total_blocks;
-        Ok((tags, metrics))
+        let mut warnings = Self::exclusion_warnings(&snapshot, planned_live);
+        warnings.extend(self.generation_warning(&snapshot, planned_live));
+        Ok((tags, metrics, warnings))
     }
 
-    /// Run `/api/v2/search/tag/{tag}/values`: fan over shards, then union and
-    /// dedupe.
+    /// Run `/api/v2/search/tag/{tag}/values`: fan over assigned shards, then
+    /// union and dedupe.
     ///
     /// # Errors
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
@@ -225,32 +350,25 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         tag: &str,
         start_ns: i64,
         end_ns: i64,
-    ) -> Result<(Vec<krabka_traceql::TypedValue>, Metrics), BackendError> {
-        let blocks = self
-            .catalog
-            .blocks(tenant, start_ns, end_ns)
-            .await
-            .map_err(|e| catalog_error(&e))?;
-        let plan = job::plan_search_jobs(
-            &blocks,
-            end_ns,
-            self.cfg.hot_frontier_ns,
-            self.cfg.target_per_job,
-        );
-        let total_jobs = plan.jobs.len() as u64;
-        let total_blocks = plan.total_blocks;
+    ) -> Result<(Vec<krabka_traceql::TypedValue>, Metrics, Vec<String>), BackendError> {
+        let snapshot = self.ready_pool()?;
+        let (assigned, total_blocks, planned_live) = self
+            .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
+            .await?;
+        let total_jobs = assigned.len() as u64;
 
         let backend = Arc::clone(&self.backend);
         let tenant_s = tenant.to_string();
         let tag_s = tag.to_string();
-        let results = queue::run_jobs(plan.jobs, self.cfg.max_concurrency, move |shard| {
+        let results = queue::run_jobs(assigned, self.cfg.max_concurrency, move |job| {
             let backend = Arc::clone(&backend);
             let req = TagValuesJobRequest {
                 tenant: tenant_s.clone(),
                 tag: tag_s.clone(),
                 start_ns,
                 end_ns,
-                shard,
+                shard: job.shard,
+                querier: job.querier,
             };
             async move { backend.tag_values_job(&req).await }
         })
@@ -260,11 +378,13 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let (values, mut metrics) = merge::merge_tag_values(partials);
         metrics.total_jobs = total_jobs;
         metrics.total_blocks = total_blocks;
-        Ok((values, metrics))
+        let mut warnings = Self::exclusion_warnings(&snapshot, planned_live);
+        warnings.extend(self.generation_warning(&snapshot, planned_live));
+        Ok((values, metrics, warnings))
     }
 
     /// Run a `TraceQL`-metrics query as a **single unsharded job** against one
-    /// querier.
+    /// ready querier.
     ///
     /// The query is `/api/metrics/query_range` or `query`.
     ///
@@ -279,6 +399,10 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     /// union correctly for every aggregate. This method applies only exemplar
     /// limiting.
     ///
+    /// The one querier is chosen by ownership of the query text, so repeated
+    /// evaluations of the same query land on the same querier while the pool
+    /// holds, and it is always one the membership has just seen ready.
+    ///
     /// # Errors
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
     pub async fn metrics_query(
@@ -289,6 +413,10 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         instant: bool,
         exemplar_limit: Option<usize>,
     ) -> Result<MetricsResponseJson, BackendError> {
+        let snapshot = self.ready_pool()?;
+        let querier = pick_querier(&snapshot.ready_addrs(), query)
+            .ok_or_else(|| BackendError::Transport("no ready querier".to_string()))?
+            .to_string();
         let (start_ns, end_ns, step_ns) = window;
         let req = MetricsJobRequest {
             tenant: tenant.to_string(),
@@ -300,6 +428,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             // `JobShard::Live` sends no scan restriction, so the querier scans its
             // full hot+cold union — the whole result in one job.
             shard: JobShard::Live,
+            querier,
         };
         let mut series = self.backend.metrics_job(&req).await?.response.series;
         metrics_merge::limit_exemplars(&mut series, exemplar_limit);
