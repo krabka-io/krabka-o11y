@@ -3168,6 +3168,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabka-audit"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617#32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "bytes",
+ "clap",
+ "derive_more",
+ "krabka-ids",
+ "krabka-protocol",
+ "krabka-units",
+ "qubit-clock",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "krabka-blockstore"
 version = "0.4.0"
 dependencies = [
@@ -3176,6 +3199,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "datafusion",
+ "derive_more",
  "futures",
  "krabka-object-store",
  "krabka-units",
@@ -3441,6 +3465,7 @@ dependencies = [
  "datafusion",
  "flate2",
  "futures-util",
+ "krabka-audit",
  "krabka-blockstore",
  "krabka-client-admin",
  "krabka-client-consumer",
@@ -3449,6 +3474,7 @@ dependencies = [
  "krabka-ids",
  "krabka-logfmt",
  "krabka-logql",
+ "krabka-security",
  "krabka-telemetry",
  "krabka-units",
  "num-traits",
@@ -3457,19 +3483,28 @@ dependencies = [
  "parquet",
  "prometheus-client",
  "prost 0.14.4",
+ "qubit-clock",
  "regex",
+ "reqwest 0.13.5",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "snap",
+ "subtle",
  "thiserror",
  "time",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tonic",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "url",
+ "x509-parser",
 ]
 
 [[package]]
@@ -3510,6 +3545,7 @@ dependencies = [
  "krabka-blockstore",
  "krabka-ids",
  "krabka-metrics",
+ "krabka-observability",
  "krabka-units",
  "num-traits",
  "object_store",
@@ -5211,6 +5247,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "parking_lot",
+ "tokio",
 ]
 
 [[package]]
@@ -6611,6 +6648,7 @@ dependencies = [
  "socket2",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tower",
  "tower-layer",
@@ -7587,11 +7625,6 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "krabka-audit"
-version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-broker?rev=32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617#32dd555ec1b7bf9d82b4b7bcdb0c9332f7029617"
 
 [[patch.unused]]
 name = "krabka-authz"

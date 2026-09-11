@@ -12,6 +12,7 @@
 use std::{hint::black_box, sync::Arc};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use krabka_blockstore::TenantId;
 use krabka_o11y_benches::{
     index::TENANT,
     metrics::{SCRAPE_INTERVAL_MS, metric_store},
@@ -64,6 +65,10 @@ fn promql_range(criterion: &mut Criterion) {
         });
     }
 
+    // The engine takes the validated tenant id, so the benchmark builds one
+    // from the fixture name once rather than per iteration.
+    let tenant = TenantId::new(TENANT).expect("the benchmark tenant is a valid tenant id");
+
     for series in SERIES {
         let engine = PromqlEngine::new(
             Arc::new(metric_store(series, SAMPLES)),
@@ -77,7 +82,7 @@ fn promql_range(criterion: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new(label, series), &series, |bencher, _| {
                 bencher.to_async(&runtime).iter(|| async {
                     let result = engine
-                        .query_range(TENANT, query, start_ms, end_ms, step)
+                        .query_range(&tenant, query, start_ms, end_ms, step)
                         .await
                         .expect("the fixture query evaluates");
                     black_box(result)
