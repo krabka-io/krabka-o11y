@@ -3101,6 +3101,7 @@ dependencies = [
  "num-traits",
  "object_store",
  "parquet",
+ "prometheus-client",
  "refined_type",
  "regex",
  "serde",

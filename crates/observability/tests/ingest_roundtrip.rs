@@ -177,9 +177,10 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
         &wal_topic,
         Some(format!("file://{}", object_dir.path().display())),
     );
-    let dependencies = build_service_dependencies(&querier_config)
-        .await
-        .expect("querier dependencies");
+    let dependencies =
+        build_service_dependencies(&querier_config, WalConsumerMetrics::unregistered())
+            .await
+            .expect("querier dependencies");
     let app = build_service_router(&querier_config, dependencies, None)
         .await
         .expect("querier router");

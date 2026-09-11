@@ -1,0 +1,1 @@
+approx_topk(3, rate({job="api"}[1m]))
