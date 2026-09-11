@@ -1,7 +1,7 @@
 use crate::{
     HttpQueryError, IntoResponse, QueryAuthorizationError, QueryError, Response, StatusCode,
     loki_error, loki_format_query_invalid_response, loki_parse_error, loki_parse_error_text,
-    text_response,
+    tenant_error_response, text_response,
 };
 
 impl IntoResponse for HttpQueryError {
@@ -20,14 +20,13 @@ impl IntoResponse for HttpQueryError {
             | Self::InvalidVolumeAggregation
             | Self::InvalidSinceQueryParameter { .. }
             | Self::InvalidTimestampQueryParameter { .. }
-            | Self::InvalidTenant
             | Self::MissingQueryParameter(_)
-            | Self::MissingTenant
             | Self::QueryRangeTooLarge { .. }
             | Self::LokiQueryRangeTooLarge { .. }
             | Self::QueryResolutionTooHigh
             | Self::QueryBytesTooLarge { .. }
-            | Self::QueryLengthTooLarge { .. }
+            | Self::MaxEntriesLimitPerQuery { .. }
+            | Self::QueryStringTooLong { .. }
             | Self::QuerySeriesTooLarge { .. }
             | Self::LokiPlainParse(_)
             | Self::CountValuesQuery
@@ -46,6 +45,8 @@ impl IntoResponse for HttpQueryError {
             | Self::DeleteFilter(_)
             | Self::LokiParquet(_)
             | Self::Parquet(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Tenant { source, surface } => return tenant_error_response(source, *surface),
+            Self::TenantDenied(denied) => return denied.clone().into_response(),
             Self::LokiParse { query, source } => {
                 return loki_parse_error(StatusCode::BAD_REQUEST, query, source);
             }
@@ -83,6 +84,7 @@ impl IntoResponse for HttpQueryError {
                 | Self::InvalidSinceQueryParameter { .. }
                 | Self::InvalidTimestampQueryParameter { .. }
                 | Self::LokiQueryRangeTooLarge { .. }
+                | Self::MaxEntriesLimitPerQuery { .. }
                 | Self::QueryResolutionTooHigh
                 | Self::LokiPlainParse(_)
                 | Self::ApproxTopKDisabled

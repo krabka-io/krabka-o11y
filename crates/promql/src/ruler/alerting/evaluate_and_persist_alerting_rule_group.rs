@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RulerAlertState, RulerStateSink,
-    evaluate_and_persist_alerting_rule_with_state, yaml_optional_string,
+    TenantId, evaluate_and_persist_alerting_rule_with_state, yaml_optional_string,
 };
 
 /// Evaluates all alerting rules in one rule group, persists alert state, and dispatches firing alerts.
@@ -14,7 +14,7 @@ pub async fn evaluate_and_persist_alerting_rule_group<S, A, R>(
     sink: &A,
     state_sink: &R,
     state: &mut RulerAlertState,
-    tenant: &str,
+    tenant: &TenantId,
     group: &serde_yaml::Value,
     eval_time_ms: i64,
 ) -> Result<usize, PromqlError>

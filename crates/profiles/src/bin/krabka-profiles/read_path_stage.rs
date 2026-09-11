@@ -1,6 +1,6 @@
 use krabka_observability::SupervisedTasks;
 
-use super::{AllStage, Arc, Cli, ProfileReadPath, ServiceMetrics};
+use super::{AllStage, Arc, Cli, ClientSecurity, ProfileReadPath, ServiceMetrics};
 
 /// The read path's shared background work, as `--target all` runs it.
 ///
@@ -20,13 +20,16 @@ pub(crate) fn read_path_stage(
     cli: &Arc<Cli>,
     read: ProfileReadPath,
     metrics: &ServiceMetrics,
+    wal_security: Option<ClientSecurity>,
 ) -> AllStage {
     let cli = Arc::clone(cli);
     let metrics = metrics.clone();
     Box::new(move |token| {
         Box::pin(async move {
             let mut tasks = SupervisedTasks::new(token.clone());
-            for (name, handle) in read.spawn_background(&cli, &metrics, &token) {
+            for (name, handle) in
+                read.spawn_background(&cli, &metrics, &token, wal_security.as_ref())
+            {
                 tasks.adopt(name, handle);
             }
             tokio::select! {

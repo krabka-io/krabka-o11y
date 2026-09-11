@@ -8,15 +8,26 @@ use axum::{
 };
 use krabka_blockstore::Labels;
 use krabka_metrics::{BucketSpan, Limits, NativeHistogram, OverridesProvider, ResetHint, wire::pb};
+use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use krabka_promql::{
-    EngineOpts, InMemoryMetricStore, PrometheusApiState, QueryFrontendOptions,
-    RulerAlertStateRecord, RulerGroupStateRecord, prometheus_router,
+    EngineOpts, InMemoryMetricStore, MetricStore, PrometheusApiState, QueryFrontendOptions,
+    RulerAlertStateRecord, RulerGroupStateRecord,
 };
 use krabka_units::prelude::*;
 use prost::Message;
 use serde_json::Value;
 use snap::raw::{Decoder as SnappyDecoder, Encoder as SnappyEncoder};
 use tower::ServiceExt;
+
+// Every request reaches the handlers through the authentication layer, as it
+// does on a served listener. With no credentials file, the layer marks each
+// request unauthenticated and lets it through.
+fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>) -> axum::Router {
+    authenticate_requests(
+        krabka_promql::prometheus_router(state),
+        &ServerSecurity::default(),
+    )
+}
 
 const RULE_GROUP_YAML: &str = "
 name: latency
@@ -1104,6 +1115,8 @@ async fn query_range_endpoint_returns_prometheus_error_for_missing_step() {
     assert2::assert!(body["error"] == "missing step parameter");
 }
 
+/// Grafana Mimir answers a query without `X-Scope-OrgID` with `401` and the
+/// plain-text body `no org id`, before its Prometheus API handler runs.
 #[tokio::test]
 async fn query_endpoint_requires_scope_org_id() {
     let state = Arc::new(PrometheusApiState::new(
@@ -1122,10 +1135,9 @@ async fn query_endpoint_requires_scope_org_id() {
         .await
         .unwrap();
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "bad_data");
+    assert2::assert!(response.status() == StatusCode::UNAUTHORIZED);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert2::assert!(body.as_ref() == b"no org id\n");
 }
 
 #[tokio::test]
@@ -1167,7 +1179,7 @@ async fn query_endpoint_returns_422_when_max_samples_is_exceeded() {
     let body = response_json(response).await;
     assert2::assert!(body["status"] == "error");
     assert2::assert!(body["errorType"] == "execution");
-    assert2::assert!(body["error"] == "execution error: query exceeds max_samples=1");
+    assert2::assert!(body["error"] == "samples per query exceeded: observed 2 above limit 1");
 }
 
 #[tokio::test]
@@ -1210,7 +1222,7 @@ async fn query_endpoint_applies_runtime_max_samples_per_query() {
     let body = response_json(response).await;
     assert2::assert!(body["status"] == "error");
     assert2::assert!(body["errorType"] == "execution");
-    assert2::assert!(body["error"] == "execution error: query exceeds max_samples=1");
+    assert2::assert!(body["error"] == "samples per query exceeded: observed 2 above limit 1");
 }
 
 #[tokio::test]

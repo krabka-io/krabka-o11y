@@ -1,16 +1,12 @@
-use super::HeaderMap;
+use super::TenantId;
 
-/// Gives the best-effort tenant label for the ingest tracing span.
+/// Gives the tenant label for the ingest tracing span.
 ///
-/// This function reads the `X-Scope-OrgID` header directly and does not
-/// validate it. An absent or empty header gives `"unknown"`. The label only
-/// tags the span. [`tenant_from_headers`] separately resolves and validates the
-/// tenant that storage uses.
-pub(crate) fn ingest_span_tenant(headers: &HeaderMap) -> String {
-    headers
-        .get("x-scope-orgid")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown")
-        .to_string()
+/// `tenant` is the result of `tenant_from_headers` for the request, so the
+/// label is the name the WAL records carry. A request that does not resolve to
+/// a tenant gets the fixed label `<unresolved>`. That label holds characters
+/// that a tenant id cannot hold, so it never reads as a real tenant, and the
+/// span never shows a name that the resolver rejected.
+pub(crate) fn ingest_span_tenant(tenant: Option<&TenantId>) -> &str {
+    tenant.map_or("<unresolved>", TenantId::as_str)
 }

@@ -1,10 +1,11 @@
 use super::{
-    Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response, State,
-    parse_discovery_params, series_inner,
+    Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState, RawQuery,
+    Response, State, parse_discovery_params, series_inner,
 };
 
 pub(crate) async fn series<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
@@ -12,5 +13,5 @@ pub(crate) async fn series<S: MetricStore>(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    series_inner(state, headers, params).await
+    series_inner(state, headers, principal, params).await
 }

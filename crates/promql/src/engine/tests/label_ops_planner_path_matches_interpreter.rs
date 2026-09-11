@@ -162,7 +162,7 @@ pub(crate) async fn label_ops_planner_path_matches_interpreter() {
     // top-level uniqueness check enforces this for both (`query_instant`).
     let collision = r#"label_replace(h, "a", "same", "a", ".*")"#;
     let operator_err = engine
-        .query_instant("t", collision, 60_000)
+        .query_instant(&tenant_id("t"), collision, 60_000)
         .await
         .expect_err("collision must error through the operator path");
     assert2::assert!(matches!(operator_err, PromqlError::Exec(_)));

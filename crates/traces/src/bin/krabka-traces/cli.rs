@@ -1,13 +1,13 @@
 use super::{
-    ArgAction, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    ArgAction, AuditArgs, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
     DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
-    IndexSnapshotRetain, MetricsFlags, Parser, SocketAddr, Target, Time, UnixNano, parse,
-    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
-    parse_min_two_usize, parse_non_negative_time_or_secs,
-    parse_non_negative_whole_byte_size_or_bytes, parse_positive_time_or_millis,
-    parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64, parse_positive_time_or_secs,
-    parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
-    parse_scan_concat_max, parse_unix_nano,
+    IndexSnapshotRetain, MetricsFlags, Parser, ServerSecurityArgs, SocketAddr, Target, Time,
+    UnixNano, WalClientSecurityArgs, parse, parse_client_dispatch_queue_capacity,
+    parse_client_frame_max, parse_consumer_fetch_size, parse_min_two_usize,
+    parse_non_negative_time_or_secs, parse_non_negative_whole_byte_size_or_bytes,
+    parse_positive_time_or_millis, parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64,
+    parse_positive_time_or_secs, parse_positive_u32, parse_positive_usize,
+    parse_positive_whole_byte_size, parse_scan_concat_max, parse_unix_nano,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -28,6 +28,11 @@ pub(crate) struct Cli {
     /// nothing in the logs.
     #[arg(long, env = "KRABKA_TRACES_LISTEN", default_value = "0.0.0.0:3200")]
     pub(crate) listen: String,
+    /// Admin listen address for `/metrics`, `/ready` and the profiling routes. Default: `0.0.0.0:9404`.
+    ///
+    /// This port always serves plain HTTP without authentication. The
+    /// `--server-tls-*` and `--auth-credentials-config` flags do not apply to
+    /// it, so a deployment that sets them should bind it to a private address.
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
     #[arg(
@@ -201,6 +206,14 @@ pub(crate) struct Cli {
     pub(crate) edge_ttl: Option<Time>,
     #[arg(long, env = "KRABKA_TRACES_EDGE_STORE_MAX_ITEMS")]
     pub(crate) edge_store_max_items: Option<usize>,
+    /// Span-metrics dimension keys one tenant may hold. `0` is unlimited.
+    ///
+    /// This is Tempo's `metrics_generator.max_active_series`.
+    #[arg(long, env = "KRABKA_TRACES_MAX_ACTIVE_SERIES")]
+    pub(crate) max_active_series: Option<usize>,
+    /// Tenants one metrics generator holds state for. `0` is unlimited.
+    #[arg(long, env = "KRABKA_TRACES_METRICS_GENERATOR_MAX_TENANTS")]
+    pub(crate) metrics_generator_max_tenants: Option<usize>,
     #[arg(
         long = "histogram-buckets",
         visible_alias = "histogram-buckets-ns",
@@ -353,6 +366,35 @@ pub(crate) struct Cli {
     pub(crate) max_ingest_spans_per_second: usize,
     #[arg(long, env = "KRABKA_TRACES_INGEST_RATE_BURST", default_value_t = usize::MAX)]
     pub(crate) ingest_rate_burst: usize,
+    /// Ceiling on the `limit` parameter of `/api/search`. `usize::MAX` is
+    /// unlimited.
+    ///
+    /// This is Tempo's `max_traces_per_search`, and the querier enforces it.
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_MAX_TRACES_PER_SEARCH",
+        default_value_t = 1000
+    )]
+    pub(crate) max_traces_per_search: usize,
+    /// Ceiling on the `(end - start)` window of a read. Zero is unlimited.
+    ///
+    /// This is Tempo's `max_search_duration`, and the querier enforces it on
+    /// `/api/search` and on the metrics query endpoints.
+    #[arg(
+        long = "max-search-duration",
+        visible_alias = "max-search-duration-secs",
+        env = "KRABKA_TRACES_MAX_SEARCH_DURATION",
+        default_value = "0s",
+        value_parser = parse_non_negative_time_or_secs
+    )]
+    pub(crate) max_search_duration: Time,
+    /// Per-tenant limit overrides, as a runtime YAML file.
+    ///
+    /// The file names only the tenants and the keys that differ from the flags
+    /// above. Every other tenant, and every key an entry leaves out, keeps what
+    /// the flags set.
+    #[arg(long, env = "KRABKA_TRACES_LIMITS_OVERRIDES_CONFIG")]
+    pub(crate) traces_limits_overrides_config: Option<std::path::PathBuf>,
     #[arg(
         long = "promote-span-attr",
         env = "KRABKA_TRACES_PROMOTE_SPAN_ATTR",
@@ -412,4 +454,16 @@ pub(crate) struct Cli {
         value_parser = parse::positive_time
     )]
     pub(crate) all_drain_stage_timeout: Time,
+    /// TLS, authentication and internal-client flags for every data and ingest listener.
+    ///
+    /// With none set, every listener serves plain HTTP and plain gRPC without
+    /// authentication, as Tempo does.
+    #[command(flatten)]
+    pub(crate) server_security: ServerSecurityArgs,
+    /// The audit trail of failed authentications and tenant denials.
+    #[command(flatten)]
+    pub(crate) audit: AuditArgs,
+    /// TLS and SASL for the connections to the WAL broker.
+    #[command(flatten)]
+    pub(crate) wal_security: WalClientSecurityArgs,
 }

@@ -1,13 +1,14 @@
-use krabka_units::convert::TimeExt;
+use krabka_units::convert::{ByteSizeExt, TimeExt};
 
 use crate::{
-    CONTENT_TYPE, DistributorError, HeaderMap, Labels, LokiProtoPushRequest, LokiTypedPushRequest,
-    MatchOp, OtlpLogsRequest, Time, Value, WalLogRecord, current_unix_time_ns,
-    discover_detected_level_label, discover_service_name_label, loki_decode_error_context,
-    loki_missing_proto_timestamp_error, loki_proto_label_pairs_to_labels, loki_proto_timestamp_ns,
-    loki_stale_sample_label_set, otlp_attributes_to_labels, otlp_log_record_structured_metadata,
-    otlp_timestamp_ns, otlp_value_to_string, parse_query, parse_structured_metadata,
-    quote_logql_string, tenant, validate_ingest_timestamp_ns, validate_loki_timestamp_window,
+    ByteSize, CONTENT_TYPE, DistributorError, HeaderMap, Labels, Limits, LokiProtoPushRequest,
+    LokiTypedPushRequest, MatchOp, OtlpLogsRequest, TenantId, Time, Value, WalLogRecord,
+    current_unix_time_ns, discover_detected_level_label, discover_service_name_label,
+    loki_decode_error_context, loki_missing_proto_timestamp_error,
+    loki_proto_label_pairs_to_labels, loki_proto_timestamp_ns, loki_stale_sample_label_set,
+    otlp_attributes_to_labels, otlp_log_record_structured_metadata, otlp_timestamp_ns,
+    otlp_value_to_string, parse_query, parse_structured_metadata, quote_logql_string,
+    validate_ingest_timestamp_ns, validate_loki_timestamp_window,
 };
 
 mod is_loki_json_content_type;
@@ -26,6 +27,8 @@ mod normalize_loki_push;
 mod normalize_otlp_logs;
 mod parse_loki_proto_labels;
 mod validate_loki_empty_json_value_timestamp_window;
+mod validate_loki_label_limits;
+mod validate_loki_line_size;
 mod validate_loki_stream_labels;
 
 pub(crate) use is_loki_json_content_type::is_loki_json_content_type;
@@ -44,4 +47,6 @@ pub(crate) use normalize_loki_push::normalize_loki_push;
 pub(crate) use normalize_otlp_logs::normalize_otlp_logs;
 pub(crate) use parse_loki_proto_labels::parse_loki_proto_labels;
 pub(crate) use validate_loki_empty_json_value_timestamp_window::validate_loki_empty_json_value_timestamp_window;
+pub(crate) use validate_loki_label_limits::validate_loki_label_limits;
+pub(crate) use validate_loki_line_size::validate_loki_line_size;
 pub(crate) use validate_loki_stream_labels::validate_loki_stream_labels;

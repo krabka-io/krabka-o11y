@@ -17,7 +17,7 @@ pub mod testkit {
         sync::Arc,
     };
 
-    use krabka_blockstore::Labels;
+    use krabka_blockstore::{Labels, TenantId};
     use krabka_metrics::{NativeHistogram, ResetHint};
     use krabka_units::prelude::*;
 
@@ -137,6 +137,7 @@ pub mod testkit {
         let mut store = InMemoryMetricStore::new();
         let mut hints: BTreeMap<String, ChunkResetHints> = BTreeMap::new();
         let mut outcome = FileOutcome::default();
+        let tenant = TenantId::new(TENANT).map_err(|error| PromqlError::Exec(error.to_string()))?;
 
         for statement in &file.statements {
             match statement {
@@ -209,7 +210,7 @@ pub mod testkit {
                 } => {
                     let engine = PromqlEngine::new(Arc::new(store.clone()), EngineOpts::default());
                     let result = engine
-                        .query_instant_with_annotations(TENANT, expr, *at_ms)
+                        .query_instant_with_annotations(&tenant, expr, *at_ms)
                         .await;
                     let case = handle_instant_eval_result(
                         result,
@@ -234,7 +235,7 @@ pub mod testkit {
                 } => {
                     let engine = PromqlEngine::new(Arc::new(store.clone()), EngineOpts::default());
                     let result = engine
-                        .query_range_with_annotations(TENANT, expr, *start_ms, *end_ms, *step)
+                        .query_range_with_annotations(&tenant, expr, *start_ms, *end_ms, *step)
                         .await;
                     let case = handle_range_eval_result(
                         result,
@@ -297,6 +298,9 @@ pub mod testkit {
             }
             PromqlError::Unsupported(message) => {
                 PromqlError::Unsupported(format!("{kind} eval `{expr}`: {message}"))
+            }
+            PromqlError::Limit(limit_error) => {
+                PromqlError::Exec(format!("{kind} eval `{expr}`: {limit_error}"))
             }
         }
     }

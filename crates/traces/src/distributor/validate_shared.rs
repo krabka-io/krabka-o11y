@@ -4,6 +4,8 @@ use super::{
 };
 
 pub(crate) fn validate_shared(spans: &[Span], limits: &Limits) -> Result<(), TracesError> {
+    IngestEnforcer::check_spans_per_request(limits, u64::try_from(spans.len()).unwrap_or(u64::MAX))
+        .map_err(|err| limit_error_to_traces_error(&err))?;
     let mut spans_per_trace = BTreeMap::new();
     for span in spans {
         let count = spans_per_trace

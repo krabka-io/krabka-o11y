@@ -31,11 +31,19 @@ pub(crate) async fn vector_vector_arithmetic_scales_native_histograms_with_match
         ("duration / on (x) factor", 2.0, 5.0),
     ] {
         let count = engine
-            .query_instant("tenant-a", &format!("histogram_count({query})"), 10_000)
+            .query_instant(
+                &tenant_id("tenant-a"),
+                &format!("histogram_count({query})"),
+                10_000,
+            )
             .await
             .unwrap();
         let sum = engine
-            .query_instant("tenant-a", &format!("histogram_sum({query})"), 10_000)
+            .query_instant(
+                &tenant_id("tenant-a"),
+                &format!("histogram_sum({query})"),
+                10_000,
+            )
             .await
             .unwrap();
 
@@ -45,7 +53,7 @@ pub(crate) async fn vector_vector_arithmetic_scales_native_histograms_with_match
 
     let invalid = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "histogram_count(factor / on (x) duration)",
             10_000,
         )

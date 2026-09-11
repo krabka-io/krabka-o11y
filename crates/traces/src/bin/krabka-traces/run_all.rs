@@ -3,8 +3,8 @@ use krabka_traces::all_in_one::DRAIN_ORDER;
 use tokio::net::TcpListener;
 
 use super::{
-    AllRoleContext, CancellationToken, Cli, ServiceMetrics, SharedObjectStore, SocketAddr,
-    all_role_stages,
+    AllRoleContext, CancellationToken, Cli, ProcessSecurity, ServiceMetrics, SharedObjectStore,
+    SocketAddr, all_role_stages, require_internal_credential,
 };
 
 /// The loopback address the two internal roles bind, with the port left to the
@@ -35,16 +35,36 @@ const INTERNAL_LISTEN: &str = "127.0.0.1:0";
 /// runs afterwards, because the remaining roles still have the same things to
 /// lose.
 ///
+/// # Internal traffic
+///
+/// Every listener of the process serves with the same security: the Tempo
+/// API, the ingest ports, and the two loopback ports. A loopback port is not a
+/// trust boundary, because any process on the machine can dial it, so it gets
+/// no exception.
+///
+/// - With TLS on, the query-frontend dials the querier, and the querier dials
+///   the live-store, at `https://127.0.0.1`. The server certificate needs
+///   `127.0.0.1` in its subject alternative names, and the internal client CA
+///   bundle needs the CA that signed it.
+/// - With authentication on, both callers present the internal client
+///   credential. The frontend and the querier have already checked the end
+///   user against the tenant, so the internal principal should hold every
+///   tenant. Without an internal client credential, the process refuses to
+///   start, because every query would fail at the loopback hop.
+///
 /// # Errors
-/// Returns an error when a port cannot be bound, when the composition
-/// disagrees with [`DRAIN_ORDER`], or when a role stops while the process was
-/// still serving.
+/// Returns an error when authentication is on and no internal client is
+/// configured, when a port cannot be bound, when the composition disagrees
+/// with [`DRAIN_ORDER`], or when a role stops while the process was still
+/// serving.
 pub(crate) async fn run_all(
     cli: Cli,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     shutdown: CancellationToken,
+    security: ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    require_internal_credential(&security.server)?;
     // Bound here, before any role starts, because the addresses are what wire
     // the roles to each other: the frontend needs the querier's port and the
     // querier needs the live-store's. Reading `local_addr` off a listener that
@@ -67,6 +87,7 @@ pub(crate) async fn run_all(
         metrics,
         readiness,
         object_store: SharedObjectStore::new(),
+        security,
     };
     let mut roles = all_role_stages(&ctx, frontend, querier, live_store)?;
 

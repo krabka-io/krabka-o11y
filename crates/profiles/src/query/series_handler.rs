@@ -1,10 +1,11 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
-    QuerierState, pb, series_inner, timed_query,
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
+    ProfileStore, QuerierState, pb, series_inner, timed_query,
 };
 
 pub(crate) async fn series_handler<S>(
     state: Extension<Arc<QuerierState<S>>>,
+    principal: Extension<Principal>,
     headers: HeaderMap,
     req: ConnectRequest<pb::querier::v1::SeriesRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::SeriesResponse>, ConnectError>
@@ -12,5 +13,10 @@ where
     S: ProfileStore,
 {
     let metrics = state.0.metrics.clone();
-    timed_query(&metrics, "series", series_inner(state, headers, req)).await
+    timed_query(
+        &metrics,
+        "series",
+        series_inner(state, principal, headers, req),
+    )
+    .await
 }

@@ -1,7 +1,7 @@
 //! Query-frontend range splitting, sharding, and merge helpers.
 
 pub use krabka_blockstore::QUERY_SHARD_LABEL;
-use krabka_blockstore::{LabelMatcher, MatchOp};
+use krabka_blockstore::{LabelMatcher, MatchOp, TenantId};
 use krabka_units::prelude::*;
 use promql_parser::parser::LabelModifier;
 

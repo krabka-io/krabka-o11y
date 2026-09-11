@@ -36,6 +36,9 @@ use krabka_metrics::{
     WalRecord,
     distributor::{DistributorState, ProduceError, WalSink, router},
 };
+use krabka_observability::server_security::{
+    InternalClient, ServerSecurity, authenticate_requests,
+};
 use krabka_promql::{EngineOpts, PrometheusApiState, WalHead, prometheus_router};
 use krabka_traces::metricsgen::{
     MetricsGenConfig, PrometheusRemoteWriteSink, RemoteWriteSink as _, SeriesPayload, SpanKind,
@@ -121,7 +124,10 @@ async fn serve_distributor() -> (String, Arc<CapturingWalSink>) {
         .expect("bind distributor listener");
     let addr = listener.local_addr().expect("distributor local addr");
     tokio::spawn(async move {
-        axum::serve(listener, router(state)).await.expect("serve");
+        // The push handlers read the principal that the authentication layer
+        // attaches, so the router is served through that layer, unconfigured.
+        let app = authenticate_requests(router(state), &ServerSecurity::default());
+        axum::serve(listener, app).await.expect("serve");
     });
     (format!("http://{addr}/api/v1/push"), sink)
 }
@@ -155,7 +161,8 @@ async fn span_metrics_exemplar_survives_remote_write_with_its_trace_id() {
     );
 
     // --- the wire hop: krabka-traces' encoder, krabka-metrics' decoder -----
-    PrometheusRemoteWriteSink::new(&url)
+    PrometheusRemoteWriteSink::new(&url, &InternalClient::default())
+        .expect("the remote-write client builds")
         .write(&SeriesPayload {
             tenant: TENANT.to_string(),
             series,
@@ -202,7 +209,7 @@ async fn span_metrics_exemplar_survives_remote_write_with_its_trace_id() {
         EngineOpts::default(),
     ));
 
-    let response = prometheus_router(api)
+    let response = authenticate_requests(prometheus_router(api), &ServerSecurity::default())
         .oneshot(
             Request::builder()
                 .method("GET")

@@ -1,26 +1,32 @@
-use super::{Arc, Future, ProfileStore, QuerierState, SocketAddr, TcpListener, router};
+use super::{
+    Arc, Future, ProfileStore, QuerierState, ServerListener, ServerSecurity, SocketAddr,
+    TcpListener, router, serve_router,
+};
 
+/// Serves the querier on `addr` until `shutdown` completes, and returns the bound address.
+///
+/// The listener serves TLS and authenticates each request as `security` says.
+/// `ServerSecurity::default()` serves plain HTTP and accepts every request, as
+/// Pyroscope does.
 ///
 /// # Errors
-/// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+/// Returns an error when `addr` cannot be bound, or when the socket cannot
+/// report its local address.
 pub async fn serve<S>(
     addr: SocketAddr,
     state: Arc<QuerierState<S>>,
+    security: &ServerSecurity,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<SocketAddr>
 where
     S: ProfileStore + 'static,
 {
-    let listener = TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
+    let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
+        .map_err(std::io::Error::other)?;
+    let bound = listener.local_addr();
+    let server = serve_router(listener, router(state), security).with_graceful_shutdown(shutdown);
     tokio::spawn(async move {
-        if let Err(err) = axum::serve(
-            listener,
-            krabka_observability::contain_handler_panics(router(state)),
-        )
-        .with_graceful_shutdown(shutdown)
-        .await
-        {
+        if let Err(err) = server.await {
             tracing::warn!(%err, "profiles querier server stopped with error");
         }
     });

@@ -1,12 +1,15 @@
 use super::{HttpQueryError, QuerierState, Time, TimeExt, TimeRange};
 
+/// Applies Krabka's own `[start, end]` cap, which is stricter than `Loki`'s
+/// `max_query_length`.
 pub(crate) fn validate_query_range_limit(
     state: &QuerierState,
     time_range: TimeRange,
 ) -> Result<(), HttpQueryError> {
-    let Some(max_query_range) = state.max_query_range else {
+    let max_query_range = state.limits.max_query_range;
+    if max_query_range <= Time::ZERO {
         return Ok(());
-    };
+    }
     // `start_ns` and `end_ns` are instants; only their difference is an extent.
     // The error carries plain nanoseconds so its rendered message is fixed by
     // the `#[error]` format string alone.

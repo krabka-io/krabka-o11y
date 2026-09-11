@@ -191,7 +191,7 @@ pub(crate) async fn range_planner_path_matches_interpreter() {
         // The public range path now routes these through the planner (the
         // only evaluation engine); it must evaluate without falling back.
         let planner = engine
-            .query_range("t", query, start, end, step)
+            .query_range(&tenant_id("t"), query, start, end, step)
             .await
             .unwrap_or_else(|error| panic!("planner `{query}`: {error}"));
         assert2::assert!(matches!(planner, QueryResult::RangeMatrix(_)));

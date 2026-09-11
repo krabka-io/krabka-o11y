@@ -14,7 +14,7 @@ pub(crate) async fn moving_window_reuses_cached_subranges() {
         &executor,
         &cache,
         &FrontendRangeRequest {
-            tenant: "tenant-a".into(),
+            tenant: tenant_id("tenant-a"),
             query: "up".into(),
             start_ms: 0,
             end_ms: 360_000,
@@ -42,7 +42,7 @@ pub(crate) async fn moving_window_reuses_cached_subranges() {
         &executor,
         &cache,
         &FrontendRangeRequest {
-            tenant: "tenant-a".into(),
+            tenant: tenant_id("tenant-a"),
             query: "up".into(),
             start_ms: 60_000,
             end_ms: 420_000,

@@ -53,9 +53,9 @@ pub(crate) mod prelude {
     pub(crate) use krabka_blockstore::{
         BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex,
         LogBlockStoreError as BlockStoreError, LogLabels as Labels, LogRow,
-        LogSeriesFingerprint as SeriesFingerprint, TimeRange, read_log_block,
-        read_log_block_from_object_store, read_log_index_manifest,
-        read_tenant_log_index_manifest_from_object_store,
+        LogSeriesFingerprint as SeriesFingerprint, TENANT_HEADER, TenantId, TenantIdError,
+        TenantResolveError, TimeRange, read_log_block, read_log_block_from_object_store,
+        read_log_index_manifest, read_tenant_log_index_manifest_from_object_store,
         read_tenant_log_index_shard_from_object_store,
         read_tenant_log_index_shard_ranges_from_object_store,
         read_tenant_log_index_shards_from_object_store, register_log_blocks,
@@ -126,13 +126,14 @@ pub(crate) mod prelude {
     pub(crate) use url::Url;
 
     pub(crate) use super::{
-        acl_quota_and_buffers::*, alerts_and_params::*, cache_post_and_rules::*,
+        acl_quota_and_buffers::*, alerts_and_params::*, broker_access::*, cache_post_and_rules::*,
         compaction_and_query_limits::*, detected_fields_and_params::*, durations_and_tail::*,
         errors_labels_and_operators::*, formatting_and_errors::*, hot_metrics_and_metadata::*,
         hot_tail_frontier::*, ingest_and_operations::*, operators_and_alerts::*,
-        patterns_and_prometheus_rules::*, query_limits_and_timestamps::*, rules_and_expressions::*,
-        runtime_policies::*, scalar_rules_and_scans::*, scan_stats_and_samples::*,
-        service_and_authorization::*, shard_index_cache::*, vector_binary_operations::*, *,
+        patterns_and_prometheus_rules::*, per_tenant_limits::*, query_limits_and_timestamps::*,
+        rules_and_expressions::*, runtime_policies::*, scalar_rules_and_scans::*,
+        scan_stats_and_samples::*, service_and_authorization::*, shard_index_cache::*,
+        tenant_resolution::*, vector_binary_operations::*, *,
     };
     pub use crate::ids::{Offset, PartitionIndex};
     pub(crate) use crate::{
@@ -157,6 +158,7 @@ pub(crate) mod prelude {
             response::{loki_responses::*, parquet_responses::*, query_stats::*},
             router::*,
         },
+        limits::*,
         metrics::ServiceMetrics,
         querier::{
             aggregate::{metric_values::*, record_matching::*, sample_windows::*},
@@ -172,10 +174,13 @@ pub(crate) mod prelude {
             tail::*,
         },
         readiness::*,
+        request_tenant::*,
         ruler::{
             api::{loki_api::*, prometheus_alerts::*, prometheus_rules::*},
             store::*,
         },
+        security_context::*,
+        server_security::{AuthMethod, Principal, SecurityEventSink, TenantGrant},
         service::*,
         service_runtime::*,
         wal::{hot_tail::*, pollers_and_records::*, traits_and_kafka::*},
@@ -184,6 +189,7 @@ pub(crate) mod prelude {
 
 mod acl_quota_and_buffers;
 mod alerts_and_params;
+mod broker_access;
 mod cache_post_and_rules;
 mod compaction_and_query_limits;
 mod detected_fields_and_params;
@@ -195,6 +201,7 @@ mod hot_tail_frontier;
 mod ingest_and_operations;
 mod operators_and_alerts;
 mod patterns_and_prometheus_rules;
+mod per_tenant_limits;
 mod query_limits_and_timestamps;
 mod rules_and_expressions;
 mod runtime_policies;
@@ -202,4 +209,5 @@ mod scalar_rules_and_scans;
 mod scan_stats_and_samples;
 mod service_and_authorization;
 mod shard_index_cache;
+mod tenant_resolution;
 mod vector_binary_operations;

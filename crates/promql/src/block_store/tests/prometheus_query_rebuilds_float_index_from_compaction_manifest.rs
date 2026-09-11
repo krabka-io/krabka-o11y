@@ -38,7 +38,10 @@ pub(crate) async fn prometheus_query_rebuilds_float_index_from_compaction_manife
     let fresh_store = BlockStore::new(object_store, base);
     let store = MetricBlockStore::from_compaction_manifests(fresh_store, None, &[manifest]);
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine.query_instant("tenant-a", "up", 1_000).await.unwrap();
+    let result = engine
+        .query_instant(&tenant_id("tenant-a"), "up", 1_000)
+        .await
+        .unwrap();
 
     let QueryResult::InstantVector(samples) = result else {
         panic!("expected instant vector");

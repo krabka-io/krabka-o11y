@@ -18,7 +18,7 @@ pub(crate) async fn instant_count_and_present_over_time_include_native_histogram
         ("present_over_time(request_duration_seconds[2m])", 1.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 120_000)
+            .query_instant(&tenant_id("tenant-a"), query, 120_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

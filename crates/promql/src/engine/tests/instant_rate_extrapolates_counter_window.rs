@@ -20,7 +20,11 @@ pub(crate) async fn instant_rate_extrapolates_counter_window() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "rate(http_requests_total[5m])", 300_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "rate(http_requests_total[5m])",
+            300_000,
+        )
         .await
         .unwrap();
 

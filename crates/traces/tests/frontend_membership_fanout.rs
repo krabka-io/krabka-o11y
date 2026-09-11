@@ -208,7 +208,12 @@ fn cfg() -> FrontendConfig {
 /// Build the frontend the way the role binary does: probe the endpoints, then
 /// serve with whatever the probe found.
 async fn serve(endpoints: &[String], cfg: FrontendConfig) -> std::net::SocketAddr {
-    let probe = HttpReadinessProbe::new(Duration::from_secs(5)).unwrap();
+    let probe = HttpReadinessProbe::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
     let membership = MembershipView::empty();
     membership.publish(refresh_membership(endpoints, &probe).await);
     serve_with(membership, cfg).await
@@ -223,7 +228,12 @@ async fn serve_with_readiness(
     cfg: FrontendConfig,
     readiness: RoleReadiness,
 ) -> std::net::SocketAddr {
-    let backend = HttpQuerier::new(cfg.request_timeout.to_std()).unwrap();
+    let backend = HttpQuerier::new(
+        cfg.request_timeout.to_std(),
+        cfg.querier_scheme,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
     let qf = Arc::new(QueryFrontend::new(
         Arc::new(backend),
         Arc::new(two_block_catalog()),
@@ -233,7 +243,7 @@ async fn serve_with_readiness(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, router_with_backend(qf, readiness))
+        axum::serve(listener, authenticated(router_with_backend(qf, readiness)))
             .await
             .unwrap();
     });
@@ -524,8 +534,14 @@ async fn an_assembled_trace_is_partial_when_a_querier_was_left_out() {
 async fn serve_with_refresh(endpoints: Vec<String>) -> (std::net::SocketAddr, CancellationToken) {
     let readiness = RoleReadiness::new();
     let gate = readiness.gate(QUERIER_MEMBERSHIP_GATE);
-    let probe: Arc<dyn ReadinessProbe> =
-        Arc::new(HttpReadinessProbe::new(Duration::from_secs(2)).unwrap());
+    let probe: Arc<dyn ReadinessProbe> = Arc::new(
+        HttpReadinessProbe::new(
+            Duration::from_secs(2),
+            krabka_traces::frontend::QuerierScheme::Http,
+            &krabka_observability::server_security::InternalClient::default(),
+        )
+        .unwrap(),
+    );
     let membership = MembershipView::empty();
     let shutdown = CancellationToken::new();
     tokio::spawn(run_membership_refresh(
@@ -642,4 +658,14 @@ async fn the_frontend_goes_unready_again_when_its_last_querier_does() {
     );
 
     shutdown.cancel();
+}
+
+// The routers read the principal from the request extensions, where the
+// authentication layer puts it. This is that layer with no security flags,
+// which serves every request as unauthenticated.
+fn authenticated(router: axum::Router) -> axum::Router {
+    krabka_observability::server_security::authenticate_requests(
+        router,
+        &krabka_observability::server_security::ServerSecurity::default(),
+    )
 }

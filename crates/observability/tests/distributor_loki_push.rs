@@ -1937,7 +1937,7 @@ async fn loki_push_endpoint_rejects_negative_protobuf_timestamp_like_loki_withou
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()

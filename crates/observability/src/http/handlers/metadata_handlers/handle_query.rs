@@ -1,11 +1,12 @@
 use super::{
-    HeaderMap, IntoResponse, QuerierState, QueryKind, Response, StatusCode,
+    HeaderMap, IntoResponse, QuerierState, QueryKind, RequestSecurity, Response, StatusCode,
     add_loki_encoding_flags, execute_http_query, json_response, loki_encoding_flags,
     loki_parquet_response, parse_query_params, wants_loki_parquet,
 };
 
 pub(crate) async fn handle_query(
     state: QuerierState,
+    security: RequestSecurity,
     headers: HeaderMap,
     raw_query: Option<&str>,
     kind: QueryKind,
@@ -17,7 +18,7 @@ pub(crate) async fn handle_query(
     };
 
     let flags = loki_encoding_flags(&headers);
-    match execute_http_query(&state, &headers, params, kind).await {
+    match execute_http_query(&state, &security, &headers, params, kind).await {
         Ok(value) if wants_parquet => match loki_parquet_response(&value) {
             Ok(response) => response,
             Err(error) => error.into_response(),

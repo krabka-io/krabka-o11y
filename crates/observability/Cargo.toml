@@ -24,6 +24,9 @@ async-trait = { workspace = true }
 axum = { workspace = true, features = ["http2", "json", "query", "ws"] }
 base64 = { workspace = true }
 clap = { workspace = true, features = ["env"] }
+# The audit log, its hash chain, OCSF records and its disk spool. The broker
+# writes its own audit trail with the same crate.
+krabka-audit = { version = "0.4.0" }
 krabka-blockstore = { version = "0.4.0", path = "../blockstore" }
 krabka-client-admin = { version = "0.4.0" }
 krabka-client-core = { version = "0.4.0" }
@@ -36,6 +39,9 @@ krabka-ids = { version = "0.4.0" }
 # `krabka-telemetry` would have installed, so the JSON lines are unchanged.
 krabka-logfmt = { version = "0.4.0" }
 krabka-logql = { version = "0.4.0", path = "../logql" }
+# `ListenerProtocol` and `SaslMechanism`, the two types a `ClientSecurity` names
+# that `krabka-client-core` does not re-export.
+krabka-security = { version = "0.4.0" }
 krabka-telemetry = { version = "0.4.0" }
 krabka-units = { workspace = true }
 datafusion.workspace = true
@@ -47,10 +53,20 @@ opentelemetry-proto = { workspace = true, features = ["gen-tonic", "logs"] }
 parquet.workspace = true
 prometheus-client.workspace = true
 prost.workspace = true
+# The audit writer's checkpoint and replay cadence runs on this sleeper, so a
+# test can drive it without wall-clock time.
+qubit-clock = { version = "0.8", features = ["tokio"] }
 regex.workspace = true
+# The outbound client that carries service-to-service credentials. The
+# `loki_differential` suite also uses it, for both sides of its comparison.
+reqwest = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml.workspace = true
+sha2 = { workspace = true }
+subtle = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 snap.workspace = true
@@ -58,8 +74,11 @@ thiserror = { workspace = true }
 time = { version = "0.3", default-features = false, features = ["parsing"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
 tokio-util = { workspace = true }
+tokio-rustls = { workspace = true }
+tower = { workspace = true }
 tonic.workspace = true
 url = "2"
+x509-parser = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
@@ -82,15 +101,12 @@ opentelemetry_sdk = { workspace = true, features = ["trace"] }
 # specification gives. Test-only, hence dev-dependencies. It also uses
 # `regex::escape`, which reaches it as a normal dependency of this crate.
 proptest = { workspace = true }
-# `loki_differential` speaks HTTP to a real Loki container and to this crate's
-# own router over a loopback listener, so both sides go through one client.
-reqwest = { workspace = true }
+rcgen = { workspace = true }
 temp-env = "0.3"
 tempfile.workspace = true
 testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
 tokio-tungstenite = { workspace = true }
-tower = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 
 # The scale suite. `test = false` keeps `cargo test` and `cargo test

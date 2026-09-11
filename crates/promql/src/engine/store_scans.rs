@@ -9,9 +9,9 @@ use super::{
         FloatRow, FloatWindow, HistogramRow, RANGE_SCAN_CACHE, collect_float_rows,
         collect_histogram_rows, matchers_cache_key,
     },
+    samples_per_query_exceeded, series_per_query_exceeded,
 };
 use crate::{
-    PromqlError,
     error::Result,
     extension::is_stale_nan,
     planner::{LabeledSeries, TimedValue},
@@ -99,21 +99,29 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Arc<BTreeMap<SeriesFingerprint, Arc<Labels>>>> {
-        if let [matchers] = matcher_sets {
-            return self
-                .labels_by_fingerprint(tenant, matchers, start_ms, end_ms)
-                .await;
+        let resolved = if let [matchers] = matcher_sets {
+            self.labels_by_fingerprint(tenant, matchers, start_ms, end_ms)
+                .await?
+        } else {
+            let mut out = BTreeMap::new();
+            for matchers in matcher_sets {
+                out.extend(
+                    self.labels_by_fingerprint(tenant, matchers, start_ms, end_ms)
+                        .await?
+                        .iter()
+                        .map(|(fp, labels)| (*fp, Arc::clone(labels))),
+                );
+            }
+            Arc::new(out)
+        };
+        let max_fetched_series = self.opts.max_fetched_series;
+        if max_fetched_series != 0 && resolved.len() > max_fetched_series {
+            return Err(series_per_query_exceeded(
+                max_fetched_series,
+                resolved.len(),
+            ));
         }
-        let mut out = BTreeMap::new();
-        for matchers in matcher_sets {
-            out.extend(
-                self.labels_by_fingerprint(tenant, matchers, start_ms, end_ms)
-                    .await?
-                    .iter()
-                    .map(|(fp, labels)| (*fp, Arc::clone(labels))),
-            );
-        }
-        Ok(Arc::new(out))
+        Ok(resolved)
     }
 
     /// The indexed float rows covering `[start_ms, end_ms]` for one matcher set.
@@ -197,10 +205,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 .await?;
             out.extend(window.rows_between(start_ms, end_ms));
             if out.len() > self.opts.max_samples {
-                return Err(PromqlError::Exec(format!(
-                    "query exceeds max_samples={}",
-                    self.opts.max_samples
-                )));
+                return Err(samples_per_query_exceeded(self.opts.max_samples, out.len()));
             }
         }
         Ok(out)
@@ -243,10 +248,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 // the same window would have returned.
                 total += rows.len();
                 if total > self.opts.max_samples {
-                    return Err(PromqlError::Exec(format!(
-                        "query exceeds max_samples={}",
-                        self.opts.max_samples
-                    )));
+                    return Err(samples_per_query_exceeded(self.opts.max_samples, total));
                 }
                 let Some(labels) = labels_by_fp.get(&fp) else {
                     continue;
@@ -391,10 +393,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     .await?,
             );
             if out.len() > self.opts.max_samples {
-                return Err(PromqlError::Exec(format!(
-                    "query exceeds max_samples={}",
-                    self.opts.max_samples
-                )));
+                return Err(samples_per_query_exceeded(self.opts.max_samples, out.len()));
             }
         }
         Ok(out)

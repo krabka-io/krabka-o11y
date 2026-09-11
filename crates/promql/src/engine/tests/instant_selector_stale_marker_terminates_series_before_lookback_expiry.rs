@@ -25,7 +25,7 @@ pub(crate) async fn instant_selector_stale_marker_terminates_series_before_lookb
         },
     );
     let result = engine
-        .query_instant("tenant-a", "up", 30_000)
+        .query_instant(&tenant_id("tenant-a"), "up", 30_000)
         .await
         .unwrap();
 

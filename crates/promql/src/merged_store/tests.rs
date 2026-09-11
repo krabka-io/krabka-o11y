@@ -5,6 +5,7 @@ use krabka_blockstore::Labels;
 use crate::{
     EngineOpts, ExemplarRecord, InMemoryMetricStore, InstantSample, MergedMetricStore, MetricStore,
     NamedTsdbStat, PromqlEngine, QueryResult, SampleValue, TsdbHeadStats, TsdbStats,
+    test_support::tenant_id,
 };
 
 mod cardinality_methods_merge_cold_and_hot_series;

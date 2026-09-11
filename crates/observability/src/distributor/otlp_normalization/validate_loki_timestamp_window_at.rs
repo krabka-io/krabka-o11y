@@ -10,10 +10,10 @@ pub(crate) fn validate_loki_timestamp_window_at(
     timestamp_ns: i64,
     now_ns: i64,
     stream_labels: &Labels,
-    max_age: Option<Time>,
-    creation_grace_period: Option<Time>,
+    max_age: Time,
+    creation_grace_period: Time,
 ) -> Result<(), DistributorError> {
-    if let Some(max_age) = max_age {
+    if max_age > Time::ZERO {
         let oldest_acceptable_timestamp_ns = now_ns.saturating_sub(max_age.nanos_i64());
         if timestamp_ns < oldest_acceptable_timestamp_ns {
             return Err(DistributorError::TimestampTooOld {
@@ -23,7 +23,7 @@ pub(crate) fn validate_loki_timestamp_window_at(
             });
         }
     }
-    if let Some(creation_grace_period) = creation_grace_period {
+    if creation_grace_period > Time::ZERO {
         let newest_acceptable_timestamp_ns =
             now_ns.saturating_add(creation_grace_period.nanos_i64());
         if timestamp_ns > newest_acceptable_timestamp_ns {

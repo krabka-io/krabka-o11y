@@ -22,7 +22,7 @@ expr: up > 0
         &engine,
         &firing_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rule,
         60_000,
     )
@@ -37,7 +37,7 @@ expr: up > 0
         &engine,
         &resolved_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rule,
         120_000,
     )

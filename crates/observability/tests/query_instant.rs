@@ -13,7 +13,7 @@ use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels, write_log_block,
 };
 use krabka_observability::{
-    CompactionFrontier, InMemoryWalSink, LogWalSink, Offset, PartitionIndex, QuerierState,
+    CompactionFrontier, InMemoryWalSink, Limits, LogWalSink, Offset, PartitionIndex, QuerierState,
     SharedCompactionFrontier, WalLogRecord, WalPosition, loki_router,
 };
 use krabka_units::{bytes, convert::ByteSizeExt as _};
@@ -602,7 +602,7 @@ async fn query_endpoint_rejects_invalid_direction() {
 }
 
 #[tokio::test]
-async fn query_endpoint_rejects_missing_tenant_header() {
+async fn query_endpoint_rejects_missing_tenant_header_as_loki_does() {
     let state = fixture();
     let app = loki_router(state);
 
@@ -616,12 +616,8 @@ async fn query_endpoint_rejects_missing_tenant_header() {
         .await
         .unwrap();
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(
-        &json_body(response).await,
-        "bad_data",
-        "missing X-Scope-OrgID header",
-    );
+    assert!(response.status() == StatusCode::UNAUTHORIZED);
+    assert!(text_body(response).await == "no org id\n");
 }
 
 #[tokio::test]
@@ -744,7 +740,10 @@ async fn query_endpoint_returns_loki_error_for_negative_limit() {
 
 #[tokio::test]
 async fn query_endpoint_rejects_series_over_configured_limit() {
-    let state = fixture().with_max_query_series(1);
+    let state = fixture().with_limits(Limits {
+        max_query_series: 1,
+        ..Limits::default()
+    });
     let app = loki_router(state);
 
     let response = app
@@ -764,7 +763,10 @@ async fn query_endpoint_rejects_series_over_configured_limit() {
 
 #[tokio::test]
 async fn query_endpoint_rejects_planned_block_bytes_over_configured_limit() {
-    let state = fixture().with_max_query_read(bytes(1));
+    let state = fixture().with_limits(Limits {
+        max_query_read: bytes(1),
+        ..Limits::default()
+    });
     let app = loki_router(state);
 
     let response = app

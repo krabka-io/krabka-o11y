@@ -1,10 +1,11 @@
 use super::{
-    HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State, WebSocketUpgrade,
-    parse_query_params, prepare_http_tail, send_tail_stream,
+    HeaderMap, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
+    WebSocketUpgrade, parse_query_params, prepare_http_tail, send_tail_stream,
 };
 
 pub(crate) async fn tail(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
     ws: WebSocketUpgrade,
@@ -14,7 +15,7 @@ pub(crate) async fn tail(
         Err(error) => return error.into_response(),
     };
 
-    match prepare_http_tail(&state, &headers, &params).await {
+    match prepare_http_tail(&state, &security, &headers, &params).await {
         Ok(tail) => ws
             .on_upgrade(move |socket| send_tail_stream(socket, tail))
             .into_response(),

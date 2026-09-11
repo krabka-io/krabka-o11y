@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::BTreeMap};
 
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::{Labels, SeriesFingerprint, TenantId};
 use krabka_units::prelude::*;
 use promql_parser::parser::Expr;
 
@@ -31,7 +31,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// Returns parse, store, execution, or unsupported-expression errors.
     pub async fn query_range(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         query: &str,
         start_ms: i64,
         end_ms: i64,
@@ -65,7 +65,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     )]
     pub async fn query_range_with_annotations(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         query: &str,
         start_ms: i64,
         end_ms: i64,
@@ -74,7 +74,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         ANNOTATIONS
             .scope(RefCell::new(Annotations::new()), async move {
                 let result = self
-                    .eval_range_query(tenant, query, start_ms, end_ms, step)
+                    .eval_range_query(tenant.as_str(), query, start_ms, end_ms, step)
                     .await?;
                 let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
                 Ok((result, annotations))

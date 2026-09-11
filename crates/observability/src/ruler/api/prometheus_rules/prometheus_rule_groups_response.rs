@@ -1,13 +1,13 @@
 use super::{
     HttpQueryError, LokiRuleNamespaces, PrometheusRuleGroupResponse, PrometheusRulesFilters,
-    PrometheusRulesPage, QuerierState, json, loki_rule_group_name,
+    PrometheusRulesPage, QuerierState, TenantId, json, loki_rule_group_name,
     prometheus_rule_group_interval_seconds, prometheus_rule_group_page_token,
     prometheus_rules_for_group,
 };
 
 pub(crate) async fn prometheus_rule_groups_response(
     state: &QuerierState,
-    tenant: &str,
+    tenant: &TenantId,
     namespaces: &LokiRuleNamespaces,
     filters: &PrometheusRulesFilters,
     evaluation_time: i64,

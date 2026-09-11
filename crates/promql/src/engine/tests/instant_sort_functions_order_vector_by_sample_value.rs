@@ -34,7 +34,7 @@ pub(crate) async fn instant_sort_functions_order_vector_by_sample_value() {
         ),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

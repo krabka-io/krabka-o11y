@@ -27,7 +27,7 @@ pub(crate) async fn stdvar_over_time_adds_back_each_of_its_compensations() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", "stdvar_over_time(v[5m])", 40_000)
+        .query_instant(&tenant_id("tenant-a"), "stdvar_over_time(v[5m])", 40_000)
         .await
         .expect("a variance")
     else {

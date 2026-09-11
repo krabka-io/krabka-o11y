@@ -22,7 +22,7 @@ pub(crate) async fn range_rate_uses_each_step_as_window_end() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_range(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "rate(http_requests_total[5m])",
             240_000,
             300_000,

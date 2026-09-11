@@ -1,9 +1,9 @@
 use super::{
-    BackendError, Duration, MetricsJobRequest, MetricsPartial, MetricsResponseJson, QuerierBackend,
-    SearchJobRequest, SearchPartial, SearchResponseJson, TENANT_HEADER, TagNamesJobRequest,
-    TagNamesPartial, TagValuesBody, TagValuesJobRequest, TagValuesPartial, TagsBody,
-    TraceByIdJobRequest, TraceByIdResponseJson, TracePartial, async_trait, build_url,
-    error_for_status, ns_to_seconds, push_shard_params, scope_param,
+    BackendError, Duration, InternalClient, MetricsJobRequest, MetricsPartial, MetricsResponseJson,
+    QuerierBackend, QuerierScheme, SearchJobRequest, SearchPartial, SearchResponseJson,
+    TENANT_HEADER, TagNamesJobRequest, TagNamesPartial, TagValuesBody, TagValuesJobRequest,
+    TagValuesPartial, TagsBody, TraceByIdJobRequest, TraceByIdResponseJson, TracePartial,
+    async_trait, build_url, error_for_status, ns_to_seconds, push_shard_params, scope_param,
 };
 
 /// The HTTP transport to one querier at a time.
@@ -19,19 +19,32 @@ use super::{
 /// had appeared.
 pub struct HttpQuerier {
     pub(crate) http: reqwest::Client,
+    pub(crate) scheme: QuerierScheme,
 }
 
 impl HttpQuerier {
     /// Build the transport. `timeout` bounds one job.
     ///
+    /// Every job dials `scheme://host:port`. The client carries
+    /// `internal_client`: its token as the `Authorization` header of every
+    /// job, its certificate as the TLS identity, and its CA bundle as the only
+    /// roots that a querier certificate can chain to. A querier with
+    /// authentication on then serves the frontend as the internal principal.
+    /// The frontend has already checked the end user against the tenant, so
+    /// that principal should hold every tenant the frontend serves.
+    ///
     /// # Errors
     /// Returns `BackendError::Transport` if the client cannot be built.
-    pub fn new(timeout: Duration) -> Result<Self, BackendError> {
-        let http = reqwest::Client::builder()
-            .timeout(timeout)
+    pub fn new(
+        timeout: Duration,
+        scheme: QuerierScheme,
+        internal_client: &InternalClient,
+    ) -> Result<Self, BackendError> {
+        let http = internal_client
+            .apply(reqwest::Client::builder().timeout(timeout))
             .build()
             .map_err(|e| BackendError::Transport(e.to_string()))?;
-        Ok(Self { http })
+        Ok(Self { http, scheme })
     }
 
     pub(crate) fn map_send_err(e: &reqwest::Error) -> BackendError {
@@ -46,7 +59,7 @@ impl HttpQuerier {
 #[async_trait]
 impl QuerierBackend for HttpQuerier {
     async fn search_job(&self, req: &SearchJobRequest) -> Result<SearchPartial, BackendError> {
-        let url = format!("http://{}/api/search", req.querier);
+        let url = format!("{}://{}/api/search", self.scheme.as_str(), req.querier);
         let mut params: Vec<(&str, String)> = vec![
             ("q", req.query.clone()),
             ("start", ns_to_seconds(req.start_ns)),
@@ -58,7 +71,7 @@ impl QuerierBackend for HttpQuerier {
         let resp = self
             .http
             .get(build_url(&url, &params)?)
-            .header(TENANT_HEADER, &req.tenant)
+            .header(TENANT_HEADER, req.tenant.as_str())
             .send()
             .await
             .map_err(|e| Self::map_send_err(&e))?;
@@ -78,7 +91,11 @@ impl QuerierBackend for HttpQuerier {
         req: &TraceByIdJobRequest,
     ) -> Result<TracePartial, BackendError> {
         let hex = crate::frontend::wire::hex16(&req.trace_id);
-        let url = format!("http://{}/api/v2/traces/{hex}", req.querier);
+        let url = format!(
+            "{}://{}/api/v2/traces/{hex}",
+            self.scheme.as_str(),
+            req.querier
+        );
         let params: Vec<(&str, String)> = vec![
             ("start", ns_to_seconds(req.start_ns)),
             ("end", ns_to_seconds(req.end_ns)),
@@ -86,7 +103,7 @@ impl QuerierBackend for HttpQuerier {
         let resp = self
             .http
             .get(build_url(&url, &params)?)
-            .header(TENANT_HEADER, &req.tenant)
+            .header(TENANT_HEADER, req.tenant.as_str())
             .send()
             .await
             .map_err(|e| Self::map_send_err(&e))?;
@@ -110,7 +127,11 @@ impl QuerierBackend for HttpQuerier {
         &self,
         req: &TagNamesJobRequest,
     ) -> Result<TagNamesPartial, BackendError> {
-        let url = format!("http://{}/api/v2/search/tags", req.querier);
+        let url = format!(
+            "{}://{}/api/v2/search/tags",
+            self.scheme.as_str(),
+            req.querier
+        );
         let mut params: Vec<(&str, String)> = vec![
             ("start", ns_to_seconds(req.start_ns)),
             ("end", ns_to_seconds(req.end_ns)),
@@ -122,7 +143,7 @@ impl QuerierBackend for HttpQuerier {
         let resp = self
             .http
             .get(build_url(&url, &params)?)
-            .header(TENANT_HEADER, &req.tenant)
+            .header(TENANT_HEADER, req.tenant.as_str())
             .send()
             .await
             .map_err(|e| Self::map_send_err(&e))?;
@@ -145,7 +166,7 @@ impl QuerierBackend for HttpQuerier {
         // `resource.service.name`); build it via `path_segments_mut` so any
         // special chars (`/`, `?`, `#`, space) are percent-encoded into a single
         // segment rather than corrupting the path/query when re-parsed.
-        let mut url = reqwest::Url::parse(&format!("http://{}", req.querier))
+        let mut url = reqwest::Url::parse(&format!("{}://{}", self.scheme.as_str(), req.querier))
             .map_err(|e| BackendError::Transport(format!("invalid querier addr: {e}")))?;
         url.path_segments_mut()
             .map_err(|()| BackendError::Transport("querier url cannot be a base".to_string()))?
@@ -164,7 +185,7 @@ impl QuerierBackend for HttpQuerier {
         let resp = self
             .http
             .get(url)
-            .header(TENANT_HEADER, &req.tenant)
+            .header(TENANT_HEADER, req.tenant.as_str())
             .send()
             .await
             .map_err(|e| Self::map_send_err(&e))?;
@@ -182,7 +203,11 @@ impl QuerierBackend for HttpQuerier {
 
     async fn metrics_job(&self, req: &MetricsJobRequest) -> Result<MetricsPartial, BackendError> {
         let path = if req.instant { "query" } else { "query_range" };
-        let url = format!("http://{}/api/metrics/{path}", req.querier);
+        let url = format!(
+            "{}://{}/api/metrics/{path}",
+            self.scheme.as_str(),
+            req.querier
+        );
         let mut params: Vec<(&str, String)> = vec![
             ("q", req.query.clone()),
             ("start", ns_to_seconds(req.start_ns)),
@@ -195,7 +220,7 @@ impl QuerierBackend for HttpQuerier {
         let resp = self
             .http
             .get(build_url(&url, &params)?)
-            .header(TENANT_HEADER, &req.tenant)
+            .header(TENANT_HEADER, req.tenant.as_str())
             .send()
             .await
             .map_err(|e| Self::map_send_err(&e))?;

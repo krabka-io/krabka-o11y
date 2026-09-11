@@ -1,4 +1,4 @@
-use super::{ProfileError, ProfileStore, QuerierState};
+use super::{ProfileError, ProfileStore, QuerierState, TenantId};
 
 #[derive(Clone, Copy)]
 pub(crate) struct MetadataRange {
@@ -28,7 +28,7 @@ impl MetadataRange {
     pub(crate) fn validate<S: ProfileStore>(
         self,
         state: &QuerierState<S>,
-        tenant: &str,
+        tenant: &TenantId,
     ) -> Result<Self, ProfileError> {
         if !self.omitted {
             state.validate_query_range(tenant, self.start_ms, self.end_ms)?;

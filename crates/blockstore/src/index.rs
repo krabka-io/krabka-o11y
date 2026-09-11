@@ -25,6 +25,7 @@ use crate::{
     error::{BlockStoreError, Result},
     labels::{Labels, SeriesFingerprint},
     matcher::{LabelMatcher, MatchOp, QUERY_SHARD_LABEL, parse_query_shard_selector},
+    path_escape::{escape_object_path_segment, unescape_object_path_segment},
 };
 
 #[cfg(test)]
@@ -1378,6 +1379,90 @@ mod tests {
             .into_iter()
             .next()
             .expect("a saved index has at least one shard")
+    }
+
+    const AWKWARD_TENANTS: [(&str, &str); 13] = [
+        ("plain", "tenant-a"),
+        ("separator", "a/b"),
+        ("relative", ".."),
+        ("current", "."),
+        ("traversal", "../../etc"),
+        ("absolute", "/etc/passwd"),
+        ("space", "a b"),
+        ("star", "a*b"),
+        ("marker", "a!b"),
+        ("quote", "a'b"),
+        ("brackets", "(a)"),
+        ("backslash", "a\\b"),
+        ("non ASCII", "\u{e9}"),
+    ];
+
+    /// A tenant reaches an index key from an untrusted header, and the key is
+    /// what separates one tenant's shards from another's.
+    #[test]
+    fn a_tenant_never_widens_an_index_key_past_its_own_segment() {
+        const KEY: &str = "index/metrics.json";
+        let shards_prefix = index_shards_prefix_for_key(KEY);
+        let range = IndexShardRange::new(10, 20);
+
+        for (name, tenant) in AWKWARD_TENANTS {
+            let prefix = index_shard_tenant_prefix(KEY, tenant);
+            let shard = index_shard_object_key(KEY, tenant, range);
+            let unbound = index_unbound_series_object_key(KEY, tenant);
+
+            for key in [&prefix, &shard, &unbound] {
+                let rest = key
+                    .strip_prefix(&shards_prefix)
+                    .expect("every index key sits under the shard prefix of its key");
+                let segments = rest.trim_start_matches('/').split('/').collect::<Vec<_>>();
+                assert2::check!(segments[0].starts_with("tenant="), "{name}");
+                assert2::check!(
+                    !segments
+                        .iter()
+                        .any(|segment| matches!(*segment, "." | ".." | "")),
+                    "{name}"
+                );
+                // `object_store` stores the key byte for byte, so the key a
+                // writer builds is the location a listing hands back.
+                assert2::check!(Path::from(key.clone()).as_ref() == key.as_str(), "{name}");
+            }
+            assert2::check!(
+                prefix.matches('/').count() == shards_prefix.matches('/').count() + 1,
+                "{name}"
+            );
+            assert2::check!(
+                shard.matches('/').count() == shards_prefix.matches('/').count() + 3,
+                "{name}"
+            );
+
+            assert2::check!(
+                parse_index_shard_location(&shards_prefix, &shard)
+                    == Some((tenant.to_string(), IndexShardObject::Shard(range))),
+                "{name}"
+            );
+            assert2::check!(
+                parse_index_shard_location(&shards_prefix, &unbound)
+                    == Some((tenant.to_string(), IndexShardObject::UnboundSeries)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tenant_segment_the_writer_could_not_have_written_is_foreign() {
+        const KEY: &str = "index/metrics.json";
+        let shards_prefix = index_shards_prefix_for_key(KEY);
+
+        assert2::check!(
+            parse_index_shard_location(&shards_prefix, "index/metrics/shards/t/unbound.kbi")
+                == None
+        );
+        assert2::check!(
+            parse_index_shard_location(
+                &shards_prefix,
+                "index/metrics/shards/tenant=a!zz/unbound.kbi"
+            ) == None
+        );
     }
 }
 

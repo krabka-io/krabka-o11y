@@ -42,15 +42,27 @@ pub(crate) async fn instant_sum_and_avg_aggregations_combine_compatible_native_h
         ("avg by (job) (request_duration_seconds)", 5.0, 15.0, 3.0),
     ] {
         let count = engine
-            .query_instant("tenant-a", &format!("histogram_count({query})"), 10_000)
+            .query_instant(
+                &tenant_id("tenant-a"),
+                &format!("histogram_count({query})"),
+                10_000,
+            )
             .await
             .unwrap();
         let sum = engine
-            .query_instant("tenant-a", &format!("histogram_sum({query})"), 10_000)
+            .query_instant(
+                &tenant_id("tenant-a"),
+                &format!("histogram_sum({query})"),
+                10_000,
+            )
             .await
             .unwrap();
         let avg = engine
-            .query_instant("tenant-a", &format!("histogram_avg({query})"), 10_000)
+            .query_instant(
+                &tenant_id("tenant-a"),
+                &format!("histogram_avg({query})"),
+                10_000,
+            )
             .await
             .unwrap();
 

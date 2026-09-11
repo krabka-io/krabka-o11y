@@ -14,7 +14,11 @@ pub(crate) async fn instant_increase_corrects_counter_resets() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "increase(http_requests_total[2m])", 120_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "increase(http_requests_total[2m])",
+            120_000,
+        )
         .await
         .unwrap();
 

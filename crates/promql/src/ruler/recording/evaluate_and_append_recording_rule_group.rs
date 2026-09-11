@@ -1,5 +1,5 @@
 use super::{
-    MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
+    MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink, TenantId,
     evaluate_and_append_recording_rule, yaml_optional_string, yaml_required_string,
     yaml_string_map,
 };
@@ -14,7 +14,7 @@ use super::{
 pub async fn evaluate_and_append_recording_rule_group<S, W>(
     engine: &PromqlEngine<S>,
     sink: &W,
-    tenant: &str,
+    tenant: &TenantId,
     group: &serde_yaml::Value,
     eval_time_ms: i64,
 ) -> Result<usize, PromqlError>

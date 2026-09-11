@@ -9,13 +9,14 @@ pub(crate) fn a_created_delete_request_is_stamped_in_whole_seconds() {
     let state = CompactorDeleteState {
         delete_requests: SharedLogDeleteRequests::from_data_root(dir.path())
             .expect("an absent file is not an error"),
+        query_authorizer: Arc::new(AllowAllQueryAuthorizer),
     };
-    let mut headers = HeaderMap::new();
-    headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
+    let tenant = TenantId::new("tenant-a").expect("a valid tenant id");
 
     execute_create_delete_request(
         &state,
-        &headers,
+        &super::super::prelude::RequestSecurity::unauthenticated(),
+        &tenant,
         Some(r#"query={job="api"}&start=1&end=2"#),
         &Bytes::new(),
     )

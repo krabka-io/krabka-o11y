@@ -32,6 +32,7 @@ pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
                     deferred.group_id.clone(),
                     deferred.topic.clone(),
                     deferred.client_resource_policy,
+                    deferred.security.clone(),
                 ) => {
                     match result {
                         Ok(c) => break c.with_metrics(deferred.metrics.clone()),

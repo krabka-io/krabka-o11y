@@ -51,6 +51,7 @@ pub(crate) fn all_role_stages(
                     distributor.readiness.for_role(RoleKind::Distributor),
                     token,
                     false,
+                    &distributor.security,
                 )
                 .await,
             );
@@ -69,6 +70,7 @@ pub(crate) fn all_role_stages(
                     builder.readiness.for_role(RoleKind::BlockBuilder),
                     token,
                     &builder.object_store,
+                    &builder.security,
                 )
                 .await,
             );
@@ -87,6 +89,7 @@ pub(crate) fn all_role_stages(
                     live.readiness.for_role(RoleKind::LiveStore),
                     token,
                     live_store,
+                    &live.security,
                 )
                 .await,
             );
@@ -100,7 +103,14 @@ pub(crate) fn all_role_stages(
     // `--querier-live-store` set consumes the WAL itself, and `--target all`
     // would then be six roles and a copy of the seventh.
     reader.cli.querier_live_store = false;
-    reader.cli.querier_live_store_url = Some(format!("http://{live_store_addr}"));
+    // The live-store port serves with the process security, so the URL names
+    // TLS when the listeners serve it.
+    let live_store_scheme = if ctx.security.server.tls_enabled() {
+        "https"
+    } else {
+        "http"
+    };
+    reader.cli.querier_live_store_url = Some(format!("{live_store_scheme}://{live_store_addr}"));
     stages.insert(
         RoleKind::Querier,
         all_role_stage(move |token| async move {
@@ -113,6 +123,7 @@ pub(crate) fn all_role_stages(
                     token,
                     querier,
                     &reader.object_store,
+                    &reader.security,
                 )
                 .await,
             );
@@ -170,6 +181,7 @@ pub(crate) fn all_role_stages(
                         generator.cli,
                         generator.readiness.for_role(RoleKind::MetricsGenerator),
                         token,
+                        &generator.security,
                     )
                     .await,
                 );

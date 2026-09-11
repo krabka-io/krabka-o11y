@@ -1,16 +1,16 @@
 use super::{
-    DistributorError, ProtoExportLogsServiceRequest, Time, WalLogRecord,
+    DistributorError, Limits, ProtoExportLogsServiceRequest, TenantId, WalLogRecord,
     discover_service_name_label, proto_attributes_to_labels, proto_log_record_structured_metadata,
-    proto_timestamp_ns, proto_value_to_string, validate_loki_timestamp_window,
+    proto_timestamp_ns, proto_value_to_string, validate_loki_label_limits, validate_loki_line_size,
+    validate_loki_timestamp_window,
 };
 
 pub(crate) fn normalize_otlp_proto_logs_for_tenant(
-    tenant: &str,
+    tenant: &TenantId,
     payload: ProtoExportLogsServiceRequest,
-    reject_old_samples_max_age: Option<Time>,
-    creation_grace_period: Option<Time>,
+    limits: &Limits,
 ) -> Result<Vec<WalLogRecord>, DistributorError> {
-    let tenant = tenant.to_string();
+    let tenant = tenant.as_str();
     let mut records = Vec::new();
 
     for resource_logs in payload.resource_logs {
@@ -33,27 +33,28 @@ pub(crate) fn normalize_otlp_proto_logs_for_tenant(
             if labels.is_empty() {
                 return Err(DistributorError::EmptyStreamLabels);
             }
+            // As in the OTLP/JSON path: the caps apply, the name syntax check
+            // does not, because these names came through
+            // `proto_attributes_to_labels`.
+            validate_loki_label_limits(&labels, limits)?;
 
             for log_record in scope_logs.log_records {
                 let timestamp_ns = proto_timestamp_ns(
                     log_record.time_unix_nano,
                     log_record.observed_time_unix_nano,
                 )?;
-                validate_loki_timestamp_window(
-                    timestamp_ns,
-                    &labels,
-                    reject_old_samples_max_age,
-                    creation_grace_period,
-                )?;
+                validate_loki_timestamp_window(timestamp_ns, &labels, limits)?;
+                let line = log_record
+                    .body
+                    .as_ref()
+                    .map(proto_value_to_string)
+                    .unwrap_or_default();
+                validate_loki_line_size(&line, &labels, limits)?;
                 records.push(WalLogRecord {
-                    tenant: tenant.clone(),
+                    tenant: tenant.to_owned(),
                     labels: labels.clone(),
                     timestamp_ns,
-                    line: log_record
-                        .body
-                        .as_ref()
-                        .map(proto_value_to_string)
-                        .unwrap_or_default(),
+                    line,
                     structured_metadata: proto_log_record_structured_metadata(&log_record)?,
                     position: None,
                 });

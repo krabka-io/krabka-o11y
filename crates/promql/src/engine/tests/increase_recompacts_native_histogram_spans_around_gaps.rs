@@ -56,7 +56,7 @@ pub(crate) async fn increase_recompacts_native_histogram_spans_around_gaps() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "increase(h[5m])", 20_000)
+        .query_instant(&tenant_id("tenant-a"), "increase(h[5m])", 20_000)
         .await
         .expect("a histogram increase");
     let QueryResult::InstantVector(samples) = result else {

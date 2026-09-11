@@ -1,10 +1,11 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State, StatusCode,
-    execute_patterns_query, json_response, post_query_params,
+    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
+    StatusCode, execute_patterns_query, json_response, post_query_params,
 };
 
 pub(crate) async fn patterns_post(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
     body: Bytes,
@@ -13,7 +14,7 @@ pub(crate) async fn patterns_post(
         Ok(raw_query) => raw_query,
         Err(error) => return error.into_response(),
     };
-    match execute_patterns_query(&state, &headers, Some(&raw_query)).await {
+    match execute_patterns_query(&state, &security, &headers, Some(&raw_query)).await {
         Ok(value) => json_response(StatusCode::OK, &value),
         Err(error) => error.into_response(),
     }

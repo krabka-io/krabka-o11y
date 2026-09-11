@@ -108,16 +108,24 @@ impl MetricsCompactorConfig {
     /// the instruments are the only place that says so. See
     /// [`krabka_observability::wal_group_assignment`].
     ///
+    /// `security` is the broker connection policy that
+    /// `krabka_observability::wal_client_security::WalClientSecurityArgs::load`
+    /// gives. `None` connects in plain text. The policy is a parameter and not
+    /// a field, because `ClientSecurity` prints its SASL password under `{:?}`
+    /// and this configuration derives `Debug`.
+    ///
     /// # Errors
     /// Returns an error when the configuration is invalid, or when the consumer
     /// cannot join its group.
     pub async fn build_consumer(
         &self,
         wal_consumer_metrics: &WalConsumerMetrics,
+        security: Option<krabka_client_core::ClientSecurity>,
     ) -> Result<DurableCompactionConsumer<WalAssignmentConsumer>, MetricsCompactorBuildError> {
         self.validate()?;
         let consumer = Consumer::builder()
             .bootstrap(self.bootstrap.clone())
+            .maybe_security(security)
             .dispatch_queue_capacity(self.client_dispatch_queue_capacity.get())
             .frame_max(self.client_frame_max.size())
             .group_id(self.group_id.clone())

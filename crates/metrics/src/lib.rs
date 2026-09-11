@@ -14,10 +14,10 @@ pub mod limits;
 pub mod metadata;
 pub mod metrics;
 pub mod otlp;
+pub mod request_tenant;
 pub mod sample;
 pub mod schema;
 pub mod symbols;
-pub mod tenant;
 pub mod wal;
 pub mod wire;
 
@@ -57,6 +57,10 @@ pub use otlp::{
     decode_otlp_stateful, decode_otlp_stateful_bytes, exponential_histogram_to_native,
     normalize_name,
 };
+pub use request_tenant::{
+    MAX_REQUEST_TENANTS, RequestTenantError, TenantAccessError, authorized_tenant_from_headers,
+    resolve_request_tenant, tenant_from_headers, tenant_from_metadata,
+};
 pub use sample::{decode_float_samples, encode_float_samples};
 pub use schema::{
     COL_FINGERPRINT, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS,
@@ -66,7 +70,6 @@ pub use schema::{
     metadata_schema, native_histogram_schema,
 };
 pub use symbols::{SymbolError, SymbolTable};
-pub use tenant::validate_tenant;
 pub use wal::{
     ClockReadingPayload, SamplePayload, WAL_TOPIC, WalError, WalExemplar, WalRecord, partition_key,
 };

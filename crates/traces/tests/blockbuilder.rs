@@ -16,6 +16,7 @@ use futures::stream::BoxStream;
 use krabka_blockstore::{
     BlockLevel, BlockWriter, ObjectStoreRetryPolicy, PromotedSpanAttr, SCOL_START_NANO,
     SCOL_TRACE_ID, ShardedTraceBloom, TraceBlockStats, TraceIndex, read_block,
+    unescape_object_path_segment,
 };
 use krabka_client_consumer::ConsumerRecord;
 use krabka_traces::{
@@ -116,6 +117,47 @@ fn object_key_is_deterministic_and_offset_scoped() {
     check!(a == b);
     check!(a != c);
     check!(a == "traces/tenant-a/00003/00000000000000000010-00000000000000000020-1000.parquet");
+}
+
+/// A valid tenant id can hold characters that `object_store` rewrites, so the
+/// key carries the escaped name. Each row must stay one path segment that the
+/// store keeps byte for byte, and must read back as the tenant it came from. A
+/// key that wrote the raw name passes the plain row and fails the other three.
+#[test]
+fn object_key_escapes_the_tenant_into_one_segment_that_reads_back() {
+    let cases = [
+        ("plain", "tenant-a", "tenant-a"),
+        ("star", "a*b", "a!2Ab"),
+        ("escape marker", "a!b", "a!21b"),
+        ("parentheses", "a(b)", "a!28b!29"),
+    ];
+
+    for (name, tenant, segment) in cases {
+        let key = object_key(
+            tenant,
+            3,
+            MinOffset(10),
+            MaxOffset(20),
+            WindowStartNs(1_000),
+        );
+        check!(
+            key == format!(
+                "traces/{segment}/00003/00000000000000000010-00000000000000000020-1000.parquet"
+            ),
+            "{name}"
+        );
+        let path = Path::from(key.as_str());
+        check!(
+            path.as_ref() == key,
+            "{name}: the store keeps the key as written"
+        );
+        let parts: Vec<_> = path.parts().collect();
+        check!(parts.len() == 4, "{name}");
+        check!(
+            unescape_object_path_segment(parts[1].as_ref()) == Some(tenant.to_string()),
+            "{name}"
+        );
+    }
 }
 
 #[test]

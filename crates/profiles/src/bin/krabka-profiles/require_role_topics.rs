@@ -1,6 +1,6 @@
 use krabka_observability::topic_contract::{PROFILES_TOPICS, TopicContractError, require_topics};
 
-use super::{Cli, Target};
+use super::{Cli, ClientSecurity, Target};
 
 /// Refuses to let this role start on topics that do not meet the contract.
 ///
@@ -14,14 +14,21 @@ use super::{Cli, Target};
 /// them to validate a topic would make a broker they do not use a condition of
 /// their starting, which is a fault they do not have.
 ///
+/// The admin client connects with `wal_security`, as every other broker
+/// connection of the role does. A broker that needs TLS or SASL refuses a
+/// plain connection, and the role would then never start.
+///
 /// # Errors
 /// Returns [`TopicContractError`] when no bootstrap address answers, or when
 /// the topic is absent.
-pub(crate) async fn require_role_topics(cli: &Cli) -> Result<(), TopicContractError> {
+pub(crate) async fn require_role_topics(
+    cli: &Cli,
+    wal_security: Option<&ClientSecurity>,
+) -> Result<(), TopicContractError> {
     if !cli.target.touches_the_wal() {
         return Ok(());
     }
-    require_topics(&cli.bootstrap, &PROFILES_TOPICS).await?;
+    require_topics(&cli.bootstrap, &PROFILES_TOPICS, wal_security.cloned()).await?;
     Ok(())
 }
 

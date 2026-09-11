@@ -6,6 +6,7 @@ pub(crate) fn connect_error(err: ProfilesError) -> ConnectError {
     }
     let code = match err.status_code() {
         400 | 415 => Code::InvalidArgument,
+        403 => Code::PermissionDenied,
         _ => Code::Internal,
     };
     let message = client_facing_message(&err);

@@ -1,10 +1,11 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, Path, QuerierState, RawQuery, Response, State,
+    Bytes, HeaderMap, IntoResponse, Path, QuerierState, RawQuery, RequestSecurity, Response, State,
     execute_label_values_query, parse_series_params, post_query_params_body_first,
 };
 
 pub(crate) async fn label_values_post(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     Path(name): Path<String>,
     RawQuery(raw_query): RawQuery,
@@ -18,7 +19,7 @@ pub(crate) async fn label_values_post(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    match execute_label_values_query(&state, &headers, &name, &params).await {
+    match execute_label_values_query(&state, &security, &headers, &name, &params).await {
         Ok(response) => response,
         Err(error) => error.into_response(),
     }

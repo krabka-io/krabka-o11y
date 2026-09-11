@@ -60,9 +60,7 @@ impl From<PromqlError> for ApiError {
         let (status, error_type) = match &error {
             PromqlError::Parse(_) | PromqlError::Plan(_) => (StatusCode::BAD_REQUEST, "bad_data"),
             PromqlError::Unsupported(_) => (StatusCode::UNPROCESSABLE_ENTITY, "execution"),
-            PromqlError::Exec(message) if message.starts_with("query exceeds max_samples=") => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "execution")
-            }
+            PromqlError::Limit(limit_error) => return Self::from(limit_error.clone()),
             PromqlError::Exec(_) | PromqlError::Store(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "execution")
             }

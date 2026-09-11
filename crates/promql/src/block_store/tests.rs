@@ -16,7 +16,7 @@ use object_store::{ObjectStore, memory::InMemory};
 use super::MetricBlockStore;
 use crate::{
     EngineOpts, InstantSample, MetadataRecord, MetricStore, NamedTsdbStat, PromqlEngine,
-    QueryResult, SampleValue, TsdbBlock, TsdbHeadStats, TsdbStats,
+    QueryResult, SampleValue, TsdbBlock, TsdbHeadStats, TsdbStats, test_support::tenant_id,
 };
 
 mod exemplar_batch;

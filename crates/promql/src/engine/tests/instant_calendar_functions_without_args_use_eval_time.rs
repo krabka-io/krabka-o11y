@@ -4,7 +4,7 @@ use super::*;
 pub(crate) async fn instant_calendar_functions_without_args_use_eval_time() {
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "minute()", 3_660_000)
+        .query_instant(&tenant_id("tenant-a"), "minute()", 3_660_000)
         .await
         .unwrap();
 

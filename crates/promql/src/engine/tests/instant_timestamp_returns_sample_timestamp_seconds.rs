@@ -12,7 +12,7 @@ pub(crate) async fn instant_timestamp_returns_sample_timestamp_seconds() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "timestamp(up)", 120_000)
+        .query_instant(&tenant_id("tenant-a"), "timestamp(up)", 120_000)
         .await
         .unwrap();
 

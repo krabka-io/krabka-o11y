@@ -12,7 +12,7 @@ pub(crate) async fn comparison_bool_returns_one_or_zero() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "a > bool 0", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "a > bool 0", 10_000)
         .await
         .unwrap();
 

@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerGroupEvaluation, evaluate_ruler_rule_group,
+    RulerAlertState, RulerGroupEvaluation, TenantId, evaluate_ruler_rule_group,
 };
 
 /// Evaluates all ruler rule groups for one tenant.
@@ -12,7 +12,7 @@ pub async fn evaluate_ruler_rule_set<S, W, A>(
     wal_sink: &W,
     alert_sink: &A,
     alert_state: &mut RulerAlertState,
-    tenant: &str,
+    tenant: &TenantId,
     rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
     eval_time_ms: i64,
 ) -> Result<RulerGroupEvaluation, PromqlError>

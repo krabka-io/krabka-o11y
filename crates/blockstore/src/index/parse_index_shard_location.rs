@@ -1,8 +1,12 @@
-use super::{IndexShardObject, IndexShardRange, parse_shard_bound_key};
+use super::{
+    IndexShardObject, IndexShardRange, parse_shard_bound_key, unescape_object_path_segment,
+};
 
 /// Classifies an object listed under the index-shard prefix of a key.
 ///
-/// Returns the tenant it belongs to and what it is. Anything that does not
+/// Returns the tenant it belongs to and what it is. The tenant segment comes
+/// back through [`unescape_object_path_segment`], so the caller gets the name
+/// the writer was given and not the escaped form. Anything that does not
 /// spell one of the two shapes this module writes comes back as
 /// [`IndexShardObject::Foreign`], so a caller neither decodes it nor deletes
 /// it: the prefix belongs to the index, but a bucket is shared and being wrong
@@ -15,7 +19,7 @@ pub(crate) fn parse_index_shard_location(
         .strip_prefix(shards_prefix)?
         .trim_start_matches('/');
     let (tenant_segment, rest) = rest.split_once('/')?;
-    let tenant = tenant_segment.strip_prefix("tenant=")?.to_string();
+    let tenant = unescape_object_path_segment(tenant_segment.strip_prefix("tenant=")?)?;
 
     if rest == "unbound.kbi" {
         return Some((tenant, IndexShardObject::UnboundSeries));

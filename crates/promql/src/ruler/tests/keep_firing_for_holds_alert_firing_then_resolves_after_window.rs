@@ -26,7 +26,7 @@ keep_firing_for: 5m
         &sink0,
         &state_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rule,
         0,
     )
@@ -46,7 +46,12 @@ keep_firing_for: 5m
     // firing, no EndsAt.
     let sink1 = RecordingAlertmanagerSink::default();
     let kept = super::super::evaluate_and_dispatch_alerting_rule_with_state(
-        &engine, &sink1, &mut state, "tenant-a", &rule, 120_000,
+        &engine,
+        &sink1,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &rule,
+        120_000,
     )
     .await
     .expect("kept firing");
@@ -57,7 +62,12 @@ keep_firing_for: 5m
     // t=600s: keep-firing window (deadline 300s) elapsed; resolves with EndsAt.
     let sink2 = RecordingAlertmanagerSink::default();
     let resolved = super::super::evaluate_and_dispatch_alerting_rule_with_state(
-        &engine, &sink2, &mut state, "tenant-a", &rule, 600_000,
+        &engine,
+        &sink2,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &rule,
+        600_000,
     )
     .await
     .expect("resolved after window");

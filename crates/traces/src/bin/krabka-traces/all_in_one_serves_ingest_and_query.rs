@@ -83,9 +83,14 @@ async fn spans_pushed_to_the_ingest_port_come_back_through_the_tempo_api_port() 
         .await
         .expect("broker start");
     let bootstrap = broker.listen_addr().to_string();
-    provision_topics(&bootstrap, &TRACES_TOPICS, &TopicSettings::single_broker())
-        .await
-        .expect("provision the traces WAL topic");
+    provision_topics(
+        &bootstrap,
+        &TRACES_TOPICS,
+        &TopicSettings::single_broker(),
+        None,
+    )
+    .await
+    .expect("provision the traces WAL topic");
 
     let tempo_api = free_loopback_addr();
     let otlp_http = free_loopback_addr();

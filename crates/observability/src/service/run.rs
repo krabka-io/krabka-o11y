@@ -20,12 +20,16 @@ pub fn run(config: ServiceConfig) -> Result<ServiceStatus, Infallible> {
         max_query_range: _max_query_range,
         max_query_series: _max_query_series,
         max_query_read: _max_query_read,
-        max_query_length: _max_query_length,
+        max_query_string_bytes: _max_query_string_bytes,
+        logs_limits_overrides_config: _logs_limits_overrides_config,
         max_ingest_body: _max_ingest_body,
         wal_append_timeout: _wal_append_timeout,
         reject_old_samples_max_age: _reject_old_samples_max_age,
         creation_grace_period: _creation_grace_period,
         ingest_quota_burst_window: _ingest_quota_burst_window,
+        broker_access_cache_ttl: _broker_access_cache_ttl,
+        broker_access_max_staleness: _broker_access_max_staleness,
+        broker_access_tenant_capacity: _broker_access_tenant_capacity,
         wal_connect_startup_deadline: _wal_connect_startup_deadline,
         wal_connect_attempt_timeout: _wal_connect_attempt_timeout,
         wal_connect_initial_backoff: _wal_connect_initial_backoff,
@@ -46,6 +50,9 @@ pub fn run(config: ServiceConfig) -> Result<ServiceStatus, Infallible> {
         querier_hot_tail_bucket_width: _querier_hot_tail_bucket_width,
         querier_hot_tail_interval: _querier_hot_tail_interval,
         querier_dependency_reconnect_interval: _querier_dependency_reconnect_interval,
+        server_security: _server_security,
+        audit: _audit,
+        wal_client_security: _wal_client_security,
     } = config;
 
     Ok(ServiceStatus { role: target })

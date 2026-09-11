@@ -21,7 +21,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use krabka_blockstore::Labels;
+use krabka_blockstore::{Labels, TenantId};
 use krabka_promql::{EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult, SampleValue};
 use proptest::{prelude::*, test_runner::TestCaseError};
 use tokio::runtime::Runtime;
@@ -71,7 +71,11 @@ fn eval_sorted(
     query: &str,
 ) -> Result<Vec<Row>, TestCaseError> {
     let result = runtime()
-        .block_on(engine.query_instant(TENANT, query, EVAL_MS))
+        .block_on(engine.query_instant(
+            &TenantId::new(TENANT).expect("the test tenant is a valid tenant id"),
+            query,
+            EVAL_MS,
+        ))
         .map_err(|error| TestCaseError::fail(format!("{query}: {error}")))?;
     let QueryResult::InstantVector(samples) = result else {
         return Err(TestCaseError::fail(format!(

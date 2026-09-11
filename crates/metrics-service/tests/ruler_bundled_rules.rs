@@ -3,7 +3,7 @@
 //! A rule file an operator names and the ruler cannot install is an alerting
 //! gap with no signal, so every failure here stops the start.
 
-use std::{path::Path, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 
 use assert2::check;
 use axum::{
@@ -11,14 +11,21 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use krabka_blockstore::TenantId;
 use krabka_metrics_service::{
     BundledRulesError, install_bundled_rule_groups, prometheus_api_state_for_store,
+    serve_prometheus_router,
 };
+use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use krabka_promql::{InMemoryMetricStore, PrometheusApiState, prometheus_router};
 use tempfile::TempDir;
 use tower::ServiceExt as _;
 
 const TENANT: &str = "tenant-a";
+
+fn tenant() -> TenantId {
+    TenantId::new(TENANT).expect("the test tenant is a valid tenant id")
+}
 
 const ONE_GROUP: &str = r#"
 groups:
@@ -34,19 +41,34 @@ groups:
           severity: critical
 "#;
 
+/// A ruler API served on a real socket, as the ruler serves it at startup.
+///
+/// The loader posts through the listener. `router` is the same API behind the
+/// authentication layer, for the reads a test makes in process.
 struct Fixture {
     state: Arc<PrometheusApiState<InMemoryMetricStore>>,
     router: Router,
+    listener: SocketAddr,
     dir: TempDir,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    async fn new() -> Self {
         let state = prometheus_api_state_for_store(InMemoryMetricStore::new());
         let router = prometheus_router(Arc::clone(&state));
+        // The test runtime stops the server when the test ends.
+        let listener = serve_prometheus_router(
+            "127.0.0.1:0".parse().expect("a socket address"),
+            router.clone(),
+            &ServerSecurity::default(),
+            std::future::pending(),
+        )
+        .await
+        .expect("the ruler API serves");
         Self {
             state,
-            router,
+            router: authenticate_requests(router, &ServerSecurity::default()),
+            listener,
             dir: TempDir::new().expect("temporary directory"),
         }
     }
@@ -59,7 +81,8 @@ impl Fixture {
     }
 
     async fn install(&self, path: &Path) -> Result<Vec<String>, BundledRulesError> {
-        install_bundled_rule_groups(&self.router, path, TENANT).await
+        install_bundled_rule_groups(self.listener, &ServerSecurity::default(), path, &tenant())
+            .await
     }
 
     /// Reads the ruler config API back as the operator sees it.
@@ -86,7 +109,7 @@ impl Fixture {
 
 #[tokio::test]
 async fn the_loader_installs_a_group_under_the_file_stem() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let path = fixture.write("krabka-clock.yaml", ONE_GROUP);
 
     let installed = fixture.install(&path).await.expect("the file installs");
@@ -94,7 +117,7 @@ async fn the_loader_installs_a_group_under_the_file_stem() {
     check!(installed == vec!["clock-recording".to_string()]);
     let namespaces = fixture
         .state
-        .ruler_rule_set(TENANT)
+        .ruler_rule_set(&tenant())
         .into_keys()
         .collect::<Vec<_>>();
     check!(namespaces == vec!["krabka-clock".to_string()]);
@@ -105,12 +128,12 @@ async fn the_loader_installs_a_group_under_the_file_stem() {
 
 #[tokio::test]
 async fn a_bundled_group_evaluates_like_a_posted_group() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let bundled = fixture.write("bundled.yaml", ONE_GROUP);
     fixture.install(&bundled).await.expect("the file installs");
-    let from_loader = fixture.state.ruler_rule_set(TENANT);
+    let from_loader = fixture.state.ruler_rule_set(&tenant());
 
-    let posted = Fixture::new();
+    let posted = Fixture::new().await;
     let answer =
         posted
             .router
@@ -136,36 +159,36 @@ async fn a_bundled_group_evaluates_like_a_posted_group() {
             .expect("the API answers");
     check!(answer.status() == StatusCode::ACCEPTED);
 
-    check!(from_loader == posted.state.ruler_rule_set(TENANT));
+    check!(from_loader == posted.state.ruler_rule_set(&tenant()));
 }
 
 #[tokio::test]
 async fn a_missing_file_stops_the_start() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let path = fixture.dir.path().join("absent.yaml");
 
     let error = fixture.install(&path).await.expect_err("no such file");
 
     check!(matches!(error, BundledRulesError::Read { .. }));
     check!(format!("{error}").contains("absent.yaml"));
-    check!(fixture.state.ruler_rule_set(TENANT).is_empty());
+    check!(fixture.state.ruler_rule_set(&tenant()).is_empty());
 }
 
 #[tokio::test]
 async fn a_file_that_is_not_yaml_stops_the_start() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let path = fixture.write("broken.yaml", "groups: [ - name: unterminated\n");
 
     let error = fixture.install(&path).await.expect_err("malformed YAML");
 
     check!(matches!(error, BundledRulesError::Decode { .. }));
     check!(format!("{error}").contains("broken.yaml"));
-    check!(fixture.state.ruler_rule_set(TENANT).is_empty());
+    check!(fixture.state.ruler_rule_set(&tenant()).is_empty());
 }
 
 #[tokio::test]
 async fn a_file_with_no_group_stops_the_start() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let empty = fixture.write("empty.yaml", "groups: []\n");
     // A rule file names its groups under `groups`. A file that carries rules at
     // the top level is a rule group, not a rule file.
@@ -182,7 +205,7 @@ async fn a_file_with_no_group_stops_the_start() {
 
     check!(matches!(no_groups, BundledRulesError::NoGroups { .. }));
     check!(matches!(not_a_rule_file, BundledRulesError::Decode { .. }));
-    check!(fixture.state.ruler_rule_set(TENANT).is_empty());
+    check!(fixture.state.ruler_rule_set(&tenant()).is_empty());
 }
 
 #[tokio::test]
@@ -208,7 +231,7 @@ async fn a_group_the_config_api_rejects_stops_the_start() {
     ];
 
     for (name, body) in cases {
-        let fixture = Fixture::new();
+        let fixture = Fixture::new().await;
         let path = fixture.write("rejected.yaml", body);
 
         let error = fixture.install(&path).await.expect_err("rejected group");
@@ -217,13 +240,13 @@ async fn a_group_the_config_api_rejects_stops_the_start() {
             matches!(error, BundledRulesError::Rejected { .. }),
             "{name}"
         );
-        check!(fixture.state.ruler_rule_set(TENANT).is_empty(), "{name}");
+        check!(fixture.state.ruler_rule_set(&tenant()).is_empty(), "{name}");
     }
 }
 
 #[tokio::test]
 async fn a_later_group_that_the_api_rejects_stops_the_start() {
-    let fixture = Fixture::new();
+    let fixture = Fixture::new().await;
     let path = fixture.write(
         "mixed.yaml",
         "groups:\n  - name: good\n    rules:\n      - record: a:b\n        expr: up\n  - name: bad\n    rules: []\n",
@@ -238,7 +261,7 @@ async fn a_later_group_that_the_api_rejects_stops_the_start() {
     check!(matches!(error, BundledRulesError::Rejected { .. }));
     let installed = fixture
         .state
-        .ruler_rule_set(TENANT)
+        .ruler_rule_set(&tenant())
         .values()
         .map(std::collections::BTreeMap::len)
         .sum::<usize>();

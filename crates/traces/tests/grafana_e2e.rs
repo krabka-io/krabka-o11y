@@ -552,7 +552,7 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
     let state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
 
     // D1 — OTLP HTTP `POST /v1/traces` (Trace A).
-    let resp = distributor::router(state.clone())
+    let resp = authenticated(distributor::router(state.clone()))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -566,7 +566,7 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
     let _ = resp.into_body().collect().await?;
 
     // D2 — Tempo push `POST /api/push` (Trace B, the PARTIAL trace).
-    let resp = distributor::router(state.clone())
+    let resp = authenticated(distributor::router(state.clone()))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -584,7 +584,7 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
         "name":"zipkin op","timestamp":1000,"duration":2000,"kind":"SERVER",
         "localEndpoint":{"serviceName":"zipkin-svc"},
         "tags":{"http.method":"GET","error":"boom"}}]"#;
-    let resp = distributor::router(state.clone())
+    let resp = authenticated(distributor::router(state.clone()))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -598,7 +598,7 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
     let _ = resp.into_body().collect().await?;
 
     // D4 — Jaeger binary thrift `POST /api/traces`.
-    let resp = distributor::router(state.clone())
+    let resp = authenticated(distributor::router(state.clone()))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -617,6 +617,8 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
         resource_spans: TracesData::decode(grpc_otlp_bytes().as_slice())?.resource_spans,
     });
     req.metadata_mut().insert("x-scope-orgid", TENANT.parse()?);
+    req.extensions_mut()
+        .insert(krabka_observability::server_security::Principal::Unauthenticated);
     otlp_grpc
         .export(req)
         .await
@@ -661,6 +663,8 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
         }),
     });
     req.metadata_mut().insert("x-scope-orgid", TENANT.parse()?);
+    req.extensions_mut()
+        .insert(krabka_observability::server_security::Principal::Unauthenticated);
     jaeger_grpc
         .post_spans(req)
         .await
@@ -670,7 +674,7 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
     // `application/x-thrift` selects the compact decoder, distinct from D4's
     // binary decoder). This is the same `decode_jaeger_thrift` path the compact
     // UDP datagram receiver uses.
-    let resp = distributor::router(state.clone())
+    let resp = authenticated(distributor::router(state.clone()))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -895,14 +899,14 @@ async fn start_krabka_querier(records: &[SpanRecord]) -> TestResult<KrabkaPair> 
         Arc::new(span_store_from_records(records)),
         EngineOpts::default(),
     ));
-    let app = router_with_config(
+    let app = authenticated(router_with_config(
         engine,
         HttpConfig {
             max_trace_spans: MAX_TRACE_SPANS,
             ..HttpConfig::default()
         },
         krabka_observability::RoleReadiness::new(),
-    );
+    ));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
     let port = listener.local_addr()?.port();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -1765,7 +1769,10 @@ async fn grafana_e2e_service_graph(
             15_000_000,
         ),
     ]);
-    let sink = Arc::new(PrometheusRemoteWriteSink::new(rw_url));
+    let sink = Arc::new(PrometheusRemoteWriteSink::new(
+        rw_url,
+        &krabka_observability::server_security::InternalClient::default(),
+    )?);
     let svc = MetricsGenService::new(
         MetricsGenConfig::default(),
         Arc::new(SystemClock),
@@ -1867,4 +1874,14 @@ fn scope_tags(tags: &JsonValue, scope_name: &str) -> Vec<String> {
         .flatten()
         .filter_map(|tag| tag.as_str().map(str::to_string))
         .collect()
+}
+
+// The routers read the principal from the request extensions, where the
+// authentication layer puts it. This is that layer with no security flags,
+// which serves every request as unauthenticated.
+fn authenticated(router: axum::Router) -> axum::Router {
+    krabka_observability::server_security::authenticate_requests(
+        router,
+        &krabka_observability::server_security::ServerSecurity::default(),
+    )
 }

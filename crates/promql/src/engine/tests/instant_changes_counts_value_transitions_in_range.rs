@@ -20,7 +20,7 @@ pub(crate) async fn instant_changes_counts_value_transitions_in_range() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "changes(queue_depth[4m])", 240_000)
+        .query_instant(&tenant_id("tenant-a"), "changes(queue_depth[4m])", 240_000)
         .await
         .unwrap();
 

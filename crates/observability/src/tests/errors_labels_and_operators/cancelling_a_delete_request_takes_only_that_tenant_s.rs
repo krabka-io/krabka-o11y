@@ -18,6 +18,7 @@ pub(crate) fn cancelling_a_delete_request_takes_only_that_tenant_s() {
     };
     let state = super::super::prelude::CompactorDeleteState {
         delete_requests: super::super::prelude::SharedLogDeleteRequests::default(),
+        query_authorizer: Arc::new(super::super::prelude::AllowAllQueryAuthorizer),
     };
     state
         .delete_requests
@@ -30,11 +31,11 @@ pub(crate) fn cancelling_a_delete_request_takes_only_that_tenant_s() {
         request("tenant-a", "delete-2"),
     ];
 
-    let mut headers = HeaderMap::new();
-    headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
+    let tenant = super::super::prelude::TenantId::new("tenant-a").expect("a valid tenant id");
     super::super::prelude::execute_cancel_delete_request(
         &state,
-        &headers,
+        &super::super::prelude::RequestSecurity::unauthenticated(),
+        &tenant,
         Some("request_id=delete-1"),
     )
     .expect("the cancel succeeds");

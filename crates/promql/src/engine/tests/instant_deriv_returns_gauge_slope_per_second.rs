@@ -14,7 +14,11 @@ pub(crate) async fn instant_deriv_returns_gauge_slope_per_second() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "deriv(temperature_celsius[2m])", 120_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "deriv(temperature_celsius[2m])",
+            120_000,
+        )
         .await
         .unwrap();
 

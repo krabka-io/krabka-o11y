@@ -88,7 +88,7 @@ pub(crate) async fn a_range_query_agrees_with_instant_evaluation_at_every_step()
         "last_over_time(gauge[3m:1m])",
     ] {
         let QueryResult::RangeMatrix(series) = engine
-            .query_range("t", query, start_ms, end_ms, step)
+            .query_range(&tenant_id("t"), query, start_ms, end_ms, step)
             .await
             .unwrap_or_else(|error| panic!("range `{query}`: {error}"))
         else {
@@ -109,7 +109,7 @@ pub(crate) async fn a_range_query_agrees_with_instant_evaluation_at_every_step()
         let mut instant_ms = start_ms;
         while instant_ms <= end_ms {
             let result = engine
-                .query_instant("t", query, instant_ms)
+                .query_instant(&tenant_id("t"), query, instant_ms)
                 .await
                 .unwrap_or_else(|error| panic!("instant `{query}` at {instant_ms}: {error}"));
             let QueryResult::InstantVector(samples) = result else {

@@ -1,11 +1,12 @@
 use super::{
-    Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response,
-    State, StatusCode, Uri, backend_error_response, json, optional_time_bounds, scope_name,
-    scope_param, tenant,
+    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Principal, QuerierBackend,
+    QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, json,
+    optional_time_bounds, request_tenant, scope_name, scope_param,
 };
 
 pub(crate) async fn search_tags_v2<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     uri: Uri,
 ) -> Response
@@ -13,7 +14,10 @@ where
     B: QuerierBackend + 'static,
     C: BlockCatalog + 'static,
 {
-    let tenant = tenant(&headers);
+    let tenant = match request_tenant(&headers, &principal, &qf.cfg.tenant_policy) {
+        Ok(tenant) => tenant,
+        Err(rejection) => return *rejection,
+    };
     let (start_ns, end_ns) = match optional_time_bounds(&uri) {
         Ok(bounds) => bounds,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),

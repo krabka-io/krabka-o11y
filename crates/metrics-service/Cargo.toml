@@ -54,9 +54,12 @@ url = { workspace = true }
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
+opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
+rcgen = { workspace = true }
 snap = { workspace = true }
 temp-env = "0.3"
 tempfile = { workspace = true }
 testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tonic = { workspace = true }

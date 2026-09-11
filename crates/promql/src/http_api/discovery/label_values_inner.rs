@@ -1,16 +1,17 @@
 use super::{
-    Arc, DiscoveryParams, HeaderMap, MetricStore, PrometheusApiState, Response,
+    Arc, DiscoveryParams, HeaderMap, MetricStore, Principal, PrometheusApiState, Response,
     label_values_dispatch, record_query_response,
 };
 
 pub(crate) async fn label_values_inner<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,
     headers: HeaderMap,
+    principal: Principal,
     name: String,
     params: DiscoveryParams,
 ) -> Response {
     let started = std::time::Instant::now();
-    let response = label_values_dispatch(&state, &headers, name, params).await;
+    let response = label_values_dispatch(&state, &headers, &principal, name, params).await;
     record_query_response(&state, "label_values", &response, started);
     response
 }

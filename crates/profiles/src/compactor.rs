@@ -17,9 +17,9 @@ use krabka_blockstore::{
     CompactionJob, CompactionPolicy, DEFAULT_BLOCK_READ_MAX, MERGE_BATCH_ROWS,
     MERGE_READ_BATCH_ROWS, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
     PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, ProfileIndex,
-    ProfileSampleRow, SortedMerge, SummaryColumns, encode_profile_samples, input_key_fingerprint,
-    open_block_stream, plan_compactions as plan_level_compactions, profile_samples_decl,
-    versioned_compaction_key,
+    ProfileSampleRow, SortedMerge, SummaryColumns, encode_profile_samples,
+    escape_object_path_segment, input_key_fingerprint, open_block_stream,
+    plan_compactions as plan_level_compactions, profile_samples_decl, versioned_compaction_key,
 };
 use krabka_pprof::SymbolDb;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
@@ -68,6 +68,37 @@ mod tests {
                 != super::compacted_key(&job(&["a", "b"], 1, 100, 500)),
             "a different input list is a different key over the same range"
         );
+    }
+
+    // A compacted block keeps its tenant in one escaped segment, the same
+    // segment the block-builder writes, and the unescape gives the tenant back.
+    #[test]
+    fn a_compacted_key_escapes_the_tenant_into_one_segment() {
+        for (tenant, segment) in [("a*b", "a!2Ab"), ("a!b", "a!21b"), ("tenant-a", "tenant-a")] {
+            let job = CompactionJob {
+                tenant: tenant.to_string(),
+                input_keys: vec!["a".to_string()],
+                output_level: BlockLevel(1),
+                min_ts: 100,
+                max_ts: 500,
+                row_count: 0,
+            };
+            let key = super::compacted_key(&job);
+            let block_key = crate::blockbuilder::object_key(tenant, 0, 1, 2, 100, 500);
+
+            let path = Path::from(key.as_str());
+            let parts: Vec<_> = path.parts().collect();
+            check!(parts.len() == 4, "{key}");
+            check!(parts.get(1).map(|part| part.as_ref().to_string()) == Some(segment.to_string()));
+            check!(
+                block_key.split('/').nth(1) == Some(segment),
+                "the block-builder writes the same segment"
+            );
+            check!(
+                krabka_blockstore::unescape_object_path_segment(segment)
+                    == Some(tenant.to_string())
+            );
+        }
     }
 
     use super::*;

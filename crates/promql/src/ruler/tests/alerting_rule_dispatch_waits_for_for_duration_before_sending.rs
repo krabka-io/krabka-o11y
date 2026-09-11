@@ -19,7 +19,12 @@ for: 5m
     let mut state = super::super::RulerAlertState::default();
 
     let pending = super::super::evaluate_and_dispatch_alerting_rule_with_state(
-        &engine, &sink, &mut state, "tenant-a", &rule, 60_000,
+        &engine,
+        &sink,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &rule,
+        60_000,
     )
     .await
     .expect("pending alert evaluation");
@@ -27,7 +32,12 @@ for: 5m
     assert2::assert!(sink.alerts().is_empty());
 
     let firing = super::super::evaluate_and_dispatch_alerting_rule_with_state(
-        &engine, &sink, &mut state, "tenant-a", &rule, 360_000,
+        &engine,
+        &sink,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &rule,
+        360_000,
     )
     .await
     .expect("firing alert evaluation");

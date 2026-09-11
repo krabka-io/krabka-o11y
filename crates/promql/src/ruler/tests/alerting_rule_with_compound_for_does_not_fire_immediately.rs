@@ -25,7 +25,12 @@ for: 1h30m
     // eval time). With `for: 1h30m` it must NOT fire immediately — proving
     // the compound duration parsed as 90m rather than collapsing to 0.
     let pending = super::super::evaluate_and_dispatch_alerting_rule_with_state(
-        &engine, &sink, &mut state, "tenant-a", &rule, 60_000,
+        &engine,
+        &sink,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &rule,
+        60_000,
     )
     .await
     .expect("pending evaluation");
@@ -37,7 +42,7 @@ for: 1h30m
         &engine,
         &sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rule,
         60_000 + 90 * 60_000,
     )

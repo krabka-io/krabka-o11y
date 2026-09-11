@@ -3,10 +3,10 @@ use std::{collections::BTreeMap, net::Ipv4Addr};
 use krabka_observability::{RoleKind, RoleReadiness};
 
 use super::{
-    AllStage, Arc, CancellationToken, Cli, FrontendConfig, QuerierState, ServiceMetrics,
-    SocketAddr, bind_all_stage_server, block_builder_stage, build_distributor_state,
-    build_object_store, build_profile_read_path, compactor_stage, debuginfod_config,
-    load_profiles_limits_overrides_config, read_path_stage, symbolizer_stage,
+    AllStage, Arc, CancellationToken, Cli, FrontendConfig, ProcessSecurity, QuerierState,
+    ServiceMetrics, SocketAddr, bind_all_stage_server, block_builder_stage,
+    build_distributor_state, build_object_store, build_profile_read_path, compactor_stage,
+    debuginfod_config, load_profiles_limits_overrides_config, read_path_stage, symbolizer_stage,
 };
 
 /// Builds every role `--target all` runs, and every listener it binds, before
@@ -21,6 +21,9 @@ use super::{
 /// [`DRAIN_ORDER`](krabka_profiles::all::DRAIN_ORDER) and this function has no
 /// business restating it.
 ///
+/// `security` sets the TLS and authentication of both listeners, and the TLS
+/// and SASL of the WAL producer and of both WAL consumers.
+///
 /// # Errors
 /// Returns an error when the object store cannot be built, when a limits file
 /// cannot be read, when the block index cannot be loaded, or when either
@@ -30,6 +33,7 @@ pub(crate) async fn build_all_stages(
     metrics: &ServiceMetrics,
     readiness: &RoleReadiness,
     shutdown: &CancellationToken,
+    security: &ProcessSecurity,
 ) -> Result<Option<BTreeMap<RoleKind, AllStage>>, Box<dyn std::error::Error>> {
     // One object store, built once, for every role that reads or writes
     // blocks. Four roles call `build_object_store` when they run alone, and
@@ -54,11 +58,19 @@ pub(crate) async fn build_all_stages(
         readiness.for_role(role).gate("object-store").mark_ready();
     }
 
+    // One read of the overrides file for the whole process: the distributor's
+    // ingest gates and both read roles then resolve a tenant's limits through
+    // the same provider, and a file the roles disagreed about would gate ingest
+    // and queries differently.
+    let overrides =
+        load_profiles_limits_overrides_config(cli.profiles_limits_overrides_config.as_deref())?;
     let distributor = build_distributor_state(
         cli,
         metrics,
         &readiness.for_role(RoleKind::Distributor),
         shutdown,
+        overrides.clone(),
+        security.wal.clone(),
     )
     .await?;
     let Some(distributor) = distributor else {
@@ -66,8 +78,6 @@ pub(crate) async fn build_all_stages(
     };
 
     let debuginfod = debuginfod_config(cli)?;
-    let overrides =
-        load_profiles_limits_overrides_config(cli.profiles_limits_overrides_config.as_deref())?;
     let querier_index_gate = readiness.for_role(RoleKind::Querier).gate("profile-index");
     let frontend_index_gate = readiness
         .for_role(RoleKind::QueryFrontend)
@@ -123,7 +133,7 @@ pub(crate) async fn build_all_stages(
         .merge(krabka_profiles::query::router(frontend_state))
         .merge(krabka_observability::readiness_router(readiness.clone()));
     let (bound, door_stage) =
-        bind_all_stage_server(cli.listen, door, "profiles all-in-one").await?;
+        bind_all_stage_server(cli.listen, door, "profiles all-in-one", &security.server).await?;
     tracing::info!(%bound, "profiles all-in-one ingest and query listening");
 
     // The plain querier, on a loopback port the kernel picks. Nothing fans out
@@ -138,6 +148,7 @@ pub(crate) async fn build_all_stages(
         SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
         querier_app,
         "profiles querier",
+        &security.server,
     )
     .await?;
     tracing::info!(%loopback, "profiles querier listening");
@@ -147,9 +158,12 @@ pub(crate) async fn build_all_stages(
     stages.insert(RoleKind::Querier, loopback_stage);
     stages.insert(
         RoleKind::BlockBuilder,
-        block_builder_stage(cli, &store, &index_key, metrics),
+        block_builder_stage(cli, &store, &index_key, metrics, security.wal.clone()),
     );
-    stages.insert(RoleKind::QueryFrontend, read_path_stage(cli, read, metrics));
+    stages.insert(
+        RoleKind::QueryFrontend,
+        read_path_stage(cli, read, metrics, security.wal.clone()),
+    );
     stages.insert(
         RoleKind::Symbolizer,
         symbolizer_stage(cli.debuginfod_urls.clone(), debuginfod),

@@ -48,7 +48,7 @@ pub(crate) async fn range_bare_selector_lookback_boundary_matches_prometheus() {
 
     // (2) planner (public range path) yields the boundary-correct grid.
     let planner = engine
-        .query_range("t", "m", start, end, step)
+        .query_range(&tenant_id("t"), "m", start, end, step)
         .await
         .unwrap();
 
@@ -63,7 +63,10 @@ pub(crate) async fn range_bare_selector_lookback_boundary_matches_prometheus() {
 
     // (4) cross-check the interpreter's INSTANT path and the operator both
     // exclude the boundary sample directly, proving all three paths agree.
-    let instant_at_boundary = engine.query_instant("t", "m", lookback).await.unwrap();
+    let instant_at_boundary = engine
+        .query_instant(&tenant_id("t"), "m", lookback)
+        .await
+        .unwrap();
     let QueryResult::InstantVector(samples) = instant_at_boundary else {
         panic!("expected instant vector");
     };

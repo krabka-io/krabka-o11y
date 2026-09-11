@@ -12,7 +12,7 @@ pub(crate) async fn vector_scalar_atan2_preserves_labels_and_drops_metric_name()
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "y atan2 0", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "y atan2 0", 10_000)
         .await
         .unwrap();
 

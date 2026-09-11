@@ -1,6 +1,6 @@
 use super::{
     BlockStoreError, CompactionFrontierStoreError, Error, LogDeleteRequestStoreError,
-    LokiRuleStoreError, QuerierIndexSource,
+    LokiRuleStoreError, OverridesError, QuerierIndexSource,
 };
 
 #[derive(Debug, Error)]
@@ -13,6 +13,8 @@ pub enum ServiceConfigError {
     CompactorAccumulationPollExceedsWindow,
     #[error("compactor object-store initial backoff must not exceed maximum backoff")]
     CompactorObjectStoreInitialBackoffExceedsMaximum,
+    #[error("broker access max staleness must not be shorter than the broker access cache TTL")]
+    BrokerAccessStalenessBelowTtl,
     #[error("WAL sink is required for distributor service startup")]
     MissingWalSink,
     #[error("WAL consumer is required for compactor service startup")]
@@ -43,4 +45,6 @@ pub enum ServiceConfigError {
     DeleteRequests(#[from] LogDeleteRequestStoreError),
     #[error(transparent)]
     Rules(#[from] LokiRuleStoreError),
+    #[error(transparent)]
+    LimitsOverrides(#[from] OverridesError),
 }

@@ -26,7 +26,7 @@ pub(crate) async fn instant_ts_of_over_time_functions_return_sample_timestamps_s
         ("ts_of_max_over_time(queue_depth[4m])", 240.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 240_000)
+            .query_instant(&tenant_id("tenant-a"), query, 240_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

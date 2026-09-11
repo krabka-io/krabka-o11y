@@ -1,4 +1,4 @@
-use super::{Span, SpanRecord, TracesError, WalSink};
+use super::{Span, SpanRecord, TenantId, TracesError, WalSink};
 
 /// Appends one request's decoded spans to the WAL as one pipelined batch.
 ///
@@ -15,13 +15,13 @@ use super::{Span, SpanRecord, TracesError, WalSink};
 /// full. The error carries how many records reached the broker.
 pub async fn produce_spans(
     sink: &dyn WalSink,
-    tenant: &str,
+    tenant: &TenantId,
     spans: Vec<Span>,
 ) -> Result<(), TracesError> {
     let records = spans
         .into_iter()
         .map(|span| SpanRecord {
-            tenant: tenant.to_string(),
+            tenant: tenant.as_str().to_owned(),
             span,
         })
         .collect();

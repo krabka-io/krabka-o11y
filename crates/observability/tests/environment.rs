@@ -1,7 +1,11 @@
 use std::num::NonZeroUsize;
 
+use assert2::assert;
 use clap::Parser;
-use krabka_observability::{QuerierIndexSource, Role, ServiceConfig};
+use krabka_observability::{
+    QuerierIndexSource, Role, ServiceConfig, audit::AuditArgs, server_security::ServerSecurityArgs,
+    wal_client_security::WalClientSecurityArgs,
+};
 use krabka_units::{bytes, days, kibibytes, millis, minutes, nanos, secs};
 
 #[test]
@@ -38,7 +42,7 @@ fn service_config_reads_environment() {
             ("KRABKA_OBSERVABILITY_MAX_QUERY_RANGE", Some("20ns")),
             ("KRABKA_OBSERVABILITY_MAX_QUERY_SERIES", Some("10")),
             ("KRABKA_OBSERVABILITY_MAX_QUERY_READ", Some("1KiB")),
-            ("KRABKA_OBSERVABILITY_MAX_QUERY_LENGTH", Some("64B")),
+            ("KRABKA_OBSERVABILITY_MAX_QUERY_STRING_BYTES", Some("64B")),
             ("KRABKA_OBSERVABILITY_MAX_INGEST_BODY", Some("2KiB")),
             ("KRABKA_OBSERVABILITY_WAL_APPEND_TIMEOUT", Some("250ms")),
             (
@@ -47,6 +51,15 @@ fn service_config_reads_environment() {
             ),
             ("KRABKA_OBSERVABILITY_CREATION_GRACE_PERIOD", Some("11m")),
             ("KRABKA_OBSERVABILITY_INGEST_QUOTA_BURST_WINDOW", Some("2s")),
+            ("KRABKA_OBSERVABILITY_BROKER_ACCESS_CACHE_TTL", Some("15s")),
+            (
+                "KRABKA_OBSERVABILITY_BROKER_ACCESS_MAX_STALENESS",
+                Some("2m"),
+            ),
+            (
+                "KRABKA_OBSERVABILITY_BROKER_ACCESS_TENANT_CAPACITY",
+                Some("500"),
+            ),
             (
                 "KRABKA_OBSERVABILITY_WAL_CONNECT_STARTUP_DEADLINE",
                 Some("3m"),
@@ -122,51 +135,58 @@ fn service_config_reads_environment() {
             let config =
                 ServiceConfig::try_parse_from(["krabka-observability"]).expect("parse environment");
 
-            assert_eq!(
-                config,
-                ServiceConfig {
-                    target: Role::Querier,
-                    listen_addr: "127.0.0.1:3200".parse().unwrap(),
-                    object_store_url: Some("s3://krabka-observability".to_string()),
-                    wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
-                    wal_topic: "logs-wal".to_string(),
-                    wal_group_id: "logs-querier".to_string(),
-                    data_root: "/var/lib/krabka-observability".into(),
-                    querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
-                    tenant: Some("tenant-a".to_string()),
-                    index_prefix: Some("observability/logs".to_string()),
-                    query_start_ns: Some(10),
-                    query_end_ns: Some(30),
-                    max_query_range: Some(nanos(20)),
-                    max_query_series: Some(10),
-                    max_query_read: Some(kibibytes(1)),
-                    max_query_length: Some(bytes(64)),
-                    max_ingest_body: Some(kibibytes(2)),
-                    wal_append_timeout: Some(millis(250)),
-                    reject_old_samples_max_age: days(8),
-                    creation_grace_period: minutes(11),
-                    ingest_quota_burst_window: secs(2),
-                    wal_connect_startup_deadline: minutes(3),
-                    wal_connect_attempt_timeout: secs(16),
-                    wal_connect_initial_backoff: millis(300),
-                    wal_connect_max_backoff: secs(3),
-                    compactor_wal_poll_timeout: millis(600),
-                    compactor_accumulation_window: secs(3),
-                    compactor_accumulation_poll_timeout: millis(300),
-                    compactor_max_records_per_batch: NonZeroUsize::new(5000).unwrap(),
-                    compactor_idle_interval: millis(20),
-                    all_drain_stage_timeout: secs(30),
-                    compactor_object_store_initial_backoff: millis(20),
-                    compactor_object_store_max_backoff: millis(600),
-                    querier_frontier_refresh_interval: secs(6),
-                    querier_dynamic_index_cache_ttl: secs(7),
-                    querier_shard_index_cache_ttl: minutes(6),
-                    querier_shard_fetch_concurrency: NonZeroUsize::new(33).unwrap(),
-                    querier_cold_block_fetch_concurrency: NonZeroUsize::new(9).unwrap(),
-                    querier_hot_tail_bucket_width: minutes(2),
-                    querier_hot_tail_interval: millis(60),
-                    querier_dependency_reconnect_interval: millis(600),
-                }
+            assert!(
+                config
+                    == ServiceConfig {
+                        target: Role::Querier,
+                        listen_addr: "127.0.0.1:3200".parse().unwrap(),
+                        object_store_url: Some("s3://krabka-observability".to_string()),
+                        wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
+                        wal_topic: "logs-wal".to_string(),
+                        wal_group_id: "logs-querier".to_string(),
+                        data_root: "/var/lib/krabka-observability".into(),
+                        querier_index_source: QuerierIndexSource::TenantObjectStoreShards,
+                        tenant: Some("tenant-a".to_string()),
+                        index_prefix: Some("observability/logs".to_string()),
+                        query_start_ns: Some(10),
+                        query_end_ns: Some(30),
+                        max_query_range: Some(nanos(20)),
+                        max_query_series: Some(10),
+                        max_query_read: Some(kibibytes(1)),
+                        max_query_string_bytes: Some(bytes(64)),
+                        logs_limits_overrides_config: None,
+                        max_ingest_body: Some(kibibytes(2)),
+                        wal_append_timeout: Some(millis(250)),
+                        reject_old_samples_max_age: days(8),
+                        creation_grace_period: minutes(11),
+                        ingest_quota_burst_window: secs(2),
+                        broker_access_cache_ttl: secs(15),
+                        broker_access_max_staleness: minutes(2),
+                        broker_access_tenant_capacity: NonZeroUsize::new(500).unwrap(),
+                        wal_connect_startup_deadline: minutes(3),
+                        wal_connect_attempt_timeout: secs(16),
+                        wal_connect_initial_backoff: millis(300),
+                        wal_connect_max_backoff: secs(3),
+                        compactor_wal_poll_timeout: millis(600),
+                        compactor_accumulation_window: secs(3),
+                        compactor_accumulation_poll_timeout: millis(300),
+                        compactor_max_records_per_batch: NonZeroUsize::new(5000).unwrap(),
+                        compactor_idle_interval: millis(20),
+                        all_drain_stage_timeout: secs(30),
+                        compactor_object_store_initial_backoff: millis(20),
+                        compactor_object_store_max_backoff: millis(600),
+                        querier_frontier_refresh_interval: secs(6),
+                        querier_dynamic_index_cache_ttl: secs(7),
+                        querier_shard_index_cache_ttl: minutes(6),
+                        querier_shard_fetch_concurrency: NonZeroUsize::new(33).unwrap(),
+                        querier_cold_block_fetch_concurrency: NonZeroUsize::new(9).unwrap(),
+                        querier_hot_tail_bucket_width: minutes(2),
+                        querier_hot_tail_interval: millis(60),
+                        querier_dependency_reconnect_interval: millis(600),
+                        server_security: ServerSecurityArgs::default(),
+                        audit: AuditArgs::default(),
+                        wal_client_security: WalClientSecurityArgs::default(),
+                    }
             );
         },
     );

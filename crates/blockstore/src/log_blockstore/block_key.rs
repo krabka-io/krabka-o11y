@@ -1,4 +1,4 @@
-use super::{Deserialize, Serialize, TimeRange};
+use super::{Deserialize, Serialize, TimeRange, escape_object_path_segment};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BlockKey {
@@ -27,11 +27,16 @@ impl BlockKey {
         }
     }
 
+    /// The key of this block, relative to the store root or the object prefix.
+    ///
+    /// The tenant carries an escape, so the key always has the four segments
+    /// this format writes. The other three segments come from integers and
+    /// cannot hold a separator.
     #[must_use]
     pub fn object_key(&self) -> String {
         format!(
             "tenant={}/partition={}/offsets={}-{}/time={}-{}.parquet",
-            self.tenant,
+            escape_object_path_segment(&self.tenant),
             self.partition,
             self.first_offset,
             self.last_offset,

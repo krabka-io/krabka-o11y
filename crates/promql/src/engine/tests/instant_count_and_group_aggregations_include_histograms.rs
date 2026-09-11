@@ -30,7 +30,7 @@ pub(crate) async fn instant_count_and_group_aggregations_include_histograms() {
         ("group by (job) (mixed_metric)", 1.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
 

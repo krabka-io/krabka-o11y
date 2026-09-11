@@ -17,13 +17,12 @@ mod ids;
 
 use axum::{
     Router,
-    body::Body,
-    http::{Request, StatusCode, header},
+    http::{StatusCode, header},
 };
 use bytes::Bytes;
 use futures::TryStreamExt;
 pub use ids::{Offset, PartitionIndex};
-use krabka_blockstore::{BlockStore, LabelMatcher, Labels};
+use krabka_blockstore::{BlockStore, LabelMatcher, Labels, TENANT_HEADER, TenantId};
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Producer, ProducerRecord};
 use krabka_metrics::{CompactionIndexManifest, WalRecord, partition_key};
@@ -38,7 +37,6 @@ use krabka_promql::{
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
 use tokio::{net::TcpListener, task::JoinHandle};
-use tower::ServiceExt as _;
 use url::Url;
 
 #[cfg(test)]
@@ -50,6 +48,16 @@ mod tests {
         },
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
+
+    // Every request reaches the handlers through the authentication layer, as
+    // it does on a served listener. With no credentials file, the layer marks
+    // each request unauthenticated and lets it through.
+    fn authenticated(router: axum::Router) -> axum::Router {
+        krabka_observability::server_security::authenticate_requests(
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+        )
+    }
 
     /// Manifest listing has three rules with no test between them: the range
     /// filter is an *overlap* test, so a manifest ending exactly when the query
@@ -492,7 +500,7 @@ mod tests {
 
     #[tokio::test]
     async fn in_memory_router_serves_prometheus_query_api() {
-        let response = super::in_memory_prometheus_router()
+        let response = authenticated(super::in_memory_prometheus_router())
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/query?query=vector(1)&time=10")
@@ -513,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn in_memory_router_serves_mimir_prefixed_query_api() {
-        let response = super::in_memory_prometheus_router()
+        let response = authenticated(super::in_memory_prometheus_router())
             .oneshot(
                 Request::builder()
                     .uri("/prometheus/api/v1/query?query=vector(1)&time=10")
@@ -540,7 +548,7 @@ mod tests {
         labels.insert("job", "api");
         store.push_float("tenant-a", labels, 10_000, 1.0);
 
-        let response = super::prometheus_router_for_store(store)
+        let response = authenticated(super::prometheus_router_for_store(store))
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/query?query=up&time=10")
@@ -695,13 +703,13 @@ mod tests {
             store.push_float("tenant-a", labels.clone(), ts_ms, value);
         }
 
-        let response = super::query_frontend_prometheus_router_for_store(
+        let response = authenticated(super::query_frontend_prometheus_router_for_store(
             store,
             krabka_promql::QueryFrontendOptions {
                 split_interval: minutes(1),
                 shard_count: 1,
             },
-        )
+        ))
         .oneshot(
             Request::builder()
                 .uri("/api/v1/query_range?query=up&start=0&end=120&step=60")
@@ -843,7 +851,9 @@ mod tests {
         labels.insert("job", "api");
         store.push_float("tenant-a", labels, 10_000, 1.0);
         let state = super::prometheus_api_state_for_store(store);
-        let router = krabka_promql::prometheus_router(std::sync::Arc::clone(&state));
+        let router = authenticated(krabka_promql::prometheus_router(std::sync::Arc::clone(
+            &state,
+        )));
 
         let response = router
             .oneshot(
@@ -877,7 +887,7 @@ rules:
             (&wal_sink, &alert_sink, &state_sink),
             &mut alert_state,
             &mut group_state,
-            "tenant-a",
+            &krabka_blockstore::TenantId::new("tenant-a").expect("a valid tenant id"),
             krabka_promql::RulerShard::new(1, 1).unwrap(),
             10_000,
         )
@@ -919,7 +929,9 @@ rules:
             )
             .with_query_limits(krabka_metrics::OverridesProvider::new(limits)),
         );
-        let router = krabka_promql::prometheus_router(std::sync::Arc::clone(&state));
+        let router = authenticated(krabka_promql::prometheus_router(std::sync::Arc::clone(
+            &state,
+        )));
 
         let response = router
             .oneshot(
@@ -953,14 +965,14 @@ rules:
             (&wal_sink, &alert_sink, &state_sink),
             &mut alert_state,
             &mut group_state,
-            "tenant-a",
+            &krabka_blockstore::TenantId::new("tenant-a").expect("a valid tenant id"),
             krabka_promql::RulerShard::new(1, 1).unwrap(),
             10_000,
         )
         .await
         .unwrap_err();
 
-        assert2::assert!(format!("{error}").contains("query exceeds max_samples=1"));
+        assert2::assert!(format!("{error}").contains("samples per query exceeded"));
         assert2::assert!(wal_sink.records().is_empty());
     }
 
@@ -981,9 +993,14 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
-            std::future::pending::<()>().await;
-        })
+        let bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                std::future::pending::<()>().await;
+            },
+        )
         .await
         .unwrap();
 
@@ -1042,9 +1059,14 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
-            std::future::pending::<()>().await;
-        })
+        let bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                std::future::pending::<()>().await;
+            },
+        )
         .await
         .unwrap();
         let sink = super::AlertmanagerHttpSink::with_delivery(
@@ -1089,12 +1111,16 @@ rules:
                 std::future::pending::<axum::http::StatusCode>().await;
             }),
         );
-        let stalled_bound =
-            super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), stalled, async {
+        let stalled_bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            stalled,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
                 std::future::pending::<()>().await;
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         let received = Arc::new(AtomicUsize::new(0));
         let received_for_route = Arc::clone(&received);
         let router = axum::Router::new().route(
@@ -1104,9 +1130,14 @@ rules:
                 async { axum::http::StatusCode::OK }
             }),
         );
-        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
-            std::future::pending::<()>().await;
-        })
+        let bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                std::future::pending::<()>().await;
+            },
+        )
         .await
         .unwrap();
         let sink = super::AlertmanagerHttpSink::with_delivery(
@@ -1198,9 +1229,14 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
-            std::future::pending::<()>().await;
-        })
+        let bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                std::future::pending::<()>().await;
+            },
+        )
         .await
         .unwrap();
         let sink = super::QueuedAlertmanagerSink::new(
@@ -1262,9 +1298,14 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
-            std::future::pending::<()>().await;
-        })
+        let bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                std::future::pending::<()>().await;
+            },
+        )
         .await
         .unwrap();
         let sink = super::QueuedAlertmanagerSink::new(
@@ -1319,9 +1360,14 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
-            std::future::pending::<()>().await;
-        })
+        let bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                std::future::pending::<()>().await;
+            },
+        )
         .await
         .unwrap();
         let sink = super::QueuedAlertmanagerSink::new(
@@ -1378,9 +1424,14 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router("127.0.0.1:0".parse().unwrap(), router, async {
-            std::future::pending::<()>().await;
-        })
+        let bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                std::future::pending::<()>().await;
+            },
+        )
         .await
         .unwrap();
         let sink = Arc::new(super::QueuedAlertmanagerSink::new(
@@ -1516,7 +1567,9 @@ rules:
     async fn replay_ruler_state_records_applies_state_and_reports_commit_offsets() {
         let state =
             super::prometheus_api_state_for_store(krabka_promql::InMemoryMetricStore::new());
-        let router = krabka_promql::prometheus_router(std::sync::Arc::clone(&state));
+        let router = authenticated(krabka_promql::prometheus_router(std::sync::Arc::clone(
+            &state,
+        )));
         let response = router
             .clone()
             .oneshot(
@@ -1895,6 +1948,7 @@ rules:
         let router = super::blockstore_prometheus_router(object_store, base, "metrics/tenant-a")
             .await
             .unwrap();
+        let router = authenticated(router);
         let response = router
             .oneshot(
                 Request::builder()
@@ -1917,11 +1971,11 @@ rules:
     async fn blockstore_router_sees_manifests_written_after_startup() {
         let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
         let base = url::Url::parse("memory:///").unwrap();
-        let router = super::refreshing_blockstore_prometheus_router(
+        let router = authenticated(super::refreshing_blockstore_prometheus_router(
             object_store.clone(),
             base.clone(),
             "metrics/tenant-a",
-        );
+        ));
 
         let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base);
         let mut labels = krabka_blockstore::Labels::new();
@@ -2333,11 +2387,13 @@ rules:
             exemplars: Vec::new(),
         });
 
-        let router = super::refreshing_blockstore_prometheus_router_with_hot_store(
-            object_store,
-            base,
-            "metrics/tenant-a",
-            hot_store,
+        let router = authenticated(
+            super::refreshing_blockstore_prometheus_router_with_hot_store(
+                object_store,
+                base,
+                "metrics/tenant-a",
+                hot_store,
+            ),
         );
         let response = router
             .oneshot(
@@ -2656,9 +2712,13 @@ rules:
     #[tokio::test]
     async fn in_memory_prometheus_server_binds_to_listen_address() {
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-        let bound = super::serve_in_memory_prometheus("127.0.0.1:0".parse().unwrap(), async {
-            let _ = stop_rx.await;
-        })
+        let bound = super::serve_in_memory_prometheus(
+            "127.0.0.1:0".parse().unwrap(),
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                let _ = stop_rx.await;
+            },
+        )
         .await
         .unwrap();
         let _ = stop_tx.send(());
@@ -2676,6 +2736,7 @@ rules:
         let (bound, server) = super::serve_prometheus_router_joinable(
             "127.0.0.1:0".parse().unwrap(),
             super::in_memory_prometheus_router(),
+            &krabka_observability::server_security::ServerSecurity::default(),
             async {
                 let _ = stop_rx.await;
             },
@@ -2697,7 +2758,9 @@ mod apply_ruler_state_record;
 mod blockstore_prometheus_router;
 mod bundled_group_label;
 mod bundled_rule_file;
+mod bundled_rules_address;
 mod bundled_rules_error;
+mod bundled_rules_host;
 mod bundled_rules_namespace;
 mod bundled_rules_response_max;
 mod cached_metric_block_store;
@@ -2766,7 +2829,9 @@ pub use apply_ruler_state_record::apply_ruler_state_record;
 pub use blockstore_prometheus_router::blockstore_prometheus_router;
 use bundled_group_label::bundled_group_label;
 use bundled_rule_file::BundledRuleFile;
+pub use bundled_rules_address::bundled_rules_address;
 pub use bundled_rules_error::BundledRulesError;
+pub use bundled_rules_host::BUNDLED_RULES_HOST;
 use bundled_rules_namespace::bundled_rules_namespace;
 use bundled_rules_response_max::BUNDLED_RULES_RESPONSE_MAX;
 use cached_metric_block_store::CachedMetricBlockStore;

@@ -1,10 +1,11 @@
 use super::{
-    HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State,
+    HeaderMap, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
     execute_api_prom_series_query, parse_series_params,
 };
 
 pub(crate) async fn api_prom_series(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
@@ -12,7 +13,7 @@ pub(crate) async fn api_prom_series(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    match execute_api_prom_series_query(&state, &headers, &params).await {
+    match execute_api_prom_series_query(&state, &security, &headers, &params).await {
         Ok(response) => response,
         Err(error) => error.into_response(),
     }

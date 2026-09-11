@@ -5,9 +5,11 @@ pub(crate) fn grpc_status_from_error(err: &TracesError) -> GrpcStatus {
         TracesError::Limit(_) | TracesError::RateLimit(_) => {
             GrpcStatus::resource_exhausted(err.to_string())
         }
-        TracesError::Invalid(_) | TracesError::Decode(_) | TracesError::TooLarge { .. } => {
-            GrpcStatus::invalid_argument(err.to_string())
-        }
+        TracesError::Invalid(_)
+        | TracesError::Tenant(_)
+        | TracesError::Decode(_)
+        | TracesError::TooLarge { .. } => GrpcStatus::invalid_argument(err.to_string()),
+        TracesError::TenantDenied(_) => GrpcStatus::permission_denied(err.to_string()),
         TracesError::UnsupportedContentType(_) => GrpcStatus::unimplemented(err.to_string()),
         TracesError::Wal(_)
         | TracesError::Produce(_)

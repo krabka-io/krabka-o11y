@@ -7,11 +7,14 @@
 //! tenants, `org-a` and `org-b`, with disjoint series. Each assertion proves
 //! that a tenant NEVER observes the other tenant's label values or series
 //! identifiers, and that the API rejects a request without `X-Scope-OrgID` as
-//! `bad_data`.
+//! Grafana Mimir does: `401 Unauthorized` with the plain-text body `no org id`.
 
 use std::{net::SocketAddr, sync::Arc};
 
 use krabka_blockstore::Labels;
+use krabka_observability::server_security::{
+    ClientAuth, ServerListener, ServerSecurity, ServerSecurityArgs, serve_router,
+};
 use krabka_promql::{EngineOpts, InMemoryMetricStore, PrometheusApiState, prometheus_router};
 use serde_json::Value;
 
@@ -39,6 +42,11 @@ fn labels(pairs: &[(&str, &str)]) -> Labels {
 
 /// Seeds disjoint series for the two tenants and boots the API on a real socket.
 async fn boot_isolated_api() -> SocketAddr {
+    boot_isolated_api_with(ServerSecurity::default()).await
+}
+
+/// Seeds disjoint series for the two tenants and serves the API with `security`.
+async fn boot_isolated_api_with(security: ServerSecurity) -> SocketAddr {
     let mut store = InMemoryMetricStore::new();
 
     // org-a: `up{job=alpha-job-a, instance=alpha-instance-a, zone=alpha-zone-a}`
@@ -110,13 +118,170 @@ async fn boot_isolated_api() -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral socket");
-    let addr = listener.local_addr().expect("local addr");
+    let listener = ServerListener::bind(listener, &security).expect("wrap the listener");
+    let addr = listener.local_addr();
     tokio::spawn(async move {
-        axum::serve(listener, prometheus_router(state))
+        serve_router(listener, prometheus_router(state), &security)
             .await
             .expect("serve prometheus api");
     });
     addr
+}
+
+const GRAFANA_TOKEN: &str = "grafana-token-9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d";
+const GRAFANA_TOKEN_SHA256: &str =
+    "e87ca13d588249dfc0131a45fd6b399bb81889d7b9e238cdf17c969c7612adc7";
+
+/// Every route that resolves a tenant, with a request that passes its
+/// parameter checks, so the only thing left to refuse it is the tenant.
+fn tenant_routes() -> Vec<(reqwest::Method, &'static str, &'static str)> {
+    let get = reqwest::Method::GET;
+    let post = reqwest::Method::POST;
+    let delete = reqwest::Method::DELETE;
+    vec![
+        (get.clone(), "/api/v1/query?query=up&time=20", ""),
+        (post.clone(), "/api/v1/query", "query=up&time=20"),
+        (
+            get.clone(),
+            "/api/v1/query_range?query=up&start=10&end=20&step=10",
+            "",
+        ),
+        (
+            post.clone(),
+            "/api/v1/query_range",
+            "query=up&start=10&end=20&step=10",
+        ),
+        (
+            get.clone(),
+            "/api/v1/query_exemplars?query=up&start=10&end=11",
+            "",
+        ),
+        (
+            post.clone(),
+            "/api/v1/query_exemplars",
+            "query=up&start=10&end=11",
+        ),
+        (
+            get.clone(),
+            "/api/v1/series?match%5B%5D=up&start=10&end=20",
+            "",
+        ),
+        (
+            post.clone(),
+            "/api/v1/series",
+            "match%5B%5D=up&start=10&end=20",
+        ),
+        (get.clone(), "/api/v1/labels?start=10&end=20", ""),
+        (post.clone(), "/api/v1/labels", "start=10&end=20"),
+        (get.clone(), "/api/v1/label/job/values?start=10&end=20", ""),
+        (post.clone(), "/api/v1/label/job/values", "start=10&end=20"),
+        (get.clone(), "/api/v1/cardinality/label_names", ""),
+        (post.clone(), "/api/v1/cardinality/label_names", ""),
+        (get.clone(), "/api/v1/cardinality/label_values", ""),
+        (post.clone(), "/api/v1/cardinality/label_values", ""),
+        (get.clone(), "/api/v1/cardinality/active_series", ""),
+        (post.clone(), "/api/v1/cardinality/active_series", ""),
+        (post.clone(), "/api/v1/read", ""),
+        (get.clone(), "/api/v1/metadata", ""),
+        (get.clone(), "/api/v1/targets/metadata", ""),
+        (get.clone(), "/api/v1/rules", ""),
+        (get.clone(), "/api/v1/alerts", ""),
+        (get.clone(), "/api/v1/status/runtimeinfo", ""),
+        (get.clone(), "/api/v1/status/tsdb", ""),
+        (get.clone(), "/api/v1/status/tsdb/blocks", ""),
+        (get.clone(), "/prometheus/config/v1/rules", ""),
+        (get.clone(), "/prometheus/config/v1/rules/ns", ""),
+        (post, "/prometheus/config/v1/rules/ns", ""),
+        (delete.clone(), "/prometheus/config/v1/rules/ns", ""),
+        (get, "/prometheus/config/v1/rules/ns/group", ""),
+        (delete, "/prometheus/config/v1/rules/ns/group", ""),
+    ]
+}
+
+/// With a credentials file, every route that resolves a tenant refuses a
+/// principal that is not granted that tenant, with a plain-text 403. The same
+/// principal gets past the check on its own tenant, and a request with no
+/// credential gets a 401 before any route runs.
+#[tokio::test]
+async fn every_tenant_route_refuses_a_principal_without_the_tenant() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let credentials = directory.path().join("credentials.yaml");
+    std::fs::write(
+        &credentials,
+        format!(
+            "principals:\n  - name: grafana\n    token_sha256: [\"{GRAFANA_TOKEN_SHA256}\"]\n    tenants: [\"{ORG_A}\"]\n"
+        ),
+    )
+    .expect("the credentials file is writable");
+    let security = ServerSecurityArgs {
+        server_tls_cert_path: None,
+        server_tls_key_path: None,
+        server_tls_client_ca_path: None,
+        server_tls_client_auth: ClientAuth::NoClientCert,
+        server_tls_handshake_timeout: krabka_units::prelude::secs(10),
+        auth_credentials_config: Some(credentials),
+        internal_client_token_path: None,
+        internal_client_tls_cert_path: None,
+        internal_client_tls_key_path: None,
+        internal_client_tls_ca_path: None,
+    }
+    .load()
+    .expect("the credentials load");
+    let addr = boot_isolated_api_with(security).await;
+    let client = reqwest::Client::new();
+    let send = |method: &reqwest::Method, path: &str, body: &'static str, tenant: &str| {
+        client
+            .request(method.clone(), format!("http://{addr}{path}"))
+            .header("X-Scope-OrgID", tenant)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(body)
+    };
+
+    for (method, path, body) in tenant_routes() {
+        let refused = send(&method, path, body, ORG_B)
+            .bearer_auth(GRAFANA_TOKEN)
+            .send()
+            .await
+            .expect("send request");
+        let refused_status = refused.status();
+        let refused_body = refused.text().await.expect("response text");
+        let granted = send(&method, path, body, ORG_A)
+            .bearer_auth(GRAFANA_TOKEN)
+            .send()
+            .await
+            .expect("send request")
+            .status();
+        let anonymous = send(&method, path, body, ORG_A)
+            .send()
+            .await
+            .expect("send request")
+            .status();
+
+        assert2::check!(
+            refused_status == reqwest::StatusCode::FORBIDDEN,
+            "{method} {path}"
+        );
+        assert2::check!(
+            refused_body
+                == format!("principal \"grafana\" is not allowed to access tenant \"{ORG_B}\"\n"),
+            "{method} {path}"
+        );
+        assert2::check!(
+            ![
+                reqwest::StatusCode::UNAUTHORIZED,
+                reqwest::StatusCode::FORBIDDEN
+            ]
+            .contains(&granted),
+            "{method} {path}: {granted}"
+        );
+        assert2::check!(
+            anonymous == reqwest::StatusCode::UNAUTHORIZED,
+            "{method} {path}"
+        );
+    }
 }
 
 /// Sends a GET for `path` with the given tenant header. Returns the status and
@@ -310,32 +475,68 @@ async fn cardinality_endpoints_are_tenant_isolated() {
     assert2::assert!(!body.contains(A_JOB));
 }
 
+/// The pinned Mimir 2.16.1 image answers every one of these reads without
+/// `X-Scope-OrgID` with `401` and `no org id`, as plain text with a line break.
+/// Mimir checks the tenant before its API handler runs, so no read surface
+/// answers with the JSON error envelope.
 #[tokio::test]
 async fn read_surfaces_reject_missing_tenant_header() {
     let addr = boot_isolated_api().await;
     let client = reqwest::Client::new();
 
-    for path in [
-        "/api/v1/query?query=up&time=20",
-        "/api/v1/query_range?query=up&start=10&end=20&step=10",
-        "/api/v1/series?match%5B%5D=up&start=10&end=20",
-        "/api/v1/labels?start=10&end=20",
-        "/api/v1/label/job/values?start=10&end=20",
-        "/api/v1/query_exemplars?query=up&start=10&end=11",
-        "/api/v1/cardinality/label_names",
-        "/api/v1/cardinality/label_values",
-        "/prometheus/api/v1/cardinality/active_series",
+    for (method, path) in [
+        (reqwest::Method::GET, "/api/v1/query?query=up&time=20"),
+        (
+            reqwest::Method::GET,
+            "/api/v1/query_range?query=up&start=10&end=20&step=10",
+        ),
+        (
+            reqwest::Method::GET,
+            "/api/v1/series?match%5B%5D=up&start=10&end=20",
+        ),
+        (reqwest::Method::GET, "/api/v1/labels?start=10&end=20"),
+        (
+            reqwest::Method::GET,
+            "/api/v1/label/job/values?start=10&end=20",
+        ),
+        (
+            reqwest::Method::GET,
+            "/api/v1/query_exemplars?query=up&start=10&end=11",
+        ),
+        (reqwest::Method::GET, "/api/v1/cardinality/label_names"),
+        (reqwest::Method::GET, "/api/v1/cardinality/label_values"),
+        (
+            reqwest::Method::GET,
+            "/prometheus/api/v1/cardinality/active_series",
+        ),
+        (reqwest::Method::GET, "/prometheus/api/v1/metadata"),
+        (reqwest::Method::GET, "/prometheus/api/v1/rules"),
+        (reqwest::Method::GET, "/prometheus/api/v1/alerts"),
+        (reqwest::Method::POST, "/prometheus/api/v1/read"),
+        (reqwest::Method::GET, "/prometheus/config/v1/rules"),
+        (reqwest::Method::GET, "/prometheus/config/v1/rules/ns/group"),
+        (reqwest::Method::POST, "/prometheus/config/v1/rules/ns"),
+        (reqwest::Method::DELETE, "/prometheus/config/v1/rules/ns"),
     ] {
         let response = client
-            .get(format!("http://{addr}{path}"))
+            .request(method.clone(), format!("http://{addr}{path}"))
             .send()
             .await
             .expect("send request");
         let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .map(|value| value.as_bytes().to_vec());
         let body = response.text().await.expect("response text");
-        assert2::assert!(status == reqwest::StatusCode::BAD_REQUEST);
-        let parsed: Value = serde_json::from_str(&body).expect("json body");
-        assert2::assert!(parsed["status"] == "error");
-        assert2::assert!(parsed["errorType"] == "bad_data");
+        assert2::check!(
+            status == reqwest::StatusCode::UNAUTHORIZED,
+            "{method} {path}"
+        );
+        assert2::check!(
+            content_type.as_deref() == Some(&b"text/plain; charset=utf-8"[..]),
+            "{method} {path}"
+        );
+        assert2::check!(body == "no org id\n", "{method} {path}");
     }
 }

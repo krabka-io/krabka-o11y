@@ -54,7 +54,7 @@ pub(crate) async fn increase_extrapolates_to_the_range_edges_by_the_sample_spaci
         ("rate(spans_range[1m])", 0.16),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 100_000)
+            .query_instant(&tenant_id("tenant-a"), query, 100_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"));
         let QueryResult::InstantVector(samples) = result else {

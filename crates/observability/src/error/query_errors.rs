@@ -1,8 +1,8 @@
 use crate::{
     ActiveLogDeleteFilterError, BlockStoreError, DataFusionError, Error, IngestLimitError,
     IntoResponse, LogDeleteRequestStoreError, LokiRuleStoreError, ParseError, PlanError,
-    QueryAuthorizationError, Response, SeriesFingerprint, StatusCode, Value, WalSinkError, json,
-    rfc3339_seconds,
+    QueryAuthorizationError, Response, SeriesFingerprint, StatusCode, TenantErrorSurface,
+    TenantRequestError, Value, WalSinkError, json, rfc3339_seconds, server_security::TenantDenied,
 };
 
 mod column_number;

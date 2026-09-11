@@ -16,6 +16,12 @@ pub(crate) fn apply_metrics_generator_cli_overrides(cfg: &mut MetricsGenConfig, 
     if let Some(max) = cli.edge_store_max_items {
         cfg.edge_store_max_items = max;
     }
+    if let Some(max) = cli.max_active_series {
+        cfg.max_active_series = max;
+    }
+    if let Some(max) = cli.metrics_generator_max_tenants {
+        cfg.max_tenants = max;
+    }
     if let Some(buckets) = &cli.histogram_buckets {
         cfg.histogram_buckets_ns = buckets
             .iter()

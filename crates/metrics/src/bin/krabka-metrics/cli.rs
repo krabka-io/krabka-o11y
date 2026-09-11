@@ -1,6 +1,7 @@
 use super::{
-    ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_RATE_BUCKETS,
-    HA_TRACKER_TOPIC, Parser, SocketAddr, Target, TargetValueParser, Time, parse,
+    AuditArgs, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    DEFAULT_MAX_RATE_BUCKETS, HA_TRACKER_TOPIC, Parser, PathBuf, ServerSecurityArgs, SocketAddr,
+    Target, TargetValueParser, Time, WalClientSecurityArgs, parse,
     parse_client_dispatch_queue_capacity, parse_client_frame_max,
     parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap,
 };
@@ -24,6 +25,11 @@ pub(crate) struct Cli {
     /// symptom is a health check timing out with nothing in the logs.
     #[arg(long, env = "KRABKA_METRICS_LISTEN", default_value = "0.0.0.0:4041")]
     pub(crate) listen: SocketAddr,
+    /// Address for the admin port: pprof, Prometheus metrics and `/ready`. Default: `0.0.0.0:9404`.
+    ///
+    /// The admin port always serves plain HTTP with no authentication. The
+    /// TLS and credential flags apply only to the data port. Bind the admin
+    /// port to an address that only the cluster can reach.
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
     #[arg(
@@ -169,4 +175,22 @@ pub(crate) struct Cli {
         value_parser = parse_distributor_max_decompressed
     )]
     pub(crate) distributor_max_decompressed: ByteSize,
+    /// Mimir-style runtime overrides file, which sets the per-tenant limits.
+    ///
+    /// Without one, every tenant gets the built-in defaults. The file names
+    /// the same keys `krabka-metrics-service` reads, so one file serves both
+    /// the write path and the read path.
+    #[arg(long, env = "KRABKA_METRICS_RUNTIME_OVERRIDES")]
+    pub(crate) runtime_overrides: Option<PathBuf>,
+    // The shared security flags come after this binary's own flags, so
+    // `--help` lists the role and its listener first.
+    /// TLS, authentication and outbound-credential flags for the data port.
+    #[command(flatten)]
+    pub(crate) server_security: ServerSecurityArgs,
+    /// Audit trail flags. The audit layer is off until `--audit-topic` is set.
+    #[command(flatten)]
+    pub(crate) audit: AuditArgs,
+    /// TLS and SASL flags for every broker connection, the audit producer included.
+    #[command(flatten)]
+    pub(crate) wal_security: WalClientSecurityArgs,
 }

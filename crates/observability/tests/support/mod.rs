@@ -8,8 +8,9 @@ use assert2::assert;
 use async_trait::async_trait;
 use axum::body::to_bytes;
 use krabka_blockstore::{
-    BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels, write_log_block,
-    write_log_block_to_object_store, write_tenant_log_index_shards_to_object_store,
+    BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TenantId, TimeRange, labels,
+    write_log_block, write_log_block_to_object_store,
+    write_tenant_log_index_shards_to_object_store,
 };
 use krabka_observability::{
     IngestLimitError, LogIngestLimiter, LogQueryAuthorizer, LogWalSink, QuerierIndexSource,
@@ -75,8 +76,13 @@ pub struct RejectingIngestLimiter;
 
 #[async_trait]
 impl LogIngestLimiter for RejectingIngestLimiter {
-    async fn check(&self, tenant: &str, records: &[WalLogRecord]) -> Result<(), IngestLimitError> {
-        assert!(tenant == "tenant-a");
+    async fn check(
+        &self,
+        _principal: &krabka_observability::server_security::Principal,
+        tenant: &TenantId,
+        records: &[WalLogRecord],
+    ) -> Result<(), IngestLimitError> {
+        assert!(tenant.as_str() == "tenant-a");
         assert!(records.len() == 1);
         Err(IngestLimitError::RateLimited {
             tenant: tenant.to_string(),
@@ -90,7 +96,35 @@ pub struct DenyingQueryAuthorizer;
 
 #[async_trait]
 impl LogQueryAuthorizer for DenyingQueryAuthorizer {
-    async fn check(&self, tenant: &str) -> Result<(), QueryAuthorizationError> {
+    async fn check(
+        &self,
+        _principal: &krabka_observability::server_security::Principal,
+        tenant: &TenantId,
+    ) -> Result<(), QueryAuthorizationError> {
+        Err(QueryAuthorizationError::Unauthorized {
+            tenant: tenant.to_string(),
+            reason: "tenant read ACL denied".to_string(),
+        })
+    }
+}
+
+/// Refuses one tenant and allows every other, so a test can show that a
+/// refusal changes nothing for the refused tenant and nothing for the rest.
+#[derive(Clone)]
+pub struct TenantDenyingQueryAuthorizer {
+    pub denied: &'static str,
+}
+
+#[async_trait]
+impl LogQueryAuthorizer for TenantDenyingQueryAuthorizer {
+    async fn check(
+        &self,
+        _principal: &krabka_observability::server_security::Principal,
+        tenant: &TenantId,
+    ) -> Result<(), QueryAuthorizationError> {
+        if tenant.as_str() != self.denied {
+            return Ok(());
+        }
         Err(QueryAuthorizationError::Unauthorized {
             tenant: tenant.to_string(),
             reason: "tenant read ACL denied".to_string(),
@@ -298,7 +332,7 @@ pub async fn tenant_object_store_shard_catalog_service_fixture()
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -316,6 +350,15 @@ pub fn proto_key_value(key: &str, value: any_value::Value) -> KeyValue {
 }
 
 pub fn proto_logs_request() -> ExportLogsServiceRequest {
+    proto_logs_request_at_ns(19)
+}
+
+/// The same request, dated to `time_unix_nano`.
+///
+/// The ingest timestamp window refuses an entry older than the tenant's
+/// `reject_old_samples_max_age`, so a test that goes through a configured
+/// service has to date its entry inside that window.
+pub fn proto_logs_request_at_ns(time_unix_nano: u64) -> ExportLogsServiceRequest {
     ExportLogsServiceRequest {
         resource_logs: vec![ResourceLogs {
             resource: Some(Resource {
@@ -343,7 +386,7 @@ pub fn proto_logs_request() -> ExportLogsServiceRequest {
                     dropped_attributes_count: 0,
                 }),
                 log_records: vec![LogRecord {
-                    time_unix_nano: 19,
+                    time_unix_nano,
                     observed_time_unix_nano: 0,
                     severity_number: 0,
                     severity_text: String::new(),
@@ -409,7 +452,7 @@ pub fn test_service_config(
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()

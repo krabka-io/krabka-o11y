@@ -9,7 +9,7 @@ pub(crate) async fn range_query_accepts_parenthesized_expression() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_range("tenant-a", "(up)", 0, 120_000, millis(60_000))
+        .query_range(&tenant_id("tenant-a"), "(up)", 0, 120_000, millis(60_000))
         .await
         .unwrap();
 

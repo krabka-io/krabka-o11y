@@ -1,6 +1,6 @@
 //! Span-metrics RED processor.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 
 use krabka_units::convert::ByteSizeExt as _;
 use num_traits::ToPrimitive as _;
@@ -9,6 +9,7 @@ use crate::metricsgen::{
     config::MetricsGenConfig,
     contract::{SpanKind, SpanRecord, StatusCode},
     series::{Exemplar, Series, SeriesSample, sorted_labels},
+    servicegraph::RecordOutcome,
 };
 
 #[cfg(test)]
@@ -116,6 +117,183 @@ mod tests {
                         .any(|(k, v)| k == "span_name" && v == span_name)
             })
             .unwrap_or_else(|| panic!("no {name} for {span_name}"))
+    }
+
+    fn capped(max_active_series: usize) -> MetricsGenConfig {
+        MetricsGenConfig {
+            max_active_series,
+            ..MetricsGenConfig::default()
+        }
+    }
+
+    fn discarded(series: &[Series]) -> f64 {
+        let found = series
+            .iter()
+            .find(|s| s.name == "traces_spanmetrics_discarded_series_total")
+            .expect("the discarded-series counter is emitted on every drain");
+        match found.sample {
+            SeriesSample::Counter(value) => value,
+            ref other => panic!("expected Counter, got {other:?}"),
+        }
+    }
+
+    fn calls_totals(series: &[Series]) -> Vec<String> {
+        let mut names: Vec<String> = series
+            .iter()
+            .filter(|s| s.name == "traces_spanmetrics_calls_total")
+            .filter_map(|s| {
+                s.labels
+                    .iter()
+                    .find(|(k, _)| k == "span_name")
+                    .map(|(_, v)| v.clone())
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn ok_span(service: &str, name: &str) -> SpanRecord {
+        span(
+            service,
+            name,
+            SpanKind::Server,
+            StatusCode::Ok,
+            5_000_000,
+            1,
+        )
+    }
+
+    /// A span name is the classic unbounded dimension, so a new one is refused
+    /// once the registry is full, and the refusal is counted. Without the
+    /// count, a dropped series and a series that was never sent look the same
+    /// to an operator.
+    #[test]
+    fn registry_full_refuses_new_series() {
+        let mut reg = SpanMetricsRegistry::new(&capped(1));
+
+        check!(reg.record_span(&ok_span("api", "GET /x")) == RecordOutcome::Recorded);
+        check!(reg.record_span(&ok_span("api", "GET /y")) == RecordOutcome::Dropped);
+
+        let out = reg.drain(1_000);
+        check!(calls_totals(&out) == vec!["GET /x".to_string()]);
+        check!((discarded(&out) - 1.0).abs() < 1e-9);
+    }
+
+    /// The cap refuses only a NEW key. A full registry that stopped recording
+    /// the series it already holds would freeze every RED rate it publishes,
+    /// which is a worse failure than the cardinality it was protecting against.
+    #[test]
+    fn a_series_in_a_full_registry_is_still_recorded() {
+        let mut reg = SpanMetricsRegistry::new(&capped(1));
+
+        check!(reg.record_span(&ok_span("api", "GET /x")) == RecordOutcome::Recorded);
+        check!(reg.record_span(&ok_span("api", "GET /x")) == RecordOutcome::Recorded);
+
+        let out = reg.drain(1_000);
+        assert2::assert!(matches!(
+            find(&out, "traces_spanmetrics_calls_total", "GET /x").sample,
+            SeriesSample::Counter(c) if (c - 2.0).abs() < 1e-9
+        ));
+        check!(discarded(&out).abs() < 1e-9);
+    }
+
+    /// The cap admits its limit and not one less. An off-by-one that compares
+    /// `>` instead of `>=`, or that counts the key being added, still refuses
+    /// an unbounded flood and so passes every other test here.
+    #[test]
+    fn the_cap_admits_exactly_its_limit() {
+        let mut reg = SpanMetricsRegistry::new(&capped(3));
+
+        for name in ["GET /a", "GET /b", "GET /c"] {
+            check!(
+                reg.record_span(&ok_span("api", name)) == RecordOutcome::Recorded,
+                "{name}"
+            );
+        }
+        check!(reg.record_span(&ok_span("api", "GET /d")) == RecordOutcome::Dropped);
+
+        let out = reg.drain(1_000);
+        check!(
+            calls_totals(&out)
+                == vec![
+                    "GET /a".to_string(),
+                    "GET /b".to_string(),
+                    "GET /c".to_string()
+                ]
+        );
+        check!((discarded(&out) - 1.0).abs() < 1e-9);
+    }
+
+    /// `services` is the second map on the registry, and it feeds one
+    /// `traces_target_info` series per service. It is filled only from an
+    /// admitted key, so the entry cap holds it down too, and the refusal adds
+    /// no label of its own. A counter labelled by the refused span would grow
+    /// the very cardinality the cap exists to stop.
+    #[test]
+    fn a_refused_span_adds_neither_a_service_nor_a_label() {
+        let cfg = MetricsGenConfig {
+            max_active_series: 1,
+            enable_target_info: true,
+            ..MetricsGenConfig::default()
+        };
+        let mut reg = SpanMetricsRegistry::new(&cfg);
+
+        check!(reg.record_span(&ok_span("api", "GET /x")) == RecordOutcome::Recorded);
+        check!(reg.record_span(&ok_span("checkout", "GET /y")) == RecordOutcome::Dropped);
+        check!(reg.record_span(&ok_span("billing", "GET /z")) == RecordOutcome::Dropped);
+
+        let out = reg.drain(1_000);
+        let target_info: Vec<&Series> = out
+            .iter()
+            .filter(|s| s.name == "traces_target_info")
+            .collect();
+        check!(target_info.len() == 1);
+        check!(
+            target_info[0].labels == vec![("service".to_string(), "api".to_string())],
+            "only the admitted service is tracked"
+        );
+        let counter = out
+            .iter()
+            .find(|s| s.name == "traces_spanmetrics_discarded_series_total")
+            .unwrap();
+        check!(counter.labels.is_empty());
+        check!((discarded(&out) - 2.0).abs() < 1e-9);
+    }
+
+    /// Zero is Tempo's spelling of "no cap", and it must not read as "admit
+    /// nothing". A registry that refused every span under the default-shaped
+    /// zero would publish no RED metrics at all.
+    #[test]
+    fn a_zero_cap_is_unlimited() {
+        let mut reg = SpanMetricsRegistry::new(&capped(0));
+
+        for name in ["GET /a", "GET /b", "GET /c"] {
+            check!(reg.record_span(&ok_span("api", name)) == RecordOutcome::Recorded);
+        }
+
+        let out = reg.drain(1_000);
+        check!(calls_totals(&out).len() == 3);
+        check!(discarded(&out).abs() < 1e-9);
+    }
+
+    /// The counter is cumulative and always present, like the RED counters
+    /// beside it. A counter that reset each interval, or that appeared only
+    /// after the first refusal, reads in `PromQL` as a counter reset.
+    #[test]
+    fn the_discarded_counter_is_cumulative_and_always_emitted() {
+        let mut reg = SpanMetricsRegistry::new(&capped(1));
+
+        check!(discarded(&reg.drain(1_000)).abs() < 1e-9);
+
+        reg.record_span(&ok_span("api", "GET /x"));
+        reg.record_span(&ok_span("api", "GET /y"));
+        check!((discarded(&reg.drain(2_000)) - 1.0).abs() < 1e-9);
+
+        reg.record_span(&ok_span("api", "GET /z"));
+        check!((discarded(&reg.drain(3_000)) - 2.0).abs() < 1e-9);
+        // No new refusal in this interval: the running total stays, it does
+        // not fall back to zero.
+        check!((discarded(&reg.drain(4_000)) - 2.0).abs() < 1e-9);
     }
 
     #[test]

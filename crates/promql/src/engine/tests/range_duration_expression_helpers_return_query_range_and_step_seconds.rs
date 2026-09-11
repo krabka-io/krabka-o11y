@@ -13,7 +13,13 @@ pub(crate) async fn range_duration_expression_helpers_return_query_range_and_ste
         ("end()", 180.0),
     ] {
         let result = engine
-            .query_range("tenant-a", query, 60_000, 180_000, millis(30_000))
+            .query_range(
+                &tenant_id("tenant-a"),
+                query,
+                60_000,
+                180_000,
+                millis(30_000),
+            )
             .await
             .unwrap();
 

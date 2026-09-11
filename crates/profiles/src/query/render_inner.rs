@@ -1,21 +1,26 @@
 use super::{
-    Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, ProfileStore, QuerierState,
-    Query, RenderQuery, Response, flamebearer_json, flamegraph_dot, parse_render_query,
-    parse_render_time_param, profile_error_response, tenant_from_headers, unix_now_ms,
+    Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, Principal, ProfileStore,
+    QuerierState, Query, RenderQuery, Response, authorize_tenant, flamebearer_json, flamegraph_dot,
+    parse_render_query, parse_render_time_param, profile_error_response, tenant_error_response,
+    tenant_from_headers, unix_now_ms,
 };
 
 pub(crate) async fn render_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     Query(query): Query<RenderQuery>,
 ) -> Response
 where
     S: ProfileStore,
 {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match tenant_from_headers(&headers, &state.tenant_policy) {
         Ok(tenant) => tenant,
-        Err(err) => return profile_error_response(err),
+        Err(error) => return tenant_error_response(&error),
     };
+    if let Err(denied) = authorize_tenant(&principal, &tenant) {
+        return denied.into_response();
+    }
     let (profile_type, selector) = match parse_render_query(&query.query) {
         Ok(parsed) => parsed,
         Err(err) => return profile_error_response(err),

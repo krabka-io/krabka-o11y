@@ -33,7 +33,7 @@ pub(crate) async fn instant_count_values_counts_native_histogram_sample_values()
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"count_values by (job) ("histogram", request_duration_seconds)"#,
             10_000,
         )

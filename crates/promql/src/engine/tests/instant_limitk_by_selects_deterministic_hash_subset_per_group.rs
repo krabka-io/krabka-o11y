@@ -27,7 +27,11 @@ pub(crate) async fn instant_limitk_by_selects_deterministic_hash_subset_per_grou
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "limitk by (job) (1, memory_bytes)", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "limitk by (job) (1, memory_bytes)",
+            10_000,
+        )
         .await
         .unwrap();
 

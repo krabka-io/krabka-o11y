@@ -33,7 +33,7 @@ pub(crate) async fn vector_vector_group_left_fill_right_preserves_unmatched_many
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "http_requests_total + on (job) group_left(region) fill_right(0) target_info",
             10_000,
         )

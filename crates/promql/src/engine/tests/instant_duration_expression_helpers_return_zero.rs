@@ -8,7 +8,7 @@ pub(crate) async fn instant_duration_expression_helpers_return_zero() {
 
     for query in ["range()", "step()", "start()", "end()"] {
         let result = engine
-            .query_instant("tenant-a", query, 120_000)
+            .query_instant(&tenant_id("tenant-a"), query, 120_000)
             .await
             .unwrap();
 

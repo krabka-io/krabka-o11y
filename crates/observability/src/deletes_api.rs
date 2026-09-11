@@ -4,14 +4,20 @@ use crate::{
     ActiveLogDeleteFilter, ActiveLogDeleteFilterError, BlockStoreError, Bytes,
     CompactorDeleteRequest, CompactorDeleteRequestResponse, CompactorDeleteState,
     CreateDeleteRequestParams, HeaderMap, HttpQueryError, ListDeleteRequestsParams, OffsetDateTime,
-    QuerierState, RawQuery, Response, Rfc3339, SharedLogDeleteRequests, State, StatusCode,
-    TimeRange, current_unix_time_ns, decode_form_component, form_body_query, json, json_response,
+    QuerierState, RawQuery, RequestSecurity, Response, Rfc3339, SharedLogDeleteRequests, State,
+    StatusCode, TenantErrorSurface, TenantId, TimeRange,
+    audit::{
+        AuditOutcome, OPERATION_DELETE_REQUEST_CANCEL, OPERATION_DELETE_REQUEST_CREATE,
+        RESOURCE_DELETE_REQUEST, RESOURCE_TENANT, resource,
+    },
+    current_unix_time_ns, decode_form_component, form_body_query, json, json_response,
     parse_decimal_seconds_timestamp, parse_loki_duration_query_param, parse_query,
-    split_query_param_pairs, tenant,
+    resolve_single_tenant, split_query_param_pairs, tenant_header_value,
 };
 
 mod active_log_delete_filters;
 mod active_log_delete_filters_from_requests;
+mod authorized_delete_tenant;
 mod cancel_delete_request;
 mod create_delete_request;
 mod delete_request_overlaps_filter;
@@ -29,6 +35,7 @@ mod request_query_or_form_body;
 
 pub(crate) use active_log_delete_filters::active_log_delete_filters;
 pub(crate) use active_log_delete_filters_from_requests::active_log_delete_filters_from_requests;
+pub(crate) use authorized_delete_tenant::authorized_delete_tenant;
 pub(crate) use cancel_delete_request::cancel_delete_request;
 pub(crate) use create_delete_request::create_delete_request;
 pub(crate) use delete_request_overlaps_filter::delete_request_overlaps_filter;

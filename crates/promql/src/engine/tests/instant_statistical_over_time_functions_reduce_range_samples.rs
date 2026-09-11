@@ -29,7 +29,7 @@ pub(crate) async fn instant_statistical_over_time_functions_reduce_range_samples
         ("mad_over_time(latency_seconds[8m])", 0.5),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 420_000)
+            .query_instant(&tenant_id("tenant-a"), query, 420_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

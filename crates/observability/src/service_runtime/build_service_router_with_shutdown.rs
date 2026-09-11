@@ -1,9 +1,10 @@
 use super::{
-    CancellationToken, JoinHandle, ObjectStore, QUERIER_OPS, Role, Router, ServiceConfig,
+    Arc, CancellationToken, JoinHandle, ObjectStore, QUERIER_OPS, Role, Router, ServiceConfig,
     ServiceConfigError, ServiceDependencies, all_in_one_router,
     compactor_delete_requests_for_config, compactor_router_with_delete_requests,
-    distributor_router_with_sink, distributor_state_for_config, querier_routes_with_shutdown,
-    with_role_ops_routes,
+    distributor_router_with_sink, distributor_state_for_config, ingest_limiter_refresh_task,
+    limits_provider_for_config, querier_routes_with_shutdown, query_authorizer_for_role,
+    service_audit_for_config, with_role_ops_routes, with_service_audit,
 };
 use crate::{DRAINING_GATE, RoleKind};
 
@@ -17,7 +18,13 @@ pub(crate) async fn build_service_router_with_shutdown(
     // The binary may have handed in the same readiness its admin port serves,
     // so a probe on `:9404` and a probe on the data port agree.
     let readiness = dependencies.readiness.clone().unwrap_or_default();
-    match config.target {
+    // Every route of the role records through the audit handle in
+    // `dependencies`, or through a disabled one.
+    let audit = service_audit_for_config(config, &dependencies);
+    // One provider for the process. Both the write path and the read path
+    // resolve every tenant through this one, so the two gates cannot disagree.
+    let overrides = limits_provider_for_config(config)?;
+    let (router, background_tasks) = match config.target {
         Role::Distributor => {
             let state = distributor_state_for_config(
                 config,
@@ -26,42 +33,56 @@ pub(crate) async fn build_service_router_with_shutdown(
                 readiness
                     .for_role(RoleKind::Distributor)
                     .gate(DRAINING_GATE),
+                overrides,
             )?;
-            Ok((
+            let refresh = ingest_limiter_refresh_task(&state.ingest_limiter, &token);
+            (
                 distributor_router_with_sink(
                     state.sink,
                     state.ingest_limiter,
-                    config.max_ingest_body,
+                    state.overrides,
                     config.wal_append_timeout,
-                    Some(config.reject_old_samples_max_age),
-                    Some(config.creation_grace_period),
                     state.metrics,
                 ),
-                Vec::new(),
-            ))
+                vec![refresh],
+            )
         }
         Role::Querier => {
-            let (routes, background_tasks) = querier_routes_with_shutdown(
+            let role_authorizer =
+                query_authorizer_for_role(config, &dependencies, &token, &readiness);
+            let dependencies = ServiceDependencies {
+                query_authorizer: Some(role_authorizer.authorizer),
+                ..dependencies
+            };
+            let (routes, mut background_tasks) = Box::pin(querier_routes_with_shutdown(
                 config,
                 dependencies,
                 object_store,
                 token,
                 metrics,
                 readiness.clone(),
-            )
+                overrides,
+            ))
             .await?;
-            Ok((
+            background_tasks.extend(role_authorizer.task);
+            (
                 with_role_ops_routes(Router::new(), QUERIER_OPS, readiness).merge(routes),
                 background_tasks,
-            ))
+            )
         }
         Role::BlockBuilder => {
+            let role_authorizer =
+                query_authorizer_for_role(config, &dependencies, &token, &readiness);
             let delete_requests =
                 compactor_delete_requests_for_config(config, dependencies.delete_requests)?;
-            Ok((
-                compactor_router_with_delete_requests(delete_requests),
-                Vec::new(),
-            ))
+            (
+                compactor_router_with_delete_requests(
+                    delete_requests,
+                    role_authorizer.authorizer,
+                    readiness,
+                ),
+                role_authorizer.task.into_iter().collect(),
+            )
         }
         Role::All => {
             let distributor_state = distributor_state_for_config(
@@ -71,8 +92,9 @@ pub(crate) async fn build_service_router_with_shutdown(
                 readiness
                     .for_role(RoleKind::Distributor)
                     .gate(DRAINING_GATE),
+                Arc::clone(&overrides),
             )?;
-            all_in_one_router(
+            Box::pin(all_in_one_router(
                 config,
                 dependencies,
                 object_store,
@@ -80,8 +102,9 @@ pub(crate) async fn build_service_router_with_shutdown(
                 metrics,
                 readiness,
                 distributor_state,
-            )
-            .await
+            ))
+            .await?
         }
-    }
+    };
+    Ok((with_service_audit(router, audit), background_tasks))
 }

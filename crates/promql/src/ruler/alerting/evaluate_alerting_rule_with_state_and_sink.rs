@@ -1,7 +1,7 @@
 use super::{
     AlertStateKey, AlertmanagerAlert, AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine,
     PromqlError, QueryResult, RulerAlertState, RulerAlertStateRecord, RulerStateSink, SampleValue,
-    TimeExt, expand_alert_label_map, labels_to_map, yaml_duration, yaml_optional_string,
+    TenantId, TimeExt, expand_alert_label_map, labels_to_map, yaml_duration, yaml_optional_string,
     yaml_required_string, yaml_string_map,
 };
 
@@ -10,7 +10,7 @@ pub(crate) async fn evaluate_alerting_rule_with_state_and_sink<S, A, R>(
     sink: &A,
     state_sink: &R,
     state: &mut RulerAlertState,
-    tenant: &str,
+    tenant: &TenantId,
     rule: &serde_yaml::Value,
     eval_time_ms: i64,
 ) -> Result<usize, PromqlError>
@@ -98,7 +98,9 @@ where
     let cleared_keys = state
         .active_since_ms
         .keys()
-        .filter(|key| key.tenant == tenant && key.rule_id == rule_id && !active_keys.contains(key))
+        .filter(|key| {
+            key.tenant == tenant.as_str() && key.rule_id == rule_id && !active_keys.contains(key)
+        })
         .cloned()
         .collect::<Vec<_>>();
     let mut cleared_records = Vec::new();
@@ -171,7 +173,7 @@ where
     // Retain the active instances plus any instance still inside its keep-firing
     // window; tombstone everything else for this rule.
     state.active_since_ms.retain(|key, _| {
-        key.tenant != tenant
+        key.tenant != tenant.as_str()
             || key.rule_id != rule_id
             || active_keys.contains(key)
             || kept_firing_keys.contains(key)

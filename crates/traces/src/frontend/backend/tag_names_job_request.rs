@@ -1,9 +1,10 @@
-use super::{JobShard, TagScope};
+use super::{JobShard, TagScope, TenantId};
 
 /// A tag-names job for one optional scope over a window.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagNamesJobRequest {
-    pub tenant: String,
+    /// The resolved tenant, which the transport sends as `X-Scope-OrgID`.
+    pub tenant: TenantId,
     pub scope: Option<TagScope>,
     pub start_ns: i64,
     pub end_ns: i64,

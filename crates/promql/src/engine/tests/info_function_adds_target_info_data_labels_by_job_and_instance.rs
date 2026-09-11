@@ -28,7 +28,7 @@ pub(crate) async fn info_function_adds_target_info_data_labels_by_job_and_instan
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "info(http_requests_total)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "info(http_requests_total)", 10_000)
         .await
         .unwrap();
 

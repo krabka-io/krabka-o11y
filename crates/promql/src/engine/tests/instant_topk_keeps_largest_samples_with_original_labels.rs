@@ -14,7 +14,7 @@ pub(crate) async fn instant_topk_keeps_largest_samples_with_original_labels() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "topk(2, memory_bytes)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "topk(2, memory_bytes)", 10_000)
         .await
         .unwrap();
 

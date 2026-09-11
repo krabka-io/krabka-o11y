@@ -13,7 +13,7 @@ pub(crate) async fn recording_rule_fails_on_labelset_collision_after_rule_labels
 
     let result = super::super::evaluate_recording_rule(
         &engine,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         "job:up:current",
         "up",
         &rule_labels,

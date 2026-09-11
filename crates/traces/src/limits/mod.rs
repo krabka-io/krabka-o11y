@@ -20,6 +20,7 @@ mod tests {
                 == Limits {
                     ingestion_rate: per_sec(100_000),
                     ingestion_burst_spans: 100_000,
+                    max_spans_per_request: 10_000,
                     max_traces_per_search: 1000,
                     max_spans_per_trace: 200_000,
                     max_attribute: bytes(2048),

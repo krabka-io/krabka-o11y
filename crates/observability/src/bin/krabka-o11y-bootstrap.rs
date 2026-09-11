@@ -6,8 +6,10 @@
 //! refuses to report success when one does not meet the contract.
 
 use clap::Parser;
-use krabka_observability::topic_contract::{
-    ALL_TOPICS, PartitionCount, TopicSettings, provision_topics,
+use krabka_observability::{
+    server_security::install_crypto_provider,
+    topic_contract::{ALL_TOPICS, PartitionCount, TopicSettings, provision_topics},
+    wal_client_security::WalClientSecurityArgs,
 };
 use krabka_units::millis;
 
@@ -41,18 +43,25 @@ struct Cli {
         default_value_t = 900_000
     )]
     retention_ms: u32,
+    /// TLS and SASL for the connection to the broker. Default: `PLAINTEXT`.
+    #[command(flatten)]
+    wal_client_security: WalClientSecurityArgs,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // First of all: with two rustls crypto providers compiled in, the first
+    // TLS connection panics until one of them is installed.
+    install_crypto_provider();
     let cli = Cli::parse();
+    let security = cli.wal_client_security.load()?;
     let settings = TopicSettings {
         wal_partitions: PartitionCount::new(cli.partitions)?,
         state_partitions: PartitionCount::new(cli.state_partitions)?,
         replication_factor: cli.replicas,
         wal_retention: millis(cli.retention_ms),
     };
-    let report = provision_topics(&cli.bootstrap, &ALL_TOPICS, &settings).await?;
+    let report = provision_topics(&cli.bootstrap, &ALL_TOPICS, &settings, security).await?;
     for topic in &report.observed {
         println!("{} ready: {} partitions", topic.name, topic.partitions);
     }

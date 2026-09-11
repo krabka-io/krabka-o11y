@@ -1,10 +1,12 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, Response, SpanStore, StatusCode, Uri, decode_trace_id,
-    header, optional_time_bounds, tenant, trace_json, trace_protobuf, wants_json,
+    AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode, Uri,
+    decode_trace_id, header, optional_time_bounds, request_tenant, trace_json, trace_protobuf,
+    wants_json,
 };
 
 pub(crate) async fn trace_by_id_v1_inner<S>(
     state: &AppState<S>,
+    principal: &Principal,
     headers: HeaderMap,
     trace_id: String,
     uri: Uri,
@@ -15,7 +17,10 @@ where
     let Ok(trace_id) = decode_trace_id(&trace_id) else {
         return (StatusCode::BAD_REQUEST, "trace id must be 32 hex chars").into_response();
     };
-    let tenant = tenant(&headers);
+    let tenant = match request_tenant(&headers, principal, &state.cfg.tenant_policy) {
+        Ok(tenant) => tenant,
+        Err(rejection) => return *rejection,
+    };
     let (start_ns, end_ns) = match optional_time_bounds(&uri) {
         Ok(bounds) => bounds,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
@@ -23,7 +28,7 @@ where
 
     match state
         .engine
-        .trace_by_id_within(&tenant, &trace_id, start_ns, end_ns)
+        .trace_by_id_within(tenant.as_str(), &trace_id, start_ns, end_ns)
         .await
     {
         Ok(Some(trace)) => {

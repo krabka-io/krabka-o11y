@@ -49,7 +49,7 @@ pub(crate) async fn resets_counts_a_drop_in_any_native_histogram_component() {
 
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
         let result = engine
-            .query_instant("tenant-a", "resets(h[5m])", 60_000)
+            .query_instant(&tenant_id("tenant-a"), "resets(h[5m])", 60_000)
             .await
             .unwrap();
 

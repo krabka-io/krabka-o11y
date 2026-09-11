@@ -14,7 +14,7 @@ pub(crate) async fn instant_group_returns_one_for_each_group() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "group by (job) (up)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "group by (job) (up)", 10_000)
         .await
         .unwrap();
 

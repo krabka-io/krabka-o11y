@@ -31,7 +31,12 @@ for: 5m
     let sink = RecordingAlertmanagerSink::default();
 
     let firing = super::super::evaluate_and_dispatch_alerting_rule_with_state(
-        &engine, &sink, &mut state, "tenant-a", &rule, 360_000,
+        &engine,
+        &sink,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &rule,
+        360_000,
     )
     .await
     .expect("replayed alert state evaluation");
@@ -48,7 +53,12 @@ for: 5m
     });
     let sink = RecordingAlertmanagerSink::default();
     let pending = super::super::evaluate_and_dispatch_alerting_rule_with_state(
-        &engine, &sink, &mut state, "tenant-a", &rule, 360_000,
+        &engine,
+        &sink,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &rule,
+        360_000,
     )
     .await
     .expect("tombstoned alert state evaluation");

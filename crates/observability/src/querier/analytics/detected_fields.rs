@@ -2,14 +2,14 @@ use krabka_units::convert::ByteSizeExt;
 
 use crate::{
     BTreeMap, DetectedFieldStats, DetectedFieldType, DetectedFieldsParams, HeaderMap,
-    HttpQueryError, Labels, QuerierState, QueryError, StreamPlan, TimeRange, Value,
-    VolumeAggregateBy, VolumeKind, VolumeParams, active_log_delete_filters,
-    add_loki_query_stats_for_stream_plan, authorized_tenant, detect_log_level,
-    is_deleted_log_entry, json, loki_success_value, parse_query, parse_volume_params,
-    plan_stream_query, read_log_block, read_log_block_from_object_store,
-    should_insert_unknown_detected_level, validate_loki_volume_query_range_limit,
-    validate_query_bytes_limit, validate_query_length_limit, validate_query_range_limit,
-    validate_query_series_limit,
+    HttpQueryError, Labels, QuerierState, QueryError, RequestSecurity, StreamPlan,
+    TenantErrorSurface, TimeRange, Value, VolumeAggregateBy, VolumeKind, VolumeParams,
+    active_log_delete_filters, add_loki_query_stats_for_stream_plan, authorized_tenant,
+    clamp_query_lookback, current_unix_time_ns, detect_log_level, is_deleted_log_entry, json,
+    loki_success_value, parse_query, parse_volume_params, plan_stream_query, read_log_block,
+    read_log_block_from_object_store, should_insert_unknown_detected_level,
+    validate_loki_volume_query_range_limit, validate_query_bytes_limit, validate_query_range_limit,
+    validate_query_series_limit, validate_query_string_bytes_limit,
 };
 
 mod add_detected_field;

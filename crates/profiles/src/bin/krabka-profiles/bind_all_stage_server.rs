@@ -1,6 +1,6 @@
 use tokio::net::TcpListener;
 
-use super::{AllStage, SocketAddr};
+use super::{AllStage, ServerListener, ServerSecurity, SocketAddr, serve_router};
 
 /// Binds `addr` now and returns the address it got, together with the stage
 /// that serves `app` there until its token is cancelled.
@@ -12,19 +12,23 @@ use super::{AllStage, SocketAddr};
 /// caller may have asked for port 0 and would otherwise have nothing to log
 /// and no way to reach the role.
 ///
+/// The listener serves TLS and authenticates each request as `security` says.
+///
 /// # Errors
-/// Returns an error when `addr` cannot be bound.
+/// Returns an error when `addr` cannot be bound, or when the socket cannot
+/// report its local address.
 pub(crate) async fn bind_all_stage_server(
     addr: SocketAddr,
     app: axum::Router,
     role: &'static str,
-) -> std::io::Result<(SocketAddr, AllStage)> {
-    let listener = TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
-    let app = krabka_observability::contain_handler_panics(app);
+    security: &ServerSecurity,
+) -> Result<(SocketAddr, AllStage), Box<dyn std::error::Error>> {
+    let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)?;
+    let bound = listener.local_addr();
+    let server = serve_router(listener, app, security);
     let stage: AllStage = Box::new(move |token| {
         Box::pin(async move {
-            if let Err(error) = axum::serve(listener, app)
+            if let Err(error) = server
                 .with_graceful_shutdown(async move { token.cancelled().await })
                 .await
             {

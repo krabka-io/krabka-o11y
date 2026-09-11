@@ -6,10 +6,18 @@ use super::{
 };
 use crate::{
     BTreeMap, BTreeSet, Bytes, HeaderMap, HttpQueryError, LokiRuleNamespaces, Path, QuerierState,
-    RawQuery, Response, Serialize, State, StatusCode, StreamQuery, current_unix_time_ns, json,
-    json_response, text_response,
+    RawQuery, RequestSecurity, Response, Serialize, State, StatusCode, StreamQuery,
+    TenantErrorSurface, TenantId,
+    audit::{
+        AuditOutcome, OPERATION_RULE_GROUP_DELETE, OPERATION_RULE_GROUP_SET,
+        OPERATION_RULE_NAMESPACE_DELETE, RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE,
+        RESOURCE_TENANT, resource,
+    },
+    current_unix_time_ns, json, json_response, resolve_single_tenant, tenant_header_value,
+    text_response,
 };
 
+mod authorized_ruler_tenant;
 mod create_loki_rule_group;
 mod delete_loki_rule_group;
 mod delete_loki_rule_namespace;
@@ -18,7 +26,6 @@ mod loki_rule_group;
 mod loki_rule_group_name;
 mod loki_rule_namespace;
 mod loki_rule_namespace_response;
-mod loki_ruler_tenant;
 mod loki_rules;
 mod loki_yaml_response;
 mod missing_loki_rule_directory_response;
@@ -32,6 +39,7 @@ mod ruler_status_page;
 mod validate_loki_rule;
 mod validate_loki_rule_group;
 
+pub(crate) use authorized_ruler_tenant::authorized_ruler_tenant;
 pub(crate) use create_loki_rule_group::create_loki_rule_group;
 pub(crate) use delete_loki_rule_group::delete_loki_rule_group;
 pub(crate) use delete_loki_rule_namespace::delete_loki_rule_namespace;
@@ -40,7 +48,6 @@ pub(crate) use loki_rule_group::loki_rule_group;
 pub(crate) use loki_rule_group_name::loki_rule_group_name;
 pub(crate) use loki_rule_namespace::loki_rule_namespace;
 pub(crate) use loki_rule_namespace_response::loki_rule_namespace_response;
-pub(crate) use loki_ruler_tenant::loki_ruler_tenant;
 pub(crate) use loki_rules::loki_rules;
 pub(crate) use loki_yaml_response::loki_yaml_response;
 pub(crate) use missing_loki_rule_directory_response::missing_loki_rule_directory_response;

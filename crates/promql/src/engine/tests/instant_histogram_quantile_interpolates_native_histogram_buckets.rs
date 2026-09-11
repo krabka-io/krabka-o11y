@@ -19,7 +19,7 @@ pub(crate) async fn instant_histogram_quantile_interpolates_native_histogram_buc
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "histogram_quantile(0.5, request_duration_seconds)",
             10_000,
         )

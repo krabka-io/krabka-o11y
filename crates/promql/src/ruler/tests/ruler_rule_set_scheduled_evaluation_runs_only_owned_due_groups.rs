@@ -71,7 +71,7 @@ rules:
         &engine,
         (&wal_sink, &alert_sink, &state_sink),
         &mut alert_state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rules,
         (&mut group_state, shard, 180_000),
     )

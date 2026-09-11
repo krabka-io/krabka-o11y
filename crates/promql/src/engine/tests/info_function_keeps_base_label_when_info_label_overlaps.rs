@@ -29,7 +29,7 @@ pub(crate) async fn info_function_keeps_base_label_when_info_label_overlaps() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "info(http_requests_total)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "info(http_requests_total)", 10_000)
         .await
         .unwrap();
 

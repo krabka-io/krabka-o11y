@@ -16,6 +16,7 @@ use std::{
 
 use assert2::check;
 use axum::{Router, extract::State, routing::get};
+use krabka_blockstore::{TENANT_HEADER, TenantId};
 use krabka_traces::frontend::{
     backend::{QuerierBackend, SearchJobRequest, TagValuesJobRequest, TraceByIdJobRequest},
     http_backend::HttpQuerier,
@@ -35,7 +36,7 @@ async fn http_querier_search_job_sends_scan_params_and_parses() {
                 |State(s): State<Log>, headers: axum::http::HeaderMap, uri: axum::http::Uri| async move {
                     let params = uri.query().unwrap_or_default().to_string();
                     let tenant = headers
-                        .get("x-scope-orgid")
+                        .get(TENANT_HEADER)
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("")
                         .to_string();
@@ -57,11 +58,16 @@ async fn http_querier_search_job_sends_scan_params_and_parses() {
         .with_state(seen.clone());
 
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
 
     let out = backend
         .search_job(&SearchJobRequest {
-            tenant: "tenant-x".to_string(),
+            tenant: TenantId::new("tenant-x").unwrap(),
             query: "{ }".to_string(),
             start_ns: 0,
             end_ns: 100_000_000_000,
@@ -109,11 +115,16 @@ async fn http_querier_live_shard_sends_no_scan_params() {
         )
         .with_state(seen.clone());
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
 
     backend
         .search_job(&SearchJobRequest {
-            tenant: "t1".to_string(),
+            tenant: TenantId::new("t1").unwrap(),
             query: "{ }".to_string(),
             start_ns: 0,
             end_ns: 1,
@@ -137,11 +148,16 @@ async fn http_querier_by_id_404_is_empty_partial() {
         get(|| async { (axum::http::StatusCode::NOT_FOUND, "trace not found") }),
     );
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
 
     let out = backend
         .trace_by_id_job(&TraceByIdJobRequest {
-            tenant: "t1".to_string(),
+            tenant: TenantId::new("t1").unwrap(),
             trace_id: [9; 16],
             start_ns: 0,
             end_ns: 1,
@@ -174,11 +190,16 @@ async fn http_querier_by_id_parses_v2_envelope() {
         }),
     );
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
 
     let out = backend
         .trace_by_id_job(&TraceByIdJobRequest {
-            tenant: "t1".to_string(),
+            tenant: TenantId::new("t1").unwrap(),
             trace_id: [10; 16],
             start_ns: 0,
             end_ns: 1,
@@ -207,14 +228,19 @@ async fn http_querier_tag_values_encodes_tag_path_segment() {
             )
             .with_state(seen.clone());
     let addr = spawn(app).await;
-    let backend = HttpQuerier::new(Duration::from_secs(5)).unwrap();
+    let backend = HttpQuerier::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
 
     // `#` interpolated raw would start a URL fragment and truncate the path
     // (the stub's `{tag}/values` route would never match). Path-segment
     // encoding round-trips it intact.
     backend
         .tag_values_job(&TagValuesJobRequest {
-            tenant: "t1".to_string(),
+            tenant: TenantId::new("t1").unwrap(),
             tag: "a#b".to_string(),
             start_ns: 0,
             end_ns: 1,

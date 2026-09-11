@@ -21,7 +21,11 @@ annotations:
     let sink = RecordingAlertmanagerSink::default();
 
     let dispatched = super::super::evaluate_and_dispatch_alerting_rule(
-        &engine, &sink, "tenant-a", &rule, 60_000,
+        &engine,
+        &sink,
+        &tenant_id("tenant-a"),
+        &rule,
+        60_000,
     )
     .await
     .expect("alert dispatch");

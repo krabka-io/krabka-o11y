@@ -6,7 +6,10 @@ use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 use krabka_units::prelude::*;
 
 use super::*;
-use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult, RangeSeries, SampleValue};
+use crate::{
+    EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult, RangeSeries, SampleValue,
+    test_support::tenant_id,
+};
 
 mod avg_partial_recording_executor;
 mod concurrency_probe_executor;

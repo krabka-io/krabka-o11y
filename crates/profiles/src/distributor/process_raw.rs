@@ -1,7 +1,7 @@
 use super::{
-    DistributorState, ProfileRecord, ProfilesError, WalSample, apply_relabel, cap_session_id,
-    enforce_and_reserve_max_series, enforce_ingestion_rate, enforce_limits, extract_symbols,
-    ingest_limits_for_tenant, require_service_name, rollback_reserved_series, split_sample_types,
+    DistributorState, ProfileRecord, ProfilesError, TenantId, WalSample, apply_relabel,
+    cap_session_id, enforce_and_reserve_max_series, enforce_ingestion_rate, enforce_limits,
+    extract_symbols, require_service_name, rollback_reserved_series, split_sample_types,
 };
 
 ///
@@ -9,23 +9,26 @@ use super::{
 /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
 pub async fn process_raw(
     state: &DistributorState,
-    tenant: &str,
+    tenant: &TenantId,
     raws: Vec<crate::ingest::RawProfile>,
 ) -> Result<(), ProfilesError> {
+    // One resolution of this tenant's limits for the whole request. Every gate
+    // below reads the same values, and an unlisted tenant gets the overrides
+    // file's defaults.
+    let limits = state.overrides.for_tenant(tenant);
     let mut pending = Vec::new();
     for mut raw in raws {
         if !apply_relabel(&mut raw.labels, &state.relabel) {
             continue;
         }
         require_service_name(&mut raw.labels);
-        let limits = ingest_limits_for_tenant(state, tenant);
-        cap_session_id(&mut raw.labels, limits.session_id_buckets);
+        cap_session_id(&mut raw.labels, limits);
 
         let symbols = extract_symbols(&raw.profile)?;
         for profile in split_sample_types(&raw)? {
-            enforce_limits(&profile.labels, &limits)?;
+            enforce_limits(&profile.labels, limits)?;
             let rec = ProfileRecord {
-                tenant: tenant.to_string(),
+                tenant: tenant.as_str().to_owned(),
                 labels: profile
                     .labels
                     .iter()
@@ -56,7 +59,7 @@ pub async fn process_raw(
     // failed write never permanently inflates the tenant's series count.
     let reserved = enforce_and_reserve_max_series(state, tenant, &pending)?;
     if let Err(err) = enforce_ingestion_rate(state, tenant, pending.len()) {
-        rollback_reserved_series(state, tenant, &reserved);
+        rollback_reserved_series(state, tenant.as_str(), &reserved);
         return Err(err);
     }
 
@@ -75,7 +78,7 @@ pub async fn process_raw(
             .metrics
             .wal_produce
             .record_batch_failure(error.appended(), error.total());
-        rollback_reserved_series(state, tenant, &reserved);
+        rollback_reserved_series(state, tenant.as_str(), &reserved);
         return Err(ProfilesError::from(error));
     }
 

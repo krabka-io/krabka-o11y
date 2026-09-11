@@ -1,8 +1,8 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, ByteSize, DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED,
-    DEFAULT_HA_FAILOVER_TIMEOUT, DeltaAccumulator, HaElectionSink, HaTracker, IngestEnforcer,
-    Limits, Mutex, OverridesProvider, SeriesFingerprint, ServiceMetrics, TenantLimits, Time,
-    WalSink, tenant_limits_to_limits,
+    Arc, ByteSize, DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED, DEFAULT_HA_FAILOVER_TIMEOUT,
+    DEFAULT_MAX_TRACKED_TENANTS, HaElectionSink, HaTracker, IngestClock, IngestEnforcer, Limits,
+    OverridesProvider, SeriesTracker, ServiceMetrics, SystemIngestClock, TenantDeltaAccumulators,
+    TenantId, Time, WalSink,
 };
 
 /// Shared distributor handler state.
@@ -10,12 +10,13 @@ pub struct DistributorState {
     pub(crate) sink: Arc<dyn WalSink>,
     pub(crate) ha_election_sink: Option<Arc<dyn HaElectionSink>>,
     pub(crate) tracker: HaTracker,
-    pub(crate) otlp_delta_accumulator: Mutex<DeltaAccumulator>,
+    pub(crate) otlp_delta_accumulators: TenantDeltaAccumulators,
     pub(crate) ingest_enforcer: IngestEnforcer,
-    pub(crate) overrides: Option<OverridesProvider>,
-    pub(crate) active_series: Mutex<BTreeMap<String, BTreeSet<SeriesFingerprint>>>,
-    pub(crate) latest_timestamps: Mutex<BTreeMap<(String, SeriesFingerprint), i64>>,
-    pub(crate) limits: TenantLimits,
+    /// The one place limits come from. Every gate reads the tenant's limits
+    /// through it, so a tenant has a single limit set rather than one per gate.
+    pub(crate) overrides: OverridesProvider,
+    pub(crate) series_tracker: SeriesTracker,
+    pub(crate) clock: Arc<dyn IngestClock>,
     pub(crate) ha_failover_timeout: Time,
     pub(crate) max_decompressed: ByteSize,
     pub(crate) metrics: Option<ServiceMetrics>,
@@ -28,21 +29,22 @@ impl DistributorState {
             sink,
             ha_election_sink: None,
             tracker: HaTracker::default(),
-            otlp_delta_accumulator: Mutex::new(DeltaAccumulator::default()),
+            otlp_delta_accumulators: TenantDeltaAccumulators::new(DEFAULT_MAX_TRACKED_TENANTS),
             ingest_enforcer: IngestEnforcer::new(),
-            overrides: None,
-            active_series: Mutex::new(BTreeMap::new()),
-            latest_timestamps: Mutex::new(BTreeMap::new()),
-            limits: TenantLimits::default(),
+            overrides: OverridesProvider::new(Limits::default()),
+            series_tracker: SeriesTracker::new(DEFAULT_MAX_TRACKED_TENANTS),
+            clock: Arc::new(SystemIngestClock),
             ha_failover_timeout: DEFAULT_HA_FAILOVER_TIMEOUT,
             max_decompressed: DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED,
             metrics: None,
         }
     }
 
+    /// Gives every tenant the same limits. This is
+    /// [`with_overrides`](Self::with_overrides) with no per-tenant entries.
     #[must_use]
-    pub fn with_limits(mut self, limits: TenantLimits) -> Self {
-        self.limits = limits;
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.overrides = OverridesProvider::new(limits);
         self
     }
 
@@ -54,7 +56,7 @@ impl DistributorState {
 
     #[must_use]
     pub fn with_overrides(mut self, overrides: OverridesProvider) -> Self {
-        self.overrides = Some(overrides);
+        self.overrides = overrides;
         self
     }
 
@@ -76,6 +78,22 @@ impl DistributorState {
         self
     }
 
+    /// Bounds the number of tenants the series tracker and the OTLP delta
+    /// accumulators hold state for. A cap of `0` clamps to `1`.
+    #[must_use]
+    pub fn with_max_tracked_tenants(mut self, cap: usize) -> Self {
+        self.series_tracker = SeriesTracker::new(cap);
+        self.otlp_delta_accumulators = TenantDeltaAccumulators::new(cap);
+        self
+    }
+
+    /// Drives the idle timeouts from `clock` instead of the system clock.
+    #[must_use]
+    pub fn with_clock(mut self, clock: Arc<dyn IngestClock>) -> Self {
+        self.clock = clock;
+        self
+    }
+
     #[must_use]
     pub fn with_ha_election_sink(mut self, sink: Arc<dyn HaElectionSink>) -> Self {
         self.ha_election_sink = Some(sink);
@@ -89,10 +107,7 @@ impl DistributorState {
 }
 
 impl DistributorState {
-    pub(crate) fn limits_for_tenant(&self, tenant: &str) -> Limits {
-        self.overrides.as_ref().map_or_else(
-            || tenant_limits_to_limits(&self.limits),
-            |overrides| overrides.for_tenant(tenant).clone(),
-        )
+    pub(crate) fn limits_for_tenant(&self, tenant: &TenantId) -> &Limits {
+        self.overrides.for_tenant(tenant.as_str())
     }
 }

@@ -1,6 +1,6 @@
 use super::{
-    AllowAllIngestLimiter, Arc, DistributorState, ServiceConfig, ServiceConfigError,
-    ServiceDependencies, ServiceMetrics,
+    AllowAllIngestLimiter, Arc, DistributorState, OverridesProvider, ServiceConfig,
+    ServiceConfigError, ServiceDependencies, ServiceMetrics,
 };
 use crate::ReadinessGate;
 
@@ -21,6 +21,7 @@ pub(crate) fn distributor_state_for_config(
     dependencies: &ServiceDependencies,
     metrics: ServiceMetrics,
     accepting_writes: ReadinessGate,
+    overrides: Arc<OverridesProvider>,
 ) -> Result<DistributorState, ServiceConfigError> {
     let sink = dependencies
         .wal_sink
@@ -38,10 +39,8 @@ pub(crate) fn distributor_state_for_config(
         sink,
         ingest_limiter,
         prepare_shutdown: accepting_writes,
-        max_ingest_body: config.max_ingest_body,
+        overrides,
         wal_append_timeout: config.wal_append_timeout,
-        reject_old_samples_max_age: Some(config.reject_old_samples_max_age),
-        creation_grace_period: Some(config.creation_grace_period),
         metrics,
     })
 }

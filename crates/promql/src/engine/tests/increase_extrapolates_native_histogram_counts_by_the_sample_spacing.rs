@@ -65,7 +65,7 @@ pub(crate) async fn increase_extrapolates_native_histogram_counts_by_the_sample_
         ("increase(gh_thr_edge[1m])", 30.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 100_000)
+            .query_instant(&tenant_id("tenant-a"), query, 100_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"));
         let QueryResult::InstantVector(samples) = result else {

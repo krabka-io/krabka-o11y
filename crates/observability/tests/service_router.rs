@@ -35,8 +35,9 @@ use serde_json::{Value, json};
 use snap::raw::Encoder as SnappyEncoder;
 use support::{
     DenyingQueryAuthorizer, LokiProtoEntry, LokiProtoPushRequest, LokiProtoStream,
-    RejectingIngestLimiter, assert_loki_error, expected_api_error, expected_api_error_with_stats,
-    json_body, proto_logs_request, tenant_object_store_shard_catalog_service_fixture, text_body,
+    RejectingIngestLimiter, assert_loki_error, current_unix_epoch_nanos, expected_api_error,
+    expected_api_error_with_stats, json_body, proto_logs_request_at_ns,
+    tenant_object_store_shard_catalog_service_fixture, text_body,
 };
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -72,7 +73,7 @@ fn minimal_service_config(target: Role) -> ServiceConfig {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -345,7 +346,7 @@ async fn service_router_builds_distributor_role() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -411,7 +412,7 @@ async fn service_router_rejects_stale_loki_push_timestamp_without_wal_append() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -475,7 +476,7 @@ async fn service_router_rejects_missing_protobuf_timestamp_like_loki_without_wal
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -543,7 +544,7 @@ async fn service_router_rejects_future_loki_push_timestamp_without_wal_append() 
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -608,7 +609,7 @@ async fn service_router_rejects_future_otlp_timestamp_without_wal_append() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -684,7 +685,7 @@ async fn service_router_rejects_loki_push_over_configured_ingest_body_limit_with
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: Some(bytes(1)),
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -747,7 +748,7 @@ async fn service_router_rejects_loki_push_over_ingest_quota_without_wal_append()
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -816,7 +817,7 @@ async fn service_router_times_out_loki_push_when_wal_append_stalls() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: Some(millis(1)),
         ..ServiceConfig::default()
@@ -883,7 +884,7 @@ async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -957,7 +958,7 @@ async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -979,7 +980,10 @@ async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
     let mut client = LogsServiceClient::connect(format!("http://{addr}"))
         .await
         .unwrap();
-    let mut request = tonic::Request::new(proto_logs_request());
+    // Dated to now: the gRPC export path carries the service's limits, so an
+    // entry at the epoch is outside `reject_old_samples_max_age` and refused.
+    let now_ns = u64::try_from(current_unix_epoch_nanos()).expect("a timestamp that fits");
+    let mut request = tonic::Request::new(proto_logs_request_at_ns(now_ns));
     request
         .metadata_mut()
         .insert("x-scope-orgid", "tenant-a".parse().unwrap());
@@ -1040,7 +1044,7 @@ async fn service_router_applies_query_authorizer_dependency_to_querier_role() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1111,7 +1115,7 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1166,7 +1170,7 @@ async fn service_router_applies_configured_query_range_limit() {
         max_query_range: Some(nanos(20)),
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1212,7 +1216,7 @@ async fn service_router_applies_configured_query_length_limit() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: Some(bytes(10)),
+        max_query_string_bytes: Some(bytes(10)),
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1259,7 +1263,7 @@ async fn service_router_applies_configured_query_series_limit() {
         max_query_range: None,
         max_query_series: Some(1),
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1313,7 +1317,7 @@ async fn service_router_applies_configured_query_bytes_limit() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: Some(bytes(1)),
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1369,7 +1373,7 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()

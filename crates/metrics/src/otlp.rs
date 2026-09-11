@@ -1,8 +1,17 @@
 //! OTLP metrics translation into the shared ingest decode target.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
+};
 
-use krabka_blockstore::Labels;
+use dashmap::DashMap;
+use krabka_blockstore::{Labels, TenantId};
+use krabka_units::{Time, convert::TimeExt, minutes};
 use num_traits::ToPrimitive;
 use opentelemetry_proto::tonic::{
     common::v1::{AnyValue, InstrumentationScope, KeyValue, any_value},
@@ -16,7 +25,7 @@ use opentelemetry_proto::tonic::{
 use prost::Message as _;
 
 use crate::{
-    BucketSpan, NativeHistogram, ResetHint,
+    BucketSpan, Limits, NativeHistogram, ResetHint,
     wire::{DecodedExemplar, DecodedMetadata, DecodedSample, DecodedSeries},
 };
 
@@ -37,6 +46,101 @@ mod tests {
     };
 
     use crate::wire::DecodedExemplar;
+
+    /// A delta stream that takes no point for longer than `max_stale` is
+    /// dropped, so the accumulator does not hold one entry per attribute set
+    /// an exporter ever sent. The point after the drop starts a fresh
+    /// cumulative, which is what makes the drop observable.
+    #[test]
+    fn a_delta_stream_that_goes_stale_is_dropped() {
+        let is = |value: f64, expected: f64| (value - expected).abs() < f64::EPSILON;
+        let series = |name: &str| {
+            let mut labels = Labels::new();
+            labels.insert("__name__", name);
+            labels
+        };
+        let limits = crate::Limits {
+            otlp_delta_max_stale: krabka_units::minutes(5),
+            otlp_delta_max_streams: 0,
+            ..crate::Limits::default()
+        };
+        let start = std::time::Instant::now();
+        let mut accumulator = super::DeltaAccumulator::default();
+
+        accumulator.seen_at(start);
+        check!(is(accumulator.accumulate_sum(&series("a"), 0, 1.0), 1.0));
+        accumulator.bound(&limits);
+
+        // Inside the window the stream is still there and keeps its total.
+        accumulator.seen_at(start + std::time::Duration::from_mins(1));
+        check!(is(accumulator.accumulate_sum(&series("a"), 0, 1.0), 2.0));
+
+        // Past the window the stream goes, and the next point is the whole
+        // cumulative rather than a continuation.
+        accumulator.seen_at(start + std::time::Duration::from_mins(21));
+        accumulator.bound(&limits);
+        check!(accumulator.sums.is_empty(), "the stale stream went");
+        check!(is(accumulator.accumulate_sum(&series("a"), 0, 4.0), 4.0));
+    }
+
+    /// The stream cap bounds one tenant's accumulator. It evicts the least
+    /// recently seen stream, not merely *a* stream: dropping the newest would
+    /// throw away the stream in active use and keep the idle ones.
+    #[test]
+    fn the_stream_cap_evicts_the_least_recently_seen_stream() {
+        let series = |name: &str| {
+            let mut labels = Labels::new();
+            labels.insert("__name__", name);
+            labels
+        };
+        let limits = crate::Limits {
+            otlp_delta_max_stale: krabka_units::Time::default(),
+            otlp_delta_max_streams: 2,
+            ..crate::Limits::default()
+        };
+        let start = std::time::Instant::now();
+        let mut accumulator = super::DeltaAccumulator::default();
+
+        for (offset, name) in [(0, "a"), (1, "b"), (2, "c")] {
+            accumulator.seen_at(start + std::time::Duration::from_secs(offset));
+            accumulator.accumulate_sum(&series(name), 0, 1.0);
+        }
+        accumulator.bound(&limits);
+
+        let holds = |name: &str| {
+            accumulator
+                .sums
+                .contains_key(&super::delta_key(&series(name)))
+        };
+        check!(accumulator.sums.len() == 2, "the cap holds");
+        check!(!holds("a"), "the least recently seen went");
+        check!(holds("b") && holds("c"), "the other two stayed");
+    }
+
+    /// Each tenant gets its own accumulator and keeps it across requests, and
+    /// the number of tenants that hold one is capped. A tenant id arrives in a
+    /// request header, so an unbounded set of them would grow the map without
+    /// limit.
+    #[test]
+    fn every_tenant_gets_its_own_accumulator_within_a_tenant_cap() {
+        let accumulators = super::TenantDeltaAccumulators::new(2);
+        let tenant =
+            |name: &str| krabka_blockstore::TenantId::new(name).expect("a valid tenant id");
+
+        let a = accumulators.for_tenant(&tenant("tenant-a"));
+        let b = accumulators.for_tenant(&tenant("tenant-b"));
+        check!(
+            !std::sync::Arc::ptr_eq(&a, &b),
+            "two tenants never share one accumulator"
+        );
+        check!(
+            std::sync::Arc::ptr_eq(&a, &accumulators.for_tenant(&tenant("tenant-a"))),
+            "and a tenant keeps its own across requests"
+        );
+
+        let _ = accumulators.for_tenant(&tenant("tenant-c"));
+        check!(accumulators.tenant_count() == 2, "the tenant cap holds");
+    }
 
     /// `accumulate_delta_float_series` turns delta sums into running totals and
     /// stamps each sample with the series start time -- but only when there IS
@@ -2292,6 +2396,7 @@ mod decode_otlp_stateful_bytes;
 mod delta_accumulator;
 mod delta_histogram_state;
 mod delta_key;
+mod delta_prune_interval;
 mod delta_state;
 mod delta_sum_series;
 mod downscaled_spans;
@@ -2333,6 +2438,8 @@ mod sum_metadata_type;
 mod sum_series;
 mod summary_point_series;
 mod summary_series;
+mod tenant_delta_accumulator;
+mod tenant_delta_accumulators;
 mod translated_metric_name;
 mod translation_strategy;
 
@@ -2351,6 +2458,7 @@ pub use decode_otlp_stateful_bytes::decode_otlp_stateful_bytes;
 pub use delta_accumulator::DeltaAccumulator;
 use delta_histogram_state::DeltaHistogramState;
 use delta_key::{DeltaKey, delta_key};
+use delta_prune_interval::DELTA_PRUNE_INTERVAL;
 use delta_state::DeltaState;
 use delta_sum_series::delta_sum_series;
 use downscaled_spans::downscaled_spans;
@@ -2392,5 +2500,7 @@ use sum_metadata_type::sum_metadata_type;
 use sum_series::sum_series;
 use summary_point_series::summary_point_series;
 use summary_series::summary_series;
+use tenant_delta_accumulator::TenantDeltaAccumulator;
+pub use tenant_delta_accumulators::TenantDeltaAccumulators;
 use translated_metric_name::translated_metric_name;
 pub use translation_strategy::TranslationStrategy;

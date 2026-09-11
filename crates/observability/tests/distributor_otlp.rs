@@ -789,7 +789,23 @@ async fn otlp_grpc_logs_service_rejects_missing_tenant_without_wal_append() {
         .await
         .unwrap_err();
 
-    assert!(error.code() == tonic::Code::InvalidArgument);
+    assert!((error.code(), error.message()) == (tonic::Code::Unauthenticated, "no org id"));
+    assert!(sink.records().is_empty());
+}
+
+#[tokio::test]
+async fn otlp_grpc_logs_service_rejects_a_malformed_tenant_without_wal_append() {
+    let sink = InMemoryWalSink::default();
+    let service = otlp_grpc_logs_service(sink.clone());
+
+    for tenant in ["a/b", "..", "a|b"] {
+        let mut request = tonic::Request::new(proto_logs_request());
+        request
+            .metadata_mut()
+            .insert("x-scope-orgid", tenant.parse().expect("a metadata value"));
+        let error = service.export(request).await.unwrap_err();
+        check!(error.code() == tonic::Code::InvalidArgument, "{tenant}");
+    }
     assert!(sink.records().is_empty());
 }
 

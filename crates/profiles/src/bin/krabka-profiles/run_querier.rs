@@ -1,13 +1,16 @@
 use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
 
 use super::{
-    Arc, CancellationToken, Cli, QuerierState, ServiceMetrics, build_object_store,
+    Arc, CancellationToken, Cli, ProcessSecurity, QuerierState, ServiceMetrics, build_object_store,
     build_profile_read_path, debuginfod_config, load_profiles_limits_overrides_config,
     serve_querier,
 };
 
 /// Answers a query from the WAL tail this role keeps and the blocks its index
 /// names.
+///
+/// `security` sets the TLS and authentication of `--listen`, and the TLS and
+/// SASL of the WAL tail.
 ///
 /// # Errors
 /// Returns an error when the object store or the block index cannot be
@@ -18,6 +21,7 @@ pub(crate) async fn run_querier(
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     shutdown: CancellationToken,
+    security: ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_gate = readiness.gate("object-store");
     let profile_index_gate = readiness.gate("profile-index");
@@ -39,7 +43,7 @@ pub(crate) async fn run_querier(
     .await?;
     let Some(read) = read else { return Ok(()) };
     let mut tasks = SupervisedTasks::new(shutdown.clone());
-    for (name, handle) in read.spawn_background(&cli, &metrics, &shutdown) {
+    for (name, handle) in read.spawn_background(&cli, &metrics, &shutdown, security.wal.as_ref()) {
         tasks.adopt(name, handle);
     }
     let state = Arc::new(
@@ -47,7 +51,14 @@ pub(crate) async fn run_querier(
             .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
             .with_metrics(metrics.clone()),
     );
-    let (bound, server) = serve_querier(cli.listen, state, readiness, shutdown.clone()).await?;
+    let (bound, server) = serve_querier(
+        cli.listen,
+        state,
+        readiness,
+        &security.server,
+        shutdown.clone(),
+    )
+    .await?;
     tasks.adopt("profiles querier HTTP", server);
     tracing::info!(%bound, "profiles querier listening");
     let outcome = tokio::select! {

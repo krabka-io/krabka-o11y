@@ -1,10 +1,11 @@
 use super::{
-    BTreeMap, MetricStore, PrometheusApiState, PromqlError, Value, prometheus_alerts_for_rule_json,
+    BTreeMap, MetricStore, PrometheusApiState, PromqlError, TenantId, Value,
+    prometheus_alerts_for_rule_json,
 };
 
 pub(crate) async fn prometheus_alerts_json<S: MetricStore>(
     state: &PrometheusApiState<S>,
-    tenant: &str,
+    tenant: &TenantId,
     rules: BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
 ) -> Result<Vec<Value>, PromqlError> {
     let eval_time_ms = state.ruler_evaluation_time_ms();

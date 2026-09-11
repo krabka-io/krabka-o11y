@@ -1,9 +1,9 @@
 use super::*;
 
-/// The three per-query limits share a shape: unset means no limit, a query
+/// The three per-query limits share a shape: zero means no limit, a query
 /// exactly at the limit is allowed, and one unit over is refused. Each is
 /// checked at all three points, because `>` and `>=` differ only at the
-/// boundary and "unset" is a third answer distinct from a limit of zero.
+/// boundary and zero is a third answer distinct from a limit of one.
 ///
 /// They are tested together because they are parallel by design and a
 /// reader comparing them should see the same three cases each; a mutant
@@ -42,27 +42,43 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
     };
     let base = || {
         super::super::prelude::QuerierState::new(".", LabelIndex::default(), BlockIndex::default())
+            .with_limits(Limits::unenforced())
+    };
+    let capped = |limits: Limits| {
+        super::super::prelude::QuerierState::new(".", LabelIndex::default(), BlockIndex::default())
+            .with_limits(limits)
+    };
+    let series_limit = |max_query_series| {
+        capped(Limits {
+            max_query_series,
+            ..Limits::unenforced()
+        })
+    };
+    let read_limit = |max_query_read| {
+        capped(Limits {
+            max_query_read,
+            ..Limits::unenforced()
+        })
+    };
+    let string_limit = |max_query_string_bytes| {
+        capped(Limits {
+            max_query_string_bytes,
+            ..Limits::unenforced()
+        })
     };
 
     // Series: three fingerprints against a limit of three, then two.
     check!(
         super::super::prelude::validate_query_series_limit(&base(), &plan(3, &[])).is_ok(),
-        "unset"
+        "off"
     );
     check!(
-        super::super::prelude::validate_query_series_limit(
-            &base().with_max_query_series(3),
-            &plan(3, &[])
-        )
-        .is_ok(),
+        super::super::prelude::validate_query_series_limit(&series_limit(3), &plan(3, &[])).is_ok(),
         "exactly at the limit"
     );
     check!(
-        super::super::prelude::validate_query_series_limit(
-            &base().with_max_query_series(2),
-            &plan(3, &[])
-        )
-        .is_err(),
+        super::super::prelude::validate_query_series_limit(&series_limit(2), &plan(3, &[]))
+            .is_err(),
         "one over"
     );
 
@@ -71,11 +87,11 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
     let two_blocks = plan(0, &[40, 60]);
     check!(
         super::super::prelude::validate_query_bytes_limit(&base(), &two_blocks).is_ok(),
-        "unset"
+        "off"
     );
     check!(
         super::super::prelude::validate_query_bytes_limit(
-            &base().with_max_query_read(krabka_units::bytes(100)),
+            &read_limit(krabka_units::bytes(100)),
             &two_blocks,
         )
         .is_ok(),
@@ -83,7 +99,7 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
     );
     check!(
         super::super::prelude::validate_query_bytes_limit(
-            &base().with_max_query_read(krabka_units::bytes(99)),
+            &read_limit(krabka_units::bytes(99)),
             &two_blocks,
         )
         .is_err(),
@@ -93,12 +109,12 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
     // Length: measured in bytes of the query text.
     let query = "{app=\"api\"}";
     check!(
-        super::super::prelude::validate_query_length_limit(&base(), query).is_ok(),
-        "unset"
+        super::super::prelude::validate_query_string_bytes_limit(&base(), query).is_ok(),
+        "off"
     );
     check!(
-        super::super::prelude::validate_query_length_limit(
-            &base().with_max_query_length(krabka_units::bytes(
+        super::super::prelude::validate_query_string_bytes_limit(
+            &string_limit(krabka_units::bytes(
                 u32::try_from(query.len()).expect("a short query")
             )),
             query,
@@ -107,8 +123,8 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
         "exactly at the limit"
     );
     check!(
-        super::super::prelude::validate_query_length_limit(
-            &base().with_max_query_length(krabka_units::bytes(
+        super::super::prelude::validate_query_string_bytes_limit(
+            &string_limit(krabka_units::bytes(
                 u32::try_from(query.len()).expect("a short query") - 1
             )),
             query,
@@ -119,24 +135,21 @@ pub(crate) fn every_per_query_limit_admits_exactly_its_boundary() {
 
     // Each refusal names its own limit rather than a shared message.
     check!(matches!(
-        super::super::prelude::validate_query_series_limit(
-            &base().with_max_query_series(2),
-            &plan(3, &[])
-        ),
+        super::super::prelude::validate_query_series_limit(&series_limit(2), &plan(3, &[])),
         Err(HttpQueryError::QuerySeriesTooLarge { .. })
     ));
     check!(matches!(
         super::super::prelude::validate_query_bytes_limit(
-            &base().with_max_query_read(krabka_units::bytes(99)),
+            &read_limit(krabka_units::bytes(99)),
             &two_blocks,
         ),
         Err(HttpQueryError::QueryBytesTooLarge { .. })
     ));
     check!(matches!(
-        super::super::prelude::validate_query_length_limit(
-            &base().with_max_query_length(krabka_units::bytes(1)),
+        super::super::prelude::validate_query_string_bytes_limit(
+            &string_limit(krabka_units::bytes(1)),
             query,
         ),
-        Err(HttpQueryError::QueryLengthTooLarge { .. })
+        Err(HttpQueryError::QueryStringTooLong { .. })
     ));
 }

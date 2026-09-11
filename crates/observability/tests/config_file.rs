@@ -7,13 +7,18 @@
 use std::{
     ffi::OsString,
     net::SocketAddr,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
 use assert2::{assert, check};
 use clap::Parser;
-use krabka_observability::{ConfigFileArgs, argv_with_config_file};
+use krabka_observability::{
+    ConfigFileArgs, ServiceConfig, argv_with_config_file,
+    audit::AuditArgs,
+    server_security::{ClientAuth, ServerSecurityArgs},
+    wal_client_security::{WalClientSecurityArgs, WalSaslMechanism, WalSecurityProtocol},
+};
 
 /// A binary's `Cli` in miniature: one required argument with no default, one
 /// with a default, a switch, and a repeatable value.
@@ -257,4 +262,82 @@ fn an_undefined_expansion_with_no_default_stops_start_up() {
         assert!(let Err(error) = argv_with_config_file::<TestCli>(argv));
         check!(error.to_string().contains("KRABKA_TEST_CONFIG_ABSENT"));
     });
+}
+
+// The binary's `Cli` in miniature: the config-file flags and the whole
+// `ServiceConfig`, as `krabka-observability` flattens them.
+#[derive(Debug, Parser)]
+#[command(name = "krabka-observability")]
+struct ServiceCli {
+    #[command(flatten)]
+    config_file: ConfigFileArgs,
+    #[command(flatten)]
+    service: ServiceConfig,
+}
+
+// The security flags that `ServiceConfig` flattens take their values from a
+// config file as every other flag does. A key names the long flag, with
+// underscores or dashes. The audit flags keep an `audit_` id beside their
+// `audit-` long name, and both spellings reach the same flag.
+#[test]
+fn a_config_file_sets_the_server_audit_and_wal_security_flags() {
+    let _environment = lock_environment();
+    let directory = tempfile::tempdir().expect("temp dir");
+    let path = write_config(
+        directory.path(),
+        "target: querier
+server_tls_cert_path: /etc/krabka/tls.crt
+server-tls-key-path: /etc/krabka/tls.key
+server_tls_client_auth: RequireAndVerifyClientCert
+server_tls_client_ca_path: /etc/krabka/client-ca.crt
+auth_credentials_config: /etc/krabka/credentials.yaml
+audit_topic: krabka-audit
+audit-spool-dir: /var/lib/krabka/audit
+wal_security_protocol: SASL_SSL
+wal_tls_ca_path: /etc/krabka/broker-ca.crt
+wal_tls_server_name: broker.internal
+wal_sasl_mechanism: SCRAM-SHA-512
+wal_sasl_username: krabka-logs
+wal_sasl_password_path: /etc/krabka/wal-password
+",
+    );
+    let argv: Vec<OsString> = vec![
+        "krabka-observability".into(),
+        "--config.file".into(),
+        path.into(),
+    ];
+    let argv = argv_with_config_file::<ServiceCli>(argv).expect("config file applies");
+    let config = ServiceCli::parse_from(argv).service;
+
+    check!(
+        config.server_security
+            == ServerSecurityArgs {
+                server_tls_cert_path: Some(PathBuf::from("/etc/krabka/tls.crt")),
+                server_tls_key_path: Some(PathBuf::from("/etc/krabka/tls.key")),
+                server_tls_client_ca_path: Some(PathBuf::from("/etc/krabka/client-ca.crt")),
+                server_tls_client_auth: ClientAuth::RequireAndVerifyClientCert,
+                auth_credentials_config: Some(PathBuf::from("/etc/krabka/credentials.yaml")),
+                ..ServerSecurityArgs::default()
+            }
+    );
+    check!(
+        config.audit
+            == AuditArgs {
+                topic: Some("krabka-audit".to_owned()),
+                spool_dir: Some(PathBuf::from("/var/lib/krabka/audit")),
+                ..AuditArgs::default()
+            }
+    );
+    check!(
+        config.wal_client_security
+            == WalClientSecurityArgs {
+                wal_security_protocol: WalSecurityProtocol::SaslSsl,
+                wal_tls_ca_path: Some(PathBuf::from("/etc/krabka/broker-ca.crt")),
+                wal_tls_server_name: Some("broker.internal".to_owned()),
+                wal_sasl_mechanism: Some(WalSaslMechanism::ScramSha512),
+                wal_sasl_username: Some("krabka-logs".to_owned()),
+                wal_sasl_password_path: Some(PathBuf::from("/etc/krabka/wal-password")),
+                ..WalClientSecurityArgs::default()
+            }
+    );
 }

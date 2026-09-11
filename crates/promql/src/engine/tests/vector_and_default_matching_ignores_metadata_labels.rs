@@ -18,7 +18,7 @@ pub(crate) async fn vector_and_default_matching_ignores_metadata_labels() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "(requests_total + 1) and requests_total",
             10_000,
         )

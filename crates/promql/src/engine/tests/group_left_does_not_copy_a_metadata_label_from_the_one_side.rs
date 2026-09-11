@@ -23,7 +23,11 @@ pub(crate) async fn group_left_does_not_copy_a_metadata_label_from_the_one_side(
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "a + on (job) group_left(__name__) b", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "a + on (job) group_left(__name__) b",
+            10_000,
+        )
         .await
         .unwrap();
 

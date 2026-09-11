@@ -2,12 +2,14 @@ use super::*;
 
 pub(crate) async fn ingest_handler(
     Extension(state): Extension<Arc<DistributorState>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     RawQuery(query): RawQuery,
     body: Bytes,
 ) -> Response {
     let start = std::time::Instant::now();
     let bytes = body.len() as u64;
+    let tenant = tenant_from_headers(&headers, &state.tenant_policy);
     // ONE server span per ingest request. The `/ingest` door carries exactly one
     // profile per request, so `krabka.ingest.samples` is fixed at 1.
     let ingest_span = tracing::info_span!(
@@ -15,12 +17,14 @@ pub(crate) async fn ingest_handler(
         otel.kind = "server",
         messaging.system = "kafka",
         messaging.destination.name = PROFILES_WAL_TOPIC,
-        krabka.tenant = %ingest_span_tenant(&headers),
+        krabka.tenant = ingest_span_tenant(tenant.as_ref().ok()),
         krabka.ingest.samples = 1_u64,
         krabka.ingest.bytes = bytes,
     );
     let result = async {
-        let tenant = tenant_from_headers(&headers)?;
+        let tenant = tenant.as_ref().map_err(TenantResolveError::clone)?;
+        // Before the profiles are decoded, so a denied push reaches no WAL.
+        authorize_tenant(&principal, tenant)?;
         let query = parse_ingest_query(query.as_deref().unwrap_or(""))?;
         let content_type = headers
             .get(axum::http::header::CONTENT_TYPE)
@@ -33,13 +37,13 @@ pub(crate) async fn ingest_handler(
             state.legacy_decode_limits,
         )
         .await?;
-        process_raw(&state, &tenant, vec![raw]).await
+        process_raw(&state, tenant, vec![raw]).await
     }
     .instrument(ingest_span)
     .await;
 
-    if let Ok(tenant) = tenant_from_headers(&headers) {
-        state.metrics.record_ingest_samples(&tenant, 1);
+    if let Ok(tenant) = &tenant {
+        state.metrics.record_ingest_samples(tenant.as_str(), 1);
     }
     // The `/ingest` door carries exactly one profile per request.
     state.metrics.record_ingest(

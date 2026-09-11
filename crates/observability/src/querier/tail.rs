@@ -1,11 +1,11 @@
 use crate::{
     ActiveLogDeleteFilter, Arc, CompactionFrontier, CompactionFrontierSource, Duration, HeaderMap,
     HttpQueryError, LOKI_DEFAULT_TAIL_LIMIT, LogHotTail, LokiStreamEncoding, Message, QuerierState,
-    QueryParams, StreamPlan, TimeRange, Value, WalLogRecord, WebSocket, active_log_delete_filters,
-    add_loki_tail_encoding_flags, authorized_tenant, current_unix_time_ns,
-    execute_tail_query_with_frontier_and_deletes, json, loki_encoding_flags,
+    QueryParams, RequestSecurity, StreamPlan, TenantErrorSurface, TimeRange, Value, WalLogRecord,
+    WebSocket, active_log_delete_filters, add_loki_tail_encoding_flags, authorized_tenant,
+    current_unix_time_ns, execute_tail_query_with_frontier_and_deletes, json, loki_encoding_flags,
     loki_stream_encoding_for_headers, optional_start_end_range, parse_query, plan_stream_query,
-    sleep, validate_loki_tail_delay_for, validate_query_length_limit,
+    sleep, validate_loki_tail_delay_for, validate_query_string_bytes_limit,
 };
 
 mod apply_loki_tail_frame_limit;

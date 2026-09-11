@@ -1,18 +1,22 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
-    QuerierState, connect_error, flamegraph_dot, merge_profile_id_selector, pb,
-    stack_trace_call_sites_from_json, tenant_from_headers,
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
+    ProfileStore, QuerierState, authorize_tenant, connect_error, flamegraph_dot,
+    merge_profile_id_selector, pb, stack_trace_call_sites_from_json, tenant_connect_error,
+    tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn select_merge_stacktraces_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     req: ConnectRequest<pb::querier::v1::SelectMergeStacktracesRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::SelectMergeStacktracesResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers).map_err(connect_error)?;
+    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
+        .map_err(|error| tenant_connect_error(&error))?;
+    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
     let req = req.0;
     let label_selector = merge_profile_id_selector(&req.label_selector, &req.profile_id_selector)
         .map_err(connect_error)?;

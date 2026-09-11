@@ -4,7 +4,8 @@ use super::*;
 pub(crate) fn metadata_index_range_defaults_empty_metadata_requests_to_recent_window() {
     const SIX_HOURS_NS: i64 = 6 * 60 * 60 * 1_000_000_000;
     let before = current_unix_time_ns();
-    let range = metadata_index_range(&SeriesParams::default()).unwrap();
+    let state = QuerierState::new(".", LabelIndex::default(), BlockIndex::default());
+    let range = metadata_index_range(&state, &SeriesParams::default()).unwrap();
     let after = current_unix_time_ns();
 
     check!(

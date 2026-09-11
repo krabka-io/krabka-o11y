@@ -21,18 +21,18 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use flate2::{Compression, write::GzEncoder};
-use krabka_blockstore::ProfileIndex;
+use krabka_blockstore::{ProfileIndex, TenantPolicy};
 use krabka_broker::{Broker, BrokerConfig};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_client_producer::Producer;
+use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use krabka_pprof::{PprofProfile, proto};
 use krabka_profiles::{
     PROFILES_WAL_TOPIC, ProfileRecord, WalSample,
     blockbuilder::{DEFAULT_FLUSH_RECORDS, flush_consumer_records_with_index},
     cold_store::ColdProfileStore,
     distributor::{self, DistributorState, KafkaSink},
-    ingest::TenantLimitConfig,
     limits::{Limits, OverridesProvider},
     metrics::ServiceMetrics,
     query::{self, QuerierState},
@@ -72,7 +72,9 @@ async fn a_pushed_profile_lands_in_a_queryable_block() {
         .await
         .expect("producer build");
     let state = distributor_state(Arc::new(KafkaSink::new(Arc::new(producer))));
-    let response = distributor::router(state)
+    // A listener puts a principal into every request. These routers are
+    // served without one, so `authenticate_requests` does it here.
+    let response = authenticate_requests(distributor::router(state), &ServerSecurity::default())
         .oneshot(push_request())
         .await
         .expect("push response");
@@ -196,7 +198,9 @@ async fn a_push_with_a_path_unsafe_tenant_never_reaches_the_wal() {
             serde_json::to_vec(&push_body()).expect("serialize push body"),
         ))
         .expect("request");
-    let response = distributor::router(state)
+    // A listener puts a principal into every request. These routers are
+    // served without one, so `authenticate_requests` does it here.
+    let response = authenticate_requests(distributor::router(state), &ServerSecurity::default())
         .oneshot(request)
         .await
         .expect("push response");
@@ -208,8 +212,8 @@ async fn a_push_with_a_path_unsafe_tenant_never_reaches_the_wal() {
 fn distributor_state(sink: Arc<KafkaSink>) -> Arc<DistributorState> {
     Arc::new(DistributorState {
         sink,
-        limits: TenantLimitConfig::default(),
-        profile_overrides: OverridesProvider::new(Limits::default()),
+        overrides: OverridesProvider::new(Limits::default()),
+        tenant_policy: TenantPolicy::anonymous(),
         active_series: std::sync::Mutex::default(),
         ingestion_buckets: std::sync::Mutex::default(),
         relabel: Vec::new(),
@@ -316,7 +320,7 @@ async fn render_flamebearer(object_store: Arc<dyn ObjectStore>, index: ProfileIn
         .header("x-scope-orgid", TENANT)
         .body(Body::empty())
         .expect("render request");
-    let response = query::router(querier)
+    let response = authenticate_requests(query::router(querier), &ServerSecurity::default())
         .oneshot(request)
         .await
         .expect("render response");

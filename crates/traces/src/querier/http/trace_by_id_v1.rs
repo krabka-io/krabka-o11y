@@ -1,4 +1,7 @@
-use super::{AppState, HeaderMap, Path, Response, SpanStore, State, Uri, trace_by_id_v1_inner};
+use super::{
+    AppState, Extension, HeaderMap, Path, Principal, Response, SpanStore, State, Uri,
+    trace_by_id_v1_inner,
+};
 
 /// Tempo v1 trace-by-id, at `/api/traces/{id}`.
 ///
@@ -8,6 +11,7 @@ use super::{AppState, HeaderMap, Path, Response, SpanStore, State, Uri, trace_by
 /// v1 default. It falls back to the wrapped JSON for humans.
 pub(crate) async fn trace_by_id_v1<S>(
     State(state): State<AppState<S>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     Path(trace_id): Path<String>,
     uri: Uri,
@@ -16,7 +20,7 @@ where
     S: SpanStore + 'static,
 {
     let start = std::time::Instant::now();
-    let resp = trace_by_id_v1_inner(&state, headers, trace_id, uri).await;
+    let resp = trace_by_id_v1_inner(&state, &principal, headers, trace_id, uri).await;
     state.record_query("trace_by_id", resp.status().is_success(), start);
     resp
 }

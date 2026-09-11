@@ -135,7 +135,7 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     // Pin specific behaviors the parity above relies on.
     // 1. scalar(single) returns the lone value; scalar(multi) returns NaN.
     let QueryResult::Scalar { value: single, .. } = engine
-        .query_instant("t", "scalar(solo)", time_ms)
+        .query_instant(&tenant_id("t"), "scalar(solo)", time_ms)
         .await
         .unwrap()
     else {
@@ -143,7 +143,7 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     };
     assert2::assert!(single.to_bits() == 42.5_f64.to_bits());
     let QueryResult::Scalar { value: multi, .. } = engine
-        .query_instant("t", "scalar(dup)", time_ms)
+        .query_instant(&tenant_id("t"), "scalar(dup)", time_ms)
         .await
         .unwrap()
     else {
@@ -155,14 +155,19 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     let QueryResult::Scalar {
         ts_ms: returned_ts,
         value: eval_seconds,
-    } = engine.query_instant("t", "time()", time_ms).await.unwrap()
+    } = engine
+        .query_instant(&tenant_id("t"), "time()", time_ms)
+        .await
+        .unwrap()
     else {
         panic!("expected scalar");
     };
     assert2::assert!(returned_ts == time_ms);
     assert2::assert!(eval_seconds.to_bits() == 60.0_f64.to_bits());
-    let QueryResult::Scalar { value: pi_v, .. } =
-        engine.query_instant("t", "pi()", time_ms).await.unwrap()
+    let QueryResult::Scalar { value: pi_v, .. } = engine
+        .query_instant(&tenant_id("t"), "pi()", time_ms)
+        .await
+        .unwrap()
     else {
         panic!("expected scalar");
     };
@@ -171,7 +176,7 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     // 3. absent(present) is empty; absent(gone{job="z"}) carries the matcher
     //    label and value 1.
     let QueryResult::InstantVector(present) = engine
-        .query_instant("t", "absent(present)", time_ms)
+        .query_instant(&tenant_id("t"), "absent(present)", time_ms)
         .await
         .unwrap()
     else {
@@ -179,7 +184,7 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     };
     assert2::assert!(present.is_empty());
     let QueryResult::InstantVector(gone) = engine
-        .query_instant("t", "absent(gone{job=\"z\"})", time_ms)
+        .query_instant(&tenant_id("t"), "absent(gone{job=\"z\"})", time_ms)
         .await
         .unwrap()
     else {
@@ -193,7 +198,7 @@ pub(crate) async fn util_planner_path_matches_interpreter() {
     // 4. timestamp(m) reports each sample's own timestamp in seconds, not the
     //    eval time, and drops __name__.
     let QueryResult::InstantVector(ts_samples) = engine
-        .query_instant("t", "timestamp(m)", time_ms)
+        .query_instant(&tenant_id("t"), "timestamp(m)", time_ms)
         .await
         .unwrap()
     else {

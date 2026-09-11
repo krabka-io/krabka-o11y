@@ -14,11 +14,19 @@ pub(crate) async fn instant_clamp_min_and_max_apply_single_bound() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let min_result = engine
-        .query_instant("tenant-a", "clamp_min(temperature_celsius, 0)", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "clamp_min(temperature_celsius, 0)",
+            10_000,
+        )
         .await
         .unwrap();
     let max_result = engine
-        .query_instant("tenant-a", "clamp_max(temperature_celsius, 10)", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "clamp_max(temperature_celsius, 10)",
+            10_000,
+        )
         .await
         .unwrap();
 

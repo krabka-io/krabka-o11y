@@ -2,8 +2,8 @@ use krabka_observability::RoleReadiness;
 use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 use super::{
-    BlockStoreGates, CancellationToken, Cli, ServiceMetrics, SharedObjectStore, SocketAddr,
-    build_trace_index_catalog, frontend, frontend_config_from_cli,
+    BlockStoreGates, CancellationToken, Cli, ProcessSecurity, ServiceMetrics, SharedObjectStore,
+    SocketAddr, build_trace_index_catalog, frontend, frontend_config_from_cli,
 };
 
 pub(crate) async fn run_query_frontend(
@@ -12,6 +12,7 @@ pub(crate) async fn run_query_frontend(
     readiness: RoleReadiness,
     shutdown: CancellationToken,
     object_store: &SharedObjectStore,
+    security: &ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: SocketAddr = cli.listen.parse()?;
     let cfg = frontend_config_from_cli(&cli, addr)?;
@@ -22,6 +23,6 @@ pub(crate) async fn run_query_frontend(
         .then(|| BlockStoreGates::register(&readiness));
     let catalog = build_trace_index_catalog(&cli, &metrics, gates.as_ref(), object_store).await?;
     tracing::info!(%addr, "traces query-frontend listening");
-    frontend::run_query_frontend(cfg, catalog, readiness, shutdown).await?;
+    frontend::run_query_frontend(cfg, catalog, readiness, &security.server, shutdown).await?;
     Ok(())
 }

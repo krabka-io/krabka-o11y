@@ -1,11 +1,11 @@
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, AutoOffsetReset, Cli, Consumer, KafkaRecordingRuleWalSink, KafkaRulerStateSink,
-    ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink, RoleReadiness,
-    RulerAlertmanagerSink, RulerShard, RulerStateFanoutSink, Shutdown, WalHead,
-    install_bundled_rule_groups, load_runtime_overrides, prometheus_router, query_engine_opts,
-    readiness_router, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
+    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, KafkaRecordingRuleWalSink,
+    KafkaRulerStateSink, ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink,
+    RoleReadiness, RulerAlertmanagerSink, RulerShard, RulerStateFanoutSink, ServerSecurity,
+    Shutdown, WalHead, install_bundled_rule_groups, load_runtime_overrides, prometheus_router,
+    query_engine_opts, readiness_router, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
     serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
 };
 
@@ -20,6 +20,9 @@ pub(crate) async fn run_ruler(
     cli: Cli,
     metrics: krabka_promql::metrics::ServiceMetrics,
     readiness: RoleReadiness,
+    security: &ServerSecurity,
+    wal_security: Option<ClientSecurity>,
+    audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
@@ -32,62 +35,101 @@ pub(crate) async fn run_ruler(
     )
     .with_cold_cache_ttl(cli.cold_cache_ttl)
     .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
-    let mut state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
+    let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
         .with_remote_read_max_body(cli.remote_read_max_body)
-        .with_metrics(metrics);
-    if let Some(overrides) = load_runtime_overrides(cli.runtime_overrides.as_deref())? {
-        state = state.with_query_limits(overrides);
-    }
+        .with_metrics(metrics)
+        .with_audit(audit);
+    let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
     let state = Arc::new(state);
-    let router = prometheus_router(Arc::clone(&state)).merge(readiness_router(readiness));
     let shard = RulerShard::new(cli.ruler_shard_index, cli.ruler_shard_total)?;
-
-    // Install the bundled rules before the ruler reaches Kafka, so a rule file
-    // an operator names but the ruler cannot install stops the start early.
-    if let Some(path) = cli.ruler_bundled_rules.as_deref() {
-        let groups = install_bundled_rule_groups(&router, path, &cli.ruler_tenant).await?;
-        tracing::info!(
-            path = %path.display(),
-            groups = groups.len(),
-            "metrics ruler installed the bundled rule groups"
-        );
-    }
-
     let bootstrap = cli.wal_bootstrap.clone().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "--wal-bootstrap is required for --target ruler",
         )
     })?;
+
+    // The listener binds before the bundled rules install, because they
+    // install through it. These gates keep the ruler out of rotation until the
+    // rules are in and both broker clients connect.
+    let bundled_rules = cli
+        .ruler_bundled_rules
+        .as_deref()
+        .map(|path| (path, readiness.gate("bundled-rules")));
+    let wal_broker = readiness.gate("wal-broker");
+    let router = prometheus_router(Arc::clone(&state)).merge(readiness_router(readiness));
     // Installed before the first broker connect, and raced against it: the
     // clients retry an unreachable bootstrap rather than reporting it, so a
     // ruler that starts against a broker that is down would otherwise sit in
     // `build` with no handler for the signal that is trying to stop it.
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
-    let mut state_consumer = tokio::select! {
-        biased;
-        () = shutdown.signalled() => return Ok(()),
-        built = Consumer::builder()
-            .bootstrap(bootstrap.clone())
-            .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-            .frame_max(cli.client_frame_max)
-            .group_id(format!("{}-ruler-state", cli.wal_group_id))
-            .client_id(format!("{}-ruler-state", cli.wal_client_id))
-            .auto_offset_reset(AutoOffsetReset::Earliest)
-            .subscribe([cli.ruler_state_topic.clone()])
-            .build() => built?,
+    let (bound, server) =
+        serve_prometheus_router_joinable(cli.listen, router, security, shutdown.signalled())
+            .await?;
+    tracing::info!(
+        %bound,
+        tls = security.tls_enabled(),
+        authentication = security.authentication_enabled(),
+        "metrics-service ruler listening"
+    );
+
+    let startup = async {
+        // Before the ruler reaches Kafka, so a rule file an operator names but
+        // the ruler cannot install stops the start early.
+        if let Some((path, gate)) = bundled_rules {
+            let groups =
+                install_bundled_rule_groups(bound, security, path, &cli.ruler_tenant).await?;
+            gate.mark_ready();
+            tracing::info!(
+                path = %path.display(),
+                groups = groups.len(),
+                "metrics ruler installed the bundled rule groups"
+            );
+        }
+        let state_consumer = tokio::select! {
+            biased;
+            () = shutdown.signalled() => return Ok(None),
+            built = Consumer::builder()
+                .bootstrap(bootstrap.clone())
+                .maybe_security(wal_security.clone())
+                .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
+                .frame_max(cli.client_frame_max)
+                .group_id(format!("{}-ruler-state", cli.wal_group_id))
+                .client_id(format!("{}-ruler-state", cli.wal_client_id))
+                .auto_offset_reset(AutoOffsetReset::Earliest)
+                .subscribe([cli.ruler_state_topic.clone()])
+                .build() => built?,
+        };
+        let producer = tokio::select! {
+            biased;
+            () = shutdown.signalled() => return Ok(None),
+            built = Producer::builder()
+                .bootstrap(bootstrap)
+                .maybe_security(wal_security)
+                .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
+                .frame_max(cli.client_frame_max)
+                .build() => built?,
+        };
+        Ok::<_, Box<dyn std::error::Error>>(Some((state_consumer, producer)))
     };
-    let producer = Arc::new(tokio::select! {
-        biased;
-        () = shutdown.signalled() => return Ok(()),
-        built = Producer::builder()
-            .bootstrap(bootstrap)
-            .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-            .frame_max(cli.client_frame_max)
-            .build() => built?,
-    });
+    let (mut state_consumer, producer) = match startup.await {
+        Ok(Some(clients)) => clients,
+        Ok(None) => {
+            server.await?;
+            return Ok(());
+        }
+        Err(error) => {
+            shutdown.trigger();
+            if let Err(join_error) = server.await {
+                tracing::warn!(%join_error, "metrics ruler server task failed while the start stopped");
+            }
+            return Err(error);
+        }
+    };
+    wal_broker.mark_ready();
+    let producer = Arc::new(producer);
     let wal_sink = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), cli.wal_topic.clone());
     let state_sink = RulerStateFanoutSink::new(
         PrometheusRulerStateSink::new(Arc::clone(&state)),
@@ -156,9 +198,6 @@ pub(crate) async fn run_ruler(
         }
     });
 
-    let (bound, server) =
-        serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
-    tracing::info!(%bound, "metrics-service ruler listening");
     // Join the server task so in-flight requests drain (graceful shutdown)
     // before the process exits.
     let outcome = tokio::select! {

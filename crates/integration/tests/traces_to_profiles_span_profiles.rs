@@ -38,6 +38,7 @@ use std::sync::Arc;
 use assert2::{assert, check};
 use axum::http::{Request, StatusCode};
 use krabka_blockstore::{BlockIndex as _, LABEL_PROFILE_TYPE, Labels, ProfileIndex};
+use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use krabka_profiles::{
     ProfileRecord, WalSample,
     blockbuilder::{STACKTRACE_PARTITION, build_block},
@@ -173,15 +174,20 @@ async fn querier_over(record: &ProfileRecord) -> axum::Router {
     }
 
     let cold = ColdProfileStore::new(store, Arc::new(index));
-    router(Arc::new(QuerierState::new_with_limits(
-        Arc::new(cold),
-        Limits {
-            // The query below spans milliseconds, but the default ceiling is
-            // measured against wall-clock-shaped ranges. Zero is "no ceiling".
-            max_query_length: Time::ZERO,
-            ..Limits::default()
-        },
-    )))
+    // The querier's handlers read the principal that the authentication layer
+    // attaches, so the router is served through that layer, unconfigured.
+    authenticate_requests(
+        router(Arc::new(QuerierState::new_with_limits(
+            Arc::new(cold),
+            Limits {
+                // The query below spans milliseconds, but the default ceiling is
+                // measured against wall-clock-shaped ranges. Zero is "no ceiling".
+                max_query_length: Time::ZERO,
+                ..Limits::default()
+            },
+        ))),
+        &ServerSecurity::default(),
+    )
 }
 
 /// Issues `SelectMergeSpanProfile` for a set of span selectors and returns the

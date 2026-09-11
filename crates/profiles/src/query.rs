@@ -14,7 +14,13 @@ use axum::{
     routing::get,
 };
 use connectrpc_axum::message::{Code, ConnectError, ConnectRequest, ConnectResponse};
-use krabka_blockstore::{LABEL_PROFILE_TYPE, LabelMatcher, MatchOp, span_id_hex_from_u64};
+use krabka_blockstore::{
+    LABEL_PROFILE_TYPE, LabelMatcher, MatchOp, TenantId, TenantPolicy, TenantResolveError,
+    span_id_hex_from_u64,
+};
+use krabka_observability::server_security::{
+    Principal, ServerListener, ServerSecurity, TenantDenied, authorize_tenant, serve_router,
+};
 use krabka_pprof::{
     COL_FINGERPRINT, COL_TIMESTAMP, EngineOpts, FlameEngine, FlameGraph, InMemoryProfileStore,
     LabeledHeatmap, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE,
@@ -37,6 +43,7 @@ use crate::{
     limits::{Limits, OverridesProvider},
     metrics::ServiceMetrics,
     query_frontend::{FrontendConfig, split_inclusive_range},
+    tenant_from_headers,
     wire::pb,
 };
 
@@ -393,6 +400,10 @@ mod tests {
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 
+    fn tenant(name: &str) -> TenantId {
+        TenantId::new(name).expect("a valid tenant id")
+    }
+
     #[test]
     fn metadata_range_expands_omitted_request_without_validation() {
         let state = QuerierState::new_with_limits(
@@ -404,7 +415,7 @@ mod tests {
         );
 
         let range = MetadataRange::from_request(0, 0)
-            .validate(&state, "tenant-a")
+            .validate(&state, &tenant("tenant-a"))
             .unwrap();
 
         assert!(range.start_ms == 0);
@@ -423,13 +434,14 @@ mod tests {
         );
 
         let range = MetadataRange::from_request(0, 1_000)
-            .validate(&state, "tenant-a")
+            .validate(&state, &tenant("tenant-a"))
             .unwrap();
         assert!(range.start_ms == 0);
         assert!(range.end_ms == 1_000);
         assert!(!range.omitted);
 
-        let Err(err) = MetadataRange::from_request(0, 2_000).validate(&state, "tenant-a") else {
+        let Err(err) = MetadataRange::from_request(0, 2_000).validate(&state, &tenant("tenant-a"))
+        else {
             panic!("explicit over-limit metadata range should be rejected");
         };
         assert!(err.to_string().contains("query length exceeded"), "{err}");
@@ -797,7 +809,10 @@ mod tests {
 
         // The handler path queries globally and reports the sample.
         let state = QuerierState::new(Arc::clone(&store));
-        let profile_stats = state.global_profile_stats("tenant-a").await.unwrap();
+        let profile_stats = state
+            .global_profile_stats(&tenant("tenant-a"))
+            .await
+            .unwrap();
         assert!(
             profile_stats
                 == ProfileStats {
@@ -820,7 +835,7 @@ mod tests {
 
         let err = state
             .select_series(
-                ("tenant-a", PT, r#"{service_name="api"}"#),
+                (&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
@@ -849,7 +864,7 @@ overrides:
 
         let tenant_a_err = state
             .select_series(
-                ("tenant-a", PT, r#"{service_name="api"}"#),
+                (&tenant("tenant-a"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
@@ -860,7 +875,7 @@ overrides:
             .unwrap_err();
         let tenant_b_series = state
             .select_series(
-                ("tenant-b", PT, r#"{service_name="api"}"#),
+                (&tenant("tenant-b"), PT, r#"{service_name="api"}"#),
                 &[],
                 secs(1),
                 SeriesAgg::Sum,
@@ -893,7 +908,14 @@ overrides:
         );
 
         let flamegraph = state
-            .select_merge_stacktraces("tenant-a", PT, r#"{service_name="api"}"#, 0, 100, 10_000)
+            .select_merge_stacktraces(
+                &tenant("tenant-a"),
+                PT,
+                r#"{service_name="api"}"#,
+                0,
+                100,
+                10_000,
+            )
             .await
             .unwrap();
 
@@ -906,9 +928,14 @@ overrides:
     async fn render_format_dot_returns_dot_graph() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let query = url::form_urlencoded::Serializer::new(String::new())
@@ -942,9 +969,14 @@ overrides:
         // settings set; `Set` must echo the value back.
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let client = reqwest::Client::new();
@@ -999,9 +1031,14 @@ overrides:
             ("worker", "prod", 7),
         ]))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let query = url::form_urlencoded::Serializer::new(String::new())
@@ -1044,9 +1081,14 @@ overrides:
     async fn render_diff_flamebearer_includes_legacy_ticks_and_max_self() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let query = url::form_urlencoded::Serializer::new(String::new())
@@ -1094,9 +1136,14 @@ overrides:
             &[(1_700_000_010_000, 5), (1_700_000_090_000, 7)],
         ))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let query = url::form_urlencoded::Serializer::new(String::new())
@@ -1137,9 +1184,14 @@ overrides:
     async fn select_merge_stacktraces_dot_format_returns_dot_only() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1186,9 +1238,14 @@ overrides:
     async fn select_merge_stacktraces_tree_format_returns_pyroscope_tree_bytes() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1236,9 +1293,14 @@ overrides:
             111,
         ))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1277,9 +1339,14 @@ overrides:
     async fn select_merge_stacktraces_profile_id_selector_filters_profiles() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1314,9 +1381,14 @@ overrides:
     async fn select_merge_profile_profile_id_selector_filters_profiles() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1365,9 +1437,14 @@ overrides:
             ("cold.path", 10),
         ]))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1426,9 +1503,14 @@ overrides:
             ("leaf9", 1),
         ]))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1487,9 +1569,14 @@ overrides:
             ("cold.path", 10),
         ]))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1527,9 +1614,14 @@ overrides:
             ("cold.path", 10),
         ]))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1577,9 +1669,14 @@ overrides:
     async fn profile_types_without_time_range_returns_ingested_types() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1623,9 +1720,14 @@ overrides:
             },
         ));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1659,9 +1761,14 @@ overrides:
             ("cold.path", 10),
         ]))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1710,9 +1817,14 @@ overrides:
     async fn series_emits_label_sets_sorted_by_name() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_unsorted_labels())));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
 
@@ -1783,9 +1895,14 @@ overrides:
             0x2a,
         ))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1831,9 +1948,14 @@ overrides:
             ("cold.path", 0x2b, 7),
         ]))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1878,9 +2000,14 @@ overrides:
     async fn select_series_individual_exemplar_returns_profile_ids() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1932,9 +2059,14 @@ overrides:
             ]),
         )));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -1998,9 +2130,14 @@ overrides:
         );
         let state = Arc::new(QuerierState::new(Arc::new(store)));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -2053,9 +2190,14 @@ overrides:
             0x2a,
         ))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -2099,9 +2241,14 @@ overrides:
     async fn select_heatmap_individual_exemplar_returns_profile_ids() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_profile_ids())));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -2164,9 +2311,14 @@ overrides:
         );
         let state = Arc::new(QuerierState::new(Arc::new(store)));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -2207,9 +2359,14 @@ overrides:
     async fn analyze_query_returns_scope_and_impact_for_matching_series() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_two_profile_types())));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -2259,9 +2416,14 @@ overrides:
     async fn analyze_query_counts_only_the_queried_profile_type() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_two_profile_types())));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -2416,56 +2578,129 @@ overrides:
         );
     }
 
-    #[test]
-    fn tenant_from_headers_validates_and_defaults() {
-        // Absent header -> anonymous.
-        let empty = HeaderMap::new();
-        assert!(tenant_from_headers(&empty).unwrap() == "anonymous");
-
-        // Valid tenant passes through.
-        let mut valid = HeaderMap::new();
-        valid.insert("x-scope-orgid", "tenant-a".parse().unwrap());
-        assert!(tenant_from_headers(&valid).unwrap() == "tenant-a");
-
-        // Empty header value falls back to anonymous (preserved behaviour).
-        let mut blank = HeaderMap::new();
-        blank.insert("x-scope-orgid", "".parse().unwrap());
-        assert!(tenant_from_headers(&blank).unwrap() == "anonymous");
-    }
-
-    #[test]
-    fn tenant_from_headers_rejects_path_unsafe_tenant() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-scope-orgid", "../escape".parse().unwrap());
-        let err = tenant_from_headers(&headers).unwrap_err();
-
-        // Mapped to an invalid-argument-class error with a generic message that
-        // does not echo the attacker-supplied id.
-        assert!(matches!(err, ProfileError::Plan(_)));
-        assert!(connect_error(err).code() == Code::InvalidArgument);
-    }
-
+    // Both querier mappings carry the resolver's message unchanged, as a 400
+    // on a plain HTTP route and as `invalid_argument` on a Connect method.
     #[tokio::test]
-    async fn invalid_tenant_header_is_rejected_by_connect_handler() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
-        .await
-        .unwrap();
-        let status = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/querier.v1.QuerierService/ProfileTypes"
-            ))
-            .header("x-scope-orgid", "bad/tenant")
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap()
-            .status();
+    async fn a_tenant_that_does_not_resolve_maps_to_a_client_fault_with_upstreams_message() {
+        let cases = [
+            (TenantResolveError::Missing, "no org id".to_string()),
+            (
+                TenantResolveError::Invalid(
+                    krabka_blockstore::TenantIdError::UnsupportedCharacter {
+                        tenant: "a/b".into(),
+                        character: '/',
+                    },
+                ),
+                "tenant ID 'a/b' contains unsupported character '/'".to_string(),
+            ),
+            (
+                TenantResolveError::Invalid(krabka_blockstore::TenantIdError::TooLong),
+                "tenant ID is too long: max 150 characters".to_string(),
+            ),
+        ];
 
-        assert!(status.is_client_error(), "{status}");
+        for (error, message) in cases {
+            let connect = tenant_connect_error(&error);
+            check!(
+                (connect.code(), connect.message())
+                    == (Code::InvalidArgument, Some(message.as_str()))
+            );
+
+            let response = tenant_error_response(&error);
+            let status = response.status();
+            let content_type = response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            check!(
+                (
+                    status,
+                    content_type,
+                    String::from_utf8(body.to_vec()).unwrap()
+                ) == (
+                    StatusCode::BAD_REQUEST,
+                    Some("text/plain; charset=utf-8".to_string()),
+                    message
+                )
+            );
+        }
+    }
+
+    // Every querier handler resolves the header under the policy on the state,
+    // and not under a policy of its own. A request without a tenant shows
+    // that, because only the policy decides what it resolves to.
+    #[tokio::test]
+    async fn the_querier_resolves_a_request_without_a_tenant_under_the_state_policy() {
+        let fallback = TenantPolicy::Fallback(tenant("tenant-a"));
+        let required = TenantPolicy::Required;
+        for (policy, want_status, want_frame) in [
+            (fallback, StatusCode::OK, true),
+            (required, StatusCode::BAD_REQUEST, false),
+        ] {
+            let mut state = QuerierState::new(Arc::new(store_with_frame("main.work")));
+            state.tenant_policy = policy.clone();
+            let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let bound = serve(
+                "127.0.0.1:0".parse().unwrap(),
+                Arc::new(state),
+                &ServerSecurity::default(),
+                async move {
+                    let _ = shutdown_rx.await;
+                },
+            )
+            .await
+            .unwrap();
+            let client = reqwest::Client::new();
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("query", &format!(r#"{PT}{{service_name="api"}}"#))
+                .append_pair("from", "0")
+                .append_pair("until", "100")
+                .finish();
+
+            let render = client
+                .get(format!("http://{bound}/pyroscope/render?{query}"))
+                .send()
+                .await
+                .unwrap();
+            let render_status = render.status();
+            let render_body = render.text().await.unwrap();
+            check!(render_status == want_status, "{policy:?}: {render_body}");
+            check!(
+                render_body.contains("main.work") == want_frame,
+                "{policy:?}: {render_body}"
+            );
+
+            let types = client
+                .post(format!(
+                    "http://{bound}/querier.v1.QuerierService/ProfileTypes"
+                ))
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap();
+            let types_status = types.status();
+            let types_body: serde_json::Value = types.json().await.unwrap();
+            check!(types_status == want_status, "{policy:?}: {types_body}");
+            if want_frame {
+                check!(
+                    types_body
+                        .pointer("/profileTypes/0/ID")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(PT),
+                    "{policy:?}: {types_body}"
+                );
+            } else {
+                check!(
+                    types_body == json!({"code": "invalid_argument", "message": "no org id"}),
+                    "{policy:?}"
+                );
+                check!(render_body == "no org id");
+            }
+        }
     }
 
     #[test]
@@ -2475,12 +2710,16 @@ overrides:
         // An explicit `start=0, end=i64::MAX` range (NOT the range-omitted health
         // probe) now exceeds the default `max_query_length` cap.
         let err = state
-            .validate_query_range("anonymous", 0, i64::MAX)
+            .validate_query_range(&TenantId::anonymous(), 0, i64::MAX)
             .unwrap_err();
         assert!(err.to_string().contains("query length exceeded"), "{err}");
 
         // A bounded recent window stays well within the 721h default.
-        assert!(state.validate_query_range("anonymous", 0, 60_000).is_ok());
+        assert!(
+            state
+                .validate_query_range(&TenantId::anonymous(), 0, 60_000)
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -2489,9 +2728,14 @@ overrides:
         // even though the default cap now rejects explicit unbounded ranges.
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let response: serde_json::Value = reqwest::Client::new()
@@ -2716,7 +2960,9 @@ mod stack_trace_call_sites;
 mod stack_trace_call_sites_from_json;
 mod stack_trace_location_json;
 mod stack_trace_selector_json;
-mod tenant_from_headers;
+mod tenant_connect_error;
+mod tenant_denied_connect_error;
+mod tenant_error_response;
 mod timed_query;
 mod timed_query_response;
 mod types_label_pairs;
@@ -2807,7 +3053,9 @@ use stack_trace_call_sites::stack_trace_call_sites;
 use stack_trace_call_sites_from_json::stack_trace_call_sites_from_json;
 use stack_trace_location_json::StackTraceLocationJson;
 use stack_trace_selector_json::StackTraceSelectorJson;
-use tenant_from_headers::tenant_from_headers;
+use tenant_connect_error::tenant_connect_error;
+use tenant_denied_connect_error::tenant_denied_connect_error;
+use tenant_error_response::tenant_error_response;
 use timed_query::timed_query;
 use timed_query_response::timed_query_response;
 use types_label_pairs::types_label_pairs;

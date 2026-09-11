@@ -1,6 +1,6 @@
 use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 
-use super::{CancellationToken, Cli, WalTailProfileStore};
+use super::{CancellationToken, Cli, ClientSecurity, WalTailProfileStore};
 
 /// Runs the hot WAL tail, returning its handle for the caller to supervise.
 ///
@@ -12,12 +12,15 @@ use super::{CancellationToken, Cli, WalTailProfileStore};
 /// `shutdown` is the role's token, and the tail must watch it: the supervisor
 /// waits for every adopted task on the way out, so a tail that polls forever
 /// holds the whole process open until the orchestrator kills it.
+///
+/// `wal_security` is the TLS and SASL of the consumer.
 pub(crate) fn spawn_wal_tail(
     cli: &Cli,
     hot: WalTailProfileStore,
     client_dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
     client_frame_max: krabka_client_core::ClientFrameMax,
     metrics: WalConsumerMetrics,
+    wal_security: Option<ClientSecurity>,
     shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     let config = krabka_profiles::hot_store::WalTailConfig {
@@ -28,6 +31,7 @@ pub(crate) fn spawn_wal_tail(
         client_dispatch_queue_capacity,
         client_frame_max,
         metrics,
+        security: wal_security,
     };
     tokio::spawn(async move {
         if let Err(error) =

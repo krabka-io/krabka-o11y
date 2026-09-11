@@ -1,9 +1,10 @@
-use super::JobShard;
+use super::{JobShard, TenantId};
 
 /// A tag-values job for one tag over a window.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagValuesJobRequest {
-    pub tenant: String,
+    /// The resolved tenant, which the transport sends as `X-Scope-OrgID`.
+    pub tenant: TenantId,
     pub tag: String,
     pub start_ns: i64,
     pub end_ns: i64,

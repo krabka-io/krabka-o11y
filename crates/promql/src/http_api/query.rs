@@ -6,16 +6,16 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use krabka_metrics::QueryEnforcer;
 use krabka_units::prelude::*;
 use serde::Deserialize;
 use url::form_urlencoded;
 
 use super::{
-    ApiError, PrometheusApiState, acquire_query_permit, apply_result_limit, check_range_resolution,
-    duration_param, exemplar_key, exemplars_json, optional_timestamp_ms, parse_limit_parameter,
-    record_query_response, required_form_param, selector_matchers, success_data_response,
-    success_response, tenant_from_headers, timestamp_ms, unix_now_ms, validate_timestamp_range,
+    ApiError, Extension, Principal, PrometheusApiState, acquire_query_permit, apply_result_limit,
+    authorized_tenant_from_headers, check_range_resolution, duration_param,
+    enforce_query_range_limit, exemplar_key, exemplars_json, optional_timestamp_ms,
+    parse_limit_parameter, record_query_response, required_form_param, selector_matchers,
+    success_data_response, success_response, timestamp_ms, validate_timestamp_range,
 };
 use crate::{
     MetricStore,

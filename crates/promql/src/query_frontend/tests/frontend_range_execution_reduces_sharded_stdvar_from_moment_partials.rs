@@ -9,7 +9,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_stdvar_from_moment_
         &executor,
         &cache,
         &FrontendRangeRequest {
-            tenant: "tenant-a".into(),
+            tenant: tenant_id("tenant-a"),
             query: "stdvar(up)".into(),
             start_ms: 0,
             end_ms: 0,

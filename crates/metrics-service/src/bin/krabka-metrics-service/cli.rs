@@ -1,8 +1,9 @@
 use super::{
-    ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, ExternalLabels, Parser,
-    PathBuf, RULER_STATE_TOPIC, SocketAddr, Target, Time, WAL_TOPIC, parse,
-    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_external_label,
-    parse_external_labels_env, parse_positive_usize, parse_remote_read_max_body,
+    AuditArgs, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    ExternalLabels, Parser, PathBuf, RULER_STATE_TOPIC, ServerSecurityArgs, SocketAddr, Target,
+    TenantId, Time, WAL_TOPIC, WalClientSecurityArgs, parse, parse_client_dispatch_queue_capacity,
+    parse_client_frame_max, parse_external_label, parse_external_labels_env, parse_positive_usize,
+    parse_remote_read_max_body,
 };
 
 #[derive(Debug, Parser)]
@@ -13,7 +14,11 @@ pub(crate) struct Cli {
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
     #[arg(long, env = "KRABKA_METRICS_SERVICE_TARGET")]
     pub(crate) target: Target,
-    /// Address for the admin port: pprof, Prometheus metrics and `/ready`.
+    /// Address for the admin port: pprof, Prometheus metrics and `/ready`. Default: `0.0.0.0:9404`.
+    ///
+    /// The admin port always serves plain HTTP with no authentication. The
+    /// TLS and credential flags apply only to the data port. Bind the admin
+    /// port to an address that only the cluster can reach.
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
     /// HTTP query listen address. Default: `0.0.0.0:4041`.
@@ -123,7 +128,7 @@ pub(crate) struct Cli {
     )]
     pub(crate) query_frontend_cache_prefix: String,
     #[arg(long, env = "KRABKA_METRICS_RULER_TENANT", default_value = "anonymous")]
-    pub(crate) ruler_tenant: String,
+    pub(crate) ruler_tenant: TenantId,
     #[arg(
         long,
         env = "KRABKA_METRICS_RULER_EVAL_INTERVAL",
@@ -165,9 +170,13 @@ pub(crate) struct Cli {
     pub(crate) ruler_generator_url_template: Option<String>,
     /// A Prometheus rule file the ruler installs at startup.
     ///
-    /// The ruler posts each group of the file to its own ruler-config API, so a
-    /// bundled group and a group an operator posts behave the same way. The
-    /// start stops when the ruler cannot read, parse, or install the file.
+    /// The ruler posts each group of the file over HTTP to its own
+    /// ruler-config API at `localhost`, so a bundled group and a group an
+    /// operator posts behave the same way. The request carries the
+    /// `--internal-client-*` credentials. With authentication on, they should
+    /// name a principal that may use `--ruler-tenant`. With TLS on, the server
+    /// certificate should be valid for `localhost`. The start stops when the
+    /// ruler cannot read, parse, or install the file.
     #[arg(long, env = "KRABKA_METRICS_RULER_BUNDLED_RULES")]
     pub(crate) ruler_bundled_rules: Option<PathBuf>,
     #[arg(
@@ -216,4 +225,15 @@ pub(crate) struct Cli {
         value_parser = parse::positive_time
     )]
     pub(crate) wal_head_retention: Time,
+    // The shared security flags come after this binary's own flags, so
+    // `--help` lists the role and its listener first.
+    /// TLS, authentication and outbound-credential flags for the data port.
+    #[command(flatten)]
+    pub(crate) server_security: ServerSecurityArgs,
+    /// Audit trail flags. The audit layer is off until `--audit-topic` is set.
+    #[command(flatten)]
+    pub(crate) audit: AuditArgs,
+    /// TLS and SASL flags for every broker connection, the audit producer included.
+    #[command(flatten)]
+    pub(crate) wal_security: WalClientSecurityArgs,
 }

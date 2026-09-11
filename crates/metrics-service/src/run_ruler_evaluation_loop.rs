@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerSink, Arc, MetricStore, PrometheusApiState, RecordingRuleWalSink, RulerAlertState,
-    RulerGroupState, RulerShard, RulerStateSink, Time, TimeExt, current_time_ms,
+    RulerGroupState, RulerShard, RulerStateSink, TenantId, Time, TimeExt, current_time_ms,
     evaluate_ruler_once,
 };
 
@@ -10,7 +10,7 @@ use super::{
 pub async fn run_ruler_evaluation_loop<S, W, A, R, Stop>(
     state: Arc<PrometheusApiState<S>>,
     sinks: (W, A, R),
-    tenant: String,
+    tenant: TenantId,
     shard: RulerShard,
     interval: Time,
     stop: Stop,

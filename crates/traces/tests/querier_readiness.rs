@@ -83,7 +83,12 @@ async fn a_querier_reports_its_gates_and_the_frontend_probe_reads_them_back() {
         },
     ];
 
-    let probe = HttpReadinessProbe::new(Duration::from_secs(5)).unwrap();
+    let probe = HttpReadinessProbe::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
     for case in cases {
         let readiness = RoleReadiness::new();
         for name in ["object-store", "trace-index", "live-store"] {
@@ -117,7 +122,12 @@ async fn a_querier_that_is_not_there_is_unreachable_rather_than_unready() {
     let addr = listener.local_addr().unwrap();
     drop(listener);
 
-    let probe = HttpReadinessProbe::new(Duration::from_secs(5)).unwrap();
+    let probe = HttpReadinessProbe::new(
+        Duration::from_secs(5),
+        krabka_traces::frontend::QuerierScheme::Http,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
     let health = probe.probe(&addr.to_string()).await;
     check!(
         matches!(health, QuerierHealth::Unreachable { .. }),

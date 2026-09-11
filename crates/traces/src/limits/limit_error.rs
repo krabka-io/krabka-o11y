@@ -6,6 +6,8 @@ pub enum LimitError {
     IngestionRateExceeded { rate: f64, observed: f64 },
     #[error("trace exceeds max spans per trace ({limit}): observed {observed}")]
     MaxSpansPerTrace { limit: u64, observed: u64 },
+    #[error("request exceeds max spans per request ({limit}): observed {observed}")]
+    MaxSpansPerRequest { limit: u64, observed: u64 },
     #[error("attribute exceeds max attribute bytes ({limit}): observed {observed}")]
     AttributeTooLong { limit: u64, observed: u64 },
     #[error("search limit exceeds max traces per search ({limit}): requested {requested}")]
@@ -22,6 +24,7 @@ impl LimitError {
         match self {
             Self::IngestionRateExceeded { .. } => 429,
             Self::MaxSpansPerTrace { .. }
+            | Self::MaxSpansPerRequest { .. }
             | Self::AttributeTooLong { .. }
             | Self::TracesPerSearchExceeded { .. }
             | Self::SearchDurationExceeded { .. } => 400,

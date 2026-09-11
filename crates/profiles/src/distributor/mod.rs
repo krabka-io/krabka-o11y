@@ -19,8 +19,12 @@ use connectrpc_axum::{
     MakeServiceBuilder, MessageLimits,
     message::{Code, ConnectError, ConnectRequest, ConnectResponse},
 };
+use krabka_blockstore::{TenantId, TenantPolicy, TenantResolveError};
 use krabka_client_producer::{Header, Producer, ProducerRecord};
-use krabka_observability::wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined};
+use krabka_observability::{
+    server_security::{Principal, ServerListener, ServerSecurity, authorize_tenant, serve_router},
+    wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
+};
 use krabka_pprof::PprofProfile;
 use krabka_throttle::TokenBucket;
 #[cfg(test)]
@@ -38,12 +42,13 @@ use crate::{
     error::ProfilesError,
     ids::{IngestBytes, IngestItems},
     ingest::{
-        LegacyDecodeLimits, RelabelConfig, TenantLimitConfig, apply_relabel, cap_session_id,
+        LegacyDecodeLimits, RelabelConfig, apply_relabel, cap_session_id,
         decode_ingest_body_with_limits, decode_otlp, decode_push, enforce_limits,
         parse_ingest_query, require_service_name, split_sample_types,
     },
     limits::{Limits, OverridesProvider},
     metrics::ServiceMetrics,
+    tenant_from_headers,
     wal::{
         PROFILES_WAL_TOPIC, ProfileRecord, WalFunction, WalLocation, WalMapping, WalSample,
         WalSymbolSet, partition_key,
@@ -54,150 +59,13 @@ use crate::{
 #[cfg(test)]
 mod tests {
 
-    /// `merge_ingest_limits` takes each field from the override when that
-    /// override is positive, and from the base otherwise. The four fields fall
-    /// back independently, so every value here differs from every other: a
-    /// field that reads its neighbour's override still produces a positive
-    /// number, and only distinct values make that visible.
-    #[test]
-    fn ingest_limits_fall_back_field_by_field() {
-        use krabka_units::bytes;
-
-        let base = crate::ingest::TenantLimits {
-            max_label_name: bytes(11),
-            max_label_names_per_series: 22,
-            max_label_value: bytes(33),
-            session_id_buckets: 44,
-        };
-        let zeroed = super::Limits {
-            max_label_name: bytes(0),
-            max_label_value: bytes(0),
-            max_label_names_per_series: 0,
-            max_session_id_cardinality: 0,
-            ..super::Limits::default()
-        };
-
-        // Every override unset: the base survives intact, field for field.
-        let merged = super::merge_ingest_limits(&base, &zeroed);
-        check!(merged.max_label_name == bytes(11));
-        check!(merged.max_label_names_per_series == 22);
-        check!(merged.max_label_value == bytes(33));
-        check!(merged.session_id_buckets == 44);
-
-        // Every override set: each replaces its own field and no other.
-        let overridden = super::Limits {
-            max_label_name: bytes(55),
-            max_label_value: bytes(66),
-            max_label_names_per_series: 77,
-            max_session_id_cardinality: 88,
-            ..super::Limits::default()
-        };
-        let merged = super::merge_ingest_limits(&base, &overridden);
-        check!(merged.max_label_name == bytes(55));
-        check!(merged.max_label_value == bytes(66));
-        check!(merged.max_label_names_per_series == 77);
-        check!(merged.session_id_buckets == 88);
-
-        // One field overridden at a time, so a fallback that reads the wrong
-        // side shows up as the other three changing when they should not.
-        let one = super::Limits {
-            max_label_value: bytes(66),
-            ..zeroed.clone()
-        };
-        let merged = super::merge_ingest_limits(&base, &one);
-        check!(merged.max_label_value == bytes(66), "the overridden one");
-        check!(merged.max_label_name == bytes(11), "and only that one");
-        check!(merged.max_label_names_per_series == 22);
-        check!(merged.session_id_buckets == 44);
-    }
     use std::sync::{Arc, Mutex};
 
     use assert2::{assert, check};
-    use krabka_units::{bytes, per_sec};
+    use krabka_units::per_sec;
     use prost::Message;
 
     use super::*;
-
-    /// `positive_or` and `merge_ingest_limits` implement one rule: a
-    /// per-tenant override counts only when it is set, and zero means unset.
-    /// Every field has to make that choice independently, so the case below
-    /// overrides exactly one field at a time and checks the other three still
-    /// come from the base.
-    #[test]
-    fn a_zero_override_falls_back_to_the_base_limit_field_by_field() {
-        let base = crate::ingest::TenantLimits {
-            max_label_name: bytes(11),
-            max_label_names_per_series: 22,
-            max_label_value: bytes(33),
-            session_id_buckets: 44,
-        };
-
-        // Limits::default() is not an empty override: its label caps are
-        // real values that would legitimately win. "Unset" means zero, so
-        // that is what the baseline here has to be.
-        let unset = || Limits {
-            max_label_name: bytes(0),
-            max_label_value: bytes(0),
-            max_label_names_per_series: 0,
-            max_session_id_cardinality: 0,
-            ..Limits::default()
-        };
-
-        check!(
-            super::merge_ingest_limits(&base, &unset()) == base,
-            "an override that sets nothing changes nothing"
-        );
-
-        // Each field on its own, with the rest left unset.
-        check!(
-            super::merge_ingest_limits(
-                &base,
-                &Limits {
-                    max_label_name: bytes(1),
-                    ..unset()
-                }
-            ) == crate::ingest::TenantLimits {
-                max_label_name: bytes(1),
-                ..base.clone()
-            }
-        );
-        check!(
-            super::merge_ingest_limits(
-                &base,
-                &Limits {
-                    max_label_names_per_series: 2,
-                    ..unset()
-                }
-            ) == crate::ingest::TenantLimits {
-                max_label_names_per_series: 2,
-                ..base.clone()
-            }
-        );
-        check!(
-            super::merge_ingest_limits(
-                &base,
-                &Limits {
-                    max_label_value: bytes(3),
-                    ..unset()
-                }
-            ) == crate::ingest::TenantLimits {
-                max_label_value: bytes(3),
-                ..base.clone()
-            }
-        );
-        check!(
-            super::merge_ingest_limits(
-                &base,
-                &Limits {
-                    max_session_id_cardinality: 4,
-                    ..unset()
-                }
-            ) == crate::ingest::TenantLimits {
-                session_id_buckets: 4,
-                ..base.clone()
-            }
-        );
-    }
 
     /// `rate_tokens_per_sec` rounds a fractional rate up, floors it at one
     /// token so a trickle still admits something, and caps it at the burst
@@ -244,11 +112,11 @@ mod tests {
     fn state_with_ingestion(rate: f64, burst: u64, max_tenants: usize) -> Arc<DistributorState> {
         Arc::new(DistributorState {
             sink: Arc::new(RecordingSink(Mutex::default())),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::from_yaml(&format!(
+            overrides: OverridesProvider::from_yaml(&format!(
                 "overrides:\n  tenant-a:\n    ingestion_rate_profiles_per_sec: {rate}\n    ingestion_burst_profiles: {burst}\n"
             ))
             .expect("the overrides parse"),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -274,26 +142,29 @@ mod tests {
         let state = state_with_ingestion(1_000_000.0, 2, 4096);
 
         check!(
-            super::enforce_ingestion_rate(&state, "tenant-a", 2).is_ok(),
+            super::enforce_ingestion_rate(&state, &tenant("tenant-a"), 2).is_ok(),
             "at the cap"
         );
         check!(
-            super::enforce_ingestion_rate(&state, "tenant-a", 3).is_err(),
+            super::enforce_ingestion_rate(&state, &tenant("tenant-a"), 3).is_err(),
             "one over the cap, with a rate that would otherwise allow it"
         );
 
         // A zero burst means "no burst cap", not "reject everything", so the
         // guard must be `> 0` rather than a plain non-zero test.
         let unlimited = state_with_ingestion(1_000_000.0, 0, 4096);
-        check!(super::enforce_ingestion_rate(&unlimited, "tenant-a", 5_000).is_ok());
+        check!(super::enforce_ingestion_rate(&unlimited, &tenant("tenant-a"), 5_000).is_ok());
 
-        // A tenant with no override of its own is not rate limited at all --
-        // asked for well past the DEFAULT burst of 10_000, which is what
-        // separates "skipped entirely" from "happened to fit under the
-        // default cap".
-        check!(super::enforce_ingestion_rate(&state, "tenant-b", 20_000).is_ok());
+        // A tenant with no override of its own is gated by the defaults, so a
+        // batch past the default burst of 10_000 is rejected. A gate that
+        // skipped an unlisted tenant would admit this.
+        check!(super::enforce_ingestion_rate(&state, &tenant("tenant-b"), 20_000).is_err());
+        check!(
+            super::enforce_ingestion_rate(&state, &tenant("tenant-b"), 1).is_ok(),
+            "and a batch inside the default burst still passes"
+        );
         // And an empty batch is never rejected, whatever the caps say.
-        check!(super::enforce_ingestion_rate(&state, "tenant-a", 0).is_ok());
+        check!(super::enforce_ingestion_rate(&state, &tenant("tenant-a"), 0).is_ok());
     }
 
     /// The per-tenant bucket map is capped, evicting one existing tenant
@@ -340,11 +211,11 @@ mod tests {
     fn state_with_max_series(limit: u64) -> Arc<DistributorState> {
         Arc::new(DistributorState {
             sink: Arc::new(RecordingSink(Mutex::default())),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::from_yaml(&format!(
+            overrides: OverridesProvider::from_yaml(&format!(
                 "overrides:\n  tenant-a:\n    max_series: {limit}\n"
             ))
             .unwrap(),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -353,6 +224,10 @@ mod tests {
             legacy_decode_limits: LegacyDecodeLimits::default(),
             metrics: ServiceMetrics::new(),
         })
+    }
+
+    fn tenant(name: &str) -> TenantId {
+        TenantId::new(name).expect("a valid tenant id")
     }
 
     fn series_record(name: &str) -> ProfileRecord {
@@ -378,7 +253,7 @@ mod tests {
     fn max_series_reserves_all_or_nothing() {
         let state = state_with_max_series(2);
         let reserved = |records: &[ProfileRecord]| {
-            super::enforce_and_reserve_max_series(&state, "tenant-a", records)
+            super::enforce_and_reserve_max_series(&state, &tenant("tenant-a"), records)
         };
         let held = || {
             state
@@ -422,7 +297,7 @@ mod tests {
         let records = [series_record("a"), series_record("b")];
 
         check!(
-            super::enforce_and_reserve_max_series(&state, "tenant-a", &records)
+            super::enforce_and_reserve_max_series(&state, &tenant("tenant-a"), &records)
                 .unwrap()
                 .is_empty()
         );
@@ -522,26 +397,20 @@ mod tests {
         }
     }
 
-    /// `ingest_span_tenant` reads the `X-Scope-OrgID` header. It returns the
-    /// value verbatim when the header is present and non-empty. It returns
-    /// `"unknown"` when the header is missing or empty.
+    // The span label is the tenant the resolver gave. A request that does not
+    // resolve gets a label that no tenant id can spell, so a reader of the
+    // trace never takes it for a tenant.
     #[test]
-    fn ingest_span_tenant_reads_scope_orgid_header() {
-        let mut present = HeaderMap::new();
-        present.insert("x-scope-orgid", "acme".parse().unwrap());
-        assert!(ingest_span_tenant(&present) == "acme");
-
-        let missing = HeaderMap::new();
-        assert!(ingest_span_tenant(&missing) == "unknown");
-
-        let mut empty = HeaderMap::new();
-        empty.insert("x-scope-orgid", "".parse().unwrap());
-        assert!(ingest_span_tenant(&empty) == "unknown");
+    fn the_ingest_span_is_labelled_with_the_resolved_tenant() {
+        check!(ingest_span_tenant(Some(&tenant("acme"))) == "acme");
+        check!(ingest_span_tenant(Some(&TenantId::anonymous())) == "anonymous");
+        check!(ingest_span_tenant(None) == "<unresolved>");
+        check!(TenantId::new(ingest_span_tenant(None)).is_err());
     }
 
     use crate::{
         error::ProfilesError,
-        ingest::{RelabelAction, RelabelConfig, TenantLimitConfig, TenantLimits},
+        ingest::{RelabelAction, RelabelConfig},
         limits::OverridesProvider,
         wal::ProfileRecord,
     };
@@ -604,8 +473,8 @@ mod tests {
     fn state_with(sink: Arc<RecordingSink>) -> Arc<DistributorState> {
         Arc::new(DistributorState {
             sink,
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::new(Limits::default()),
+            overrides: OverridesProvider::new(Limits::default()),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -704,8 +573,8 @@ mod tests {
         let metrics = ServiceMetrics::new();
         let state = Arc::new(DistributorState {
             sink: Arc::new(PartialSink::new(1)),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::new(Limits::default()),
+            overrides: OverridesProvider::new(Limits::default()),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -715,9 +584,14 @@ mod tests {
             metrics: metrics.clone(),
         });
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         // Two resource profiles, so the request becomes two WAL records and
@@ -747,7 +621,9 @@ mod tests {
         let state = state_with(sink.clone());
         let raws = vec![crate::wire::test_fixtures::raw_profile_2types()];
 
-        process_raw(&state, "tenant-a", raws).await.unwrap();
+        process_raw(&state, &tenant("tenant-a"), raws)
+            .await
+            .unwrap();
 
         let recs = sink.0.lock().unwrap();
         check!(recs.len() == 2);
@@ -822,7 +698,7 @@ mod tests {
 
         process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::ingest::RawProfile {
                 labels,
                 profile,
@@ -845,8 +721,8 @@ mod tests {
         let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(DistributorState {
             sink: sink.clone(),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::new(Limits::default()),
+            overrides: OverridesProvider::new(Limits::default()),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![RelabelConfig {
@@ -863,64 +739,203 @@ mod tests {
         });
         let raws = vec![crate::wire::test_fixtures::raw_profile_cpu()];
 
-        process_raw(&state, "t", raws).await.unwrap();
+        process_raw(&state, &tenant("t"), raws).await.unwrap();
 
         assert!(sink.0.lock().unwrap().is_empty());
     }
 
+    /// The overrides file's `defaults` block is what an operator sets when a
+    /// cap applies to every tenant, and it has to reach the structural caps a
+    /// push is checked against. A tenant with no entry of its own resolves to
+    /// those defaults, and a tenant entry departs from them.
     #[tokio::test]
-    async fn tenant_specific_limits_are_enforced() {
+    async fn overrides_defaults_reach_the_ingest_label_caps() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState {
-            sink,
-            limits: TenantLimitConfig::default().with_tenant_limits(
-                "tenant-a",
-                TenantLimits {
-                    max_label_value: bytes(3),
-                    ..Default::default()
-                },
-            ),
-            profile_overrides: OverridesProvider::new(Limits::default()),
-            active_series: Mutex::default(),
-            ingestion_buckets: Mutex::default(),
-            relabel: vec![],
-            max_decompressed: mebibytes(16),
-            max_tracked_tenants: 4096,
-            legacy_decode_limits: LegacyDecodeLimits::default(),
-            metrics: ServiceMetrics::new(),
-        });
+        let state = state_with_overrides(
+            sink.clone(),
+            r"
+defaults:
+  max_label_value_length: 3
+overrides:
+  tenant-a:
+    max_label_value_length: 256
+",
+        );
 
+        // `tenant-b` names no override entry, so only the defaults can reject
+        // it. Before the two limit systems collapsed into one, they could not.
         let err = process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-b"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
         .unwrap_err();
+        assert!(err.to_string().contains("value exceeds 3 bytes"), "{err}");
+
+        // `tenant-a` raises the cap above the fixture's longest value.
         process_raw(
             &state,
-            "tenant-b",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
         .unwrap();
 
-        assert!(err.to_string().contains("value exceeds"));
+        assert!(sink.0.lock().unwrap().len() == 1);
     }
 
+    /// The defaults block throttles a tenant that has no entry of its own, and
+    /// a zero rate turns the gate off for a tenant that asks for it. Before the
+    /// two limit systems collapsed into one, the rate gate skipped every tenant
+    /// the overrides file did not list, so a default rate reached nobody.
     #[tokio::test]
-    async fn label_count_limit_is_enforced_after_profile_type_split() {
+    async fn overrides_defaults_throttle_a_tenant_with_no_entry() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState {
-            sink: sink.clone(),
-            limits: TenantLimitConfig::default().with_tenant_limits(
-                "tenant-a",
-                TenantLimits {
-                    max_label_names_per_series: 5,
-                    ..Default::default()
-                },
-            ),
-            profile_overrides: OverridesProvider::new(Limits::default()),
+        let state = state_with_overrides(
+            sink.clone(),
+            r"
+defaults:
+  ingestion_rate_profiles_per_sec: 1
+  ingestion_burst_profiles: 1
+overrides:
+  tenant-a:
+    ingestion_rate_profiles_per_sec: 0
+",
+        );
+        let state = &state;
+        let push = |name: &'static str| async move {
+            process_raw(
+                state,
+                &tenant(name),
+                vec![crate::wire::test_fixtures::raw_profile_cpu()],
+            )
+            .await
+        };
+
+        // `tenant-b` names no entry, so only the defaults can throttle it. One
+        // profile spends its single token, and the next one finds none.
+        push("tenant-b").await.unwrap();
+        let err = push("tenant-b").await.unwrap_err();
+        assert!(err.to_string().contains("ingestion rate exceeded"), "{err}");
+
+        // A zero rate is unlimited, so an operator can turn the gate off for
+        // one tenant. Three profiles pass where the defaults allow one.
+        for _ in 0..3 {
+            push("tenant-a").await.unwrap();
+        }
+
+        assert!(sink.0.lock().unwrap().len() == 4);
+    }
+
+    /// The label-name cap resolves through the same provider as the value cap,
+    /// and reads its own field. A tenant entry and the defaults are both
+    /// exercised, because only the entry path worked before the collapse.
+    #[tokio::test]
+    async fn the_label_name_cap_resolves_through_the_one_provider() {
+        let sink = Arc::new(RecordingSink::default());
+        let state = state_with_overrides(
+            sink.clone(),
+            r"
+defaults:
+  max_label_name_length: 4
+overrides:
+  tenant-a:
+    max_label_name_length: 64
+",
+        );
+
+        let err = process_raw(
+            &state,
+            &tenant("tenant-b"),
+            vec![crate::wire::test_fixtures::raw_profile_cpu()],
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("name exceeds 4 bytes"), "{err}");
+
+        process_raw(
+            &state,
+            &tenant("tenant-a"),
+            vec![crate::wire::test_fixtures::raw_profile_cpu()],
+        )
+        .await
+        .unwrap();
+        assert!(sink.0.lock().unwrap().len() == 1);
+    }
+
+    /// The `__session_id__` cap folds a client's session id into a bucket, and
+    /// the bucket count comes from the resolved limits. A tenant that names no
+    /// entry takes the defaults' count, so the two tenants here land in
+    /// different ranges.
+    #[tokio::test]
+    async fn the_session_id_cap_comes_from_the_resolved_limits() {
+        let sink = Arc::new(RecordingSink::default());
+        let state = state_with_overrides(
+            sink.clone(),
+            r"
+defaults:
+  max_session_id_cardinality: 4
+overrides:
+  tenant-a:
+    max_session_id_cardinality: 1
+",
+        );
+        let with_session = || {
+            let mut raw = crate::wire::test_fixtures::raw_profile_cpu();
+            raw.labels.insert("__session_id__", "deadbeefcafef00d");
+            vec![raw]
+        };
+
+        process_raw(&state, &tenant("tenant-a"), with_session())
+            .await
+            .unwrap();
+        process_raw(&state, &tenant("tenant-b"), with_session())
+            .await
+            .unwrap();
+
+        let recs = sink.0.lock().unwrap();
+        let session = |index: usize| {
+            recs[index]
+                .labels
+                .iter()
+                .find(|(name, _)| name == "__session_id__")
+                .map(|(_, value)| value.clone())
+                .expect("the session id survives")
+        };
+        check!(session(0) == "0", "one bucket leaves only bucket zero");
+        let bucket: u64 = session(1).parse().expect("a bucket number");
+        check!(bucket < 4, "the defaults give four buckets");
+    }
+
+    /// A session id passes through untouched when no cardinality is set,
+    /// because a Pyroscope cap of zero is unlimited. A cap that read zero as
+    /// "one bucket" would collapse every session a tenant ever sent.
+    #[tokio::test]
+    async fn an_unset_session_cardinality_keeps_the_client_session_id() {
+        let sink = Arc::new(RecordingSink::default());
+        let state = state_with_overrides(sink.clone(), "overrides: {}\n");
+        let mut raw = crate::wire::test_fixtures::raw_profile_cpu();
+        raw.labels.insert("__session_id__", "deadbeefcafef00d");
+
+        process_raw(&state, &tenant("tenant-a"), vec![raw])
+            .await
+            .unwrap();
+
+        let recs = sink.0.lock().unwrap();
+        assert!(
+            recs[0]
+                .labels
+                .iter()
+                .any(|(name, value)| name == "__session_id__" && value == "deadbeefcafef00d")
+        );
+    }
+
+    fn state_with_overrides(sink: Arc<RecordingSink>, yaml: &str) -> Arc<DistributorState> {
+        Arc::new(DistributorState {
+            sink,
+            overrides: OverridesProvider::from_yaml(yaml).expect("the overrides parse"),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -928,11 +943,23 @@ mod tests {
             max_tracked_tenants: 4096,
             legacy_decode_limits: LegacyDecodeLimits::default(),
             metrics: ServiceMetrics::new(),
-        });
+        })
+    }
+
+    #[tokio::test]
+    async fn label_count_limit_is_enforced_after_profile_type_split() {
+        let sink = Arc::new(RecordingSink::default());
+        let state = state_with_overrides(
+            sink.clone(),
+            r"
+defaults:
+  max_label_names_per_series: 5
+",
+        );
 
         let err = process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
@@ -947,8 +974,7 @@ mod tests {
         let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(DistributorState {
             sink,
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::from_yaml(
+            overrides: OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -956,6 +982,7 @@ overrides:
 ",
             )
             .unwrap(),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -967,14 +994,14 @@ overrides:
 
         let err = process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
         .unwrap_err();
         process_raw(
             &state,
-            "tenant-b",
+            &tenant("tenant-b"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
@@ -988,8 +1015,7 @@ overrides:
         let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(DistributorState {
             sink: sink.clone(),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::from_yaml(
+            overrides: OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -997,6 +1023,7 @@ overrides:
 ",
             )
             .unwrap(),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -1008,7 +1035,7 @@ overrides:
 
         let err = process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_2types()],
         )
         .await
@@ -1023,8 +1050,7 @@ overrides:
         let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(DistributorState {
             sink: sink.clone(),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::from_yaml(
+            overrides: OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1033,6 +1059,7 @@ overrides:
 ",
             )
             .unwrap(),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -1044,7 +1071,7 @@ overrides:
 
         let err = process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_2types()],
         )
         .await
@@ -1059,8 +1086,7 @@ overrides:
         let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(DistributorState {
             sink: sink.clone(),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::from_yaml(
+            overrides: OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1069,6 +1095,7 @@ overrides:
 ",
             )
             .unwrap(),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -1080,21 +1107,21 @@ overrides:
 
         process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
         .unwrap();
         let err = process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
         .unwrap_err();
         process_raw(
             &state,
-            "tenant-b",
+            &tenant("tenant-b"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
@@ -1162,6 +1189,7 @@ overrides:
 
         push_handler(
             Extension(state.clone()),
+            Extension(Principal::Unauthenticated),
             headers,
             ConnectRequest(push_request_one_sample()),
         )
@@ -1196,6 +1224,7 @@ overrides:
 
         export_handler(
             Extension(state.clone()),
+            Extension(Principal::Unauthenticated),
             headers,
             ConnectRequest(otlp_export_request()),
         )
@@ -1222,9 +1251,14 @@ overrides:
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
         let body = otlp_export_request().encode_to_vec();
@@ -1252,9 +1286,14 @@ overrides:
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .unwrap();
 
@@ -1320,84 +1359,13 @@ overrides:
         );
     }
 
-    // C1: the ingest door must validate the `X-Scope-OrgID` tenant.
-    #[tokio::test]
-    async fn ingest_rejects_path_unsafe_tenant_with_400() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = state_with(sink.clone());
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
-        .await
-        .unwrap();
-
-        let response = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/ingest?name=myapp{{service_name=\"api\"}}&format=groups&units=samples&until=1700000000000"
-            ))
-            .header("content-type", "text/plain")
-            .header("x-scope-orgid", "../escape")
-            .body("main;work 3\n")
-            .send()
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::BAD_REQUEST, "{response:?}");
-        // A rejected tenant must not produce any WAL records.
-        assert!(sink.0.lock().unwrap().is_empty());
-    }
-
-    // C1: an absent header still defaults to the anonymous tenant.
-    #[tokio::test]
-    async fn ingest_without_tenant_header_defaults_to_anonymous() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = state_with(sink.clone());
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async move {
-            let _ = shutdown_rx.await;
-        })
-        .await
-        .unwrap();
-
-        let response = reqwest::Client::new()
-            .post(format!(
-                "http://{bound}/ingest?name=myapp{{service_name=\"api\"}}&format=groups&units=samples&until=1700000000000"
-            ))
-            .header("content-type", "text/plain")
-            .body("main;work 3\n")
-            .send()
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK, "{response:?}");
-        let recs = sink.0.lock().unwrap();
-        assert!(recs.len() == 1);
-        assert!(recs[0].tenant == "anonymous");
-    }
-
-    #[test]
-    fn tenant_from_headers_validates_and_defaults() {
-        use axum::http::HeaderValue;
-
-        let mut headers = HeaderMap::new();
-        assert!(tenant_from_headers(&headers).unwrap() == "anonymous");
-
-        headers.insert("x-scope-orgid", HeaderValue::from_static("tenant-a"));
-        assert!(tenant_from_headers(&headers).unwrap() == "tenant-a");
-
-        headers.insert("x-scope-orgid", HeaderValue::from_static("a/b"));
-        assert!(tenant_from_headers(&headers).is_err());
-    }
-
     // #3: when the WAL append fails, the max-series reservation is rolled back
     // so a failed write does not permanently consume the tenant's budget.
     #[tokio::test]
     async fn wal_append_failure_rolls_back_max_series_reservation() {
         let state = Arc::new(DistributorState {
             sink: Arc::new(FailingSink),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::from_yaml(
+            overrides: OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1405,6 +1373,7 @@ overrides:
 ",
             )
             .unwrap(),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -1416,7 +1385,7 @@ overrides:
 
         let err = process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_2types()],
         )
         .await
@@ -1450,8 +1419,7 @@ overrides:
         let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(DistributorState {
             sink: sink.clone(),
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::from_yaml(
+            overrides: OverridesProvider::from_yaml(
                 r"
 overrides:
   tenant-a:
@@ -1459,6 +1427,7 @@ overrides:
 ",
             )
             .unwrap(),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -1471,7 +1440,7 @@ overrides:
         // Two distinct series in one request exceed the cap of 1 and are rejected.
         let err = process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_2types()],
         )
         .await
@@ -1481,7 +1450,7 @@ overrides:
         // Nothing was reserved, so a single-series write afterwards succeeds.
         process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::wire::test_fixtures::raw_profile_cpu()],
         )
         .await
@@ -1517,12 +1486,12 @@ overrides:
         // past `MAX_TENANTS`.
         let state = Arc::new(DistributorState {
             sink,
-            limits: TenantLimitConfig::default(),
-            profile_overrides: OverridesProvider::new(crate::limits::Limits {
+            overrides: OverridesProvider::new(crate::limits::Limits {
                 ingestion_rate: per_sec(1000),
                 ingestion_burst_profiles: 1000,
                 ..Default::default()
             }),
+            tenant_policy: TenantPolicy::anonymous(),
             active_series: Mutex::default(),
             ingestion_buckets: Mutex::default(),
             relabel: vec![],
@@ -1533,8 +1502,8 @@ overrides:
         });
 
         for idx in 0..(4096 + 50) {
-            // `has_tenant_override` is false for the default provider, so the
-            // rate path is skipped; allocate buckets directly to exercise the cap.
+            // The cap lives in the bucket map, not in the rate gate, so the
+            // buckets are allocated directly rather than through a push.
             let _ = ingestion_bucket_for_tenant(&state, &format!("tenant-{idx}"), per_sec(10));
         }
 
@@ -1645,7 +1614,7 @@ overrides:
 
         process_raw(
             &state,
-            "tenant-a",
+            &tenant("tenant-a"),
             vec![crate::ingest::RawProfile {
                 labels,
                 profile,
@@ -1676,17 +1645,14 @@ mod evict_one_tenant;
 mod export_handler;
 mod extract_symbols;
 mod ingest_handler;
-mod ingest_limits_for_tenant;
 mod ingest_span_tenant;
 mod ingestion_bucket_for_tenant;
 mod internal_error_message;
 mod kafka_sink;
 mod limit_connect_code;
-mod merge_ingest_limits;
 mod normalize_optional_pprof_id;
 mod normalize_required_pprof_id;
 mod otlp_http_handler;
-mod positive_or;
 mod process_raw;
 mod profiles_error_response;
 mod push_handler;
@@ -1695,7 +1661,6 @@ mod rollback_reserved_series;
 mod router;
 mod serve;
 mod serve_supervised;
-mod tenant_from_headers;
 mod u32_from_i64;
 mod wal_sink;
 
@@ -1708,17 +1673,14 @@ use evict_one_tenant::evict_one_tenant;
 use export_handler::export_handler;
 use extract_symbols::extract_symbols;
 use ingest_handler::ingest_handler;
-use ingest_limits_for_tenant::ingest_limits_for_tenant;
 use ingest_span_tenant::ingest_span_tenant;
 use ingestion_bucket_for_tenant::ingestion_bucket_for_tenant;
 use internal_error_message::INTERNAL_ERROR_MESSAGE;
 pub use kafka_sink::KafkaSink;
 use limit_connect_code::limit_connect_code;
-use merge_ingest_limits::merge_ingest_limits;
 use normalize_optional_pprof_id::normalize_optional_pprof_id;
 use normalize_required_pprof_id::normalize_required_pprof_id;
 use otlp_http_handler::otlp_http_handler;
-use positive_or::positive_or;
 pub use process_raw::process_raw;
 use profiles_error_response::profiles_error_response;
 use push_handler::push_handler;
@@ -1727,6 +1689,5 @@ use rollback_reserved_series::rollback_reserved_series;
 pub use router::router;
 pub use serve::serve;
 pub use serve_supervised::serve_supervised;
-use tenant_from_headers::tenant_from_headers;
 use u32_from_i64::u32_from_i64;
 pub use wal_sink::WalSink;

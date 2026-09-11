@@ -1,4 +1,4 @@
-use super::{DistributorState, PushError, WalRecord, partition_key};
+use super::{DistributorState, PushError, TenantId, WalRecord, partition_key};
 
 /// Appends already-gated records to the WAL as one pipelined batch.
 ///
@@ -6,12 +6,17 @@ use super::{DistributorState, PushError, WalRecord, partition_key};
 /// series stay ordered on the partition their key selects.
 pub(crate) async fn append_wal_records(
     state: &DistributorState,
-    tenant: &str,
+    tenant: &TenantId,
     records: Vec<WalRecord>,
 ) -> Result<(), PushError> {
     let keyed: Vec<_> = records
         .into_iter()
-        .map(|record| (partition_key(tenant, record.series_fingerprint()), record))
+        .map(|record| {
+            (
+                partition_key(tenant.as_str(), record.series_fingerprint()),
+                record,
+            )
+        })
         .collect();
     match state.sink.append_batch(keyed).await {
         Ok(()) => Ok(()),

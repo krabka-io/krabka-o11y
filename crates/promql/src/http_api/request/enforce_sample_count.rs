@@ -1,12 +1,10 @@
-use super::{ApiError, MetricStore, PrometheusApiState, QueryEnforcer};
+use super::{ApiError, MetricStore, PrometheusApiState, QueryEnforcer, TenantId};
 
 pub(crate) fn enforce_sample_count<S: MetricStore>(
     state: &PrometheusApiState<S>,
-    tenant: &str,
+    tenant: &TenantId,
     processed: u64,
 ) -> Result<(), ApiError> {
-    let Some(limits) = &state.query_limits else {
-        return Ok(());
-    };
-    QueryEnforcer::check_sample_count(limits.for_tenant(tenant), processed).map_err(ApiError::from)
+    QueryEnforcer::check_sample_count(state.query_limits.for_tenant(tenant.as_str()), processed)
+        .map_err(ApiError::from)
 }

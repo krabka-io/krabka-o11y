@@ -1,5 +1,5 @@
 use super::{
-    AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RulerAlertState,
+    AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RulerAlertState, TenantId,
     evaluate_and_dispatch_alerting_rule_with_state, yaml_optional_string,
 };
 
@@ -13,7 +13,7 @@ pub async fn evaluate_and_dispatch_alerting_rule_group<S, A>(
     engine: &PromqlEngine<S>,
     sink: &A,
     state: &mut RulerAlertState,
-    tenant: &str,
+    tenant: &TenantId,
     group: &serde_yaml::Value,
     eval_time_ms: i64,
 ) -> Result<usize, PromqlError>

@@ -9,7 +9,7 @@ pub(crate) struct MomentPartialRecordingExecutor {
 impl RangeQueryExecutor for MomentPartialRecordingExecutor {
     async fn execute_range_query(
         &self,
-        _tenant: &str,
+        _tenant: &TenantId,
         query: &FrontendRangeQuery,
     ) -> Result<QueryResult, PromqlError> {
         self.calls

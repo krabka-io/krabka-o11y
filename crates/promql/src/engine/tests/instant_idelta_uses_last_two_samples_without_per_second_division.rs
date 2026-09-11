@@ -14,7 +14,11 @@ pub(crate) async fn instant_idelta_uses_last_two_samples_without_per_second_divi
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "idelta(temperature_celsius[2m])", 90_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "idelta(temperature_celsius[2m])",
+            90_000,
+        )
         .await
         .unwrap();
 

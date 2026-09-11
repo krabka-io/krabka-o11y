@@ -10,7 +10,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use krabka_blockstore::{LabelMatcher, Labels, MatchOp, SeriesFingerprint};
+use krabka_blockstore::{LabelMatcher, Labels, MatchOp, SeriesFingerprint, TenantId};
 use krabka_metrics::{
     BucketSpan, NativeHistogram, ResetHint, decode_native_histograms,
     wire::{pb, snappy_block_decode},
@@ -19,8 +19,9 @@ use num_traits::ToPrimitive;
 use prost::Message;
 
 use super::{
-    ApiError, PrometheusApiState, enforce_sample_count, enforce_selected_series_limit,
-    tenant_from_headers, validate_timestamp_range,
+    ApiError, Extension, Principal, PrometheusApiState, authorized_tenant_from_headers,
+    enforce_query_range_limit, enforce_sample_count, enforce_selected_series_limit,
+    validate_timestamp_range,
 };
 use crate::{
     MetricStore, PromqlError,

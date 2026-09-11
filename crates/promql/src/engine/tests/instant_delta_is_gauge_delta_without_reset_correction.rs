@@ -14,7 +14,11 @@ pub(crate) async fn instant_delta_is_gauge_delta_without_reset_correction() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "delta(temperature_celsius[1m])", 60_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "delta(temperature_celsius[1m])",
+            60_000,
+        )
         .await
         .unwrap();
 

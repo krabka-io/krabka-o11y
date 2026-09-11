@@ -24,7 +24,7 @@ impl ConcurrencyProbeExecutor {
 impl RangeQueryExecutor for ConcurrencyProbeExecutor {
     async fn execute_range_query(
         &self,
-        _tenant: &str,
+        _tenant: &TenantId,
         query: &FrontendRangeQuery,
     ) -> Result<QueryResult, PromqlError> {
         self.calls

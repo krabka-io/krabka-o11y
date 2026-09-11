@@ -1,7 +1,9 @@
+use krabka_client_core::ClientSecurity;
 use krabka_units::convert::{StdDurationExt, TimeExt};
 
 use crate::{
-    BlockDescriptor, BrokerBackedIngestLimiter, ClientResourcePolicy, ConfiguredObjectStore,
+    BlockDescriptor, BrokerAccessPolicy, BrokerBackedIngestLimiter, ClientResourcePolicy,
+    ConfiguredObjectStore, DeferredQueryAuthorizerConnect, DeferredWalConsumerConnect,
     KafkaLogWalConsumer, KafkaLogWalSink, ObjectPath, ObjectStore, Role, ServiceConfig,
     ServiceConfigError, ServiceDependencies, ServiceRuntimeError, TenantCompactionIndexCache, Time,
     advance_and_persist_compaction_frontier, build_configured_object_store,

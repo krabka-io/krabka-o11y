@@ -21,7 +21,7 @@ pub(crate) async fn histogram_quantiles_emits_one_sample_per_requested_quantile(
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"histogram_quantiles(http_request_duration_seconds_bucket, "quantile", 0.5, 0.9)"#,
             10_000,
         )

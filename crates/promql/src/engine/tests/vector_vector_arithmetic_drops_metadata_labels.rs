@@ -28,7 +28,7 @@ pub(crate) async fn vector_vector_arithmetic_drops_metadata_labels() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "requests_total + 1", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "requests_total + 1", 10_000)
         .await
         .unwrap();
 

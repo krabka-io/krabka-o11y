@@ -2,13 +2,15 @@ use krabka_observability::RoleReadiness;
 
 use super::{
     Arc, CancellationToken, Cli, KafkaSpanSource, MetricsGenConfig, MetricsGenService,
-    PrometheusRemoteWriteSink, SystemClock, apply_metrics_generator_cli_overrides, wal_consumer,
+    ProcessSecurity, PrometheusRemoteWriteSink, SystemClock, apply_metrics_generator_cli_overrides,
+    wal_consumer,
 };
 
 pub(crate) async fn run_metrics_generator(
     cli: Cli,
     readiness: RoleReadiness,
     shutdown: CancellationToken,
+    security: &ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // The spans this role reads all come from the WAL. Until the consumer has
     // a broker it generates no metrics at all, and the admin port says so.
@@ -22,18 +24,20 @@ pub(crate) async fn run_metrics_generator(
     apply_metrics_generator_cli_overrides(&mut cfg, &cli);
 
     let consumer = wal_consumer(
-        cli.bootstrap,
+        &cli,
         "krabka-traces-metrics-generator",
         None,
-        cli.wal_fetch_max,
-        cli.wal_fetch_partition_max,
-        cli.client_dispatch_queue_capacity,
-        cli.client_frame_max,
+        security.wal.as_ref(),
     )
     .await?;
     wal_consumer_gate.mark_ready();
     let source = Arc::new(KafkaSpanSource::new(consumer));
-    let sink = Arc::new(PrometheusRemoteWriteSink::new(cfg.remote_write_url.clone()));
+    // The remote-write target is a Krabka metrics distributor, so the sink
+    // presents the internal client credential.
+    let sink = Arc::new(PrometheusRemoteWriteSink::new(
+        cfg.remote_write_url.clone(),
+        security.server.internal_client(),
+    )?);
     let service = MetricsGenService::new(cfg, Arc::new(SystemClock), source, sink)
         .with_poll_policy(
             cli.metrics_generator_poll_batch_size,

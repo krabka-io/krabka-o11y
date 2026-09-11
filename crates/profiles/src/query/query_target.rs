@@ -1,1 +1,3 @@
-pub(crate) type QueryTarget<'a> = (&'a str, &'a str, &'a str);
+use super::TenantId;
+
+pub(crate) type QueryTarget<'a> = (&'a TenantId, &'a str, &'a str);

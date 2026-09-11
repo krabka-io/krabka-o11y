@@ -142,20 +142,26 @@ pub(crate) async fn binary_planner_path_matches_interpreter() {
 
     // Pin specific behaviors the parity above relies on.
     // 1. `__name__` is dropped for arithmetic.
-    let arith = engine.query_instant("t", "m1 + m2", time_ms).await.unwrap();
+    let arith = engine
+        .query_instant(&tenant_id("t"), "m1 + m2", time_ms)
+        .await
+        .unwrap();
     let QueryResult::InstantVector(arith) = arith else {
         panic!("expected vector");
     };
     assert2::assert!(arith.iter().all(|s| s.labels.get("__name__").is_none()));
     // 2. A comparison without `bool` keeps the LHS labelset (incl. __name__).
-    let cmp = engine.query_instant("t", "m1 > m2", time_ms).await.unwrap();
+    let cmp = engine
+        .query_instant(&tenant_id("t"), "m1 > m2", time_ms)
+        .await
+        .unwrap();
     let QueryResult::InstantVector(cmp) = cmp else {
         panic!("expected vector");
     };
     assert2::assert!(cmp.iter().all(|s| s.labels.get("__name__") == Some("m1")));
     // 3. A no-match set op: `right and on(job) left` drops `web` (no left).
     let setop = engine
-        .query_instant("t", "right and on(job) left", time_ms)
+        .query_instant(&tenant_id("t"), "right and on(job) left", time_ms)
         .await
         .unwrap();
     let QueryResult::InstantVector(setop) = setop else {

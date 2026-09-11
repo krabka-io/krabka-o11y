@@ -1,64 +1,68 @@
 use super::{
-    AclEntryFilter, AdminClient, AdminError, Arc, AtomicBool, AtomicOrdering, ClientResourcePolicy,
-    LogQueryAuthorizer, QueryAuthorizationError, admin_connection_options, async_trait,
-    check_tenant_wal_read_acl,
+    AdminBrokerAccess, AdminClient, AdminError, Arc, AtomicBool, BrokerAccessCache,
+    BrokerAccessPolicy, CancellationToken, ClientResourcePolicy, ClientSecurity,
+    LogQueryAuthorizer, Principal, QueryAuthorizationError, TenantId, admin_connection_options,
+    async_trait, check_tenant_wal_read_acl,
 };
 
+/// Allows a read when the broker's ACLs grant the request's ACL principal read
+/// on the WAL topic.
+///
+/// The ACL principal is `User:{name}` for an authenticated request and
+/// `User:{tenant}` otherwise. [`check_tenant_wal_read_acl`] gives the whole
+/// rule. The ACLs come from a [`BrokerAccessCache`], so a check does not wait
+/// on the broker. See that type for how stale an answer may be.
 pub(crate) struct BrokerBackedQueryAuthorizer {
-    pub(crate) admin: tokio::sync::Mutex<AdminClient>,
-    pub(crate) wal_topic: String,
-    pub(crate) connected: Arc<AtomicBool>,
+    pub(crate) access: BrokerAccessCache,
 }
 
 impl BrokerBackedQueryAuthorizer {
+    /// Connects the admin client under `security`, and holds its answers
+    /// under `policy`.
+    ///
+    /// `connected` reads `true` while the last ACL lookup succeeded.
     pub(crate) async fn connect(
         bootstrap: &str,
         wal_topic: String,
         client_resource_policy: ClientResourcePolicy,
+        security: Option<&ClientSecurity>,
         connected: Arc<AtomicBool>,
+        policy: BrokerAccessPolicy,
     ) -> Result<Self, AdminError> {
         let admin = AdminClient::connect_with_options(
             &[bootstrap.to_string()],
-            admin_connection_options(client_resource_policy),
+            admin_connection_options(client_resource_policy, security),
         )
         .await?;
-        Ok(Self {
+        let source = Arc::new(AdminBrokerAccess {
             admin: tokio::sync::Mutex::new(admin),
-            wal_topic,
-            connected,
+        });
+        Ok(Self {
+            access: BrokerAccessCache::new(source, wal_topic, policy, connected),
         })
+    }
+
+    /// Refreshes the ACL snapshot once per TTL until `token` is cancelled.
+    pub(crate) async fn keep_fresh(&self, token: CancellationToken) {
+        self.access.keep_fresh(token).await;
     }
 }
 
 #[async_trait]
 impl LogQueryAuthorizer for BrokerBackedQueryAuthorizer {
-    #[cfg_attr(test, mutants::skip)]
-    async fn check(&self, tenant: &str) -> Result<(), QueryAuthorizationError> {
-        let result = {
-            let mut admin = self.admin.lock().await;
-            admin.describe_acls(&AclEntryFilter::default()).await
-        };
-        let acls = match result {
-            Ok(acls) => {
-                self.connected.store(true, AtomicOrdering::SeqCst);
-                acls
-            }
-            Err(AdminError::Broker {
-                api: "DescribeAcls",
-                code: 54,
-                ..
-            }) => {
-                self.connected.store(true, AtomicOrdering::SeqCst);
-                Vec::new()
-            }
-            Err(error) => {
-                self.connected.store(false, AtomicOrdering::SeqCst);
-                return Err(QueryAuthorizationError::Unavailable {
+    async fn check(
+        &self,
+        principal: &Principal,
+        tenant: &TenantId,
+    ) -> Result<(), QueryAuthorizationError> {
+        let acls =
+            self.access
+                .acls()
+                .await
+                .map_err(|reason| QueryAuthorizationError::Unavailable {
                     tenant: tenant.to_string(),
-                    reason: error.to_string(),
-                });
-            }
-        };
-        check_tenant_wal_read_acl(tenant, &self.wal_topic, &acls)
+                    reason,
+                })?;
+        check_tenant_wal_read_acl(principal, tenant, &self.access.wal_topic, &acls)
     }
 }

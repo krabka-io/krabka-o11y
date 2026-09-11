@@ -14,7 +14,7 @@ pub(crate) async fn recording_rule_merges_rule_level_labels_into_every_series() 
 
     let records = super::super::evaluate_recording_rule(
         &engine,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         "job:up:current",
         "up",
         &rule_labels,

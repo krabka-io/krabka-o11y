@@ -15,6 +15,14 @@ pub enum PromqlError {
 
     #[error("unsupported: {0}")]
     Unsupported(String),
+
+    /// A per-tenant query limit rejected the evaluation.
+    ///
+    /// The message is the limit error's own message, so the HTTP layer reports
+    /// the same text for an engine-raised limit and for one raised at the API
+    /// boundary.
+    #[error("{0}")]
+    Limit(#[from] krabka_metrics::LimitError),
 }
 
 impl From<datafusion::error::DataFusionError> for PromqlError {

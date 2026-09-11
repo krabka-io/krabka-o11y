@@ -8,7 +8,8 @@ pub(crate) fn service_dependencies_builder_methods_preserve_existing_fields() {
     impl LogIngestLimiter for TestLimiter {
         async fn check(
             &self,
-            _tenant: &str,
+            _principal: &Principal,
+            _tenant: &TenantId,
             _records: &[WalLogRecord],
         ) -> Result<(), IngestLimitError> {
             Ok(())
@@ -19,7 +20,11 @@ pub(crate) fn service_dependencies_builder_methods_preserve_existing_fields() {
     struct TestAuthorizer;
     #[async_trait]
     impl LogQueryAuthorizer for TestAuthorizer {
-        async fn check(&self, _tenant: &str) -> Result<(), QueryAuthorizationError> {
+        async fn check(
+            &self,
+            _principal: &Principal,
+            _tenant: &TenantId,
+        ) -> Result<(), QueryAuthorizationError> {
             Ok(())
         }
     }
@@ -38,13 +43,14 @@ pub(crate) fn service_dependencies_builder_methods_preserve_existing_fields() {
         .with_ingest_limiter(TestLimiter)
         .with_query_authorizer(TestAuthorizer)
         .with_hot_tail_shared_frontier(BufferedLogHotTail::default(), frontier.clone())
-        .with_deferred_wal_consumer_connect(
-            "broker:9092".to_string(),
-            "group".to_string(),
-            "topic".to_string(),
+        .with_deferred_wal_consumer_connect(DeferredWalConsumerConnect {
+            bootstrap: "broker:9092".to_string(),
+            group_id: "group".to_string(),
+            topic: "topic".to_string(),
             client_resource_policy,
-            crate::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
-        );
+            security: None,
+            metrics: crate::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
+        });
 
     check!(deps.metrics.is_some());
     check!(deps.wal_sink.is_some());
@@ -58,19 +64,36 @@ pub(crate) fn service_dependencies_builder_methods_preserve_existing_fields() {
     ));
     match deps.hot_tail.as_ref().unwrap().frontier.clone() {
         CompactionFrontierSource::Shared(actual) => {
-            assert_eq!(actual.snapshot(), frontier.snapshot());
+            check!(actual.snapshot() == frontier.snapshot());
         }
         CompactionFrontierSource::Snapshot(_) => panic!("expected shared frontier"),
     }
     let deferred = deps.deferred_wal_consumer_connect.as_ref().unwrap();
-    assert_eq!(deferred.bootstrap, "broker:9092");
-    assert_eq!(deferred.group_id, "group");
-    assert_eq!(deferred.topic, "topic");
-    assert_eq!(deferred.client_resource_policy, client_resource_policy);
-    let options = admin_connection_options(client_resource_policy);
-    assert_eq!(
-        options.dispatch_queue_capacity,
-        client_resource_policy.dispatch_queue_capacity
+    check!(
+        (
+            deferred.bootstrap.as_str(),
+            deferred.group_id.as_str(),
+            deferred.topic.as_str(),
+            deferred.client_resource_policy,
+            deferred.security.is_none(),
+        ) == (
+            "broker:9092",
+            "group",
+            "topic",
+            client_resource_policy,
+            true
+        )
     );
-    assert_eq!(options.frame_max, client_resource_policy.frame_max);
+    let options = admin_connection_options(client_resource_policy, None);
+    check!(
+        (
+            options.dispatch_queue_capacity,
+            options.frame_max,
+            options.security.is_none()
+        ) == (
+            client_resource_policy.dispatch_queue_capacity,
+            client_resource_policy.frame_max,
+            true
+        )
+    );
 }

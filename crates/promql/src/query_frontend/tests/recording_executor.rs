@@ -9,7 +9,7 @@ pub(crate) struct RecordingExecutor {
 impl RangeQueryExecutor for RecordingExecutor {
     async fn execute_range_query(
         &self,
-        _tenant: &str,
+        _tenant: &TenantId,
         query: &FrontendRangeQuery,
     ) -> Result<QueryResult, PromqlError> {
         self.calls

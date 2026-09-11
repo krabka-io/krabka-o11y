@@ -2,7 +2,10 @@
 
 use std::net::SocketAddr;
 
+use krabka_blockstore::TenantPolicy;
 use krabka_units::{ByteSize, Time, bytes, mebibytes, secs};
+
+use crate::frontend::QuerierScheme;
 
 /// Static configuration for the `query-frontend` role.
 ///
@@ -50,6 +53,12 @@ pub struct FrontendConfig {
     pub readiness_timeout: Time,
     /// The frontend's own listen address.
     pub listen_addr: SocketAddr,
+    /// The policy that every frontend route resolves a tenant with. Default:
+    /// [`TenantPolicy::anonymous`].
+    pub tenant_policy: TenantPolicy,
+    /// The scheme that the frontend dials every querier with. Default:
+    /// [`QuerierScheme::Http`].
+    pub querier_scheme: QuerierScheme,
 }
 
 impl Default for FrontendConfig {
@@ -70,6 +79,8 @@ impl Default for FrontendConfig {
             membership_refresh_interval: secs(5),
             readiness_timeout: secs(2),
             listen_addr: "0.0.0.0:3200".parse().expect("valid default addr"),
+            tenant_policy: TenantPolicy::anonymous(),
+            querier_scheme: QuerierScheme::Http,
         }
     }
 }

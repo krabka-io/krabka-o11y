@@ -4,7 +4,7 @@ use super::*;
 pub(crate) async fn scalar_binary_atan2_returns_angle_radians() {
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "1 atan2 1", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "1 atan2 1", 10_000)
         .await
         .unwrap();
     assert2::assert!(

@@ -15,7 +15,7 @@ pub(crate) async fn matching_on_a_metadata_label_keeps_it_out_of_the_result() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "x - on (__name__) x", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "x - on (__name__) x", 10_000)
         .await
         .unwrap();
 

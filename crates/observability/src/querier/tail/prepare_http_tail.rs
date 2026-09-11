@@ -1,21 +1,26 @@
 use super::{
     CompactionFrontier, CompactionFrontierSource, HeaderMap, HttpQueryError,
-    LOKI_DEFAULT_TAIL_LIMIT, QuerierState, QueryParams, TailStream, active_log_delete_filters,
-    authorized_tenant, loki_encoding_flags, loki_stream_encoding_for_headers,
-    optional_start_end_range, parse_query, plan_stream_query, validate_loki_tail_delay_for,
-    validate_query_length_limit,
+    LOKI_DEFAULT_TAIL_LIMIT, QuerierState, QueryParams, RequestSecurity, TailStream,
+    TenantErrorSurface, active_log_delete_filters, authorized_tenant, loki_encoding_flags,
+    loki_stream_encoding_for_headers, optional_start_end_range, parse_query, plan_stream_query,
+    validate_loki_tail_delay_for, validate_query_string_bytes_limit,
 };
 
 pub(crate) async fn prepare_http_tail(
     state: &QuerierState,
+    security: &RequestSecurity,
     headers: &HeaderMap,
     params: &QueryParams,
 ) -> Result<TailStream, HttpQueryError> {
-    let tenant = authorized_tenant(state, headers).await?;
+    let tenant = authorized_tenant(state, security, headers, TenantErrorSurface::Tail).await?;
+    // One resolution for the whole request: every check below reads the
+    // tenant's limits from this state.
+    let state = &state.with_tenant_limits(&tenant);
+    let tenant = tenant.as_str();
     let time_range = optional_start_end_range(params.start, params.since, params.end)?;
     let delay_for = params.delay_for.unwrap_or(0);
     validate_loki_tail_delay_for(delay_for)?;
-    validate_query_length_limit(state, &params.query)?;
+    validate_query_string_bytes_limit(state, &params.query)?;
     let query = parse_query(&params.query).map_err(|source| HttpQueryError::LokiParse {
         query: params.query.clone(),
         source,

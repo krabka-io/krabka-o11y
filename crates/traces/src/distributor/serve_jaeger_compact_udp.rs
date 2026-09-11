@@ -1,7 +1,17 @@
-use super::{Arc, CancellationToken, DistributorState, SocketAddr, handle_jaeger_compact_datagram};
+use super::{
+    Arc, CancellationToken, DistributorState, ServerSecurity, SocketAddr,
+    handle_jaeger_compact_datagram,
+};
 
 /// Serve the Jaeger compact-Thrift UDP receiver until cancelled, returning the
-/// bound address and the receive loop's handle.
+/// bound address and the receive loop's handle, or `None` when `security`
+/// turns on authentication.
+///
+/// A datagram carries no header and no TLS, so it cannot present a
+/// credential. When a credentials file is configured, the receiver does not
+/// bind its port and logs one warning that says why. Tempo's own UDP receiver
+/// has no authentication either. With no credentials file, the receiver serves
+/// every datagram as unauthenticated, as upstream does.
 ///
 /// UDP has no connection for a failure to show up on, so a receiver that has
 /// stopped looks exactly like a client that is not sending. The handle is how
@@ -14,8 +24,16 @@ use super::{Arc, CancellationToken, DistributorState, SocketAddr, handle_jaeger_
 pub async fn serve_jaeger_compact_udp(
     addr: SocketAddr,
     state: Arc<DistributorState>,
+    security: &ServerSecurity,
     shutdown: CancellationToken,
-) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
+) -> std::io::Result<Option<(SocketAddr, tokio::task::JoinHandle<()>)>> {
+    if security.authentication_enabled() {
+        tracing::warn!(
+            %addr,
+            "traces distributor does not start the Jaeger compact UDP receiver: a datagram cannot carry a credential, and --auth-credentials-config turns on authentication"
+        );
+        return Ok(None);
+    }
     let socket = tokio::net::UdpSocket::bind(addr).await?;
     let bound = socket.local_addr()?;
     let handle = tokio::spawn(async move {
@@ -27,7 +45,7 @@ pub async fn serve_jaeger_compact_udp(
                     match received {
                         Ok((len, peer)) => {
                             if let Err(err) =
-                                handle_jaeger_compact_datagram(&state, "anonymous", &buf[..len]).await
+                                handle_jaeger_compact_datagram(&state, &buf[..len]).await
                             {
                                 tracing::warn!(%peer, error = %err, "jaeger compact datagram rejected");
                             }
@@ -41,5 +59,5 @@ pub async fn serve_jaeger_compact_udp(
             }
         }
     });
-    Ok((bound, handle))
+    Ok(Some((bound, handle)))
 }

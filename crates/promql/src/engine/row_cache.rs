@@ -10,6 +10,7 @@ use arrow::{
 use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
 use krabka_metrics::{NativeHistogram, decode_native_histograms};
 
+use super::samples_per_query_exceeded;
 use crate::{PromqlError, ScanResult, error::Result};
 
 tokio::task_local! {

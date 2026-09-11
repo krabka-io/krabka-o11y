@@ -29,7 +29,7 @@ rules:
         &wal_sink,
         &alert_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &group,
         60_000,
     )
@@ -49,7 +49,7 @@ rules:
         &wal_sink,
         &alert_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &group,
         360_000,
     )

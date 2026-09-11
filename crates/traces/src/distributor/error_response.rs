@@ -7,6 +7,8 @@ pub(crate) fn error_response(err: &TracesError) -> Response {
         TracesError::Limit(_) | TracesError::RateLimit(_) => {
             tempo_error_response(status, err.to_string())
         }
+        // The same 403 body that every Krabka listener sends for a denial.
+        TracesError::TenantDenied(denied) => denied.clone().into_response(),
         _ => (status, err.to_string()).into_response(),
     }
 }

@@ -1,47 +1,41 @@
 use super::{
-    ApiError, Arc, Bytes, HeaderMap, IntoResponse, MetricStore, Path, PrometheusApiState, Response,
-    State, StatusCode, require_yaml_content_type, rule_group_name, tenant_from_headers,
-    validate_rule_group,
+    Arc, Bytes, ConnectInfo, Extension, HeaderMap, IntoResponse, MetricStore,
+    OPERATION_RULE_GROUP_SET, Path, PeerAddr, Principal, PrometheusApiState, RESOURCE_RULE_GROUP,
+    RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, Response, State, authorized_tenant_from_headers,
+    record_ruler_config_change, resource, store_ruler_config_group,
 };
 
 pub(crate) async fn set_ruler_config_group<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
+    peer: Option<Extension<ConnectInfo<PeerAddr>>>,
     headers: HeaderMap,
     Path(namespace): Path<String>,
     body: Bytes,
 ) -> Response {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };
-    if let Err(error) = require_yaml_content_type(&headers) {
-        return error.into_response();
+    let mut resources = vec![
+        resource(RESOURCE_TENANT, tenant.as_str()),
+        resource(RESOURCE_RULE_NAMESPACE, namespace.as_str()),
+    ];
+    let (response, group_name) =
+        store_ruler_config_group(&state, &headers, tenant, &namespace, &body);
+    if let Some(group_name) = group_name {
+        resources.push(resource(
+            RESOURCE_RULE_GROUP,
+            format!("{namespace}/{group_name}"),
+        ));
     }
-    let group: serde_yaml::Value = match serde_yaml::from_slice(&body) {
-        Ok(group) => group,
-        Err(error) => {
-            return ApiError::bad_data(format!("rule group YAML decode failed: {error}"))
-                .into_response();
-        }
-    };
-    let group_name = match rule_group_name(&group) {
-        Ok(name) => name,
-        Err(error) => return error.into_response(),
-    };
-    if let Err(error) = validate_rule_group(&group) {
-        return error.into_response();
-    }
-
-    match state.ruler_rules.write() {
-        Ok(mut rules) => {
-            rules
-                .entry(tenant)
-                .or_default()
-                .entry(namespace)
-                .or_default()
-                .insert(group_name, group);
-            StatusCode::ACCEPTED.into_response()
-        }
-        Err(_) => ApiError::internal("ruler rules lock poisoned").into_response(),
-    }
+    record_ruler_config_change(
+        &state.audit,
+        &principal,
+        peer,
+        OPERATION_RULE_GROUP_SET,
+        resources,
+        &response,
+    );
+    response
 }

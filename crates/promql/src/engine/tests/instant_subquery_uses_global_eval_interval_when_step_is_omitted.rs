@@ -20,7 +20,7 @@ pub(crate) async fn instant_subquery_uses_global_eval_interval_when_step_is_omit
         },
     );
     let result = engine
-        .query_instant("tenant-a", "queue_depth[90s:]", 90_000)
+        .query_instant(&tenant_id("tenant-a"), "queue_depth[90s:]", 90_000)
         .await
         .unwrap();
 

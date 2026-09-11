@@ -15,7 +15,7 @@ pub(crate) async fn instant_predict_linear_extrapolates_gauge_series() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "predict_linear(disk_free_bytes[2m], 60)",
             120_000,
         )
@@ -35,7 +35,7 @@ pub(crate) async fn instant_predict_linear_extrapolates_gauge_series() {
     // three samples with nothing to refuse.
     let QueryResult::InstantVector(samples) = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "predict_linear(disk_free_bytes[3m], 60)",
             120_000,
         )

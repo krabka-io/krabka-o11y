@@ -20,7 +20,11 @@ pub(crate) async fn instant_limit_ratio_negative_selects_complement_subset() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "limit_ratio(-0.25, memory_bytes)", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "limit_ratio(-0.25, memory_bytes)",
+            10_000,
+        )
         .await
         .unwrap();
 

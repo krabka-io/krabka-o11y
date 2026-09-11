@@ -7,11 +7,12 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
+    time::Instant,
 };
 
 use axum::{
-    Router,
+    Extension, Router,
     body::Bytes as BodyBytes,
     extract::{DefaultBodyLimit, State},
     http::{HeaderMap, HeaderValue, StatusCode},
@@ -23,11 +24,16 @@ pub use ha::{
     DEFAULT_HA_FAILOVER_TIMEOUT, HA_TRACKER_TOPIC, HaDecision, HaElection, HaElectionRecord,
     HaTracker, ha_decision, ha_election, strip_replica_label,
 };
-use krabka_blockstore::SeriesFingerprint;
+use krabka_blockstore::{SeriesFingerprint, TenantId};
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord};
 use krabka_ids::{Offset, PartitionIndex};
-use krabka_observability::wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined};
+use krabka_observability::{
+    server_security::{
+        Principal, ServerListener, ServerSecurity, TenantDenied, authorize_tenant, serve_router,
+    },
+    wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
+};
 use krabka_telemetry::propagation::current_trace_headers;
 use krabka_units::prelude::*;
 use opentelemetry_proto::tonic::{
@@ -45,10 +51,12 @@ use crate::{
     IngestEnforcer, LimitError, Limits, OverridesProvider,
     metrics::ServiceMetrics,
     otlp::{
-        DeltaAccumulator, OtlpError, TranslationStrategy, decode_otlp_stateful,
+        OtlpError, TenantDeltaAccumulators, TranslationStrategy, decode_otlp_stateful,
         decode_otlp_stateful_bytes,
     },
-    validate_tenant,
+    request_tenant::{
+        RequestTenantError, TenantAccessError, authorized_tenant_from_headers, tenant_from_metadata,
+    },
     wal::{ClockReadingPayload, SamplePayload, WAL_TOPIC, WalExemplar, WalRecord, partition_key},
     wire::{
         ClockSyncState, ClockWireError, DecodedClockReading, DecodedExemplar, DecodedSample,
@@ -59,6 +67,330 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+
+    /// A monotonic clock the test drives, so an idle timeout can be reached
+    /// without a real wait.
+    #[derive(Debug)]
+    struct FixedClock {
+        now: Mutex<std::time::Instant>,
+    }
+
+    impl FixedClock {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                now: Mutex::new(std::time::Instant::now()),
+            })
+        }
+
+        fn advance(&self, delta: std::time::Duration) {
+            let mut guard = self.now.lock().expect("clock lock");
+            *guard += delta;
+        }
+    }
+
+    impl super::IngestClock for FixedClock {
+        fn now(&self) -> std::time::Instant {
+            *self.now.lock().expect("clock lock")
+        }
+    }
+
+    fn v1_body_with_series_count(count: usize) -> Vec<u8> {
+        let req = crate::wire::pb::v1::WriteRequest {
+            timeseries: (0..count)
+                .map(|index| crate::wire::pb::v1::TimeSeries {
+                    labels: vec![label("__name__", &format!("series_{index}"))],
+                    samples: vec![crate::wire::pb::v1::Sample {
+                        value: 1.0,
+                        timestamp: 100,
+                    }],
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        snappy(&req.encode_to_vec())
+    }
+
+    async fn push_v1(app: &Router, tenant: &str, body: Vec<u8>) -> StatusCode {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/push")
+                    .header("Content-Type", "application/x-protobuf")
+                    .header("Content-Encoding", "snappy")
+                    .header("X-Scope-OrgID", tenant)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    }
+
+    async fn push_otlp(app: &Router, tenant: &str, body: Vec<u8>) -> StatusCode {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/otlp/v1/metrics")
+                    .header("Content-Type", "application/x-protobuf")
+                    .header("X-Scope-OrgID", tenant)
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .status()
+    }
+
+    /// The request-shape gate reads the tenant's own limits. It used to read
+    /// one process-wide set, so an override of either cap was ignored while
+    /// the label gate two lines later honoured it. Both caps are checked, and
+    /// a second tenant with no override proves the gate is not simply
+    /// rejecting everything.
+    #[tokio::test]
+    async fn a_per_tenant_override_decides_the_request_shape_gates() {
+        let sink = Arc::new(RecordingSink::default());
+        let state = Arc::new(
+            DistributorState::new(sink.clone()).with_overrides(
+                crate::OverridesProvider::from_yaml(
+                    r"
+overrides:
+  tenant-tight:
+    max_series_per_request: 1
+    max_samples_per_series: 1
+",
+                )
+                .unwrap(),
+            ),
+        );
+        let app = router(state);
+
+        check!(
+            push_v1(&app, "tenant-tight", v1_body_with_series_count(2)).await
+                == StatusCode::BAD_REQUEST,
+            "two series exceed the override of one"
+        );
+        check!(
+            push_v1(&app, "tenant-loose", v1_body_with_series_count(2)).await
+                == StatusCode::NO_CONTENT,
+            "an unlisted tenant keeps the default of 100_000"
+        );
+        check!(
+            push_v1(&app, "tenant-tight", v1_body_with_samples(2)).await == StatusCode::BAD_REQUEST,
+            "two samples exceed the override of one"
+        );
+        check!(
+            push_v1(&app, "tenant-loose", v1_body_with_samples(2)).await == StatusCode::NO_CONTENT
+        );
+        check!(
+            sink.records().len() == 4,
+            "only the loose tenant appended: two series, then two samples"
+        );
+    }
+
+    /// One request gets one verdict on a label. The shape gate and the label
+    /// gate used to apply different limits to the same label, so a request
+    /// could be admitted by one and refused by the other. Label lengths are
+    /// now decided in one place, from the limits the request already
+    /// resolved.
+    #[test]
+    fn label_lengths_are_decided_once_from_the_tenants_own_limits() {
+        let limits = Limits {
+            max_label_value_length: krabka_units::bytes(2),
+            ..Limits::default()
+        };
+        let series = [decoded_series(&[("__name__", "up"), ("job", "api")], 1)];
+
+        check!(
+            validate(&series, &limits).is_ok(),
+            "the shape gate does not judge a label's length"
+        );
+        let err = super::enforce_label_limits(&limits, &series).unwrap_err();
+        check!(
+            matches!(
+                err,
+                LimitError::LabelValueTooLong {
+                    limit: 2,
+                    observed: 3
+                }
+            ),
+            "the label gate gives the one verdict, in Mimir's shape: {err:?}"
+        );
+    }
+
+    /// `max_global_series_per_user` is an *active* series cap. It used to
+    /// count every fingerprint seen since boot, so a tenant that rotates
+    /// series names hit the cap while its live series count was far below it.
+    #[tokio::test]
+    async fn an_idle_series_stops_counting_against_the_active_series_cap() {
+        let clock = FixedClock::new();
+        let sink = Arc::new(RecordingSink::default());
+        let state = Arc::new(
+            DistributorState::new(sink.clone())
+                .with_clock(Arc::clone(&clock) as Arc<dyn super::IngestClock>)
+                .with_overrides(
+                    crate::OverridesProvider::from_yaml(
+                        "defaults:\n  max_global_series_per_user: 1\n  \
+                         active_series_idle_timeout: \"5m\"\n",
+                    )
+                    .unwrap(),
+                ),
+        );
+        let app = router(Arc::clone(&state));
+
+        check!(
+            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "first")])).await
+                == StatusCode::NO_CONTENT
+        );
+        clock.advance(std::time::Duration::from_mins(21));
+        check!(
+            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "second")])).await
+                == StatusCode::NO_CONTENT,
+            "the first series went idle, so the second fits the cap of one"
+        );
+        check!(
+            state.series_tracker.active_series("tenant-a") == 1,
+            "the idle series is gone rather than merely uncounted"
+        );
+    }
+
+    /// The other half of the same window: a series written to inside it still
+    /// counts. An eviction that dropped everything on every sweep would pass
+    /// the test above and let a tenant exceed its cap without limit.
+    #[tokio::test]
+    async fn a_series_written_inside_the_idle_window_still_counts() {
+        let clock = FixedClock::new();
+        let sink = Arc::new(RecordingSink::default());
+        let state = Arc::new(
+            DistributorState::new(sink.clone())
+                .with_clock(Arc::clone(&clock) as Arc<dyn super::IngestClock>)
+                .with_overrides(
+                    crate::OverridesProvider::from_yaml(
+                        "defaults:\n  max_global_series_per_user: 1\n  \
+                         active_series_idle_timeout: \"5m\"\n",
+                    )
+                    .unwrap(),
+                ),
+        );
+        let app = router(Arc::clone(&state));
+
+        check!(
+            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "first")])).await
+                == StatusCode::NO_CONTENT
+        );
+        // Past the sweep interval, so a sweep does run, but well inside the
+        // five-minute idle window.
+        clock.advance(std::time::Duration::from_secs(90));
+        check!(
+            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "second")])).await
+                == StatusCode::BAD_REQUEST,
+            "the first series is still active, so the second is over the cap"
+        );
+        check!(state.series_tracker.active_series("tenant-a") == 1);
+    }
+
+    /// A tenant that stops writing must not keep an empty map alive. The
+    /// sweep drops the tenant once its last series goes idle.
+    #[tokio::test]
+    async fn a_tenant_entry_goes_when_its_last_series_goes_idle() {
+        let clock = FixedClock::new();
+        let sink = Arc::new(RecordingSink::default());
+        let state = Arc::new(
+            DistributorState::new(sink.clone())
+                .with_clock(Arc::clone(&clock) as Arc<dyn super::IngestClock>)
+                .with_overrides(
+                    crate::OverridesProvider::from_yaml(
+                        "defaults:\n  active_series_idle_timeout: \"5m\"\n",
+                    )
+                    .unwrap(),
+                ),
+        );
+        let app = router(Arc::clone(&state));
+
+        check!(
+            push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "up")])).await
+                == StatusCode::NO_CONTENT
+        );
+        check!(state.series_tracker.tenants() == vec!["tenant-a".to_string()]);
+
+        clock.advance(std::time::Duration::from_mins(21));
+        check!(
+            push_v1(&app, "tenant-b", v1_body(vec![label("__name__", "up")])).await
+                == StatusCode::NO_CONTENT
+        );
+        check!(
+            state.series_tracker.tenants() == vec!["tenant-b".to_string()],
+            "the idle tenant's entry went with its last series"
+        );
+    }
+
+    /// A flood of distinct tenant ids must not grow the tracker without
+    /// limit. The tenant of the request in hand is never the one evicted, so
+    /// the arriving tenant is always the one that stays.
+    #[tokio::test]
+    async fn the_tracked_tenant_count_stays_within_its_cap() {
+        let sink = Arc::new(RecordingSink::default());
+        let state = Arc::new(DistributorState::new(sink.clone()).with_max_tracked_tenants(2));
+        let app = router(Arc::clone(&state));
+
+        for tenant in ["tenant-a", "tenant-b", "tenant-c"] {
+            check!(
+                push_v1(&app, tenant, v1_body(vec![label("__name__", "up")])).await
+                    == StatusCode::NO_CONTENT
+            );
+        }
+
+        check!(
+            state.series_tracker.tenants() == vec!["tenant-b".to_string(), "tenant-c".to_string()],
+            "the least recently written tenant made room for the newest"
+        );
+    }
+
+    /// Two tenants exporting the same OTLP delta counter, with the same
+    /// attributes, must each read back their own cumulative value. One
+    /// process-wide accumulator folded both into one entry, so each tenant
+    /// saw the other's increments -- a cross-tenant leak and a wrong value on
+    /// both sides.
+    #[tokio::test]
+    async fn a_delta_counter_accumulates_per_tenant_and_does_not_leak() {
+        let (state, sink) = test_state();
+        let app = router(state);
+        let delta = |value: f64, timestamp: u64| {
+            otlp_sum_body(value, timestamp, true, AggregationTemporality::Delta as i32)
+        };
+
+        check!(push_otlp(&app, "tenant-a", delta(7.0, 2_000_000)).await == StatusCode::OK);
+        check!(push_otlp(&app, "tenant-b", delta(5.0, 2_000_000)).await == StatusCode::OK);
+        check!(push_otlp(&app, "tenant-a", delta(3.0, 3_000_000)).await == StatusCode::OK);
+
+        let payloads = |tenant: &str| {
+            sink.records()
+                .into_iter()
+                .filter(|record| record.tenant == tenant)
+                .map(|record| record.payload)
+                .filter(|payload| matches!(payload, SamplePayload::Float { .. }))
+                .collect::<Vec<_>>()
+        };
+
+        let a = payloads("tenant-a");
+        check!(a.len() == 2);
+        check!(matches!(a[0], SamplePayload::Float { value: 7.0, .. }));
+        check!(
+            matches!(a[1], SamplePayload::Float { value: 10.0, .. }),
+            "tenant-a's own 7 plus 3, with none of tenant-b's 5: {:?}",
+            a[1]
+        );
+
+        let b = payloads("tenant-b");
+        check!(b.len() == 1);
+        check!(
+            matches!(b[0], SamplePayload::Float { value: 5.0, .. }),
+            "tenant-b reads back its own delta, not the sum of both: {:?}",
+            b[0]
+        );
+    }
 
     /// A push failure reaches an HTTP client as a status code and a gRPC
     /// client as a code, and the two mappings are separate pieces of code
@@ -83,6 +415,14 @@ mod tests {
             limit: 1,
             observed: 2,
         };
+        let missing_tenant = || super::PushError::Tenant(TenantResolveError::Missing.into());
+        let invalid_tenant = || {
+            super::PushError::Tenant(
+                TenantResolveError::Invalid(TenantIdError::RelativePathSegment).into(),
+            )
+        };
+        let too_many_tenants =
+            || super::PushError::Tenant(RequestTenantError::TooManyTenants { actual: 2 });
 
         // The three-way gRPC mapping. 429 and 500 each have their own code;
         // everything else is an invalid argument, including codes that are
@@ -103,10 +443,9 @@ mod tests {
 
         // Per-variant gRPC codes.
         let code = |error: &super::PushError| super::status_from_push_error(error).code();
-        check!(code(&super::PushError::MissingTenant) == tonic::Code::InvalidArgument);
-        check!(
-            code(&super::PushError::InvalidTenant("x".to_string())) == tonic::Code::InvalidArgument
-        );
+        check!(code(&missing_tenant()) == tonic::Code::Unauthenticated);
+        check!(code(&invalid_tenant()) == tonic::Code::Unauthenticated);
+        check!(code(&too_many_tenants()) == tonic::Code::InvalidArgument);
         check!(
             code(&super::PushError::TooOldSample {
                 timestamp_ms: 1,
@@ -126,11 +465,9 @@ mod tests {
         // Per-variant HTTP statuses, which are a separate mapping over the
         // same errors and disagree with the gRPC one on the 422 case.
         let http = |error: super::PushError| error.into_response().status();
-        check!(http(super::PushError::MissingTenant) == axum::http::StatusCode::BAD_REQUEST);
-        check!(
-            http(super::PushError::InvalidTenant("x".to_string()))
-                == axum::http::StatusCode::BAD_REQUEST
-        );
+        check!(http(missing_tenant()) == axum::http::StatusCode::UNAUTHORIZED);
+        check!(http(invalid_tenant()) == axum::http::StatusCode::UNAUTHORIZED);
+        check!(http(too_many_tenants()) == axum::http::StatusCode::UNPROCESSABLE_ENTITY);
         check!(
             http(super::PushError::TooOldSample {
                 timestamp_ms: 1,
@@ -178,30 +515,44 @@ mod tests {
             out_of_order_time_window: Time::from_millis(ms),
             ..Limits::default()
         };
+        // The window is measured against sample timestamps, not against the
+        // tracker's clock, so one fixed instant serves every call here.
+        let now = std::time::Instant::now();
+        let tenant = TenantId::new("t").expect("a valid tenant id");
 
         // A zero window: the first sample sets the mark, and one before it is
         // refused.
         let zero = window(0);
-        check!(super::enforce_out_of_order_window(&state, &zero, "t", &[series(1_000)]).is_ok());
         check!(
-            super::enforce_out_of_order_window(&state, &zero, "t", &[series(999)]).is_err(),
+            super::enforce_out_of_order_window(&state, &zero, &tenant, &[series(1_000)], now)
+                .is_ok()
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &zero, &tenant, &[series(999)], now)
+                .is_err(),
             "one millisecond earlier is out of order"
         );
         check!(
-            super::enforce_out_of_order_window(&state, &zero, "t", &[series(1_000)]).is_ok(),
+            super::enforce_out_of_order_window(&state, &zero, &tenant, &[series(1_000)], now)
+                .is_ok(),
             "the same timestamp is not older"
         );
 
         // A positive window admits samples within it and refuses those beyond.
         let (state, _sink) = test_state();
         let ten = window(10_000);
-        check!(super::enforce_out_of_order_window(&state, &ten, "t", &[series(100_000)]).is_ok());
         check!(
-            super::enforce_out_of_order_window(&state, &ten, "t", &[series(90_000)]).is_ok(),
+            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(100_000)], now)
+                .is_ok()
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(90_000)], now)
+                .is_ok(),
             "exactly the window back is still allowed"
         );
         check!(
-            super::enforce_out_of_order_window(&state, &ten, "t", &[series(89_999)]).is_err(),
+            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(89_999)], now)
+                .is_err(),
             "one millisecond beyond it is not"
         );
 
@@ -209,10 +560,12 @@ mod tests {
         let (state, _sink) = test_state();
         let disabled = window(-1);
         check!(
-            super::enforce_out_of_order_window(&state, &disabled, "t", &[series(1_000)]).is_ok()
+            super::enforce_out_of_order_window(&state, &disabled, &tenant, &[series(1_000)], now)
+                .is_ok()
         );
         check!(
-            super::enforce_out_of_order_window(&state, &disabled, "t", &[series(1)]).is_ok(),
+            super::enforce_out_of_order_window(&state, &disabled, &tenant, &[series(1)], now)
+                .is_ok(),
             "anything goes when the window is negative"
         );
     }
@@ -265,10 +618,10 @@ mod tests {
                 metadata: None,
             }
         };
-        let limits = super::TenantLimits {
+        let limits = super::Limits {
             max_samples_per_series: 6,
             max_series_per_request: 10,
-            ..super::TenantLimits::default()
+            ..super::Limits::default()
         };
 
         // Three, two and one make exactly the cap, which is allowed.
@@ -450,46 +803,6 @@ mod tests {
         );
     }
 
-    /// `tenant_limits_to_limits` copies five fields across and leaves the rest
-    /// at their defaults. Two of the five are byte sizes and two are counts,
-    /// so every value here is distinct: a field reading its neighbour still
-    /// produces a well-formed limit, and only distinct values show it.
-    #[test]
-    fn tenant_limits_map_field_by_field_onto_the_shared_limits() {
-        use krabka_units::{bytes, per_sec, secs};
-
-        let tenant = super::TenantLimits {
-            max_label_name_len: bytes(11),
-            max_label_value_len: bytes(22),
-            max_samples_per_series: 33,
-            max_series_per_request: 44,
-            ingestion_rate: per_sec(55),
-            ingestion_burst_size: 66,
-            out_of_order_time_window: secs(77),
-        };
-
-        let limits = super::tenant_limits_to_limits(&tenant);
-
-        check!(limits.max_label_name_length == bytes(11));
-        check!(
-            limits.max_label_value_length == bytes(22),
-            "not the name length"
-        );
-        check!(
-            limits.ingestion_burst_size == 66,
-            "the burst, not a sample count"
-        );
-        check!(limits.out_of_order_time_window == secs(77));
-        check!(limits.ingestion_rate == per_sec(55));
-
-        // The fields with no counterpart keep the shared default rather than
-        // picking up a value from the tenant's own limits.
-        let defaults = super::Limits::default();
-        check!(
-            limits.max_global_series_per_user == defaults.max_global_series_per_user,
-            "a field with no source stays at its default"
-        );
-    }
     use std::sync::Mutex;
 
     fn decoded_series(labels: &[(&str, &str)], samples: usize) -> crate::wire::DecodedSeries {
@@ -518,12 +831,12 @@ mod tests {
     /// differ only in which number they name.
     #[test]
     fn structural_limits_admit_exactly_their_boundary() {
-        let limits = TenantLimits {
+        let limits = Limits {
             max_series_per_request: 2,
             max_samples_per_series: 3,
-            max_label_name_len: krabka_units::bytes(4),
-            max_label_value_len: krabka_units::bytes(5),
-            ..TenantLimits::default()
+            max_label_name_length: krabka_units::bytes(4),
+            max_label_value_length: krabka_units::bytes(5),
+            ..Limits::default()
         };
 
         let two = [
@@ -558,28 +871,42 @@ mod tests {
             "got: {err}"
         );
 
+        // Label lengths are the label gate's business, from these same
+        // limits, so the boundary is checked where the verdict is given.
         let at_edge = [decoded_series(&[("abcd", "v")], 1)];
         assert!(
-            super::validate(&at_edge, &limits).is_ok(),
+            super::enforce_label_limits(&limits, &at_edge).is_ok(),
             "a four-byte name fits"
         );
         let over = [decoded_series(&[("abcde", "v")], 1)];
-        let err = super::validate(&over, &limits).unwrap_err().to_string();
+        let err = super::enforce_label_limits(&limits, &over).unwrap_err();
         assert!(
-            err.contains("label name length 5 exceeds limit 4"),
-            "got: {err}"
+            matches!(
+                err,
+                LimitError::LabelNameTooLong {
+                    limit: 4,
+                    observed: 5
+                }
+            ),
+            "got: {err:?}"
         );
 
         let at_edge = [decoded_series(&[("ok", "vwxyz")], 1)];
         assert!(
-            super::validate(&at_edge, &limits).is_ok(),
+            super::enforce_label_limits(&limits, &at_edge).is_ok(),
             "a five-byte value fits"
         );
         let over = [decoded_series(&[("ok", "vwxyz!")], 1)];
-        let err = super::validate(&over, &limits).unwrap_err().to_string();
+        let err = super::enforce_label_limits(&limits, &over).unwrap_err();
         assert!(
-            err.contains("label value length 6 exceeds limit 5"),
-            "got: {err}"
+            matches!(
+                err,
+                LimitError::LabelValueTooLong {
+                    limit: 5,
+                    observed: 6
+                }
+            ),
+            "got: {err:?}"
         );
 
         let bad = [decoded_series(&[("has space", "v")], 1)];
@@ -591,9 +918,9 @@ mod tests {
     /// together, so a series can exceed it without any one kind doing so.
     #[test]
     fn the_sample_budget_counts_every_kind_together() {
-        let limits = TenantLimits {
+        let limits = Limits {
             max_samples_per_series: 3,
-            ..TenantLimits::default()
+            ..Limits::default()
         };
 
         let mut series = decoded_series(&[("ok", "v")], 2);
@@ -790,14 +1117,21 @@ mod tests {
                 "so is an invalid one",
             ),
             (
-                super::PushError::MissingTenant,
-                tonic::Code::InvalidArgument,
+                super::PushError::Tenant(TenantResolveError::Missing.into()),
+                tonic::Code::Unauthenticated,
                 "a missing tenant header",
             ),
             (
-                super::PushError::InvalidTenant("a/b".into()),
-                tonic::Code::InvalidArgument,
+                super::PushError::Tenant(
+                    TenantResolveError::Invalid(TenantIdError::RelativePathSegment).into(),
+                ),
+                tonic::Code::Unauthenticated,
                 "an unusable tenant header",
+            ),
+            (
+                super::PushError::Tenant(RequestTenantError::TooManyTenants { actual: 2 }),
+                tonic::Code::InvalidArgument,
+                "more than one tenant",
             ),
             (
                 super::PushError::TooOldSample {
@@ -923,7 +1257,8 @@ mod tests {
 
     use assert2::{assert, check};
     use axum::{body::Body, http::Request};
-    use krabka_blockstore::Labels;
+    use krabka_blockstore::{Labels, TenantIdError, TenantResolveError};
+    use krabka_observability::server_security::authenticate_requests;
     use opentelemetry_proto::tonic::{
         collector::metrics::v1::{
             ExportMetricsServiceRequest, metrics_service_client::MetricsServiceClient,
@@ -942,24 +1277,90 @@ mod tests {
     use super::*;
     use crate::wire::DecodedSample;
 
-    /// Pins the span-label logic of `tenant_for_span`. A present, non-empty
-    /// header goes through verbatim. A missing OR empty `X-Scope-OrgID` falls
-    /// back to `"unknown"`. This kills the whole-function replacement mutants,
-    /// `"xyzzy"` and `String::new()`, and the `delete !` mutant on
-    /// `!value.is_empty()`. The empty-string case maps to `"unknown"` only
-    /// while the negation stands.
-    #[test]
-    fn tenant_for_span_labels_present_and_falls_back_on_missing_or_empty() {
-        let mut present = HeaderMap::new();
-        present.insert("X-Scope-OrgID", "acme".parse().unwrap());
-        assert!(tenant_for_span(&present) == "acme");
+    // Every request reaches the handlers through the authentication layer, as
+    // it does on a served listener. With no credentials file, the layer marks
+    // each request unauthenticated and lets it through.
+    fn router(state: Arc<DistributorState>) -> Router {
+        authenticate_requests(super::router(state), &ServerSecurity::default())
+    }
 
-        let missing = HeaderMap::new();
-        assert!(tenant_for_span(&missing) == "unknown");
+    /// The gRPC service is mounted inside the router, so on a served listener
+    /// every export carries the principal that the authentication layer
+    /// decided. An export without one is a server fault, and it must append
+    /// nothing.
+    #[tokio::test]
+    async fn an_otlp_grpc_export_without_a_principal_fails_closed() {
+        let (state, sink) = test_state();
+        let data = MetricsData::decode(otlp_body().as_slice()).expect("otlp metrics data");
+        let mut request = tonic::Request::new(ExportMetricsServiceRequest {
+            resource_metrics: data.resource_metrics,
+        });
+        request
+            .metadata_mut()
+            .insert("x-scope-orgid", "tenant-a".parse().unwrap());
 
-        let mut empty = HeaderMap::new();
-        empty.insert("X-Scope-OrgID", "".parse().unwrap());
-        assert!(tenant_for_span(&empty) == "unknown");
+        let error = otlp_metrics_service(state)
+            .export(request)
+            .await
+            .expect_err("an export without a principal is refused");
+
+        check!(error.code() == tonic::Code::Internal);
+        assert!(sink.records().is_empty());
+    }
+
+    /// A principal whose grant does not name the tenant is refused before the
+    /// body is decoded, on both HTTP push paths and on the gRPC export.
+    #[tokio::test]
+    async fn a_push_from_a_principal_without_the_tenant_is_refused_and_appends_nothing() {
+        let tenant_b = krabka_blockstore::TenantId::new("tenant-b").expect("a valid tenant id");
+        let principal = Principal::Authenticated {
+            name: Arc::from("grafana"),
+            method: krabka_observability::server_security::AuthMethod::Bearer,
+            tenants: krabka_observability::server_security::TenantGrant::Only(Arc::new(
+                BTreeSet::from([tenant_b]),
+            )),
+            admin: false,
+            events: krabka_observability::server_security::SecurityEventSink::default(),
+        };
+        let (state, sink) = test_state();
+        let app = super::router(Arc::clone(&state));
+        let paths = [
+            ("/api/v1/push", v1_body(vec![label("__name__", "up")])),
+            ("/api/v1/clocks", v1_body(vec![label("__name__", "up")])),
+            ("/otlp/v1/metrics", otlp_body()),
+        ];
+
+        for (path, body) in paths {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("Content-Type", "application/x-protobuf")
+                .header("Content-Encoding", "snappy")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::from(body))
+                .unwrap();
+            request.extensions_mut().insert(principal.clone());
+
+            let response = app.clone().oneshot(request).await.unwrap();
+
+            check!(response.status() == StatusCode::FORBIDDEN, "{path}");
+        }
+
+        let data = MetricsData::decode(otlp_body().as_slice()).expect("otlp metrics data");
+        let mut request = tonic::Request::new(ExportMetricsServiceRequest {
+            resource_metrics: data.resource_metrics,
+        });
+        request
+            .metadata_mut()
+            .insert("x-scope-orgid", "tenant-a".parse().unwrap());
+        request.extensions_mut().insert(principal);
+        let error = otlp_metrics_service(state)
+            .export(request)
+            .await
+            .expect_err("a principal without the tenant is refused");
+
+        check!(error.code() == tonic::Code::PermissionDenied);
+        assert!(sink.records().is_empty());
     }
 
     #[derive(Default)]
@@ -1663,12 +2064,10 @@ mod tests {
     #[tokio::test]
     async fn oversized_label_names_are_rejected() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(
-            DistributorState::new(sink.clone()).with_limits(TenantLimits {
-                max_label_name_len: bytes(7),
-                ..TenantLimits::default()
-            }),
-        );
+        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+            max_label_name_length: bytes(7),
+            ..Limits::default()
+        }));
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -1746,12 +2145,10 @@ overrides:
     #[tokio::test]
     async fn oversized_sample_sets_are_rejected() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(
-            DistributorState::new(sink.clone()).with_limits(TenantLimits {
-                max_samples_per_series: 1,
-                ..TenantLimits::default()
-            }),
-        );
+        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+            max_samples_per_series: 1,
+            ..Limits::default()
+        }));
         let response = router(state)
             .oneshot(
                 Request::builder()
@@ -1797,9 +2194,9 @@ overrides:
 
         let err = validate(
             &series,
-            &TenantLimits {
+            &Limits {
                 max_samples_per_series: 1,
-                ..TenantLimits::default()
+                ..Limits::default()
             },
         )
         .unwrap_err();
@@ -1822,7 +2219,7 @@ overrides:
                 metadata: None,
             }];
 
-            let err = validate(&series, &TenantLimits::default()).unwrap_err();
+            let err = validate(&series, &Limits::default()).unwrap_err();
 
             assert!(matches!(err, WireError::Invalid(_)));
             assert!(format!("{err}").contains("invalid label name"));
@@ -1848,7 +2245,7 @@ overrides:
                 metadata: None,
             }];
 
-            let err = validate(&series, &TenantLimits::default()).unwrap_err();
+            let err = validate(&series, &Limits::default()).unwrap_err();
 
             assert!(matches!(err, WireError::Invalid(_)));
             assert!(format!("{err}").contains("invalid exemplar label name"));
@@ -1858,13 +2255,11 @@ overrides:
     #[tokio::test]
     async fn ingestion_rate_limit_returns_429_without_append() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(
-            DistributorState::new(sink.clone()).with_limits(TenantLimits {
-                ingestion_rate: per_sec(1),
-                ingestion_burst_size: 1,
-                ..TenantLimits::default()
-            }),
-        );
+        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+            ingestion_rate: per_sec(1),
+            ingestion_burst_size: 1,
+            ..Limits::default()
+        }));
         let app = router(state);
 
         let first_response = app
@@ -1950,13 +2345,11 @@ defaults:
     #[tokio::test]
     async fn ingestion_rate_limit_counts_exemplar_only_writes() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(
-            DistributorState::new(sink.clone()).with_limits(TenantLimits {
-                ingestion_rate: per_sec(1),
-                ingestion_burst_size: 1,
-                ..TenantLimits::default()
-            }),
-        );
+        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+            ingestion_rate: per_sec(1),
+            ingestion_burst_size: 1,
+            ..Limits::default()
+        }));
         let app = router(state);
 
         let exemplar_response = app
@@ -1995,12 +2388,10 @@ defaults:
     #[tokio::test]
     async fn too_old_samples_beyond_out_of_order_window_are_rejected() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(
-            DistributorState::new(sink.clone()).with_limits(TenantLimits {
-                out_of_order_time_window: millis(100),
-                ..TenantLimits::default()
-            }),
-        );
+        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+            out_of_order_time_window: millis(100),
+            ..Limits::default()
+        }));
         let app = router(state);
 
         let newest_response = app
@@ -2106,12 +2497,10 @@ overrides:
     #[tokio::test]
     async fn too_old_exemplar_only_series_beyond_out_of_order_window_are_rejected() {
         let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(
-            DistributorState::new(sink.clone()).with_limits(TenantLimits {
-                out_of_order_time_window: millis(100),
-                ..TenantLimits::default()
-            }),
-        );
+        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+            out_of_order_time_window: millis(100),
+            ..Limits::default()
+        }));
         let app = router(state);
 
         let newest_response = app
@@ -2147,8 +2536,176 @@ overrides:
         check!(sink.records().len() == 1);
     }
 
+    /// The header values of the tenant oracle, each with the status and the
+    /// body that the pinned Mimir 2.16.1 image sends for it on
+    /// `POST /api/v1/push` and `POST /otlp/v1/metrics`. Every body is
+    /// `text/plain; charset=utf-8` and ends in a line break.
+    fn mimir_tenant_rejections() -> Vec<(&'static str, Option<String>, StatusCode, String)> {
+        let too_long = "x".repeat(151);
+        let too_long_and_bad = format!("{too_long}/");
+        let unsupported = |tenant: &str, character: char| {
+            format!("tenant ID '{tenant}' contains unsupported character '{character}'\n")
+        };
+        vec![
+            (
+                "absent",
+                None,
+                StatusCode::UNAUTHORIZED,
+                "no org id\n".into(),
+            ),
+            (
+                "empty",
+                Some(String::new()),
+                StatusCode::UNAUTHORIZED,
+                "no org id\n".into(),
+            ),
+            (
+                "separator",
+                Some("a/b".into()),
+                StatusCode::UNAUTHORIZED,
+                unsupported("a/b", '/'),
+            ),
+            (
+                "space",
+                Some("a b".into()),
+                StatusCode::UNAUTHORIZED,
+                unsupported("a b", ' '),
+            ),
+            (
+                "too long",
+                Some(too_long),
+                StatusCode::UNAUTHORIZED,
+                "tenant ID is too long: max 150 characters\n".into(),
+            ),
+            (
+                "too long and unsupported",
+                Some(too_long_and_bad.clone()),
+                StatusCode::UNAUTHORIZED,
+                unsupported(&too_long_and_bad, '/'),
+            ),
+            (
+                "dot dot",
+                Some("..".into()),
+                StatusCode::UNAUTHORIZED,
+                "tenant ID is '.' or '..'\n".into(),
+            ),
+            (
+                "two tenants",
+                Some("a|b".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "too many tenant IDs present in the request. max: 1 actual: 2\n".into(),
+            ),
+            (
+                "three tenants",
+                Some("a|b|c".into()),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "too many tenant IDs present in the request. max: 1 actual: 3\n".into(),
+            ),
+            (
+                "an invalid second part",
+                Some("a|b/c".into()),
+                StatusCode::UNAUTHORIZED,
+                unsupported("b/c", '/'),
+            ),
+        ]
+    }
+
+    /// Grafana Mimir answers a push without a usable tenant before it reads
+    /// the body. Each row gets the status, the content type and the whole body
+    /// the pinned image sends, on both HTTP push paths. A rejected push must
+    /// append nothing, because a record without a valid tenant has no tenant
+    /// prefix to go under.
     #[tokio::test]
-    async fn push_rejects_invalid_tenant_with_400() {
+    async fn a_push_without_a_usable_tenant_gets_mimirs_answer_and_appends_nothing() {
+        let (state, sink) = test_state();
+        let app = router(state);
+        let paths = [
+            (
+                "/api/v1/push",
+                Some("snappy"),
+                v1_body(vec![label("__name__", "up")]),
+            ),
+            ("/otlp/v1/metrics", None, otlp_body()),
+        ];
+
+        for (path, encoding, body) in paths {
+            for (name, tenant, status, text) in mimir_tenant_rejections() {
+                let mut request = Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("Content-Type", "application/x-protobuf");
+                if let Some(encoding) = encoding {
+                    request = request.header("Content-Encoding", encoding);
+                }
+                if let Some(tenant) = tenant {
+                    request = request.header("X-Scope-OrgID", tenant);
+                }
+                let response = app
+                    .clone()
+                    .oneshot(request.body(Body::from(body.clone())).unwrap())
+                    .await
+                    .unwrap();
+
+                check!(response.status() == status, "{path} {name}");
+                check!(
+                    response
+                        .headers()
+                        .get(axum::http::header::CONTENT_TYPE)
+                        .map(HeaderValue::as_bytes)
+                        == Some(&b"text/plain; charset=utf-8"[..]),
+                    "{path} {name}"
+                );
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                check!(String::from_utf8_lossy(&bytes) == text, "{path} {name}");
+            }
+        }
+        assert!(sink.records().is_empty());
+    }
+
+    /// Mimir has no OTLP gRPC receiver, so the gRPC export answers each oracle
+    /// row with the gRPC analogue of Mimir's HTTP status: `Unauthenticated`
+    /// for a 401 and `InvalidArgument` for a 422. The message is the HTTP body
+    /// without its line break, because a gRPC status message is not a text
+    /// document.
+    #[tokio::test]
+    async fn an_otlp_grpc_export_without_a_usable_tenant_is_refused_and_appends_nothing() {
+        let (state, sink) = test_state();
+        let service = otlp_metrics_service(state);
+
+        for (name, tenant, status, text) in mimir_tenant_rejections() {
+            let data = MetricsData::decode(otlp_body().as_slice()).expect("otlp metrics data");
+            let mut request = tonic::Request::new(ExportMetricsServiceRequest {
+                resource_metrics: data.resource_metrics,
+            });
+            if let Some(tenant) = tenant {
+                request
+                    .metadata_mut()
+                    .insert("x-scope-orgid", tenant.parse().unwrap());
+            }
+            request.extensions_mut().insert(Principal::Unauthenticated);
+            let expected_code = if status == StatusCode::UNAUTHORIZED {
+                tonic::Code::Unauthenticated
+            } else {
+                tonic::Code::InvalidArgument
+            };
+
+            let error = service
+                .export(request)
+                .await
+                .expect_err("an unusable tenant is refused");
+
+            check!(error.code() == expected_code, "{name}");
+            check!(error.message() == text.trim_end_matches('\n'), "{name}");
+        }
+        assert!(sink.records().is_empty());
+    }
+
+    /// Mimir reads `a|a` as one tenant, so a push that repeats its tenant is
+    /// accepted under that tenant rather than refused as two.
+    #[tokio::test]
+    async fn a_push_that_repeats_its_tenant_is_accepted_under_that_tenant() {
         let (state, sink) = test_state();
         let response = router(state)
             .oneshot(
@@ -2157,15 +2714,17 @@ overrides:
                     .uri("/api/v1/push")
                     .header("Content-Type", "application/x-protobuf")
                     .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "bad tenant")
+                    .header("X-Scope-OrgID", "tenant-a|tenant-a")
                     .body(Body::from(v1_body(vec![label("__name__", "up")])))
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert!(response.status() == StatusCode::BAD_REQUEST);
-        assert!(sink.records().is_empty());
+        check!(response.status() == StatusCode::NO_CONTENT);
+        let records = sink.records();
+        assert!(records.len() == 1);
+        check!(records[0].tenant == "tenant-a");
     }
 
     #[tokio::test]
@@ -2294,6 +2853,7 @@ overrides:
         request
             .metadata_mut()
             .insert("x-scope-orgid", "tenant-a".parse().unwrap());
+        request.extensions_mut().insert(Principal::Unauthenticated);
 
         let response = service.export(request).await.expect("otlp grpc export");
 
@@ -2318,9 +2878,14 @@ overrides:
     async fn otlp_grpc_metrics_export_round_trips_over_bound_server() {
         let (state, sink) = test_state();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let bound = serve("127.0.0.1:0".parse().unwrap(), state, async {
-            let _ = shutdown_rx.await;
-        })
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async {
+                let _ = shutdown_rx.await;
+            },
+        )
         .await
         .expect("serve distributor");
         let data = MetricsData::decode(otlp_body().as_slice()).expect("otlp metrics data");
@@ -3042,6 +3607,7 @@ mod consumer;
 mod decoded_sample_count;
 mod decoded_series;
 mod default_distributor_max_decompressed;
+mod default_max_tracked_tenants;
 mod distributor_state;
 mod enforce_and_record_active_series;
 mod enforce_ingest_limits;
@@ -3060,6 +3626,7 @@ mod ha_election_replay_result;
 mod ha_election_sink;
 mod header_list_includes;
 mod indicator;
+mod ingest_clock;
 mod ingest_span;
 mod ingest_stamp;
 mod insert_written_header;
@@ -3088,17 +3655,17 @@ mod require_snappy_encoding;
 mod router;
 mod run_ha_election_consumer_loop;
 mod sample_timestamp_bounds;
+mod series_activity;
+mod series_sweep_interval;
+mod series_tracker;
+mod series_tracker_state;
 mod serve;
 mod status_from_http_status;
 mod status_from_push_error;
-mod tenant_for_span;
-mod tenant_from_headers;
-mod tenant_from_metadata;
-mod tenant_limits;
-mod tenant_limits_to_limits;
+mod system_ingest_clock;
+mod tenant_series;
 mod validate;
 mod validate_exemplar_labels;
-mod validate_request_tenant;
 mod wal_producer_record;
 mod wal_records_from_series;
 mod wal_sink;
@@ -3119,6 +3686,7 @@ use clocks_push_inner::clocks_push_inner;
 use decoded_sample_count::decoded_sample_count;
 use decoded_series::decoded_series;
 pub use default_distributor_max_decompressed::DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED;
+pub use default_max_tracked_tenants::DEFAULT_MAX_TRACKED_TENANTS;
 pub use distributor_state::DistributorState;
 use enforce_and_record_active_series::enforce_and_record_active_series;
 use enforce_ingest_limits::enforce_ingest_limits;
@@ -3137,6 +3705,7 @@ pub use ha_election_replay_result::HaElectionReplayResult;
 pub use ha_election_sink::HaElectionSink;
 use header_list_includes::header_list_includes;
 use indicator::indicator;
+pub use ingest_clock::IngestClock;
 use ingest_span::ingest_span;
 use ingest_stamp::ingest_stamp;
 use insert_written_header::insert_written_header;
@@ -3165,20 +3734,17 @@ use require_snappy_encoding::require_snappy_encoding;
 pub use router::router;
 pub use run_ha_election_consumer_loop::run_ha_election_consumer_loop;
 use sample_timestamp_bounds::sample_timestamp_bounds;
+use series_activity::SeriesActivity;
+use series_sweep_interval::SERIES_SWEEP_INTERVAL;
+use series_tracker::SeriesTracker;
+use series_tracker_state::SeriesTrackerState;
 pub use serve::serve;
 use status_from_http_status::status_from_http_status;
 use status_from_push_error::status_from_push_error;
-use tenant_for_span::tenant_for_span;
-#[cfg_attr(test, mutants::skip)]
-use tenant_from_headers::tenant_from_headers;
-#[cfg_attr(test, mutants::skip)]
-use tenant_from_metadata::tenant_from_metadata;
-pub use tenant_limits::TenantLimits;
-use tenant_limits_to_limits::tenant_limits_to_limits;
+pub use system_ingest_clock::SystemIngestClock;
+use tenant_series::TenantSeries;
 pub use validate::validate;
 use validate_exemplar_labels::validate_exemplar_labels;
-#[cfg_attr(test, mutants::skip)]
-use validate_request_tenant::validate_request_tenant;
 use wal_producer_record::wal_producer_record;
 pub use wal_records_from_series::wal_records_from_series;
 pub use wal_sink::WalSink;

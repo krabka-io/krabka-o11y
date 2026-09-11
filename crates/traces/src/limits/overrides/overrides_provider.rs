@@ -15,11 +15,25 @@ impl OverridesProvider {
         }
     }
 
+    /// Parse a runtime-overrides file over [`Limits::default`].
     ///
     /// # Errors
-    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    /// Returns an error when the text is not the expected YAML document.
     pub fn from_yaml(yaml: &str) -> Result<Self, OverridesError> {
-        let defaults = Limits::default();
+        Self::from_yaml_with_defaults(yaml, Limits::default())
+    }
+
+    /// Parse a runtime-overrides file over the limits this process was started
+    /// with.
+    ///
+    /// The `defaults` are what an unlisted tenant gets, and they are also the
+    /// base each listed tenant's entry merges over. A service builds them from
+    /// its command line, so one flag moves every tenant that the file does not
+    /// name.
+    ///
+    /// # Errors
+    /// Returns an error when the text is not the expected YAML document.
+    pub fn from_yaml_with_defaults(yaml: &str, defaults: Limits) -> Result<Self, OverridesError> {
         let file = serde_yaml::from_str::<RuntimeFile>(yaml)
             .map_err(|err| OverridesError::Yaml(err.to_string()))?;
         let per_tenant = file

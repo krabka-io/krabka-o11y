@@ -1,9 +1,9 @@
+use krabka_blockstore::TenantPolicy;
 use krabka_observability::RoleReadiness;
 
 use super::{
-    Arc, CancellationToken, Cli, DistributorState, KafkaSink, Mutex, Producer, RelabelConfig,
-    ServiceMetrics, client_resource_policy, load_profiles_limits_overrides_config,
-    load_tenant_limits_config,
+    Arc, CancellationToken, Cli, ClientSecurity, DistributorState, KafkaSink, Mutex,
+    OverridesProvider, Producer, RelabelConfig, ServiceMetrics, client_resource_policy,
 };
 
 /// Builds the distributor's shared state, connecting its WAL producer on the
@@ -15,26 +15,32 @@ use super::{
 /// broker that is not there would be a process that no signal can end, which
 /// an orchestrator can only resolve by killing it.
 ///
+/// `overrides` is the one provider the process resolves every per-tenant limit
+/// through, so the caller loads the overrides file and every role shares what it
+/// read.
+///
+/// `wal_security` is the TLS and SASL of the producer. `None` connects in
+/// plain text.
+///
 /// # Errors
-/// Returns an error when a limits file cannot be read or parsed, or when the
-/// producer refuses the configured bootstrap address.
+/// Returns an error when the producer refuses the configured bootstrap address.
 pub(crate) async fn build_distributor_state(
     cli: &Cli,
     metrics: &ServiceMetrics,
     readiness: &RoleReadiness,
     shutdown: &CancellationToken,
+    overrides: OverridesProvider,
+    wal_security: Option<ClientSecurity>,
 ) -> Result<Option<Arc<DistributorState>>, Box<dyn std::error::Error>> {
     let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
     // Nowhere to put a push until the WAL producer has a broker.
     let wal_broker = readiness.gate("wal-broker");
-    let limits = load_tenant_limits_config(cli.tenant_limits_config.as_deref())?;
-    let profile_overrides =
-        load_profiles_limits_overrides_config(cli.profiles_limits_overrides_config.as_deref())?;
     let producer = tokio::select! {
         biased;
         () = shutdown.cancelled() => return Ok(None),
         built = Producer::builder()
             .bootstrap(&cli.bootstrap)
+            .maybe_security(wal_security)
             .dispatch_queue_capacity(client_dispatch_queue_capacity.get())
             .frame_max(client_frame_max.size())
             .build() => built?,
@@ -45,8 +51,10 @@ pub(crate) async fn build_distributor_state(
             Arc::new(producer),
             cli.wal_topic.clone(),
         )),
-        limits,
-        profile_overrides,
+        overrides,
+        // Pyroscope keeps multi-tenancy off by default, so a push without a
+        // tenant goes to `anonymous`.
+        tenant_policy: TenantPolicy::anonymous(),
         active_series: Mutex::default(),
         ingestion_buckets: Mutex::default(),
         relabel: Vec::<RelabelConfig>::new(),

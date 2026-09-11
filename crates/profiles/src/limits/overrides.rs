@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use krabka_blockstore::TenantId;
 use krabka_units::{
     ByteSize, Frequency, Time,
     convert::{ByteSizeExt as _, FrequencyExt, TimeExt as _},
@@ -27,7 +28,7 @@ overrides:
     #[test]
     fn tenant_override_merges_over_defaults() {
         let provider = OverridesProvider::from_yaml(YAML).unwrap();
-        let tenant_a = provider.for_tenant("tenant-a");
+        let tenant_a = provider.for_tenant(&"tenant-a".parse().unwrap());
 
         assert!(
             *tenant_a
@@ -49,7 +50,7 @@ overrides:
     #[test]
     fn partial_override_keeps_other_defaults() {
         let provider = OverridesProvider::from_yaml(YAML).unwrap();
-        let tenant_b = provider.for_tenant("tenant-b");
+        let tenant_b = provider.for_tenant(&"tenant-b".parse().unwrap());
 
         assert!(tenant_b.max_label_value == bytes(64));
         assert!(tenant_b.ingestion_rate == Limits::default().ingestion_rate);
@@ -59,9 +60,94 @@ overrides:
     fn unlisted_tenant_gets_defaults() {
         let provider = OverridesProvider::from_yaml(YAML).unwrap();
 
-        check!(*provider.for_tenant("tenant-z") == Limits::default());
-        check!(!provider.has_tenant_override("tenant-z"));
-        check!(provider.has_tenant_override("tenant-a"));
+        check!(*provider.for_tenant(&"tenant-z".parse().unwrap()) == Limits::default());
+    }
+
+    /// The `defaults` block moves every tenant that has no entry of its own,
+    /// and a tenant entry still departs from it rather than from the
+    /// compiled-in value.
+    #[test]
+    fn the_defaults_block_moves_every_tenant() {
+        let provider = OverridesProvider::from_yaml(
+            r"
+defaults:
+  max_label_value_length: 64
+  max_label_names_per_series: 5
+  max_session_id_cardinality: 8
+overrides:
+  tenant-a:
+    max_label_names_per_series: 7
+",
+        )
+        .unwrap();
+
+        assert!(
+            *provider.for_tenant(&"unlisted".parse().unwrap())
+                == Limits {
+                    max_label_value: bytes(64),
+                    max_label_names_per_series: 5,
+                    max_session_id_cardinality: 8,
+                    ..Limits::default()
+                }
+        );
+        assert!(
+            *provider.for_tenant(&"tenant-a".parse().unwrap())
+                == Limits {
+                    max_label_value: bytes(64),
+                    max_label_names_per_series: 7,
+                    max_session_id_cardinality: 8,
+                    ..Limits::default()
+                }
+        );
+    }
+
+    /// A byte cap is a whole non-negative count of bytes. Serde rejects each
+    /// way a YAML scalar can fail to be one, and rejecting is the point: a cap
+    /// that silently rounded or wrapped would be enforced as something other
+    /// than what was configured.
+    #[test]
+    fn a_byte_cap_must_be_a_whole_non_negative_count() {
+        let parse = |key: &str, value: &str| {
+            OverridesProvider::from_yaml(&format!("overrides:\n  tenant-a:\n    {key}: {value}\n"))
+        };
+        let tenant_a = |provider: &OverridesProvider| {
+            provider.for_tenant(&"tenant-a".parse().unwrap()).clone()
+        };
+
+        check!(
+            tenant_a(&parse("max_label_name_length", "0").unwrap()).max_label_name == bytes(0),
+            "zero is a cap, and means unlimited"
+        );
+        check!(
+            tenant_a(&parse("max_label_value_length", "1024").unwrap()).max_label_value
+                == bytes(1024)
+        );
+
+        for key in ["max_label_name_length", "max_label_value_length"] {
+            for rejected in ["-1", "1.5", "-0.5", "18446744073709551616"] {
+                let err = parse(key, rejected).unwrap_err();
+                check!(
+                    matches!(err, OverridesError::Yaml(_)),
+                    "{key}: {rejected} should be rejected, got: {err:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_invalid_defaults_block_is_rejected() {
+        let err = OverridesProvider::from_yaml(
+            r"
+defaults:
+  max_flamegraph_nodes_max: -5
+",
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, OverridesError::InvalidDefaults { .. }),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -150,7 +236,7 @@ overrides:
 ",
         )
         .unwrap();
-        let tenant_a = provider.for_tenant("tenant-a");
+        let tenant_a = provider.for_tenant(&"tenant-a".parse().unwrap());
 
         assert!(
             *tenant_a

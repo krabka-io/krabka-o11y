@@ -1,9 +1,10 @@
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, AutoOffsetReset, Cli, Consumer, ObjectStore, PrometheusApiState, RoleReadiness, Shutdown,
-    WalHead, load_runtime_overrides, prometheus_router, query_engine_opts, readiness_router,
-    serve_prometheus_router_joinable, spawn_shutdown_signal_listener, spawn_wal_head_consumer_task,
+    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, ObjectStore,
+    PrometheusApiState, RoleReadiness, ServerSecurity, Shutdown, WalHead, load_runtime_overrides,
+    prometheus_router, query_engine_opts, readiness_router, serve_prometheus_router_joinable,
+    spawn_shutdown_signal_listener, spawn_wal_head_consumer_task,
 };
 
 #[tracing::instrument(
@@ -17,6 +18,9 @@ pub(crate) async fn run_querier(
     cli: Cli,
     metrics: krabka_promql::metrics::ServiceMetrics,
     readiness: RoleReadiness,
+    security: &ServerSecurity,
+    wal_security: Option<ClientSecurity>,
+    audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
@@ -46,6 +50,7 @@ pub(crate) async fn run_querier(
                 move || async move {
                     Consumer::builder()
                         .bootstrap(bootstrap)
+                        .maybe_security(wal_security)
                         .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
                         .frame_max(cli.client_frame_max)
                         .group_id(group_id)
@@ -72,17 +77,22 @@ pub(crate) async fn run_querier(
     )
     .with_cold_cache_ttl(cli.cold_cache_ttl)
     .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
-    let mut state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
+    let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
         .with_remote_read_max_body(cli.remote_read_max_body)
-        .with_metrics(metrics);
-    if let Some(overrides) = load_runtime_overrides(cli.runtime_overrides.as_deref())? {
-        state = state.with_query_limits(overrides);
-    }
+        .with_metrics(metrics)
+        .with_audit(audit);
+    let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
     let router = prometheus_router(Arc::new(state)).merge(readiness_router(readiness));
     let (bound, server) =
-        serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
-    tracing::info!(%bound, "metrics-service querier listening");
+        serve_prometheus_router_joinable(cli.listen, router, security, shutdown.signalled())
+            .await?;
+    tracing::info!(
+        %bound,
+        tls = security.tls_enabled(),
+        authentication = security.authentication_enabled(),
+        "metrics-service querier listening"
+    );
     // Join the server task so in-flight requests drain (graceful shutdown)
     // before the process exits -- unless the WAL head consumer stops first, in
     // which case the role fails by name and the drain happens on the way out.

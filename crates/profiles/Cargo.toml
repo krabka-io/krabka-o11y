@@ -81,7 +81,11 @@ temp-env = "0.3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 reqwest = { workspace = true, features = ["json"] }
 testcontainers = { workspace = true }
+qubit-clock = "0.8"
+rcgen = { workspace = true }
+sha2 = { workspace = true }
 base64 = { workspace = true }
 flate2 = { workspace = true }
+krabka-audit = { version = "0.4.0" }
 krabka-broker = { version = "0.4.0" }
 krabka-pprof = { path = "../pprof", version = "0.4.0" }

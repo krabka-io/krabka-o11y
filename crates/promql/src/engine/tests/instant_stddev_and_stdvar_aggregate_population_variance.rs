@@ -21,11 +21,11 @@ pub(crate) async fn instant_stddev_and_stdvar_aggregate_population_variance() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let stdvar = engine
-        .query_instant("tenant-a", "stdvar(latency_seconds)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "stdvar(latency_seconds)", 10_000)
         .await
         .unwrap();
     let stddev = engine
-        .query_instant("tenant-a", "stddev(latency_seconds)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "stddev(latency_seconds)", 10_000)
         .await
         .unwrap();
 

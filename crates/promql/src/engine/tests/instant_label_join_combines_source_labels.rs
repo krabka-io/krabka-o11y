@@ -18,7 +18,7 @@ pub(crate) async fn instant_label_join_combines_source_labels() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"label_join(up, "target", "/", "job", "instance")"#,
             10_000,
         )

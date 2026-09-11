@@ -24,7 +24,7 @@ pub(crate) async fn instant_topk_and_bottomk_ignore_histograms() {
         ("bottomk(1, memory_bytes)", "a", 1.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
 

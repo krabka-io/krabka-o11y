@@ -8,7 +8,7 @@ use krabka_blockstore::Labels;
 use krabka_metrics::{SamplePayload, WalRecord};
 use krabka_units::prelude::*;
 
-use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine};
+use crate::{EngineOpts, InMemoryMetricStore, PromqlEngine, test_support::tenant_id};
 
 mod alerting_rule_dispatch_expands_value_and_labels_templates;
 mod alerting_rule_dispatch_sends_firing_alerts_to_alertmanager_sink;

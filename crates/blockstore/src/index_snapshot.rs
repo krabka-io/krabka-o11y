@@ -21,6 +21,7 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::{
     error::{BlockStoreError, Result},
     index::{IndexShardRange, parse_shard_bound_key, shard_bound_key},
+    path_escape::{escape_object_path_segment, unescape_object_path_segment},
 };
 
 #[cfg(test)]
@@ -66,11 +67,14 @@ mod tests {
 
         use crate::{
             IndexShardRange,
+            index::shard_bound_key,
             index_snapshot::{
                 MAX_SHARD_SLOTS_PER_RECORD, SnapshotManifest, UNBOUNDED_SHARD_RANGE,
                 is_shard_payload_location, put_manifest_snapshot, put_shard_payload,
-                shard_payload_content_hash, shard_payload_object_key, shard_ranges_for_span,
+                shard_payload_content_hash, shard_payload_object_key, shard_payload_prefix_for_key,
+                shard_ranges_for_span,
             },
+            unescape_object_path_segment,
         };
 
         const LABEL: &str = "test index snapshot";
@@ -266,6 +270,71 @@ mod tests {
             .unwrap();
 
             check!(store.head(&foreign).await.is_ok());
+        }
+
+        /// A payload key names the tenant it belongs to, and the sweep decides
+        /// from that key alone whether an object is the index's to delete.
+        #[test]
+        fn a_tenant_never_widens_a_payload_key_past_its_own_segment() {
+            let awkward = [
+                ("plain", "tenant-a"),
+                ("separator", "a/b"),
+                ("relative", ".."),
+                ("current", "."),
+                ("traversal", "../../etc"),
+                ("absolute", "/etc/passwd"),
+                ("space", "a b"),
+                ("star", "a*b"),
+                ("marker", "a!b"),
+                ("quote", "a'b"),
+                ("brackets", "(a)"),
+                ("backslash", "a\\b"),
+                ("non ASCII", "\u{e9}"),
+            ];
+            let prefix = shard_payload_prefix_for_key(KEY);
+            let range = IndexShardRange::new(10, 20);
+            let content = shard_payload_content_hash(b"payload");
+
+            for (name, tenant) in awkward {
+                let key = shard_payload_object_key(KEY, tenant, range, &content);
+                let rest = key
+                    .strip_prefix(&prefix)
+                    .expect("a payload key sits under the payload prefix of its key");
+                let segments = rest.trim_start_matches('/').split('/').collect::<Vec<_>>();
+
+                check!(segments.len() == 3, "{name}");
+                check!(
+                    !segments
+                        .iter()
+                        .any(|segment| matches!(*segment, "." | ".." | "")),
+                    "{name}"
+                );
+                check!(
+                    segments[0]
+                        .strip_prefix("tenant=")
+                        .and_then(unescape_object_path_segment)
+                        == Some(tenant.to_string()),
+                    "{name}"
+                );
+                check!(is_shard_payload_location(KEY, &key), "{name}");
+                // The sweep matches a manifest's key against a listed
+                // location, so the two have to be the same string.
+                check!(Path::from(key.clone()).as_ref() == key.as_str(), "{name}");
+            }
+        }
+
+        #[test]
+        fn a_tenant_segment_the_writer_could_not_have_written_is_foreign() {
+            let prefix = shard_payload_prefix_for_key(KEY);
+            let span = format!("time={}-{}", shard_bound_key(10), shard_bound_key(20));
+
+            for tenant_segment in ["t", "tenant=a!zz"] {
+                let location = format!("{prefix}/{tenant_segment}/{span}/a.kbs");
+                check!(
+                    !is_shard_payload_location(KEY, &location),
+                    "{tenant_segment}"
+                );
+            }
         }
     }
 }

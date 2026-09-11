@@ -16,7 +16,13 @@ pub(crate) async fn range_selector_returns_samples_in_each_step_window() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_range("tenant-a", "up[2m]", 120_000, 180_000, millis(60_000))
+        .query_range(
+            &tenant_id("tenant-a"),
+            "up[2m]",
+            120_000,
+            180_000,
+            millis(60_000),
+        )
         .await
         .unwrap();
 

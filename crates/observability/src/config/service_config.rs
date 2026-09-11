@@ -1,6 +1,6 @@
 use super::{
-    ByteSize, NonZeroUsize, Parser, PathBuf, QuerierIndexSource, Role, SocketAddr, Time, days,
-    millis, minutes, secs,
+    AuditArgs, ByteSize, NonZeroUsize, Parser, PathBuf, QuerierIndexSource, Role,
+    ServerSecurityArgs, SocketAddr, Time, WalClientSecurityArgs, days, millis, minutes, secs,
 };
 
 /// Operator-facing service configuration.
@@ -97,12 +97,23 @@ pub struct ServiceConfig {
     pub max_query_read: Option<ByteSize>,
 
     /// Ceiling on the length of the `LogQL` query string, as `4KiB`.
+    ///
+    /// Not `--max-query-length`: `Loki` gives that key to the `[start, end]`
+    /// window a query may cover, and this one counts bytes of query text.
     #[arg(
         long,
-        env = "KRABKA_OBSERVABILITY_MAX_QUERY_LENGTH",
+        env = "KRABKA_OBSERVABILITY_MAX_QUERY_STRING_BYTES",
         value_parser = krabka_units::parse::non_negative_byte_size
     )]
-    pub max_query_length: Option<ByteSize>,
+    pub max_query_string_bytes: Option<ByteSize>,
+
+    /// Runtime per-tenant limits overrides, as a path to a YAML file.
+    ///
+    /// The file holds a `defaults` block and an `overrides` map keyed by
+    /// tenant. Both merge over the values the scalar limit flags set. Default:
+    /// unset, so every tenant gets the same limits.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_LOGS_LIMITS_OVERRIDES_CONFIG")]
+    pub logs_limits_overrides_config: Option<PathBuf>,
 
     /// Largest accepted ingest request body, as `4MiB`.
     #[arg(
@@ -128,6 +139,44 @@ pub struct ServiceConfig {
 
     #[arg(long, env = "KRABKA_OBSERVABILITY_INGEST_QUOTA_BURST_WINDOW", default_value = "1s", value_parser = krabka_units::parse::positive_time)]
     pub ingest_quota_burst_window: Time,
+
+    /// How long a broker answer about ACLs or a tenant's quota is used before
+    /// it is asked again, as `10s`. Default: `10s`.
+    ///
+    /// The query authorizer and the ingest limiter read these answers from
+    /// memory. A background task refreshes the WAL topic ACLs once per TTL,
+    /// and a push refreshes its tenant's quota after one TTL. An ACL change
+    /// therefore takes effect within about one TTL. The default is the reload
+    /// period of Loki's and Mimir's runtime configuration.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_BROKER_ACCESS_CACHE_TTL", default_value = "10s", value_parser = krabka_units::parse::positive_time)]
+    pub broker_access_cache_ttl: Time,
+
+    /// The oldest broker answer that a check still uses while the broker does
+    /// not answer, as `1m`. Default: `1m`.
+    ///
+    /// While refreshes fail, the last good answer is used until it is this
+    /// old, and the `query-authorization` gate of a querier or a block builder
+    /// reads unmet on `/ready`. After that, every
+    /// authorization and every ingest-limit check fails closed until the
+    /// broker answers again. A revoked ACL is therefore in force no later than
+    /// this bound, even with the broker unreachable. The default is six TTLs,
+    /// so a broker restart or a controller failover does not fail every check.
+    /// The service refuses a value shorter than `--broker-access-cache-ttl`.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_BROKER_ACCESS_MAX_STALENESS", default_value = "1m", value_parser = krabka_units::parse::positive_time)]
+    pub broker_access_max_staleness: Time,
+
+    /// The most tenants whose broker quota and ingest rate bucket are held in
+    /// memory. Default: `10000`.
+    ///
+    /// When a new tenant arrives at the limit, the tenant that was used least
+    /// recently is removed. Its next push asks the broker again and starts
+    /// with a full rate bucket.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_BROKER_ACCESS_TENANT_CAPACITY",
+        default_value = "10000"
+    )]
+    pub broker_access_tenant_capacity: NonZeroUsize,
 
     #[arg(long, env = "KRABKA_OBSERVABILITY_WAL_CONNECT_STARTUP_DEADLINE", default_value = "2m", value_parser = krabka_units::parse::positive_time)]
     pub wal_connect_startup_deadline: Time,
@@ -207,6 +256,26 @@ pub struct ServiceConfig {
 
     #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_DEPENDENCY_RECONNECT_INTERVAL", default_value = "500ms", value_parser = krabka_units::parse::positive_time)]
     pub querier_dependency_reconnect_interval: Time,
+
+    /// TLS for the data port, authentication of its requests, and the
+    /// credentials for calls to other Krabka services. Default: every flag
+    /// unset, so the data port serves plain HTTP with no authentication, as
+    /// Loki does.
+    ///
+    /// The admin port of the `krabka-observability` binary does not use these
+    /// flags.
+    #[command(flatten)]
+    pub server_security: ServerSecurityArgs,
+
+    /// The audit trail of tenant-affecting and admin operations. Default:
+    /// `--audit-topic` unset, so audit is off.
+    #[command(flatten)]
+    pub audit: AuditArgs,
+
+    /// TLS and SASL for every connection to the WAL broker, and for the audit
+    /// producer. Default: `PLAINTEXT`.
+    #[command(flatten)]
+    pub wal_client_security: WalClientSecurityArgs,
 }
 
 impl Default for ServiceConfig {
@@ -229,12 +298,17 @@ impl Default for ServiceConfig {
             max_query_range: None,
             max_query_series: None,
             max_query_read: None,
-            max_query_length: None,
+            max_query_string_bytes: None,
+            logs_limits_overrides_config: None,
             max_ingest_body: None,
             wal_append_timeout: None,
             reject_old_samples_max_age: days(7),
             creation_grace_period: minutes(10),
             ingest_quota_burst_window: secs(1),
+            broker_access_cache_ttl: secs(10),
+            broker_access_max_staleness: minutes(1),
+            broker_access_tenant_capacity: NonZeroUsize::new(10_000)
+                .expect("default broker access tenant capacity is nonzero"),
             wal_connect_startup_deadline: minutes(2),
             wal_connect_attempt_timeout: secs(15),
             wal_connect_initial_backoff: millis(200),
@@ -258,6 +332,9 @@ impl Default for ServiceConfig {
             querier_hot_tail_bucket_width: minutes(1),
             querier_hot_tail_interval: millis(50),
             querier_dependency_reconnect_interval: millis(500),
+            server_security: ServerSecurityArgs::default(),
+            audit: AuditArgs::default(),
+            wal_client_security: WalClientSecurityArgs::default(),
         }
     }
 }

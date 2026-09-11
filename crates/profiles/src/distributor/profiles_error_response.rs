@@ -4,6 +4,7 @@ pub(crate) fn profiles_error_response(err: ProfilesError) -> Response {
     let status =
         StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     match err {
+        ProfilesError::TenantDenied(denied) => denied.into_response(),
         ProfilesError::Limit(limit) => (
             status,
             axum::Json(serde_json::json!({

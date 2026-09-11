@@ -13,7 +13,12 @@ pub(crate) fn distributor_error_to_grpc_status(error: &DistributorError) -> toni
         DistributorError::IngestQuota(IngestLimitError::Unavailable { .. })
         | DistributorError::WalAppendTimeout
         | DistributorError::WalBatch(_) => tonic::Status::unavailable(message),
+        DistributorError::RecordTenantMismatch { .. } => tonic::Status::internal(message),
         DistributorError::EmptyStreamLabels
+        | DistributorError::LineTooLong { .. }
+        | DistributorError::TooManyLabelNames { .. }
+        | DistributorError::LabelNameTooLong { .. }
+        | DistributorError::LabelValueTooLong { .. }
         | DistributorError::InvalidOtlpAttribute
         | DistributorError::InvalidOtlpPayload
         | DistributorError::InvalidPushLabels

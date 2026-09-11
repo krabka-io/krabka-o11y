@@ -13,6 +13,7 @@
 use std::{collections::BTreeSet, sync::Mutex};
 
 use async_trait::async_trait;
+use krabka_blockstore::TenantId;
 use krabka_traceql::{ScopedTag, TagScope, TypedValue};
 
 use crate::frontend::{
@@ -52,7 +53,7 @@ mod tests {
             },
         });
         let req = SearchJobRequest {
-            tenant: "t1".to_string(),
+            tenant: TenantId::new("t1").unwrap(),
             query: "{ .service.name = \"checkout\" }".to_string(),
             start_ns: 0,
             end_ns: 100,
@@ -85,7 +86,7 @@ mod tests {
     async fn empty_stub_yields_default_partial() {
         let mock = MockQuerier::new();
         let req = SearchJobRequest {
-            tenant: "t1".to_string(),
+            tenant: TenantId::new("t1").unwrap(),
             query: "{ }".to_string(),
             start_ns: 0,
             end_ns: 100,
@@ -107,7 +108,7 @@ mod tests {
         let mock = MockQuerier::new();
         mock.fail_querier("dead:3200");
         let job = |addr: &str| SearchJobRequest {
-            tenant: "t1".to_string(),
+            tenant: TenantId::new("t1").unwrap(),
             query: "{ }".to_string(),
             start_ns: 0,
             end_ns: 100,

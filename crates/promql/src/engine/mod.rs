@@ -27,11 +27,13 @@ mod range_functions;
 mod range_query;
 mod result_utils;
 mod row_cache;
+mod samples_per_query_exceeded;
 mod scalar;
 mod scalar_eval;
 mod selector;
 mod selector_eval;
 mod selector_plan;
+mod series_per_query_exceeded;
 mod step_vectors;
 mod store_scans;
 #[cfg(test)]
@@ -75,8 +77,10 @@ use range_functions::validate_smoothing_factor;
 #[cfg(test)]
 use range_functions::{IrateFn, OverTimeFn, RangeFn};
 use range_functions::{OuterRangeFn, apply_outer_range_fn};
+use samples_per_query_exceeded::samples_per_query_exceeded;
 pub(crate) use selector::label_matcher_sets;
 use selector::{AtModifierBounds, apply_selector_time_modifier, selector_duration};
+use series_per_query_exceeded::series_per_query_exceeded;
 
 #[cfg(test)]
 use crate::extension::is_stale_nan;

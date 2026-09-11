@@ -12,6 +12,10 @@ pub(crate) struct Cli {
     #[command(flatten)]
     pub(crate) service: ServiceConfig,
     /// Address for the admin port: pprof, Prometheus metrics and `/ready`.
+    /// Default: `0.0.0.0:9404`.
+    ///
+    /// The admin port serves plain HTTP with no authentication, whatever the
+    /// server security flags say. Bind it to a private address.
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
     #[arg(

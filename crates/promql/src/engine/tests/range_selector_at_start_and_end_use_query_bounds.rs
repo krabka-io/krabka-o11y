@@ -15,7 +15,13 @@ pub(crate) async fn range_selector_at_start_and_end_use_query_bounds() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for (query, expected) in [("up @ start()", 1.0), ("up @ end()", 3.0)] {
         let result = engine
-            .query_range("tenant-a", query, 60_000, 180_000, millis(60_000))
+            .query_range(
+                &tenant_id("tenant-a"),
+                query,
+                60_000,
+                180_000,
+                millis(60_000),
+            )
             .await
             .unwrap();
 

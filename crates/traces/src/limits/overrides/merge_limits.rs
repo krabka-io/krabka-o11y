@@ -8,6 +8,9 @@ pub(crate) fn merge_limits(defaults: &Limits, partial: &PartialLimits) -> Limits
         ingestion_burst_spans: partial
             .ingestion_burst_spans
             .unwrap_or(defaults.ingestion_burst_spans),
+        max_spans_per_request: partial
+            .max_spans_per_request
+            .unwrap_or(defaults.max_spans_per_request),
         max_traces_per_search: partial
             .max_traces_per_search
             .unwrap_or(defaults.max_traces_per_search),

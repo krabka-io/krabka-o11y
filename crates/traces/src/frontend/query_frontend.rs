@@ -2,8 +2,8 @@ use super::{
     Arc, AssignedJob, BackendError, BlockCatalog, FrontendConfig, JobShard, Membership,
     MembershipView, Metrics, MetricsJobRequest, MetricsResponseJson, QuerierBackend,
     SearchJobRequest, SearchPartial, SearchResponseJson, TagNamesJobRequest, TagNamesPartial,
-    TagValuesJobRequest, TagValuesPartial, TraceByIdJobRequest, TraceByIdResponseJson, TraceStatus,
-    assign_jobs, catalog_error, job, merge, metrics_merge, pick_querier, queue,
+    TagValuesJobRequest, TagValuesPartial, TenantId, TraceByIdJobRequest, TraceByIdResponseJson,
+    TraceStatus, assign_jobs, catalog_error, job, merge, metrics_merge, pick_querier, queue,
 };
 
 /// The query-frontend pipeline.
@@ -124,14 +124,14 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     /// Plan the shards for a window, and place each on a ready querier.
     async fn plan_and_assign(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         start_ns: i64,
         end_ns: i64,
         snapshot: &Membership,
     ) -> Result<(Vec<AssignedJob>, u64, bool), BackendError> {
         let blocks = self
             .catalog
-            .blocks(tenant, start_ns, end_ns)
+            .blocks(tenant.as_str(), start_ns, end_ns)
             .await
             .map_err(|e| catalog_error(&e))?;
         let plan = job::plan_search_jobs(
@@ -161,7 +161,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
     pub async fn search(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         query: &str,
         start_ns: i64,
         end_ns: i64,
@@ -175,12 +175,12 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let total_jobs = assigned.len() as u64;
 
         let backend = Arc::clone(&self.backend);
-        let tenant_s = tenant.to_string();
+        let tenant = tenant.clone();
         let query_s = query.to_string();
         let results = queue::run_jobs(assigned, self.cfg.max_concurrency, move |job| {
             let backend = Arc::clone(&backend);
             let req = SearchJobRequest {
-                tenant: tenant_s.clone(),
+                tenant: tenant.clone(),
                 query: query_s.clone(),
                 start_ns,
                 end_ns,
@@ -221,7 +221,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     /// Returns an error when every querier lookup fails.
     pub async fn trace_by_id(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         trace_id: [u8; 16],
         start_ns: i64,
         end_ns: i64,
@@ -243,11 +243,11 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let total_jobs = targets.len() as u64;
 
         let backend = Arc::clone(&self.backend);
-        let tenant_s = tenant.to_string();
+        let tenant = tenant.clone();
         let results = queue::run_jobs(targets, self.cfg.max_concurrency, move |querier| {
             let backend = Arc::clone(&backend);
             let req = TraceByIdJobRequest {
-                tenant: tenant_s.clone(),
+                tenant: tenant.clone(),
                 trace_id,
                 start_ns,
                 end_ns,
@@ -303,7 +303,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
     pub async fn tag_names(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         scope: Option<krabka_traceql::TagScope>,
         start_ns: i64,
         end_ns: i64,
@@ -315,11 +315,11 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let total_jobs = assigned.len() as u64;
 
         let backend = Arc::clone(&self.backend);
-        let tenant_s = tenant.to_string();
+        let tenant = tenant.clone();
         let results = queue::run_jobs(assigned, self.cfg.max_concurrency, move |job| {
             let backend = Arc::clone(&backend);
             let req = TagNamesJobRequest {
-                tenant: tenant_s.clone(),
+                tenant: tenant.clone(),
                 scope,
                 start_ns,
                 end_ns,
@@ -346,7 +346,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
     pub async fn tag_values(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         tag: &str,
         start_ns: i64,
         end_ns: i64,
@@ -358,12 +358,12 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let total_jobs = assigned.len() as u64;
 
         let backend = Arc::clone(&self.backend);
-        let tenant_s = tenant.to_string();
+        let tenant = tenant.clone();
         let tag_s = tag.to_string();
         let results = queue::run_jobs(assigned, self.cfg.max_concurrency, move |job| {
             let backend = Arc::clone(&backend);
             let req = TagValuesJobRequest {
-                tenant: tenant_s.clone(),
+                tenant: tenant.clone(),
                 tag: tag_s.clone(),
                 start_ns,
                 end_ns,
@@ -407,7 +407,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
     pub async fn metrics_query(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         query: &str,
         window: (i64, i64, i64),
         instant: bool,
@@ -419,7 +419,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             .to_string();
         let (start_ns, end_ns, step_ns) = window;
         let req = MetricsJobRequest {
-            tenant: tenant.to_string(),
+            tenant: tenant.clone(),
             query: query.to_string(),
             start_ns,
             end_ns,

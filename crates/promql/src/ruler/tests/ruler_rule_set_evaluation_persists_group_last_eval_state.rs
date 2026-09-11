@@ -43,7 +43,7 @@ rules:
         &engine,
         (&wal_sink, &alert_sink, &state_sink),
         &mut alert_state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rules,
         120_000,
     )

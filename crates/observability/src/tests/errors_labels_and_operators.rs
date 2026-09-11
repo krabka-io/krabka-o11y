@@ -1,8 +1,8 @@
 use super::prelude::{
-    BTreeMap, BlockIndex, CompactorDeleteRequest, HeaderMap, LabelIndex, ListDeleteRequestsParams,
-    OtlpAnyValue, OtlpArrayValue, OtlpKeyValue, OtlpKeyValueList, ProtoAnyValue, ProtoKeyValue,
-    QuerierState, TimeRange, check, contains_log_level_token, delete_request_overlaps_filter,
-    discover_detected_level_label, is_log_level_word_byte, json,
+    Arc, BTreeMap, BlockIndex, CompactorDeleteRequest, HeaderMap, LabelIndex,
+    ListDeleteRequestsParams, OtlpAnyValue, OtlpArrayValue, OtlpKeyValue, OtlpKeyValueList,
+    ProtoAnyValue, ProtoKeyValue, QuerierState, TimeRange, check, contains_log_level_token,
+    delete_request_overlaps_filter, discover_detected_level_label, is_log_level_word_byte, json,
     loki_json_push_payload_parse_error, loki_json_push_streams_parse_error, loki_label_set,
     loki_proto_label_parse_error, loki_push_label_parse_error,
     loki_structured_metadata_value_parse_error, otlp_severity_number_to_string, otlp_timestamp_ns,

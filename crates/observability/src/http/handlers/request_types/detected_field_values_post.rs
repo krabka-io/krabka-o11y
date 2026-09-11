@@ -1,10 +1,11 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, Path, QuerierState, RawQuery, Response, State, StatusCode,
-    execute_detected_field_values_query, json_response, post_query_params_body_first,
+    Bytes, HeaderMap, IntoResponse, Path, QuerierState, RawQuery, RequestSecurity, Response, State,
+    StatusCode, execute_detected_field_values_query, json_response, post_query_params_body_first,
 };
 
 pub(crate) async fn detected_field_values_post(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     Path(name): Path<String>,
     RawQuery(raw_query): RawQuery,
@@ -14,7 +15,9 @@ pub(crate) async fn detected_field_values_post(
         Ok(raw_query) => raw_query,
         Err(error) => return error.into_response(),
     };
-    match execute_detected_field_values_query(&state, &headers, &name, Some(&raw_query)).await {
+    match execute_detected_field_values_query(&state, &security, &headers, &name, Some(&raw_query))
+        .await
+    {
         Ok(value) => json_response(StatusCode::OK, &value),
         Err(error) => error.into_response(),
     }

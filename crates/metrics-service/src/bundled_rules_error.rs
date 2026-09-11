@@ -31,11 +31,27 @@ pub enum BundledRulesError {
         source: serde_yaml::Error,
     },
 
-    #[error("the ruler config request for bundled rule group `{group}` is not valid: {source}")]
-    Request {
+    /// The internal client credentials do not make a usable HTTP client.
+    #[error("the HTTP client for the ruler config API does not build: {source}")]
+    Client {
+        #[source]
+        source: reqwest::Error,
+    },
+
+    /// The URL of the ruler's own listener does not parse.
+    #[error("the ruler config URL `{address}` is not valid: {source}")]
+    Url {
+        address: String,
+        #[source]
+        source: url::ParseError,
+    },
+
+    /// The request did not reach the ruler's listener, or got no response.
+    #[error("the ruler config request for bundled rule group `{group}` failed: {source}")]
+    Send {
         group: String,
         #[source]
-        source: axum::http::Error,
+        source: reqwest::Error,
     },
 
     #[error("the ruler config API rejected bundled rule group `{group}`: HTTP {status}, {body}")]
@@ -49,6 +65,6 @@ pub enum BundledRulesError {
     ResponseBody {
         group: String,
         #[source]
-        source: axum::Error,
+        source: reqwest::Error,
     },
 }

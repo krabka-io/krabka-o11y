@@ -41,7 +41,7 @@ pub(crate) async fn instant_sum_aggregation_downscales_native_histograms() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "sum by (job) (request_duration_seconds)",
             10_000,
         )

@@ -1,5 +1,5 @@
 use crate::{
-    Arc, BlockIndex, ConfiguredObjectStore, LabelIndex, ObjectPath, ObjectStore,
+    Arc, BlockIndex, ConfiguredObjectStore, LabelIndex, ObjectPath, ObjectStore, OverridesProvider,
     QuerierIndexSource, QuerierState, ServiceConfig, ServiceConfigError,
     build_querier_state_with_object_store_prefix,
 };

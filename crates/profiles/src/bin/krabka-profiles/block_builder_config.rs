@@ -1,4 +1,7 @@
-use super::{Arc, BlockBuilderConfig, Cli, ObjectStore, ServiceMetrics, client_resource_policy};
+use super::{
+    Arc, BlockBuilderConfig, Cli, ClientSecurity, ObjectStore, ServiceMetrics,
+    client_resource_policy,
+};
 
 /// Reads the block builder's configuration off the command line.
 ///
@@ -7,12 +10,14 @@ use super::{Arc, BlockBuilderConfig, Cli, ObjectStore, ServiceMetrics, client_re
 /// the same handle to every role. A block builder that parsed
 /// `--object-store-url` a second time would get a second store, and with an
 /// in-memory URL that is a store nothing else can read: the blocks would be
-/// written where no querier ever looks.
+/// written where no querier ever looks. `wal_security` is a parameter for the
+/// same reason: the process loads it once, from the flags.
 pub(crate) fn block_builder_config(
     cli: &Cli,
     store: Arc<dyn ObjectStore>,
     index_key: String,
     metrics: ServiceMetrics,
+    wal_security: Option<ClientSecurity>,
 ) -> BlockBuilderConfig {
     let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
     let mut config = BlockBuilderConfig::new(cli.bootstrap.clone(), store).with_metrics(metrics);
@@ -28,5 +33,6 @@ pub(crate) fn block_builder_config(
     config.poll_timeout = cli.wal_poll_timeout;
     config.index_snapshot_max = cli.index_snapshot_max;
     config.index_snapshot_retain = cli.index_snapshot_retain;
+    config.security = wal_security;
     config
 }

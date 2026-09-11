@@ -9,11 +9,9 @@ pub mod otlp;
 pub mod push_v1;
 pub mod split;
 
-use std::collections::BTreeMap;
-
 use krabka_blockstore::Labels;
 use krabka_pprof::PprofProfile;
-use krabka_units::{ByteSize, bytes, convert::ByteSizeExt as _};
+use krabka_units::convert::ByteSizeExt as _;
 pub use legacy::{
     IngestFormat, IngestQuery, LegacyDecodeLimits, decode_ingest_body,
     decode_ingest_body_with_limits, decode_ingest_multipart, decode_ingest_multipart_with_limits,
@@ -21,37 +19,9 @@ pub use legacy::{
 };
 pub use otlp::decode_otlp;
 pub use push_v1::{decode_push, gunzip};
-use serde::{Deserialize, Serialize};
 pub use split::split_sample_types;
 
-use crate::error::ProfilesError;
-
-mod label_byte_limit {
-    use krabka_units::{ByteSize, convert::ByteSizeExt as _};
-    use serde::{Deserializer, Serializer, de::Error as _};
-
-    #[cfg(target_pointer_width = "64")]
-    const USIZE_UPPER_EXCLUSIVE: f64 = 18_446_744_073_709_551_616.0;
-    #[cfg(target_pointer_width = "32")]
-    const USIZE_UPPER_EXCLUSIVE: f64 = 4_294_967_296.0;
-
-    #[allow(clippy::trivially_copy_pass_by_ref)] // Required by serde's `with` adapter contract.
-    pub fn serialize<S: Serializer>(value: &ByteSize, serializer: S) -> Result<S::Ok, S::Error> {
-        krabka_units::serde_units::human::byte_size::serialize(value, serializer)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ByteSize, D::Error> {
-        let value = krabka_units::serde_units::human::byte_size::deserialize(deserializer)?;
-        let bytes = value.bytes_f64();
-        if bytes >= 0.0 && bytes.fract() == 0.0 && bytes < USIZE_UPPER_EXCLUSIVE {
-            Ok(value)
-        } else {
-            Err(D::Error::custom(
-                "label byte limit must be a non-negative whole byte count representable by usize",
-            ))
-        }
-    }
-}
+use crate::{error::ProfilesError, limits::Limits};
 
 #[cfg(test)]
 mod tests {
@@ -309,17 +279,21 @@ mod tests {
         assert!(series == labels(&[("env", "prod"), ("keep", "me")]));
     }
 
+    fn ingest_limits(name: u32, names_per_series: u64, value: u32) -> Limits {
+        Limits {
+            max_label_name: krabka_units::bytes(name),
+            max_label_names_per_series: names_per_series,
+            max_label_value: krabka_units::bytes(value),
+            ..Limits::default()
+        }
+    }
+
     /// Each ingest limit rejects what exceeds it, so a series sitting exactly
     /// on every limit is still admitted. All three are checked at their edge
     /// and one past it.
     #[test]
     fn ingest_limits_admit_exactly_their_boundary() {
-        let limits = TenantLimits {
-            max_label_name: krabka_units::bytes(3),
-            max_label_names_per_series: 2,
-            max_label_value: krabka_units::bytes(4),
-            session_id_buckets: 1,
-        };
+        let limits = ingest_limits(3, 2, 4);
 
         // Two labels, a three-byte name and a four-byte value: all at the edge.
         let at_edge = labels(&[("abc", "wxyz"), ("de", "fg")]);
@@ -340,37 +314,32 @@ mod tests {
         assert!(err.contains("`a` value exceeds 4 bytes"));
     }
 
-    /// A label byte limit is a count of bytes, so it has to be a whole
-    /// non-negative number that a usize can hold. The deserializer rejects
-    /// each way that can fail, and rejecting is the point: a limit that
-    /// silently rounded or wrapped would be enforced as something other than
-    /// what was configured.
+    /// A Pyroscope cap of zero is unlimited, and each of the three caps has to
+    /// read its own zero. A shared test would pass while two of them rejected
+    /// everything.
     #[test]
-    fn a_label_byte_limit_must_be_a_whole_non_negative_count() {
-        let parse = |limit: &str| {
-            let json = String::from("{\"max_label_name\":\"")
-                + limit
-                + "\",\"max_label_names_per_series\":2,\"max_label_value\":\"4B\",\"session_id_buckets\":1}";
-            serde_json::from_str::<TenantLimits>(&json).map(|limits| limits.max_label_name)
-        };
+    fn a_zero_structural_cap_is_unlimited() {
+        let wide = labels(&[
+            ("a_very_long_label_name", "a_very_long_label_value"),
+            ("b", "c"),
+        ]);
 
-        assert!(
-            parse("0B").unwrap() == krabka_units::bytes(0),
-            "zero is a limit"
+        check!(
+            enforce_limits(&wide, &ingest_limits(0, 2, 64)).is_ok(),
+            "name"
         );
-        assert!(parse("3B").unwrap() == krabka_units::bytes(3));
-        assert!(
-            parse("1KiB").unwrap() == krabka_units::bytes(1024),
-            "units are honoured"
+        check!(
+            enforce_limits(&wide, &ingest_limits(64, 0, 64)).is_ok(),
+            "count"
         );
-
-        for rejected in ["1.5B", "-1B", "-0.5B", "18446744073709551616B"] {
-            let err = parse(rejected).unwrap_err().to_string();
-            assert!(
-                err.contains("non-negative whole byte count"),
-                "{rejected} should be rejected, got: {err}"
-            );
-        }
+        check!(
+            enforce_limits(&wide, &ingest_limits(64, 2, 0)).is_ok(),
+            "value"
+        );
+        check!(
+            enforce_limits(&wide, &ingest_limits(0, 0, 0)).is_ok(),
+            "and all three together"
+        );
     }
 
     fn labels(pairs: &[(&str, &str)]) -> Labels {
@@ -397,22 +366,52 @@ mod tests {
 
     #[test]
     fn session_id_is_modulo_hashed() {
+        let limits = session_limits(16);
         let mut a = labels(&[("__session_id__", "deadbeefcafef00d")]);
-        cap_session_id(&mut a, 16);
+        cap_session_id(&mut a, &limits);
         let value = a.get("__session_id__").unwrap();
         let bucket: u64 = value.parse().unwrap();
         assert!(bucket < 16);
 
         let mut b = labels(&[("__session_id__", "deadbeefcafef00d")]);
-        cap_session_id(&mut b, 16);
+        cap_session_id(&mut b, &limits);
         assert!(b.get("__session_id__") == a.get("__session_id__"));
+    }
+
+    /// A cardinality of zero is unlimited, which for a session id means the
+    /// value the client sent survives. A cap that folded it into bucket `0`
+    /// instead would collapse every session of every tenant that configures
+    /// nothing.
+    #[test]
+    fn a_zero_session_cardinality_leaves_the_session_id_alone() {
+        let mut labels = labels(&[("__session_id__", "deadbeefcafef00d")]);
+
+        cap_session_id(&mut labels, &session_limits(0));
+
+        assert!(labels.get("__session_id__") == Some("deadbeefcafef00d"));
+    }
+
+    #[test]
+    fn a_series_without_a_session_id_is_untouched() {
+        let mut labels = labels(&[("__name__", "process_cpu")]);
+
+        cap_session_id(&mut labels, &session_limits(16));
+
+        assert!(labels.get("__session_id__").is_none());
+    }
+
+    fn session_limits(cardinality: u64) -> Limits {
+        Limits {
+            max_session_id_cardinality: cardinality,
+            ..Limits::default()
+        }
     }
 
     #[test]
     fn enforce_limits_rejects_too_many_labels() {
-        let limits = TenantLimits {
+        let limits = Limits {
             max_label_names_per_series: 1,
-            ..Default::default()
+            ..Limits::default()
         };
         let labels = labels(&[("a", "1"), ("b", "2")]);
         assert!(enforce_limits(&labels, &limits).is_err());
@@ -420,41 +419,12 @@ mod tests {
 
     #[test]
     fn enforce_limits_rejects_too_long_label_names() {
-        let limits = TenantLimits {
-            max_label_name: bytes(3),
-            ..Default::default()
+        let limits = Limits {
+            max_label_name: krabka_units::bytes(3),
+            ..Limits::default()
         };
         let labels = labels(&[("too_long", "1")]);
         assert!(enforce_limits(&labels, &limits).is_err());
-    }
-
-    #[test]
-    fn tenant_limit_config_uses_override_before_default() {
-        let config = TenantLimitConfig::default().with_tenant_limits(
-            "tenant-a",
-            TenantLimits {
-                max_label_names_per_series: 2,
-                max_label_value: bytes(5),
-                session_id_buckets: 8,
-                ..Default::default()
-            },
-        );
-
-        assert!(config.for_tenant("tenant-a").max_label_value == bytes(5));
-        assert!(config.for_tenant("tenant-b") == &TenantLimits::default());
-    }
-
-    #[test]
-    fn tenant_limits_reject_invalid_label_byte_caps() {
-        for cap in ["-1B", "1.5B", "18446744073709551616B"] {
-            let json = serde_json::json!({
-                "max_label_name": cap,
-                "max_label_names_per_series": 30,
-                "max_label_value": "2KiB",
-                "session_id_buckets": 1024,
-            });
-            assert!(serde_json::from_value::<TenantLimits>(json).is_err());
-        }
     }
 
     #[test]
@@ -475,7 +445,6 @@ mod apply_relabel;
 mod cap_session_id;
 mod decoded_profile;
 mod decoded_sample;
-mod default_max_label_name;
 mod enforce_limits;
 mod fnv1a;
 mod raw_profile;
@@ -485,14 +454,11 @@ mod relabel_config;
 mod remove_label;
 mod replace_label;
 mod require_service_name;
-mod tenant_limit_config;
-mod tenant_limits;
 
 pub use apply_relabel::apply_relabel;
 pub use cap_session_id::cap_session_id;
 pub use decoded_profile::DecodedProfile;
 pub use decoded_sample::DecodedSample;
-use default_max_label_name::default_max_label_name;
 pub use enforce_limits::enforce_limits;
 use fnv1a::fnv1a;
 pub use raw_profile::RawProfile;
@@ -502,5 +468,3 @@ pub use relabel_config::RelabelConfig;
 use remove_label::remove_label;
 use replace_label::replace_label;
 pub use require_service_name::require_service_name;
-pub use tenant_limit_config::TenantLimitConfig;
-pub use tenant_limits::TenantLimits;

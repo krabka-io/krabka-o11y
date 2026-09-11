@@ -1,14 +1,13 @@
 use super::{
-    CompactorDeleteRequestResponse, CompactorDeleteState, HeaderMap, HttpQueryError,
-    delete_request_overlaps_filter, parse_list_delete_requests_params, tenant,
+    CompactorDeleteRequestResponse, CompactorDeleteState, HttpQueryError, TenantId,
+    delete_request_overlaps_filter, parse_list_delete_requests_params,
 };
 
 pub(crate) fn execute_list_delete_requests(
     state: &CompactorDeleteState,
-    headers: &HeaderMap,
+    tenant: &TenantId,
     raw_query: Option<&str>,
 ) -> Result<Vec<CompactorDeleteRequestResponse>, HttpQueryError> {
-    let tenant = tenant(headers)?;
     let params = parse_list_delete_requests_params(raw_query)?;
     let requests = state
         .delete_requests
@@ -18,7 +17,7 @@ pub(crate) fn execute_list_delete_requests(
     Ok(requests
         .requests
         .iter()
-        .filter(|request| request.tenant == tenant)
+        .filter(|request| request.tenant == tenant.as_str())
         .filter(|request| delete_request_overlaps_filter(request, &params))
         .map(|request| CompactorDeleteRequestResponse {
             request_id: request.request_id.clone(),

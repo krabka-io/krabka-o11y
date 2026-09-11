@@ -2,7 +2,7 @@ use krabka_observability::{CriticalTaskError, RoleReadiness, StagedDrain};
 use krabka_profiles::all::DRAIN_ORDER;
 use krabka_units::fmt::Human as _;
 
-use super::{Arc, CancellationToken, Cli, ServiceMetrics, build_all_stages};
+use super::{Arc, CancellationToken, Cli, ProcessSecurity, ServiceMetrics, build_all_stages};
 
 /// Runs every profiles role in one process.
 ///
@@ -18,7 +18,9 @@ use super::{Arc, CancellationToken, Cli, ServiceMetrics, build_all_stages};
 ///   block-builder/object-store` rather than a bare `object-store` that four
 ///   of the roles could have registered;
 /// * one Pyroscope-facing port, carrying the ingest doors and the query
-///   surface together.
+///   surface together;
+/// * one [`ProcessSecurity`], so both listeners and every broker connection
+///   use the same TLS, credentials and audit trail.
 ///
 /// The stop is ordered rather than simultaneous, and
 /// [`DRAIN_ORDER`] is where that order is written down. A role that stops on
@@ -35,10 +37,13 @@ pub(crate) async fn run_all(
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     shutdown: CancellationToken,
+    security: ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cli = Arc::new(cli);
     let stage_timeout = cli.all_drain_stage_timeout;
-    let Some(mut stages) = build_all_stages(&cli, &metrics, &readiness, &shutdown).await? else {
+    let Some(mut stages) =
+        build_all_stages(&cli, &metrics, &readiness, &shutdown, &security).await?
+    else {
         return Ok(());
     };
     let mut drain = StagedDrain::new(stage_timeout);

@@ -11,7 +11,7 @@ pub(crate) async fn instant_query_uses_hot_sample_newer_than_compacted_sample() 
     let store = MergedMetricStore::new(cold, hot);
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "up", 20_000)
+        .query_instant(&tenant_id("tenant-a"), "up", 20_000)
         .await
         .unwrap();
 

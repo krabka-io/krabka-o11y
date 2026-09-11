@@ -1,9 +1,9 @@
-use super::{DecodedSeries, DistributorState, Limits, PushError, decoded_sample_count};
+use super::{DecodedSeries, DistributorState, Limits, PushError, TenantId, decoded_sample_count};
 
 pub(crate) fn enforce_ingestion_rate(
     state: &DistributorState,
     limits: &Limits,
-    tenant: &str,
+    tenant: &TenantId,
     series: &[DecodedSeries],
 ) -> Result<(), PushError> {
     let sample_count = decoded_sample_count(series);
@@ -15,7 +15,7 @@ pub(crate) fn enforce_ingestion_rate(
         .ingest_enforcer
         .check_sample_rate(
             limits,
-            tenant,
+            tenant.as_str(),
             u64::try_from(sample_count).unwrap_or(u64::MAX),
         )
         .map_err(PushError::from)

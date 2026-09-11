@@ -19,7 +19,11 @@ pub(crate) async fn instant_subquery_aligns_start_to_step_grid() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "rate(metric_total[1m500ms:10s])", 80_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "rate(metric_total[1m500ms:10s])",
+            80_000,
+        )
         .await
         .unwrap();
 

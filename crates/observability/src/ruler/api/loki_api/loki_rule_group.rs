@@ -1,24 +1,27 @@
 use super::{
-    HeaderMap, IntoResponse, Path, QuerierState, Response, State, StatusCode, loki_ruler_tenant,
-    loki_yaml_response, text_response,
+    HeaderMap, Path, QuerierState, RequestSecurity, Response, State, StatusCode,
+    TenantErrorSurface, authorized_ruler_tenant, loki_yaml_response, text_response,
 };
 
 pub(crate) async fn loki_rule_group(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     Path((namespace, group_name)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    let tenant = match loki_ruler_tenant(&headers) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
+    let tenant =
+        match authorized_ruler_tenant(&state, &security, &headers, TenantErrorSurface::Ruler).await
+        {
+            Ok(tenant) => tenant,
+            Err(response) => return response,
+        };
     let rules = state
         .rules
         .tenants
         .lock()
         .expect("Loki rule store lock poisoned");
     let Some(groups) = rules
-        .get(&tenant)
+        .get(tenant.as_str())
         .and_then(|namespaces| namespaces.get(&namespace))
     else {
         return text_response(

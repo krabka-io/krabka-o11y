@@ -13,7 +13,7 @@ pub(crate) async fn abusive_subquery_resolution_errors_before_looping() {
     // `last_over_time(up[1000d:1ms])` would walk ~8.6e10 sub-steps; the
     // backstop rejects it with the resolution error instead.
     let err = engine
-        .query_instant("t", "last_over_time(up[1000d:1ms])", 0)
+        .query_instant(&tenant_id("t"), "last_over_time(up[1000d:1ms])", 0)
         .await
         .expect_err("abusive subquery resolution must error");
     assert2::assert!(err.to_string().contains("exceeded maximum resolution"));

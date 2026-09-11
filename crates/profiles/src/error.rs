@@ -1,5 +1,8 @@
 //! Crate-wide error + ingest-edge HTTP status mapping.
 
+use krabka_blockstore::TenantResolveError;
+use krabka_observability::server_security::TenantDenied;
+
 /// Errors across the profiles ingest pipeline.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ProfilesError {
@@ -11,6 +14,18 @@ pub enum ProfilesError {
     Gunzip(String),
     #[error("invalid request: {0}")]
     Invalid(String),
+    /// The `X-Scope-OrgID` header names a tenant that is not a valid tenant id.
+    ///
+    /// The message is the [`TenantResolveError`] text alone, which is the text
+    /// that Grafana's `dskit` sends for the same header.
+    #[error(transparent)]
+    Tenant(#[from] TenantResolveError),
+    /// The principal of the request may not use the tenant that the request names.
+    ///
+    /// The message is the [`TenantDenied`] text alone. A plain HTTP door
+    /// answers with the 403 of [`TenantDenied`] itself.
+    #[error(transparent)]
+    TenantDenied(#[from] TenantDenied),
     #[error("{0}")]
     Limit(crate::limits::LimitError),
     #[error("payload exceeds limit {limit} bytes")]
@@ -48,11 +63,21 @@ impl ProfilesError {
     pub fn status_code(&self) -> u16 {
         match self {
             Self::UnsupportedFormat(_) => 415,
+            // `Tenant` is here for Krabka's own reason. Pyroscope with
+            // multi-tenancy off does not read `X-Scope-OrgID`, so it has no
+            // rejection to match. Krabka isolates WAL records, limits and
+            // blocks by tenant, so it rejects a malformed name. A 400 is a
+            // client fault, so the Connect doors send `invalid_argument` with
+            // the same message.
             Self::Decode(_)
             | Self::Gunzip(_)
             | Self::Invalid(_)
+            | Self::Tenant(_)
             | Self::Pprof(_)
             | Self::TooLarge { .. } => 400,
+            // Only a service with a credentials file can deny a tenant. The
+            // Connect doors send `permission_denied`, which is also a 403.
+            Self::TenantDenied(_) => 403,
             Self::Limit(err) => err.http_status(),
             Self::Wal(_)
             | Self::Produce(_)

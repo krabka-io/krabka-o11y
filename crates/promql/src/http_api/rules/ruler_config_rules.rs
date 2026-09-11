@@ -1,13 +1,14 @@
 use super::{
-    ApiError, Arc, BTreeMap, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response,
-    State, StatusCode, tenant_from_headers, yaml_response,
+    ApiError, Arc, BTreeMap, Extension, HeaderMap, IntoResponse, MetricStore, Principal,
+    PrometheusApiState, Response, State, StatusCode, authorized_tenant_from_headers, yaml_response,
 };
 
 pub(crate) async fn ruler_config_rules<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
 ) -> Response {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };

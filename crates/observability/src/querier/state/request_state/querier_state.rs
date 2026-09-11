@@ -16,10 +16,8 @@ impl QuerierState {
             rules: SharedLokiRules::default(),
             alert_states: SharedPrometheusAlertStates::default(),
             query_authorizer: Arc::new(AllowAllQueryAuthorizer),
-            max_query_range: None,
-            max_query_series: None,
-            max_query_read: None,
-            max_query_length: None,
+            overrides: Arc::new(OverridesProvider::new(Limits::default())),
+            limits: Limits::default(),
             metrics: None,
         }
     }
@@ -43,28 +41,35 @@ impl QuerierState {
         }
     }
 
+    /// Gives every tenant the same limits.
     #[must_use]
-    pub fn with_max_query_range(mut self, max_query_range: Time) -> Self {
-        self.max_query_range = Some(max_query_range);
+    pub fn with_limits(self, limits: Limits) -> Self {
+        self.with_limits_overrides(OverridesProvider::new(limits))
+    }
+
+    /// Resolves each tenant's limits through `overrides`.
+    ///
+    /// The state starts on the provider's defaults, and each read path resolves
+    /// one tenant's limits once it knows whose request it is.
+    #[must_use]
+    pub fn with_limits_overrides(self, overrides: OverridesProvider) -> Self {
+        self.with_limits_overrides_source(Arc::new(overrides))
+    }
+
+    pub(crate) fn with_limits_overrides_source(
+        mut self,
+        overrides: Arc<OverridesProvider>,
+    ) -> Self {
+        self.limits = overrides.defaults().clone();
+        self.overrides = overrides;
         self
     }
 
-    #[must_use]
-    pub fn with_max_query_series(mut self, max_query_series: usize) -> Self {
-        self.max_query_series = Some(max_query_series);
-        self
-    }
-
-    #[must_use]
-    pub fn with_max_query_read(mut self, max_query_read: ByteSize) -> Self {
-        self.max_query_read = Some(max_query_read);
-        self
-    }
-
-    #[must_use]
-    pub fn with_max_query_length(mut self, max_query_length: ByteSize) -> Self {
-        self.max_query_length = Some(max_query_length);
-        self
+    /// Resolves one tenant's limits, once, for the request in hand.
+    pub(crate) fn with_tenant_limits(&self, tenant: &TenantId) -> Self {
+        let mut state = self.clone();
+        state.limits = self.overrides.for_tenant(tenant).clone();
+        state
     }
 
     #[must_use]

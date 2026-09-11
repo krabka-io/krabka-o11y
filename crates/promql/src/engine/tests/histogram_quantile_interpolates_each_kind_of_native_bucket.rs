@@ -61,7 +61,7 @@ pub(crate) async fn histogram_quantile_interpolates_each_kind_of_native_bucket()
     ] {
         let query = format!("histogram_quantile({quantile}, h)");
         let result = engine
-            .query_instant("tenant-a", &query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), &query, 10_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"));
         let QueryResult::InstantVector(samples) = result else {

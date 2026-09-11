@@ -37,7 +37,7 @@ pub(crate) async fn instant_sum_and_avg_aggregations_omit_mixed_float_and_histog
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for query in ["sum by (job) (mixed_metric)", "avg by (job) (mixed_metric)"] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
 

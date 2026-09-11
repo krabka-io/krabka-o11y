@@ -36,6 +36,7 @@ overrides:
                 == Limits {
                     ingestion_rate: per_sec(500),
                     ingestion_burst_spans: 100_000,
+                    max_spans_per_request: 10_000,
                     max_traces_per_search: 1000,
                     max_spans_per_trace: 1000,
                     max_attribute: bytes(2048),
@@ -51,6 +52,34 @@ overrides:
 
         assert2::assert!(tenant_b.max_attribute == bytes(64));
         assert2::assert!(tenant_b.ingestion_rate == Limits::default().ingestion_rate);
+    }
+
+    /// The defaults a service was started with, not the compiled ones, are what
+    /// an unlisted tenant gets and what a listed tenant's entry merges over.
+    /// Without that, a command-line flag would reach only the tenants no file
+    /// mentions, and the file would silently undo it for the rest.
+    #[test]
+    fn process_defaults_carry_into_every_tenant() {
+        let defaults = Limits {
+            max_spans_per_trace: 7,
+            max_traces_per_search: 9,
+            ..Limits::default()
+        };
+        let provider = OverridesProvider::from_yaml_with_defaults(YAML, defaults).unwrap();
+
+        // The entry names `max_spans_per_trace`, so that key wins for tenant-a.
+        assert2::assert!(provider.for_tenant("tenant-a").max_spans_per_trace == 1000);
+        // It names nothing else, so the process defaults stand.
+        assert2::assert!(provider.for_tenant("tenant-a").max_traces_per_search == 9);
+        // tenant-b's entry names neither, so both process defaults stand.
+        assert2::assert!(
+            *provider.for_tenant("tenant-b")
+                == Limits {
+                    max_attribute: bytes(64),
+                    ..defaults
+                }
+        );
+        assert2::assert!(*provider.for_tenant("tenant-z") == defaults);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use super::{
-    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, Value,
+    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, TenantId, Value,
     add_loki_query_stats, execute_http_query_for_tenant, json,
     loki_instant_scalar_or_vector_response, loki_range_vector_response, loki_success_value,
     merge_loki_query_response, reject_signed_vector_function_literal, resolved_range_step,
@@ -9,7 +9,7 @@ use super::{
 
 pub(crate) async fn execute_http_multi_tenant_query(
     state: &QuerierState,
-    tenants: &[String],
+    tenants: &[TenantId],
     params: &QueryParams,
     kind: QueryKind,
     encoding: LokiStreamEncoding,
@@ -17,7 +17,16 @@ pub(crate) async fn execute_http_multi_tenant_query(
     reject_signed_vector_function_literal(&params.query)?;
     if let Some(result) = scalar_vector_expression_result(&params.query) {
         let time_range = time_range(params, kind)?;
-        validate_loki_range_query_range_limit(kind, time_range)?;
+        // A scalar expression reads no data, but the window cap still applies,
+        // and it applies per tenant: `Loki` takes the smallest of the limits
+        // the named tenants carry, so every one of them is checked.
+        for tenant in tenants {
+            validate_loki_range_query_range_limit(
+                &state.with_tenant_limits(tenant),
+                kind,
+                time_range,
+            )?;
+        }
         validate_loki_query_range_resolution(params, kind, time_range)?;
         let value = match kind {
             QueryKind::Instant => loki_instant_scalar_or_vector_response(time_range.end_ns, result),

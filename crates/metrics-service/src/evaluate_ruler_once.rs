@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerSink, Arc, MetricStore, PrometheusApiState, RecordingRuleWalSink, RulerAlertState,
-    RulerGroupEvaluation, RulerGroupState, RulerShard, RulerStateSink,
+    RulerGroupEvaluation, RulerGroupState, RulerShard, RulerStateSink, TenantId,
     evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval,
 };
 
@@ -19,7 +19,7 @@ pub async fn evaluate_ruler_once<S, W, A, R>(
     sinks: (&W, &A, &R),
     alert_state: &mut RulerAlertState,
     group_state: &mut RulerGroupState,
-    tenant: &str,
+    tenant: &TenantId,
     shard: RulerShard,
     eval_time_ms: i64,
 ) -> Result<RulerGroupEvaluation, krabka_promql::PromqlError>

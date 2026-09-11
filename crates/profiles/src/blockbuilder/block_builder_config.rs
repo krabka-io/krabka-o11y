@@ -33,6 +33,12 @@ pub struct BlockBuilderConfig {
     /// block-builder then still works without a metrics registry, as in tests
     /// and in `run()`.
     pub metrics: Option<ServiceMetrics>,
+    /// TLS and SASL for the WAL consumer, as `WalClientSecurityArgs::load`
+    /// gives it. `None`, the default, connects in plain text.
+    ///
+    /// The policy holds the SASL password, and `krabka-client-core` prints it
+    /// under `{:?}`. That is why this struct has no `Debug`.
+    pub security: Option<krabka_client_core::ClientSecurity>,
 }
 
 impl BlockBuilderConfig {
@@ -56,6 +62,7 @@ impl BlockBuilderConfig {
             index_snapshot_retain: IndexSnapshotRetain::default(),
             object_store_retry: ObjectStoreRetryPolicy::DEFAULT,
             metrics: None,
+            security: None,
         }
     }
 

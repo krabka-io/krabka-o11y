@@ -6,8 +6,11 @@ use super::*;
 /// input separating `>` from `>=` in either check.
 #[test]
 pub(crate) fn query_range_limits_admit_the_boundary_and_refuse_the_step_past_it() {
-    let state = QuerierState::new(".", LabelIndex::default(), BlockIndex::default())
-        .with_max_query_range(Time::from_nanos(1_000_000));
+    let state =
+        QuerierState::new(".", LabelIndex::default(), BlockIndex::default()).with_limits(Limits {
+            max_query_range: Time::from_nanos(1_000_000),
+            ..Limits::default()
+        });
     for (name, end_ns, allowed) in [
         ("exactly the limit", 1_000_000_i64, true),
         ("one nanosecond past it", 1_000_001, false),

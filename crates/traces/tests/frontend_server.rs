@@ -34,7 +34,7 @@ fn block(id: &str) -> BlockMetaInfo {
 async fn spawn(app: axum::Router) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    tokio::spawn(async move { axum::serve(listener, authenticated(app)).await.unwrap() });
     addr
 }
 
@@ -251,4 +251,14 @@ async fn server_tags_round_trip() {
                 "tags": ["http.method"],
             })
     );
+}
+
+// The routers read the principal from the request extensions, where the
+// authentication layer puts it. This is that layer with no security flags,
+// which serves every request as unauthenticated.
+fn authenticated(router: axum::Router) -> axum::Router {
+    krabka_observability::server_security::authenticate_requests(
+        router,
+        &krabka_observability::server_security::ServerSecurity::default(),
+    )
 }

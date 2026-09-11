@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::{self, Cursor},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -49,7 +49,7 @@ use tracing::instrument;
 use url::Url;
 use xxhash_rust::xxh3::xxh3_64;
 
-use crate::reader::DEFAULT_BLOCK_READ_MAX;
+use crate::{path_escape::escape_object_path_segment, reader::DEFAULT_BLOCK_READ_MAX};
 
 #[cfg(test)]
 mod tests {
@@ -1226,6 +1226,96 @@ mod tests {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect()
+    }
+
+    const AWKWARD_TENANTS: [(&str, &str); 13] = [
+        ("plain", "tenant-a"),
+        ("separator", "a/b"),
+        ("relative", ".."),
+        ("current", "."),
+        ("traversal", "../../etc"),
+        ("absolute", "/etc/passwd"),
+        ("space", "a b"),
+        ("star", "a*b"),
+        ("marker", "a!b"),
+        ("quote", "a'b"),
+        ("brackets", "(a)"),
+        ("backslash", "a\\b"),
+        ("non ASCII", "\u{e9}"),
+    ];
+
+    /// A tenant reaches these keys from an untrusted header, and the keys are
+    /// what separates one tenant's blocks and index shards from another's.
+    #[test]
+    fn a_tenant_never_widens_a_log_key_past_its_own_segment() {
+        let prefix = ObjectPath::from("observability/logs");
+
+        for (name, tenant) in AWKWARD_TENANTS {
+            let key = BlockKey::new(tenant, 3, 42, 47, TimeRange::new(10, 20).unwrap());
+            let object_key = key.object_key();
+            let segments = object_key.split('/').collect::<Vec<_>>();
+            assert2::check!(segments.len() == 4, "{name}");
+            assert2::check!(
+                !segments
+                    .iter()
+                    .any(|segment| matches!(*segment, "." | ".." | "")),
+                "{name}"
+            );
+            assert2::check!(
+                log_block_object_path(&prefix, &key).to_string()
+                    == format!("observability/logs/{object_key}"),
+                "{name}"
+            );
+
+            let shards = log_tenant_index_shards_object_prefix(&prefix, tenant);
+            let manifest = log_tenant_index_manifest_object_path(&prefix, tenant);
+            for path in [&shards, &manifest] {
+                let parts = path
+                    .prefix_match(&prefix)
+                    .expect("a tenant path sits under the prefix it was given")
+                    .collect::<Vec<_>>();
+                assert2::check!(parts[0].as_ref().starts_with("tenant="), "{name}");
+                assert2::check!(
+                    parts[0]
+                        .as_ref()
+                        .strip_prefix("tenant=")
+                        .and_then(crate::unescape_object_path_segment)
+                        == Some(tenant.to_string()),
+                    "{name}"
+                );
+            }
+            assert2::check!(
+                shards.to_string()
+                    == format!(
+                        "observability/logs/tenant={}/index/logs/shards",
+                        crate::escape_object_path_segment(tenant)
+                    ),
+                "{name}"
+            );
+        }
+    }
+
+    /// `block_path` joins a multi-segment key onto a local directory, so a
+    /// tenant is the one part of it an attacker chooses.
+    #[test]
+    fn a_block_path_stays_under_its_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("store");
+        fs::create_dir_all(&root).unwrap();
+        let resolved_root = root.canonicalize().unwrap();
+
+        for (name, tenant) in AWKWARD_TENANTS {
+            let key = BlockKey::new(tenant, 0, 0, 1, TimeRange::new(0, 1).unwrap());
+            let path = block_path(&root, &key);
+            fs::create_dir_all(path.parent().expect("a block path has a parent")).unwrap();
+            fs::write(&path, b"block").unwrap();
+
+            // The resolved path, not the spelling: `..` and a leading `/` only
+            // show up once the operating system walks the path.
+            let resolved = path.canonicalize().unwrap();
+            assert2::check!(resolved.starts_with(&resolved_root), "{name}");
+            assert2::check!(resolved != resolved_root, "{name}");
+        }
     }
 }
 
