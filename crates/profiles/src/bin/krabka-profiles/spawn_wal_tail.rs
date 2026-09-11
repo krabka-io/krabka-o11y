@@ -1,6 +1,6 @@
 use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 
-use super::{Cli, WalTailProfileStore};
+use super::{CancellationToken, Cli, WalTailProfileStore};
 
 /// Runs the hot WAL tail, returning its handle for the caller to supervise.
 ///
@@ -8,12 +8,17 @@ use super::{Cli, WalTailProfileStore};
 /// answering from the cold blocks alone and the last few minutes of profiles
 /// are simply absent from the answer, so any end of this task -- an error or a
 /// panic -- has to end the role.
+///
+/// `shutdown` is the role's token, and the tail must watch it: the supervisor
+/// waits for every adopted task on the way out, so a tail that polls forever
+/// holds the whole process open until the orchestrator kills it.
 pub(crate) fn spawn_wal_tail(
     cli: &Cli,
     hot: WalTailProfileStore,
     client_dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
     client_frame_max: krabka_client_core::ClientFrameMax,
     metrics: WalConsumerMetrics,
+    shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     let config = krabka_profiles::hot_store::WalTailConfig {
         bootstrap: cli.bootstrap.clone(),
@@ -25,7 +30,9 @@ pub(crate) fn spawn_wal_tail(
         metrics,
     };
     tokio::spawn(async move {
-        if let Err(error) = krabka_profiles::hot_store::run_wal_tail_with_topic(hot, config).await {
+        if let Err(error) =
+            krabka_profiles::hot_store::run_wal_tail_with_topic(hot, config, shutdown).await
+        {
             tracing::error!(%error, "profiles WAL tail stopped");
         }
     })

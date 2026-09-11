@@ -4,6 +4,7 @@
 use std::{sync::Arc, time::Duration};
 
 use assert2::check;
+use krabka_observability::RoleReadiness;
 use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     backend::{MockQuerier, SearchPartial, TracePartial},
@@ -68,7 +69,7 @@ async fn server_round_trips_search_and_echo() {
         cfg,
         MembershipView::fixed(["q1:3200"]),
     ));
-    let addr = spawn(router_with_backend(qf)).await;
+    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
     let client = reqwest::Client::new();
 
     let echo = client
@@ -115,7 +116,7 @@ async fn server_search_requires_query() {
         FrontendConfig::default(),
         MembershipView::fixed(["q1:3200"]),
     ));
-    let addr = spawn(router_with_backend(qf)).await;
+    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("http://{addr}/api/search?start=0&end=1"))
@@ -163,7 +164,7 @@ async fn server_by_id_returns_v2_envelope() {
         cfg,
         MembershipView::fixed(["q1:3200"]),
     ));
-    let addr = spawn(router_with_backend(qf)).await;
+    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
     let client = reqwest::Client::new();
 
     let resp = client
@@ -199,7 +200,7 @@ async fn server_by_id_404_when_missing() {
         cfg,
         MembershipView::fixed(["q1:3200"]),
     ));
-    let addr = spawn(router_with_backend(qf)).await;
+    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("http://{addr}/api/v2/traces/{}", "0a".repeat(16)))
@@ -233,7 +234,7 @@ async fn server_tags_round_trip() {
         cfg,
         MembershipView::fixed(["q1:3200"]),
     ));
-    let addr = spawn(router_with_backend(qf)).await;
+    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("http://{addr}/api/v2/search/tags?start=0&end=100"))

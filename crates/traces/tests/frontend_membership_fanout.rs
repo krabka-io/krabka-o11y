@@ -31,11 +31,13 @@ use axum::{
     response::IntoResponse as _,
     routing::get,
 };
+use krabka_observability::RoleReadiness;
 use krabka_traces::frontend::{
-    HttpQuerier, HttpReadinessProbe, MembershipView, QueryFrontend,
+    HttpQuerier, HttpReadinessProbe, MembershipView, QUERIER_MEMBERSHIP_GATE, QueryFrontend,
+    ReadinessProbe,
     config::FrontendConfig,
     job::{BlockMetaInfo, RowGroupInfo, TraceIndexCatalog},
-    refresh_membership,
+    refresh_membership, run_membership_refresh,
     server::router_with_backend,
 };
 use krabka_units::{
@@ -43,6 +45,7 @@ use krabka_units::{
     convert::{ByteSizeExt as _, TimeExt as _},
 };
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
 
 /// Every query string one stub querier was asked, in arrival order.
 type Log = Arc<Mutex<Vec<String>>>;
@@ -55,13 +58,27 @@ struct StubState {
     live_trace: String,
     /// Whether a by-id lookup on this querier finds the trace.
     holds_trace: bool,
+    /// What `/ready` answers now. A test that moves a querier from starting to
+    /// serving writes here, and the next probe reads it.
+    readiness: Readiness,
 }
+
+/// The status and body one stub querier serves on `/ready`.
+type Readiness = Arc<Mutex<(StatusCode, &'static str)>>;
 
 /// A running stub querier: where to reach it, and what it was asked.
 struct Stub {
     addr: String,
     log: Log,
     live_trace: String,
+    readiness: Readiness,
+}
+
+impl Stub {
+    /// Make this querier answer `/ready` the way a started one does.
+    fn mark_ready(&self) {
+        *self.readiness.lock().unwrap() = (StatusCode::OK, "ready\n");
+    }
 }
 
 /// A stub querier that answers `/ready` with `readiness` and serves searches.
@@ -86,11 +103,15 @@ async fn spawn_querier_holding(
         log: Arc::new(Mutex::new(Vec::new())),
         live_trace: live_trace.to_string(),
         holds_trace,
+        readiness: Arc::new(Mutex::new((readiness, ready_body))),
     };
     let app = Router::new()
         .route(
             "/ready",
-            get(move || async move { (readiness, ready_body) }),
+            get(|State(state): State<StubState>| async move {
+                let (status, body) = *state.readiness.lock().unwrap();
+                (status, body)
+            }),
         )
         .route(
             "/api/search",
@@ -140,6 +161,7 @@ async fn spawn_querier_holding(
         addr: addr.to_string(),
         log: state.log,
         live_trace: state.live_trace,
+        readiness: state.readiness,
     }
 }
 
@@ -193,6 +215,14 @@ async fn serve(endpoints: &[String], cfg: FrontendConfig) -> std::net::SocketAdd
 }
 
 async fn serve_with(membership: MembershipView, cfg: FrontendConfig) -> std::net::SocketAddr {
+    serve_with_readiness(membership, cfg, RoleReadiness::new()).await
+}
+
+async fn serve_with_readiness(
+    membership: MembershipView,
+    cfg: FrontendConfig,
+    readiness: RoleReadiness,
+) -> std::net::SocketAddr {
     let backend = HttpQuerier::new(cfg.request_timeout.to_std()).unwrap();
     let qf = Arc::new(QueryFrontend::new(
         Arc::new(backend),
@@ -203,7 +233,7 @@ async fn serve_with(membership: MembershipView, cfg: FrontendConfig) -> std::net
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, router_with_backend(qf))
+        axum::serve(listener, router_with_backend(qf, readiness))
             .await
             .unwrap();
     });
@@ -483,4 +513,133 @@ async fn an_assembled_trace_is_partial_when_a_querier_was_left_out() {
     let message = body["message"].as_str().unwrap();
     check!(message.contains(&down.addr), "{message}");
     check!(message.contains("live-store"), "{message}");
+}
+
+// ---------------------------------------------------------------------------
+// The frontend's own readiness.
+// ---------------------------------------------------------------------------
+
+/// Serve a frontend the way the role binary does, with the real probe loop
+/// moving the `querier-membership` gate that its own `/ready` reports.
+async fn serve_with_refresh(endpoints: Vec<String>) -> (std::net::SocketAddr, CancellationToken) {
+    let readiness = RoleReadiness::new();
+    let gate = readiness.gate(QUERIER_MEMBERSHIP_GATE);
+    let probe: Arc<dyn ReadinessProbe> =
+        Arc::new(HttpReadinessProbe::new(Duration::from_secs(2)).unwrap());
+    let membership = MembershipView::empty();
+    let shutdown = CancellationToken::new();
+    tokio::spawn(run_membership_refresh(
+        membership.clone(),
+        endpoints,
+        probe,
+        Duration::from_millis(25),
+        gate,
+        shutdown.clone(),
+    ));
+    let addr = serve_with_readiness(membership, cfg(), readiness).await;
+    (addr, shutdown)
+}
+
+/// Read one readiness path off the frontend.
+async fn probe_path(frontend: std::net::SocketAddr, path: &str) -> (StatusCode, String) {
+    let resp = reqwest::Client::new()
+        .get(format!("http://{frontend}{path}"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, resp.text().await.unwrap_or_default())
+}
+
+/// Poll `path` until it answers `want`, or give up and return what it last
+/// said. The refresh loop is on a timer, so the verdict arrives shortly after
+/// the state that produced it.
+async fn await_path(
+    frontend: std::net::SocketAddr,
+    path: &str,
+    want: StatusCode,
+) -> (StatusCode, String) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let got = probe_path(frontend, path).await;
+        if got.0 == want || std::time::Instant::now() >= deadline {
+            return got;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// A query-frontend with nobody to fan out to cannot serve, and it is the only
+/// role whose readiness never settles: the gate reports other processes.
+///
+/// The pool here is one real querier that starts unready and then starts. The
+/// frontend's own `/ready` follows it, on both the `/ready` path and Tempo's
+/// `/status` alias, and the query succeeds only once the gate is met.
+#[tokio::test]
+async fn the_frontend_is_unready_until_a_querier_passes_its_probe() {
+    let querier = spawn_querier(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "not ready: trace-index, live-store\n",
+        "hot-a",
+    )
+    .await;
+    let (frontend, shutdown) = serve_with_refresh(vec![querier.addr.clone()]).await;
+
+    let starting = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        "not ready: querier-membership\n".to_string(),
+    );
+    for path in ["/ready", "/status"] {
+        check!(
+            await_path(frontend, path, StatusCode::SERVICE_UNAVAILABLE).await == starting,
+            "{path}"
+        );
+    }
+    // And the frontend means it: a query in that state fails rather than
+    // answering from nobody.
+    let (status, _body) = search(frontend).await;
+    check!(status == StatusCode::BAD_GATEWAY);
+
+    querier.mark_ready();
+
+    let serving = (StatusCode::OK, "ready\n".to_string());
+    for path in ["/ready", "/status"] {
+        check!(
+            await_path(frontend, path, StatusCode::OK).await == serving,
+            "{path}"
+        );
+    }
+    let (status, body) = search(frontend).await;
+    check!(status == StatusCode::OK, "{body}");
+    check!(trace_ids(&body) == BTreeSet::from([querier.live_trace.clone(), "cold".to_string()]));
+
+    shutdown.cancel();
+}
+
+/// The gate goes back down. A pool that loses its last ready querier takes the
+/// frontend out of rotation, rather than leaving it to answer every query with
+/// a transport error.
+#[tokio::test]
+async fn the_frontend_goes_unready_again_when_its_last_querier_does() {
+    let querier = spawn_querier(StatusCode::OK, "ready\n", "hot-a").await;
+    let (frontend, shutdown) = serve_with_refresh(vec![querier.addr.clone()]).await;
+
+    check!(
+        await_path(frontend, "/ready", StatusCode::OK).await
+            == (StatusCode::OK, "ready\n".to_string())
+    );
+
+    *querier.readiness.lock().unwrap() =
+        (StatusCode::SERVICE_UNAVAILABLE, "not ready: live-store\n");
+
+    check!(
+        await_path(frontend, "/ready", StatusCode::SERVICE_UNAVAILABLE).await
+            == (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "not ready: querier-membership\n".to_string()
+            )
+    );
+
+    shutdown.cancel();
 }

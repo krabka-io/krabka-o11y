@@ -22,6 +22,7 @@ use krabka_metrics::{
 };
 use krabka_observability::{
     ConfigFileArgs, RoleReadiness, argv_with_config_file, readiness_router,
+    topic_contract::{METRICS_TOPICS, require_topics},
 };
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
@@ -31,11 +32,17 @@ use tokio::net::TcpListener;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
+    use std::{
+        collections::BTreeMap,
+        sync::{Mutex, OnceLock},
+    };
 
     use assert2::{assert, check};
     use axum::{body::Body, http::Request};
     use clap::Parser;
+    use krabka_broker::{Broker, BrokerConfig};
+    use krabka_client_admin::{AdminClient, CreateTopicSpec};
+    use krabka_observability::topic_contract::{METRICS_HA_TOPIC, METRICS_WAL_TOPIC};
     use tower::ServiceExt;
 
     use super::*;
@@ -425,6 +432,149 @@ mod tests {
     fn rejects_unknown_target() {
         assert!(Cli::try_parse_from(["krabka-metrics", "--target", "bogus"]).is_err());
     }
+
+    /// The contract has to stop a start, not merely describe one.
+    ///
+    /// The broker here holds a metrics WAL topic that meets the contract and
+    /// an HA topic that does not: it carries no `cleanup.policy`, so the
+    /// broker default of `delete` applies and every HA election is discarded
+    /// at the retention window. A distributor or compactor started against it
+    /// would produce and consume happily and lose the election map without a
+    /// word, so both must refuse; the three roles that open no client at all
+    /// are unaffected by the same broker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_topic_that_breaks_the_contract_stops_the_roles_that_use_it_and_no_others() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+        create_topics(
+            &bootstrap,
+            &[
+                (
+                    METRICS_WAL_TOPIC,
+                    BTreeMap::from([("retention.ms".to_string(), "900000".to_string())]),
+                ),
+                // The violation: a compacted state topic with no
+                // `cleanup.policy` override on it.
+                (METRICS_HA_TOPIC, BTreeMap::new()),
+            ],
+        )
+        .await;
+
+        for (target, refuses) in [
+            (Target::Distributor, true),
+            (Target::Compactor, true),
+            (Target::Querier, false),
+            (Target::QueryFrontend, false),
+            (Target::Ruler, false),
+        ] {
+            let cli = cli_for(target, &bootstrap);
+            let outcome = require_role_topics(&cli).await;
+            check!(outcome.is_err() == refuses, "{target:?}");
+            if let Err(error) = outcome {
+                check!(error.to_string().contains(METRICS_HA_TOPIC), "{target:?}");
+            }
+        }
+    }
+
+    /// A role that reaches no broker must start when there is no broker to
+    /// reach. Nothing else here distinguishes "the contract is broken" from
+    /// "there is nothing to check".
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unreachable_broker_stops_only_the_roles_that_need_one() {
+        // Bound and dropped, so the address is one nothing answers on.
+        let unused = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let bootstrap = unused.local_addr().expect("local address").to_string();
+        drop(unused);
+
+        for (target, refuses) in [
+            (Target::Distributor, true),
+            (Target::Compactor, true),
+            (Target::Querier, false),
+            (Target::QueryFrontend, false),
+            (Target::Ruler, false),
+        ] {
+            let cli = cli_for(target, &bootstrap);
+            check!(
+                require_role_topics(&cli).await.is_err() == refuses,
+                "{target:?}"
+            );
+        }
+    }
+
+    /// The refusal has to reach the process, not just the helper: `run` must
+    /// return the contract error and leave its data port unbound.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_role_does_not_start_and_does_not_listen_when_the_contract_is_broken() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+        create_topics(&bootstrap, &[(METRICS_HA_TOPIC, BTreeMap::new())]).await;
+
+        // A port nothing holds, so a bind by the role is the only thing that
+        // could make it answer.
+        let reserved = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listen = reserved.local_addr().expect("local address");
+        drop(reserved);
+
+        let cli = Cli::try_parse_from([
+            "krabka-metrics",
+            "--target",
+            "distributor",
+            "--bootstrap",
+            &bootstrap,
+            "--listen",
+            &listen.to_string(),
+            "--admin-listen-addr",
+            "127.0.0.1:0",
+        ])
+        .expect("distributor cli");
+
+        // Bounded: a role that does not refuse serves until it is stopped, so
+        // without this the failure would be a hung test rather than a red one.
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), run(cli))
+            .await
+            .expect("the role decides within 30s whether to start");
+
+        let error = outcome.expect_err("the role refuses to start");
+        check!(error.to_string().contains("topic contract violated"));
+        assert!(tokio::net::TcpStream::connect(listen).await.is_err());
+    }
+
+    fn cli_for(target: Target, bootstrap: &str) -> Cli {
+        let name = match target {
+            Target::Distributor => "distributor",
+            Target::Compactor => "compactor",
+            Target::Querier => "querier",
+            Target::QueryFrontend => "query-frontend",
+            Target::Ruler => "ruler",
+        };
+        Cli::try_parse_from(["krabka-metrics", "--target", name, "--bootstrap", bootstrap])
+            .expect("cli")
+    }
+
+    async fn create_topics(bootstrap: &str, topics: &[(&str, BTreeMap<String, String>)]) {
+        let mut admin = AdminClient::connect(&[bootstrap.to_string()])
+            .await
+            .expect("admin connect");
+        let specs: Vec<CreateTopicSpec> = topics
+            .iter()
+            .map(|(name, configs)| CreateTopicSpec {
+                name: (*name).to_string(),
+                partitions: 1,
+                replicas: 1,
+                configs: configs.clone(),
+            })
+            .collect();
+        admin
+            .create_topics(&specs, krabka_units::secs(5))
+            .await
+            .expect("create topics");
+    }
 }
 
 mod alloc;
@@ -438,9 +588,11 @@ mod parse_ingest_rate_bucket_cap;
 mod querier_build_info;
 mod querier_router;
 mod query_frontend_router;
+mod require_role_topics;
 mod role_build_info;
 mod role_status_router;
 mod ruler_router;
+mod run;
 mod run_compactor;
 mod run_distributor;
 mod run_querier;
@@ -468,10 +620,12 @@ use parse_ingest_rate_bucket_cap::parse_ingest_rate_bucket_cap;
 use querier_build_info::querier_build_info;
 use querier_router::querier_router;
 use query_frontend_router::query_frontend_router;
+use require_role_topics::require_role_topics;
 use role_build_info::role_build_info;
 use role_status_router::role_status_router;
 use ruler_router::ruler_router;
 #[cfg_attr(test, mutants::skip)]
+use run::run;
 use run_compactor::run_compactor;
 use run_distributor::run_distributor;
 use run_querier::run_querier;
@@ -505,38 +659,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "info",
         "krabka-metrics",
     )?;
-    let result = async {
-        let metrics = ServiceMetrics::new();
-        // The admin port binds before the role reaches its broker or object
-        // store, so `/ready` there is 503 for exactly as long as the role's
-        // remaining startup takes. The compactor has no data port at all, and
-        // this is the only place it can be asked.
-        let readiness = RoleReadiness::new();
-        let admin = krabka_telemetry::profiling::spawn_admin_with_config(
-            cli.admin_listen_addr,
-            krabka_metrics::metrics::metrics_router(metrics.registry.clone())
-                .merge(readiness_router(readiness.clone())),
-            cli.profiling.clone(),
-        )
-        .await?;
-
-        let role = async {
-            match cli.target {
-                Target::Distributor => run_distributor(cli, metrics, readiness).await?,
-                Target::Compactor => run_compactor(cli, metrics, readiness).await?,
-                Target::Querier => run_querier(cli, readiness).await?,
-                Target::QueryFrontend => run_query_frontend(cli, readiness).await?,
-                Target::Ruler => run_ruler(cli, readiness).await?,
-            }
-            Ok::<(), Box<dyn std::error::Error>>(())
-        };
-        tokio::select! {
-            result = role => result?,
-            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
-        }
-        Ok(())
-    }
-    .await;
+    let result = run(cli).await;
     telemetry.shutdown();
     result
 }

@@ -10,11 +10,16 @@ use super::*;
 ///
 /// The membership refresh runs as a supervised task, not a bare `tokio::spawn`.
 /// If it stopped unnoticed the frontend would keep fanning out over whichever
-/// pool it last saw -- stale, and silently so, which is the failure the loop
-/// exists to prevent.
+/// pool it last saw. That is stale, and silently so, which is the failure the
+/// loop exists to prevent.
 ///
 /// `catalog` is the production [`TraceIndexCatalog`], or any compatible block
 /// catalog.
+///
+/// `readiness` already carries the gates the caller cleared before this point.
+/// This function adds `querier-membership`, which the probe loop moves up and
+/// down for the life of the role. It is the one gate of a query-frontend that
+/// no amount of startup can settle, because it reports other processes.
 ///
 /// # Errors
 /// Propagates bind and serve `std::io` errors, and backend-construction
@@ -22,6 +27,7 @@ use super::*;
 pub async fn run_query_frontend(
     cfg: FrontendConfig,
     catalog: TraceIndexCatalog,
+    readiness: RoleReadiness,
     shutdown: CancellationToken,
 ) -> std::io::Result<()> {
     let backend = HttpQuerier::new(cfg.request_timeout.to_std())
@@ -30,8 +36,11 @@ pub async fn run_query_frontend(
         HttpReadinessProbe::new(cfg.readiness_timeout.to_std())
             .map_err(|e| std::io::Error::other(e.to_string()))?,
     );
+    let membership_gate = readiness.gate(QUERIER_MEMBERSHIP_GATE);
     let membership = MembershipView::empty();
-    membership.publish(refresh_membership(&cfg.querier_addrs, probe.as_ref()).await);
+    let members = refresh_membership(&cfg.querier_addrs, probe.as_ref()).await;
+    mark_querier_membership_gate(&membership_gate, &members);
+    membership.publish(members);
 
     let listen_addr = cfg.listen_addr;
     let endpoints = cfg.querier_addrs.clone();
@@ -42,7 +51,7 @@ pub async fn run_query_frontend(
         cfg,
         membership.clone(),
     ));
-    let app = crate::frontend::server::router_with_backend(qf);
+    let app = crate::frontend::server::router_with_backend(qf, readiness);
     let listener = tokio::net::TcpListener::bind(listen_addr).await?;
 
     let mut tasks = SupervisedTasks::new(shutdown.clone());
@@ -54,6 +63,7 @@ pub async fn run_query_frontend(
             endpoints,
             probe,
             refresh_interval,
+            membership_gate,
             refresh_shutdown,
         ),
     );

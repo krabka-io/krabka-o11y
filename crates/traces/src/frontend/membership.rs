@@ -41,6 +41,7 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
+use krabka_observability::ReadinessGate;
 use tokio_util::sync::CancellationToken;
 
 use crate::frontend::backend::BackendError;
@@ -155,26 +156,31 @@ mod tests {
         check!(resolved == vec!["no-such-host.invalid:3200".to_string()]);
     }
 
+    /// The probe and the role it probes are one pair, so this drives the real
+    /// `krabka_observability` handler rather than a hand-written body. A
+    /// renderer that changed its wording would leave the probe saying
+    /// `unnamed gate`, and a querier that is still loading its index would then
+    /// look the same as one that answered 503 for any other reason.
     #[tokio::test]
     async fn the_probe_reads_the_gate_names_out_of_a_role_readiness_503() {
-        use axum::{Router, http::StatusCode, routing::get};
+        use krabka_observability::RoleReadiness;
 
-        let app = Router::new()
-            .route("/ready", get(|| async { "ready\n" }))
-            .route(
-                "/starting",
-                get(|| async {
-                    (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "not ready: trace-index, live-store\n",
-                    )
-                }),
-            );
+        let readiness = RoleReadiness::new();
+        let trace_index = readiness.gate("trace-index");
+        let app = krabka_observability::readiness_router(readiness);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         let probe = HttpReadinessProbe::new(Duration::from_secs(5)).unwrap();
+        check!(
+            probe.probe(&addr.to_string()).await
+                == QuerierHealth::NotReady {
+                    pending: "trace-index".to_string(),
+                }
+        );
+
+        trace_index.mark_ready();
         check!(probe.probe(&addr.to_string()).await == QuerierHealth::Ready);
 
         // A port with nothing behind it is unreachable, not unready.
@@ -198,6 +204,7 @@ mod membership_snapshot;
 mod membership_view;
 mod querier_health;
 mod querier_member;
+mod querier_membership_gate;
 mod readiness_probe;
 mod refresh_membership;
 mod resolve_endpoints;
@@ -208,6 +215,8 @@ pub use membership_snapshot::Membership;
 pub use membership_view::MembershipView;
 pub use querier_health::QuerierHealth;
 pub use querier_member::QuerierMember;
+pub use querier_membership_gate::QUERIER_MEMBERSHIP_GATE;
+pub(crate) use querier_membership_gate::mark_querier_membership_gate;
 pub use readiness_probe::ReadinessProbe;
 pub use refresh_membership::refresh_membership;
 pub use resolve_endpoints::resolve_endpoints;

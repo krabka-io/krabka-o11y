@@ -60,24 +60,34 @@ pub(crate) async fn run_ruler(
             "--wal-bootstrap is required for --target ruler",
         )
     })?;
-    let mut state_consumer = Consumer::builder()
-        .bootstrap(bootstrap.clone())
-        .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-        .frame_max(cli.client_frame_max)
-        .group_id(format!("{}-ruler-state", cli.wal_group_id))
-        .client_id(format!("{}-ruler-state", cli.wal_client_id))
-        .auto_offset_reset(AutoOffsetReset::Earliest)
-        .subscribe([cli.ruler_state_topic.clone()])
-        .build()
-        .await?;
-    let producer = Arc::new(
-        Producer::builder()
+    // Installed before the first broker connect, and raced against it: the
+    // clients retry an unreachable bootstrap rather than reporting it, so a
+    // ruler that starts against a broker that is down would otherwise sit in
+    // `build` with no handler for the signal that is trying to stop it.
+    let shutdown = Shutdown::new();
+    spawn_shutdown_signal_listener(shutdown.clone());
+    let mut state_consumer = tokio::select! {
+        biased;
+        () = shutdown.signalled() => return Ok(()),
+        built = Consumer::builder()
+            .bootstrap(bootstrap.clone())
+            .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
+            .frame_max(cli.client_frame_max)
+            .group_id(format!("{}-ruler-state", cli.wal_group_id))
+            .client_id(format!("{}-ruler-state", cli.wal_client_id))
+            .auto_offset_reset(AutoOffsetReset::Earliest)
+            .subscribe([cli.ruler_state_topic.clone()])
+            .build() => built?,
+    };
+    let producer = Arc::new(tokio::select! {
+        biased;
+        () = shutdown.signalled() => return Ok(()),
+        built = Producer::builder()
             .bootstrap(bootstrap)
             .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
             .frame_max(cli.client_frame_max)
-            .build()
-            .await?,
-    );
+            .build() => built?,
+    });
     let wal_sink = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), cli.wal_topic.clone());
     let state_sink = RulerStateFanoutSink::new(
         PrometheusRulerStateSink::new(Arc::clone(&state)),
@@ -101,9 +111,6 @@ pub(crate) async fn run_ruler(
     let state_for_replay = Arc::clone(&state);
     let state_topic = cli.ruler_state_topic.clone();
     let poll_timeout = cli.wal_poll_timeout;
-
-    let shutdown = Shutdown::new();
-    spawn_shutdown_signal_listener(shutdown.clone());
 
     let alert_sink = RulerAlertmanagerSink::from_endpoints(
         alertmanager_urls,

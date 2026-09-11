@@ -37,6 +37,7 @@ use object_store::ObjectStore;
 mod tests {
     use std::sync::{Mutex, OnceLock};
 
+    use assert2::check;
     use clap::Parser;
 
     use super::*;
@@ -686,6 +687,40 @@ mod tests {
         task.abort();
     }
 
+    /// The contract has to stop a start, not merely describe one.
+    ///
+    /// With no `--wal-bootstrap` a querier or query-frontend serves compacted
+    /// blocks alone and reaches no broker, so there is no topic to check and
+    /// nothing to refuse. Name a broker and the check becomes a condition of
+    /// starting -- including when the address answers nothing, which is a role
+    /// that would otherwise bind its port and serve a recent window that is
+    /// permanently empty.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn only_a_role_that_names_a_broker_is_held_to_the_topic_contract() {
+        // Bound and dropped, so the address is one nothing answers on.
+        let unused = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let unreachable = unused.local_addr().expect("local address").to_string();
+        drop(unused);
+
+        for target in ["querier", "query-frontend", "ruler"] {
+            let without = Cli::try_parse_from(["krabka-metrics-service", "--target", target])
+                .expect("cli without a broker");
+            check!(require_role_topics(&without).await.is_ok(), "{target}");
+
+            let with = Cli::try_parse_from([
+                "krabka-metrics-service",
+                "--target",
+                target,
+                "--wal-bootstrap",
+                &unreachable,
+            ])
+            .expect("cli with an unreachable broker");
+            check!(require_role_topics(&with).await.is_err(), "{target}");
+        }
+    }
+
     struct PendingWalHeadConsumer;
 
     #[async_trait::async_trait]
@@ -711,6 +746,12 @@ mod tests {
     }
 }
 
+/// A `SIGTERM` sent to the real querier composition has to end the process,
+/// not merely reach a handler. The suite runs the role in a child and asserts
+/// on its exit status.
+#[cfg(all(test, unix))]
+mod sigterm_exits_the_querier;
+
 mod alloc;
 mod cli;
 mod load_runtime_overrides;
@@ -720,6 +761,7 @@ mod parse_external_label;
 mod parse_positive_usize;
 mod parse_remote_read_max_body;
 mod query_engine_opts;
+mod require_role_topics;
 mod run_querier;
 mod run_query_frontend;
 mod run_ruler;
@@ -740,6 +782,7 @@ use parse_external_label::{ExternalLabels, parse_external_label, parse_external_
 use parse_positive_usize::parse_positive_usize;
 use parse_remote_read_max_body::parse_remote_read_max_body;
 use query_engine_opts::query_engine_opts;
+use require_role_topics::require_role_topics;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
 use run_ruler::run_ruler;
@@ -778,6 +821,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
         let role = async {
+            // Before any producer or consumer exists. A role started against a
+            // WAL whose partition count is not the one the deployment
+            // provisioned reads a re-mapped key space, and a ruler started
+            // against an uncompacted state topic loses every pending alert at
+            // the retention window; neither reports itself.
+            require_role_topics(&cli).await?;
             match cli.target {
                 Target::Querier => run_querier(cli, metrics, readiness).await?,
                 Target::QueryFrontend => run_query_frontend(cli, metrics, readiness).await?,

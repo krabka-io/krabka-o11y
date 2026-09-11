@@ -1,18 +1,39 @@
-use krabka_observability::{CriticalTaskError, SupervisedTasks, contain_handler_panics};
+use krabka_observability::{
+    CriticalTaskError, RoleReadiness, SupervisedTasks, contain_handler_panics,
+};
 
 use super::*;
 
 pub(crate) async fn run_querier(
     cli: Cli,
     metrics: ServiceMetrics,
+    readiness: RoleReadiness,
     shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: SocketAddr = cli.listen.parse()?;
+    // Registered before any of the work, and in the order the start meets it.
+    // The object store, the index snapshot and the embedded live-store
+    // consumer are all built before the data port binds, so the honest report
+    // of this window lands on the admin port; the data port echoes the same
+    // gates for the query-frontend that probes it.
+    let gates = BlockStoreGates::register(&readiness);
     let live_store = cli
         .querier_live_store
         .then(|| Arc::new(RwLock::new(LiveStore::new(cli.retention.nanos_i64()))));
-    let (router, store, trace_index_key, trace_index) =
-        build_querier_router_with_live(&cli, metrics.clone(), live_store.clone()).await?;
+    // The embedded live tier is this querier's alone: the group gives each
+    // replica a disjoint slice of the recent spans, and no other querier can
+    // supply it. A querier that loses the consumer still answers, from a store
+    // that stopped at the last record it read, so the gate goes back down when
+    // the loop ends.
+    let live_store_gate = live_store.is_some().then(|| readiness.gate("live-store"));
+    let (router, store, trace_index_key, trace_index) = build_querier_router_with_live(
+        &cli,
+        metrics.clone(),
+        live_store.clone(),
+        &gates,
+        readiness,
+    )
+    .await?;
     // Both loops below decide what this querier can see. Supervised, so that a
     // stop of either -- error, early return, or panic -- ends the role rather
     // than leaving it answering from a tier that no longer moves.
@@ -31,10 +52,16 @@ pub(crate) async fn run_querier(
         let live_shutdown = shutdown.clone();
         let live_metrics = metrics.clone();
         tasks.spawn("traces querier embedded live-store", async move {
+            if let Some(gate) = &live_store_gate {
+                gate.mark_ready();
+            }
             if let Err(err) =
                 livestore::run(consumer, live_store, live_metrics, live_shutdown).await
             {
                 tracing::error!(error = %err, "traces querier embedded live-store stopped");
+            }
+            if let Some(gate) = &live_store_gate {
+                gate.mark_unready();
             }
         });
     }

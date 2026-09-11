@@ -41,8 +41,8 @@ pub use job::{
     TraceIndexCatalog, blocks_for_tenant, plan_search_jobs,
 };
 pub use membership::{
-    HttpReadinessProbe, Membership, MembershipView, QuerierHealth, QuerierMember, ReadinessProbe,
-    refresh_membership, run_membership_refresh,
+    HttpReadinessProbe, Membership, MembershipView, QUERIER_MEMBERSHIP_GATE, QuerierHealth,
+    QuerierMember, ReadinessProbe, refresh_membership, run_membership_refresh,
 };
 pub use merge::{
     TraceStatus, assemble_trace, assembled_span_count, merge_search, merge_tag_names,

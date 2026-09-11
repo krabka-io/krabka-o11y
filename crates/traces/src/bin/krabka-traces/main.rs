@@ -55,6 +55,11 @@ mod tests {
     };
     use clap::{CommandFactory as _, Parser};
     use http_body_util::BodyExt;
+    use krabka_broker::{Broker, BrokerConfig};
+    use krabka_observability::{
+        RoleReadiness,
+        topic_contract::{TRACES_TOPICS, TopicSettings, provision_topics},
+    };
     use krabka_units::{minutes, secs};
     use tower::ServiceExt;
 
@@ -887,7 +892,7 @@ mod tests {
             span: test_span([7; 16], [3; 8]),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store).unwrap();
+        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
 
         let response = router
             .oneshot(
@@ -920,7 +925,7 @@ mod tests {
             span: test_span([8; 16], [4; 8]),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store).unwrap();
+        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -966,7 +971,7 @@ mod tests {
             span: test_span([9; 16], [5; 8]),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store).unwrap();
+        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -998,7 +1003,7 @@ mod tests {
             span: test_span([11; 16], [7; 8]),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store).unwrap();
+        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -1039,7 +1044,7 @@ mod tests {
             span: test_span([10; 16], [6; 8]),
         });
         let live_cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let live_router = build_live_store_router(&live_cli, store).unwrap();
+        let live_router = build_live_store_router(&live_cli, store, RoleReadiness::new()).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -1819,10 +1824,75 @@ mod tests {
         assert2::assert!(cli.target_bytes_per_job == ByteSize::from_bytes(4096));
         check!(build_query_frontend_router(&cli).await.is_ok());
     }
+
+    /// The contract has to stop a start, not merely describe one.
+    ///
+    /// The traces WAL is keyed by trace id, so a role that ran against a topic
+    /// the deployment never provisioned -- or provisioned at a different
+    /// partition count -- would scatter one trace's spans with nothing on the
+    /// wire to say so. The four roles that open a WAL client must refuse; the
+    /// three that never reach a broker must be untouched by the same fault.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+
+        // The querier appears twice: it tails the WAL only with an embedded
+        // live store, and reaches no broker without one.
+        let roles: [(&[&str], bool); 8] = [
+            (&["--target", "distributor"], true),
+            (&["--target", "block-builder"], true),
+            (&["--target", "live-store"], true),
+            (&["--target", "metrics-generator"], true),
+            (&["--target", "querier", "--querier-live-store"], true),
+            (&["--target", "querier"], false),
+            (&["--target", "query-frontend"], false),
+            (&["--target", "compactor"], false),
+        ];
+
+        for (args, refuses) in roles {
+            let cli = cli_with(args, &bootstrap);
+            let outcome = require_role_topics(&cli).await;
+            check!(outcome.is_err() == refuses, "{args:?} before provisioning");
+            if let Err(error) = outcome {
+                check!(error.to_string().contains(TRACES_WAL_TOPIC), "{args:?}");
+            }
+        }
+
+        create_traces_wal_topic(&bootstrap).await;
+
+        for (args, _) in roles {
+            check!(
+                require_role_topics(&cli_with(args, &bootstrap))
+                    .await
+                    .is_ok(),
+                "{args:?} after provisioning"
+            );
+        }
+    }
+
+    fn cli_with(role_flags: &[&str], bootstrap: &str) -> Cli {
+        let mut argv = vec!["krabka-traces"];
+        argv.extend_from_slice(role_flags);
+        argv.extend_from_slice(&["--bootstrap", bootstrap]);
+        Cli::try_parse_from(argv).expect("cli")
+    }
+
+    /// Provisions the traces WAL topic the way the deployment step does,
+    /// through the same call `krabka-o11y-bootstrap` makes.
+    async fn create_traces_wal_topic(bootstrap: &str) {
+        provision_topics(bootstrap, &TRACES_TOPICS, &TopicSettings::single_broker())
+            .await
+            .expect("provision the traces WAL topic");
+    }
 }
 
 mod alloc;
 mod apply_metrics_generator_cli_overrides;
+mod block_store_gates;
 mod build_live_store_router;
 mod build_object_store;
 mod build_querier_router;
@@ -1860,6 +1930,7 @@ mod parse_scan_concat_max;
 mod parse_time_or_legacy_i64;
 mod parse_unix_nano;
 mod promoted_attrs_from_cli;
+mod require_role_topics;
 mod run;
 mod run_block_builder;
 mod run_compactor;
@@ -1877,6 +1948,7 @@ mod wal_consumer;
 // reads -- which is a warning, not a link to the allocator.
 
 use apply_metrics_generator_cli_overrides::apply_metrics_generator_cli_overrides;
+use block_store_gates::BlockStoreGates;
 use build_live_store_router::build_live_store_router;
 use build_object_store::build_object_store;
 #[cfg(test)]
@@ -1916,6 +1988,7 @@ use parse_scan_concat_max::parse_scan_concat_max;
 use parse_time_or_legacy_i64::parse_time_or_legacy_i64;
 use parse_unix_nano::parse_unix_nano;
 use promoted_attrs_from_cli::promoted_attrs_from_cli;
+use require_role_topics::require_role_topics;
 use run::run;
 use run_block_builder::run_block_builder;
 use run_compactor::run_compactor;

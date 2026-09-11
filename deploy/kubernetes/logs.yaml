@@ -33,12 +33,13 @@ spec:
         fsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
       initContainers:
-        # The topic contract, re-checked on every pod start. `provision_topics`
+        # The topic contract, re-applied on every pod start. `provision_topics`
         # creates what is missing, then describes every topic and fails when one
         # does not meet the contract -- so a role cannot come up against a
-        # broker whose WAL topic is compacted, or absent. No service binary
-        # makes this check itself, which is why it is an init container rather
-        # than an assumption.
+        # broker whose WAL topic is compacted, or absent. The service binary
+        # checks too, with `require_topics`, but it only checks: creating the
+        # six topics is this container's job, and nothing else in the pod can
+        # do it.
         - name: topic-contract
           image: ghcr.io/krabka-io/krabka-o11y
           command: [krabka-o11y-bootstrap]
@@ -144,12 +145,13 @@ spec:
         fsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
       initContainers:
-        # The topic contract, re-checked on every pod start. `provision_topics`
+        # The topic contract, re-applied on every pod start. `provision_topics`
         # creates what is missing, then describes every topic and fails when one
         # does not meet the contract -- so a role cannot come up against a
-        # broker whose WAL topic is compacted, or absent. No service binary
-        # makes this check itself, which is why it is an init container rather
-        # than an assumption.
+        # broker whose WAL topic is compacted, or absent. The service binary
+        # checks too, with `require_topics`, but it only checks: creating the
+        # six topics is this container's job, and nothing else in the pod can
+        # do it.
         - name: topic-contract
           image: ghcr.io/krabka-io/krabka-o11y
           command: [krabka-o11y-bootstrap]
@@ -259,12 +261,13 @@ spec:
         fsGroup: 65532
         seccompProfile: {type: RuntimeDefault}
       initContainers:
-        # The topic contract, re-checked on every pod start. `provision_topics`
+        # The topic contract, re-applied on every pod start. `provision_topics`
         # creates what is missing, then describes every topic and fails when one
         # does not meet the contract -- so a role cannot come up against a
-        # broker whose WAL topic is compacted, or absent. No service binary
-        # makes this check itself, which is why it is an init container rather
-        # than an assumption.
+        # broker whose WAL topic is compacted, or absent. The service binary
+        # checks too, with `require_topics`, but it only checks: creating the
+        # six topics is this container's job, and nothing else in the pod can
+        # do it.
         - name: topic-contract
           image: ghcr.io/krabka-io/krabka-o11y
           command: [krabka-o11y-bootstrap]

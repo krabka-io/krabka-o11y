@@ -126,7 +126,11 @@ async fn start_querier(
         overrides,
         ..HttpConfig::default()
     };
-    let app = krabka_traces::querier::http::router_with_config(store, cfg);
+    let app = krabka_traces::querier::http::router_with_config(
+        store,
+        cfg,
+        krabka_observability::RoleReadiness::new(),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     let (tx, rx) = tokio::sync::oneshot::channel();

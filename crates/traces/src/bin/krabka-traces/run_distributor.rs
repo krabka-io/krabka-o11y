@@ -1,4 +1,4 @@
-use krabka_observability::{CriticalTaskError, SupervisedTasks};
+use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
 
 use super::{
     Arc, CancellationToken, Cli, DistributorState, KafkaSink, Producer, ServiceMetrics, SocketAddr,
@@ -8,8 +8,13 @@ use super::{
 pub(crate) async fn run_distributor(
     cli: Cli,
     metrics: ServiceMetrics,
+    readiness: RoleReadiness,
     shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Nowhere to put a push until the WAL producer has a broker, and the seven
+    // ingest listeners below all bind after it. The admin port is already up,
+    // so `/ready` reports the connect.
+    let wal_broker = readiness.gate("wal-broker");
     // Boxed: the producer-startup future is several KB and would otherwise be
     // inlined into this role's future (and from there into `run`'s). One
     // allocation at startup keeps the role futures small.
@@ -21,6 +26,7 @@ pub(crate) async fn run_distributor(
             .build(),
     )
     .await?;
+    wal_broker.mark_ready();
     let mut state =
         DistributorState::with_metrics(Arc::new(KafkaSink::new(Arc::new(producer))), metrics);
     state.limits.max_spans_per_request = cli.max_spans_per_request;

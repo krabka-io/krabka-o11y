@@ -901,6 +901,7 @@ async fn start_krabka_querier(records: &[SpanRecord]) -> TestResult<KrabkaPair> 
             max_trace_spans: MAX_TRACE_SPANS,
             ..HttpConfig::default()
         },
+        krabka_observability::RoleReadiness::new(),
     );
     let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
     let port = listener.local_addr()?.port();
@@ -1181,9 +1182,9 @@ async fn grafana_e2e_full_surface() -> TestResult {
 
     // E1 — /api/echo; E2 — /ready; E3 — /status (alias of /ready).
     let cases = [
-        ("api/echo", "echo"), // E1
-        ("ready", "ready"),   // E2
-        ("status", "ready"),  // E3
+        ("api/echo", "echo"),  // E1
+        ("ready", "ready\n"),  // E2
+        ("status", "ready\n"), // E3
     ];
     for (path, expected_body) in cases {
         let (status, body) = get_text(&client, &proxy(path)).await?;

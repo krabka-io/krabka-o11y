@@ -62,25 +62,39 @@ pub async fn run_with_config(
         config.object_store_retry,
         object_store_metrics.clone(),
     );
-    let mut index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
-        &index_store,
-        &config.index_key,
-        config.index_snapshot_max,
-    )
-    .await
-    .map_err(|error| ProfilesError::Block(format!("profile index load failed: {error}")))?;
-    let mut consumer = Consumer::builder()
-        .bootstrap(config.bootstrap)
-        .dispatch_queue_capacity(config.client_dispatch_queue_capacity.get())
-        .frame_max(config.client_frame_max.size())
-        .group_id(config.group_id.clone())
-        .fetch_max(config.wal_fetch_max)
-        .fetch_partition_max(config.wal_fetch_partition_max)
-        .subscribe(vec![config.wal_topic.clone()])
-        .auto_offset_reset(AutoOffsetReset::Earliest)
-        .build()
-        .await
-        .map_err(|err| ProfilesError::Block(format!("consumer build failed: {err}")))?;
+    // Both of these are raced against the token rather than awaited. An object
+    // store or a broker that has gone away makes its connect take as long as
+    // its own retry budget, and a `SIGTERM` that arrives during the start has
+    // nothing to cancel otherwise: the role would run to the end of the
+    // orchestrator's grace period and be `SIGKILL`ed. Neither has buffered a
+    // record yet, so returning here drains nothing.
+    let mut index = tokio::select! {
+        biased;
+        () = shutdown.cancelled() => return Ok(()),
+        loaded = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
+            &index_store,
+            &config.index_key,
+            config.index_snapshot_max,
+        ) => loaded.map_err(|error| {
+            ProfilesError::Block(format!("profile index load failed: {error}"))
+        })?,
+    };
+    let mut consumer = tokio::select! {
+        biased;
+        () = shutdown.cancelled() => return Ok(()),
+        built = Consumer::builder()
+            .bootstrap(config.bootstrap)
+            .dispatch_queue_capacity(config.client_dispatch_queue_capacity.get())
+            .frame_max(config.client_frame_max.size())
+            .group_id(config.group_id.clone())
+            .fetch_max(config.wal_fetch_max)
+            .fetch_partition_max(config.wal_fetch_partition_max)
+            .subscribe(vec![config.wal_topic.clone()])
+            .auto_offset_reset(AutoOffsetReset::Earliest)
+            .build() => built.map_err(|err| {
+                ProfilesError::Block(format!("consumer build failed: {err}"))
+            })?,
+    };
 
     // Reports a group rebalance that takes WAL partitions away from this
     // member. The builder buffers records across polls, so a revocation

@@ -9,7 +9,7 @@ pub(crate) async fn build_query_frontend_router(
 
     let addr: SocketAddr = cli.listen.parse()?;
     let cfg = frontend_config_from_cli(cli, addr)?;
-    let catalog = build_trace_index_catalog(cli, &ServiceMetrics::new()).await?;
+    let catalog = build_trace_index_catalog(cli, &ServiceMetrics::new(), None).await?;
     let backend = HttpQuerier::new(cfg.request_timeout.to_std())?;
     // The router test double skips the probe loop: the configured endpoints
     // are the membership, all ready.
@@ -20,5 +20,8 @@ pub(crate) async fn build_query_frontend_router(
         cfg,
         membership,
     ));
-    Ok(frontend::server::router_with_backend(qf))
+    Ok(frontend::server::router_with_backend(
+        qf,
+        krabka_observability::RoleReadiness::new(),
+    ))
 }

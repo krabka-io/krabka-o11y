@@ -67,16 +67,27 @@ variables: a Secret in Kubernetes, and the compose file's `environment` block.
 Each of these is a property of the binaries. The manifests are wired to them,
 and a change to one of them is a change to the manifests.
 
-**Every binary handles SIGTERM.** `krabka_observability::shutdown_signal` waits
-on SIGTERM and SIGINT together, and every role calls it. The image sets no
-entrypoint, so the role binary is PID 1 and the signal reaches the process that
-installed the handler. This matters more than it looks: the kernel gives PID 1
-no default terminate action, so a process that did not install a handler would
-discard SIGTERM and run until the grace period ended.
+**Every binary exits on SIGTERM.** `krabka_observability::shutdown_signal`
+waits on SIGTERM and SIGINT together, every role calls it, and every role
+returns from `main` once it has. The image sets no entrypoint, so the role
+binary is PID 1 and the signal reaches the process that installed the handler.
+This matters more than it looks, and in two ways. The kernel gives PID 1 no
+default terminate action, so a process that installed no handler would discard
+SIGTERM and run until the grace period ended. And a handler alone is not
+enough: a role whose shutdown waits on a background task that never hears the
+cancel is killed at the grace period just as surely, so every long-lived task a
+role supervises races its own connect and its own poll against the role's
+token. The suites that hold this are the `sigterm_*` tests, which signal a real
+child process and assert its exit status is `Some(0)` -- a signalled process
+reports `None`.
 
 **`/ready` names the gates a role has not met.** It answers 200 with `ready`,
 or 503 with `not ready:` and the names of the unmet gates. The compose
-healthchecks and the Kubernetes readiness probes both use it.
+healthchecks and the Kubernetes readiness probes both use it. Every role of
+every signal serves it on its admin port, and the roles with an HTTP data port
+echo the same gates there -- a `krabka-traces` query port on both `/ready` and
+Tempo's `/status` alias, which is what the traces query-frontend probes to
+decide its fan-out.
 
 **The drain is a readiness change, not an exit.** `POST
 /ingester/prepare_shutdown` on the logs distributor clears the
@@ -111,38 +122,30 @@ creates the six topics, then describes each one and fails if one does not meet
 the contract. It runs as an init container on every role pod, and as an ordered
 dependency in compose.
 
+**Every role checks that contract again for itself.** Each binary calls
+`krabka_observability::topic_contract::require_topics` for the topics its role
+touches, after it parses its configuration and before it builds a producer or a
+consumer, and refuses to start when one is absent or a state topic is not
+compacted. It creates nothing: the partition count is stated once, by the
+provisioning step above, and read back here. A role that reaches no broker --
+the metrics querier, the traces compactor, a logs role with no
+`wal_bootstrap_server` -- skips the check rather than making a broker it does
+not use a condition of its starting.
+
 ## Gaps
 
 These are properties of the binaries that the manifests cannot work around.
 Each one is a place where a probe says less than it appears to.
 
-**`krabka-traces` reports no readiness.** It registers no readiness gates, and
-its `main` merges only the metrics router into the admin port, so `:9404/ready`
-does not exist for any traces role. The `/ready` its data-port roles serve is a
-constant string with nothing behind it. The manifests use TCP checks
-for every traces role, and report only that a port is open.
+**A traces distributor is probed on its admin port.** Its seven data ports are
+OTLP, Jaeger and Zipkin ingest routers, and none of them carries an HTTP
+surface of its own, so `/ready` is on `:9404` alone. The admin server is a
+detached task with no graceful shutdown, so this probe cannot report a drain --
+which costs nothing today, because no traces role has a drain gate to report.
+The traces querier is probed on its data port, where the query-frontend's own
+membership probe asks it.
 
-**No binary checks the topic contract at startup.**
-`krabka_observability::topic_contract` documents that "every role calls
-`require_topics` at start-up ... and refuses to start when one is absent or not
-compacted". No service binary calls it. A role started against a broker whose
-WAL topic is compacted starts normally. The init container is what closes this,
-and it closes it only for pods that this base creates.
-
-**`krabka-profiles --target=querier` does not exit on SIGTERM.** It is
-SIGKILLed at the end of its grace period on every stop, with no work in flight.
-Two measured runs of `docker stop` on an idle, healthy container took 64.8 s and
-73.2 s and both ended in exit 137. The other eleven roles in the same stack, the
-profiles distributor and block builder among them, stop in 0.1 s to 1.3 s with
-exit 0. Raising the grace period does not help, because the process never
-exits. The value in the compose file stays at 60 s for that reason.
-
-**`krabka-metrics-service --target=querier` can ignore SIGTERM.** This is a
-different case: it stops normally when its dependencies answer, and hangs when
-they do not. Started against an unreachable broker and object store it does not
-exit on SIGTERM, or on a second one. Reproduce it with:
-
-```bash
-timeout 6 ./bazel-bin/crates/metrics-service/krabka-metrics-service \
-  --config.file=deploy/roles/metrics-querier.yaml --admin-listen-addr=127.0.0.1:0
-```
+**No probe reports how far behind a WAL consumer is.** A gate answers whether a
+consumer is attached, not whether it has caught up. A block builder that is
+attached and an hour behind reads as ready, and the lag is visible only in the
+metrics.

@@ -13,6 +13,7 @@ pub mod livestore;
 pub mod metrics;
 pub mod metricsgen;
 pub mod querier;
+mod readiness;
 pub mod span;
 pub mod wal;
 pub mod wire;

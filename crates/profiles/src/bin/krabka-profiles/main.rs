@@ -46,6 +46,8 @@ mod tests {
 
     use assert2::{assert, check};
     use clap::{CommandFactory, Parser};
+    use krabka_broker::{Broker, BrokerConfig};
+    use krabka_observability::topic_contract::{PROFILES_TOPICS, TopicSettings, provision_topics};
     use krabka_units::{bytes, per_sec};
 
     use super::*;
@@ -870,7 +872,81 @@ overrides:
     fn rejects_unknown_target() {
         assert!(Cli::try_parse_from(["krabka-profiles", "--target", "bogus"]).is_err());
     }
+
+    /// The contract has to stop a start, not merely describe one.
+    ///
+    /// A profiles role that ran against a topic the deployment never
+    /// provisioned -- or provisioned at a different partition count -- would
+    /// route every series key to a shard holding none of its history, and
+    /// nothing on the wire would say so. The four roles that open a WAL client
+    /// must refuse; the compactor and the symbolizer, which reach no broker,
+    /// must be untouched by the same fault.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+
+        let roles = [
+            ("distributor", true),
+            ("block-builder", true),
+            ("querier", true),
+            ("query-frontend", true),
+            ("compactor", false),
+            ("symbolizer", false),
+        ];
+
+        for (target, refuses) in roles {
+            let outcome = require_role_topics(&cli_for(target, &bootstrap)).await;
+            check!(outcome.is_err() == refuses, "{target} before provisioning");
+            if let Err(error) = outcome {
+                check!(
+                    error
+                        .to_string()
+                        .contains(krabka_profiles::PROFILES_WAL_TOPIC),
+                    "{target}"
+                );
+            }
+        }
+
+        // The same call `krabka-o11y-bootstrap` makes as a deployment step.
+        provision_topics(
+            &bootstrap,
+            &PROFILES_TOPICS,
+            &TopicSettings::single_broker(),
+        )
+        .await
+        .expect("provision the profiles WAL topic");
+
+        for (target, _) in roles {
+            check!(
+                require_role_topics(&cli_for(target, &bootstrap))
+                    .await
+                    .is_ok(),
+                "{target} after provisioning"
+            );
+        }
+    }
+
+    fn cli_for(target: &str, bootstrap: &str) -> Cli {
+        Cli::try_parse_from([
+            "krabka-profiles",
+            "--target",
+            target,
+            "--bootstrap",
+            bootstrap,
+        ])
+        .expect("cli")
+    }
 }
+
+/// A `SIGTERM` sent to the real querier composition has to end the process,
+/// not merely reach a handler. The suite runs the role in a child and asserts
+/// on its exit status.
+#[cfg(all(test, unix))]
+mod sigterm_exits_the_querier;
 
 mod alloc;
 mod build_object_store;
@@ -892,6 +968,7 @@ mod parse_positive_time_or_legacy_nanos;
 mod parse_positive_u32;
 mod parse_positive_usize;
 mod parse_positive_whole_byte_size;
+mod require_role_topics;
 mod role_shutdown_token;
 mod run;
 mod run_compaction_pass;
@@ -922,6 +999,7 @@ use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
 use parse_positive_u32::parse_positive_u32;
 use parse_positive_usize::parse_positive_usize;
 use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
+use require_role_topics::require_role_topics;
 use role_shutdown_token::role_shutdown_token;
 use run::run;
 use run_compaction_pass::run_compaction_pass;

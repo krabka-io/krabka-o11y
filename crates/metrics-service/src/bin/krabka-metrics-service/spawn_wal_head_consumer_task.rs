@@ -13,6 +13,11 @@ use super::{
 /// The task does not decide the role's fate. It returns its handle, the caller
 /// supervises it, and any end -- a failed connect, a loop error, a clean
 /// return, or a panic -- reaches the caller as one exit to act on.
+///
+/// The connect is raced against `shutdown` rather than awaited. A broker that
+/// is unreachable makes `build_consumer` take as long as it takes, and the
+/// role's supervisor waits for this task before the process exits, so an
+/// unraced connect turns a `SIGTERM` into a grace-period `SIGKILL`.
 pub(crate) fn spawn_wal_head_consumer_task<C, Build, BuildFuture>(
     build_consumer: Build,
     wal_head: WalHead,
@@ -27,12 +32,16 @@ where
     BuildFuture: Future<Output = Result<C, String>> + Send + 'static,
 {
     tokio::spawn(async move {
-        let mut consumer = match build_consumer().await {
-            Ok(consumer) => consumer,
-            Err(error) => {
-                tracing::error!(%error, "metrics WAL head consumer failed to start");
-                return;
-            }
+        let mut consumer = tokio::select! {
+            biased;
+            () = shutdown.signalled() => return,
+            built = build_consumer() => match built {
+                Ok(consumer) => consumer,
+                Err(error) => {
+                    tracing::error!(%error, "metrics WAL head consumer failed to start");
+                    return;
+                }
+            },
         };
         wal_head_gate.mark_ready();
         let consumer_stop = shutdown.clone();

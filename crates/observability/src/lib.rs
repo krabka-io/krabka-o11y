@@ -193,8 +193,7 @@ pub use querier::{
     execute_stream_query_with_hot_tail_frontier, execute_tail_query,
     execute_tail_query_with_frontier, metric_plan_scan_sql, stream_plan_scan_sql,
 };
-pub(crate) use readiness::ready;
-pub use readiness::{DRAINING_GATE, ReadinessGate, RoleReadiness, readiness_router};
+pub use readiness::{DRAINING_GATE, ReadinessGate, RoleReadiness, readiness_router, ready};
 pub use service::{
     ActiveLogDeleteFilterError, ClientResourcePolicy, LogDeleteRequestStoreError,
     LokiRuleStoreError, ServiceDependencies, ServiceStatus, SharedLogDeleteRequests, run,

@@ -1,13 +1,21 @@
-use krabka_observability::{CriticalTaskError, SupervisedTasks, contain_handler_panics};
+use krabka_observability::{
+    CriticalTaskError, RoleReadiness, SupervisedTasks, contain_handler_panics,
+};
 
 use super::*;
 
 pub(crate) async fn run_live_store(
     cli: Cli,
     metrics: ServiceMetrics,
+    readiness: RoleReadiness,
     shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: SocketAddr = cli.listen.parse()?;
+    // The consumer is the live tier. Without it the role keeps its port and
+    // answers every search from a store that stopped at the last record it
+    // read, and nothing in the answer says so. The gate is registered before
+    // the connect and goes back down when the loop ends.
+    let wal_consumer_gate = readiness.gate("wal-consumer");
     let consumer = wal_consumer(
         cli.bootstrap.clone(),
         "krabka-traces-live-store",
@@ -19,16 +27,15 @@ pub(crate) async fn run_live_store(
     )
     .await?;
     let store = Arc::new(RwLock::new(LiveStore::new(cli.retention.nanos_i64())));
-    let router = build_live_store_router(&cli, Arc::clone(&store))?;
-    // The consumer is the live tier. Without it the role keeps its port and
-    // answers every search from a store that stopped at the last record it
-    // read, and nothing in the answer says so.
+    let router = build_live_store_router(&cli, Arc::clone(&store), readiness)?;
     let mut tasks = SupervisedTasks::new(shutdown.clone());
     let live_shutdown = shutdown.clone();
     tasks.spawn("traces live-store consumer", async move {
+        wal_consumer_gate.mark_ready();
         if let Err(err) = livestore::run(consumer, store, metrics, live_shutdown).await {
             tracing::error!(error = %err, "traces live-store consumer stopped");
         }
+        wal_consumer_gate.mark_unready();
     });
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

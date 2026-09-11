@@ -1,3 +1,5 @@
+use krabka_observability::RoleReadiness;
+
 use super::{
     Arc, CancellationToken, Cli, KafkaSpanSource, MetricsGenConfig, MetricsGenService,
     PrometheusRemoteWriteSink, SystemClock, apply_metrics_generator_cli_overrides, wal_consumer,
@@ -5,8 +7,12 @@ use super::{
 
 pub(crate) async fn run_metrics_generator(
     cli: Cli,
+    readiness: RoleReadiness,
     shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // The spans this role reads all come from the WAL. Until the consumer has
+    // a broker it generates no metrics at all, and the admin port says so.
+    let wal_consumer_gate = readiness.gate("wal-consumer");
     let mut cfg = if let Some(path) = &cli.config {
         let bytes = std::fs::read_to_string(path)?;
         serde_yaml::from_str::<MetricsGenConfig>(&bytes)?
@@ -25,6 +31,7 @@ pub(crate) async fn run_metrics_generator(
         cli.client_frame_max,
     )
     .await?;
+    wal_consumer_gate.mark_ready();
     let source = Arc::new(KafkaSpanSource::new(consumer));
     let sink = Arc::new(PrometheusRemoteWriteSink::new(cfg.remote_write_url.clone()));
     let service = MetricsGenService::new(cfg, Arc::new(SystemClock), source, sink)

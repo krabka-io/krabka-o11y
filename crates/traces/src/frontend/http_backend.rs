@@ -21,6 +21,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use krabka_observability::RoleReadiness;
 use krabka_units::convert::TimeExt as _;
 use tokio_util::sync::CancellationToken;
 
@@ -32,7 +33,10 @@ use crate::frontend::{
     },
     config::FrontendConfig,
     job::{JobShard, TraceIndexCatalog},
-    membership::{HttpReadinessProbe, MembershipView, refresh_membership, run_membership_refresh},
+    membership::{
+        HttpReadinessProbe, MembershipView, QUERIER_MEMBERSHIP_GATE, mark_querier_membership_gate,
+        refresh_membership, run_membership_refresh,
+    },
     metrics_merge::MetricsResponseJson,
     wire::{SearchResponseJson, TraceByIdResponseJson},
 };

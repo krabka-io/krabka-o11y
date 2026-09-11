@@ -10,6 +10,7 @@ use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 use krabka_pprof::{InMemoryProfileStore, ProfileError, ProfileScan, ProfileStats, ProfileStore};
 use krabka_units::{Time, convert::TimeExt as _, hours};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     blockbuilder::{intern_record, profile_timestamp_ms},

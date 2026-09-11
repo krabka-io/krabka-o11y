@@ -21,20 +21,35 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     let role = async move {
+        // Before any producer or consumer exists. A WAL topic's partition
+        // count is the write-path shard count, so a role that started against
+        // the wrong one would re-map every key it routes and report nothing;
+        // this is where it refuses instead.
+        require_role_topics(&cli).await?;
         match cli.target {
             Target::Distributor => {
                 // Nowhere to put a push until the WAL producer has a broker.
                 let wal_broker = readiness.gate("wal-broker");
+                // Before the producer, not after it: until this token exists
+                // no SIGTERM handler is installed, and the build below is
+                // where an unreachable broker keeps the role.
+                let shutdown = role_shutdown_token();
                 let limits = load_tenant_limits_config(cli.tenant_limits_config.as_deref())?;
                 let profile_overrides = load_profiles_limits_overrides_config(
                     cli.profiles_limits_overrides_config.as_deref(),
                 )?;
-                let producer = Producer::builder()
-                    .bootstrap(&cli.bootstrap)
-                    .dispatch_queue_capacity(client_dispatch_queue_capacity.get())
-                    .frame_max(client_frame_max.size())
-                    .build()
-                    .await?;
+                // Raced against the token: `krabka-client-producer` retries an
+                // unreachable bootstrap rather than reporting it, so an
+                // unraced build is a start no shutdown can end.
+                let producer = tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => return Ok(()),
+                    built = Producer::builder()
+                        .bootstrap(&cli.bootstrap)
+                        .dispatch_queue_capacity(client_dispatch_queue_capacity.get())
+                        .frame_max(client_frame_max.size())
+                        .build() => built?,
+                };
                 wal_broker.mark_ready();
                 let state = Arc::new(DistributorState {
                     sink: Arc::new(KafkaSink::with_topic(Arc::new(producer), cli.wal_topic)),
@@ -52,7 +67,6 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     },
                     metrics: metrics.clone(),
                 });
-                let shutdown = role_shutdown_token();
                 let mut tasks = SupervisedTasks::new(shutdown.clone());
                 let (bound, server) =
                     serve_supervised(cli.listen, state, readiness, shutdown.clone()).await?;
@@ -106,12 +120,19 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         .map_err(|e| format!("object store: {e}"))?;
                 object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
-                let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
-                    &configured.store,
-                    &index_key,
-                    cli.index_snapshot_max,
-                )
-                .await?;
+                // Raced against the token for the same reason the WAL tail
+                // is: an object store that has gone away retries for minutes,
+                // and a role stuck here hears the signal and does nothing with
+                // it.
+                let index = tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => return Ok(()),
+                    loaded = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
+                        &configured.store,
+                        &index_key,
+                        cli.index_snapshot_max,
+                    ) => loaded?,
+                };
                 profile_index_gate.mark_ready();
                 let refresh_store = Arc::clone(&configured.store);
                 let cold = Arc::new(ColdProfileStore::new_with_debuginfod_config(
@@ -144,6 +165,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         client_dispatch_queue_capacity,
                         client_frame_max,
                         metrics.wal_consumer.clone(),
+                        shutdown.clone(),
                     ),
                 );
                 let union = Arc::new(UnionProfileStore::new(Arc::new(hot), cold));
@@ -183,12 +205,19 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         .map_err(|e| format!("object store: {e}"))?;
                 object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
-                let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
-                    &configured.store,
-                    &index_key,
-                    cli.index_snapshot_max,
-                )
-                .await?;
+                // Raced against the token for the same reason the WAL tail
+                // is: an object store that has gone away retries for minutes,
+                // and a role stuck here hears the signal and does nothing with
+                // it.
+                let index = tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => return Ok(()),
+                    loaded = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
+                        &configured.store,
+                        &index_key,
+                        cli.index_snapshot_max,
+                    ) => loaded?,
+                };
                 profile_index_gate.mark_ready();
                 let refresh_store = Arc::clone(&configured.store);
                 let cold = Arc::new(ColdProfileStore::new_with_debuginfod_config(
@@ -221,6 +250,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         client_dispatch_queue_capacity,
                         client_frame_max,
                         metrics.wal_consumer.clone(),
+                        shutdown.clone(),
                     ),
                 );
                 let union = Arc::new(UnionProfileStore::new(Arc::new(hot), cold));

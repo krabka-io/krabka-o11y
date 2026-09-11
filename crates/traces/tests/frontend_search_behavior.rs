@@ -27,6 +27,7 @@ use axum::{
     routing::get,
 };
 use http_body_util::BodyExt as _;
+use krabka_observability::RoleReadiness;
 use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     config::FrontendConfig,
@@ -58,7 +59,7 @@ fn build_router(querier_urls: &str, cfg: FrontendConfig, catalog: TraceIndexCata
         cfg,
         membership,
     ));
-    router_with_backend(qf)
+    router_with_backend(qf, RoleReadiness::new())
 }
 
 /// Strip the scheme from a comma-separated querier URL list into bare host:port,

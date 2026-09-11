@@ -39,9 +39,14 @@ x-krabka: &krabka
     RUST_LOG: ${KRABKA_RUST_LOG:-info}
 
 # Every role depends on the topic contract being in place and on the object
-# store holding its bucket. Nothing in the binaries checks either: the
-# `topic_contract` module can refuse a broker that does not meet the contract,
-# but no binary calls it, so the ordering is the deployment's to enforce.
+# store holding its bucket. This ordering is what makes a cold start work in
+# one pass. It is not the only guard on the first: each binary calls
+# `krabka_observability::topic_contract::require_topics` for the topics its
+# role touches, before it builds a producer or a consumer, and refuses to start
+# when one is absent or a state topic is not compacted -- so a role pointed at
+# a broker that does not meet the contract fails where an operator can see it,
+# rather than re-mapping every key in silence. The bucket has no such check and
+# rests on this ordering alone.
 x-needs-stack: &needs-stack
   broker: {condition: service_healthy}
   bootstrap: {condition: service_completed_successfully}
@@ -235,10 +240,12 @@ services:
       - "9411:9411"
       - "6831:6831/udp"
     depends_on: *needs-stack
-    # No `/ready` anywhere on this role -- see deploy/README.md. A TCP check on
-    # the data port is what can honestly be asserted.
-    healthcheck: &probe-3200-tcp
-      test: ["CMD", "/busybox/nc", "-z", "127.0.0.1", "3200"]
+    # The admin port, not :3200. This role's seven data ports are OTLP, Jaeger
+    # and Zipkin ingest routers with no HTTP surface of their own, so `/ready`
+    # is on :9404 alone -- where the `wal-broker` gate it registers is answered
+    # for the whole window between the admin bind and the producer connecting.
+    healthcheck: &probe-9404
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:9404/ready"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -249,15 +256,9 @@ services:
     !!merge <<: *krabka
     command: [krabka-traces, --config.file=/etc/krabka/traces-block-builder.yaml]
     depends_on: *needs-stack
-    # `krabka-traces` merges only the metrics router into its admin port, so
-    # there is no `/ready` to ask and no data port either. A TCP check on the
-    # admin port is the whole of what this role can be probed for.
-    healthcheck:
-      test: ["CMD", "/busybox/nc", "-z", "127.0.0.1", "9404"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 120s
+    # No data port at all, so :9404 is the only place its `wal-consumer`,
+    # `object-store` and `trace-index` gates can be asked.
+    healthcheck: *probe-9404
     stop_grace_period: 60s
 
   traces-querier:
@@ -265,7 +266,15 @@ services:
     command: [krabka-traces, --config.file=/etc/krabka/traces-querier.yaml]
     ports: ["3201:3200"]
     depends_on: *needs-stack
-    healthcheck: *probe-3200-tcp
+    # The data port, because that is the one the query-frontend probes to
+    # decide its fan-out. It reports `object-store` and `trace-index`, and
+    # `live-store` when the embedded live tier is configured.
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:3200/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
     stop_grace_period: 60s
 
   # --- profiles -----------------------------------------------------------
