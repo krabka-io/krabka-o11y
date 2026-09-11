@@ -1,26 +1,60 @@
 use super::{
-    CancellationToken, ObjectStore, Role, ServiceConfig, ServiceDependencies, ServiceRuntimeError,
-    TcpListener, build_service_router_with_shutdown, serve_compactor_service_listener,
+    CancellationToken, CriticalTaskError, ObjectStore, Role, ServiceConfig, ServiceDependencies,
+    ServiceRuntimeError, SupervisedTasks, TcpListener, build_service_router_with_shutdown,
+    contain_handler_panics, serve_all_service_listener, serve_compactor_service_listener,
     shutdown_signal,
 };
 
+/// Serves a role on `listener` until it is asked to stop or one of its
+/// background tasks stops first.
+///
+/// The listener and the role's background tasks are joined, not detached. A
+/// task that returns, errors, or panics cancels the shutdown token and fails
+/// this call with [`ServiceRuntimeError::CriticalTask`], so the process exits
+/// instead of holding the port open over a WAL consumer that is no longer
+/// consuming.
+///
+/// A panic inside a request handler is the opposite case and is contained: the
+/// router answers 500 for that request and keeps the connection.
+///
 /// # Errors
-/// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
-/// # Panics
-/// Panics if synchronized telemetry state is poisoned or validated columnar data is missing a required field.
+/// Returns an error when telemetry input is malformed, a query cannot be evaluated, the configured storage or export backend fails, or a critical background task stops.
 pub async fn serve_service_listener(
     listener: TcpListener,
     config: ServiceConfig,
     dependencies: ServiceDependencies,
     object_store: Option<&dyn ObjectStore>,
 ) -> Result<(), ServiceRuntimeError> {
-    if config.target == Role::Compactor {
+    if config.target == Role::BlockBuilder {
         return serve_compactor_service_listener(listener, config, dependencies, object_store)
             .await;
+    }
+    if config.target == Role::All {
+        let token = CancellationToken::new();
+        let token_sig = token.clone();
+        // Not supervised: this task is meant to finish, and finishing is how
+        // it does its job.
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            token_sig.cancel();
+        });
+        // Boxed: this future carries the whole all-in-one start-up, which is
+        // several KB, and would otherwise be inlined into every caller of
+        // `serve_service_listener` including the single-role ones.
+        return Box::pin(serve_all_service_listener(
+            listener,
+            config,
+            dependencies,
+            object_store,
+            token,
+        ))
+        .await;
     }
 
     let token = CancellationToken::new();
     let token_sig = token.clone();
+    // Not supervised: this task is meant to finish, and finishing is how it
+    // does its job.
     tokio::spawn(async move {
         shutdown_signal().await;
         token_sig.cancel();
@@ -29,36 +63,25 @@ pub async fn serve_service_listener(
     let (app, background_tasks) =
         build_service_router_with_shutdown(&config, dependencies, object_store, token.clone())
             .await?;
-    let server = axum::serve(listener, app)
+    let server = axum::serve(listener, contain_handler_panics(app))
         .with_graceful_shutdown(async move { token_srv.cancelled().await })
         .into_future();
     tokio::pin!(server);
-    let mut tasks = tokio::task::JoinSet::new();
+    let mut tasks = SupervisedTasks::new(token);
     for (name, handle) in background_tasks {
-        tasks.spawn(async move {
-            let result = handle.await;
-            (name, result)
-        });
+        tasks.adopt(name, handle);
     }
-    if tasks.is_empty() {
-        server.await?;
-    } else {
-        tokio::select! {
-            result = &mut server => result?,
-            result = tasks.join_next() => {
-                if token.is_cancelled() {
-                    server.await?;
-                } else {
-                    let name = result
-                        .and_then(Result::ok)
-                        .map_or("unknown", |(name, _)| name);
-                    token.cancel();
-                    return Err(ServiceRuntimeError::CriticalTask(name));
-                }
+    let outcome = tokio::select! {
+        result = &mut server => result.map_err(ServiceRuntimeError::from),
+        name = tasks.first_unexpected_exit() => {
+            // `first_unexpected_exit` has cancelled the token, so the server
+            // is already draining. Let it finish before reporting.
+            if let Err(error) = server.await {
+                tracing::warn!(%error, "HTTP server stopped with an error while draining");
             }
+            Err(CriticalTaskError(name).into())
         }
-    }
-    token.cancel();
-    while tasks.join_next().await.is_some() {}
-    Ok(())
+    };
+    tasks.shutdown().await;
+    outcome
 }

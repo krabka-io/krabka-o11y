@@ -1,12 +1,12 @@
 use super::{
-    Extension, RoleOps, Router, ServiceReadiness, build_info, get, log_level, log_level_post,
+    Extension, RoleOps, RoleReadiness, Router, build_info, get, log_level, log_level_post,
     memberlist_status, ready, role_config, role_metrics, role_ring, role_services,
 };
 
 pub(crate) fn with_role_ops_routes<S>(
     mut router: Router<S>,
     ops: RoleOps,
-    readiness: ServiceReadiness,
+    readiness: RoleReadiness,
 ) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,

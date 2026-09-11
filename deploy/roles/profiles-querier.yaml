@@ -1,0 +1,11 @@
+# krabka-profiles --target=querier
+#
+# `query-wal-tail-group-id` defaults to the same value in the querier and the
+# query-frontend. Two roles in one group split the WAL partitions between
+# them, so each sees part of the hot tier. It is set per role for that reason.
+target: querier
+listen: 0.0.0.0:4040
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+object-store-url: s3://krabka-profiles
+query-wal-tail-group-id: krabka-profiles-querier

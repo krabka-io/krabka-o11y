@@ -1,8 +1,8 @@
 use super::{
-    AllowAllIngestLimiter, Arc, AtomicBool, DistributorState, LogIngestLimiter, LogWalSink,
-    LogsService, ProtoExportLogsServiceRequest, ProtoExportLogsServiceResponse, ServiceMetrics,
-    Time, append_distributor_wal_records, distributor_error_to_grpc_status, grpc_tenant,
-    normalize_otlp_proto_logs_for_tenant, otlp_grpc_logs_service_with_limiter,
+    AllowAllIngestLimiter, Arc, DRAINING_GATE, DistributorState, LogIngestLimiter, LogWalSink,
+    LogsService, ProtoExportLogsServiceRequest, ProtoExportLogsServiceResponse, ReadinessGate,
+    ServiceMetrics, Time, append_distributor_wal_records, distributor_error_to_grpc_status,
+    grpc_tenant, normalize_otlp_proto_logs_for_tenant, otlp_grpc_logs_service_with_limiter,
 };
 
 #[derive(Clone)]
@@ -28,10 +28,14 @@ impl LogsService for OtlpGrpcLogsService {
         let records = normalize_otlp_proto_logs_for_tenant(tenant, payload, None, None)
             .map_err(|error| distributor_error_to_grpc_status(&error))?;
 
+        // A state for this one append. The gRPC export path has no drain
+        // route of its own, so the gate it carries is met and nothing drops it.
+        let accepting_writes = ReadinessGate::unmet(DRAINING_GATE);
+        accepting_writes.mark_ready();
         let state = DistributorState {
             sink: Arc::clone(&self.sink),
             ingest_limiter: Arc::clone(&self.ingest_limiter),
-            prepare_shutdown: Arc::new(AtomicBool::new(false)),
+            prepare_shutdown: accepting_writes,
             max_ingest_body: None,
             wal_append_timeout: self.wal_append_timeout,
             reject_old_samples_max_age: None,

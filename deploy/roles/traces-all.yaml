@@ -1,0 +1,34 @@
+# krabka-traces --target=all
+#
+# Every traces role in one process: distributor, block-builder, live-store,
+# querier, query-frontend and compactor, plus the metrics-generator when a
+# remote-write URL is configured. This is the shape to evaluate the signal in
+# -- a laptop, a demo, a small deployment -- rather than running the three
+# role files beside this one.
+#
+# `listen` is the Tempo query API, served by the query-frontend: that is the
+# port a Grafana Tempo datasource is pointed at. Ingest keeps its protocol
+# ports. The querier and the live-store bind loopback ports of their own,
+# chosen by the kernel and wired up in process, so there is nothing here to
+# configure and nothing to collide.
+#
+# It is not in the compose stack or the kustomize base. Those run the roles
+# separately on purpose, because that is the topology a chart has to describe;
+# this file is here so the key names are checked by //deploy:role_config_test
+# and so there is one worked example of the target.
+target: all
+listen: 0.0.0.0:3200
+grpc-listen: 0.0.0.0:4317
+otlp-http-listen: 0.0.0.0:4318
+jaeger-grpc-listen: 0.0.0.0:14250
+jaeger-compact-listen: 0.0.0.0:6831
+jaeger-http-listen: 0.0.0.0:14268
+zipkin-listen: 0.0.0.0:9411
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+object-store-url: s3://krabka-traces
+# How long one stage of the stop may take before the next is asked to stop
+# anyway. The stop is staged: the distributor goes first, so nothing new
+# enters the WAL, and the block builder flushes behind it. Sized under the
+# pod's terminationGracePeriodSeconds.
+all-drain-stage-timeout: 30s

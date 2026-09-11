@@ -1,45 +1,53 @@
+use krabka_observability::CancellationToken;
+
 /// A single process-wide shutdown signal shared by the HTTP server and every
 /// background task.
 ///
-/// A `true` value in the watch asks the axum server to start its graceful
-/// drain, and tells the consumer and eval loops to stop. A critical background
-/// task that exits also sets the watch, whether it exits cleanly or with an
-/// error. The whole process then stops, instead of a continued run with a dead
-/// loop.
+/// Triggering it asks the axum server to start its graceful drain and tells
+/// the consumer and eval loops to stop. The role's supervisor triggers it too,
+/// as soon as a critical background task stops for any reason, so the process
+/// winds down instead of running on with a dead loop.
+///
+/// It is a [`CancellationToken`] underneath, which is what
+/// [`SupervisedTasks`](krabka_observability::SupervisedTasks) supervises
+/// against: one signal, not two that have to be kept in step.
 #[derive(Clone)]
 pub(crate) struct Shutdown {
-    pub(crate) tx: tokio::sync::watch::Sender<bool>,
-    pub(crate) rx: tokio::sync::watch::Receiver<bool>,
+    token: CancellationToken,
 }
 
 impl Shutdown {
     pub(crate) fn new() -> Self {
-        let (tx, rx) = tokio::sync::watch::channel(false);
-        Self { tx, rx }
+        Self {
+            token: CancellationToken::new(),
+        }
+    }
+
+    /// The token the role's supervisor cancels, and that its tasks watch.
+    pub(crate) fn token(&self) -> &CancellationToken {
+        &self.token
     }
 
     /// Request shutdown.
     ///
     /// This method is idempotent. Repeated triggers do nothing.
     pub(crate) fn trigger(&self) {
-        let _ = self.tx.send(true);
+        self.token.cancel();
+    }
+
+    /// Whether shutdown has been requested, for a loop's stop predicate.
+    pub(crate) fn is_triggered(&self) -> bool {
+        self.token.is_cancelled()
     }
 
     /// Return a future that resolves after a caller requests shutdown.
     ///
     /// Each consumer gets its own clone: the server's graceful-shutdown hook
-    /// and each background task.
-    pub(crate) fn signalled(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
-        let mut rx = self.rx.clone();
-        async move {
-            // `borrow()` covers the already-triggered case; otherwise wait for the
-            // next change. `changed()` only errors once every sender is dropped, by
-            // which point we also want to stop, so treat that as "shut down".
-            while !*rx.borrow_and_update() {
-                if rx.changed().await.is_err() {
-                    break;
-                }
-            }
-        }
+    /// and each background task. A token that is already cancelled resolves it
+    /// on the first poll, so a task that starts after the trigger does not
+    /// hang.
+    pub(crate) fn signalled(&self) -> impl Future<Output = ()> + Send + 'static {
+        let token = self.token.clone();
+        async move { token.cancelled_owned().await }
     }
 }

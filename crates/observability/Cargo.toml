@@ -30,6 +30,11 @@ krabka-client-core = { version = "0.4.0" }
 krabka-client-consumer = { version = "0.4.0" }
 krabka-client-producer = { version = "0.4.0" }
 krabka-ids = { version = "0.4.0" }
+# `/log_level` reloads this process's filter, which means this crate -- not
+# the pinned `krabka-telemetry`, whose `init` returns no reload handle --
+# installs the stdout subscriber. `krabka-logfmt` is the formatter that
+# `krabka-telemetry` would have installed, so the JSON lines are unchanged.
+krabka-logfmt = { version = "0.4.0" }
 krabka-logql = { version = "0.4.0", path = "../logql" }
 krabka-telemetry = { version = "0.4.0" }
 krabka-units = { workspace = true }
@@ -47,6 +52,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml.workspace = true
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 snap.workspace = true
 thiserror = { workspace = true }
 time = { version = "0.3", default-features = false, features = ["parsing"] }
@@ -86,7 +92,6 @@ tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "tim
 tokio-tungstenite = { workspace = true }
 tower = { workspace = true }
 tracing-opentelemetry = { workspace = true }
-tracing-subscriber = { workspace = true }
 
 # The scale suite. `test = false` keeps `cargo test` and `cargo test
 # --workspace` from building this binary at all, which is what stops the

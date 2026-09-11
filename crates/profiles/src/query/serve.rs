@@ -14,9 +14,12 @@ where
     let listener = TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     tokio::spawn(async move {
-        if let Err(err) = axum::serve(listener, router(state))
-            .with_graceful_shutdown(shutdown)
-            .await
+        if let Err(err) = axum::serve(
+            listener,
+            krabka_observability::contain_handler_panics(router(state)),
+        )
+        .with_graceful_shutdown(shutdown)
+        .await
         {
             tracing::warn!(%err, "profiles querier server stopped with error");
         }

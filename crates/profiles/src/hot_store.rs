@@ -7,8 +7,10 @@ use std::{
 
 use krabka_blockstore::LabelMatcher;
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 use krabka_pprof::{InMemoryProfileStore, ProfileError, ProfileScan, ProfileStats, ProfileStore};
 use krabka_units::{Time, convert::TimeExt as _, hours};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     blockbuilder::{intern_record, profile_timestamp_ms},
@@ -401,6 +403,33 @@ mod tests {
             .unwrap();
         assert!(after.newest_profile_time == Some(2), "{after:?}");
     }
+
+    /// A WAL poll reaches the store as one batch, and a query that started
+    /// before it sees none of the batch while one that starts after sees all of
+    /// it. Batching is what removes the per-record copy-on-write clone, and a
+    /// reader catching a prefix of the batch is the way that trade goes wrong.
+    #[tokio::test]
+    async fn a_batch_of_records_reaches_a_query_all_at_once() {
+        let store = super::WalTailProfileStore::new();
+        store.append_record(record_at(5, 1_000_000)).unwrap();
+        let before = store.snapshot().unwrap();
+
+        store
+            .append_records([record_at(11, 2_000_000), record_at(13, 3_000_000)])
+            .unwrap();
+        let after = store.snapshot().unwrap();
+
+        let total = async |snapshot: Arc<krabka_pprof::InMemoryProfileStore>| {
+            FlameEngine::new(snapshot, EngineOpts::default())
+                .select_merge_stacktraces("tenant-a", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+                .await
+                .unwrap()
+                .total
+        };
+
+        assert!(total(before).await == 5);
+        assert!(total(after).await == 5 + 11 + 13);
+    }
 }
 
 mod apply_record;
@@ -412,6 +441,7 @@ mod retained_state;
 mod retention_config;
 mod run_wal_tail;
 mod run_wal_tail_with_topic;
+mod wal_tail_config;
 mod wal_tail_profile_store;
 
 use apply_record::apply_record;
@@ -423,4 +453,5 @@ use retained_state::RetainedState;
 pub use retention_config::RetentionConfig;
 pub use run_wal_tail::run_wal_tail;
 pub use run_wal_tail_with_topic::run_wal_tail_with_topic;
+pub use wal_tail_config::WalTailConfig;
 pub use wal_tail_profile_store::WalTailProfileStore;

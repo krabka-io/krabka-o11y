@@ -46,8 +46,26 @@ jobs:
       # toolchains no Bazel action touches.
       - name: free disk
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          set -euo pipefail
+          before=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          # Language runtimes and SDKs no action in this repository uses.
+          #
+          # Two paths are deliberately absent, both of which this step deleted
+          # once and had to stop. `/opt/hostedtoolcache` is where the toolchain
+          # actions install, and this step runs after them.
+          # `/usr/local/lib/node_modules` holds bazelisk, which
+          # `/usr/local/bin/bazel` is a symlink into -- removing it left the
+          # symlink dangling and `aspect format` failed with `No such file or
+          # directory` from inside the CLI, naming neither bazel nor the file.
+          sudo rm -rf \
+            /usr/share/dotnet /usr/share/swift /usr/share/miniconda \
+            /usr/local/lib/android /usr/local/.ghcup /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/boost
+          # The runner preloads container images for actions that are not used
+          # here; the differential suites load their own from pinned tarballs.
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          after=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          echo "freed $((after - before)) GiB, ${after} GiB available"
           df -h /
       # `--severity` defaults to `auto`, which the CLI resolves to `fail` on CI
       # and `info` off it -- so this gates here and only reports locally.
@@ -118,8 +136,26 @@ jobs:
       # disk.
       - name: free disk
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          set -euo pipefail
+          before=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          # Language runtimes and SDKs no action in this repository uses.
+          #
+          # Two paths are deliberately absent, both of which this step deleted
+          # once and had to stop. `/opt/hostedtoolcache` is where the toolchain
+          # actions install, and this step runs after them.
+          # `/usr/local/lib/node_modules` holds bazelisk, which
+          # `/usr/local/bin/bazel` is a symlink into -- removing it left the
+          # symlink dangling and `aspect format` failed with `No such file or
+          # directory` from inside the CLI, naming neither bazel nor the file.
+          sudo rm -rf \
+            /usr/share/dotnet /usr/share/swift /usr/share/miniconda \
+            /usr/local/lib/android /usr/local/.ghcup /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/boost
+          # The runner preloads container images for actions that are not used
+          # here; the differential suites load their own from pinned tarballs.
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          after=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          echo "freed $((after - before)) GiB, ${after} GiB available"
           df -h /
       # Without this, every run compiles the whole DataFusion pin from source,
       # which is most of the wall clock here. The cache key covers `Cargo.lock`
@@ -341,8 +377,26 @@ jobs:
       # of toolchains no Bazel action here touches.
       - name: free disk
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          set -euo pipefail
+          before=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          # Language runtimes and SDKs no action in this repository uses.
+          #
+          # Two paths are deliberately absent, both of which this step deleted
+          # once and had to stop. `/opt/hostedtoolcache` is where the toolchain
+          # actions install, and this step runs after them.
+          # `/usr/local/lib/node_modules` holds bazelisk, which
+          # `/usr/local/bin/bazel` is a symlink into -- removing it left the
+          # symlink dangling and `aspect format` failed with `No such file or
+          # directory` from inside the CLI, naming neither bazel nor the file.
+          sudo rm -rf \
+            /usr/share/dotnet /usr/share/swift /usr/share/miniconda \
+            /usr/local/lib/android /usr/local/.ghcup /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/boost
+          # The runner preloads container images for actions that are not used
+          # here; the differential suites load their own from pinned tarballs.
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          after=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          echo "freed $((after - before)) GiB, ${after} GiB available"
           df -h /
       - run: bazel coverage //crates/...
       # //codecov.yml holds the targets this upload is measured against: a
@@ -625,8 +679,26 @@ jobs:
       # terminated with signal 7 [Bus error]`, which reads like a compiler bug.
       - name: free disk
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          set -euo pipefail
+          before=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          # Language runtimes and SDKs no action in this repository uses.
+          #
+          # Two paths are deliberately absent, both of which this step deleted
+          # once and had to stop. `/opt/hostedtoolcache` is where the toolchain
+          # actions install, and this step runs after them.
+          # `/usr/local/lib/node_modules` holds bazelisk, which
+          # `/usr/local/bin/bazel` is a symlink into -- removing it left the
+          # symlink dangling and `aspect format` failed with `No such file or
+          # directory` from inside the CLI, naming neither bazel nor the file.
+          sudo rm -rf \
+            /usr/share/dotnet /usr/share/swift /usr/share/miniconda \
+            /usr/local/lib/android /usr/local/.ghcup /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/boost
+          # The runner preloads container images for actions that are not used
+          # here; the differential suites load their own from pinned tarballs.
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          after=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          echo "freed $((after - before)) GiB, ${after} GiB available"
           df -h /
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -701,8 +773,26 @@ jobs:
       # during linking surfaces as `ld terminated with signal 7 [Bus error]`.
       - name: free disk
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          set -euo pipefail
+          before=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          # Language runtimes and SDKs no action in this repository uses.
+          #
+          # Two paths are deliberately absent, both of which this step deleted
+          # once and had to stop. `/opt/hostedtoolcache` is where the toolchain
+          # actions install, and this step runs after them.
+          # `/usr/local/lib/node_modules` holds bazelisk, which
+          # `/usr/local/bin/bazel` is a symlink into -- removing it left the
+          # symlink dangling and `aspect format` failed with `No such file or
+          # directory` from inside the CLI, naming neither bazel nor the file.
+          sudo rm -rf \
+            /usr/share/dotnet /usr/share/swift /usr/share/miniconda \
+            /usr/local/lib/android /usr/local/.ghcup /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/boost
+          # The runner preloads container images for actions that are not used
+          # here; the differential suites load their own from pinned tarballs.
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          after=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          echo "freed $((after - before)) GiB, ${after} GiB available"
           df -h /
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:

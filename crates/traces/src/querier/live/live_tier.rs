@@ -59,6 +59,17 @@ impl LiveTier {
         self.source.tag_values(tenant, tag, start_ns, end_ns).await
     }
 
+    /// The exclusive upper bound of what the block builder has flushed for
+    /// `tenant`: one nanosecond past the newest `max_ts` across its blocks.
+    ///
+    /// This is a *planning hint*, not a tier boundary. It says where the
+    /// flushed data ends, not where the unflushed data begins: a span can reach
+    /// the hot tier with a `start_ns` well below this bound (a lagging client
+    /// clock, a batching exporter, a long span that outlives its siblings), and
+    /// no block holds it yet. Splitting a query window here and reading the hot
+    /// tier only above it drops exactly those spans, and drops them silently.
+    /// [`crate::querier::store::KrabkaSpanStore`] therefore scans both tiers
+    /// over the whole window and deduplicates the overlap.
     #[must_use]
     pub fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
         self.source.block_builder_frontier_ns(tenant)

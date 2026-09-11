@@ -1,5 +1,6 @@
 use super::{Arc, ObjectStore, Path, Url, blockbuilder};
 
+#[derive(Clone)]
 pub(crate) struct ConfiguredObjectStore {
     pub(crate) store: Arc<dyn ObjectStore>,
     pub(crate) root: Url,

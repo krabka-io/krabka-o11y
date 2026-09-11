@@ -85,8 +85,8 @@ mod tests {
             ("__profile_type__", HEAP_TYPE),
             ("service_name", "checkout"),
         ]);
-        index.add_series("t", cpu.fingerprint(), &cpu);
-        index.add_series("t", heap.fingerprint(), &heap);
+        index.add_series("t", cpu.fingerprint(), &cpu).unwrap();
+        index.add_series("t", heap.fingerprint(), &heap).unwrap();
         index
     }
 
@@ -132,9 +132,15 @@ mod tests {
         let heap_checkout_fp = heap_checkout.fingerprint();
         let cpu_payments_fp = cpu_payments.fingerprint();
 
-        index.add_series("t", cpu_checkout_fp, &cpu_checkout);
-        index.add_series("t", heap_checkout_fp, &heap_checkout);
-        index.add_series("t", cpu_payments_fp, &cpu_payments);
+        index
+            .add_series("t", cpu_checkout_fp, &cpu_checkout)
+            .unwrap();
+        index
+            .add_series("t", heap_checkout_fp, &heap_checkout)
+            .unwrap();
+        index
+            .add_series("t", cpu_payments_fp, &cpu_payments)
+            .unwrap();
 
         for meta in [
             BlockMeta {
@@ -615,7 +621,7 @@ mod tests {
         let mut fresh = ProfileIndex::new();
         let shipping = profile_labels("process_cpu", CPU_TYPE, "shipping");
         let shipping_fp = shipping.fingerprint();
-        fresh.add_series("t", shipping_fp, &shipping);
+        fresh.add_series("t", shipping_fp, &shipping).unwrap();
         <ProfileIndex as BlockIndex>::add_block(
             &mut fresh,
             &BlockMeta {
@@ -752,7 +758,7 @@ mod tests {
         // The first writer still names the replaced block, and writes another.
         let shipping = profile_labels("process_cpu", CPU_TYPE, "shipping");
         let shipping_fp = shipping.fingerprint();
-        writer.add_series("t", shipping_fp, &shipping);
+        writer.add_series("t", shipping_fp, &shipping).unwrap();
         <ProfileIndex as BlockIndex>::add_block(
             &mut writer,
             &BlockMeta {
@@ -839,7 +845,7 @@ mod tests {
         let mut reuser = ProfileIndex::new();
         let shipping = profile_labels("process_cpu", CPU_TYPE, "shipping");
         let shipping_fp = shipping.fingerprint();
-        reuser.add_series("t", shipping_fp, &shipping);
+        reuser.add_series("t", shipping_fp, &shipping).unwrap();
         <ProfileIndex as BlockIndex>::add_block(
             &mut reuser,
             &BlockMeta {
@@ -895,7 +901,7 @@ mod tests {
         for day in 0..days {
             let labels = profile_labels("process_cpu", CPU_TYPE, &format!("service-{day}"));
             let fingerprint = labels.fingerprint();
-            index.add_series("t", fingerprint, &labels);
+            index.add_series("t", fingerprint, &labels).unwrap();
             <ProfileIndex as BlockIndex>::add_block(
                 index,
                 &BlockMeta {
@@ -1256,6 +1262,104 @@ mod tests {
                 .all(|meta| meta.object_key != "cpu-checkout.parquet")
         );
     }
+
+    /// A series with no `__profile_type__` is refused, and the refusal names
+    /// both the label it wants and the series it is about.
+    ///
+    /// What this replaces was worse than an error. `add_series` returned
+    /// having registered the series' labels and no profile type, so the
+    /// profile stored without complaint and every profile-type selector
+    /// missed it: a write that could never be read, reported at neither end.
+    #[test]
+    fn a_series_without_a_profile_type_label_is_refused_by_name() {
+        let mut index = ProfileIndex::new();
+        let untyped = labels(&[("__name__", "process_cpu"), ("service_name", "checkout")]);
+
+        let error = index
+            .add_series("t", untyped.fingerprint(), &untyped)
+            .expect_err("a series with no profile type is unqueryable and must be refused");
+
+        let BlockStoreError::MissingProfileTypeLabel {
+            label,
+            tenant,
+            fingerprint,
+            labels: series,
+        } = &error
+        else {
+            panic!("wrong variant for a missing profile-type label: {error}");
+        };
+        check!(
+            (*label, tenant.as_str(), *fingerprint, series.as_str())
+                == (
+                    "__profile_type__",
+                    "t",
+                    untyped.fingerprint(),
+                    r#"__name__="process_cpu", service_name="checkout""#,
+                )
+        );
+        // The whole rendered message, because what the operator has to be able
+        // to do from a log line alone is find the series and the label.
+        check!(
+            error.to_string()
+                == format!(
+                    r#"profile series {{__name__="process_cpu", service_name="checkout"}} of tenant `t` (fingerprint {}) has no `__profile_type__` label, so no profile-type selector could ever reach it"#,
+                    untyped.fingerprint()
+                )
+        );
+    }
+
+    /// A refused series leaves nothing of itself behind.
+    ///
+    /// Half of the old behaviour was the postings: the series went into the
+    /// label index and only the profile type was skipped, so `label_values`
+    /// listed a service whose profiles no query could return.
+    #[test]
+    fn a_refused_series_registers_neither_labels_nor_a_profile_type() {
+        let mut index = ProfileIndex::new();
+        let untyped = labels(&[("__name__", "process_cpu"), ("service_name", "checkout")]);
+
+        check!(
+            index
+                .add_series("t", untyped.fingerprint(), &untyped)
+                .is_err()
+        );
+
+        check!(index.label_names("t") == Vec::<String>::new());
+        check!(index.profile_types("t") == Vec::<String>::new());
+        check!(
+            index
+                .matching_fingerprints(
+                    "t",
+                    &[LabelMatcher::new("service_name", MatchOp::Eq, "checkout")]
+                )
+                .unwrap()
+                == BTreeSet::new()
+        );
+    }
+
+    /// The control: the same series, with the label, is registered under its
+    /// type and comes back from a type selector.
+    #[test]
+    fn a_series_with_a_profile_type_label_is_selectable_by_that_type() {
+        let mut index = ProfileIndex::new();
+        let typed = profile_labels("process_cpu", CPU_TYPE, "checkout");
+
+        index
+            .add_series("t", typed.fingerprint(), &typed)
+            .expect("a series carrying __profile_type__ is registrable");
+
+        check!(index.profile_types("t") == strings(&[CPU_TYPE]));
+        check!(
+            index
+                .select_fingerprints(
+                    "t",
+                    CPU_TYPE,
+                    &[LabelMatcher::new("service_name", MatchOp::Eq, "checkout")]
+                )
+                .unwrap()
+                == BTreeSet::from([typed.fingerprint()])
+        );
+    }
 }
 
 mod decode_profile_shard;
@@ -1267,6 +1371,7 @@ mod profile_index_shard_width;
 mod profile_index_type;
 mod profile_shard;
 mod profile_shard_format;
+mod render_series_labels;
 mod tenant_profile_extras;
 
 use decode_profile_shard::decode_profile_shard;
@@ -1278,4 +1383,5 @@ use profile_index_shard_width::PROFILE_INDEX_SHARD_WIDTH;
 pub use profile_index_type::ProfileIndex;
 use profile_shard::ProfileShard;
 use profile_shard_format::{PROFILE_SHARD_FORMAT_VERSION, PROFILE_SHARD_MAGIC};
+use render_series_labels::render_series_labels;
 use tenant_profile_extras::TenantProfileExtras;

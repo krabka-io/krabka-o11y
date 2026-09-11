@@ -18,14 +18,18 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use krabka_observability::RoleReadiness;
 use serde_json::json;
 
-use crate::frontend::{
-    QueryFrontend,
-    backend::{BackendError, QuerierBackend},
-    job::BlockCatalog,
-    merge::TraceStatus,
-    wire::parse_hex16,
+use crate::{
+    frontend::{
+        QueryFrontend,
+        backend::{BackendError, QuerierBackend},
+        job::BlockCatalog,
+        merge::TraceStatus,
+        wire::parse_hex16,
+    },
+    readiness::tempo_readiness_routes,
 };
 
 // --- param helpers (mirror the querier's contract) --------------------------
@@ -330,7 +334,6 @@ mod parse_step_to_ns;
 mod query_instant;
 mod query_param;
 mod query_range;
-mod ready;
 mod required_seconds;
 mod required_step;
 mod required_time_bounds;
@@ -364,7 +367,6 @@ use parse_step_to_ns::parse_step_to_ns;
 use query_instant::query_instant;
 use query_param::query_param;
 use query_range::query_range;
-use ready::ready;
 use required_seconds::required_seconds;
 use required_step::required_step;
 use required_time_bounds::required_time_bounds;

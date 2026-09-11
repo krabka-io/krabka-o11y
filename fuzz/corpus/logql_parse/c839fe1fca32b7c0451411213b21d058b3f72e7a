@@ -1,0 +1,1 @@
+krabka_logs_wal_consumer_records_total{topic="__wal",partition="2"} 1

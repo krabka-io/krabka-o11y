@@ -12,9 +12,11 @@ pub(crate) fn compactor_policy_rejects_zero_and_invalid_bounds() {
         "--compactor-object-store-max-backoff=0s",
     ] {
         check!(
-            ServiceConfig::try_parse_from(
-                ["krabka-observability", "--target=compactor", argument,]
-            )
+            ServiceConfig::try_parse_from([
+                "krabka-observability",
+                "--target=block-builder",
+                argument,
+            ])
             .is_err(),
             "accepted {argument}"
         );
@@ -22,7 +24,7 @@ pub(crate) fn compactor_policy_rejects_zero_and_invalid_bounds() {
 
     let poll_above_window = ServiceConfig::parse_from([
         "krabka-observability",
-        "--target=compactor",
+        "--target=block-builder",
         "--compactor-accumulation-window=1s",
         "--compactor-accumulation-poll-timeout=2s",
     ]);
@@ -30,7 +32,7 @@ pub(crate) fn compactor_policy_rejects_zero_and_invalid_bounds() {
 
     let initial_above_max = ServiceConfig::parse_from([
         "krabka-observability",
-        "--target=compactor",
+        "--target=block-builder",
         "--compactor-object-store-initial-backoff=2s",
         "--compactor-object-store-max-backoff=1s",
     ]);
@@ -49,7 +51,7 @@ pub(crate) fn compactor_policy_rejects_zero_and_invalid_bounds() {
     ] {
         let at_the_limit = ServiceConfig::parse_from([
             "krabka-observability",
-            "--target=compactor",
+            "--target=block-builder",
             window,
             timeout,
         ]);

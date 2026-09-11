@@ -7,9 +7,9 @@ use std::{
 
 use arrow::{compute::concat_batches, record_batch::RecordBatch};
 use krabka_blockstore::{
-    BlockMeta, BlockWriter, IndexSnapshotRetain, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID,
-    ShardedTraceBloom, SummaryColumns, TraceBlockStats, TraceIndex, span_block_decl,
-    span_block_schema_with_promoted_attrs,
+    BlockMeta, BlockWriter, IndexSnapshotRetain, ObjectStoreRetryPolicy, PromotedSpanAttr,
+    RetryingObjectStore, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SummaryColumns,
+    TraceBlockStats, TraceIndex, span_block_decl, span_block_schema_with_promoted_attrs,
 };
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_units::{
@@ -336,6 +336,7 @@ use build_blocks_with_options::build_blocks_with_options;
 pub use build_blocks_with_prefix::build_blocks_with_prefix;
 pub use build_blocks_with_promoted_attrs::build_blocks_with_promoted_attrs;
 use collect_tags::collect_tags;
+pub use consumer::BlockBuilderConsumer;
 pub use decode_consumer_records::decode_consumer_records;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
 pub use default_flush_max_records::DEFAULT_FLUSH_MAX_RECORDS;

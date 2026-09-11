@@ -1,7 +1,8 @@
 use crate::{
     AdminError, BlockStoreError, ByteSize, CompactionFrontierStoreError, CompactorRunError,
-    ConsumerError, Error, LogDeleteRequestStoreError, LokiRuleStoreError, NonZeroUsize, Parser,
-    PathBuf, ProducerError, SocketAddr, Time, ValueEnum, days, millis, minutes, secs,
+    ConsumerError, CriticalTaskError, Error, LogDeleteRequestStoreError, LokiRuleStoreError,
+    NonZeroUsize, Parser, PathBuf, ProducerError, RoleKind, SocketAddr, Time, ValueEnum, days,
+    millis, minutes, secs,
 };
 
 mod loki_reject_old_samples_max_age;

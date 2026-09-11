@@ -1,0 +1,31 @@
+# krabka-observability --target=all
+#
+# Every logs role in one process, on one port: push on `/loki/api/v1/push`,
+# query on `/loki/api/v1/query_range`, delete requests on
+# `/loki/api/v1/delete`, and one `/ready` that is 503 until all three roles
+# are up. This is what Loki's single binary does, and it is the shape to
+# evaluate the stack in -- a laptop, a demo, a small deployment -- rather than
+# running the three role files beside this one.
+#
+# It is not in the compose stack or the kustomize base. Those run the roles
+# separately on purpose, because that is the topology a chart has to describe;
+# this file is here so the key names are checked by //deploy:role_config_test
+# and so there is one worked example of the target.
+#
+# `wal-group-id` names the block builder's consumer group. The querier gets
+# `<wal-group-id>-querier` derived for it: two members of one group are handed
+# disjoint partitions, so sharing it would leave the block builder writing
+# blocks from half the WAL and the querier tailing the other half, with
+# nothing to say so.
+target: all
+listen-addr: 0.0.0.0:3100
+admin-listen-addr: 0.0.0.0:9404
+wal-bootstrap-server: broker:9092
+object-store-url: s3://krabka-logs
+index-prefix: logs
+data-root: /var/lib/krabka
+# How long one stage of the stop may take before the next is asked to stop
+# anyway. The stop is staged: the data port drains first, so nothing new
+# enters the WAL, and only then does the block builder empty what is left of
+# it. Sized under the pod's terminationGracePeriodSeconds.
+all-drain-stage-timeout: 30s

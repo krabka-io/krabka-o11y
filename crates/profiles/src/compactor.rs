@@ -84,18 +84,34 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec_a = record("t", "api", 5, "main");
         let rec_b = record("t", "api", 7, "worker");
-        let meta_a = build_block(&store, "t", 0, std::slice::from_ref(&rec_a), (0, 0))
-            .await
-            .unwrap()
-            .remove(0);
-        let meta_b = build_block(&store, "t", 0, std::slice::from_ref(&rec_b), (1, 1))
-            .await
-            .unwrap()
-            .remove(0);
+        let meta_a = build_block(
+            &store,
+            "t",
+            0,
+            std::slice::from_ref(&rec_a),
+            (0, 0),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap()
+        .remove(0);
+        let meta_b = build_block(
+            &store,
+            "t",
+            0,
+            std::slice::from_ref(&rec_b),
+            (1, 1),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap()
+        .remove(0);
         let mut index = ProfileIndex::new();
         for rec in [&rec_a, &rec_b] {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta_a);
         index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
@@ -134,19 +150,35 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let old_record = record("t", "api", 5, "old");
         let other_record = record("t", "api", 7, "other");
-        let old_input = build_block(&store, "t", 0, std::slice::from_ref(&old_record), (0, 0))
-            .await
-            .unwrap()
-            .remove(0);
-        let other_input = build_block(&store, "t", 0, std::slice::from_ref(&other_record), (1, 1))
-            .await
-            .unwrap()
-            .remove(0);
+        let old_input = build_block(
+            &store,
+            "t",
+            0,
+            std::slice::from_ref(&old_record),
+            (0, 0),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap()
+        .remove(0);
+        let other_input = build_block(
+            &store,
+            "t",
+            0,
+            std::slice::from_ref(&other_record),
+            (1, 1),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap()
+        .remove(0);
         let make_index = |first: &BlockMeta, first_record: &ProfileRecord| {
             let mut index = ProfileIndex::new();
             for record in [first_record, &other_record] {
                 let labels = Labels::from_pairs(record.labels.iter().cloned());
-                index.add_series("t", labels.fingerprint(), &labels);
+                index
+                    .add_series("t", labels.fingerprint(), &labels)
+                    .unwrap();
             }
             for meta in [first, &other_input] {
                 index.add_block(meta);
@@ -189,6 +221,7 @@ mod tests {
             0,
             std::slice::from_ref(&replacement_record),
             (0, 0),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
         .unwrap()
@@ -236,18 +269,34 @@ mod tests {
         let rec_a = record_at("t", "api", 4, "main", 1_000);
         let rec_b = record_at("t", "api", 6, "main", 1_500);
         let rec_c = record_at("t", "api", 3, "worker", 3_000);
-        let meta_a = build_block(&store, "t", 0, &[rec_a.clone(), rec_b.clone()], (0, 1))
-            .await
-            .unwrap()
-            .remove(0);
-        let meta_b = build_block(&store, "t", 0, std::slice::from_ref(&rec_c), (2, 2))
-            .await
-            .unwrap()
-            .remove(0);
+        let meta_a = build_block(
+            &store,
+            "t",
+            0,
+            &[rec_a.clone(), rec_b.clone()],
+            (0, 1),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap()
+        .remove(0);
+        let meta_b = build_block(
+            &store,
+            "t",
+            0,
+            std::slice::from_ref(&rec_c),
+            (2, 2),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap()
+        .remove(0);
         let mut index = ProfileIndex::new();
         for rec in [&rec_a, &rec_b, &rec_c] {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta_a);
         index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
@@ -296,13 +345,22 @@ mod tests {
         let mut metas = Vec::new();
         for (idx, rec) in [&rec_a, &rec_b, &rec_c, &rec_d].into_iter().enumerate() {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
             let offset = i64::try_from(idx).unwrap();
             let bounds = (offset, offset);
-            let meta = build_block(&store, "t", 0, std::slice::from_ref(rec), bounds)
-                .await
-                .unwrap()
-                .remove(0);
+            let meta = build_block(
+                &store,
+                "t",
+                0,
+                std::slice::from_ref(rec),
+                bounds,
+                &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+            )
+            .await
+            .unwrap()
+            .remove(0);
             index.add_block(&meta);
             index.add_profile_block("t", &meta.object_key, vec![STACKTRACE_PARTITION]);
             metas.push(meta);
@@ -491,11 +549,20 @@ mod tests {
         for n in 0..4_i64 {
             let rec = record_at("t", "api", 1, "main", 1_000 + n);
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
-            let block = build_block(&store, "t", 0, std::slice::from_ref(&rec), (n, n))
-                .await
-                .unwrap()
-                .remove(0);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
+            let block = build_block(
+                &store,
+                "t",
+                0,
+                std::slice::from_ref(&rec),
+                (n, n),
+                &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+            )
+            .await
+            .unwrap()
+            .remove(0);
             index.add_block(&block);
             index.add_profile_block("t", &block.object_key, vec![STACKTRACE_PARTITION]);
             records.push(rec);

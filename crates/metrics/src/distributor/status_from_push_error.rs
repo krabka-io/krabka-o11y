@@ -11,7 +11,7 @@ use super::{PushError, Status, status_from_http_status};
 pub(crate) fn status_from_push_error(error: &PushError) -> Status {
     let message = error.to_string();
     match error {
-        PushError::Produce(_) => Status::internal(message),
+        PushError::Produce(_) | PushError::ProduceBatch(_) => Status::internal(message),
         PushError::Limit(limit) => status_from_http_status(limit.http_status(), message),
         PushError::Wire(wire) => status_from_http_status(wire.status_code(), message),
         PushError::Otlp(otlp) => status_from_http_status(otlp.status_code(), message),

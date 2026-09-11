@@ -1,6 +1,6 @@
 use super::{
-    DistributorState, HeaderMap, IntoResponse, Response, Span, error_response, produce_spans,
-    tenant,
+    DistributorState, HeaderMap, IntoResponse, Response, Span, TracesError, error_response,
+    produce_spans, tenant,
 };
 
 pub(crate) async fn append_decoded_response(
@@ -25,6 +25,15 @@ pub(crate) async fn append_decoded_response(
             // A produce failure is an actual WAL-append error (distinct from a
             // 4xx validation/rate-limit reject handled above).
             state.metrics.record_wal_append_failure();
+            if let TracesError::ProduceBatch {
+                appended, total, ..
+            } = &err
+            {
+                state
+                    .metrics
+                    .wal_produce
+                    .record_batch_failure(*appended, *total);
+            }
             error_response(&err)
         }
     }

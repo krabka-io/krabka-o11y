@@ -1,5 +1,6 @@
 use super::{
-    Arc, CancellationToken, Consumer, LiveStore, RwLock, TracesError, ingest_wal_payloads,
+    Arc, CancellationToken, Consumer, LiveStore, RwLock, ServiceMetrics, TracesError,
+    ingest_wal_payloads,
 };
 
 /// Consume traces WAL records and rebuild the in-memory hot tier.
@@ -9,13 +10,16 @@ use super::{
 pub async fn run(
     mut consumer: Consumer,
     store: Arc<RwLock<LiveStore>>,
+    metrics: ServiceMetrics,
     shutdown: CancellationToken,
 ) -> Result<(), TracesError> {
     while !shutdown.is_cancelled() {
         let records = consumer
             .poll(krabka_units::millis(500))
             .await
+            .inspect_err(|_| metrics.wal_consumer.record_poll_failure())
             .map_err(|err| TracesError::Wal(err.to_string()))?;
+        metrics.wal_consumer.record_poll(&records);
         if records.is_empty() {
             continue;
         }

@@ -14,6 +14,7 @@ use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
 use krabka_client_producer::Producer;
+use krabka_observability::{ConfigFileArgs, argv_with_config_file};
 use krabka_pprof::{DebuginfodConfig, UnionProfileStore};
 use krabka_profiles::{
     blockbuilder::BlockBuilderConfig,
@@ -31,7 +32,6 @@ use krabka_telemetry::OtlpConfig;
 use krabka_units::{
     ByteSize, Time,
     convert::{ByteSizeExt as _, TimeExt as _},
-    fmt::Human as _,
     parse,
 };
 #[cfg(test)]
@@ -45,9 +45,24 @@ mod tests {
 
     use assert2::{assert, check};
     use clap::{CommandFactory, Parser};
+    use krabka_broker::{Broker, BrokerConfig};
+    use krabka_observability::topic_contract::{PROFILES_TOPICS, TopicSettings, provision_topics};
     use krabka_units::{bytes, per_sec};
 
     use super::*;
+
+    /// A service that binds loopback inside a container is unreachable from
+    /// outside the pod, and the symptom is a health check that fails with
+    /// nothing in the logs. Pyroscope defaults its HTTP listener to every
+    /// interface; so does this.
+    #[test]
+    fn default_listen_addresses_are_reachable_from_outside_the_container() {
+        let cli = Cli::try_parse_from(["krabka-profiles", "--target", "distributor"]).unwrap();
+
+        check!(cli.listen.ip().is_unspecified());
+        check!(cli.listen.port() == 4040);
+        check!(cli.admin_listen_addr.ip().is_unspecified());
+    }
 
     #[test]
     fn client_resource_policy_parses_defaults_and_overrides() {
@@ -856,13 +871,110 @@ overrides:
     fn rejects_unknown_target() {
         assert!(Cli::try_parse_from(["krabka-profiles", "--target", "bogus"]).is_err());
     }
+
+    /// The contract has to stop a start, not merely describe one.
+    ///
+    /// A profiles role that ran against a topic the deployment never
+    /// provisioned -- or provisioned at a different partition count -- would
+    /// route every series key to a shard holding none of its history, and
+    /// nothing on the wire would say so. The four roles that open a WAL client
+    /// must refuse; the compactor and the symbolizer, which reach no broker,
+    /// must be untouched by the same fault.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+
+        let roles = [
+            ("distributor", true),
+            ("block-builder", true),
+            ("querier", true),
+            ("query-frontend", true),
+            ("compactor", false),
+            ("symbolizer", false),
+            // `all` runs four of those roles, and asks once for the process.
+            ("all", true),
+        ];
+
+        for (target, refuses) in roles {
+            let outcome = require_role_topics(&cli_for(target, &bootstrap)).await;
+            check!(outcome.is_err() == refuses, "{target} before provisioning");
+            if let Err(error) = outcome {
+                check!(
+                    error
+                        .to_string()
+                        .contains(krabka_profiles::PROFILES_WAL_TOPIC),
+                    "{target}"
+                );
+            }
+        }
+
+        // The same call `krabka-o11y-bootstrap` makes as a deployment step.
+        provision_topics(
+            &bootstrap,
+            &PROFILES_TOPICS,
+            &TopicSettings::single_broker(),
+        )
+        .await
+        .expect("provision the profiles WAL topic");
+
+        for (target, _) in roles {
+            check!(
+                require_role_topics(&cli_for(target, &bootstrap))
+                    .await
+                    .is_ok(),
+                "{target} after provisioning"
+            );
+        }
+    }
+
+    fn cli_for(target: &str, bootstrap: &str) -> Cli {
+        Cli::try_parse_from([
+            "krabka-profiles",
+            "--target",
+            target,
+            "--bootstrap",
+            bootstrap,
+        ])
+        .expect("cli")
+    }
 }
 
+/// `--target all` end to end: a push at the ingest door answered at the query
+/// door, and a `SIGTERM` that stops all six roles. Both drive the real `run`
+/// in a child process, which is why they live in the bin crate rather than
+/// under `tests/`.
+#[cfg(all(test, unix))]
+mod all_in_one;
+
+/// A `SIGTERM` sent to the real querier composition has to end the process,
+/// not merely reach a handler. The suite runs the role in a child and asserts
+/// on its exit status.
+#[cfg(all(test, unix))]
+mod sigterm_exits_the_querier;
+
+/// `Target` is private to this binary, so the one place its clap spellings can
+/// be checked against the shared role vocabulary is here.
+#[cfg(test)]
+mod target_names_match_the_role_vocabulary;
+
+mod all_stage;
 mod alloc;
+mod bind_all_stage_server;
+mod block_builder_config;
+mod block_builder_stage;
+mod build_all_stages;
+mod build_distributor_state;
 mod build_object_store;
+mod build_profile_read_path;
 mod cli;
 mod client_resource_policy;
+mod compaction_loop;
 mod compaction_policy_from_cli;
+mod compactor_stage;
 mod configured_object_store;
 mod debuginfod_config;
 mod load_profiles_limits_overrides_config;
@@ -878,21 +990,41 @@ mod parse_positive_time_or_legacy_nanos;
 mod parse_positive_u32;
 mod parse_positive_usize;
 mod parse_positive_whole_byte_size;
+mod profile_read_path;
+mod read_path_stage;
+mod require_role_topics;
 mod role_shutdown_token;
 mod run;
+mod run_all;
+mod run_block_builder;
 mod run_compaction_pass;
+mod run_compactor;
+mod run_distributor;
+mod run_querier;
+mod run_query_frontend;
+mod run_symbolizer;
 mod spawn_profile_index_refresh;
 mod spawn_wal_tail;
+mod symbolizer_stage;
 mod target;
 
 // `alloc` deliberately has no `use` line. `#[global_allocator]` registers
 // the static by attribute, so naming it here imports something nothing
 // reads -- which is a warning, not a link to the allocator.
 
+use all_stage::AllStage;
+use bind_all_stage_server::bind_all_stage_server;
+use block_builder_config::block_builder_config;
+use block_builder_stage::block_builder_stage;
+use build_all_stages::build_all_stages;
+use build_distributor_state::build_distributor_state;
 use build_object_store::build_object_store;
+use build_profile_read_path::build_profile_read_path;
 use cli::Cli;
 use client_resource_policy::client_resource_policy;
+use compaction_loop::compaction_loop;
 use compaction_policy_from_cli::compaction_policy_from_cli;
+use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
 use debuginfod_config::debuginfod_config;
 use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
@@ -908,17 +1040,27 @@ use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
 use parse_positive_u32::parse_positive_u32;
 use parse_positive_usize::parse_positive_usize;
 use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
+use profile_read_path::ProfileReadPath;
+use read_path_stage::read_path_stage;
+use require_role_topics::require_role_topics;
 use role_shutdown_token::role_shutdown_token;
 use run::run;
+use run_all::run_all;
+use run_block_builder::run_block_builder;
 use run_compaction_pass::run_compaction_pass;
+use run_compactor::run_compactor;
+use run_distributor::run_distributor;
+use run_querier::run_querier;
+use run_query_frontend::run_query_frontend;
+use run_symbolizer::run_symbolizer;
 use spawn_profile_index_refresh::spawn_profile_index_refresh;
 use spawn_wal_tail::spawn_wal_tail;
+use symbolizer_stage::symbolizer_stage;
 use target::Target;
 
 #[tokio::main]
-#[allow(clippy::too_many_lines)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),

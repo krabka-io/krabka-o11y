@@ -1,6 +1,6 @@
 use super::{
-    Arc, AtomicOrdering, BrokerBackedQueryAuthorizer, CancellationToken, ClientResourcePolicy,
-    JoinHandle, LogQueryAuthorizer, ServiceReadiness, Time, TimeExt, sleep,
+    Arc, BrokerBackedQueryAuthorizer, CancellationToken, ClientResourcePolicy, JoinHandle,
+    LogQueryAuthorizer, ReadinessGate, Time, TimeExt, sleep,
 };
 
 /// Spawns a background task that retries `BrokerBackedQueryAuthorizer::connect`
@@ -14,7 +14,7 @@ pub(crate) fn spawn_query_authorizer_connect(
     client_resource_policy: ClientResourcePolicy,
     reconnect_interval: Time,
     token: CancellationToken,
-    readiness: ServiceReadiness,
+    authorization: ReadinessGate,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let authorizer = loop {
@@ -24,7 +24,7 @@ pub(crate) fn spawn_query_authorizer_connect(
                 &bootstrap,
                 topic.clone(),
                 client_resource_policy,
-                readiness.authorization_connected.clone(),
+                authorization.shared_flag(),
                 ) => result,
             };
             match result {
@@ -45,9 +45,7 @@ pub(crate) fn spawn_query_authorizer_connect(
             let mut guard = slot.write().await;
             *guard = Arc::new(authorizer);
         }
-        readiness
-            .authorization_connected
-            .store(true, AtomicOrdering::SeqCst);
+        authorization.mark_ready();
         tracing::info!("querier query authorizer connected; broker-backed ACL checks active");
         token.cancelled().await;
     })

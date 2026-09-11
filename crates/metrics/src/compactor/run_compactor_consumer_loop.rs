@@ -1,7 +1,8 @@
 use super::{
     BlockWriter, CompactionConsumerCommitMut, CompactionConsumerPoll, CompactionIndexSink,
-    CompactionLoopConfig, CompactionLoopResult, CompactionPollError, CompactionPollResult,
-    SystemCompactionClock, run_compactor_consumer_loop_with_clock,
+    CompactionLoopConfig, CompactionLoopContext, CompactionLoopResult, CompactionPollError,
+    CompactionPollResult, ServiceMetrics, SystemCompactionClock,
+    run_compactor_consumer_loop_with_clock,
 };
 
 /// Runs the compactor polling loop with a single consumer handle for poll and
@@ -14,6 +15,7 @@ pub async fn run_compactor_consumer_loop<C, S, Stop>(
     index_sink: &S,
     config: CompactionLoopConfig,
     should_stop: Stop,
+    metrics: &ServiceMetrics,
 ) -> Result<CompactionLoopResult, CompactionPollError>
 where
     C: CompactionConsumerPoll + CompactionConsumerCommitMut + ?Sized,
@@ -26,7 +28,7 @@ where
         index_sink,
         config,
         should_stop,
-        &SystemCompactionClock,
+        CompactionLoopContext::new(&SystemCompactionClock, metrics),
     )
     .await
 }

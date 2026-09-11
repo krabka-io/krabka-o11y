@@ -11,5 +11,14 @@ pub async fn serve_service(
     object_store: Option<&dyn ObjectStore>,
 ) -> Result<(), ServiceRuntimeError> {
     let listener = TcpListener::bind(config.listen_addr).await?;
-    serve_service_listener(listener, config, dependencies, object_store).await
+    // Boxed: the role start-ups this dispatches to are several KB of future
+    // between them, and inlining them here would put all of that on the stack
+    // of whatever awaits `serve_service`.
+    Box::pin(serve_service_listener(
+        listener,
+        config,
+        dependencies,
+        object_store,
+    ))
+    .await
 }

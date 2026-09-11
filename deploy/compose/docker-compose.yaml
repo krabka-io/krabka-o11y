@@ -1,0 +1,317 @@
+name: krabka-o11y
+
+# One role of each signal, a broker and an object store. Enough to ingest and
+# query all four signals; not a production topology -- there is one replica of
+# everything and one broker.
+#
+#     docker compose -f deploy/compose/docker-compose.yaml up -d
+#
+# Set KRABKA_O11Y_IMAGE to run an image built from this tree:
+#
+#     bazel run //bazel/images/krabka:load
+#     KRABKA_O11Y_IMAGE=krabka-o11y:dev docker compose ... up -d
+#
+# Every role reads a `--config.file` from //deploy/roles, which the Kubernetes
+# manifests mount as ConfigMaps. The command line here carries only what
+# differs between the two orchestrators, which is nothing: the files are the
+# configuration, and a flag would silently win over one.
+
+x-krabka: &krabka
+  image: ${KRABKA_O11Y_IMAGE:-ghcr.io/krabka-io/krabka-o11y:latest}
+  restart: unless-stopped
+  # The role binary is PID 1. No shell, no entrypoint wrapper: SIGTERM from
+  # `docker stop` reaches the process that installed a handler for it.
+  init: false
+  security_opt: ['no-new-privileges:true']
+  volumes:
+    - ../roles:/etc/krabka:ro
+  environment: &s3
+    # object_store reads its S3 configuration from the process environment, so
+    # these are AWS_* rather than KRABKA_*. They are not a second
+    # configuration scheme; no flag names them.
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-krabka}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-krabka-secret}
+    AWS_ENDPOINT_URL: http://minio:9000
+    AWS_REGION: us-east-1
+    AWS_ALLOW_HTTP: "true"
+    AWS_VIRTUAL_HOSTED_STYLE_REQUEST: "false"
+    AWS_EC2_METADATA_DISABLED: "true"
+    RUST_LOG: ${KRABKA_RUST_LOG:-info}
+
+# Every role depends on the topic contract being in place and on the object
+# store holding its bucket. This ordering is what makes a cold start work in
+# one pass. It is not the only guard on the first: each binary calls
+# `krabka_observability::topic_contract::require_topics` for the topics its
+# role touches, before it builds a producer or a consumer, and refuses to start
+# when one is absent or a state topic is not compacted -- so a role pointed at
+# a broker that does not meet the contract fails where an operator can see it,
+# rather than re-mapping every key in silence. The bucket has no such check and
+# rests on this ordering alone.
+x-needs-stack: &needs-stack
+  broker: {condition: service_healthy}
+  bootstrap: {condition: service_completed_successfully}
+  minio-buckets: {condition: service_completed_successfully}
+
+services:
+  # --- broker -------------------------------------------------------------
+  broker-permissions:
+    image: ${KRABKA_O11Y_IMAGE:-ghcr.io/krabka-io/krabka-o11y:latest}
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/busybox/sh", "-c"]
+    command: ["chown 65532:65532 /data"]
+    volumes: ["broker-data:/data"]
+
+  broker-format:
+    image: ${KRABKA_BROKER_IMAGE:-ghcr.io/krabka-io/krabka-broker@sha256:15851611a7d5df6e20d3f9bd85b3821ca2dd52d5ca6f4042f5a4cfe0a3a1ab89}
+    restart: "no"
+    entrypoint: ["/usr/bin/krabka-format"]
+    command:
+      - --log-dir=/data
+      - --standalone
+      - --node-id=1
+      - --controller-listener=broker:9093
+      - --ignore-formatted
+    volumes: ["broker-data:/data"]
+    depends_on:
+      broker-permissions: {condition: service_completed_successfully}
+
+  broker:
+    image: ${KRABKA_BROKER_IMAGE:-ghcr.io/krabka-io/krabka-broker@sha256:15851611a7d5df6e20d3f9bd85b3821ca2dd52d5ca6f4042f5a4cfe0a3a1ab89}
+    restart: unless-stopped
+    command:
+      - --listen-addr=0.0.0.0:9092
+      - --advertised-listener=broker:9092
+      - --log-dir=/data
+      - --process-roles=controller,broker
+    # A named volume, not a bind mount and not the container's own layer. The
+    # WAL and the consumer-group offsets that say how far each block builder
+    # has read both live here; losing it is losing the answer to "what have I
+    # already written".
+    volumes: ["broker-data:/data"]
+    ports: ["9092:9092"]
+    depends_on:
+      broker-format: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "/usr/bin/krabka-guard", "--bootstrap-server", "127.0.0.1:9092", "freeze", "list"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    stop_grace_period: 60s
+
+  # --- object store -------------------------------------------------------
+  minio:
+    image: ${KRABKA_MINIO_IMAGE:-mirror.gcr.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-krabka}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-krabka-secret}
+    volumes: ["minio-data:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  minio-buckets:
+    image: ${KRABKA_MINIO_IMAGE:-mirror.gcr.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set krabka http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" && mc mb --ignore-existing krabka/krabka-metrics krabka/krabka-logs krabka/krabka-traces krabka/krabka-profiles
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-krabka}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-krabka-secret}
+    depends_on:
+      minio: {condition: service_healthy}
+
+  # --- topic contract -----------------------------------------------------
+  # Creates the six topics and then describes every one of them, failing when
+  # one does not meet the contract. Idempotent, so it is also the Kubernetes
+  # manifests' init container.
+  bootstrap:
+    !!merge <<: *krabka
+    restart: "no"
+    command:
+      - krabka-o11y-bootstrap
+      - --bootstrap=broker:9092
+      - --partitions=1
+      - --state-partitions=1
+      - --replicas=1
+      - --retention-ms=900000
+    depends_on:
+      broker: {condition: service_healthy}
+
+  # --- metrics ------------------------------------------------------------
+  metrics-distributor:
+    !!merge <<: *krabka
+    command: [krabka-metrics, --config.file=/etc/krabka/metrics-distributor.yaml]
+    ports: ["4041:4041"]
+    depends_on: *needs-stack
+    healthcheck: &probe-4041
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:4041/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+    stop_grace_period: 30s
+
+  metrics-block-builder:
+    !!merge <<: *krabka
+    command: [krabka-metrics, --config.file=/etc/krabka/metrics-block-builder.yaml]
+    depends_on: *needs-stack
+    # No data port on this role, so the admin port is the only probe target.
+    # It reports the `object-store` and `wal-consumer` gates, which is what
+    # "this block builder can do its job" means.
+    healthcheck: &probe-admin
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:9404/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+    stop_grace_period: 60s
+
+  metrics-querier:
+    !!merge <<: *krabka
+    command: [krabka-metrics-service, --config.file=/etc/krabka/metrics-querier.yaml]
+    ports: ["9090:9090"]
+    depends_on: *needs-stack
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:9090/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+    stop_grace_period: 60s
+
+  # --- logs ---------------------------------------------------------------
+  logs-distributor:
+    !!merge <<: *krabka
+    command: [krabka-observability, --config.file=/etc/krabka/logs-distributor.yaml]
+    ports: ["3100:3100"]
+    depends_on: *needs-stack
+    # The data port, deliberately. `POST /ingester/prepare_shutdown` clears the
+    # `accepting-writes` gate reported there; the admin port has no gate for
+    # this role and answers 200 through a drain.
+    healthcheck: &probe-3100
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:3100/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+    stop_grace_period: 30s
+
+  logs-block-builder:
+    !!merge <<: *krabka
+    command: [krabka-observability, --config.file=/etc/krabka/logs-block-builder.yaml]
+    volumes:
+      - ../roles:/etc/krabka:ro
+      - logs-block-builder-data:/var/lib/krabka
+    depends_on: *needs-stack
+    healthcheck: *probe-3100
+    # The compaction batch in flight when SIGTERM arrives runs to completion
+    # before the process exits, by design: a batch killed halfway is replayed
+    # from the WAL, and the replay is what this grace period buys.
+    stop_grace_period: 120s
+
+  logs-querier:
+    !!merge <<: *krabka
+    command: [krabka-observability, --config.file=/etc/krabka/logs-querier.yaml]
+    volumes:
+      - ../roles:/etc/krabka:ro
+      - logs-querier-data:/var/lib/krabka
+    ports: ["3101:3100"]
+    depends_on: *needs-stack
+    healthcheck: *probe-3100
+    stop_grace_period: 60s
+
+  # --- traces -------------------------------------------------------------
+  traces-distributor:
+    !!merge <<: *krabka
+    command: [krabka-traces, --config.file=/etc/krabka/traces-distributor.yaml]
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+      - "14250:14250"
+      - "14268:14268"
+      - "9411:9411"
+      - "6831:6831/udp"
+    depends_on: *needs-stack
+    # The admin port, not :3200. This role's seven data ports are OTLP, Jaeger
+    # and Zipkin ingest routers with no HTTP surface of their own, so `/ready`
+    # is on :9404 alone -- where the `wal-broker` gate it registers is answered
+    # for the whole window between the admin bind and the producer connecting.
+    healthcheck: &probe-9404
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:9404/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+    stop_grace_period: 30s
+
+  traces-block-builder:
+    !!merge <<: *krabka
+    command: [krabka-traces, --config.file=/etc/krabka/traces-block-builder.yaml]
+    depends_on: *needs-stack
+    # No data port at all, so :9404 is the only place its `wal-consumer`,
+    # `object-store` and `trace-index` gates can be asked.
+    healthcheck: *probe-9404
+    stop_grace_period: 60s
+
+  traces-querier:
+    !!merge <<: *krabka
+    command: [krabka-traces, --config.file=/etc/krabka/traces-querier.yaml]
+    ports: ["3201:3200"]
+    depends_on: *needs-stack
+    # The data port, because that is the one the query-frontend probes to
+    # decide its fan-out. It reports `object-store` and `trace-index`, and
+    # `live-store` when the embedded live tier is configured.
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:3200/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+    stop_grace_period: 60s
+
+  # --- profiles -----------------------------------------------------------
+  profiles-distributor:
+    !!merge <<: *krabka
+    command: [krabka-profiles, --config.file=/etc/krabka/profiles-distributor.yaml]
+    ports: ["4040:4040"]
+    depends_on: *needs-stack
+    healthcheck: &probe-4040
+      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:4040/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 120s
+    stop_grace_period: 30s
+
+  profiles-block-builder:
+    !!merge <<: *krabka
+    command: [krabka-profiles, --config.file=/etc/krabka/profiles-block-builder.yaml]
+    depends_on: *needs-stack
+    healthcheck: *probe-admin
+    stop_grace_period: 45s
+
+  profiles-querier:
+    !!merge <<: *krabka
+    command: [krabka-profiles, --config.file=/etc/krabka/profiles-querier.yaml]
+    ports: ["4042:4040"]
+    depends_on: *needs-stack
+    healthcheck: *probe-4040
+    # This role does not exit on SIGTERM. It is SIGKILLed at the end of this
+    # period on every stop, with nothing in flight. See the gaps section of
+    # deploy/README.md. The value is the one the role would need if it did
+    # drain, and raising it buys nothing until it does.
+    stop_grace_period: 60s
+
+volumes:
+  broker-data:
+  minio-data:
+  logs-block-builder-data:
+  logs-querier-data:

@@ -8,6 +8,7 @@ use axum::{
     routing::get,
 };
 use base64::Engine;
+use krabka_observability::RoleReadiness;
 use krabka_traceql::{
     AttrValue, ComparisonOp, Field, FieldExpr, Intrinsic, ScanJob, ScanOptions, Scope, ScopedTag,
     SearchOptions, SearchResponse, SpanRef, SpanStore, SpansetExpr, TagScope, TraceMetricsResponse,
@@ -37,6 +38,7 @@ use crate::{
     ids::UnixNano,
     limits::{LimitError, Limits, OverridesProvider, QueryEnforcer},
     metrics::ServiceMetrics,
+    readiness::tempo_readiness_routes,
 };
 
 #[cfg(test)]
@@ -506,7 +508,7 @@ mod tests {
                 ..EngineOpts::default()
             },
         ));
-        router_with_config(engine, cfg)
+        router_with_config(engine, cfg, RoleReadiness::new())
     }
 
     #[test]
@@ -731,14 +733,56 @@ mod tests {
         let (status, body) = get_text("/api/echo").await;
         assert2::assert!(status == StatusCode::OK);
         assert2::assert!(body == "echo");
+    }
 
-        let (status, body) = get_text("/ready").await;
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(body == "ready");
+    /// Tempo answers `/ready` and `/status` with the same thing, and Grafana's
+    /// datasource health check reads `/status`. Both paths therefore report the
+    /// role's real gates, and they report them identically: a gate that only
+    /// one path knows about is a querier that two probes disagree about.
+    ///
+    /// The body is the one `krabka_observability` produces, which
+    /// [`HttpReadinessProbe`](crate::frontend::HttpReadinessProbe) parses back
+    /// into gate names.
+    #[tokio::test]
+    async fn both_readiness_paths_report_the_same_unmet_gates() {
+        let readiness = RoleReadiness::new();
+        let trace_index = readiness.gate("trace-index");
+        let live_store = readiness.gate("live-store");
 
-        let (status, body) = get_text("/status").await;
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(body == "ready");
+        let cases = [
+            (
+                Vec::new(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "not ready: trace-index, live-store\n",
+            ),
+            (
+                vec![&trace_index],
+                StatusCode::SERVICE_UNAVAILABLE,
+                "not ready: live-store\n",
+            ),
+            (vec![&trace_index, &live_store], StatusCode::OK, "ready\n"),
+        ];
+        for (met, want_status, want_body) in cases {
+            for gate in met {
+                gate.mark_ready();
+            }
+            for path in ["/ready", "/status"] {
+                let app = router_with_config(
+                    engine_for_probes(),
+                    HttpConfig::default(),
+                    readiness.clone(),
+                );
+                let got = get_text_with_app(app, path).await;
+                assert2::assert!(got == (want_status, want_body.to_string()), "{path}");
+            }
+        }
+    }
+
+    fn engine_for_probes() -> Arc<TraceqlEngine<InMemorySpanStore>> {
+        Arc::new(TraceqlEngine::new(
+            Arc::new(InMemorySpanStore::new()),
+            EngineOpts::default(),
+        ))
     }
 
     #[tokio::test]
@@ -2367,6 +2411,7 @@ overrides:
                 max_trace_spans: 1,
                 ..HttpConfig::default()
             },
+            RoleReadiness::new(),
         );
         let resp = app
             .oneshot(
@@ -3968,6 +4013,7 @@ overrides:
                 tag_query_filter_autocomplete_limit: 7,
                 ..HttpConfig::default()
             },
+            RoleReadiness::new(),
         );
         let resp = app
             .oneshot(
@@ -4061,7 +4107,6 @@ mod query_instant_inner;
 mod query_param;
 mod query_range;
 mod query_range_inner;
-mod ready;
 mod required_seconds_param;
 mod resource_attrs;
 mod resource_span_group;
@@ -4196,7 +4241,6 @@ use query_instant_inner::query_instant_inner;
 use query_param::query_param;
 use query_range::query_range;
 use query_range_inner::query_range_inner;
-use ready::ready;
 use required_seconds_param::required_seconds_param;
 use resource_attrs::ResourceAttrs;
 use resource_span_group::ResourceSpanGroup;

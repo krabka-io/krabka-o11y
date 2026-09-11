@@ -155,6 +155,7 @@ fn service_config_reads_environment() {
                     compactor_accumulation_poll_timeout: millis(300),
                     compactor_max_records_per_batch: NonZeroUsize::new(5000).unwrap(),
                     compactor_idle_interval: millis(20),
+                    all_drain_stage_timeout: secs(30),
                     compactor_object_store_initial_backoff: millis(20),
                     compactor_object_store_max_backoff: millis(600),
                     querier_frontier_refresh_interval: secs(6),

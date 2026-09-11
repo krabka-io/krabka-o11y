@@ -12,6 +12,7 @@ use axum::{
 };
 use flate2::read::GzDecoder;
 use krabka_client_producer::{Header, Producer, ProducerRecord};
+use krabka_observability::wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined};
 use krabka_units::{
     ByteSize, Frequency,
     convert::{ByteSizeExt as _, FrequencyExt, StdDurationExt as _},

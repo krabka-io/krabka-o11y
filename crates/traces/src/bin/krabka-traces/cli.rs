@@ -1,60 +1,69 @@
 use super::{
-    ArgAction, ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_BLOCKS_PER_JOB,
-    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, MetricsFlags, Parser,
-    SocketAddr, Target, Time, UnixNano, parse, parse_client_dispatch_queue_capacity,
-    parse_client_frame_max, parse_consumer_fetch_size, parse_min_two_usize,
-    parse_non_negative_time_or_secs, parse_non_negative_whole_byte_size_or_bytes,
-    parse_positive_time_or_millis, parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64,
-    parse_positive_time_or_secs, parse_positive_u32, parse_positive_usize,
-    parse_positive_whole_byte_size, parse_scan_concat_max, parse_unix_nano,
+    ArgAction, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
+    IndexSnapshotRetain, MetricsFlags, Parser, SocketAddr, Target, Time, UnixNano, parse,
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_min_two_usize, parse_non_negative_time_or_secs,
+    parse_non_negative_whole_byte_size_or_bytes, parse_positive_time_or_millis,
+    parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64, parse_positive_time_or_secs,
+    parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
+    parse_scan_concat_max, parse_unix_nano,
 };
 
-#[derive(Debug, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(name = "krabka-traces")]
 #[command(about = "Tempo-compatible traces service for Krabka")]
 pub(crate) struct Cli {
     #[command(flatten)]
+    pub(crate) config_file: ConfigFileArgs,
+    #[command(flatten)]
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
     #[arg(long, env = "KRABKA_TRACES_TARGET")]
     pub(crate) target: Target,
-    #[arg(long, env = "KRABKA_TRACES_LISTEN", default_value = "127.0.0.1:3200")]
+    /// HTTP query listen address. Default: `0.0.0.0:3200`.
+    ///
+    /// Every interface, as Tempo defaults to -- and so does every receiver
+    /// below it. A container that binds loopback is unreachable from outside
+    /// its pod, and the only symptom is a health check timing out with
+    /// nothing in the logs.
+    #[arg(long, env = "KRABKA_TRACES_LISTEN", default_value = "0.0.0.0:3200")]
     pub(crate) listen: String,
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
     #[arg(
         long,
         env = "KRABKA_TRACES_GRPC_LISTEN",
-        default_value = "127.0.0.1:4317"
+        default_value = "0.0.0.0:4317"
     )]
     pub(crate) grpc_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_OTLP_HTTP_LISTEN",
-        default_value = "127.0.0.1:4318"
+        default_value = "0.0.0.0:4318"
     )]
     pub(crate) otlp_http_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_JAEGER_GRPC_LISTEN",
-        default_value = "127.0.0.1:14250"
+        default_value = "0.0.0.0:14250"
     )]
     pub(crate) jaeger_grpc_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_JAEGER_COMPACT_LISTEN",
-        default_value = "127.0.0.1:6831"
+        default_value = "0.0.0.0:6831"
     )]
     pub(crate) jaeger_compact_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_JAEGER_HTTP_LISTEN",
-        default_value = "127.0.0.1:14268"
+        default_value = "0.0.0.0:14268"
     )]
     pub(crate) jaeger_http_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_ZIPKIN_LISTEN",
-        default_value = "127.0.0.1:9411"
+        default_value = "0.0.0.0:9411"
     )]
     pub(crate) zipkin_listen: String,
     #[arg(
@@ -239,12 +248,36 @@ pub(crate) struct Cli {
         value_parser = parse_positive_time_or_secs
     )]
     pub(crate) compaction_interval: Time,
+    /// Comma-separated querier URLs the query-frontend discovers from.
+    ///
+    /// These are names, not a fixed roster: the frontend re-resolves them
+    /// every `--querier-membership-refresh-interval`, so one headless-Service
+    /// name covers however many querier pods exist at that moment.
     #[arg(
         long,
         env = "KRABKA_TRACES_QUERIER_URL",
         default_value = "http://127.0.0.1:3200"
     )]
     pub(crate) querier_url: String,
+    /// How often the query-frontend re-resolves and re-probes its queriers.
+    ///
+    /// It bounds how long a dead querier keeps being assigned work, and how
+    /// long a newly started one goes unused.
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_QUERIER_MEMBERSHIP_REFRESH_INTERVAL",
+        default_value = "5s",
+        value_parser = parse_positive_time_or_secs
+    )]
+    pub(crate) querier_membership_refresh_interval: Time,
+    /// Per-querier timeout for one `/ready` probe.
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_QUERIER_READINESS_TIMEOUT",
+        default_value = "2s",
+        value_parser = parse_positive_time_or_secs
+    )]
+    pub(crate) querier_readiness_timeout: Time,
     #[arg(
         long = "live-frontier",
         visible_alias = "live-frontier-ns",
@@ -362,4 +395,21 @@ pub(crate) struct Cli {
     pub(crate) metrics_generator_poll_error_backoff: Time,
     #[arg(long, env = "KRABKA_TRACES_CONFIG")]
     pub(crate) config: Option<String>,
+    /// How long one role of `--target all` gets to stop before the next one is
+    /// asked to. Default: `30s`.
+    ///
+    /// The stop is staged, so this is a per-stage budget and not a budget for
+    /// the process: seven roles can take seven times this long. It wants to be
+    /// short enough that the whole stop fits inside an orchestrator's
+    /// termination grace period, and long enough that the block builder can
+    /// finish the flush and the offset commit it is in the middle of -- a
+    /// stage abandoned mid-flush is spans that were accepted and are in no
+    /// block.
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_ALL_DRAIN_STAGE_TIMEOUT",
+        default_value = "30s",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) all_drain_stage_timeout: Time,
 }

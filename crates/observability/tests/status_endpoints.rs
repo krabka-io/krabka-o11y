@@ -1,4 +1,8 @@
 //! The Loki status, ring, and ingester control endpoints.
+//!
+//! `/log_level` past its parameter parsing lives in `log_level.rs`: setting a
+//! level moves a process-wide filter, so checking that it took needs a test
+//! binary whose steps are in a known order.
 
 mod support;
 
@@ -76,96 +80,6 @@ async fn status_buildinfo_endpoint_returns_loki_build_info_json() {
     for field in ["revision", "branch", "buildDate", "buildUser", "goVersion"] {
         assert!(body.get(field).and_then(Value::as_str).is_some());
     }
-}
-
-#[tokio::test]
-async fn status_log_level_endpoint_returns_current_level() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/log_level")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == json!({"message": "Current log level is info"}));
-}
-
-#[tokio::test]
-async fn status_log_level_endpoint_accepts_post_query_parameter() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/log_level?log_level=debug")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({"status": "success", "message": "Log level set to debug"})
-    );
-}
-
-#[tokio::test]
-async fn status_log_level_endpoint_accepts_form_post_body_for_distributor_router() {
-    let sink = InMemoryWalSink::default();
-    let app = distributor_router(sink);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/log_level")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from("log_level=warn"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({"status": "success", "message": "Log level set to warn"})
-    );
-}
-
-#[tokio::test]
-async fn status_log_level_endpoint_prefers_form_body_over_post_query_parameter() {
-    let state = fixture();
-    let app = loki_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/log_level?log_level=debug")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from("log_level=warn"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({"status": "success", "message": "Log level set to warn"})
-    );
 }
 
 #[tokio::test]
@@ -413,7 +327,7 @@ async fn status_memberlist_endpoint_reports_memberlist_not_configured() {
     let querier = loki_router(state);
     let distributor = distributor_router(InMemoryWalSink::default());
     let compactor = build_service_router(
-        &test_service_config(Role::Compactor, tempfile::tempdir().unwrap().keep()),
+        &test_service_config(Role::BlockBuilder, tempfile::tempdir().unwrap().keep()),
         ServiceDependencies::default(),
         None,
     )
@@ -442,7 +356,7 @@ async fn status_ring_aliases_return_loki_ring_pages() {
     let querier = loki_router(state);
     let distributor = distributor_router(InMemoryWalSink::default());
     let compactor = build_service_router(
-        &test_service_config(Role::Compactor, tempfile::tempdir().unwrap().keep()),
+        &test_service_config(Role::BlockBuilder, tempfile::tempdir().unwrap().keep()),
         ServiceDependencies::default(),
         None,
     )
@@ -533,12 +447,12 @@ async fn status_metrics_endpoint_returns_prometheus_text_for_distributor_router(
 #[tokio::test]
 async fn compactor_router_exposes_loki_status_and_ring_endpoints() {
     let config = ServiceConfig {
-        target: Role::Compactor,
+        target: Role::BlockBuilder,
         listen_addr: "127.0.0.1:0".parse().unwrap(),
         object_store_url: None,
         wal_bootstrap_server: None,
         wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-compactor".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
         data_root: ".".into(),
         querier_index_source: QuerierIndexSource::LocalManifest,
         tenant: None,
@@ -599,6 +513,9 @@ async fn compactor_router_exposes_loki_status_and_ring_endpoints() {
     assert!(metrics_response.status() == StatusCode::OK);
     let metrics = text_body(metrics_response).await;
     assert!(metrics.contains("krabka_observability_service_up"));
+    // `compactor`, not `block-builder`: these are `Loki`'s ops strings, and a
+    // `Loki` dashboard keyed on them is what they exist for. See
+    // `BLOCK_BUILDER_OPS`.
     assert!(metrics.contains(r#"component="compactor""#));
 
     let config_response = app
@@ -663,4 +580,64 @@ async fn distributor_ring_endpoint_returns_loki_status_page() {
     check!(content_type.starts_with("text/html"));
     check!(body.contains("Ring Status"));
     check!(body.contains("ACTIVE"));
+}
+
+async fn page(app: &axum::Router, method: &str, uri: &str) -> (StatusCode, String) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    (status, text_body(response).await)
+}
+
+/// `/services` used to answer `Running` for every module from the moment the
+/// listener bound, whatever `/ready` said. Two pages describing one process
+/// have to describe the same process, so this drives the one transition an
+/// operator can cause over HTTP -- a drain -- and reads all three pages at
+/// each step.
+#[tokio::test]
+async fn services_ring_and_ready_agree_across_a_drain() {
+    let app = distributor_router(InMemoryWalSink::default());
+
+    let (status, ready) = page(&app, "GET", "/ready").await;
+    check!(status == StatusCode::OK);
+    check!(ready == "ready\n");
+    let (_, services) = page(&app, "GET", "/services").await;
+    check!(services.contains("distributor => Running\n"));
+    let (_, ring) = page(&app, "GET", "/ring").await;
+    check!(ring.contains("ACTIVE"));
+
+    let (status, _) = page(&app, "POST", "/ingester/prepare_shutdown").await;
+    check!(status == StatusCode::NO_CONTENT);
+
+    let (status, ready) = page(&app, "GET", "/ready").await;
+    check!(status == StatusCode::SERVICE_UNAVAILABLE);
+    check!(ready == "not ready: accepting-writes\n");
+    let (_, services) = page(&app, "GET", "/services").await;
+    check!(services.contains("distributor => Stopping\n"));
+    // The listener answered this request, so it alone keeps running.
+    check!(services.contains("server => Running\n"));
+    check!(!services.contains("distributor => Running\n"));
+    let (_, ring) = page(&app, "GET", "/ring").await;
+    check!(ring.contains("JOINING"));
+    check!(!ring.contains("ACTIVE"));
+
+    let (status, _) = page(&app, "DELETE", "/ingester/prepare_shutdown").await;
+    check!(status == StatusCode::NO_CONTENT);
+
+    let (status, ready) = page(&app, "GET", "/ready").await;
+    check!(status == StatusCode::OK);
+    check!(ready == "ready\n");
+    let (_, services) = page(&app, "GET", "/services").await;
+    check!(services.contains("distributor => Running\n"));
+    let (_, ring) = page(&app, "GET", "/ring").await;
+    check!(ring.contains("ACTIVE"));
 }

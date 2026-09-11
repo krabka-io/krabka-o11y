@@ -2,6 +2,7 @@ use super::{
     Error, HttpQueryError, IngestLimitError, IntoResponse, Response, StatusCode, WalSinkError,
     loki_error, loki_gzip_decode_error_text, rfc3339_seconds, text_response,
 };
+use crate::wal_produce::WalBatchError;
 
 #[derive(Debug, Error)]
 pub(crate) enum DistributorError {
@@ -79,8 +80,13 @@ pub(crate) enum DistributorError {
     OtlpDecode(prost::DecodeError),
     #[error("wal append timed out")]
     WalAppendTimeout,
+    /// A push whose WAL batch appended in part or not at all.
+    ///
+    /// The error carries how much of the push reached the broker. The status
+    /// is 503, so Promtail and Alloy retry the whole push, which is the only
+    /// thing they know how to do.
     #[error(transparent)]
-    WalSink(#[from] WalSinkError),
+    WalBatch(#[from] WalBatchError<WalSinkError>),
 }
 
 impl IntoResponse for DistributorError {
@@ -114,7 +120,7 @@ impl IntoResponse for DistributorError {
                 StatusCode::SERVICE_UNAVAILABLE
             }
             Self::NoValidStreams => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::WalAppendTimeout | Self::WalSink(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::WalAppendTimeout | Self::WalBatch(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::EmptyStreamLabels
             | Self::InvalidOtlpAttribute
             | Self::InvalidOtlpPayload

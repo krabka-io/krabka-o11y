@@ -1,32 +1,40 @@
 use super::{
-    Bytes, HttpQueryError, IntoResponse, RawQuery, Response, StatusCode, form_body_query, json,
-    json_response, log_level_failed_response, parse_log_level_param,
+    Bytes, HttpQueryError, IntoResponse, LogLevelControl, LogLevelError, RawQuery, Response,
+    StatusCode, json, json_response, log_level_failed_response, requested_log_level,
 };
 
+/// `POST /log_level`, moving this process's filter.
+///
+/// The reply follows what happened. A success means the filter moved and the
+/// next line at that level is emitted; a process whose logging was installed
+/// without a reload handle answers 501 and names the variable that does set
+/// its level, because an operator who is told `success` and then sees no new
+/// output goes looking for the bug somewhere else entirely.
 pub(crate) async fn log_level_post(RawQuery(raw_query): RawQuery, body: Bytes) -> Response {
-    let body_query = match form_body_query(&body) {
-        Ok(body_query) => body_query,
-        Err(error) => return error.into_response(),
-    };
-    // Both `!raw_query.is_empty()` guards are permanent mutation survivors
-    // against `true`, and only against `true`. An empty query string with an
-    // empty body falls through to the same empty string either way; with a
-    // non-empty body it would merely append a trailing `&`, which the
-    // parameter parser skips. Dropping them the other way, to `false`, does
-    // change the answer: a level named only in the query string is lost.
-    let raw_params = match (raw_query.as_deref(), body_query.is_empty()) {
-        (Some(raw_query), true) if !raw_query.is_empty() => raw_query.to_owned(),
-        (Some(raw_query), false) if !raw_query.is_empty() => format!("{body_query}&{raw_query}"),
-        _ => body_query,
-    };
-    match parse_log_level_param(Some(&raw_params)) {
-        Ok(level) => json_response(
-            StatusCode::OK,
-            &json!({
-                "status": "success",
-                "message": format!("Log level set to {level}"),
-            }),
-        ),
+    match requested_log_level(raw_query.as_deref(), &body) {
+        Ok(level) => match LogLevelControl::process().set_level(&level) {
+            Ok(()) => json_response(
+                StatusCode::OK,
+                &json!({
+                    "status": "success",
+                    "message": format!("Log level set to {level}"),
+                }),
+            ),
+            Err(error @ LogLevelError::Fixed) => json_response(
+                StatusCode::NOT_IMPLEMENTED,
+                &json!({
+                    "status": "failed",
+                    "message": error.to_string(),
+                }),
+            ),
+            Err(error) => json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &json!({
+                    "status": "failed",
+                    "message": error.to_string(),
+                }),
+            ),
+        },
         Err(HttpQueryError::InvalidQueryParameter {
             name: "log_level",
             value,

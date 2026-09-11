@@ -1,0 +1,80 @@
+# The Kafka-protocol broker the write-ahead log lives in. Krabka does not
+# implement the Kafka protocol; this is `krabka-broker`, from its own
+# repository, and it is the one dependency here that is not built from this
+# tree.
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: broker
+  ports:
+    - {name: kafka, port: 9092, targetPort: 9092}
+    - {name: controller, port: 9093, targetPort: 9093}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: broker
+spec:
+  serviceName: broker
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: broker
+    spec:
+      # The log directory holds the WAL itself and the consumer-group offsets
+      # that record how far each block builder has read. An emptyDir here
+      # would lose both on every reschedule, and the loss would look like a
+      # gap in the data rather than like a failure.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        fsGroup: 65532
+      initContainers:
+        - name: format
+          image: ghcr.io/krabka-io/krabka-broker@sha256:15851611a7d5df6e20d3f9bd85b3821ca2dd52d5ca6f4042f5a4cfe0a3a1ab89
+          command: [/usr/bin/krabka-format]
+          args:
+            - --log-dir=/data
+            - --standalone
+            - --node-id=1
+            - --controller-listener=broker-0.broker:9093
+            - --ignore-formatted
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      containers:
+        - name: broker
+          image: ghcr.io/krabka-io/krabka-broker@sha256:15851611a7d5df6e20d3f9bd85b3821ca2dd52d5ca6f4042f5a4cfe0a3a1ab89
+          args:
+            - --listen-addr=0.0.0.0:9092
+            - --advertised-listener=broker-0.broker:9092
+            - --log-dir=/data
+            - --process-roles=controller,broker
+          ports:
+            - {name: kafka, containerPort: 9092}
+            - {name: controller, containerPort: 9093}
+          readinessProbe:
+            exec:
+              command: [/usr/bin/krabka-guard, --bootstrap-server, '127.0.0.1:9092', freeze, list]
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket: {port: kafka}
+            periodSeconds: 10
+            failureThreshold: 6
+          volumeMounts:
+            - {name: data, mountPath: /data}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 20Gi

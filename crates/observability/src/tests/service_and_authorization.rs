@@ -2,9 +2,9 @@ use clap::Parser as _;
 use prost::Message as _;
 
 use super::prelude::{
-    Arc, AtomicOrdering, BTreeMap, CONTENT_ENCODING, CONTENT_TYPE, Duration, HeaderMap, Mutex,
-    ObjectStore, ProtoAnyValue, ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord,
-    QueryAuthorizationError, ServiceConfig, ServiceReadiness, UnavailableQueryAuthorizer, Url,
+    Arc, BTreeMap, CONTENT_ENCODING, CONTENT_TYPE, Duration, HeaderMap, Mutex, ObjectStore,
+    ProtoAnyValue, ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord,
+    QueryAuthorizationError, RoleReadiness, ServiceConfig, UnavailableQueryAuthorizer, Url,
     WalLogRecord, build_compactor_configured_object_store, check, ingest_tenant,
     normalize_otlp_http_logs, proto_any_value, sleep,
 };

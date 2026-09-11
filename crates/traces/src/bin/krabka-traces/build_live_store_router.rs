@@ -1,3 +1,5 @@
+use krabka_observability::RoleReadiness;
+
 use super::{
     Arc, ArcSwap, BlockStore, Cli, HttpConfig, IndexedLiveSource, KrabkaSpanStore, LiveStore,
     LiveTier, RwLock, SharedTraceIndex, TraceIndex, TraceqlEngine, Url, engine_opts_from_cli,
@@ -7,6 +9,7 @@ use super::{
 pub(crate) fn build_live_store_router(
     cli: &Cli,
     live_store: Arc<RwLock<LiveStore>>,
+    readiness: RoleReadiness,
 ) -> Result<axum::Router, Box<dyn std::error::Error + Send + Sync>> {
     let trace_index: SharedTraceIndex = Arc::new(ArcSwap::from_pointee(TraceIndex::new()));
     let blocks = Arc::new(BlockStore::new(
@@ -31,6 +34,7 @@ pub(crate) fn build_live_store_router(
             tag_query_filter_autocomplete_limit: cli.tag_query_filter_autocomplete_limit,
             ..HttpConfig::default()
         },
+        readiness,
     );
     let internal_router = axum::Router::new()
         .route(

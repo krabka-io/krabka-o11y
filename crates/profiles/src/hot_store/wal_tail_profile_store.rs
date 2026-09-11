@@ -35,35 +35,65 @@ impl WalTailProfileStore {
         }
     }
 
+    /// Appends one WAL record.
     ///
     /// # Errors
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub fn append_record(&self, record: ProfileRecord) -> Result<(), ProfilesError> {
-        let max_ts_ms = record
-            .samples
-            .iter()
-            .map(|sample| profile_timestamp_ms(sample.timestamp_ns))
-            .max();
+        self.append_records(std::iter::once(record))
+    }
 
+    /// Appends a whole WAL poll's worth of records.
+    ///
+    /// This is what the WAL tail calls, and the reason it exists is the
+    /// copy-on-write clone below: `Arc::make_mut` copies the queryable store
+    /// whenever a query holds a snapshot, so a record-at-a-time loop copied it
+    /// once per record. A batch copies it at most once however long it is.
+    ///
+    /// The batch is published atomically on the success path: the write guard
+    /// is held across the whole loop, so a query sees the poll's records all at
+    /// once or not at all. A record that fails to intern fails before it pushes
+    /// a sample, so an error leaves the head holding a clean prefix of the
+    /// batch rather than a half-applied record, and the tail stops.
+    ///
+    /// # Errors
+    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+    pub fn append_records(
+        &self,
+        records: impl IntoIterator<Item = ProfileRecord>,
+    ) -> Result<(), ProfilesError> {
+        let mut fresh = Vec::new();
         {
             let mut guard = self
                 .inner
                 .write()
                 .map_err(|_| ProfilesError::Wal("hot profile store lock poisoned".to_string()))?;
-            apply_record(Arc::make_mut(&mut guard), &record)?;
+            let store = Arc::make_mut(&mut guard);
+            for record in records {
+                let max_ts_ms = record
+                    .samples
+                    .iter()
+                    .map(|sample| profile_timestamp_ms(sample.timestamp_ns))
+                    .max();
+                apply_record(store, &record)?;
+                // A record with no samples carries no timestamp and needs no
+                // retention bookkeeping; it contributed nothing to the store
+                // either.
+                if let Some(max_ts_ms) = max_ts_ms {
+                    fresh.push(Retained { max_ts_ms, record });
+                }
+            }
         }
 
-        // Records with no samples carry no timestamp and need no retention
-        // bookkeeping (they contributed nothing to the store either).
-        let Some(max_ts_ms) = max_ts_ms else {
+        if fresh.is_empty() {
             return Ok(());
-        };
+        }
 
         let mut retained = self
             .retained
             .write()
             .map_err(|_| ProfilesError::Wal("hot profile store lock poisoned".to_string()))?;
-        retained.records.push_back(Retained { max_ts_ms, record });
+        retained.records.extend(fresh);
         Self::prune(&self.retention, &mut retained);
         if Self::should_rebuild(&retained) {
             self.rebuild(&retained.records)?;
@@ -122,6 +152,9 @@ impl WalTailProfileStore {
     }
 
     /// Cheap copy-on-write snapshot: clones the inner `Arc`, not the samples.
+    ///
+    /// The returned store is immutable and unaffected by any later append, so a
+    /// query reads a consistent view for as long as it needs one.
     pub(crate) fn snapshot(&self) -> Result<Arc<InMemoryProfileStore>, ProfileError> {
         self.inner
             .read()

@@ -1,11 +1,11 @@
 use krabka_units::convert::TimeExt;
 
 use crate::{
-    Arc, AtomicOrdering, BTreeMap, BrokerBackedQueryAuthorizer, BufferedLogHotTail,
-    CancellationToken, ClientResourcePolicy, ConsumerError, DeferredWalConsumerConnect, Error,
-    JoinHandle, KafkaLogWalConsumer, KafkaWalHeader, KafkaWalRecord, LogQueryAuthorizer,
-    ProducerError, ServiceReadiness, SharedCompactionFrontier, Time, WalLogRecord, WalPosition,
-    is_loki_label_name, poll_log_hot_tail_once_with_frontier, sleep,
+    Arc, BTreeMap, BrokerBackedQueryAuthorizer, BufferedLogHotTail, CancellationToken,
+    ClientResourcePolicy, ConsumerError, DeferredWalConsumerConnect, Error, JoinHandle,
+    KafkaLogWalConsumer, KafkaWalHeader, KafkaWalRecord, LogQueryAuthorizer, ProducerError,
+    ReadinessGate, SharedCompactionFrontier, Time, WalLogRecord, WalPosition, is_loki_label_name,
+    poll_log_hot_tail_once_with_frontier, sleep,
 };
 
 mod decode_native_kafka_log_record;

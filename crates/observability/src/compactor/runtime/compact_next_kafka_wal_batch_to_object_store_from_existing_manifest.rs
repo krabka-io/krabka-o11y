@@ -3,6 +3,7 @@ use super::{
     SharedLogDeleteRequests, TenantCompactionIndexCache, Time,
     compact_polled_kafka_wal_records_to_object_store_from_existing_manifest,
 };
+use crate::compaction_metrics::CompactionMetrics;
 
 pub(crate) async fn compact_next_kafka_wal_batch_to_object_store_from_existing_manifest(
     store: &dyn ObjectStore,
@@ -11,6 +12,7 @@ pub(crate) async fn compact_next_kafka_wal_batch_to_object_store_from_existing_m
     poll_timeout: Time,
     delete_requests: &SharedLogDeleteRequests,
     tenant_indexes: &mut TenantCompactionIndexCache,
+    metrics: &CompactionMetrics,
 ) -> Result<Vec<BlockDescriptor>, CompactorRunError> {
     let records = consumer.poll(poll_timeout).await?;
     compact_polled_kafka_wal_records_to_object_store_from_existing_manifest(
@@ -20,6 +22,7 @@ pub(crate) async fn compact_next_kafka_wal_batch_to_object_store_from_existing_m
         records,
         delete_requests,
         tenant_indexes,
+        metrics,
     )
     .await
 }

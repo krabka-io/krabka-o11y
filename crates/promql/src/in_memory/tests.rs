@@ -14,6 +14,8 @@ use crate::{
     },
 };
 
+mod a_panicking_update_leaves_the_head_readable_and_writable;
+mod a_snapshot_never_sees_part_of_a_batch;
 mod bulk_wal_replay_and_retention_are_observable;
 mod cloned_wal_head_sees_records_replayed_through_original_handle;
 mod count_rows;
@@ -31,10 +33,12 @@ mod offsets_track_low_and_high_water;
 mod prune_counts_partial_histogram_and_exemplar_retention;
 mod prune_drops_old_samples;
 mod prune_removes_emptied_series_from_index;
+mod pruning_a_chunked_head_leaves_open_snapshots_intact;
 mod query_shard_matcher_filters_by_series_fingerprint_modulo;
 mod query_shard_neq_matcher_excludes_matching_fingerprint_modulo;
 mod regex_matchers_are_anchored_and_absent_labels_match_empty;
 mod replay_wal_records_populates_queryable_head;
+mod row_chunks_share_sealed_chunks_and_isolate_snapshots;
 mod row_matches_rejects_outside_bounds_before_matching_labels;
 mod scan_filters_by_matcher_and_time_and_registers_float_table;
 mod scan_filters_histograms_by_matcher_tenant_and_time;

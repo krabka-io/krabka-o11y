@@ -1,6 +1,6 @@
 use super::{
-    Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, Labels, ObjectStore, ProfileIndex,
-    ProfileRecord, ProfilesError, STACKTRACE_PARTITION, build_block,
+    Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, Labels, ObjectStore, ObjectStoreMetrics,
+    ProfileIndex, ProfileRecord, ProfilesError, STACKTRACE_PARTITION, build_block,
 };
 
 ///
@@ -11,6 +11,7 @@ pub async fn flush_consumer_records_with_index(
     index: &mut ProfileIndex,
     records: &[ConsumerRecord],
     flush_records: usize,
+    metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     let mut batches: BTreeMap<(String, i32), Vec<(i64, ProfileRecord)>> = BTreeMap::new();
     for record in records {
@@ -20,7 +21,14 @@ pub async fn flush_consumer_records_with_index(
             .ok_or_else(|| ProfilesError::Wal("profiles WAL record has no value".to_string()))?;
         let decoded = ProfileRecord::decode(value)?;
         let labels = Labels::from_pairs(decoded.labels.iter().cloned());
-        index.add_series(&decoded.tenant, labels.fingerprint(), &labels);
+        // The index refuses a series that carries no `__profile_type__`, and
+        // the flush stops with it rather than writing a block whose series no
+        // profile-type selector can reach. Ingest's split stamps the label on
+        // every series it emits, so this is a fault in whoever produced the
+        // record, and the flush must not advance past it in silence.
+        index
+            .add_series(&decoded.tenant, labels.fingerprint(), &labels)
+            .map_err(|error| ProfilesError::Block(error.to_string()))?;
         batches
             .entry((decoded.tenant.clone(), record.partition))
             .or_default()
@@ -43,6 +51,7 @@ pub async fn flush_consumer_records_with_index(
                 partition,
                 &profile_records,
                 (min_offset, max_offset),
+                metrics,
             )
             .await?;
             for meta in &built {

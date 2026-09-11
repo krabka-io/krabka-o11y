@@ -22,7 +22,7 @@ where
         Ok(scope) => scope,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let (tags, _metrics) = match qf.tag_names(&tenant, scope, start_ns, end_ns).await {
+    let (tags, _metrics, warnings) = match qf.tag_names(&tenant, scope, start_ns, end_ns).await {
         Ok(out) => out,
         Err(err) => return backend_error_response(&err),
     };
@@ -30,5 +30,11 @@ where
         .iter()
         .map(|st| json!({ "name": scope_name(st.scope), "tags": &st.tags }))
         .collect();
-    Json(json!({ "scopes": scopes, "metrics": { "inspectedBytes": "0" } })).into_response()
+    let mut body = json!({ "scopes": scopes, "metrics": { "inspectedBytes": "0" } });
+    // Absent unless there is something to say, so a complete answer stays the
+    // body Tempo returns.
+    if !warnings.is_empty() {
+        body["warnings"] = json!(warnings);
+    }
+    Json(body).into_response()
 }

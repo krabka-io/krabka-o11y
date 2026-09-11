@@ -30,7 +30,8 @@ use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::{
     KafkaLogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig,
     ServiceDependencies, WalLogRecord, WalPosition, build_service_dependencies,
-    build_service_router, decode_kafka_wal_record, run_compactor_until_idle,
+    build_service_router, decode_kafka_wal_record, metrics::ServiceMetrics,
+    run_compactor_until_idle, wal_consumer_metrics::WalConsumerMetrics,
 };
 use krabka_units::{days, secs};
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
@@ -73,9 +74,10 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
         None,
     );
     distributor_config.reject_old_samples_max_age = days(36_500);
-    let dependencies = build_service_dependencies(&distributor_config)
-        .await
-        .expect("distributor dependencies");
+    let dependencies =
+        build_service_dependencies(&distributor_config, WalConsumerMetrics::unregistered())
+            .await
+            .expect("distributor dependencies");
     let response = build_service_router(&distributor_config, dependencies, None)
         .await
         .expect("distributor router")
@@ -101,27 +103,36 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     //    store.
     let object_dir = tempfile::tempdir().expect("object store tempdir");
     let store = LocalFileSystem::new_with_prefix(object_dir.path()).expect("object store");
+    // The compactor's consumer and its object store both record into one
+    // bundle, so the scrape at the end of this test reads what a real
+    // deployment's `/metrics` would show for this exact round trip.
+    let metrics = ServiceMetrics::new();
     let consumer = KafkaLogWalConsumer::connect(
         bootstrap.clone(),
         "krabka-observability-roundtrip-compactor",
         wal_topic.clone(),
     )
     .await
-    .expect("compactor consumer connect");
+    .expect("compactor consumer connect")
+    .with_metrics(metrics.wal_consumer.clone());
     let compactor_root = tempfile::tempdir().expect("compactor data root");
     let descriptors = run_compactor_until_idle(
         &roundtrip_config(
-            Role::Compactor,
+            Role::BlockBuilder,
             compactor_root.path().to_path_buf(),
             &bootstrap,
             &wal_topic,
             None,
         ),
-        ServiceDependencies::default().with_wal_consumer(consumer),
+        ServiceDependencies::default()
+            .with_wal_consumer(consumer)
+            .with_metrics(metrics.clone()),
         Some(&store),
     )
     .await
     .expect("compactor run");
+
+    check_compactor_instruments_moved(&metrics, &wal_topic).await;
 
     let expected_key = BlockKey::new(TENANT, 0, 0, 1, TimeRange::new(10, 20).expect("time range"));
     assert!(descriptors.len() == 1);
@@ -166,9 +177,10 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
         &wal_topic,
         Some(format!("file://{}", object_dir.path().display())),
     );
-    let dependencies = build_service_dependencies(&querier_config)
-        .await
-        .expect("querier dependencies");
+    let dependencies =
+        build_service_dependencies(&querier_config, WalConsumerMetrics::unregistered())
+            .await
+            .expect("querier dependencies");
     let app = build_service_router(&querier_config, dependencies, None)
         .await
         .expect("querier router");
@@ -224,6 +236,63 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
                 },
                 "values": [["10", "api error"]],
             }])
+    );
+}
+
+/// The compactor's instruments, read back through the registry the `/metrics`
+/// exporter serves, after a real broker and a real object store have been
+/// driven end to end.
+///
+/// An instrument that is registered and never incremented scrapes exactly like
+/// one that was never registered, and neither is visible from the recording
+/// call. Only a scrape after real work separates them, so this reads the
+/// encoded text rather than the handles.
+async fn check_compactor_instruments_moved(metrics: &ServiceMetrics, wal_topic: &str) {
+    let mut buffer = String::new();
+    let registry = metrics.registry.lock().await;
+    prometheus_client::encoding::text::encode(&mut buffer, &registry).expect("encode the registry");
+
+    for needle in [
+        // Two WAL records were produced above, and the compactor read both.
+        format!(
+            "krabka_logs_wal_consumer_records_total{{topic=\"{wal_topic}\",partition=\"0\"}} 2"
+        ),
+        format!(
+            "krabka_logs_wal_consumer_last_consumed_offset{{topic=\"{wal_topic}\",partition=\"0\"}} 1"
+        ),
+        "krabka_logs_wal_consumer_polls_total{outcome=\"records\"} 1".to_string(),
+        // The loop polls again and gets nothing, which is what a caught-up
+        // consumer looks like and is why the empty outcome has a series of its
+        // own.
+        "krabka_logs_wal_consumer_polls_total{outcome=\"empty\"} 1".to_string(),
+        // One compaction pass ran, it succeeded, and it wrote one block.
+        "krabka_logs_compaction_runs_total{status=\"ok\"} 1".to_string(),
+        "krabka_logs_compaction_duration_seconds_count 1".to_string(),
+        "krabka_logs_compaction_blocks_total 1".to_string(),
+    ] {
+        assert!(buffer.contains(&needle), "missing {needle} in:\n{buffer}");
+    }
+
+    check!(
+        !buffer.contains("krabka_logs_compaction_runs_total{status=\"error\"}"),
+        "a clean round trip must not move the compaction error series:\n{buffer}"
+    );
+
+    // The logs distributor produces its WAL records without a timestamp, so
+    // every record arrives with none and the delay histogram takes no
+    // observation. A count above zero here means an unstamped record reached
+    // the histogram and reported the age of the Unix epoch.
+    check!(
+        buffer.contains("krabka_logs_wal_consumer_receive_delay_seconds_count 0"),
+        "an unstamped WAL record must contribute no delay observation:\n{buffer}"
+    );
+
+    // The object-store instruments are absent here on purpose: this test hands
+    // the compactor a store of its own, and the decorator is applied where the
+    // role builds its store. The metrics round trip covers that path.
+    check!(
+        !buffer.contains("krabka_logs_objstore_operations_total"),
+        "an injected store bypasses the decorator, so it counts nothing:\n{buffer}"
     );
 }
 

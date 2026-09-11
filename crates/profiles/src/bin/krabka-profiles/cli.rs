@@ -1,26 +1,49 @@
 use super::{
-    ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_BLOCKS_PER_JOB,
-    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, Parser, SocketAddr,
-    Target, Time, parse, parse_client_dispatch_queue_capacity, parse_client_frame_max,
-    parse_consumer_fetch_size, parse_min_two_usize, parse_non_empty_string,
-    parse_positive_time_or_legacy_millis, parse_positive_time_or_legacy_nanos, parse_positive_u32,
-    parse_positive_usize, parse_positive_whole_byte_size,
+    ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
+    IndexSnapshotRetain, Parser, SocketAddr, Target, Time, parse,
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_min_two_usize, parse_non_empty_string, parse_positive_time_or_legacy_millis,
+    parse_positive_time_or_legacy_nanos, parse_positive_u32, parse_positive_usize,
+    parse_positive_whole_byte_size,
 };
 
 #[derive(Debug, Parser)]
 pub(crate) struct Cli {
     #[command(flatten)]
+    pub(crate) config_file: ConfigFileArgs,
+    #[command(flatten)]
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
     #[arg(long, env = "KRABKA_PROFILES_TARGET")]
     pub(crate) target: Target,
+    /// HTTP ingest and query listen address. Default: `0.0.0.0:4040`.
+    ///
+    /// Every interface, as Pyroscope defaults to. A container that binds
+    /// loopback is unreachable from outside its pod, and the only symptom is
+    /// a health check timing out with nothing in the logs.
     #[arg(
         long,
         env = "KRABKA_PROFILES_LISTEN_ADDR",
-        default_value = "127.0.0.1:4040"
+        default_value = "0.0.0.0:4040"
     )]
     pub(crate) listen: SocketAddr,
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
+    /// How long each role gets to finish when `--target all` stops. Default:
+    /// `30s`.
+    ///
+    /// The roles stop one at a time and in order, so this is a per-role budget
+    /// rather than the whole stop's. A role that overruns it is left behind
+    /// rather than allowed to hold the stop open: an orchestrator's grace
+    /// period is finite, and a process that spends all of it inside one role
+    /// is killed before the roles behind that one have stopped at all.
+    #[arg(
+        long,
+        env = "KRABKA_PROFILES_ALL_DRAIN_STAGE_TIMEOUT",
+        default_value = "30s",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) all_drain_stage_timeout: Time,
     #[arg(
         long,
         env = "KRABKA_PROFILES_BOOTSTRAP",
@@ -34,6 +57,13 @@ pub(crate) struct Cli {
         value_parser = parse_non_empty_string
     )]
     pub(crate) wal_topic: String,
+    /// The Kafka consumer group the profiles block builder joins.
+    ///
+    /// This names the group. It does not scale the write path. The block
+    /// builder buffers WAL records across polls, and the group abandons that
+    /// buffer for every partition it moves, so the group's membership should
+    /// not change while it runs. Set --wal-topic's partition count to shard the
+    /// write path. See `krabka_observability::wal_group_assignment`.
     #[arg(
         long,
         env = "KRABKA_PROFILES_BLOCK_BUILDER_GROUP_ID",
@@ -184,6 +214,11 @@ pub(crate) struct Cli {
     pub(crate) tenant_limits_config: Option<std::path::PathBuf>,
     #[arg(long, env = "KRABKA_PROFILES_LIMITS_OVERRIDES_CONFIG")]
     pub(crate) profiles_limits_overrides_config: Option<std::path::PathBuf>,
+    /// The Kafka consumer group the profiles query WAL tail joins.
+    ///
+    /// This names the group. It does not scale the write path. See
+    /// `krabka_observability::wal_group_assignment` for what a change of a
+    /// group's membership costs.
     #[arg(
         long,
         env = "KRABKA_PROFILES_QUERY_WAL_TAIL_GROUP_ID",

@@ -23,18 +23,34 @@ where
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
     let tid = parse_hex16(&trace_id);
-    let (trace, _metrics, status) = match qf.trace_by_id(&tenant, tid, start_ns, end_ns).await {
-        Ok(out) => out,
-        Err(err) => return backend_error_response(&err),
-    };
+    let (trace, _metrics, status, warnings) =
+        match qf.trace_by_id(&tenant, tid, start_ns, end_ns).await {
+            Ok(out) => out,
+            Err(err) => return backend_error_response(&err),
+        };
 
     let Some(trace) = trace else {
-        return (StatusCode::NOT_FOUND, "trace not found").into_response();
+        // 404 asserts the trace does not exist. With a querier out of the
+        // fan-out, nobody asked the one that may have held it, so the honest
+        // 404 says what was not looked at rather than claiming absence.
+        if warnings.is_empty() {
+            return (StatusCode::NOT_FOUND, "trace not found").into_response();
+        }
+        return (
+            StatusCode::NOT_FOUND,
+            format!(
+                "trace not found in the queriers that answered; {}",
+                warnings.join("; ")
+            ),
+        )
+            .into_response();
     };
     // v2 envelope: { trace, status, message }. Per the querier's contract the
-    // by-id endpoint does NOT carry a metrics block.
+    // by-id endpoint does NOT carry a metrics block. Tempo's own `message`
+    // carries why a trace came back `PARTIAL`, so an excluded querier is
+    // reported there rather than in a field Grafana would not read.
     let message = match status {
-        TraceStatus::Partial => "trace exceeds max size; returned partially".to_string(),
+        TraceStatus::Partial => warnings.join("; "),
         TraceStatus::Complete => String::new(),
     };
     Json(json!({

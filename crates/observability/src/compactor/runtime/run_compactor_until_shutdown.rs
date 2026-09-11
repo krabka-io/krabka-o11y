@@ -1,3 +1,5 @@
+use krabka_blockstore::ObjectStoreMetrics;
+
 use super::{
     BlockDescriptor, CompactorRunError, KafkaWalRecord, ObjectStore, ServiceConfig,
     ServiceConfigError, ServiceDependencies, ServiceRuntimeError, TenantCompactionIndexCache, Time,
@@ -10,6 +12,7 @@ use super::{
     materialize_log_deletes_before_compaction, next_compactor_object_store_backoff,
     poll_accumulated_log_compaction_records, sleep, validate_compactor_policy,
 };
+use crate::compaction_metrics::CompactionMetrics;
 
 #[cfg_attr(test, mutants::skip)]
 /// # Errors
@@ -21,7 +24,22 @@ pub async fn run_compactor_until_shutdown(
     shutdown: impl Future<Output = ()>,
 ) -> Result<Vec<BlockDescriptor>, ServiceRuntimeError> {
     validate_compactor_policy(config)?;
-    let configured_store = build_compactor_configured_object_store(config, object_store)?;
+    // Shared RED-metrics bundle for the `:9404` exporter. It is `None` in tests
+    // that do not wire metrics, and an unregistered bundle records nothing,
+    // which is the right reading for a compactor with no registry behind it.
+    let metrics = dependencies.metrics.clone();
+    let object_store_metrics = metrics
+        .as_ref()
+        .map_or_else(ObjectStoreMetrics::unregistered, |metrics| {
+            metrics.object_store.clone()
+        });
+    let compaction_metrics = metrics
+        .as_ref()
+        .map_or_else(CompactionMetrics::unregistered, |metrics| {
+            metrics.compaction.clone()
+        });
+    let configured_store =
+        build_compactor_configured_object_store(config, object_store, object_store_metrics)?;
     let (store, object_store_prefix) =
         compactor_object_store(object_store, configured_store.as_ref())?;
     let index_prefix = config
@@ -45,9 +63,6 @@ pub async fn run_compactor_until_shutdown(
     let mut object_store_retry_backoff = config.compactor_object_store_initial_backoff;
     let mut tenant_indexes = TenantCompactionIndexCache::new();
     let mut pending_compaction_records: Option<Vec<KafkaWalRecord>> = None;
-    // Shared RED-metrics bundle for the `:9404` exporter; `None` in tests that
-    // don't wire metrics, so block-written accounting is a no-op there.
-    let metrics = dependencies.metrics.clone();
     tokio::pin!(shutdown);
 
     loop {
@@ -87,16 +102,18 @@ pub async fn run_compactor_until_shutdown(
                     Ok(Vec::new())
                 } else {
                     let retry_records = records.clone();
-                    match compact_polled_kafka_wal_records_to_object_store_from_existing_manifest(
-                        store,
-                        &prefix,
-                        consumer.as_mut(),
-                        records,
-                        &delete_requests,
-                        &mut tenant_indexes,
-                    )
-                    .await
-                    {
+                    let compacted =
+                        compact_polled_kafka_wal_records_to_object_store_from_existing_manifest(
+                            store,
+                            &prefix,
+                            consumer.as_mut(),
+                            records,
+                            &delete_requests,
+                            &mut tenant_indexes,
+                            &compaction_metrics,
+                        )
+                        .await;
+                    match compacted {
                         Ok(batch_descriptors) => Ok(batch_descriptors),
                         Err(error) => {
                             pending_compaction_records = Some(retry_records);

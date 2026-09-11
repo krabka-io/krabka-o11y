@@ -9,8 +9,9 @@ pub(crate) fn grpc_status_from_error(err: &TracesError) -> GrpcStatus {
             GrpcStatus::invalid_argument(err.to_string())
         }
         TracesError::UnsupportedContentType(_) => GrpcStatus::unimplemented(err.to_string()),
-        TracesError::Wal(_) | TracesError::Produce(_) | TracesError::Block(_) => {
-            GrpcStatus::internal(err.to_string())
-        }
+        TracesError::Wal(_)
+        | TracesError::Produce(_)
+        | TracesError::ProduceBatch { .. }
+        | TracesError::Block(_) => GrpcStatus::internal(err.to_string()),
     }
 }

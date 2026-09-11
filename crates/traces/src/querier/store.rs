@@ -1,7 +1,7 @@
 //! `SpanStore` implementation over cold span blocks plus the live tier.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::Arc,
 };
 
@@ -670,18 +670,20 @@ mod tests {
         EventRef, LinkRef, ScanJob, ScanOptions, TraceqlEngine,
     };
     use krabka_units::{convert::ByteSizeExt as _, nanos};
-    use object_store::{buffered::BufWriter, memory::InMemory, path::Path};
+    use object_store::{ObjectStore, buffered::BufWriter, memory::InMemory, path::Path};
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
     use url::Url;
 
     use super::*;
     use crate::{
+        livestore::LiveStore,
         querier::live::LiveSource,
         span::{
             AttrValue as SpanAttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind,
             StatusCode,
             batch::{span_batch, span_batch_with_promoted_attrs},
         },
+        wal::SpanRecord,
     };
 
     fn shared(index: TraceIndex) -> SharedTraceIndex {
@@ -3079,6 +3081,239 @@ mod tests {
         check!(matched == 2, "and both are matchable on the promoted key");
     }
 
+    /// The live source the querier binary wires up: a real [`LiveStore`] for
+    /// the hot spans, with the hot/cold frontier read off the trace index.
+    /// Windowing the hot tier is what these tests are about, so the hot side
+    /// has to be the real store rather than a fake that hands back every batch
+    /// it holds whatever window it is asked for.
+    struct IndexedLiveStore {
+        store: LiveStore,
+        trace_index: SharedTraceIndex,
+    }
+
+    #[async_trait::async_trait]
+    impl LiveSource for IndexedLiveStore {
+        async fn span_batches(
+            &self,
+            tenant: &str,
+            start_ns: i64,
+            end_ns: i64,
+        ) -> Result<Vec<RecordBatch>, TraceqlError> {
+            self.store.span_batches(tenant, start_ns, end_ns).await
+        }
+
+        async fn trace_spans(
+            &self,
+            tenant: &str,
+            trace_id: &[u8; 16],
+        ) -> Result<Option<TraceSpans>, TraceqlError> {
+            self.store.trace_spans(tenant, trace_id).await
+        }
+
+        async fn tag_names(
+            &self,
+            tenant: &str,
+            scope: Option<TagScope>,
+            start_ns: i64,
+            end_ns: i64,
+        ) -> Result<Vec<ScopedTag>, TraceqlError> {
+            self.store.tag_names(tenant, scope, start_ns, end_ns).await
+        }
+
+        async fn tag_values(
+            &self,
+            tenant: &str,
+            tag: &str,
+            start_ns: i64,
+            end_ns: i64,
+        ) -> Result<Vec<TypedValue>, TraceqlError> {
+            self.store.tag_values(tenant, tag, start_ns, end_ns).await
+        }
+
+        fn block_builder_frontier_ns(&self, tenant: &str) -> i64 {
+            self.trace_index
+                .load()
+                .trace_blocks(tenant)
+                .iter()
+                .map(|block| block.max_ts.saturating_add(1))
+                .max()
+                .unwrap_or_default()
+        }
+    }
+
+    /// Flush `spans` into one block for "tenant" and return the trace index
+    /// that points at it.
+    async fn flushed_block_index(
+        object_store: &Arc<InMemory>,
+        object_key: &str,
+        spans: &[Span],
+    ) -> TraceIndex {
+        let writer = BlockWriter::new(Arc::clone(object_store) as Arc<dyn ObjectStore>);
+        let meta = writer
+            .write_block_with_decl(
+                "tenant",
+                object_key,
+                span_block_schema(),
+                &[span_batch(spans).unwrap()],
+                &span_block_decl(),
+                SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+            )
+            .await
+            .unwrap();
+        let mut bloom = ShardedTraceBloom::with_tempo_defaults(spans.len().max(1));
+        for span in spans {
+            bloom.insert(&span.trace_id);
+        }
+        let mut index = TraceIndex::new();
+        index.add_trace_block(
+            "tenant",
+            TraceBlockStats {
+                object_key: meta.object_key,
+                min_ts: meta.min_ts,
+                max_ts: meta.max_ts,
+                bloom,
+                tag_names: BTreeSet::new(),
+                tag_values: BTreeMap::new(),
+                row_count: spans.len(),
+                level: BlockLevel::INGESTED,
+            },
+        );
+        index
+    }
+
+    fn hot_store(spans: &[Span]) -> LiveStore {
+        // `i64::MAX` retention: eviction is a separate concern, and a hot span
+        // that has already been flushed still sits here until it ages out.
+        let mut store = LiveStore::new(i64::MAX);
+        for span in spans {
+            store.ingest(SpanRecord {
+                tenant: "tenant".into(),
+                span: span.clone(),
+            });
+        }
+        store
+    }
+
+    /// Every scanned row as `(span_id, childCount)`, sorted. A `Vec` rather
+    /// than a set on purpose: a span returned twice has to show up as two
+    /// entries, not collapse into one.
+    fn scanned_spans(batches: &[RecordBatch]) -> Vec<([u8; 8], i32)> {
+        let mut rows = Vec::new();
+        for batch in batches {
+            let span_ids = fixed(batch, COL_SPAN_ID).unwrap();
+            let child_counts = batch
+                .column_by_name(COL_CHILD_COUNT)
+                .unwrap()
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap();
+            for row in 0..batch.num_rows() {
+                let mut span_id = [0_u8; 8];
+                span_id.copy_from_slice(span_ids.value(row));
+                rows.push((span_id, child_counts.value(row)));
+            }
+        }
+        rows.sort_unstable();
+        rows
+    }
+
+    /// A span reaches the hot tier with a `start_ns` older than the newest
+    /// flushed block whenever a client's clock lags, an exporter batches and
+    /// holds it, or a long-running span ends after its siblings were flushed.
+    /// No block holds that span. Splitting the query window at the
+    /// block-builder frontier -- cold below it, hot above it -- puts the span
+    /// in neither half, so a query over a window that contains it returns
+    /// nothing, and says nothing, until the next flush.
+    #[tokio::test]
+    async fn a_hot_span_older_than_the_block_frontier_is_still_scanned() {
+        let object_store = Arc::new(InMemory::new());
+
+        // Flushed: one span starting at 5_000ns, so the frontier is 5_001.
+        let mut flushed = span_with_nested_refs();
+        flushed.start_ns = 5_000;
+        let trace_index = shared(
+            flushed_block_index(
+                &object_store,
+                "blocks/flushed.parquet",
+                std::slice::from_ref(&flushed),
+            )
+            .await,
+        );
+
+        // Arrived after that flush, but stamped 2_000ns: below the frontier and
+        // in no block.
+        let mut late = span_with_nested_refs();
+        late.trace_id = [2; 16];
+        late.span_id = [3; 8];
+        late.start_ns = 2_000;
+
+        let live = LiveTier::new(Arc::new(IndexedLiveStore {
+            store: hot_store(std::slice::from_ref(&late)),
+            trace_index: Arc::clone(&trace_index),
+        }));
+        check!(
+            live.block_builder_frontier_ns("tenant") == 5_001,
+            "the flushed block puts the frontier above the late span's start"
+        );
+
+        let store = KrabkaSpanStore::new(
+            Arc::new(BlockStore::new(
+                object_store,
+                Url::parse("memory:///").unwrap(),
+            )),
+            trace_index,
+            Some(live),
+        );
+
+        let scan = store.scan("tenant", &[], 0, 10_000).await.unwrap();
+        let batches = collect_table(&scan.ctx, &scan.span_table).await.unwrap();
+
+        check!(
+            scanned_spans(&batches) == vec![(flushed.span_id, 0), (late.span_id, 0)],
+            "the hot tier is the only place the late span exists, so the scan \
+             has to read it over the whole window and not just above the frontier"
+        );
+    }
+
+    /// The other half of reading both tiers over the whole window: a flush does
+    /// not evict the hot copy, so after one the same span sits in a block AND
+    /// in the hot tier. It must come back exactly once. Twice is the
+    /// mirror-image corruption of the missing late span -- a phantom span, a
+    /// doubled `count()`, and a parent whose childCount counts each child twice.
+    #[tokio::test]
+    async fn a_span_in_both_tiers_is_scanned_exactly_once() {
+        let object_store = Arc::new(InMemory::new());
+        let root = span_with_nested_refs();
+        let mut child = span_with_nested_refs();
+        child.span_id = [3; 8];
+        child.parent_span_id = Some(root.span_id);
+        child.start_ns = root.start_ns + 10;
+        let spans = [root.clone(), child.clone()];
+
+        let trace_index =
+            shared(flushed_block_index(&object_store, "blocks/both.parquet", &spans).await);
+        let live = LiveTier::new(Arc::new(IndexedLiveStore {
+            store: hot_store(&spans),
+            trace_index: Arc::clone(&trace_index),
+        }));
+        let store = KrabkaSpanStore::new(
+            Arc::new(BlockStore::new(
+                object_store,
+                Url::parse("memory:///").unwrap(),
+            )),
+            trace_index,
+            Some(live),
+        );
+
+        let scan = store.scan("tenant", &[], 0, 10_000).await.unwrap();
+        let batches = collect_table(&scan.ctx, &scan.span_table).await.unwrap();
+
+        check!(
+            scanned_spans(&batches) == vec![(root.span_id, 1), (child.span_id, 0)],
+            "one row per span, and the root counts its one child once"
+        );
+    }
+
     async fn event_intrinsic_fixture() -> (TraceqlEngine<KrabkaSpanStore>, [[u8; 16]; 4]) {
         let object_store = Arc::new(InMemory::new());
         let blocks = Arc::new(BlockStore::new(
@@ -3805,6 +4040,7 @@ mod collect_attribute_tag_names;
 mod collect_attribute_tag_values;
 mod collect_intrinsic_value;
 mod collect_table;
+mod deduplicate_scan_batches;
 mod deduplicate_trace_spans;
 mod default_scan_concat_max;
 mod enum_int_matches;
@@ -3913,6 +4149,7 @@ use collect_attribute_tag_names::collect_attribute_tag_names;
 use collect_attribute_tag_values::collect_attribute_tag_values;
 use collect_intrinsic_value::collect_intrinsic_value;
 use collect_table::collect_table;
+use deduplicate_scan_batches::deduplicate_scan_batches;
 use deduplicate_trace_spans::deduplicate_trace_spans;
 pub use default_scan_concat_max::DEFAULT_SCAN_CONCAT_MAX;
 use enum_int_matches::enum_int_matches;

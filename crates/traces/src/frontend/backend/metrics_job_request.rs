@@ -13,4 +13,10 @@ pub struct MetricsJobRequest {
     pub step_ns: i64,
     pub instant: bool,
     pub shard: JobShard,
+    /// The `host:port` of the querier this job is assigned to.
+    ///
+    /// The frontend assigns every job to a querier it has just seen ready, so
+    /// a backend never chooses one itself and never dials an address that the
+    /// membership has already ejected.
+    pub querier: String,
 }

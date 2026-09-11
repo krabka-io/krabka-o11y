@@ -3182,6 +3182,7 @@ dependencies = [
  "num-traits",
  "object_store",
  "parquet",
+ "prometheus-client",
  "refined_type",
  "regex",
  "serde",
@@ -3406,6 +3407,7 @@ dependencies = [
  "criterion",
  "datafusion",
  "krabka-blockstore",
+ "krabka-metrics",
  "krabka-pprof",
  "krabka-promql",
  "krabka-traceql",
@@ -3445,6 +3447,7 @@ dependencies = [
  "krabka-client-core",
  "krabka-client-producer",
  "krabka-ids",
+ "krabka-logfmt",
  "krabka-logql",
  "krabka-telemetry",
  "krabka-units",
@@ -3465,6 +3468,7 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 

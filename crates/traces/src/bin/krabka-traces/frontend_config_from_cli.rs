@@ -3,8 +3,8 @@ use super::{Cli, FrontendConfig, SocketAddr, UnixNano, max_trace_size, parse_que
 /// Map the role CLI onto the new query-frontend [`FrontendConfig`].
 ///
 /// `--querier-url` is a comma-separated list of querier URLs that carry a
-/// scheme. The new [`HttpQuerier`] pool takes a bare `host:port`, so this
-/// function strips the scheme and the path.
+/// scheme. The membership refresh resolves and probes bare `host:port`, so
+/// this function strips the scheme and the path.
 ///
 /// `--live-frontier`, and its legacy `--live-frontier-ns` alias, maps to
 /// `hot_frontier_ns`. `None` becomes `0`, so the live tier is always probed.
@@ -19,6 +19,8 @@ pub(crate) fn frontend_config_from_cli(
         max_concurrency: cli.query_queue_depth.max(1),
         hot_frontier_ns: cli.live_frontier.unwrap_or(UnixNano(0)).0,
         max_trace: max_trace_size(cli.max_trace_spans),
+        membership_refresh_interval: cli.querier_membership_refresh_interval,
+        readiness_timeout: cli.querier_readiness_timeout,
         listen_addr,
         ..FrontendConfig::default()
     })

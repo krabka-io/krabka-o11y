@@ -1,6 +1,6 @@
 use super::{
-    Arc, Bytes, ProduceError, Producer, WalRecord, WalSink, current_trace_headers,
-    wal_producer_record,
+    Arc, Bytes, Future, ProduceError, ProduceWindow, Producer, WalBatchError, WalRecord, WalSink,
+    current_trace_headers, wal_producer_record, write_batch_pipelined,
 };
 
 /// Producer-backed metrics WAL sink.
@@ -13,11 +13,17 @@ impl KafkaSink {
     pub fn new(producer: Arc<Producer>) -> Self {
         Self { producer }
     }
-}
 
-#[async_trait::async_trait]
-impl WalSink for KafkaSink {
-    async fn append(&self, key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
+    /// Hands one record to the producer and returns the future for its ack.
+    ///
+    /// The two halves are separate because only the first decides order.
+    /// `Producer::send` appends the record to the partition accumulator, and
+    /// the returned future resolves when the broker acks it.
+    async fn enqueue(
+        &self,
+        key: Bytes,
+        record: WalRecord,
+    ) -> Result<impl Future<Output = Result<(), ProduceError>> + use<>, ProduceError> {
         let value = record
             .encode()
             .map_err(|error| ProduceError::Append(error.to_string()))?;
@@ -30,9 +36,28 @@ impl WalSink for KafkaSink {
             .producer
             .send(wal_producer_record(key, value, current_trace_headers()))
             .await;
-        ack.await
-            .map_err(|error| ProduceError::Append(error.to_string()))?
-            .map_err(|error| ProduceError::Append(error.to_string()))?;
-        Ok(())
+        Ok(async move {
+            ack.await
+                .map_err(|error| ProduceError::Append(error.to_string()))?
+                .map_err(|error| ProduceError::Append(error.to_string()))?;
+            Ok(())
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl WalSink for KafkaSink {
+    async fn append(&self, key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
+        self.enqueue(key, record).await?.await
+    }
+
+    async fn append_batch(
+        &self,
+        records: Vec<(Bytes, WalRecord)>,
+    ) -> Result<(), WalBatchError<ProduceError>> {
+        write_batch_pipelined(records, ProduceWindow::default(), |(key, record)| {
+            self.enqueue(key, record)
+        })
+        .await
     }
 }

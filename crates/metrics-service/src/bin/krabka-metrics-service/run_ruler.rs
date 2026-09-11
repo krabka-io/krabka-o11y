@@ -1,10 +1,12 @@
+use krabka_observability::{CriticalTaskError, SupervisedTasks};
+
 use super::{
     Arc, AutoOffsetReset, Cli, Consumer, KafkaRecordingRuleWalSink, KafkaRulerStateSink,
-    ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink, RulerAlertmanagerSink,
-    RulerShard, RulerStateFanoutSink, Shutdown, WalHead, install_bundled_rule_groups,
-    load_runtime_overrides, prometheus_router, query_engine_opts, run_ruler_evaluation_loop,
-    run_ruler_state_consumer_loop, serve_prometheus_router_joinable,
-    spawn_shutdown_signal_listener,
+    ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink, RoleReadiness,
+    RulerAlertmanagerSink, RulerShard, RulerStateFanoutSink, Shutdown, WalHead,
+    install_bundled_rule_groups, load_runtime_overrides, prometheus_router, query_engine_opts,
+    readiness_router, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
+    serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -17,6 +19,7 @@ use super::{
 pub(crate) async fn run_ruler(
     cli: Cli,
     metrics: krabka_promql::metrics::ServiceMetrics,
+    readiness: RoleReadiness,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
@@ -37,7 +40,7 @@ pub(crate) async fn run_ruler(
         state = state.with_query_limits(overrides);
     }
     let state = Arc::new(state);
-    let router = prometheus_router(Arc::clone(&state));
+    let router = prometheus_router(Arc::clone(&state)).merge(readiness_router(readiness));
     let shard = RulerShard::new(cli.ruler_shard_index, cli.ruler_shard_total)?;
 
     // Install the bundled rules before the ruler reaches Kafka, so a rule file
@@ -57,24 +60,34 @@ pub(crate) async fn run_ruler(
             "--wal-bootstrap is required for --target ruler",
         )
     })?;
-    let mut state_consumer = Consumer::builder()
-        .bootstrap(bootstrap.clone())
-        .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-        .frame_max(cli.client_frame_max)
-        .group_id(format!("{}-ruler-state", cli.wal_group_id))
-        .client_id(format!("{}-ruler-state", cli.wal_client_id))
-        .auto_offset_reset(AutoOffsetReset::Earliest)
-        .subscribe([cli.ruler_state_topic.clone()])
-        .build()
-        .await?;
-    let producer = Arc::new(
-        Producer::builder()
+    // Installed before the first broker connect, and raced against it: the
+    // clients retry an unreachable bootstrap rather than reporting it, so a
+    // ruler that starts against a broker that is down would otherwise sit in
+    // `build` with no handler for the signal that is trying to stop it.
+    let shutdown = Shutdown::new();
+    spawn_shutdown_signal_listener(shutdown.clone());
+    let mut state_consumer = tokio::select! {
+        biased;
+        () = shutdown.signalled() => return Ok(()),
+        built = Consumer::builder()
+            .bootstrap(bootstrap.clone())
+            .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
+            .frame_max(cli.client_frame_max)
+            .group_id(format!("{}-ruler-state", cli.wal_group_id))
+            .client_id(format!("{}-ruler-state", cli.wal_client_id))
+            .auto_offset_reset(AutoOffsetReset::Earliest)
+            .subscribe([cli.ruler_state_topic.clone()])
+            .build() => built?,
+    };
+    let producer = Arc::new(tokio::select! {
+        biased;
+        () = shutdown.signalled() => return Ok(()),
+        built = Producer::builder()
             .bootstrap(bootstrap)
             .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
             .frame_max(cli.client_frame_max)
-            .build()
-            .await?,
-    );
+            .build() => built?,
+    });
     let wal_sink = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), cli.wal_topic.clone());
     let state_sink = RulerStateFanoutSink::new(
         PrometheusRulerStateSink::new(Arc::clone(&state)),
@@ -99,9 +112,6 @@ pub(crate) async fn run_ruler(
     let state_topic = cli.ruler_state_topic.clone();
     let poll_timeout = cli.wal_poll_timeout;
 
-    let shutdown = Shutdown::new();
-    spawn_shutdown_signal_listener(shutdown.clone());
-
     let alert_sink = RulerAlertmanagerSink::from_endpoints(
         alertmanager_urls,
         external_labels,
@@ -110,29 +120,28 @@ pub(crate) async fn run_ruler(
     );
 
     // The ruler state consumer and evaluation loop are critical: both feed
-    // ruler correctness. Their stop predicate observes the shared shutdown, and
-    // if either returns (the loops only return on error, never voluntarily) we
-    // surface it with `error!` and trigger shutdown so the process winds down
-    // loudly rather than silently running headless.
-    let consumer_shutdown = shutdown.clone();
-    let consumer_stop = consumer_shutdown.rx.clone();
-    tokio::spawn(async move {
+    // ruler correctness, and neither loop returns voluntarily. Supervising
+    // them means an exit of any kind -- an error, an early return, or a panic
+    // that no `if let Err` could have seen -- ends the role by name instead of
+    // leaving a ruler that serves its API and evaluates nothing.
+    let mut tasks = SupervisedTasks::new(shutdown.token().clone());
+    let consumer_stop = shutdown.clone();
+    tasks.spawn("metrics ruler state consumer", async move {
         let result = run_ruler_state_consumer_loop(
             &mut state_consumer,
             &state_for_replay,
             &state_topic,
             poll_timeout,
-            move |_| *consumer_stop.borrow(),
+            move |_| consumer_stop.is_triggered(),
         )
         .await;
         if let Err(error) = result {
-            tracing::error!(%error, "metrics ruler state consumer stopped; shutting down");
+            tracing::error!(%error, "metrics ruler state consumer stopped");
         }
-        consumer_shutdown.trigger();
     });
     let eval_shutdown = shutdown.clone();
     let eval_alert_sink = alert_sink.clone();
-    let evaluator = tokio::spawn(async move {
+    tasks.spawn("metrics ruler evaluation", async move {
         let result = run_ruler_evaluation_loop(
             state,
             (wal_sink, eval_alert_sink, state_sink),
@@ -143,9 +152,8 @@ pub(crate) async fn run_ruler(
         )
         .await;
         if let Err(error) = result {
-            tracing::error!(%error, "metrics ruler evaluation loop stopped; shutting down");
+            tracing::error!(%error, "metrics ruler evaluation loop stopped");
         }
-        eval_shutdown.trigger();
     });
 
     let (bound, server) =
@@ -153,12 +161,16 @@ pub(crate) async fn run_ruler(
     tracing::info!(%bound, "metrics-service ruler listening");
     // Join the server task so in-flight requests drain (graceful shutdown)
     // before the process exits.
-    let server_result = server.await;
+    let outcome = tokio::select! {
+        result = server => result.map_err(Into::into),
+        name = tasks.first_unexpected_exit() => Err(Box::<dyn std::error::Error>::from(
+            CriticalTaskError(name),
+        )),
+    };
     shutdown.trigger();
-    let evaluator_result = evaluator.await;
+    tasks.shutdown().await;
     let drain_result = alert_sink.shutdown().await;
-    server_result?;
-    evaluator_result?;
+    outcome?;
     drain_result?;
     Ok(())
 }

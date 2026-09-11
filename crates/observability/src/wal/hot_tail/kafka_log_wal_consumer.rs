@@ -1,10 +1,14 @@
 use super::{
     AutoOffsetReset, ClientResourcePolicy, Consumer, ConsumerError, KafkaWalHeader, KafkaWalRecord,
-    LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError, WalPosition, async_trait,
+    LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError, WalConsumerMetrics,
+    WalPosition, async_trait,
 };
+use crate::wal_group_assignment::WalAssignmentWatch;
 
 pub struct KafkaLogWalConsumer {
     pub(crate) consumer: Consumer,
+    metrics: WalConsumerMetrics,
+    assignment: WalAssignmentWatch,
 }
 
 impl KafkaLogWalConsumer {
@@ -38,7 +42,7 @@ impl KafkaLogWalConsumer {
         let topic = topic.into();
         let consumer = Consumer::builder()
             .bootstrap(bootstrap)
-            .client_id("krabka-observability-compactor")
+            .client_id("krabka-observability-block-builder")
             .dispatch_queue_capacity(client_resource_policy.dispatch_queue_capacity.get())
             .frame_max(client_resource_policy.frame_max.size())
             .group_id(group_id)
@@ -46,7 +50,26 @@ impl KafkaLogWalConsumer {
             .subscribe(vec![topic])
             .build()
             .await?;
-        Ok(Self { consumer })
+        let metrics = WalConsumerMetrics::unregistered();
+        Ok(Self {
+            consumer,
+            assignment: WalAssignmentWatch::new(metrics.clone()),
+            metrics,
+        })
+    }
+
+    /// The same consumer, with its polls counted in `metrics`.
+    ///
+    /// A consumer built without this records nothing, so the role that owns it
+    /// must call this. Both the hot-tail poller and the compactor read through
+    /// this one type, so one call covers the logs signal.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: WalConsumerMetrics) -> Self {
+        // The assignment watch reports through the same bundle, so it is
+        // rebuilt here rather than left pointing at the unregistered one.
+        self.assignment = WalAssignmentWatch::new(metrics.clone());
+        self.metrics = metrics;
+        self
     }
 
     #[cfg_attr(test, mutants::skip)]
@@ -59,9 +82,20 @@ impl KafkaLogWalConsumer {
 impl LogWalConsumer for KafkaLogWalConsumer {
     #[cfg_attr(test, mutants::skip)]
     async fn poll(&mut self, timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
-        self.consumer
+        let records = self
+            .consumer
             .poll(timeout)
-            .await?
+            .await
+            .inspect_err(|_| self.metrics.record_poll_failure())?;
+        // Recorded before the mapping below, so a poll that arrived is counted
+        // even when a record in it turns out to carry no value.
+        self.metrics.record_poll(&records);
+        // Read after the poll, so the snapshot is the one the fetch was served
+        // against. A revocation here says the group abandoned whatever the
+        // compactor had buffered for the lost partitions. See
+        // `krabka_observability::wal_group_assignment`.
+        self.assignment.observe_consumer(&self.consumer).await;
+        records
             .into_iter()
             .map(|record| {
                 let value = record

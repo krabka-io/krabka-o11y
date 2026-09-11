@@ -6,15 +6,14 @@ use prost::Message;
 
 use crate::{
     ByteSize, CONTENT_ENCODING, DeflateDecoder, DistributorError, DistributorState, GzDecoder,
-    HeaderMap, Instant, LogIngestLimiter, LogWalSink, LokiProtoPushRequest, LokiPushRequest,
+    HeaderMap, Instant, LogIngestLimiter, LokiProtoPushRequest, LokiPushRequest,
     LokiTypedPushRequest, ProtoExportLogsServiceRequest, Response, SnappyDecoder, StatusCode, Time,
-    Value, WalLogRecord, WalSinkError, is_loki_json_content_type, is_protobuf_content_type,
+    Value, WalLogRecord, is_loki_json_content_type, is_protobuf_content_type,
     loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
     normalize_otlp_logs, normalize_otlp_proto_logs, quote_logql_string,
 };
 
 mod append_distributor_wal_records;
-mod append_wal_records;
 mod check_ingest_quota;
 mod decode_loki_http_body;
 mod encode_otlp_status_message;
@@ -41,7 +40,6 @@ mod validate_loki_json_push_value_arrays;
 mod validate_loki_json_structured_metadata_value_types;
 
 pub(crate) use append_distributor_wal_records::append_distributor_wal_records;
-pub(crate) use append_wal_records::append_wal_records;
 pub(crate) use check_ingest_quota::check_ingest_quota;
 pub(crate) use decode_loki_http_body::decode_loki_http_body;
 pub(crate) use encode_otlp_status_message::encode_otlp_status_message;

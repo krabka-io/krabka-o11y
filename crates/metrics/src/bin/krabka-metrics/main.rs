@@ -1,14 +1,15 @@
 use std::{
+    ffi::OsStr,
     net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::get};
-use clap::{Parser, ValueEnum};
+use clap::{
+    Arg, Command, Parser, ValueEnum,
+    builder::{EnumValueParser, PossibleValue, TypedValueParser},
+    error::{Error, ErrorKind},
+};
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
@@ -23,24 +24,104 @@ use krabka_metrics::{
     metrics::ServiceMetrics,
     run_compactor_consumer_loop,
 };
+use krabka_observability::{
+    ConfigFileArgs, RoleReadiness, argv_with_config_file, readiness_router,
+    topic_contract::{METRICS_TOPICS, require_topics},
+};
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
-use serde_json::json;
 use tokio::net::TcpListener;
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
+    use std::{
+        collections::BTreeMap,
+        sync::{Mutex, OnceLock},
+    };
 
     use assert2::{assert, check};
-    use axum::{body::Body, http::Request};
-    use clap::Parser;
-    use tower::ServiceExt;
+    use clap::{CommandFactory, Parser, ValueEnum as _};
+    use krabka_broker::{Broker, BrokerConfig};
+    use krabka_client_admin::{AdminClient, CreateTopicSpec};
+    use krabka_observability::topic_contract::{METRICS_HA_TOPIC, METRICS_WAL_TOPIC};
 
     use super::*;
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// One stage, one spelling. A `--target` value that drifted from the
+    /// shared vocabulary would put a second name on a stage an operator
+    /// already runs under another signal, which is exactly the hazard the
+    /// vocabulary removes. The check goes through clap rather than through
+    /// the enum's `Debug`, because the string clap accepts is the one a
+    /// manifest carries.
+    #[test]
+    fn every_target_is_spelled_as_the_shared_vocabulary_spells_it() {
+        for target in Target::value_variants() {
+            let possible = target
+                .to_possible_value()
+                .expect("every target is a possible value");
+            check!(possible.get_name() == target.kind().as_str(), "{target:?}");
+            check!(
+                Cli::try_parse_from([
+                    "krabka-metrics",
+                    "--target",
+                    target.kind().as_str(),
+                    "--bootstrap",
+                    "broker:9092",
+                ])
+                .expect("the shared name parses")
+                .target
+                    == *target
+            );
+        }
+    }
+
+    /// A service that binds loopback inside a container is unreachable from
+    /// outside the pod, and the symptom is a health check that fails with
+    /// nothing in the logs. Prometheus and Mimir default their HTTP listener
+    /// to every interface; so does this.
+    #[test]
+    fn default_listen_addresses_are_reachable_from_outside_the_container() {
+        let cli = Cli::try_parse_from(["krabka-metrics", "--target", "distributor"]).unwrap();
+
+        check!(cli.listen.ip().is_unspecified());
+        check!(cli.listen.port() == 4041);
+        check!(cli.admin_listen_addr.ip().is_unspecified());
+    }
+
+    /// The binary's own flags, out of a file. The generic precedence rules
+    /// have their own suite; this one is here because a `Cli` that forgot to
+    /// flatten `ConfigFileArgs` would pass every one of those and still
+    /// ignore an operator's file.
+    #[test]
+    fn a_config_file_supplies_this_binary_s_flags() {
+        // The same lock the environment tests take. `argv_with_config_file`
+        // leaves out any flag clap has already sourced from the environment,
+        // so a `KRABKA_METRICS_*` variable that another test sets and unsets
+        // while this one runs removes `--target` from the argv and then
+        // removes the environment it was deferring to. `Cli::parse_from` ends
+        // the process on a usage error, so that race does not fail this test:
+        // it kills the whole binary with exit 2 and reports nothing.
+        let lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = lock.lock().expect("environment lock");
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("krabka.yaml");
+        std::fs::write(&path, "target: block-builder\nlisten: 0.0.0.0:4444\n").unwrap();
+
+        let argv = krabka_observability::argv_with_config_file::<Cli>(vec![
+            "krabka-metrics".into(),
+            "--config.file".into(),
+            path.into_os_string(),
+        ])
+        .unwrap();
+        let cli = Cli::parse_from(argv);
+
+        check!(cli.target == Target::BlockBuilder);
+        check!(cli.listen.port() == 4444);
+    }
 
     #[test]
     fn client_resource_policy_parses_defaults_and_overrides() {
@@ -237,95 +318,81 @@ mod tests {
         check!(cli.ha_tracker_poll_timeout == millis(250));
     }
 
+    /// What an operator who runs the old command sees.
+    ///
+    /// `krabka-metrics --target=querier` used to bind the data port, log that
+    /// it was listening, answer `/ready`, and serve Grafana's build-info probe
+    /// -- enough for a datasource to read as healthy -- while 404-ing every
+    /// query. The role is gone. Clap's own rejection would say only that the
+    /// value is not one of two variants, which tells an operator holding a
+    /// deployment that names `querier` nothing about where the querier went,
+    /// so the message names the binary that serves it.
     #[test]
-    fn parses_query_frontend_target() {
-        let cli = Cli::try_parse_from(["krabka-metrics", "--target", "query-frontend"]).unwrap();
+    fn a_retired_role_is_rejected_and_names_the_binary_that_serves_it() {
+        for role in ["querier", "query-frontend", "ruler"] {
+            let rendered = Cli::try_parse_from(["krabka-metrics", "--target", role])
+                .expect_err("krabka-metrics has no read-path role")
+                .to_string();
 
-        assert!(matches!(cli.target, Target::QueryFrontend));
+            check!(rendered.contains(role), "{role}: {rendered}");
+            check!(
+                rendered.contains("krabka-metrics-service"),
+                "{role}: {rendered}"
+            );
+        }
     }
 
-    #[tokio::test]
-    async fn querier_router_serves_prometheus_build_info() {
-        let response = querier_router()
-            .oneshot(
-                Request::builder()
-                    .uri("/prometheus/api/v1/status/buildinfo")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+    /// The same refusal through the path a deployment actually takes.
+    ///
+    /// `//deploy` starts every role from a `--config.file`, and
+    /// `argv_with_config_file` turns a `target:` key into `--target=<value>`
+    /// before clap sees it. A manifest carrying a dead role has to fail there
+    /// too, and with the same message.
+    #[test]
+    fn a_config_file_naming_a_retired_role_is_refused_the_same_way() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("krabka.yaml");
+        std::fs::write(&path, "target: querier\nlisten: 0.0.0.0:9090\n").unwrap();
 
-        assert!(response.status() == StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn querier_server_binds_to_listen_address() {
-        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-        let bound = serve_querier("127.0.0.1:0".parse().unwrap(), async {
-            let _ = stop_rx.await;
-        })
-        .await
+        let argv = krabka_observability::argv_with_config_file::<Cli>(vec![
+            "krabka-metrics".into(),
+            "--config.file".into(),
+            path.into_os_string(),
+        ])
         .unwrap();
-        let _ = stop_tx.send(());
+        let rendered = Cli::try_parse_from(argv)
+            .expect_err("a config file cannot name a role this binary does not have")
+            .to_string();
 
-        assert!(bound.port() != 0);
+        check!(rendered.contains("krabka-metrics-service"), "{rendered}");
     }
 
-    #[tokio::test]
-    async fn query_frontend_router_serves_prometheus_build_info() {
-        let response = query_frontend_router()
-            .oneshot(
-                Request::builder()
-                    .uri("/prometheus/api/v1/status/buildinfo")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+    /// Wrapping clap's enum parser rather than replacing it is what keeps
+    /// `--help` able to answer "then which roles *does* it have". A bare
+    /// `value_parser` function would drop the list entirely, and the only
+    /// symptom would be a `--help` that names no role at all.
+    #[test]
+    fn the_help_offers_the_roles_this_binary_has_and_none_it_refuses() {
+        let rendered = Cli::command().render_long_help().to_string();
+        let (_, after) = rendered
+            .split_once("Possible values:")
+            .expect("`--target` renders the roles it accepts");
+        let offered: String = after
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        assert!(response.status() == StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn query_frontend_server_binds_to_listen_address() {
-        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-        let bound = serve_query_frontend("127.0.0.1:0".parse().unwrap(), async {
-            let _ = stop_rx.await;
-        })
-        .await
-        .unwrap();
-        let _ = stop_tx.send(());
-
-        assert!(bound.port() != 0);
-    }
-
-    #[tokio::test]
-    async fn ruler_router_serves_prometheus_build_info() {
-        let response = ruler_router()
-            .oneshot(
-                Request::builder()
-                    .uri("/prometheus/api/v1/status/buildinfo")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn ruler_server_binds_to_listen_address() {
-        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-        let bound = serve_ruler("127.0.0.1:0".parse().unwrap(), async {
-            let _ = stop_rx.await;
-        })
-        .await
-        .unwrap();
-        let _ = stop_tx.send(());
-
-        assert!(bound.port() != 0);
+        for role in Target::value_variants()
+            .iter()
+            .filter_map(ValueEnum::to_possible_value)
+        {
+            check!(offered.contains(role.get_name()), "{offered}");
+        }
+        for retired in ["querier", "query-frontend", "ruler"] {
+            check!(!offered.contains(retired), "{retired}: {offered}");
+        }
     }
 
     #[test]
@@ -333,26 +400,26 @@ mod tests {
         let cli = Cli::try_parse_from([
             "krabka-metrics",
             "--target",
-            "compactor",
+            "block-builder",
             "--bootstrap",
             "broker:9092",
-            "--compactor-group-id",
+            "--block-builder-group-id",
             "metrics-c",
-            "--compactor-poll-timeout",
+            "--block-builder-poll-timeout",
             "250ms",
-            "--compactor-retention",
+            "--block-builder-retention",
             "1h",
-            "--compactor-retention-sweep-interval",
+            "--block-builder-retention-sweep-interval",
             "30s",
         ])
         .unwrap();
 
-        assert!(matches!(cli.target, Target::Compactor));
+        assert!(matches!(cli.target, Target::BlockBuilder));
         check!(cli.bootstrap == "broker:9092");
-        check!(cli.compactor_group_id == "metrics-c");
-        check!(cli.compactor_poll_timeout == millis(250));
-        check!(cli.compactor_retention == hours(1));
-        check!(cli.compactor_retention_sweep_interval == secs(30));
+        check!(cli.block_builder_group_id == "metrics-c");
+        check!(cli.block_builder_poll_timeout == millis(250));
+        check!(cli.block_builder_retention == hours(1));
+        check!(cli.block_builder_retention_sweep_interval == secs(30));
     }
 
     #[test]
@@ -362,24 +429,24 @@ mod tests {
 
         temp_env::with_vars(
             [
-                ("KRABKA_METRICS_TARGET", Some("compactor")),
-                ("KRABKA_METRICS_COMPACTOR_POLL_TIMEOUT", Some("250ms")),
-                ("KRABKA_METRICS_COMPACTOR_FLUSH_MAX_AGE", Some("2m")),
-                ("KRABKA_METRICS_COMPACTOR_RETENTION", Some("1h")),
+                ("KRABKA_METRICS_TARGET", Some("block-builder")),
+                ("KRABKA_METRICS_BLOCK_BUILDER_POLL_TIMEOUT", Some("250ms")),
+                ("KRABKA_METRICS_BLOCK_BUILDER_FLUSH_MAX_AGE", Some("2m")),
+                ("KRABKA_METRICS_BLOCK_BUILDER_RETENTION", Some("1h")),
                 (
-                    "KRABKA_METRICS_COMPACTOR_RETENTION_SWEEP_INTERVAL",
+                    "KRABKA_METRICS_BLOCK_BUILDER_RETENTION_SWEEP_INTERVAL",
                     Some("30s"),
                 ),
             ],
             || {
                 let cli = Cli::try_parse_from(["krabka-metrics"]).expect("parse environment");
-                assert!(matches!(cli.target, Target::Compactor));
+                assert!(matches!(cli.target, Target::BlockBuilder));
                 assert!(
                     (
-                        cli.compactor_poll_timeout,
-                        cli.compactor_flush_max_age,
-                        cli.compactor_retention,
-                        cli.compactor_retention_sweep_interval,
+                        cli.block_builder_poll_timeout,
+                        cli.block_builder_flush_max_age,
+                        cli.block_builder_retention,
+                        cli.block_builder_retention_sweep_interval,
                     ) == (millis(250), minutes(2), hours(1), secs(30))
                 );
             },
@@ -389,6 +456,126 @@ mod tests {
     #[test]
     fn rejects_unknown_target() {
         assert!(Cli::try_parse_from(["krabka-metrics", "--target", "bogus"]).is_err());
+    }
+
+    /// The contract has to stop a start, not merely describe one.
+    ///
+    /// The broker here holds a metrics WAL topic that meets the contract and
+    /// an HA topic that does not: it carries no `cleanup.policy`, so the
+    /// broker default of `delete` applies and every HA election is discarded
+    /// at the retention window. A distributor or compactor started against it
+    /// would produce and consume happily and lose the election map without a
+    /// word. Both roles of this binary reach that broker, so both must refuse.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_topic_that_breaks_the_contract_stops_every_role_that_uses_it() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+        create_topics(
+            &bootstrap,
+            &[
+                (
+                    METRICS_WAL_TOPIC,
+                    BTreeMap::from([("retention.ms".to_string(), "900000".to_string())]),
+                ),
+                // The violation: a compacted state topic with no
+                // `cleanup.policy` override on it.
+                (METRICS_HA_TOPIC, BTreeMap::new()),
+            ],
+        )
+        .await;
+
+        for target in [Target::Distributor, Target::BlockBuilder] {
+            let cli = cli_for(target, &bootstrap);
+            let error = require_role_topics(&cli)
+                .await
+                .expect_err("a role that reaches this broker refuses to start");
+            check!(error.to_string().contains(METRICS_HA_TOPIC), "{target:?}");
+        }
+    }
+
+    /// An address nothing answers on is a broken contract too, not a silent
+    /// pass. Both roles here produce or consume, so neither may start without
+    /// having read the contract back off a broker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unreachable_broker_stops_every_role() {
+        // Bound and dropped, so the address is one nothing answers on.
+        let unused = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let bootstrap = unused.local_addr().expect("local address").to_string();
+        drop(unused);
+
+        for target in [Target::Distributor, Target::BlockBuilder] {
+            let cli = cli_for(target, &bootstrap);
+            check!(require_role_topics(&cli).await.is_err(), "{target:?}");
+        }
+    }
+
+    /// The refusal has to reach the process, not just the helper: `run` must
+    /// return the contract error and leave its data port unbound.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_role_does_not_start_and_does_not_listen_when_the_contract_is_broken() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+        create_topics(&bootstrap, &[(METRICS_HA_TOPIC, BTreeMap::new())]).await;
+
+        // A port nothing holds, so a bind by the role is the only thing that
+        // could make it answer.
+        let reserved = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listen = reserved.local_addr().expect("local address");
+        drop(reserved);
+
+        let cli = Cli::try_parse_from([
+            "krabka-metrics",
+            "--target",
+            "distributor",
+            "--bootstrap",
+            &bootstrap,
+            "--listen",
+            &listen.to_string(),
+            "--admin-listen-addr",
+            "127.0.0.1:0",
+        ])
+        .expect("distributor cli");
+
+        // Bounded: a role that does not refuse serves until it is stopped, so
+        // without this the failure would be a hung test rather than a red one.
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), run(cli))
+            .await
+            .expect("the role decides within 30s whether to start");
+
+        let error = outcome.expect_err("the role refuses to start");
+        check!(error.to_string().contains("topic contract violated"));
+        assert!(tokio::net::TcpStream::connect(listen).await.is_err());
+    }
+
+    fn cli_for(target: Target, bootstrap: &str) -> Cli {
+        let name = target.kind().as_str();
+        Cli::try_parse_from(["krabka-metrics", "--target", name, "--bootstrap", bootstrap])
+            .expect("cli")
+    }
+
+    async fn create_topics(bootstrap: &str, topics: &[(&str, BTreeMap<String, String>)]) {
+        let mut admin = AdminClient::connect(&[bootstrap.to_string()])
+            .await
+            .expect("admin connect");
+        let specs: Vec<CreateTopicSpec> = topics
+            .iter()
+            .map(|(name, configs)| CreateTopicSpec {
+                name: (*name).to_string(),
+                partitions: 1,
+                replicas: 1,
+                configs: configs.clone(),
+            })
+            .collect();
+        admin
+            .create_topics(&specs, krabka_units::secs(5))
+            .await
+            .expect("create topics");
     }
 }
 
@@ -400,23 +587,14 @@ mod parse_client_dispatch_queue_capacity;
 mod parse_client_frame_max;
 mod parse_distributor_max_decompressed;
 mod parse_ingest_rate_bucket_cap;
-mod querier_build_info;
-mod querier_router;
-mod query_frontend_router;
-mod role_build_info;
-mod role_status_router;
-mod ruler_router;
-mod run_compactor;
+mod require_role_topics;
+mod retired_role_message;
+mod run;
+mod run_block_builder;
 mod run_distributor;
-mod run_querier;
-mod run_query_frontend;
-mod run_ruler;
-mod serve_querier;
-mod serve_query_frontend;
-mod serve_role_http;
-mod serve_ruler;
 mod spawn_retention_sweeper;
 mod target;
+mod target_value_parser;
 mod unix_time_ms;
 
 // `alloc` deliberately has no `use` line. `#[global_allocator]` registers
@@ -430,35 +608,22 @@ use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
 use parse_distributor_max_decompressed::parse_distributor_max_decompressed;
 use parse_ingest_rate_bucket_cap::parse_ingest_rate_bucket_cap;
-use querier_build_info::querier_build_info;
-use querier_router::querier_router;
-use query_frontend_router::query_frontend_router;
-use role_build_info::role_build_info;
-use role_status_router::role_status_router;
-use ruler_router::ruler_router;
+use require_role_topics::require_role_topics;
+use retired_role_message::retired_role_message;
 #[cfg_attr(test, mutants::skip)]
-use run_compactor::run_compactor;
+use run::run;
+use run_block_builder::run_block_builder;
 use run_distributor::run_distributor;
-use run_querier::run_querier;
-use run_query_frontend::run_query_frontend;
-use run_ruler::run_ruler;
-#[cfg(test)]
-use serve_querier::serve_querier;
-#[cfg(test)]
-use serve_query_frontend::serve_query_frontend;
-#[cfg(test)]
-use serve_role_http::serve_role_http;
-#[cfg(test)]
-use serve_ruler::serve_ruler;
 #[cfg_attr(test, mutants::skip)]
 use spawn_retention_sweeper::spawn_retention_sweeper;
 use target::Target;
+use target_value_parser::TargetValueParser;
 #[cfg_attr(test, mutants::skip)]
 use unix_time_ms::unix_time_ms;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
@@ -470,32 +635,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "info",
         "krabka-metrics",
     )?;
-    let result = async {
-        let metrics = ServiceMetrics::new();
-        let admin = krabka_telemetry::profiling::spawn_admin_with_config(
-            cli.admin_listen_addr,
-            krabka_metrics::metrics::metrics_router(metrics.registry.clone()),
-            cli.profiling.clone(),
-        )
-        .await?;
-
-        let role = async {
-            match cli.target {
-                Target::Distributor => run_distributor(cli, metrics).await?,
-                Target::Compactor => run_compactor(cli, metrics).await?,
-                Target::Querier => run_querier(cli).await?,
-                Target::QueryFrontend => run_query_frontend(cli).await?,
-                Target::Ruler => run_ruler(cli).await?,
-            }
-            Ok::<(), Box<dyn std::error::Error>>(())
-        };
-        tokio::select! {
-            result = role => result?,
-            result = krabka_telemetry::profiling::await_admin_exit(admin) => result?,
-        }
-        Ok(())
-    }
-    .await;
+    let result = run(cli).await;
     telemetry.shutdown();
     result
 }

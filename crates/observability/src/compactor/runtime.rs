@@ -3,7 +3,7 @@ use tracing::Instrument;
 use crate::{
     Arc, BTreeMap, BlockDescriptor, BlockIndex, BlockStoreError, BufferedLogHotTail,
     CancellationToken, CompactionError, CompactionFrontierStoreError, CompactorRunError,
-    KafkaWalCompactionError, KafkaWalRecord, LabelIndex, LastCompactedPosition,
+    JoinHandle, KafkaWalCompactionError, KafkaWalRecord, LabelIndex, LastCompactedPosition,
     LogCompactionIndexOutput, LogWalConsumer, ObjectPath, ObjectStore, Offset, PartitionIndex,
     ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceRuntimeError,
     SharedCompactionFrontier, SharedLogDeleteRequests, TenantCompactionIndexCache, Time, TimeExt,

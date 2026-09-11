@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use assert2::check;
 use krabka_traces::frontend::{
-    QueryFrontend,
+    MembershipView, QueryFrontend,
     backend::{MockQuerier, SearchPartial},
     config::FrontendConfig,
     job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
@@ -92,7 +92,12 @@ async fn sharded_search_equals_unsharded() {
         hot_frontier_ns: 150,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(Arc::new(backend), Arc::new(catalog), cfg);
+    let qf = QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(catalog),
+        cfg,
+        MembershipView::fixed(["q1:3200"]),
+    );
 
     let resp = qf.search("t1", "{ }", 0, 300, 20, 10).await.unwrap();
 
@@ -135,7 +140,12 @@ async fn limit_and_spss_applied_after_merge() {
         hot_frontier_ns: i64::MAX,
         ..FrontendConfig::default()
     };
-    let qf = QueryFrontend::new(Arc::new(backend), Arc::new(catalog), cfg);
+    let qf = QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(catalog),
+        cfg,
+        MembershipView::fixed(["q1:3200"]),
+    );
     // limit 2 (newest-first => 300, 200), spss 2.
     let resp = qf.search("t1", "{ }", 0, 300, 2, 2).await.unwrap();
     assert2::assert!(

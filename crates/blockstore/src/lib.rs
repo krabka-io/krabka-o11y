@@ -19,11 +19,13 @@ mod labels;
 mod log_blockstore;
 mod matcher;
 mod merge;
+mod metrics;
 mod nested_set;
 mod profile_block;
 mod profile_index;
 mod profile_schema;
 mod reader;
+mod retry;
 mod span_block;
 mod span_id;
 mod span_schema;
@@ -82,6 +84,9 @@ pub use merge::{
     BlockBatchStream, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, SortedMerge, open_block_stream,
     versioned_compaction_key,
 };
+pub use metrics::{
+    MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
+};
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
 pub use profile_block::{ProfileSampleRow, encode_profile_samples};
 pub use profile_index::{LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileIndex};
@@ -93,6 +98,10 @@ pub use reader::{
     BlockMetadataCache, DEFAULT_BLOCK_METADATA_CACHE_MAX, DEFAULT_BLOCK_READ_MAX, RowGroupMeta,
     read_block, read_block_row_groups, read_block_row_groups_with_max_bytes,
     read_block_with_max_bytes, read_row_group_metadata, read_row_group_metadata_with_max_bytes,
+};
+pub use retry::{
+    ObjectStoreRetryPolicy, RetryingObjectStore, is_transient_object_store_error,
+    retry_object_store, transient_object_store_error,
 };
 pub use span_block::{
     AttrValue, SpanAttr, SpanEvent, SpanLink, SpanRow, encode_span_rows,

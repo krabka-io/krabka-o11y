@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     error::TracesError,
     ids::UnixNano,
+    metrics::ServiceMetrics,
     querier::live::{LiveSource, Result as LiveResult},
     span::{
         AttrValue, EventRecord, KeyValue, LinkRecord, Span,

@@ -1,6 +1,6 @@
 use super::{
-    AtomicOrdering, BufferedLogHotTail, CancellationToken, DeferredWalConsumerConnect, JoinHandle,
-    KafkaLogWalConsumer, ServiceReadiness, SharedCompactionFrontier, Time, TimeExt,
+    BufferedLogHotTail, CancellationToken, DeferredWalConsumerConnect, JoinHandle,
+    KafkaLogWalConsumer, ReadinessGate, SharedCompactionFrontier, Time, TimeExt,
     poll_log_hot_tail_once_with_frontier, sleep,
 };
 
@@ -21,7 +21,7 @@ pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
     token: CancellationToken,
     poll_interval: Time,
     reconnect_interval: Time,
-    readiness: ServiceReadiness,
+    wal_tail: ReadinessGate,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut consumer = loop {
@@ -34,7 +34,7 @@ pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
                     deferred.client_resource_policy,
                 ) => {
                     match result {
-                        Ok(c) => break c,
+                        Ok(c) => break c.with_metrics(deferred.metrics.clone()),
                         Err(error) => {
                             tracing::warn!(%error, "querier WAL consumer connect failed; retrying");
                             tokio::select! {
@@ -46,7 +46,7 @@ pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
                 }
             }
         };
-        readiness.wal_connected.store(true, AtomicOrdering::SeqCst);
+        wal_tail.mark_ready();
         loop {
             let result = tokio::select! {
                 () = token.cancelled() => break,
@@ -54,11 +54,11 @@ pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
             };
             let should_back_off = match result {
                 Ok(decoded) => {
-                    readiness.wal_connected.store(true, AtomicOrdering::SeqCst);
+                    wal_tail.mark_ready();
                     decoded == 0
                 }
                 Err(error) => {
-                    readiness.wal_connected.store(false, AtomicOrdering::SeqCst);
+                    wal_tail.mark_unready();
                     tracing::warn!(%error, "querier WAL hot-tail poll failed; retrying");
                     true
                 }

@@ -9,8 +9,10 @@ use crate::{
     load_existing_compaction_frontier,
     materialize_delete_requests_in_existing_local_manifest_blocks,
     materialize_deletes_then_compact_next_kafka_wal_batch, sleep,
+    wal_consumer_metrics::WalConsumerMetrics,
 };
 
+mod all_in_one_querier_group_id;
 mod build_compactor_configured_object_store;
 mod build_service_dependencies;
 mod build_service_dependencies_with_client_resource_policy;
@@ -20,7 +22,11 @@ mod run_compactor_once;
 mod run_compactor_until_idle;
 mod validate_compactor_policy;
 mod validate_distributor_policy;
+mod with_block_builder_dependencies;
+mod with_distributor_dependencies;
+mod with_querier_dependencies;
 
+pub(crate) use all_in_one_querier_group_id::all_in_one_querier_group_id;
 pub(crate) use build_compactor_configured_object_store::build_compactor_configured_object_store;
 pub use build_service_dependencies::build_service_dependencies;
 pub use build_service_dependencies_with_client_resource_policy::build_service_dependencies_with_client_resource_policy;
@@ -31,3 +37,6 @@ pub use run_compactor_once::run_compactor_once;
 pub use run_compactor_until_idle::run_compactor_until_idle;
 pub(crate) use validate_compactor_policy::validate_compactor_policy;
 pub(crate) use validate_distributor_policy::validate_distributor_policy;
+pub(crate) use with_block_builder_dependencies::with_block_builder_dependencies;
+pub(crate) use with_distributor_dependencies::with_distributor_dependencies;
+pub(crate) use with_querier_dependencies::with_querier_dependencies;

@@ -1,8 +1,8 @@
 use super::{
     Arc, ClientResourcePolicy, CompactionFrontier, CompactionFrontierSource,
     DeferredWalConsumerConnect, HotTailDependency, LogHotTail, LogIngestLimiter,
-    LogQueryAuthorizer, LogWalConsumer, LogWalSink, ServiceMetrics, SharedCompactionFrontier,
-    SharedLogDeleteRequests,
+    LogQueryAuthorizer, LogWalConsumer, LogWalSink, RoleReadiness, ServiceMetrics,
+    SharedCompactionFrontier, SharedLogDeleteRequests,
 };
 
 #[derive(Clone, Default)]
@@ -23,6 +23,10 @@ pub struct ServiceDependencies {
     /// through here, so the `:9404` exporter and the handlers share the same
     /// registry.
     pub(crate) metrics: Option<ServiceMetrics>,
+    /// Readiness shared with the binary, so the `:9404` admin port and the
+    /// data port report the same startup state. `None` leaves the role with a
+    /// readiness of its own.
+    pub(crate) readiness: Option<RoleReadiness>,
 }
 
 impl ServiceDependencies {
@@ -35,6 +39,37 @@ impl ServiceDependencies {
         self
     }
 
+    /// The object-store instruments from the shared bundle, when one was
+    /// threaded in.
+    ///
+    /// A role with no bundle has nothing to record into, so its object store
+    /// is wrapped in an unregistered one and exports no series.
+    #[must_use]
+    pub(crate) fn object_store_metrics(&self) -> Option<krabka_blockstore::ObjectStoreMetrics> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.object_store.clone())
+    }
+
+    /// The compaction instruments from the shared bundle, when one was
+    /// threaded in.
+    #[must_use]
+    pub(crate) fn compaction_metrics(
+        &self,
+    ) -> Option<crate::compaction_metrics::CompactionMetrics> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.compaction.clone())
+    }
+
+    /// Shares one readiness between the role's router and whatever else the
+    /// binary exposes it on, above all the admin listener.
+    #[must_use]
+    pub fn with_readiness(mut self, readiness: RoleReadiness) -> Self {
+        self.readiness = Some(readiness);
+        self
+    }
+
     #[must_use]
     pub fn with_wal_sink(mut self, sink: impl LogWalSink) -> Self {
         self.wal_sink = Some(Arc::new(sink));
@@ -44,6 +79,23 @@ impl ServiceDependencies {
     #[must_use]
     pub fn with_wal_consumer(mut self, consumer: impl LogWalConsumer) -> Self {
         self.wal_consumer = Some(Arc::new(tokio::sync::Mutex::new(Box::new(consumer))));
+        self
+    }
+
+    /// The same dependencies with the WAL consumer taken out.
+    ///
+    /// The querier takes whichever consumer it is handed as its hot tail. In a
+    /// process that runs only the querier that is the right reading, and it is
+    /// how a test injects a pre-connected consumer. In an all-in-one it is a
+    /// trap: the consumer in there is the block builder's, in the block
+    /// builder's group, and a querier polling it would take records off the
+    /// topic that the block builder then never sees and never writes to a
+    /// block. The records are acknowledged, queryable for as long as they sit
+    /// in the querier's hot tail, and gone. This is how the all-in-one hands
+    /// the querier its own deferred connect instead.
+    #[must_use]
+    pub(crate) fn without_wal_consumer(mut self) -> Self {
+        self.wal_consumer = None;
         self
     }
 
@@ -109,12 +161,14 @@ impl ServiceDependencies {
         group_id: String,
         topic: String,
         client_resource_policy: ClientResourcePolicy,
+        metrics: crate::wal_consumer_metrics::WalConsumerMetrics,
     ) -> Self {
         self.deferred_wal_consumer_connect = Some(DeferredWalConsumerConnect {
             bootstrap,
             group_id,
             topic,
             client_resource_policy,
+            metrics,
         });
         self
     }

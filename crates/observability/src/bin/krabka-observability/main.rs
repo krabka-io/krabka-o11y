@@ -1,25 +1,34 @@
 //! `krabka-observability` is a role-selectable Loki-compatible logs service.
 //! It self-instruments with OTLP traces, JSON logs, and CPU and heap pprof.
 
+use std::net::SocketAddr;
+
 use clap::Parser;
 use krabka_observability::{
-    ClientResourcePolicy, ServiceConfig, build_service_dependencies_with_client_resource_policy,
-    metrics::ServiceMetrics, serve_service,
+    ClientResourcePolicy, ConfigFileArgs, RoleReadiness, ServiceConfig, argv_with_config_file,
+    build_service_dependencies_with_client_resource_policy, init_telemetry,
+    metrics::ServiceMetrics, readiness_router, serve_service,
 };
 use krabka_units::{ByteSize, parse};
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser as _;
+    use std::collections::BTreeMap;
 
-    use super::Cli;
+    use assert2::{assert, check};
+    use clap::Parser as _;
+    use krabka_broker::{Broker, BrokerConfig};
+    use krabka_client_admin::{AdminClient, CreateTopicSpec};
+    use krabka_observability::{Role, topic_contract::LOGS_WAL_TOPIC};
+
+    use super::{Cli, ServiceConfig, require_role_topics};
 
     #[test]
     fn client_resource_policy_parses_defaults_overrides_and_invalid_values() {
         let defaults =
             Cli::try_parse_from(["krabka-observability", "--target", "querier"]).expect("defaults");
-        assert_eq!(defaults.client_dispatch_queue_capacity, 64);
-        assert_eq!(defaults.client_frame_max, krabka_units::mebibytes(100));
+        assert!(defaults.client_dispatch_queue_capacity == 64);
+        assert!(defaults.client_frame_max == krabka_units::mebibytes(100));
 
         let custom = Cli::try_parse_from([
             "krabka-observability",
@@ -31,8 +40,8 @@ mod tests {
             "32KiB",
         ])
         .expect("custom policy");
-        assert_eq!(custom.client_dispatch_queue_capacity, 7);
-        assert_eq!(custom.client_frame_max, krabka_units::kibibytes(32));
+        assert!(custom.client_dispatch_queue_capacity == 7);
+        assert!(custom.client_frame_max == krabka_units::kibibytes(32));
 
         for option in [
             "--client-dispatch-queue-capacity=0",
@@ -50,8 +59,8 @@ mod tests {
         if std::env::var_os(CHILD).is_some() {
             let environment = Cli::try_parse_from(["krabka-observability", "--target", "querier"])
                 .expect("environment policy");
-            assert_eq!(environment.client_dispatch_queue_capacity, 7);
-            assert_eq!(environment.client_frame_max, krabka_units::kibibytes(32));
+            assert!(environment.client_dispatch_queue_capacity == 7);
+            assert!(environment.client_frame_max == krabka_units::kibibytes(32));
 
             let cli = Cli::try_parse_from([
                 "krabka-observability",
@@ -63,8 +72,8 @@ mod tests {
                 "64KiB",
             ])
             .expect("CLI policy");
-            assert_eq!(cli.client_dispatch_queue_capacity, 9);
-            assert_eq!(cli.client_frame_max, krabka_units::kibibytes(64));
+            assert!(cli.client_dispatch_queue_capacity == 9);
+            assert!(cli.client_frame_max == krabka_units::kibibytes(64));
             return;
         }
 
@@ -89,16 +98,13 @@ mod tests {
         if std::env::var_os(CHILD).is_some() {
             let environment = Cli::try_parse_from(["krabka-observability", "--target", "querier"])
                 .expect("environment profiling policy");
-            assert_eq!(
-                environment.profiling.profiling_cpu_default_duration,
-                krabka_units::secs(2)
-            );
-            assert_eq!(
+            assert!(environment.profiling.profiling_cpu_default_duration == krabka_units::secs(2));
+            assert!(
                 environment
                     .profiling
                     .profiling_cpu_sample_frequency
-                    .frequency(),
-                krabka_units::per_sec(101)
+                    .frequency()
+                    == krabka_units::per_sec(101)
             );
 
             let cli = Cli::try_parse_from([
@@ -109,23 +115,17 @@ mod tests {
                 "--profiling-cpu-sample-frequency=103Hz",
             ])
             .expect("CLI profiling policy");
-            assert_eq!(
-                cli.profiling.profiling_cpu_default_duration,
-                krabka_units::secs(3)
-            );
-            assert_eq!(
-                cli.profiling.profiling_cpu_sample_frequency.frequency(),
-                krabka_units::per_sec(103)
+            assert!(cli.profiling.profiling_cpu_default_duration == krabka_units::secs(3));
+            assert!(
+                cli.profiling.profiling_cpu_sample_frequency.frequency()
+                    == krabka_units::per_sec(103)
             );
             return;
         }
 
         let defaults = Cli::try_parse_from(["krabka-observability", "--target", "querier"])
             .expect("default profiling policy");
-        assert_eq!(
-            defaults.profiling,
-            krabka_telemetry::profiling::ProfilingConfig::default()
-        );
+        assert!(defaults.profiling == krabka_telemetry::profiling::ProfilingConfig::default());
 
         let status =
             std::process::Command::new(std::env::current_exe().expect("current test executable"))
@@ -141,12 +141,83 @@ mod tests {
                 .expect("run isolated profiling environment parser test");
         assert!(status.success());
     }
+    /// The contract has to stop a start, not merely describe one. A logs role
+    /// pointed at a broker with no WAL topic on it would build a consumer that
+    /// reads an empty stream and answer every query from local files alone,
+    /// with nothing in the answer to say the WAL was never there.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_missing_wal_topic_stops_every_role_that_names_a_broker() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+
+        for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
+            let config = config_for(target, Some(bootstrap.clone()));
+            let error = require_role_topics(&config)
+                .await
+                .expect_err("the role refuses to start");
+            check!(error.to_string().contains(LOGS_WAL_TOPIC), "{target:?}");
+        }
+
+        create_logs_wal_topic(&bootstrap).await;
+
+        for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
+            check!(
+                require_role_topics(&config_for(target, Some(bootstrap.clone())))
+                    .await
+                    .is_ok(),
+                "{target:?}"
+            );
+        }
+    }
+
+    /// Every logs role also runs with no WAL at all, reading and writing local
+    /// files. With no broker named there is no topic to check, so the contract
+    /// must not be the thing that stops it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_role_with_no_broker_configured_is_not_held_up_by_the_contract() {
+        for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
+            check!(
+                require_role_topics(&config_for(target, None)).await.is_ok(),
+                "{target:?}"
+            );
+        }
+    }
+
+    fn config_for(target: Role, wal_bootstrap_server: Option<String>) -> ServiceConfig {
+        ServiceConfig {
+            target,
+            wal_bootstrap_server,
+            ..ServiceConfig::default()
+        }
+    }
+
+    async fn create_logs_wal_topic(bootstrap: &str) {
+        let mut admin = AdminClient::connect(&[bootstrap.to_string()])
+            .await
+            .expect("admin connect");
+        admin
+            .create_topics(
+                &[CreateTopicSpec {
+                    name: LOGS_WAL_TOPIC.to_string(),
+                    partitions: 1,
+                    replicas: 1,
+                    configs: BTreeMap::from([("retention.ms".to_string(), "900000".to_string())]),
+                }],
+                krabka_units::secs(5),
+            )
+            .await
+            .expect("create the logs WAL topic");
+    }
 }
 
 mod alloc;
 mod cli;
 mod parse_dispatch_queue_capacity;
 mod parse_frame_max;
+mod require_role_topics;
 
 // `alloc` deliberately has no `use` line. `#[global_allocator]` registers
 // the static by attribute, so naming it here imports something nothing
@@ -155,10 +226,11 @@ mod parse_frame_max;
 pub(crate) use cli::Cli;
 pub(crate) use parse_dispatch_queue_capacity::parse_dispatch_queue_capacity;
 pub(crate) use parse_frame_max::parse_frame_max;
+pub(crate) use require_role_topics::require_role_topics;
 
 #[tokio::main]
 pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let client_resource_policy = ClientResourcePolicy {
         dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity::new(
             cli.client_dispatch_queue_capacity,
@@ -167,7 +239,10 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
         frame_max: krabka_client_core::ClientFrameMax::try_from(cli.client_frame_max)
             .expect("validated client frame maximum"),
     };
-    let telemetry = krabka_telemetry::init(
+    // `init_telemetry`, not `krabka_telemetry::init`: without OTLP it installs
+    // the same JSON stdout layer over a reloadable filter, which is what makes
+    // `POST /log_level` move the level rather than report that it did.
+    let (telemetry, _log_level) = init_telemetry(
         krabka_telemetry::OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
             "krabka-logs",
@@ -179,20 +254,33 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "krabka-logs",
     )?;
     let metrics = ServiceMetrics::new();
+    // One readiness for the process: the role's own router reports it on the
+    // data port, and the admin port echoes it, so a probe that cannot reach
+    // the data port still gets the truth rather than "the listener is up".
+    let readiness = RoleReadiness::new();
     // CPU/heap profiling admin server (Alloy pyroscope.scrape target) plus the
-    // Prometheus RED-metrics exporter on the same :9404 admin port.
-    krabka_telemetry::profiling::serve_admin_from_env_with_config(
-        "0.0.0.0:9404",
-        krabka_observability::metrics::metrics_router(metrics.registry.clone()),
+    // Prometheus RED-metrics exporter and `/ready` on the same :9404 admin port.
+    krabka_telemetry::profiling::serve_admin_with_config(
+        cli.admin_listen_addr,
+        krabka_observability::metrics::metrics_router(metrics.registry.clone())
+            .merge(readiness_router(readiness.clone())),
         cli.profiling.clone(),
     )
     .await?;
 
     let config = cli.service;
-    let dependencies =
-        build_service_dependencies_with_client_resource_policy(&config, client_resource_policy)
-            .await?
-            .with_metrics(metrics);
+    // Before the WAL producer and consumer exist. A role that started against
+    // a topic whose partition count is not the one the deployment provisioned
+    // would read or write a re-mapped key space and report nothing.
+    require_role_topics(&config).await?;
+    let dependencies = build_service_dependencies_with_client_resource_policy(
+        &config,
+        client_resource_policy,
+        metrics.wal_consumer.clone(),
+    )
+    .await?
+    .with_metrics(metrics)
+    .with_readiness(readiness);
     serve_service(config, dependencies, None).await?;
 
     telemetry.shutdown();

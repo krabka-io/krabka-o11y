@@ -1,0 +1,67 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# One role of each signal, a broker and an object store.
+#
+#     kubectl apply -k deploy
+#
+# The role configuration is the same //deploy/roles files the compose stack
+# mounts, carried here as a generated ConfigMap. The generator appends a
+# content hash to the name, so editing a role's YAML rolls the Deployments
+# that mount it rather than leaving pods running against a file they no longer
+# have. The whole set rolls together: that is one ConfigMap for twelve roles,
+# and the cost of splitting it is twelve generators to keep in step.
+
+namespace: krabka-o11y
+
+resources:
+  - kubernetes/namespace.yaml
+  - kubernetes/minio.yaml
+  - kubernetes/broker.yaml
+  - kubernetes/metrics.yaml
+  - kubernetes/logs.yaml
+  - kubernetes/traces.yaml
+  - kubernetes/profiles.yaml
+
+configMapGenerator:
+  - name: krabka-roles
+    files:
+      - roles/metrics-distributor.yaml
+      - roles/metrics-block-builder.yaml
+      - roles/metrics-querier.yaml
+      - roles/logs-distributor.yaml
+      - roles/logs-block-builder.yaml
+      - roles/logs-querier.yaml
+      - roles/traces-distributor.yaml
+      - roles/traces-block-builder.yaml
+      - roles/traces-querier.yaml
+      - roles/profiles-distributor.yaml
+      - roles/profiles-block-builder.yaml
+      - roles/profiles-querier.yaml
+  # `object_store` reads its S3 configuration from the process environment;
+  # no flag names any of it, so it cannot live in a role's config file.
+  - name: krabka-object-store-endpoint
+    literals:
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - AWS_REGION=us-east-1
+      - AWS_ALLOW_HTTP=true
+      - AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false
+      - AWS_EC2_METADATA_DISABLED=true
+
+# Replace these before using this anywhere real. They are here so that
+# `kubectl apply -k` brings the stack up on a scratch cluster, which is the
+# only claim this base makes.
+secretGenerator:
+  - name: krabka-object-store
+    literals:
+      - AWS_ACCESS_KEY_ID=krabka
+      - AWS_SECRET_ACCESS_KEY=krabka-secret
+
+images:
+  - name: ghcr.io/krabka-io/krabka-o11y
+    newTag: latest
+
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/part-of: krabka-o11y

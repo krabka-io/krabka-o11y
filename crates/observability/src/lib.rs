@@ -7,19 +7,23 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     convert::Infallible,
-    future::pending,
+    ffi::OsString,
     io::ErrorKind,
     net::SocketAddr,
     num::NonZeroUsize,
     path::{Path as FsPath, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering as AtomicOrdering},
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+pub mod compaction_metrics;
 pub mod topic_contract;
+pub mod wal_consumer_metrics;
+pub mod wal_group_assignment;
+pub mod wal_produce;
 
 use async_trait::async_trait;
 use axum::{
@@ -37,7 +41,9 @@ use axum::{
     routing::{get, post},
 };
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use clap::{Parser, ValueEnum};
+use clap::{
+    ArgAction, ArgMatches, Command, CommandFactory, Parser, ValueEnum, parser::ValueSource,
+};
 use datafusion::{
     arrow::{
         array::{
@@ -111,6 +117,7 @@ use parquet::arrow::arrow_writer::ArrowWriter;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use serde_yaml::Value as YamlValue;
 use snap::raw::Decoder as SnappyDecoder;
 use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -119,22 +126,28 @@ use tokio::{
     task::JoinHandle,
     time::{Duration, sleep},
 };
-use tokio_util::sync::CancellationToken;
+pub use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::metrics::ServiceMetrics;
 
 mod compactor;
 mod config;
+mod config_file;
 mod deletes;
 mod deletes_api;
 mod distributor;
 mod error;
 mod http;
+mod log_level;
+mod panic_containment;
 mod querier;
+mod readiness;
+mod role;
 mod ruler;
 mod service;
 mod service_runtime;
+mod supervision;
 mod wal;
 
 pub use compactor::{
@@ -150,6 +163,7 @@ pub use compactor::{
 pub use config::{
     QuerierIndexSource, Role, ServiceConfig, ServiceConfigError, ServiceRuntimeError,
 };
+pub use config_file::{ConfigFileArgs, ConfigFileError, argv_with_config_file};
 pub(crate) use deletes::{
     ActiveLogDeleteFilter, CompactorDeleteRequest, CompactorDeleteRequestResponse,
     CompactorDeleteRequests, CompactorDeleteState, CreateDeleteRequestParams,
@@ -165,6 +179,11 @@ pub use distributor::{
 };
 pub use error::QueryError;
 pub use http::loki_router;
+pub use log_level::{
+    LogLevelControl, LogLevelError, Telemetry, init_telemetry, install_json_logging,
+    json_logging_layer,
+};
+pub use panic_containment::{PanicSafeShared, contain_handler_panics};
 pub use querier::{
     QuerierState, build_querier_state, execute_metric_query,
     execute_metric_query_from_object_store, execute_metric_query_range,
@@ -175,13 +194,17 @@ pub use querier::{
     execute_stream_query_with_hot_tail_frontier, execute_tail_query,
     execute_tail_query_with_frontier, metric_plan_scan_sql, stream_plan_scan_sql,
 };
+pub use readiness::{DRAINING_GATE, ReadinessGate, RoleReadiness, readiness_router, ready};
+pub use role::RoleKind;
 pub use service::{
     ActiveLogDeleteFilterError, ClientResourcePolicy, LogDeleteRequestStoreError,
     LokiRuleStoreError, ServiceDependencies, ServiceStatus, SharedLogDeleteRequests, run,
 };
 pub use service_runtime::{
-    build_service_router, serve_service, serve_service_listener, shutdown_signal,
+    build_service_router, serve_all_service_listener, serve_service, serve_service_listener,
+    shutdown_signal,
 };
+pub use supervision::{CriticalTaskError, StagedDrain, SupervisedTasks};
 pub use wal::{
     BufferedLogHotTail, HotTailPollError, InMemoryWalSink, IngestLimitError, KafkaLogWalConsumer,
     KafkaLogWalSink, LogHotTail, LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink,
@@ -242,10 +265,10 @@ pub(crate) use self::{
             rfc3339_seconds, validate_ingest_timestamp_ns, validate_loki_timestamp_window,
         },
         router::{
-            COMPACTOR_OPS, LokiProtoLabelPair, LokiProtoPushRequest, LokiProtoTimestamp,
-            LokiPushRequest, LokiTypedPushRequest, OtlpAnyValue, OtlpKeyValue, OtlpLogRecord,
-            OtlpLogsRequest, QUERIER_OPS, RoleOps, ServiceReadiness, distributor_router_with_sink,
-            with_role_ops_routes,
+            ALL_OPS, BLOCK_BUILDER_OPS, LokiProtoLabelPair, LokiProtoPushRequest,
+            LokiProtoTimestamp, LokiPushRequest, LokiTypedPushRequest, OtlpAnyValue, OtlpKeyValue,
+            OtlpLogRecord, OtlpLogsRequest, QUERIER_OPS, RoleOps, distributor_push_routes,
+            distributor_router_with_sink, with_role_ops_routes,
         },
         value_conversion::{
             hex_string, metadata_value_to_string, otlp_value_to_json, parse_structured_metadata,
@@ -352,8 +375,8 @@ pub(crate) use self::{
             query_stats::loki_query_stats,
         },
         router::{
-            compactor_router_with_delete_requests, flush_ingester_chunks, get_prepare_shutdown,
-            log_level, log_level_post, loki_router_with_readiness, memberlist_status, ready,
+            compactor_router_with_delete_requests, delete_request_routes, flush_ingester_chunks,
+            get_prepare_shutdown, log_level, log_level_post, loki_query_routes, memberlist_status,
             role_config, role_metrics, role_ring, role_services, set_prepare_shutdown,
             shutdown_ingester, unset_prepare_shutdown,
         },

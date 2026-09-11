@@ -15,7 +15,10 @@ use arrow::{
 };
 use async_trait::async_trait;
 use futures::TryStreamExt;
-use krabka_blockstore::{BlockMeta, BlockStoreError, BlockWriter};
+use krabka_blockstore::{
+    BlockMeta, BlockStoreError, BlockWriter, ObjectStoreMetrics, ObjectStoreRetryPolicy,
+    RetryingObjectStore,
+};
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
 use krabka_ids::{Offset, PartitionIndex};
 use krabka_telemetry::propagation::{TRACEPARENT, set_remote_parent};
@@ -27,6 +30,7 @@ use tracing::Instrument as _;
 use crate::{
     NativeHistogram, encode_float_samples, encode_native_histograms,
     histogram::HistogramCodecError,
+    metrics::ServiceMetrics,
     schema::{
         CCOL_CLOCK, CCOL_EST_ERROR_NANOS, CCOL_FREQUENCY_PPB, CCOL_GM_CLOCK_ACCURACY,
         CCOL_GM_CLOCK_CLASS, CCOL_GNSS_FIX, CCOL_INGEST_UNIX_NANOS, CCOL_LAST_STEP_NANOS,
@@ -116,7 +120,10 @@ mod tests {
     use krabka_units::prelude::*;
     use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory};
 
-    use super::{compact_wal_records, encode_tenant_batches};
+    use super::{
+        CompactionLoopContext, ObjectStoreMetrics, ObjectStoreRetryPolicy, RetryingObjectStore,
+        ServiceMetrics, compact_wal_records, encode_tenant_batches,
+    };
     use crate::{
         BucketSpan, FloatRow, NativeHistogram, ResetHint,
         distributor::wal_records_from_series,
@@ -596,6 +603,7 @@ mod tests {
             auto_offset_reset: krabka_client_consumer::AutoOffsetReset::Earliest,
             flush_max_rows: super::DEFAULT_FLUSH_MAX_ROWS,
             flush_max_age: super::DEFAULT_FLUSH_MAX_AGE,
+            object_store_retry: ObjectStoreRetryPolicy::DEFAULT,
         };
 
         let err = cfg.validate().expect_err("empty bootstrap should fail");
@@ -617,10 +625,11 @@ mod tests {
             auto_offset_reset: krabka_client_consumer::AutoOffsetReset::Earliest,
             flush_max_rows: 12_345,
             flush_max_age: secs(7),
+            object_store_retry: ObjectStoreRetryPolicy::DEFAULT,
         };
 
         let runtime = cfg
-            .build_runtime(object_store.clone())
+            .build_runtime(object_store.clone(), ObjectStoreMetrics::unregistered())
             .expect("build runtime");
         assert_eq!(
             runtime.loop_config,
@@ -1105,6 +1114,7 @@ mod tests {
             &committer,
             crate::WAL_TOPIC,
             millis(1),
+            &ServiceMetrics::new(),
         )
         .await
         .expect("poll compactor once");
@@ -1185,6 +1195,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             &mut stop_after_empty,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor loop");
@@ -1255,6 +1266,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             &mut stop_after_empty,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor loop");
@@ -1346,7 +1358,7 @@ mod tests {
                 flush_max_age: minutes(1),
             },
             &mut stop_after_three,
-            clock.as_ref(),
+            CompactionLoopContext::new(clock.as_ref(), &ServiceMetrics::new()),
         )
         .await
         .expect("run compactor loop with clock");
@@ -1403,6 +1415,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor consumer loop");
@@ -1413,6 +1426,246 @@ mod tests {
         check!(result.writes == 1);
         check!(consumer.commit_calls == 1);
         check!(consumer.committed_offsets[0][0].offset == krabka_ids::Offset(11));
+    }
+
+    /// An object store whose first `failures` puts fail with `error`.
+    /// Everything else delegates to an in-memory store, and every attempt is
+    /// counted so a test can tell one try from four.
+    #[derive(Debug)]
+    struct FlakyPutStore {
+        inner: InMemory,
+        remaining_failures: std::sync::atomic::AtomicUsize,
+        attempts: std::sync::atomic::AtomicUsize,
+        error: fn() -> object_store::Error,
+    }
+
+    impl FlakyPutStore {
+        fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
+            Self {
+                inner: InMemory::new(),
+                remaining_failures: std::sync::atomic::AtomicUsize::new(failures),
+                attempts: std::sync::atomic::AtomicUsize::new(0),
+                error,
+            }
+        }
+
+        fn attempts(&self) -> usize {
+            self.attempts.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl std::fmt::Display for FlakyPutStore {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("FlakyPutStore")
+        }
+    }
+
+    #[async_trait]
+    impl ObjectStore for FlakyPutStore {
+        async fn put_opts(
+            &self,
+            location: &object_store::path::Path,
+            payload: object_store::PutPayload,
+            options: object_store::PutOptions,
+        ) -> object_store::Result<object_store::PutResult> {
+            use std::sync::atomic::Ordering;
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            if self
+                .remaining_failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    (left > 0).then(|| left - 1)
+                })
+                .is_ok()
+            {
+                return Err((self.error)());
+            }
+            self.inner.put_opts(location, payload, options).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &object_store::path::Path,
+            options: object_store::PutMultipartOptions,
+        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+            self.inner.put_multipart_opts(location, options).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &object_store::path::Path,
+            options: object_store::GetOptions,
+        ) -> object_store::Result<object_store::GetResult> {
+            self.inner.get_opts(location, options).await
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&object_store::path::Path>,
+        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
+        {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&object_store::path::Path>,
+        ) -> object_store::Result<object_store::ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &object_store::path::Path,
+            to: &object_store::path::Path,
+            options: object_store::CopyOptions,
+        ) -> object_store::Result<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
+
+        fn delete_stream(
+            &self,
+            locations: futures::stream::BoxStream<
+                'static,
+                object_store::Result<object_store::path::Path>,
+            >,
+        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::path::Path>>
+        {
+            self.inner.delete_stream(locations)
+        }
+    }
+
+    fn timed_out() -> object_store::Error {
+        object_store::Error::Generic {
+            store: "S3",
+            source: "operation timed out".into(),
+        }
+    }
+
+    fn forbidden() -> object_store::Error {
+        object_store::Error::PermissionDenied {
+            path: "blocks".to_string(),
+            source: "injected 403".into(),
+        }
+    }
+
+    /// The compactor's flush must survive a transient object store, and must
+    /// still commit the window's offsets exactly once.
+    ///
+    /// Both halves of the flush are covered: the block goes through the
+    /// [`BlockWriter`], which retries a whole write, and the compaction index
+    /// sidecar goes through a [`RetryingObjectStore`], which retries its put.
+    /// The schedule is injected, so nothing here sleeps.
+    #[tokio::test]
+    async fn a_flush_rides_out_a_transient_object_store_and_commits_once() {
+        let store = Arc::new(FlakyPutStore::new(2, timed_out));
+        let retry = ObjectStoreRetryPolicy::immediate(4);
+        let block_writer = krabka_blockstore::BlockWriter::with_retry_policy(
+            Arc::clone(&store) as Arc<dyn ObjectStore>,
+            retry,
+        );
+        let sink = super::ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
+            Arc::clone(&store) as Arc<dyn ObjectStore>,
+            retry,
+            ObjectStoreMetrics::unregistered(),
+        ));
+        let record = krabka_client_consumer::ConsumerRecord {
+            topic: crate::WAL_TOPIC.to_string(),
+            partition: 0,
+            offset: 10,
+            leader_epoch: -1,
+            timestamp: 100,
+            key: None,
+            value: Some(bytes::Bytes::from(
+                float_record("tenant-a", "up", "api", 100)
+                    .encode()
+                    .expect("encode wal"),
+            )),
+            headers: Vec::new(),
+        };
+        let mut consumer = PollAndCommit {
+            batches: vec![vec![record]],
+            commit_calls: 0,
+            committed_offsets: Vec::new(),
+        };
+
+        let result = super::run_compactor_consumer_loop(
+            &mut consumer,
+            &block_writer,
+            &sink,
+            super::CompactionLoopConfig {
+                wal_topic: crate::WAL_TOPIC.to_string(),
+                poll_timeout: millis(1),
+                flush_max_rows: 50_000,
+                flush_max_age: hours(1),
+            },
+            |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
+        )
+        .await
+        .expect("the flush rides out the transient failures");
+
+        check!(result.writes == 1);
+        // Retried, not merely attempted once.
+        check!(store.attempts() > 2);
+        // ... and committed exactly once, past the window's last offset.
+        check!(consumer.commit_calls == 1);
+        check!(consumer.committed_offsets[0][0].offset == krabka_ids::Offset(11));
+    }
+
+    /// A store that refuses the credential ends the flush on the first
+    /// attempt. The budget is for faults that clear; spending it here would
+    /// only delay the report.
+    #[tokio::test]
+    async fn a_flush_refused_by_the_store_fails_at_once_and_commits_nothing() {
+        let store = Arc::new(FlakyPutStore::new(usize::MAX, forbidden));
+        let retry = ObjectStoreRetryPolicy::immediate(4);
+        let block_writer = krabka_blockstore::BlockWriter::with_retry_policy(
+            Arc::clone(&store) as Arc<dyn ObjectStore>,
+            retry,
+        );
+        let sink = super::ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
+            Arc::clone(&store) as Arc<dyn ObjectStore>,
+            retry,
+            ObjectStoreMetrics::unregistered(),
+        ));
+        let record = krabka_client_consumer::ConsumerRecord {
+            topic: crate::WAL_TOPIC.to_string(),
+            partition: 0,
+            offset: 10,
+            leader_epoch: -1,
+            timestamp: 100,
+            key: None,
+            value: Some(bytes::Bytes::from(
+                float_record("tenant-a", "up", "api", 100)
+                    .encode()
+                    .expect("encode wal"),
+            )),
+            headers: Vec::new(),
+        };
+        let mut consumer = PollAndCommit {
+            batches: vec![vec![record]],
+            commit_calls: 0,
+            committed_offsets: Vec::new(),
+        };
+
+        let failure = super::run_compactor_consumer_loop(
+            &mut consumer,
+            &block_writer,
+            &sink,
+            super::CompactionLoopConfig {
+                wal_topic: crate::WAL_TOPIC.to_string(),
+                poll_timeout: millis(1),
+                flush_max_rows: 50_000,
+                flush_max_age: hours(1),
+            },
+            |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
+        )
+        .await;
+
+        assert!(failure.is_err());
+        check!(store.attempts() == 1);
+        check!(consumer.commit_calls == 0);
     }
 
     #[tokio::test]
@@ -1452,6 +1705,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor consumer loop");
@@ -1582,6 +1836,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor loop");
@@ -1950,6 +2205,7 @@ mod compaction_index_key;
 mod compaction_index_manifest;
 mod compaction_index_sink;
 mod compaction_loop_config;
+mod compaction_loop_context;
 mod compaction_loop_result;
 mod compaction_object_key;
 mod compaction_object_plan;
@@ -2036,6 +2292,7 @@ use compaction_index_key::compaction_index_key;
 pub use compaction_index_manifest::CompactionIndexManifest;
 pub use compaction_index_sink::CompactionIndexSink;
 pub use compaction_loop_config::CompactionLoopConfig;
+pub use compaction_loop_context::CompactionLoopContext;
 pub use compaction_loop_result::CompactionLoopResult;
 pub use compaction_object_key::compaction_object_key;
 pub use compaction_object_plan::CompactionObjectPlan;
@@ -2058,6 +2315,7 @@ pub use compaction_wal_records_from_consumer_records::compaction_wal_records_fro
 pub use compaction_window_error::CompactionWindowError;
 pub use compaction_window_result::CompactionWindowResult;
 pub use compaction_write_error::CompactionWriteError;
+pub use consumer::WalAssignmentConsumer;
 use consumer_build_error::consumer_build_error;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
 pub use default_flush_max_rows::DEFAULT_FLUSH_MAX_ROWS;

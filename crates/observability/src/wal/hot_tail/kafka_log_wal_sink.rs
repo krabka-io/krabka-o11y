@@ -1,7 +1,10 @@
+use std::future::Future;
+
 use super::{
     Acks, Arc, ClientResourcePolicy, LogWalSink, Producer, ProducerError, WalLogRecord,
     WalSinkError, async_trait, build_kafka_wal_record,
 };
+use crate::wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined};
 
 #[derive(Clone)]
 pub struct KafkaLogWalSink {
@@ -48,19 +51,44 @@ impl KafkaLogWalSink {
             .await?;
         Ok(Self::new(producer, topic))
     }
+
+    /// Hands one record to the producer and returns the future for its ack.
+    ///
+    /// The two halves are separate because only the first decides order.
+    /// `Producer::send` appends the record to the partition accumulator, and
+    /// the returned future resolves when the broker acks it.
+    async fn enqueue(
+        &self,
+        record: WalLogRecord,
+    ) -> Result<impl Future<Output = Result<(), WalSinkError>> + use<>, WalSinkError> {
+        let delivery = self
+            .producer
+            .send(build_kafka_wal_record(&self.topic, &record)?)
+            .await;
+        Ok(async move {
+            delivery
+                .await
+                .map_err(|_| WalSinkError::DeliveryCanceled)??;
+            Ok(())
+        })
+    }
 }
 
 #[async_trait]
 impl LogWalSink for KafkaLogWalSink {
     #[cfg_attr(test, mutants::skip)]
     async fn append(&self, record: WalLogRecord) -> Result<(), WalSinkError> {
-        let delivery = self
-            .producer
-            .send(build_kafka_wal_record(&self.topic, &record)?)
-            .await;
-        delivery
-            .await
-            .map_err(|_| WalSinkError::DeliveryCanceled)??;
-        Ok(())
+        self.enqueue(record).await?.await
+    }
+
+    #[cfg_attr(test, mutants::skip)]
+    async fn append_batch(
+        &self,
+        records: Vec<WalLogRecord>,
+    ) -> Result<(), WalBatchError<WalSinkError>> {
+        write_batch_pipelined(records, ProduceWindow::default(), |record| {
+            self.enqueue(record)
+        })
+        .await
     }
 }

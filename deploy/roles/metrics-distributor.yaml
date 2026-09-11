@@ -1,0 +1,9 @@
+# krabka-metrics --target=distributor
+#
+# Prometheus remote-write, OTLP/HTTP and OTLP/gRPC metric ingest, all on the
+# data port. A push is acknowledged only once its WAL append is, so there is
+# nothing buffered in this role to lose on shutdown.
+target: distributor
+listen: 0.0.0.0:4041
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092

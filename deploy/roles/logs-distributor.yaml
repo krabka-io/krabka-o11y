@@ -1,0 +1,13 @@
+# krabka-observability --target=distributor
+#
+# Loki-compatible push (`/loki/api/v1/push`) and OTLP logs, on the data port.
+#
+# Probe this role on the data port, not on 9404. The `accepting-writes` gate
+# that `POST /ingester/prepare_shutdown` clears lives on the data port's
+# readiness; the admin port reports the process gates, of which the
+# distributor has none, so it answers 200 throughout a drain.
+target: distributor
+listen-addr: 0.0.0.0:3100
+admin-listen-addr: 0.0.0.0:9404
+wal-bootstrap-server: broker:9092
+object-store-url: s3://krabka-logs

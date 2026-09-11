@@ -35,6 +35,7 @@ pub fn run(config: ServiceConfig) -> Result<ServiceStatus, Infallible> {
         compactor_accumulation_poll_timeout: _compactor_accumulation_poll_timeout,
         compactor_max_records_per_batch: _compactor_max_records_per_batch,
         compactor_idle_interval: _compactor_idle_interval,
+        all_drain_stage_timeout: _all_drain_stage_timeout,
         compactor_object_store_initial_backoff: _compactor_object_store_initial_backoff,
         compactor_object_store_max_backoff: _compactor_object_store_max_backoff,
         querier_frontier_refresh_interval: _querier_frontier_refresh_interval,

@@ -23,7 +23,7 @@ per signal above them.
 | `krabka-promql` | PromQL: Prometheus' metric query language, with a conformance corpus |
 | `krabka-traceql` | TraceQL: Grafana Tempo's trace query language |
 | `krabka-pprof` | The pprof profile format, read and written |
-| `krabka-metrics` | Prometheus remote-write ingest |
+| `krabka-metrics` | Prometheus remote-write ingest, and the block builder behind it |
 | `krabka-metrics-service` | The PromQL query API, answering what Grafana and Prometheus ask |
 | `krabka-traces` | OTLP trace ingest and TraceQL serving |
 | `krabka-profiles` | Continuous-profiling ingest and pprof serving |
@@ -48,16 +48,46 @@ over the policy in [`deny.toml`](deny.toml).
 
 ## Run
 
-The repository publishes one multi-architecture image with all five service
-binaries. Use an immutable digest in a deployment:
+The repository publishes one `linux/amd64` image that holds the five service
+binaries and `krabka-o11y-bootstrap`. It sets no entrypoint, so a deployment
+names the binary it runs. Use an immutable digest:
 
 ```bash
-docker pull ghcr.io/krabka-io/krabka-o11y@sha256:<digest>
+docker run --rm ghcr.io/krabka-io/krabka-o11y@sha256:<digest> \
+  krabka-metrics --target=distributor --bootstrap=broker:9092
 ```
 
-The runnable deployment is in
-[`krabka-o11y-demo`](https://github.com/krabka-io/krabka-o11y-demo/tree/main/demo/observability).
-It starts one role for each signal with a broker and an object store.
+Bazel builds the image from the same targets `bazel test //...` tests:
+
+```bash
+bazel run //bazel/images/krabka:load     # loads krabka-o11y:dev into Docker
+```
+
+Every signal names its stages with one vocabulary -- `distributor`,
+`block-builder`, `querier`, `query-frontend`, `compactor`, and the ones only
+one signal has -- taken from Loki, Mimir, Tempo and Pyroscope. `--target all`
+runs every role of a signal in one process on one port, which is the shape to
+evaluate the stack in:
+
+```bash
+docker run --rm ghcr.io/krabka-io/krabka-o11y@sha256:<digest> \
+  krabka-observability --target=all --wal-bootstrap-server=broker:9092
+```
+
+[`deploy/`](deploy) holds a Docker Compose stack and a kustomize base that run
+one role of each signal against a broker and an object store. Read
+[`deploy/README.md`](deploy/README.md) first. It records which lifecycle
+property of the binaries each probe, grace period, and volume is wired to, and
+which three of them do not hold.
+
+```bash
+docker compose -f deploy/compose/docker-compose.yaml up -d
+kubectl apply -k deploy
+```
+
+[`krabka-o11y-demo`](https://github.com/krabka-io/krabka-o11y-demo/tree/main/demo/observability)
+is a larger stack around the same image. It adds Grafana, Alloy and an
+instrumented workload, so it shows the signals rather than only serving them.
 
 Provision the topic contract before you start a service:
 
@@ -69,7 +99,9 @@ docker run --rm ghcr.io/krabka-io/krabka-o11y@sha256:<digest> \
 The command creates missing topics and rejects an incompatible existing topic.
 Set `--partitions`, `--replicas`, and `--retention-ms` for the deployment.
 Do not change the partition count after data is written. The WAL partition is
-part of the per-series ordering contract.
+part of the per-series ordering contract. No service binary makes this check
+for itself, so run the command before every role, as the manifests in
+`deploy/` do.
 
 | Topic | Policy | Purpose |
 | --- | --- | --- |

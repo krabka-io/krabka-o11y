@@ -1,0 +1,28 @@
+"""The deployment manifests, and the one thing about them a build can check."""
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["kustomization.yaml"])
+
+sh_test(
+    name = "role_config_test",
+    size = "small",
+    srcs = ["role_config_test.sh"],
+    args = [
+        "$(rootpath //crates/metrics:krabka-metrics)",
+        "$(rootpath //crates/metrics-service:krabka-metrics-service)",
+        "$(rootpath //crates/observability:krabka-observability)",
+        "$(rootpath //crates/profiles:krabka-profiles)",
+        "$(rootpath //crates/traces:krabka-traces)",
+        "$(rootpath :roles/metrics-distributor.yaml)",
+    ],
+    data = [
+        "//crates/metrics:krabka-metrics",
+        "//crates/metrics-service:krabka-metrics-service",
+        "//crates/observability:krabka-observability",
+        "//crates/profiles:krabka-profiles",
+        "//crates/traces:krabka-traces",
+    ] + glob(["roles/*.yaml"]),
+)

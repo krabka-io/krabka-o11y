@@ -12,6 +12,7 @@ use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
 use krabka_client_producer::Producer;
+use krabka_observability::{ConfigFileArgs, argv_with_config_file};
 use krabka_telemetry::OtlpConfig;
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
@@ -54,10 +55,110 @@ mod tests {
     };
     use clap::{CommandFactory as _, Parser};
     use http_body_util::BodyExt;
+    use krabka_broker::{Broker, BrokerConfig};
+    use krabka_observability::{
+        RoleReadiness,
+        topic_contract::{TRACES_TOPICS, TopicSettings, provision_topics},
+    };
     use krabka_units::{minutes, secs};
     use tower::ServiceExt;
 
     use super::*;
+
+    /// Every listener this binary binds, and not one of them on loopback. A
+    /// container that binds loopback is unreachable from outside the pod, and
+    /// the symptom is a health check that fails with nothing in the logs.
+    /// Tempo defaults its receivers to every interface; so does this.
+    #[test]
+    fn default_listen_addresses_are_reachable_from_outside_the_container() {
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "distributor"]).unwrap();
+
+        for (name, addr) in [
+            ("listen", &cli.listen),
+            ("grpc-listen", &cli.grpc_listen),
+            ("otlp-http-listen", &cli.otlp_http_listen),
+            ("jaeger-grpc-listen", &cli.jaeger_grpc_listen),
+            ("jaeger-compact-listen", &cli.jaeger_compact_listen),
+            ("jaeger-http-listen", &cli.jaeger_http_listen),
+            ("zipkin-listen", &cli.zipkin_listen),
+        ] {
+            let parsed: std::net::SocketAddr = addr.parse().expect(name);
+            check!(parsed.ip().is_unspecified(), "--{name} defaults to {addr}");
+        }
+        check!(cli.admin_listen_addr.ip().is_unspecified());
+    }
+
+    /// The binary's own flags, out of a file. The generic precedence rules
+    /// have their own suite; this one is here because a `Cli` that forgot to
+    /// flatten `ConfigFileArgs` would pass every one of those and still
+    /// ignore an operator's file.
+    #[test]
+    fn a_config_file_supplies_this_binary_s_flags() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("krabka.yaml");
+        std::fs::write(&path, "target: querier\nlisten: 0.0.0.0:4444\n").unwrap();
+
+        let argv = krabka_observability::argv_with_config_file::<Cli>(vec![
+            "krabka-traces".into(),
+            "--config.file".into(),
+            path.into_os_string(),
+        ])
+        .unwrap();
+        let cli = Cli::parse_from(argv);
+
+        check!(cli.listen == "0.0.0.0:4444");
+    }
+
+    /// One vocabulary, one spelling.
+    ///
+    /// `--target` is what an operator types; `RoleKind::as_str` is what a
+    /// readiness gate prints, what a manifest carries, and what the other
+    /// three signals' binaries accept for the same stage. Nothing forces the
+    /// two to agree: clap derives its names from the variant identifiers and
+    /// `RoleKind` spells its own, so a stage renamed on one side and not the
+    /// other would give the same role two names, with no error anywhere and
+    /// only a deployment that silently does not start to show for it. This is
+    /// the check that makes them one name. It goes through clap rather than
+    /// reading the source, because clap's rendering is the thing an operator
+    /// meets.
+    #[test]
+    fn every_target_spells_its_role_the_way_the_rest_of_the_stack_does() {
+        let mut mismatched = Vec::new();
+        for target in Target::value_variants() {
+            let typed = target
+                .to_possible_value()
+                .expect("every --target variant is reachable from the command line")
+                .get_name()
+                .to_string();
+            if typed != target.kind().as_str() {
+                mismatched.push((typed.clone(), target.kind().as_str()));
+                continue;
+            }
+            // And the name round-trips: what clap prints is what clap parses.
+            let parsed = Cli::try_parse_from(["krabka-traces", "--target", &typed])
+                .map(|cli| cli.target)
+                .ok();
+            check!(parsed == Some(*target), "--target {typed}");
+        }
+        check!(mismatched.is_empty());
+    }
+
+    /// The composite is a target of this binary, not only of the vocabulary.
+    #[test]
+    fn all_is_a_target_and_names_the_composite_role() {
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "all"]).unwrap();
+
+        check!(cli.target == Target::All);
+        check!(cli.target.kind().is_composite());
+        check!(
+            Target::value_variants()
+                .iter()
+                .filter(|target| target.kind().is_composite())
+                .count()
+                == 1,
+            "only one target composes the others"
+        );
+    }
 
     #[test]
     fn non_dimensioned_cli_arguments_have_environment_backing() {
@@ -333,10 +434,10 @@ mod tests {
     fn distributor_defaults_include_tempo_push_ports() {
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "distributor"]).unwrap();
 
-        assert2::assert!(cli.otlp_http_listen.as_str() == "127.0.0.1:4318");
-        assert2::assert!(cli.jaeger_grpc_listen.as_str() == "127.0.0.1:14250");
-        assert2::assert!(cli.jaeger_http_listen.as_str() == "127.0.0.1:14268");
-        assert2::assert!(cli.zipkin_listen.as_str() == "127.0.0.1:9411");
+        assert2::assert!(cli.otlp_http_listen.as_str() == "0.0.0.0:4318");
+        assert2::assert!(cli.jaeger_grpc_listen.as_str() == "0.0.0.0:14250");
+        assert2::assert!(cli.jaeger_http_listen.as_str() == "0.0.0.0:14268");
+        assert2::assert!(cli.zipkin_listen.as_str() == "0.0.0.0:9411");
     }
 
     #[test]
@@ -842,7 +943,7 @@ mod tests {
             span: test_span([7; 16], [3; 8]),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store).unwrap();
+        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
 
         let response = router
             .oneshot(
@@ -875,7 +976,7 @@ mod tests {
             span: test_span([8; 16], [4; 8]),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store).unwrap();
+        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -921,7 +1022,7 @@ mod tests {
             span: test_span([9; 16], [5; 8]),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store).unwrap();
+        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -953,7 +1054,7 @@ mod tests {
             span: test_span([11; 16], [7; 8]),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store).unwrap();
+        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -994,7 +1095,7 @@ mod tests {
             span: test_span([10; 16], [6; 8]),
         });
         let live_cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let live_router = build_live_store_router(&live_cli, store).unwrap();
+        let live_router = build_live_store_router(&live_cli, store, RoleReadiness::new()).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -1732,7 +1833,9 @@ mod tests {
         .unwrap();
 
         check!(cli.object_store_url == "memory:///tempo/traces");
-        let configured = build_object_store(&cli).unwrap();
+        let configured =
+            build_object_store(&cli, krabka_blockstore::ObjectStoreMetrics::unregistered())
+                .unwrap();
         assert2::assert!(&configured.root == &Url::parse("memory:///tempo/traces").unwrap());
         assert2::assert!(configured.prefix.to_string() == "tempo/traces".to_string());
         assert2::assert!(
@@ -1772,10 +1875,88 @@ mod tests {
         assert2::assert!(cli.target_bytes_per_job == ByteSize::from_bytes(4096));
         check!(build_query_frontend_router(&cli).await.is_ok());
     }
+
+    /// The contract has to stop a start, not merely describe one.
+    ///
+    /// The traces WAL is keyed by trace id, so a role that ran against a topic
+    /// the deployment never provisioned -- or provisioned at a different
+    /// partition count -- would scatter one trace's spans with nothing on the
+    /// wire to say so. The four roles that open a WAL client must refuse; the
+    /// three that never reach a broker must be untouched by the same fault.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_missing_wal_topic_stops_the_roles_that_use_it_and_no_others() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+            .await
+            .expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+
+        // The querier appears twice: it tails the WAL only with an embedded
+        // live store, and reaches no broker without one.
+        let roles: [(&[&str], bool); 9] = [
+            // `all` runs every WAL client this binary has, so it refuses for
+            // the same reason all four of them do -- once, not four times.
+            (&["--target", "all"], true),
+            (&["--target", "distributor"], true),
+            (&["--target", "block-builder"], true),
+            (&["--target", "live-store"], true),
+            (&["--target", "metrics-generator"], true),
+            (&["--target", "querier", "--querier-live-store"], true),
+            (&["--target", "querier"], false),
+            (&["--target", "query-frontend"], false),
+            (&["--target", "compactor"], false),
+        ];
+
+        for (args, refuses) in roles {
+            let cli = cli_with(args, &bootstrap);
+            let outcome = require_role_topics(&cli).await;
+            check!(outcome.is_err() == refuses, "{args:?} before provisioning");
+            if let Err(error) = outcome {
+                check!(error.to_string().contains(TRACES_WAL_TOPIC), "{args:?}");
+            }
+        }
+
+        create_traces_wal_topic(&bootstrap).await;
+
+        for (args, _) in roles {
+            check!(
+                require_role_topics(&cli_with(args, &bootstrap))
+                    .await
+                    .is_ok(),
+                "{args:?} after provisioning"
+            );
+        }
+    }
+
+    fn cli_with(role_flags: &[&str], bootstrap: &str) -> Cli {
+        let mut argv = vec!["krabka-traces"];
+        argv.extend_from_slice(role_flags);
+        argv.extend_from_slice(&["--bootstrap", bootstrap]);
+        Cli::try_parse_from(argv).expect("cli")
+    }
+
+    /// Provisions the traces WAL topic the way the deployment step does,
+    /// through the same call `krabka-o11y-bootstrap` makes.
+    async fn create_traces_wal_topic(bootstrap: &str) {
+        provision_topics(bootstrap, &TRACES_TOPICS, &TopicSettings::single_broker())
+            .await
+            .expect("provision the traces WAL topic");
+    }
 }
 
+/// `--target all` in one child process, driven only through its ports. The
+/// module is in the binary crate so the child can call `run` on a real `Cli`,
+/// and so it builds under Bazel as well as Cargo -- an integration test would
+/// have needed `CARGO_BIN_EXE_krabka-traces`, which only Cargo defines.
+#[cfg(test)]
+mod all_in_one_serves_ingest_and_query;
+
+mod all_role_context;
+mod all_role_stage;
+mod all_role_stages;
 mod alloc;
 mod apply_metrics_generator_cli_overrides;
+mod block_store_gates;
 mod build_live_store_router;
 mod build_object_store;
 mod build_querier_router;
@@ -1792,6 +1973,7 @@ mod indexed_live_source;
 mod ingest_rate_from_cli;
 mod live_i64_param;
 mod live_span_batches;
+mod log_role_outcome;
 mod max_trace_size;
 mod metrics_flags;
 mod parse_client_dispatch_queue_capacity;
@@ -1813,7 +1995,10 @@ mod parse_scan_concat_max;
 mod parse_time_or_legacy_i64;
 mod parse_unix_nano;
 mod promoted_attrs_from_cli;
+mod require_role_topics;
 mod run;
+mod run_all;
+mod run_all_query_frontend;
 mod run_block_builder;
 mod run_compactor;
 mod run_compactor_once;
@@ -1822,6 +2007,7 @@ mod run_live_store;
 mod run_metrics_generator;
 mod run_querier;
 mod run_query_frontend;
+mod shared_object_store;
 mod target;
 mod wal_consumer;
 
@@ -1829,7 +2015,11 @@ mod wal_consumer;
 // the static by attribute, so naming it here imports something nothing
 // reads -- which is a warning, not a link to the allocator.
 
+use all_role_context::AllRoleContext;
+use all_role_stage::{AllRoleStage, all_role_stage};
+use all_role_stages::all_role_stages;
 use apply_metrics_generator_cli_overrides::apply_metrics_generator_cli_overrides;
+use block_store_gates::BlockStoreGates;
 use build_live_store_router::build_live_store_router;
 use build_object_store::build_object_store;
 #[cfg(test)]
@@ -1848,6 +2038,7 @@ use indexed_live_source::IndexedLiveSource;
 use ingest_rate_from_cli::ingest_rate_from_cli;
 use live_i64_param::live_i64_param;
 use live_span_batches::live_span_batches;
+use log_role_outcome::log_role_outcome;
 use max_trace_size::max_trace_size;
 use metrics_flags::MetricsFlags;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
@@ -1869,7 +2060,10 @@ use parse_scan_concat_max::parse_scan_concat_max;
 use parse_time_or_legacy_i64::parse_time_or_legacy_i64;
 use parse_unix_nano::parse_unix_nano;
 use promoted_attrs_from_cli::promoted_attrs_from_cli;
+use require_role_topics::require_role_topics;
 use run::run;
+use run_all::run_all;
+use run_all_query_frontend::run_all_query_frontend;
 use run_block_builder::run_block_builder;
 use run_compactor::run_compactor;
 use run_compactor_once::run_compactor_once;
@@ -1878,12 +2072,20 @@ use run_live_store::run_live_store;
 use run_metrics_generator::run_metrics_generator;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
+use shared_object_store::SharedObjectStore;
 use target::Target;
 use wal_consumer::wal_consumer;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let argv = match argv_with_config_file::<Cli>(std::env::args_os()) {
+        Ok(argv) => argv,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(2);
+        }
+    };
+    let cli = Cli::parse_from(argv);
     // `run` fans out over every role, so its state machine is large; boxing keeps
     // it off the startup task's stack.
     match Box::pin(run(cli)).await {

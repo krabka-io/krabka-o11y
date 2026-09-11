@@ -11,7 +11,12 @@ pub(crate) async fn distributor_dependency_startup_rejects_invalid_policy_before
         "--wal-connect-attempt-timeout=2s",
     ]);
 
-    let Err(error) = build_service_dependencies(&config).await else {
+    let Err(error) = build_service_dependencies(
+        &config,
+        crate::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
+    )
+    .await
+    else {
         panic!("invalid policy must fail before broker connection");
     };
     check!(

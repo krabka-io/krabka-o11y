@@ -13,7 +13,7 @@ pub(crate) fn compactor_policy_uses_defaults_and_cli_overrides() {
 
     let configured = ServiceConfig::try_parse_from([
         "krabka-observability",
-        "--target=compactor",
+        "--target=block-builder",
         "--compactor-wal-poll-timeout=600ms",
         "--compactor-accumulation-window=3s",
         "--compactor-accumulation-poll-timeout=300ms",

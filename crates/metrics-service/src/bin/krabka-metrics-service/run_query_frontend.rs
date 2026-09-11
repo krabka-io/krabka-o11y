@@ -1,7 +1,7 @@
 use super::{
-    Arc, Cli, ObjectStore, PrometheusApiState, QueryFrontendOptions, Shutdown, WalHead,
-    load_runtime_overrides, prometheus_router, query_engine_opts, serve_prometheus_router_joinable,
-    spawn_shutdown_signal_listener,
+    Arc, Cli, ObjectStore, PrometheusApiState, QueryFrontendOptions, RoleReadiness, Shutdown,
+    WalHead, load_runtime_overrides, prometheus_router, query_engine_opts, readiness_router,
+    serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -14,6 +14,7 @@ use super::{
 pub(crate) async fn run_query_frontend(
     cli: Cli,
     metrics: krabka_promql::metrics::ServiceMetrics,
+    readiness: RoleReadiness,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
@@ -43,7 +44,7 @@ pub(crate) async fn run_query_frontend(
     if let Some(overrides) = load_runtime_overrides(cli.runtime_overrides.as_deref())? {
         state = state.with_query_limits(overrides);
     }
-    let router = prometheus_router(Arc::new(state));
+    let router = prometheus_router(Arc::new(state)).merge(readiness_router(readiness));
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
     let (bound, server) =

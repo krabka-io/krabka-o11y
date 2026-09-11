@@ -43,6 +43,7 @@ pub(crate) fn service_dependencies_builder_methods_preserve_existing_fields() {
             "group".to_string(),
             "topic".to_string(),
             client_resource_policy,
+            crate::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
         );
 
     check!(deps.metrics.is_some());

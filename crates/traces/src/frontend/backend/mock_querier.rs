@@ -1,18 +1,20 @@
 use super::{
-    BackendError, MetricsJobRequest, MetricsPartial, Mutex, QuerierBackend, SearchJobRequest,
-    SearchPartial, TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest, TagValuesPartial,
-    TraceByIdJobRequest, TracePartial, async_trait,
+    BTreeSet, BackendError, MetricsJobRequest, MetricsPartial, Mutex, QuerierBackend,
+    SearchJobRequest, SearchPartial, TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest,
+    TagValuesPartial, TraceByIdJobRequest, TracePartial, async_trait,
 };
 
 /// A programmable in-process backend for tests.
 ///
 /// It returns the next stubbed response, FIFO, and the last stub repeats if
-/// more calls arrive. It records every request for assertions.
+/// more calls arrive. It records every request for assertions, including the
+/// querier each was assigned to. [`MockQuerier::fail_querier`] makes one
+/// address behave like a querier that has died between the probe and the job.
 ///
 /// This type is un-gated so that integration tests in `tests/` can construct
 /// it. It is a fixture, not production wiring.
 pub struct MockQuerier {
-    pub(crate) querier_count: usize,
+    pub(crate) dead: Mutex<BTreeSet<String>>,
     pub(crate) search_stubs: Mutex<Vec<SearchPartial>>,
     pub(crate) trace_stubs: Mutex<Vec<TracePartial>>,
     pub(crate) tag_names_stubs: Mutex<Vec<TagNamesPartial>>,
@@ -28,13 +30,8 @@ pub struct MockQuerier {
 impl MockQuerier {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_querier_count(1)
-    }
-
-    #[must_use]
-    pub fn with_querier_count(querier_count: usize) -> Self {
         Self {
-            querier_count: querier_count.max(1),
+            dead: Mutex::new(BTreeSet::new()),
             search_stubs: Mutex::new(Vec::new()),
             trace_stubs: Mutex::new(Vec::new()),
             tag_names_stubs: Mutex::new(Vec::new()),
@@ -46,6 +43,28 @@ impl MockQuerier {
             tag_values_calls: Mutex::new(Vec::new()),
             metrics_calls: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Make every job assigned to `addr` fail, as a querier does when it dies
+    /// after the membership last saw it ready.
+    ///
+    /// # Panics
+    /// Panics if an internal synchronization primitive is poisoned.
+    pub fn fail_querier(&self, addr: impl Into<String>) {
+        self.dead.lock().unwrap().insert(addr.into());
+    }
+
+    /// `Err` when `addr` has been killed with [`MockQuerier::fail_querier`].
+    ///
+    /// # Panics
+    /// Panics if an internal synchronization primitive is poisoned.
+    pub(crate) fn refuse(&self, addr: &str) -> Result<(), BackendError> {
+        if self.dead.lock().unwrap().contains(addr) {
+            return Err(BackendError::Transport(format!(
+                "connection refused by {addr}"
+            )));
+        }
+        Ok(())
     }
 
     /// Enqueue a canned search-job response, FIFO.
@@ -151,12 +170,9 @@ impl Default for MockQuerier {
 
 #[async_trait]
 impl QuerierBackend for MockQuerier {
-    fn querier_count(&self) -> usize {
-        self.querier_count
-    }
-
     async fn search_job(&self, req: &SearchJobRequest) -> Result<SearchPartial, BackendError> {
         self.search_calls.lock().unwrap().push(req.clone());
+        self.refuse(&req.querier)?;
         Ok(Self::pop(&self.search_stubs))
     }
 
@@ -165,6 +181,7 @@ impl QuerierBackend for MockQuerier {
         req: &TraceByIdJobRequest,
     ) -> Result<TracePartial, BackendError> {
         self.trace_calls.lock().unwrap().push(req.clone());
+        self.refuse(&req.querier)?;
         Ok(Self::pop(&self.trace_stubs))
     }
 
@@ -173,6 +190,7 @@ impl QuerierBackend for MockQuerier {
         req: &TagNamesJobRequest,
     ) -> Result<TagNamesPartial, BackendError> {
         self.tag_names_calls.lock().unwrap().push(req.clone());
+        self.refuse(&req.querier)?;
         Ok(Self::pop(&self.tag_names_stubs))
     }
 
@@ -181,11 +199,13 @@ impl QuerierBackend for MockQuerier {
         req: &TagValuesJobRequest,
     ) -> Result<TagValuesPartial, BackendError> {
         self.tag_values_calls.lock().unwrap().push(req.clone());
+        self.refuse(&req.querier)?;
         Ok(Self::pop(&self.tag_values_stubs))
     }
 
     async fn metrics_job(&self, req: &MetricsJobRequest) -> Result<MetricsPartial, BackendError> {
         self.metrics_calls.lock().unwrap().push(req.clone());
+        self.refuse(&req.querier)?;
         Ok(Self::pop(&self.metrics_stubs))
     }
 }

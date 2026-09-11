@@ -1,7 +1,8 @@
 use super::{
-    Arc, BlockMeta, BlockWriter, BuiltSample, ObjectStore, ObjectStoreExt, Path, ProfileRecord,
-    ProfilesError, PutPayload, STACKTRACE_PARTITION, SummaryColumns, SymbolDb, intern_record,
-    object_key, profile_samples_decl, profile_timestamp_ms, samples_batch,
+    Arc, BlockMeta, BlockWriter, BuiltSample, ObjectStore, ObjectStoreExt, ObjectStoreMetrics,
+    ObjectStoreOperation, ObjectStoreRetryPolicy, Path, ProfileRecord, ProfilesError, PutPayload,
+    STACKTRACE_PARTITION, SummaryColumns, SymbolDb, intern_record, object_key,
+    profile_samples_decl, profile_timestamp_ms, retry_object_store, samples_batch,
 };
 
 /// Interns one WAL window's records into a symbol DB and writes the samples as
@@ -21,6 +22,7 @@ pub async fn build_block(
     partition: i32,
     records: &[ProfileRecord],
     offset_range: (i64, i64),
+    metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     if records.is_empty() {
         return Ok(Vec::new());
@@ -93,13 +95,19 @@ pub async fn build_block(
         .await
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
 
-    store
-        .put(
-            &Path::from(format!("{key}.symdb")),
-            PutPayload::from(symdb.encode()),
-        )
-        .await
-        .map_err(|err| ProfilesError::Block(err.to_string()))?;
+    // The symbol side-car is a plain single-shot put, so unlike the block it
+    // can be retried where it stands. Its key is derived from the block's, so
+    // a retry overwrites rather than orphaning a half-written side-car.
+    let symdb_key = Path::from(format!("{key}.symdb"));
+    let symdb_payload = PutPayload::from(symdb.encode());
+    retry_object_store(
+        ObjectStoreRetryPolicy::DEFAULT,
+        ObjectStoreOperation::Put,
+        metrics,
+        || store.put(&symdb_key, symdb_payload.clone()),
+    )
+    .await
+    .map_err(|err| ProfilesError::Block(err.to_string()))?;
 
     Ok(vec![meta])
 }

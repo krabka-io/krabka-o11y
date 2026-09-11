@@ -1,11 +1,26 @@
 name: image
 
+# Builds and publishes the image //bazel/images/krabka describes.
+#
+# It is a Bazel build, not a `docker build`. The binaries in the image are the
+# `rust_binary` outputs the `ci` workflow tests, rather than a third build of
+# the same sources inside a `rust:` container -- see //bazel/images/krabka for
+# why that distinction is the point.
+#
+# Cost: one ubuntu-latest job, the same 90-minute budget the `ci` job carries.
+# It compiles the workspace at `-c opt`, which `ci` does not -- that job builds
+# fastbuild -- so the two do not share a cache. The job it replaces ran a full
+# `cargo build --locked --release` inside buildx on every trigger with no
+# Bazel cache at all, so a warm run here is cheaper and a cold run comparable.
+
 on:
   pull_request:
     paths:
       - .github/workflows/image.yml
-      - .dockerignore
-      - Dockerfile
+      - MODULE.bazel
+      - MODULE.bazel.lock
+      - bazel/images/krabka/**
+      - deploy/**
       - Cargo.lock
       - Cargo.toml
       - crates/**
@@ -18,34 +33,79 @@ permissions:
   contents: read
   packages: write
   id-token: write
+  # For actions/attest-build-provenance. buildx used to produce the provenance
+  # attestation itself; rules_oci does not, so it is attached to the pushed
+  # digest here instead. The SBOM buildx also produced has no replacement yet.
+  attestations: write
 
 jobs:
-  publish:
+  # Two minutes, no Bazel. It catches the manifest errors that only appear when
+  # something renders them: a kustomize base that will not build, or a compose
+  # file with an undefined anchor. `//deploy:role_config_test` covers the other
+  # half, which is a config key that names no flag.
+  manifests:
+    name: render
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - name: kustomize
+        run: kubectl kustomize deploy > /dev/null
+      - name: compose
+        run: docker compose -f deploy/compose/docker-compose.yaml config --quiet
+
+  image:
+    name: build · publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+      # The same reclamation the `ci` job does, for the same reason: the runner
+      # ships ~25 GB of toolchains no Bazel action touches, and an opt build of
+      # this workspace does not fit beside them.
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          df -h /
+      # `--embed_label` is what fills in `org.opencontainers.image.revision`.
+      # Without it the label reads `unstamped`, which is the honest answer for
+      # a build that cannot name its commit.
+      - name: build
+        run: |
+          bazel build -c opt --stamp --embed_label=${{ github.sha }} \
+            //bazel/images/krabka:image //bazel/images/krabka:image.digest
+      - name: digest
+        id: digest
+        run: echo "digest=$(cat bazel-bin/bazel/images/krabka/image.json.sha256)" >> "$GITHUB_OUTPUT"
       - if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
+      - name: push
+        if: github.event_name != 'pull_request'
+        run: |
+          tags=()
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tags+=(--tag="${GITHUB_REF#refs/tags/}")
+          else
+            tags+=(--tag=latest)
+          fi
+          tags+=(--tag="sha-${GITHUB_SHA::12}")
+          bazel run -c opt --stamp --embed_label=${{ github.sha }} \
+            //bazel/images/krabka:push -- "${tags[@]}"
+      - name: attest provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
         with:
-          images: ghcr.io/krabka-io/krabka-o11y
-          tags: |
-            type=sha
-            type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: REVISION=${{ github.sha }}
-          provenance: mode=max
-          sbom: true
+          subject-name: ghcr.io/krabka-io/krabka-o11y
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true

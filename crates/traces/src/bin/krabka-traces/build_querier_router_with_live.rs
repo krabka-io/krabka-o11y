@@ -1,18 +1,24 @@
+use krabka_observability::RoleReadiness;
+
 use super::{
-    Arc, ArcSwap, BlockStore, Cli, HttpConfig, IndexedLiveSource, KrabkaSpanStore, LiveStore,
-    LiveTier, ObjectStore, RemoteLiveSource, RwLock, ServiceMetrics, SharedTraceIndex, TraceIndex,
-    TraceqlEngine, Url, build_object_store, engine_opts_from_cli, trace_querier,
+    Arc, ArcSwap, BlockStore, BlockStoreGates, Cli, HttpConfig, IndexedLiveSource, KrabkaSpanStore,
+    LiveStore, LiveTier, ObjectStore, RemoteLiveSource, RwLock, ServiceMetrics, SharedObjectStore,
+    SharedTraceIndex, TraceIndex, TraceqlEngine, Url, engine_opts_from_cli, trace_querier,
 };
 
 pub(crate) async fn build_querier_router_with_live(
     cli: &Cli,
     metrics: ServiceMetrics,
     live_store: Option<Arc<RwLock<LiveStore>>>,
+    gates: &BlockStoreGates,
+    readiness: RoleReadiness,
+    object_store: &SharedObjectStore,
 ) -> Result<
     (axum::Router, Arc<dyn ObjectStore>, String, SharedTraceIndex),
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    let configured = build_object_store(cli)?;
+    let configured = object_store.get(cli, metrics.object_store.clone()).await?;
+    gates.object_store.mark_ready();
     let trace_index_key = configured.object_key(&cli.trace_index_key);
     let initial = TraceIndex::load_latest_snapshot_or_empty_with_max_bytes(
         &configured.store,
@@ -20,6 +26,7 @@ pub(crate) async fn build_querier_router_with_live(
         cli.index_snapshot_max,
     )
     .await?;
+    gates.trace_index.mark_ready();
     let trace_index: SharedTraceIndex = Arc::new(ArcSwap::from_pointee(initial));
     let blocks = Arc::new(BlockStore::new_with_block_read_max(
         Arc::clone(&configured.store),
@@ -54,6 +61,7 @@ pub(crate) async fn build_querier_router_with_live(
             ..HttpConfig::default()
         },
         metrics,
+        readiness,
     );
     Ok((router, configured.store, trace_index_key, trace_index))
 }

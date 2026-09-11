@@ -81,25 +81,31 @@ impl KrabkaSpanStore {
         options: &ScanOptions,
     ) -> Result<ScanResult, TraceqlError> {
         let scan_job = options.job.as_ref();
-        let (cold_end, live_start) = if scan_job.is_some() {
-            (end_ns, end_ns.saturating_add(1))
-        } else {
-            self.live.as_ref().map_or((end_ns, end_ns + 1), |live| {
-                let frontier = live.block_builder_frontier_ns(tenant);
-                (
-                    end_ns.min(frontier.saturating_sub(1)),
-                    start_ns.max(frontier),
-                )
-            })
-        };
-
         let mut batches = self
-            .cold_batches(tenant, start_ns, cold_end, scan_job)
+            .cold_batches(tenant, start_ns, end_ns, scan_job)
             .await?;
+        // Both tiers are read over the WHOLE query window, and the overlap is
+        // resolved by deduplicating below rather than by cutting the window in
+        // two at the block-builder frontier.
+        //
+        // The frontier partition -- cold below it, hot above -- is only sound
+        // if every span whose `start_ns` is below the frontier has already been
+        // flushed. It has not. A span reaches the hot tier with a start older
+        // than the newest flushed block whenever a client's clock lags, an
+        // exporter batches and holds spans, or a long-running span ends after
+        // its siblings were flushed. Such a span is in no block, and the
+        // frontier excludes it from the hot half too, so it is invisible until
+        // the next flush -- not lost, but silently missing, with nothing
+        // reporting it. Widening the hot read is bounded: the live tier only
+        // ever holds one retention window of spans, whatever the query asks for.
+        //
+        // A sharded scan job addresses one block's row groups, and the query
+        // frontend plans the hot tier as its own `JobShard::Live` alongside the
+        // block jobs, so a block job must not read the hot tier as well.
         if let Some(live) = &self.live
-            && live_start <= end_ns
+            && scan_job.is_none()
         {
-            batches.extend(live.span_batches(tenant, live_start, end_ns).await?);
+            batches.extend(live.span_batches(tenant, start_ns, end_ns).await?);
         }
         // What this scan inspected: the decoded size of the cold+live data read,
         // before filtering (surfaced as the Tempo search `metrics.inspectedBytes`).
@@ -109,6 +115,11 @@ impl KrabkaSpanStore {
                 ByteSize::from_bytes(u64::try_from(b.get_array_memory_size()).unwrap_or(u64::MAX))
             })
             .sum();
+        // Collapse the copies of a span that both tiers hold. This runs before
+        // the nested-set rebuild, which reads each span once per row: a
+        // surviving duplicate would double its parent's `childCount` and skew
+        // the nested-set numbering for the whole trace.
+        let batches = deduplicate_scan_batches(batches)?;
         let batches = recompute_scan_nested_sets(batches, self.scan_concat_max)?;
         let batches = filter_batches_by_matchers(batches, matchers)?;
         let mut expansion_matchers = matchers.to_vec();

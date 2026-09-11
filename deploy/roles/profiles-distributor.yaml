@@ -1,0 +1,7 @@
+# krabka-profiles --target=distributor
+#
+# Pyroscope ingest (`/ingest`) and OTLP profiles, on the data port.
+target: distributor
+listen: 0.0.0.0:4040
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092

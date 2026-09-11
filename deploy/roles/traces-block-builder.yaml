@@ -1,0 +1,16 @@
+# krabka-traces --target=block-builder
+#
+# `object-store-url` defaults to `memory:///`, an in-process store: left
+# unset, this role writes every block into its own heap and the querier finds
+# nothing, with no error on either side.
+#
+# The role notices SIGTERM only at the top of its next loop iteration, so a
+# drain can take up to one `block-builder-window` before the final flush
+# starts. The grace period in the manifests is sized against that.
+target: block-builder
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+object-store-url: s3://krabka-traces
+block-builder-window: 5s
+block-builder-flush-max-records: 50000
+block-builder-flush-max-age: 1m

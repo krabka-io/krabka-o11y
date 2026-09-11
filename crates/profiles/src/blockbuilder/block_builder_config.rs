@@ -1,7 +1,7 @@
 use super::{
     Arc, ByteSize, DEFAULT_FLUSH_MAX_AGE, DEFAULT_FLUSH_RECORDS, DEFAULT_INDEX_SNAPSHOT_MAX,
     DEFAULT_WAL_FETCH_MAX, DEFAULT_WAL_FETCH_PARTITION_MAX, IndexSnapshotRetain, ObjectStore,
-    PROFILES_WAL_TOPIC, ServiceMetrics, Time, millis,
+    ObjectStoreRetryPolicy, PROFILES_WAL_TOPIC, ServiceMetrics, Time, millis,
 };
 
 #[derive(Clone)]
@@ -22,6 +22,11 @@ pub struct BlockBuilderConfig {
     pub poll_timeout: Time,
     pub index_snapshot_max: ByteSize,
     pub index_snapshot_retain: IndexSnapshotRetain,
+    /// How hard a flush tries again when the object store fails in a way that
+    /// could clear on its own. The default rides out a short outage and then
+    /// gives up, so a permanent fault is still reported rather than retried
+    /// forever. Tests inject a schedule that does not sleep.
+    pub object_store_retry: ObjectStoreRetryPolicy,
     /// Optional self-instrumentation metrics. When set, the block-builder adds
     /// to `krabka_profiles_blocks_built_total` the number of blocks that each
     /// flush wrote. `None`, the default, turns metric emission off. The
@@ -49,6 +54,7 @@ impl BlockBuilderConfig {
             poll_timeout: millis(500),
             index_snapshot_max: DEFAULT_INDEX_SNAPSHOT_MAX,
             index_snapshot_retain: IndexSnapshotRetain::default(),
+            object_store_retry: ObjectStoreRetryPolicy::DEFAULT,
             metrics: None,
         }
     }

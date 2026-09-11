@@ -1,0 +1,16 @@
+# krabka-traces --target=distributor
+#
+# Seven listeners: Tempo's HTTP API, OTLP over gRPC and HTTP, three Jaeger
+# receivers and Zipkin. The role supervises all seven and exits if any one of
+# them does, so a port collision stops the process rather than quietly
+# dropping one protocol.
+target: distributor
+listen: 0.0.0.0:3200
+grpc-listen: 0.0.0.0:4317
+otlp-http-listen: 0.0.0.0:4318
+jaeger-grpc-listen: 0.0.0.0:14250
+jaeger-compact-listen: 0.0.0.0:6831
+jaeger-http-listen: 0.0.0.0:14268
+zipkin-listen: 0.0.0.0:9411
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092

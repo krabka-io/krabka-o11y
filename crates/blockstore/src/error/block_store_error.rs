@@ -1,8 +1,10 @@
-use super::{BlockReadFailure, BlockSkipReason, SkippedBlock};
+use super::{BlockReadFailure, BlockSkipReason, ParquetError, SkippedBlock};
 
 /// Errors raised by the block store. Backend errors are stringified so public
-/// errors stay stable across dependency details, except in
-/// [`Self::BlockUnreadable`], where the caller's whole job is to inspect them.
+/// errors stay stable across dependency details, except where a caller's whole
+/// job is to inspect them: [`Self::BlockUnreadable`], which says whether a
+/// scan may leave one block out, and [`Self::Parquet`], which says whether a
+/// failed write is worth attempting again.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BlockStoreError {
@@ -26,14 +28,49 @@ pub enum BlockStoreError {
     #[error("object store error: {0}")]
     ObjectStore(String),
 
+    /// The Parquet layer failed.
+    ///
+    /// The error is kept whole, not stringified, for the same reason
+    /// [`Self::BlockUnreadable`] keeps its source: a *write* that fails
+    /// because the object store went away arrives here and nowhere else. The
+    /// block is streamed through a `BufWriter`, so the Parquet writer is what
+    /// notices, and it reports an [`External`](ParquetError::External) error
+    /// wrapping the I/O error wrapping the backend error. A caller deciding
+    /// whether to retry has to be able to reach that, and a string does not
+    /// let it. See
+    /// [`transient_object_store_error`](crate::transient_object_store_error).
     #[error("parquet error: {0}")]
-    Parquet(String),
+    Parquet(#[source] Box<ParquetError>),
 
     #[error("datafusion error: {0}")]
     DataFusion(String),
 
     #[error("invalid block: {0}")]
     InvalidBlock(String),
+
+    /// A profile series was offered to the profile index without the label
+    /// that carries its profile type.
+    ///
+    /// The profile type is not stored beside the series: a load recomputes it
+    /// from this label. A series that lacks the label therefore has no type to
+    /// be found under, now or after a reload, and a profile written under it
+    /// would store without complaint and answer no query. Ingest's
+    /// multi-value split sets the label on every series it emits, so a series
+    /// without it is a fault in the writer, not in a client's payload.
+    #[error(
+        "profile series {{{labels}}} of tenant `{tenant}` (fingerprint {fingerprint}) \
+         has no `{label}` label, so no profile-type selector could ever reach it"
+    )]
+    MissingProfileTypeLabel {
+        /// The label the series must carry, so the message names it.
+        label: &'static str,
+        /// The tenant the series was offered for.
+        tenant: String,
+        /// The fingerprint the series would have been registered under.
+        fingerprint: u64,
+        /// The series' own labels, rendered `name="value"`, comma separated.
+        labels: String,
+    },
 
     #[error("index snapshot serialization error: {0}")]
     Serde(String),
@@ -89,9 +126,9 @@ impl From<object_store::Error> for BlockStoreError {
     }
 }
 
-impl From<parquet::errors::ParquetError> for BlockStoreError {
-    fn from(error: parquet::errors::ParquetError) -> Self {
-        Self::Parquet(error.to_string())
+impl From<ParquetError> for BlockStoreError {
+    fn from(error: ParquetError) -> Self {
+        Self::Parquet(Box::new(error))
     }
 }
 

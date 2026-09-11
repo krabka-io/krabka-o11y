@@ -30,6 +30,8 @@ mod hist_row;
 mod in_memory_metric_store;
 mod partition_watermark;
 mod prune_stats;
+mod row_chunk_len;
+mod row_chunks;
 
 pub use default_retention::DEFAULT_RETENTION;
 use exemplar_row::ExemplarRow;
@@ -38,3 +40,5 @@ use hist_row::HistRow;
 pub use in_memory_metric_store::InMemoryMetricStore;
 pub use partition_watermark::PartitionWatermark;
 pub use prune_stats::PruneStats;
+use row_chunk_len::ROW_CHUNK_LEN;
+use row_chunks::RowChunks;

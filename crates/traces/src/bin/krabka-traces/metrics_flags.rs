@@ -1,6 +1,6 @@
 use super::Args;
 
-#[derive(Debug, Args)]
+#[derive(Args, Clone, Debug)]
 pub(crate) struct MetricsFlags {
     #[arg(long, env = "KRABKA_TRACES_ENABLE_TARGET_INFO")]
     pub(crate) enable_target_info: bool,

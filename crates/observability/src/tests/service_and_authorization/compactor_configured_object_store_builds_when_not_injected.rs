@@ -9,13 +9,17 @@ pub(crate) fn compactor_configured_object_store_builds_when_not_injected() {
     let config = ServiceConfig::parse_from([
         "krabka-observability",
         "--target",
-        "compactor",
+        "block-builder",
         "--object-store-url",
         &object_store_url,
     ]);
 
-    let configured_store = build_compactor_configured_object_store(&config, None)
-        .expect("valid object-store URL should configure a compactor store");
+    let configured_store = build_compactor_configured_object_store(
+        &config,
+        None,
+        krabka_blockstore::ObjectStoreMetrics::unregistered(),
+    )
+    .expect("valid object-store URL should configure a compactor store");
 
     assert!(
         configured_store.is_some(),

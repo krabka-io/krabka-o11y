@@ -23,6 +23,9 @@ use krabka_metrics_service::{
     install_bundled_rule_groups, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
     run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
+use krabka_observability::{
+    ConfigFileArgs, ReadinessGate, RoleReadiness, argv_with_config_file, readiness_router,
+};
 use krabka_promql::{
     EngineOpts, PrometheusApiState, QueryFrontendOptions, RulerShard, WalHead, prometheus_router,
 };
@@ -34,11 +37,49 @@ use object_store::ObjectStore;
 mod tests {
     use std::sync::{Mutex, OnceLock};
 
-    use clap::Parser;
+    use assert2::check;
+    use clap::{Parser, ValueEnum as _};
 
     use super::*;
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// A service that binds loopback inside a container is unreachable from
+    /// outside the pod, and the symptom is a health check that fails with
+    /// nothing in the logs.
+    #[test]
+    fn default_listen_addresses_are_reachable_from_outside_the_container() {
+        let cli = Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
+
+        assert2::check!(cli.listen.ip().is_unspecified());
+        assert2::check!(cli.listen.port() == 4041);
+        assert2::check!(cli.admin_listen_addr.ip().is_unspecified());
+        assert2::check!(cli.admin_listen_addr.port() == 9404);
+    }
+
+    /// One stage, one spelling. A `--target` value that drifted from the
+    /// shared vocabulary would put a second name on a stage an operator
+    /// already runs under another signal, which is exactly the hazard the
+    /// vocabulary removes. The check goes through clap rather than through the
+    /// enum's `Debug`, because the string clap accepts is the one a manifest
+    /// carries.
+    #[test]
+    fn every_target_is_spelled_as_the_shared_vocabulary_spells_it() {
+        for target in Target::value_variants() {
+            let possible = target
+                .to_possible_value()
+                .expect("every target is a possible value");
+            assert2::check!(possible.get_name() == target.kind().as_str(), "{target:?}");
+            assert2::check!(
+                Cli::try_parse_from(
+                    ["krabka-metrics-service", "--target", target.kind().as_str(),]
+                )
+                .expect("the shared name parses")
+                .target
+                    == *target
+            );
+        }
+    }
 
     #[test]
     fn parses_querier_target() {
@@ -559,19 +600,20 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_stop_predicate_observes_trigger() {
-        // The background loops' stop predicate borrows a cloned receiver; flipping
-        // the shared shutdown must make that borrow read `true`.
+        // The background loops' stop predicate asks a clone of the shared
+        // shutdown; flipping it must make that clone read `true`.
         let shutdown = Shutdown::new();
-        let stop = shutdown.rx.clone();
-        assert2::assert!(!*stop.borrow());
+        let stop = shutdown.clone();
+        assert2::assert!(!stop.is_triggered());
         shutdown.trigger();
-        assert2::assert!(*stop.borrow());
+        assert2::assert!(stop.is_triggered());
     }
 
     #[tokio::test]
     async fn wal_head_consumer_startup_runs_in_background() {
         let shutdown = Shutdown::new();
         let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let readiness = RoleReadiness::new();
 
         let task = spawn_wal_head_consumer_task(
             || async move {
@@ -582,12 +624,125 @@ mod tests {
             "__krabka_metrics_wal".to_string(),
             millis(1),
             shutdown.clone(),
+            readiness.gate("wal-head"),
         );
 
         let signalled = tokio::time::timeout(millis(25).to_std(), shutdown.signalled()).await;
         task.abort();
 
         assert2::assert!(signalled.is_err());
+    }
+
+    /// `GET /ready` against a router, as a probe would ask it.
+    async fn probe_ready(router: &axum::Router) -> (axum::http::StatusCode, String) {
+        use tower::ServiceExt as _;
+
+        let response = router
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/ready")
+                    .body(axum::body::Body::empty())
+                    .expect("readiness probe request"),
+            )
+            .await
+            .expect("readiness probe response");
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("readiness probe body");
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// The querier binds its listener before its WAL head consumer has reached
+    /// the broker. Between the two it can answer a query for the recent window
+    /// with nothing at all -- no error, just an empty result -- so the probe
+    /// must fail until the consumer attaches.
+    ///
+    /// Nothing here sets a readiness flag. The only thing that moves the gate
+    /// is the consumer's own connect resolving, which is what the querier's
+    /// start really waits on.
+    #[tokio::test]
+    async fn readiness_is_false_until_the_wal_head_consumer_attaches() {
+        let readiness = RoleReadiness::new();
+        // The admin port's shape exactly: `/ready` merged beside `/metrics`, so
+        // a lost `Extension` layer shows up here as a 500 rather than in
+        // production as one.
+        let metrics = krabka_promql::metrics::ServiceMetrics::new();
+        let router = krabka_promql::metrics::metrics_router(metrics.registry.clone())
+            .merge(readiness_router(readiness.clone()));
+        let shutdown = Shutdown::new();
+        let (connect_tx, connect_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let task = spawn_wal_head_consumer_task(
+            || async move {
+                let _ = connect_rx.await;
+                Ok(PendingWalHeadConsumer)
+            },
+            krabka_promql::WalHead::new(),
+            "__krabka_metrics_wal".to_string(),
+            millis(1),
+            shutdown.clone(),
+            readiness.gate("wal-head"),
+        );
+
+        assert2::assert!(
+            probe_ready(&router).await
+                == (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "not ready: wal-head\n".to_string()
+                )
+        );
+
+        connect_tx.send(()).expect("release the consumer connect");
+        // Progress poll, not a run-duration budget: wait for the connect the
+        // line above released to be observed, however loaded the machine is.
+        for _ in 0..2_000 {
+            if readiness.is_ready() {
+                break;
+            }
+            tokio::time::sleep(millis(1).to_std()).await;
+        }
+
+        assert2::assert!(
+            probe_ready(&router).await == (axum::http::StatusCode::OK, "ready\n".to_string())
+        );
+
+        task.abort();
+    }
+
+    /// The contract has to stop a start, not merely describe one.
+    ///
+    /// With no `--wal-bootstrap` a querier or query-frontend serves compacted
+    /// blocks alone and reaches no broker, so there is no topic to check and
+    /// nothing to refuse. Name a broker and the check becomes a condition of
+    /// starting -- including when the address answers nothing, which is a role
+    /// that would otherwise bind its port and serve a recent window that is
+    /// permanently empty.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn only_a_role_that_names_a_broker_is_held_to_the_topic_contract() {
+        // Bound and dropped, so the address is one nothing answers on.
+        let unused = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let unreachable = unused.local_addr().expect("local address").to_string();
+        drop(unused);
+
+        for target in ["querier", "query-frontend", "ruler"] {
+            let without = Cli::try_parse_from(["krabka-metrics-service", "--target", target])
+                .expect("cli without a broker");
+            check!(require_role_topics(&without).await.is_ok(), "{target}");
+
+            let with = Cli::try_parse_from([
+                "krabka-metrics-service",
+                "--target",
+                target,
+                "--wal-bootstrap",
+                &unreachable,
+            ])
+            .expect("cli with an unreachable broker");
+            check!(require_role_topics(&with).await.is_err(), "{target}");
+        }
     }
 
     struct PendingWalHeadConsumer;
@@ -615,6 +770,12 @@ mod tests {
     }
 }
 
+/// A `SIGTERM` sent to the real querier composition has to end the process,
+/// not merely reach a handler. The suite runs the role in a child and asserts
+/// on its exit status.
+#[cfg(all(test, unix))]
+mod sigterm_exits_the_querier;
+
 mod alloc;
 mod cli;
 mod load_runtime_overrides;
@@ -624,6 +785,7 @@ mod parse_external_label;
 mod parse_positive_usize;
 mod parse_remote_read_max_body;
 mod query_engine_opts;
+mod require_role_topics;
 mod run_querier;
 mod run_query_frontend;
 mod run_ruler;
@@ -644,6 +806,7 @@ use parse_external_label::{ExternalLabels, parse_external_label, parse_external_
 use parse_positive_usize::parse_positive_usize;
 use parse_remote_read_max_body::parse_remote_read_max_body;
 use query_engine_opts::query_engine_opts;
+use require_role_topics::require_role_topics;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
 use run_ruler::run_ruler;
@@ -654,7 +817,7 @@ use target::Target;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
@@ -668,18 +831,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let result = async {
         let metrics = krabka_promql::metrics::ServiceMetrics::new();
-        let admin = krabka_telemetry::profiling::spawn_admin_from_env_with_config(
-            "0.0.0.0:9404",
-            krabka_promql::metrics::metrics_router(metrics.registry.clone()),
+        // One readiness for the process. The admin port answers `/ready` from
+        // the moment it binds, which is what a probe that cannot reach the
+        // data port needs, and the data port's own `/ready` reports the same
+        // gates.
+        let readiness = RoleReadiness::new();
+        let admin = krabka_telemetry::profiling::spawn_admin_with_config(
+            cli.admin_listen_addr,
+            krabka_promql::metrics::metrics_router(metrics.registry.clone())
+                .merge(readiness_router(readiness.clone())),
             cli.profiling.clone(),
         )
         .await?;
 
         let role = async {
+            // Before any producer or consumer exists. A role started against a
+            // WAL whose partition count is not the one the deployment
+            // provisioned reads a re-mapped key space, and a ruler started
+            // against an uncompacted state topic loses every pending alert at
+            // the retention window; neither reports itself.
+            require_role_topics(&cli).await?;
+            // The role in the vocabulary every signal shares, not this
+            // binary's own spelling of it. An operator reading four services'
+            // logs should see one word for one stage.
+            tracing::info!(role = %cli.target.kind(), "krabka-metrics-service starting");
             match cli.target {
-                Target::Querier => run_querier(cli, metrics).await?,
-                Target::QueryFrontend => run_query_frontend(cli, metrics).await?,
-                Target::Ruler => run_ruler(cli, metrics).await?,
+                Target::Querier => run_querier(cli, metrics, readiness).await?,
+                Target::QueryFrontend => run_query_frontend(cli, metrics, readiness).await?,
+                Target::Ruler => run_ruler(cli, metrics, readiness).await?,
             }
             Ok::<(), Box<dyn std::error::Error>>(())
         };
