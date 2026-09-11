@@ -43,6 +43,14 @@ impl LogQueryAuthorizer for BrokerBackedQueryAuthorizer {
                 self.connected.store(true, AtomicOrdering::SeqCst);
                 acls
             }
+            Err(AdminError::Broker {
+                api: "DescribeAcls",
+                code: 54,
+                ..
+            }) => {
+                self.connected.store(true, AtomicOrdering::SeqCst);
+                Vec::new()
+            }
             Err(error) => {
                 self.connected.store(false, AtomicOrdering::SeqCst);
                 return Err(QueryAuthorizationError::Unavailable {

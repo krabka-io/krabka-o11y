@@ -159,19 +159,40 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     // 5. The querier, pointed at the shard indexes the compactor just wrote,
     //    answering a LogQL query over that block.
     let querier_root = tempfile::tempdir().expect("querier data root");
-    let app = build_service_router(
-        &roundtrip_config(
-            Role::Querier,
-            querier_root.path().to_path_buf(),
-            &bootstrap,
-            &wal_topic,
-            Some(format!("file://{}", object_dir.path().display())),
-        ),
-        ServiceDependencies::default(),
-        None,
-    )
-    .await
-    .expect("querier router");
+    let querier_config = roundtrip_config(
+        Role::Querier,
+        querier_root.path().to_path_buf(),
+        &bootstrap,
+        &wal_topic,
+        Some(format!("file://{}", object_dir.path().display())),
+    );
+    let dependencies = build_service_dependencies(&querier_config)
+        .await
+        .expect("querier dependencies");
+    let app = build_service_router(&querier_config, dependencies, None)
+        .await
+        .expect("querier router");
+    let ready_deadline = Instant::now() + BROKER_DEADLINE;
+    loop {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .expect("ready request"),
+            )
+            .await
+            .expect("ready response");
+        if response.status() == StatusCode::OK {
+            break;
+        }
+        assert!(
+            Instant::now() < ready_deadline,
+            "broker-backed querier authorizer did not become ready"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let response = app
         .oneshot(
             Request::builder()
