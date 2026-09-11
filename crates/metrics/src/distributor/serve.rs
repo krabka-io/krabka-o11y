@@ -1,3 +1,5 @@
+use krabka_observability::contain_handler_panics;
+
 use super::{Arc, DistributorState, Future, SocketAddr, TcpListener, router};
 
 /// Binds and serves the metrics distributor until `shutdown` resolves.
@@ -11,7 +13,7 @@ pub async fn serve(
     let listener = TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, router(state))
+        if let Err(error) = axum::serve(listener, contain_handler_panics(router(state)))
             .with_graceful_shutdown(shutdown)
             .await
         {

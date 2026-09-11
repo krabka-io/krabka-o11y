@@ -9,6 +9,10 @@ use super::{
 /// The querier binds its listener without waiting for the broker, so between
 /// bind and connect it can serve a query whose recent half is simply missing.
 /// The gate keeps it out of rotation for exactly that window.
+///
+/// The task does not decide the role's fate. It returns its handle, the caller
+/// supervises it, and any end -- a failed connect, a loop error, a clean
+/// return, or a panic -- reaches the caller as one exit to act on.
 pub(crate) fn spawn_wal_head_consumer_task<C, Build, BuildFuture>(
     build_consumer: Build,
     wal_head: WalHead,
@@ -26,27 +30,25 @@ where
         let mut consumer = match build_consumer().await {
             Ok(consumer) => consumer,
             Err(error) => {
-                tracing::error!(%error, "metrics WAL head consumer failed to start; shutting down");
-                shutdown.trigger();
+                tracing::error!(%error, "metrics WAL head consumer failed to start");
                 return;
             }
         };
         wal_head_gate.mark_ready();
-        let consumer_stop = shutdown.rx.clone();
+        let consumer_stop = shutdown.clone();
         let result = run_wal_head_consumer_loop(
             &mut consumer,
             &wal_head,
             &wal_topic,
             poll_timeout,
-            move |_| *consumer_stop.borrow(),
+            move |_| consumer_stop.is_triggered(),
         )
         .await;
         // The head stops advancing here, so the querier's recent window starts
         // going stale whether the loop ended on an error or on shutdown.
         wal_head_gate.mark_unready();
         if let Err(error) = result {
-            tracing::error!(%error, "metrics WAL head consumer stopped; shutting down");
+            tracing::error!(%error, "metrics WAL head consumer stopped");
         }
-        shutdown.trigger();
     })
 }

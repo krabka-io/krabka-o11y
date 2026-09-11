@@ -1,17 +1,24 @@
 use super::{Arc, CancellationToken, DistributorState, SocketAddr, handle_jaeger_compact_datagram};
 
-/// Serve the Jaeger compact-Thrift UDP receiver until cancelled.
+/// Serve the Jaeger compact-Thrift UDP receiver until cancelled, returning the
+/// bound address and the receive loop's handle.
+///
+/// UDP has no connection for a failure to show up on, so a receiver that has
+/// stopped looks exactly like a client that is not sending. The handle is how
+/// the caller tells the two apart: supervise it, and a receive loop that ends
+/// -- on a socket error, or on a panic decoding one datagram -- ends the role
+/// instead of silently dropping every span sent over this port.
 ///
 /// # Errors
-/// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+/// Returns an error when the socket cannot be bound.
 pub async fn serve_jaeger_compact_udp(
     addr: SocketAddr,
     state: Arc<DistributorState>,
     shutdown: CancellationToken,
-) -> std::io::Result<SocketAddr> {
+) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
     let socket = tokio::net::UdpSocket::bind(addr).await?;
     let bound = socket.local_addr()?;
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let mut buf = vec![0_u8; 65_535];
         loop {
             tokio::select! {
@@ -27,7 +34,6 @@ pub async fn serve_jaeger_compact_udp(
                         }
                         Err(err) => {
                             tracing::error!(error = %err, "jaeger compact UDP receiver stopped");
-                            shutdown.cancel();
                             break;
                         }
                     }
@@ -35,5 +41,5 @@ pub async fn serve_jaeger_compact_udp(
             }
         }
     });
-    Ok(bound)
+    Ok((bound, handle))
 }

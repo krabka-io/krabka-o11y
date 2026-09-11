@@ -34,6 +34,18 @@ pub struct ServiceMetrics {
     pub query_requests: Family<RouteStatusLabel, Counter>,
     /// Per-route query handler latency in seconds.
     pub query_duration: Family<RouteLabel, Histogram>,
+    // WAL-CONSUMER, COMPACTOR and OBJECT-STORE roles.
+    /// WAL consumer progress and receive delay. See
+    /// [`WalConsumerMetrics`] for what lag this measures and what it leaves
+    /// to the broker.
+    pub wal_consumer: WalConsumerMetrics,
+    /// Compaction passes, their outcome and their output.
+    pub compaction: CompactionMetrics,
+    /// Object-store requests, latencies, failures and retries. Give this to
+    /// [`MeteredObjectStore::wrap`](krabka_blockstore::MeteredObjectStore::wrap)
+    /// where the service builds its store, so every read and write this
+    /// process makes is counted once.
+    pub object_store: ObjectStoreMetrics,
 }
 
 impl ServiceMetrics {
@@ -102,8 +114,18 @@ impl ServiceMetrics {
             query_duration.clone(),
         );
 
+        // These three come from the shared modules, so the four signals export
+        // the same instrument under their own prefix and one dashboard reads
+        // all four.
+        let wal_consumer = WalConsumerMetrics::register(&mut registry);
+        let compaction = CompactionMetrics::register(&mut registry);
+        let object_store = ObjectStoreMetrics::register(&mut registry);
+
         Self {
             registry: Arc::new(Mutex::new(registry)),
+            wal_consumer,
+            compaction,
+            object_store,
             ingest_requests,
             ingest_bytes,
             ingest_items,

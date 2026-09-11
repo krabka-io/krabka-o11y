@@ -1,8 +1,8 @@
 use super::{
     BlockWriter, CompactionBatchResult, CompactionBuffer, CompactionClock, CompactionConsumerPoll,
-    CompactionIndexSink, CompactionLoopConfig, CompactionLoopResult, CompactionOffsetCommitter,
-    CompactionPollError, CompactionPollResult, compaction_wal_records_from_consumer_records,
-    flush_buffer,
+    CompactionIndexSink, CompactionLoopConfig, CompactionLoopContext, CompactionLoopResult,
+    CompactionOffsetCommitter, CompactionPollError, CompactionPollResult,
+    compaction_wal_records_from_consumer_records, flush_buffer,
 };
 
 /// Accumulate-then-flush compactor loop with an injectable clock.
@@ -24,7 +24,7 @@ pub async fn run_compactor_loop_with_clock<P, S, C, Stop, Clock>(
     committer: &C,
     config: CompactionLoopConfig,
     mut should_stop: Stop,
-    clock: &Clock,
+    context: CompactionLoopContext<'_, Clock>,
 ) -> Result<CompactionLoopResult, CompactionPollError>
 where
     P: CompactionConsumerPoll + ?Sized,
@@ -36,20 +36,31 @@ where
     let mut summary = CompactionLoopResult::default();
     let mut buffer = CompactionBuffer::new();
     loop {
-        let records = poller.poll(config.poll_timeout).await?;
+        let records = poller
+            .poll(config.poll_timeout)
+            .await
+            .inspect_err(|_| context.metrics.wal_consumer.record_poll_failure())?;
+        context.metrics.wal_consumer.record_poll(&records);
         let polled_records = records.len();
         let wal_records =
             compaction_wal_records_from_consumer_records(&config.wal_topic, &records)?;
         let compacted_records = wal_records.len();
 
-        let now = clock.now();
+        let now = context.clock.now();
         buffer.extend(wal_records, now);
 
         let mut iteration_offsets = Vec::new();
         if buffer.should_flush(&config, now) {
             let buffered = buffer.take();
-            iteration_offsets =
-                flush_buffer(block_writer, index_sink, committer, &buffered, &mut summary).await?;
+            iteration_offsets = flush_buffer(
+                block_writer,
+                index_sink,
+                committer,
+                &buffered,
+                &mut summary,
+                context.metrics,
+            )
+            .await?;
         }
 
         summary.polls += 1;
@@ -69,7 +80,15 @@ where
         if should_stop(&result) {
             // Shutdown: flush whatever is still buffered so no records are lost.
             let buffered = buffer.take();
-            flush_buffer(block_writer, index_sink, committer, &buffered, &mut summary).await?;
+            flush_buffer(
+                block_writer,
+                index_sink,
+                committer,
+                &buffered,
+                &mut summary,
+                context.metrics,
+            )
+            .await?;
             break;
         }
     }

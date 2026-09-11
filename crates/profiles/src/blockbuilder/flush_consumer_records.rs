@@ -1,5 +1,5 @@
 use super::{
-    Arc, BlockMeta, ConsumerRecord, ObjectStore, ProfileIndex, ProfilesError,
+    Arc, BlockMeta, ConsumerRecord, ObjectStore, ObjectStoreMetrics, ProfileIndex, ProfilesError,
     flush_consumer_records_with_index,
 };
 
@@ -10,7 +10,8 @@ pub async fn flush_consumer_records(
     store: &Arc<dyn ObjectStore>,
     records: &[ConsumerRecord],
     flush_records: usize,
+    metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     let mut index = ProfileIndex::new();
-    flush_consumer_records_with_index(store, &mut index, records, flush_records).await
+    flush_consumer_records_with_index(store, &mut index, records, flush_records, metrics).await
 }

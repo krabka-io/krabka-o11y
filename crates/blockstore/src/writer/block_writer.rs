@@ -1,9 +1,9 @@
 use super::{
     AbortOnPartFailureStore, Arc, AsyncArrowWriter, BlockMeta, BlockSchema, BlockStreamWriter,
-    BufWriter, ObjectStore, ObjectStoreRetryPolicy, Path, RecordBatch, Result, SchemaRef,
-    SortKeyCheck, SummaryColumns, block_writer_properties, debug, instrument, is_sorted_by_key,
-    retry_object_store, series_block_schema, sort_batches_by_key, validate_against,
-    validate_batch_schemas,
+    BufWriter, ObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, Path,
+    RecordBatch, Result, SchemaRef, SortKeyCheck, SummaryColumns, block_writer_properties, debug,
+    instrument, is_sorted_by_key, retry_object_store, series_block_schema, sort_batches_by_key,
+    validate_against, validate_batch_schemas,
 };
 
 /// Writes Parquet blocks to an object store.
@@ -20,6 +20,7 @@ use super::{
 pub struct BlockWriter {
     pub(crate) store: Arc<dyn ObjectStore>,
     retry: ObjectStoreRetryPolicy,
+    metrics: ObjectStoreMetrics,
 }
 
 impl BlockWriter {
@@ -33,7 +34,23 @@ impl BlockWriter {
     /// [`Self::new`] with the retry budget chosen by the caller.
     #[must_use]
     pub fn with_retry_policy(store: Arc<dyn ObjectStore>, retry: ObjectStoreRetryPolicy) -> Self {
-        Self { store, retry }
+        Self {
+            store,
+            retry,
+            metrics: ObjectStoreMetrics::unregistered(),
+        }
+    }
+
+    /// The same writer, with its block-write retries counted in `metrics`.
+    ///
+    /// A writer built without this counts nothing, so a service must call it.
+    /// The puts underneath are counted anyway when the store is wrapped in
+    /// [`MeteredObjectStore`](crate::MeteredObjectStore), but the block-write
+    /// retry is the writer's own and only this reaches it.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: ObjectStoreMetrics) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     /// Writes `batches` as a single Parquet block at `object_key`.
@@ -114,22 +131,27 @@ impl BlockWriter {
         // Only the write is retried. The validation and the sort above are
         // deterministic and can only fail permanently, so repeating them would
         // burn the budget on work whose answer cannot change.
-        retry_object_store(self.retry, "write block", || async {
-            // The order is settled above, either by the caller or by the sort,
-            // so the stream writer has nothing left to check.
-            let mut block = self.open(
-                tenant,
-                object_key,
-                schema.clone(),
-                decl,
-                summary.clone(),
-                None,
-            )?;
-            for batch in batches {
-                block.write_batch(batch).await?;
-            }
-            block.finish().await
-        })
+        retry_object_store(
+            self.retry,
+            ObjectStoreOperation::WriteBlock,
+            &self.metrics,
+            || async {
+                // The order is settled above, either by the caller or by the sort,
+                // so the stream writer has nothing left to check.
+                let mut block = self.open(
+                    tenant,
+                    object_key,
+                    schema.clone(),
+                    decl,
+                    summary.clone(),
+                    None,
+                )?;
+                for batch in batches {
+                    block.write_batch(batch).await?;
+                }
+                block.finish().await
+            },
+        )
         .await
     }
 

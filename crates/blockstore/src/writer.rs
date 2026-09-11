@@ -28,6 +28,7 @@ use crate::{
     compaction::BlockLevel,
     error::{BlockStoreError, Result},
     labels::SeriesFingerprint,
+    metrics::{ObjectStoreMetrics, ObjectStoreOperation},
     retry::{ObjectStoreRetryPolicy, retry_object_store},
 };
 

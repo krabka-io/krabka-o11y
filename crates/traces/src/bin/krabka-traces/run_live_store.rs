@@ -1,7 +1,10 @@
+use krabka_observability::{CriticalTaskError, SupervisedTasks, contain_handler_panics};
+
 use super::*;
 
 pub(crate) async fn run_live_store(
     cli: Cli,
+    metrics: ServiceMetrics,
     shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: SocketAddr = cli.listen.parse()?;
@@ -17,22 +20,31 @@ pub(crate) async fn run_live_store(
     .await?;
     let store = Arc::new(RwLock::new(LiveStore::new(cli.retention.nanos_i64())));
     let router = build_live_store_router(&cli, Arc::clone(&store))?;
+    // The consumer is the live tier. Without it the role keeps its port and
+    // answers every search from a store that stopped at the last record it
+    // read, and nothing in the answer says so.
+    let mut tasks = SupervisedTasks::new(shutdown.clone());
     let live_shutdown = shutdown.clone();
-    let live_failure = shutdown.clone();
-    tokio::spawn(async move {
-        if let Err(err) = livestore::run(consumer, store, live_shutdown).await {
+    tasks.spawn("traces live-store consumer", async move {
+        if let Err(err) = livestore::run(consumer, store, metrics, live_shutdown).await {
             tracing::error!(error = %err, "traces live-store consumer stopped");
-            live_failure.cancel();
         }
     });
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     tracing::info!(%bound, "traces live-store listening");
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            shutdown.cancelled().await;
-        })
-        .await?;
-    Ok(())
+    let server_shutdown = shutdown.clone();
+    let server =
+        axum::serve(listener, contain_handler_panics(router)).with_graceful_shutdown(async move {
+            server_shutdown.cancelled().await;
+        });
+    let outcome = tokio::select! {
+        result = server => result.map_err(Into::into),
+        name = tasks.first_unexpected_exit() => Err(
+            Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)),
+        ),
+    };
+    tasks.shutdown().await;
+    outcome
 }

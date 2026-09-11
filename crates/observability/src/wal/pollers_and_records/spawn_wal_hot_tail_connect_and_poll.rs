@@ -34,7 +34,7 @@ pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
                     deferred.client_resource_policy,
                 ) => {
                     match result {
-                        Ok(c) => break c,
+                        Ok(c) => break c.with_metrics(deferred.metrics.clone()),
                         Err(error) => {
                             tracing::warn!(%error, "querier WAL consumer connect failed; retrying");
                             tokio::select! {

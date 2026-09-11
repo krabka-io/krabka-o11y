@@ -11,9 +11,12 @@ pub(crate) async fn serve_role_http(
     let listener = TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
     tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, router)
-            .with_graceful_shutdown(shutdown)
-            .await
+        if let Err(error) = axum::serve(
+            listener,
+            krabka_observability::contain_handler_panics(router),
+        )
+        .with_graceful_shutdown(shutdown)
+        .await
         {
             tracing::warn!(%error, %role_name, "metrics role server stopped with error");
         }

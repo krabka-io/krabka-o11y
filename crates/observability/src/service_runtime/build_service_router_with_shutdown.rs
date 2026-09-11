@@ -43,7 +43,7 @@ pub(crate) async fn build_service_router_with_shutdown(
         Role::Querier => {
             let mut background_tasks = Vec::new();
             let configured_store = if object_store.is_none() {
-                build_configured_object_store(config)?
+                build_configured_object_store(config, metrics.object_store.clone())?
             } else {
                 None
             };
@@ -82,14 +82,20 @@ pub(crate) async fn build_service_router_with_shutdown(
                 .await?;
                 if let (Some(frontier), Some((store, prefix))) = (frontier.clone(), refresh_source)
                 {
-                    spawn_compaction_frontier_refresher(
-                        store,
-                        prefix,
-                        frontier,
-                        hot_tail.clone(),
-                        token.clone(),
-                        config.querier_frontier_refresh_interval,
-                    );
+                    // Named and kept, not dropped: this task is the only thing
+                    // that moves the querier's frontier forward, and a querier
+                    // answering from a frozen frontier says nothing about it.
+                    background_tasks.push((
+                        "querier compaction frontier",
+                        spawn_compaction_frontier_refresher(
+                            store,
+                            prefix,
+                            frontier,
+                            hot_tail.clone(),
+                            token.clone(),
+                            config.querier_frontier_refresh_interval,
+                        ),
+                    ));
                 }
                 background_tasks.push((
                     "querier WAL hot-tail",
@@ -125,14 +131,20 @@ pub(crate) async fn build_service_router_with_shutdown(
                 .await?;
                 if let (Some(frontier), Some((store, prefix))) = (frontier.clone(), refresh_source)
                 {
-                    spawn_compaction_frontier_refresher(
-                        store,
-                        prefix,
-                        frontier,
-                        hot_tail.clone(),
-                        token.clone(),
-                        config.querier_frontier_refresh_interval,
-                    );
+                    // Named and kept, not dropped: this task is the only thing
+                    // that moves the querier's frontier forward, and a querier
+                    // answering from a frozen frontier says nothing about it.
+                    background_tasks.push((
+                        "querier compaction frontier",
+                        spawn_compaction_frontier_refresher(
+                            store,
+                            prefix,
+                            frontier,
+                            hot_tail.clone(),
+                            token.clone(),
+                            config.querier_frontier_refresh_interval,
+                        ),
+                    ));
                 }
 
                 // Spawn the consumer connect + poll loop in a background task.

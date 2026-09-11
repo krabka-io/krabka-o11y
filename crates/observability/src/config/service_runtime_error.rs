@@ -1,6 +1,6 @@
 use super::{
-    AdminError, CompactionFrontierStoreError, CompactorRunError, ConsumerError, Error,
-    LogDeleteRequestStoreError, ProducerError, ServiceConfigError,
+    AdminError, CompactionFrontierStoreError, CompactorRunError, ConsumerError, CriticalTaskError,
+    Error, LogDeleteRequestStoreError, ProducerError, ServiceConfigError,
 };
 
 #[derive(Debug, Error)]
@@ -21,6 +21,6 @@ pub enum ServiceRuntimeError {
     Frontier(#[from] CompactionFrontierStoreError),
     #[error(transparent)]
     DeleteRequests(#[from] LogDeleteRequestStoreError),
-    #[error("critical background task `{0}` stopped unexpectedly")]
-    CriticalTask(&'static str),
+    #[error(transparent)]
+    CriticalTask(#[from] CriticalTaskError),
 }

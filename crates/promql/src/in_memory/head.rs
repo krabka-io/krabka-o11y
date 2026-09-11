@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    sync::{Arc, RwLock},
+    sync::{Arc, PoisonError, RwLock},
 };
 
 use krabka_blockstore::{LabelMatcher, Labels};
@@ -20,24 +20,30 @@ use crate::{
 /// Shared hot-head metric store rebuilt from the metrics WAL tail.
 ///
 /// A read takes a snapshot by cloning the inner `Arc` pointer and holds it for
-/// the whole scan. A write takes the lock and calls `Arc::make_mut`, so it
-/// clones the store whenever a snapshot is outstanding -- which, with a
-/// dashboard refreshing, is most of the time.
+/// the whole scan. A write builds a private copy of the store, mutates that,
+/// and publishes it into the lock in one move.
 ///
-/// Two things keep that clone off the critical path. The store keeps its rows
-/// in chunks that a clone shares by pointer, so the copy is bounded by the open
-/// chunk rather than by the size of the head; and a WAL-tail poll applies its
-/// whole batch through [`WalHead::apply_wal_records_at`], under one lock and
-/// one `Arc::make_mut`, rather than one per record.
+/// The copy is what makes the head survive a fault. Mutating in place would be
+/// cheaper while nothing holds a snapshot, but a panic part-way through the
+/// mutation would then leave a half-applied store behind the lock and poison
+/// it, and every later query and every later WAL record on this querier would
+/// panic on the poison. One bad record would permanently break the role while
+/// the role went on listening. Publishing a finished copy instead means an
+/// unwind drops the copy and leaves the previous store exactly as it was, so
+/// the poison flag carries no information and both paths below clear it.
+///
+/// The copy is cheap by construction: the store keeps its rows in chunks that
+/// a clone shares by pointer, so it is bounded by each tenant's open chunk
+/// rather than by the size of the head. A WAL-tail poll also applies its whole
+/// batch through [`WalHead::apply_wal_records_at`], under one lock and one
+/// copy, rather than one per record.
 ///
 /// A reader never sees a half-applied batch. The writer mutates a store that
-/// nothing else can reach -- either because it is unshared, or because
-/// `Arc::make_mut` gave it a private copy -- and the mutated store becomes
-/// visible only when the write guard drops. A snapshot taken before that point
-/// keeps the store it captured, and the chunks inside it are immutable, so it
-/// observes the head as of the record before the batch. One taken after
-/// observes the head as of the record after it. There is no state in between
-/// that a reader can name.
+/// nothing else can reach, and the mutated store becomes visible only when the
+/// write guard drops. A snapshot taken before that point keeps the store it
+/// captured, and the chunks inside it are immutable, so it observes the head as
+/// of the record before the batch. One taken after observes the head as of the
+/// record after it. There is no state in between that a reader can name.
 #[derive(Clone, Default)]
 pub struct WalHead {
     inner: Arc<RwLock<Arc<InMemoryMetricStore>>>,
@@ -62,70 +68,73 @@ impl WalHead {
         }
     }
 
-    /// Applies one decoded metrics WAL record to the shared hot head.
-    /// # Panics
+    /// Applies `apply` to the shared head and publishes the result.
     ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
+    /// The head changes only if `apply` returns. Should it panic, the copy it
+    /// was writing goes with the unwind and the next reader sees the head as
+    /// the last successful update left it.
+    ///
+    /// This is the single write path, and every other mutating method here is
+    /// one line over it. It is public because it is also the seam that lets a
+    /// test provoke a fault part-way through an update.
+    pub fn update<R>(&self, apply: impl FnOnce(&mut InMemoryMetricStore) -> R) -> R {
+        let mut guard = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        // Cloning the pointer before `make_mut` is what forces the private
+        // copy: with the guard's own reference still outstanding the store is
+        // never unshared, so the mutation below cannot reach what a reader or
+        // the next writer would see.
+        let mut next = Arc::clone(&guard);
+        let outcome = apply(Arc::make_mut(&mut next));
+        *guard = next;
+        outcome
+    }
+
+    /// Applies one decoded metrics WAL record to the shared hot head.
     pub fn apply_wal_record(&self, record: &WalRecord) {
-        let mut guard = self.inner.write().expect("wal head lock poisoned");
-        Arc::make_mut(&mut *guard).apply_wal_record(record);
+        self.update(|store| store.apply_wal_record(record));
     }
 
     /// Applies one decoded metrics WAL record and advances the offset watermarks
     /// for `partition` to include `offset`.
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
     pub fn apply_wal_record_at(
         &self,
         record: &WalRecord,
         partition: PartitionIndex,
         offset: Offset,
     ) {
-        let mut guard = self.inner.write().expect("wal head lock poisoned");
-        let store = Arc::make_mut(&mut *guard);
-        store.apply_wal_record(record);
-        store.record_offset(partition, offset);
+        self.update(|store| {
+            store.apply_wal_record(record);
+            store.record_offset(partition, offset);
+        });
     }
 
     /// Applies decoded metrics WAL records in log order.
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
     pub fn apply_wal_records<'a>(&self, records: impl IntoIterator<Item = &'a WalRecord>) {
-        let mut guard = self.inner.write().expect("wal head lock poisoned");
-        Arc::make_mut(&mut *guard).apply_wal_records(records);
+        self.update(|store| store.apply_wal_records(records));
     }
 
     /// Applies a batch of decoded metrics WAL records in log order, advancing
     /// each record's partition watermark to its offset.
     ///
     /// This is the WAL tail's entry point, and the reason it exists is that the
-    /// per-record form pays one `Arc::make_mut` per record: with a query
-    /// holding a snapshot, a poll of a thousand records deep-copied the head a
-    /// thousand times. Here the batch takes the write lock once and clones at
-    /// most once, whatever its length.
+    /// per-record form pays one store copy per record: a poll of a thousand
+    /// records copied the head a thousand times. Here the batch takes the write
+    /// lock once and copies once, whatever its length.
     ///
     /// The batch is published atomically. Nothing observes the store until the
     /// guard drops at the end, so a concurrent query sees either every record
-    /// in the batch or none of them, never a prefix.
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
+    /// in the batch or none of them, never a prefix. A record that panics
+    /// part-way discards the whole batch rather than publishing a prefix.
     pub fn apply_wal_records_at<'a>(
         &self,
         records: impl IntoIterator<Item = (&'a WalRecord, PartitionIndex, Offset)>,
     ) {
-        let mut guard = self.inner.write().expect("wal head lock poisoned");
-        let store = Arc::make_mut(&mut *guard);
-        for (record, partition, offset) in records {
-            store.apply_wal_record(record);
-            store.record_offset(partition, offset);
-        }
+        self.update(|store| {
+            for (record, partition, offset) in records {
+                store.apply_wal_record(record);
+                store.record_offset(partition, offset);
+            }
+        });
     }
 
     /// The store a query reads, as of now.
@@ -135,11 +144,8 @@ impl WalHead {
     /// scan run for as long as it needs without blocking the WAL tail and
     /// without risking a torn view of it.
     #[must_use]
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned.
     pub fn snapshot(&self) -> Arc<InMemoryMetricStore> {
-        Arc::clone(&self.inner.read().expect("wal head lock poisoned"))
+        Arc::clone(&self.inner.read().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Drops samples older than the retention window from the shared hot head.
@@ -149,66 +155,32 @@ impl WalHead {
     /// metrics and tests. A caller can prune only to bound memory and discard
     /// the stats.
     #[must_use]
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
     pub fn prune(&self, now_ms: i64) -> PruneStats {
-        let mut guard = self.inner.write().expect("wal head lock poisoned");
-        Arc::make_mut(&mut *guard).prune(now_ms)
+        self.update(|store| store.prune(now_ms))
     }
 
     /// The lowest WAL offset materialized in the head for `partition`.
     #[must_use]
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
     pub fn low_water_offset(&self, partition: PartitionIndex) -> Option<Offset> {
-        self.inner
-            .read()
-            .expect("wal head lock poisoned")
-            .low_water_offset(partition)
+        self.snapshot().low_water_offset(partition)
     }
 
     /// The highest WAL offset materialized in the head for `partition`.
     #[must_use]
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
     pub fn high_water_offset(&self, partition: PartitionIndex) -> Option<Offset> {
-        self.inner
-            .read()
-            .expect("wal head lock poisoned")
-            .high_water_offset(partition)
+        self.snapshot().high_water_offset(partition)
     }
 
     /// Snapshot of all per-partition WAL offset watermarks.
     #[must_use]
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
     pub fn watermarks(&self) -> BTreeMap<PartitionIndex, PartitionWatermark> {
-        self.inner
-            .read()
-            .expect("wal head lock poisoned")
-            .watermarks()
-            .clone()
+        self.snapshot().watermarks().clone()
     }
 
     /// The retention window.
     #[must_use]
-    /// # Panics
-    ///
-    /// Panics if the shared metric state is poisoned. Panics if validated series
-    /// data is missing an index entry that the operation needs.
     pub fn retention(&self) -> Time {
-        self.inner
-            .read()
-            .expect("wal head lock poisoned")
-            .retention()
+        self.snapshot().retention()
     }
 }
 

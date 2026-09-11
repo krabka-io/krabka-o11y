@@ -1,3 +1,5 @@
+use krabka_observability::contain_handler_panics;
+
 use super::{Cli, RoleReadiness, TcpListener, querier_router, readiness_router};
 
 pub(crate) async fn run_querier(
@@ -9,7 +11,7 @@ pub(crate) async fn run_querier(
     tracing::info!(%bound, "metrics querier listening");
     axum::serve(
         listener,
-        querier_router().merge(readiness_router(readiness)),
+        contain_handler_panics(querier_router().merge(readiness_router(readiness))),
     )
     .with_graceful_shutdown(async {
         krabka_observability::shutdown_signal().await;

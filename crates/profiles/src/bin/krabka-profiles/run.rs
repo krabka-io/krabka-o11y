@@ -1,3 +1,5 @@
+use krabka_observability::{CriticalTaskError, SupervisedTasks};
+
 use super::*;
 
 #[allow(clippy::too_many_lines)]
@@ -51,16 +53,26 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     metrics: metrics.clone(),
                 });
                 let shutdown = role_shutdown_token();
-                let bound =
+                let mut tasks = SupervisedTasks::new(shutdown.clone());
+                let (bound, server) =
                     serve_supervised(cli.listen, state, readiness, shutdown.clone()).await?;
+                tasks.adopt("profiles distributor HTTP", server);
                 tracing::info!(%bound, "profiles distributor listening");
-                shutdown.cancelled().await;
+                let outcome = tokio::select! {
+                    () = shutdown.cancelled() => Ok(()),
+                    name = tasks.first_unexpected_exit() => {
+                        Err(Box::<dyn std::error::Error>::from(CriticalTaskError(name)))
+                    }
+                };
+                tasks.shutdown().await;
+                outcome?;
             }
             Target::BlockBuilder => {
                 let object_store_gate = readiness.gate("object-store");
                 let shutdown = role_shutdown_token();
-                let configured = build_object_store(&cli.object_store_url)
-                    .map_err(|e| format!("object store: {e}"))?;
+                let configured =
+                    build_object_store(&cli.object_store_url, metrics.object_store.clone())
+                        .map_err(|e| format!("object store: {e}"))?;
                 object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
                 let mut config =
@@ -89,8 +101,9 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 let overrides = load_profiles_limits_overrides_config(
                     cli.profiles_limits_overrides_config.as_deref(),
                 )?;
-                let configured = build_object_store(&cli.object_store_url)
-                    .map_err(|e| format!("object store: {e}"))?;
+                let configured =
+                    build_object_store(&cli.object_store_url, metrics.object_store.clone())
+                        .map_err(|e| format!("object store: {e}"))?;
                 object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
                 let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
@@ -107,23 +120,31 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     cli.debuginfod_urls.clone(),
                     debuginfod_config,
                 )?);
-                spawn_profile_index_refresh(
-                    Arc::clone(&cold),
-                    refresh_store,
-                    index_key.clone(),
-                    cli.index_snapshot_max,
-                    cli.index_refresh_interval,
-                    shutdown.clone(),
+                let mut tasks = SupervisedTasks::new(shutdown.clone());
+                tasks.adopt(
+                    "profiles index refresher",
+                    spawn_profile_index_refresh(
+                        Arc::clone(&cold),
+                        refresh_store,
+                        index_key.clone(),
+                        cli.index_snapshot_max,
+                        cli.index_refresh_interval,
+                        shutdown.clone(),
+                    ),
                 );
                 let hot = WalTailProfileStore::with_retention(RetentionConfig {
                     max_age: cli.hot_store_max_age,
                     max_records: cli.hot_store_max_records,
                 });
-                let wal_tail = spawn_wal_tail(
-                    &cli,
-                    hot.clone(),
-                    client_dispatch_queue_capacity,
-                    client_frame_max,
+                tasks.adopt(
+                    "profiles WAL tail",
+                    spawn_wal_tail(
+                        &cli,
+                        hot.clone(),
+                        client_dispatch_queue_capacity,
+                        client_frame_max,
+                        metrics.wal_consumer.clone(),
+                    ),
                 );
                 let union = Arc::new(UnionProfileStore::new(Arc::new(hot), cold));
                 let state = Arc::new(
@@ -134,15 +155,18 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .with_metrics(metrics.clone()),
                 );
-                let bound = serve_querier(cli.listen, state, readiness, shutdown.clone()).await?;
+                let (bound, server) =
+                    serve_querier(cli.listen, state, readiness, shutdown.clone()).await?;
+                tasks.adopt("profiles querier HTTP", server);
                 tracing::info!(%bound, "profiles querier listening");
-                tokio::select! {
-                    () = shutdown.cancelled() => {}
-                    result = wal_tail => {
-                        shutdown.cancel();
-                        result??;
+                let outcome = tokio::select! {
+                    () = shutdown.cancelled() => Ok(()),
+                    name = tasks.first_unexpected_exit() => {
+                        Err(Box::<dyn std::error::Error>::from(CriticalTaskError(name)))
                     }
-                }
+                };
+                tasks.shutdown().await;
+                outcome?;
             }
             Target::QueryFrontend => {
                 // A querier that answers before its block index is loaded
@@ -154,8 +178,9 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 let overrides = load_profiles_limits_overrides_config(
                     cli.profiles_limits_overrides_config.as_deref(),
                 )?;
-                let configured = build_object_store(&cli.object_store_url)
-                    .map_err(|e| format!("object store: {e}"))?;
+                let configured =
+                    build_object_store(&cli.object_store_url, metrics.object_store.clone())
+                        .map_err(|e| format!("object store: {e}"))?;
                 object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
                 let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
@@ -172,23 +197,31 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     cli.debuginfod_urls.clone(),
                     debuginfod_config,
                 )?);
-                spawn_profile_index_refresh(
-                    Arc::clone(&cold),
-                    refresh_store,
-                    index_key.clone(),
-                    cli.index_snapshot_max,
-                    cli.index_refresh_interval,
-                    shutdown.clone(),
+                let mut tasks = SupervisedTasks::new(shutdown.clone());
+                tasks.adopt(
+                    "profiles index refresher",
+                    spawn_profile_index_refresh(
+                        Arc::clone(&cold),
+                        refresh_store,
+                        index_key.clone(),
+                        cli.index_snapshot_max,
+                        cli.index_refresh_interval,
+                        shutdown.clone(),
+                    ),
                 );
                 let hot = WalTailProfileStore::with_retention(RetentionConfig {
                     max_age: cli.hot_store_max_age,
                     max_records: cli.hot_store_max_records,
                 });
-                let wal_tail = spawn_wal_tail(
-                    &cli,
-                    hot.clone(),
-                    client_dispatch_queue_capacity,
-                    client_frame_max,
+                tasks.adopt(
+                    "profiles WAL tail",
+                    spawn_wal_tail(
+                        &cli,
+                        hot.clone(),
+                        client_dispatch_queue_capacity,
+                        client_frame_max,
+                        metrics.wal_consumer.clone(),
+                    ),
                 );
                 let union = Arc::new(UnionProfileStore::new(Arc::new(hot), cold));
                 let state = Arc::new(
@@ -202,19 +235,22 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
                     .with_metrics(metrics.clone()),
                 );
-                let bound = serve_querier(cli.listen, state, readiness, shutdown.clone()).await?;
+                let (bound, server) =
+                    serve_querier(cli.listen, state, readiness, shutdown.clone()).await?;
+                tasks.adopt("profiles query-frontend HTTP", server);
                 tracing::info!(
                     %bound,
                     shard_width = %cli.query_frontend_shard_width.human(),
                     "profiles query-frontend listening"
                 );
-                tokio::select! {
-                    () = shutdown.cancelled() => {}
-                    result = wal_tail => {
-                        shutdown.cancel();
-                        result??;
+                let outcome = tokio::select! {
+                    () = shutdown.cancelled() => Ok(()),
+                    name = tasks.first_unexpected_exit() => {
+                        Err(Box::<dyn std::error::Error>::from(CriticalTaskError(name)))
                     }
-                }
+                };
+                tasks.shutdown().await;
+                outcome?;
             }
             Target::Symbolizer => {
                 krabka_profiles::symbolizer::run_with_config(
@@ -225,8 +261,9 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             Target::Compactor => {
                 let object_store_gate = readiness.gate("object-store");
-                let configured = build_object_store(&cli.object_store_url)
-                    .map_err(|e| format!("object store: {e}"))?;
+                let configured =
+                    build_object_store(&cli.object_store_url, metrics.object_store.clone())
+                        .map_err(|e| format!("object store: {e}"))?;
                 object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
                 let policy = compaction_policy_from_cli(&cli);
@@ -255,15 +292,20 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         () = shutdown.cancelled() => break,
                         _ = tick.tick() => {}
                     }
-                    match run_compaction_pass(
+                    let started = std::time::Instant::now();
+                    let outcome = run_compaction_pass(
                         &configured.store,
                         &index_key,
                         &cli,
                         policy,
                         downsample,
+                        &metrics,
                     )
-                    .await
-                    {
+                    .await;
+                    metrics
+                        .compaction
+                        .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
+                    match outcome {
                         Ok(compacted_blocks) => tracing::info!(
                             compacted_blocks,
                             downsample_resolution = ?cli.compactor_downsample_resolution,
@@ -271,7 +313,9 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         ),
                         // One failed pass is not a reason to lose the role. The
                         // next tick reloads the index and replans from
-                        // whatever is durable.
+                        // whatever is durable. The counter is what makes that
+                        // visible: without it a role whose every pass fails
+                        // exports what a role with nothing to do exports.
                         Err(error) => {
                             tracing::warn!(%error, "profiles compaction pass failed; retrying on the next tick");
                         }

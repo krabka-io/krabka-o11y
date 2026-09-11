@@ -7,11 +7,12 @@ use super::*;
 /// with no per-block fan-out.
 pub(crate) async fn build_trace_index_catalog(
     cli: &Cli,
+    metrics: &ServiceMetrics,
 ) -> Result<TraceIndexCatalog, Box<dyn std::error::Error + Send + Sync>> {
     if cli.target_bytes_per_job == ByteSize::from_bytes(0) {
         return Ok(TraceIndexCatalog::new(std::collections::BTreeMap::new()));
     }
-    let configured = build_object_store(cli)?;
+    let configured = build_object_store(cli, metrics.object_store.clone())?;
     let trace_index_key = configured.object_key(&cli.trace_index_key);
     let trace_index = TraceIndex::load_latest_snapshot_or_empty_with_max_bytes(
         &configured.store,

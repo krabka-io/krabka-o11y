@@ -39,6 +39,29 @@ impl ServiceDependencies {
         self
     }
 
+    /// The object-store instruments from the shared bundle, when one was
+    /// threaded in.
+    ///
+    /// A role with no bundle has nothing to record into, so its object store
+    /// is wrapped in an unregistered one and exports no series.
+    #[must_use]
+    pub(crate) fn object_store_metrics(&self) -> Option<krabka_blockstore::ObjectStoreMetrics> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.object_store.clone())
+    }
+
+    /// The compaction instruments from the shared bundle, when one was
+    /// threaded in.
+    #[must_use]
+    pub(crate) fn compaction_metrics(
+        &self,
+    ) -> Option<crate::compaction_metrics::CompactionMetrics> {
+        self.metrics
+            .as_ref()
+            .map(|metrics| metrics.compaction.clone())
+    }
+
     /// Shares one readiness between the role's router and whatever else the
     /// binary exposes it on, above all the admin listener.
     #[must_use]
@@ -121,12 +144,14 @@ impl ServiceDependencies {
         group_id: String,
         topic: String,
         client_resource_policy: ClientResourcePolicy,
+        metrics: crate::wal_consumer_metrics::WalConsumerMetrics,
     ) -> Self {
         self.deferred_wal_consumer_connect = Some(DeferredWalConsumerConnect {
             bootstrap,
             group_id,
             topic,
             client_resource_policy,
+            metrics,
         });
         self
     }

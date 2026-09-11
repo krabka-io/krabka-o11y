@@ -136,6 +136,7 @@ async fn a_pushed_profile_lands_in_a_queryable_block() {
         &mut index,
         &wal_records,
         DEFAULT_FLUSH_RECORDS,
+        &krabka_blockstore::ObjectStoreMetrics::unregistered(),
     )
     .await
     .expect("flush wal records into a block");

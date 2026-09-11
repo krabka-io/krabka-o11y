@@ -1777,7 +1777,9 @@ mod tests {
         .unwrap();
 
         check!(cli.object_store_url == "memory:///tempo/traces");
-        let configured = build_object_store(&cli).unwrap();
+        let configured =
+            build_object_store(&cli, krabka_blockstore::ObjectStoreMetrics::unregistered())
+                .unwrap();
         assert2::assert!(&configured.root == &Url::parse("memory:///tempo/traces").unwrap());
         assert2::assert!(configured.prefix.to_string() == "tempo/traces".to_string());
         assert2::assert!(

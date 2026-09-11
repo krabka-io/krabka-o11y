@@ -575,13 +575,13 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_stop_predicate_observes_trigger() {
-        // The background loops' stop predicate borrows a cloned receiver; flipping
-        // the shared shutdown must make that borrow read `true`.
+        // The background loops' stop predicate asks a clone of the shared
+        // shutdown; flipping it must make that clone read `true`.
         let shutdown = Shutdown::new();
-        let stop = shutdown.rx.clone();
-        assert2::assert!(!*stop.borrow());
+        let stop = shutdown.clone();
+        assert2::assert!(!stop.is_triggered());
         shutdown.trigger();
-        assert2::assert!(*stop.borrow());
+        assert2::assert!(stop.is_triggered());
     }
 
     #[tokio::test]

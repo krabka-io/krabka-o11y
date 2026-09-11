@@ -1,8 +1,8 @@
 use super::{
-    Arc, BlockMeta, BlockWriter, BuiltSample, ObjectStore, ObjectStoreExt, ObjectStoreRetryPolicy,
-    Path, ProfileRecord, ProfilesError, PutPayload, STACKTRACE_PARTITION, SummaryColumns, SymbolDb,
-    intern_record, object_key, profile_samples_decl, profile_timestamp_ms, retry_object_store,
-    samples_batch,
+    Arc, BlockMeta, BlockWriter, BuiltSample, ObjectStore, ObjectStoreExt, ObjectStoreMetrics,
+    ObjectStoreOperation, ObjectStoreRetryPolicy, Path, ProfileRecord, ProfilesError, PutPayload,
+    STACKTRACE_PARTITION, SummaryColumns, SymbolDb, intern_record, object_key,
+    profile_samples_decl, profile_timestamp_ms, retry_object_store, samples_batch,
 };
 
 /// Interns one WAL window's records into a symbol DB and writes the samples as
@@ -22,6 +22,7 @@ pub async fn build_block(
     partition: i32,
     records: &[ProfileRecord],
     offset_range: (i64, i64),
+    metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     if records.is_empty() {
         return Ok(Vec::new());
@@ -101,7 +102,8 @@ pub async fn build_block(
     let symdb_payload = PutPayload::from(symdb.encode());
     retry_object_store(
         ObjectStoreRetryPolicy::DEFAULT,
-        "put profile symbol side-car",
+        ObjectStoreOperation::Put,
+        metrics,
         || store.put(&symdb_key, symdb_payload.clone()),
     )
     .await

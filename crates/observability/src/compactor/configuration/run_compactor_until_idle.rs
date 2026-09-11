@@ -15,7 +15,16 @@ pub async fn run_compactor_until_idle(
     object_store: Option<&dyn ObjectStore>,
 ) -> Result<Vec<BlockDescriptor>, ServiceRuntimeError> {
     validate_compactor_policy(config)?;
-    let configured_store = build_compactor_configured_object_store(config, object_store)?;
+    let compaction_metrics = dependencies
+        .compaction_metrics()
+        .unwrap_or_else(crate::compaction_metrics::CompactionMetrics::unregistered);
+    let configured_store = build_compactor_configured_object_store(
+        config,
+        object_store,
+        dependencies
+            .object_store_metrics()
+            .unwrap_or_else(krabka_blockstore::ObjectStoreMetrics::unregistered),
+    )?;
     let (store, object_store_prefix) =
         compactor_object_store(object_store, configured_store.as_ref())?;
     let index_prefix = config
@@ -46,6 +55,7 @@ pub async fn run_compactor_until_idle(
             config.compactor_wal_poll_timeout,
             &delete_requests,
             &mut tenant_indexes,
+            &compaction_metrics,
         )
         .await?;
         if batch_descriptors.is_empty() {

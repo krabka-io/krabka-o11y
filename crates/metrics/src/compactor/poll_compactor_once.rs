@@ -1,7 +1,7 @@
 use super::{
     BlockWriter, CompactionConsumerPoll, CompactionIndexSink, CompactionOffsetCommitter,
-    CompactionPollError, CompactionPollResult, Time, compaction_wal_records_from_consumer_records,
-    process_compaction_record_batch,
+    CompactionPollError, CompactionPollResult, ServiceMetrics, Time,
+    compaction_wal_records_from_consumer_records, process_compaction_record_batch,
 };
 
 /// Polls the metrics WAL consumer once, compacts the returned records, and
@@ -15,13 +15,18 @@ pub async fn poll_compactor_once<P, S, C>(
     committer: &C,
     wal_topic: &str,
     timeout: Time,
+    metrics: &ServiceMetrics,
 ) -> Result<CompactionPollResult, CompactionPollError>
 where
     P: CompactionConsumerPoll + ?Sized,
     S: CompactionIndexSink + ?Sized,
     C: CompactionOffsetCommitter + ?Sized,
 {
-    let records = poller.poll(timeout).await?;
+    let records = poller
+        .poll(timeout)
+        .await
+        .inspect_err(|_| metrics.wal_consumer.record_poll_failure())?;
+    metrics.wal_consumer.record_poll(&records);
     let polled_records = records.len();
     let wal_records = compaction_wal_records_from_consumer_records(wal_topic, &records)?;
     let compacted_records = wal_records.len();

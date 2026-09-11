@@ -7,7 +7,7 @@ use crate::{
     Producer, ProducerError, ProducerHeader, ProducerRecord, SharedCompactionFrontier, Time,
     WalConsumerError, WalLogRecord, WalPosition, WalRecordDecodeError, WalSinkError, async_trait,
     decode_native_kafka_log_record, has_native_kafka_log_headers, hot_tail_bucket_key, minutes,
-    series_fingerprint, sleep,
+    series_fingerprint, sleep, wal_consumer_metrics::WalConsumerMetrics,
 };
 
 mod buffered_log_hot_tail;

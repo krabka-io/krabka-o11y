@@ -1,3 +1,5 @@
+use krabka_observability::{CriticalTaskError, SupervisedTasks};
+
 use super::{
     Arc, AutoOffsetReset, Cli, Consumer, ObjectStore, PrometheusApiState, RoleReadiness, Shutdown,
     WalHead, load_runtime_overrides, prometheus_router, query_engine_opts, readiness_router,
@@ -22,6 +24,11 @@ pub(crate) async fn run_querier(
     let head = WalHead::with_retention(cli.wal_head_retention);
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
+    // The WAL head consumer is the querier's recent window. If it stops, the
+    // role keeps its listener and answers from the last compacted block with
+    // nothing in the response to say the rest is missing, so its exit -- panic
+    // included -- has to end the role.
+    let mut tasks = SupervisedTasks::new(shutdown.token().clone());
     if let Some(bootstrap) = cli.wal_bootstrap.clone() {
         // Configured to read the WAL, so the querier is not ready until it
         // does: until then its answers stop at the last compacted block and
@@ -33,25 +40,28 @@ pub(crate) async fn run_querier(
         let group_id = cli.wal_group_id.clone();
         let client_id = cli.wal_client_id.clone();
         let subscribe_topic = cli.wal_topic.clone();
-        spawn_wal_head_consumer_task(
-            move || async move {
-                Consumer::builder()
-                    .bootstrap(bootstrap)
-                    .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-                    .frame_max(cli.client_frame_max)
-                    .group_id(group_id)
-                    .client_id(client_id)
-                    .auto_offset_reset(AutoOffsetReset::Earliest)
-                    .subscribe([subscribe_topic])
-                    .build()
-                    .await
-                    .map_err(|error| error.to_string())
-            },
-            wal_head,
-            wal_topic,
-            poll_timeout,
-            shutdown.clone(),
-            wal_head_gate,
+        tasks.adopt(
+            "metrics querier WAL head",
+            spawn_wal_head_consumer_task(
+                move || async move {
+                    Consumer::builder()
+                        .bootstrap(bootstrap)
+                        .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
+                        .frame_max(cli.client_frame_max)
+                        .group_id(group_id)
+                        .client_id(client_id)
+                        .auto_offset_reset(AutoOffsetReset::Earliest)
+                        .subscribe([subscribe_topic])
+                        .build()
+                        .await
+                        .map_err(|error| error.to_string())
+                },
+                wal_head,
+                wal_topic,
+                poll_timeout,
+                shutdown.clone(),
+                wal_head_gate,
+            ),
         );
     }
     let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
@@ -74,7 +84,14 @@ pub(crate) async fn run_querier(
         serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
     tracing::info!(%bound, "metrics-service querier listening");
     // Join the server task so in-flight requests drain (graceful shutdown)
-    // before the process exits.
-    server.await?;
-    Ok(())
+    // before the process exits -- unless the WAL head consumer stops first, in
+    // which case the role fails by name and the drain happens on the way out.
+    let outcome = tokio::select! {
+        result = server => result.map_err(Into::into),
+        name = tasks.first_unexpected_exit() => Err(Box::<dyn std::error::Error>::from(
+            CriticalTaskError(name),
+        )),
+    };
+    tasks.shutdown().await;
+    outcome
 }

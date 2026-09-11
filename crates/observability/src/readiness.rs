@@ -8,8 +8,8 @@
 //! is still waiting for.
 
 use crate::{
-    Arc, AtomicBool, AtomicOrdering, Extension, IntoResponse, Mutex, Response, Router, StatusCode,
-    get,
+    Arc, AtomicBool, AtomicOrdering, Extension, IntoResponse, PanicSafeShared, Response, Router,
+    StatusCode, get,
 };
 
 mod draining_gate;

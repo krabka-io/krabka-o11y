@@ -24,6 +24,8 @@ use object_store::{
 use tokio::time::sleep;
 use tracing::warn;
 
+use crate::metrics::{ObjectStoreMetrics, ObjectStoreOperation};
+
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -248,12 +250,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_transient_failure_is_retried_and_a_permanent_one_is_not() {
+        let metrics = ObjectStoreMetrics::unregistered();
         // Two failures then success, against a budget of four: the operation
         // succeeds, having been attempted three times.
         let attempts = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&attempts);
-        let result: Result<(), ObjectStoreError> =
-            retry_object_store(ObjectStoreRetryPolicy::immediate(4), "test", || {
+        let result: Result<(), ObjectStoreError> = retry_object_store(
+            ObjectStoreRetryPolicy::immediate(4),
+            ObjectStoreOperation::Put,
+            &metrics,
+            || {
                 let attempts = Arc::clone(&counted);
                 async move {
                     if attempts.fetch_add(1, Ordering::SeqCst) < 2 {
@@ -262,43 +268,64 @@ mod tests {
                         Ok(())
                     }
                 }
-            })
-            .await;
+            },
+        )
+        .await;
         check!(result.is_ok());
         check!(attempts.load(Ordering::SeqCst) == 3);
+        check!(
+            metrics.retries(ObjectStoreOperation::Put) == 2,
+            "a store that degraded and then recovered moves the retry counter"
+        );
 
         // A permanent failure is reported on the first attempt, not the
         // fourth: the budget is for transient faults, and spending it here
         // only delays the report.
         let attempts = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&attempts);
-        let result: Result<(), ObjectStoreError> =
-            retry_object_store(ObjectStoreRetryPolicy::immediate(4), "test", || {
+        let result: Result<(), ObjectStoreError> = retry_object_store(
+            ObjectStoreRetryPolicy::immediate(4),
+            ObjectStoreOperation::Get,
+            &metrics,
+            || {
                 let attempts = Arc::clone(&counted);
                 async move {
                     attempts.fetch_add(1, Ordering::SeqCst);
                     Err(forbidden())
                 }
-            })
-            .await;
+            },
+        )
+        .await;
         check!(result.is_err());
         check!(attempts.load(Ordering::SeqCst) == 1);
+        check!(
+            metrics.retries(ObjectStoreOperation::Get) == 0,
+            "a permanent failure is never retried, so it counts no retry"
+        );
 
         // And the budget is a budget: a fault that never clears is reported
         // after `max_attempts`, not retried forever.
         let attempts = Arc::new(AtomicUsize::new(0));
         let counted = Arc::clone(&attempts);
-        let result: Result<(), ObjectStoreError> =
-            retry_object_store(ObjectStoreRetryPolicy::immediate(4), "test", || {
+        let result: Result<(), ObjectStoreError> = retry_object_store(
+            ObjectStoreRetryPolicy::immediate(4),
+            ObjectStoreOperation::Copy,
+            &metrics,
+            || {
                 let attempts = Arc::clone(&counted);
                 async move {
                     attempts.fetch_add(1, Ordering::SeqCst);
                     Err(timeout())
                 }
-            })
-            .await;
+            },
+        )
+        .await;
         check!(result.is_err());
         check!(attempts.load(Ordering::SeqCst) == 4);
+        check!(
+            metrics.retries(ObjectStoreOperation::Copy) == 3,
+            "four attempts are three retries"
+        );
     }
 
     #[tokio::test]
@@ -307,6 +334,7 @@ mod tests {
         let store = RetryingObjectStore::wrap(
             Arc::clone(&flaky) as Arc<dyn ObjectStore>,
             ObjectStoreRetryPolicy::immediate(4),
+            ObjectStoreMetrics::unregistered(),
         );
 
         store

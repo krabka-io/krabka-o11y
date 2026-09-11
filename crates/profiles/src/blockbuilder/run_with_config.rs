@@ -36,8 +36,19 @@ pub async fn run_with_config(
     // unwrapped because `build_block` hands it to a `BlockWriter`, which does
     // its own whole-write retry; wrapping it as well would multiply the two
     // budgets together.
-    let index_store =
-        RetryingObjectStore::wrap(Arc::clone(&config.store), config.object_store_retry);
+    // An unwired bundle records nothing, and that is the right reading for a
+    // builder a test drives with no registry behind it.
+    let object_store_metrics = config
+        .metrics
+        .as_ref()
+        .map_or_else(ObjectStoreMetrics::unregistered, |metrics| {
+            metrics.object_store.clone()
+        });
+    let index_store = RetryingObjectStore::wrap(
+        Arc::clone(&config.store),
+        config.object_store_retry,
+        object_store_metrics.clone(),
+    );
     let mut index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
         &index_store,
         &config.index_key,
@@ -64,8 +75,19 @@ pub async fn run_with_config(
         let records = tokio::select! {
             biased;
             () = shutdown.cancelled() => Vec::new(),
-            polled = consumer.poll(config.poll_timeout) => polled
-                .map_err(|err| ProfilesError::Block(format!("consumer poll failed: {err}")))?,
+            polled = consumer.poll(config.poll_timeout) => {
+                let polled = polled.inspect_err(|_| {
+                    if let Some(metrics) = &config.metrics {
+                        metrics.wal_consumer.record_poll_failure();
+                    }
+                });
+                let polled = polled
+                    .map_err(|err| ProfilesError::Block(format!("consumer poll failed: {err}")))?;
+                if let Some(metrics) = &config.metrics {
+                    metrics.wal_consumer.record_poll(&polled);
+                }
+                polled
+            }
         };
         let draining = shutdown.is_cancelled();
         let now = Instant::now();
@@ -105,6 +127,7 @@ pub async fn run_with_config(
                 &mut index,
                 &records,
                 config.flush_records,
+                &object_store_metrics,
             )
             .await?;
             if let Some(metrics) = &config.metrics {

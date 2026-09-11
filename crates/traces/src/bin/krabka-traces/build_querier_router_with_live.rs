@@ -12,7 +12,7 @@ pub(crate) async fn build_querier_router_with_live(
     (axum::Router, Arc<dyn ObjectStore>, String, SharedTraceIndex),
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    let configured = build_object_store(cli)?;
+    let configured = build_object_store(cli, metrics.object_store.clone())?;
     let trace_index_key = configured.object_key(&cli.trace_index_key);
     let initial = TraceIndex::load_latest_snapshot_or_empty_with_max_bytes(
         &configured.store,

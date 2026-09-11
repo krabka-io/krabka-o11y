@@ -62,7 +62,9 @@ pub(crate) async fn run_distributor(
     let server = std::future::IntoFuture::into_future(
         axum::serve(
             listener,
-            distributor_router(state).merge(readiness_router(readiness)),
+            krabka_observability::contain_handler_panics(
+                distributor_router(state).merge(readiness_router(readiness)),
+            ),
         )
         .with_graceful_shutdown(async {
             krabka_observability::shutdown_signal().await;

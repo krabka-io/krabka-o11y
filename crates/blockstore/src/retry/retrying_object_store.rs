@@ -1,7 +1,7 @@
 use super::{
     Arc, BoxStream, CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta,
-    ObjectStore, ObjectStoreRetryPolicy, Path, PutMultipartOptions, PutOptions, PutPayload,
-    PutResult, async_trait, retry_object_store,
+    ObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, Path,
+    PutMultipartOptions, PutOptions, PutPayload, PutResult, async_trait, retry_object_store,
 };
 
 /// An [`ObjectStore`] that retries its single-shot operations when the backend
@@ -31,10 +31,16 @@ use super::{
 pub struct RetryingObjectStore {
     inner: Arc<dyn ObjectStore>,
     policy: ObjectStoreRetryPolicy,
+    metrics: ObjectStoreMetrics,
 }
 
 impl RetryingObjectStore {
-    /// Wraps `inner` so its single-shot operations retry under `policy`.
+    /// Wraps `inner` so its single-shot operations retry under `policy`, and
+    /// so every retry moves `metrics`.
+    ///
+    /// Wrap a store that [`MeteredObjectStore`](crate::MeteredObjectStore)
+    /// already wraps, and give both the same `metrics`. The retry count and
+    /// the attempt count are then two views of one store.
     ///
     /// The result is already an `Arc<dyn ObjectStore>`, which is the only
     /// shape a caller ever wants it in.
@@ -42,8 +48,13 @@ impl RetryingObjectStore {
     pub fn wrap(
         inner: Arc<dyn ObjectStore>,
         policy: ObjectStoreRetryPolicy,
+        metrics: ObjectStoreMetrics,
     ) -> Arc<dyn ObjectStore> {
-        Arc::new(Self { inner, policy })
+        Arc::new(Self {
+            inner,
+            policy,
+            metrics,
+        })
     }
 }
 
@@ -61,10 +72,15 @@ impl ObjectStore for RetryingObjectStore {
         payload: PutPayload,
         options: PutOptions,
     ) -> object_store::Result<PutResult> {
-        retry_object_store(self.policy, "put", || {
-            self.inner
-                .put_opts(location, payload.clone(), options.clone())
-        })
+        retry_object_store(
+            self.policy,
+            ObjectStoreOperation::Put,
+            &self.metrics,
+            || {
+                self.inner
+                    .put_opts(location, payload.clone(), options.clone())
+            },
+        )
         .await
     }
 
@@ -81,9 +97,12 @@ impl ObjectStore for RetryingObjectStore {
         location: &Path,
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
-        retry_object_store(self.policy, "get", || {
-            self.inner.get_opts(location, options.clone())
-        })
+        retry_object_store(
+            self.policy,
+            ObjectStoreOperation::Get,
+            &self.metrics,
+            || self.inner.get_opts(location, options.clone()),
+        )
         .await
     }
 
@@ -92,9 +111,12 @@ impl ObjectStore for RetryingObjectStore {
     }
 
     async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        retry_object_store(self.policy, "list_with_delimiter", || {
-            self.inner.list_with_delimiter(prefix)
-        })
+        retry_object_store(
+            self.policy,
+            ObjectStoreOperation::ListWithDelimiter,
+            &self.metrics,
+            || self.inner.list_with_delimiter(prefix),
+        )
         .await
     }
 
@@ -104,9 +126,12 @@ impl ObjectStore for RetryingObjectStore {
         to: &Path,
         options: CopyOptions,
     ) -> object_store::Result<()> {
-        retry_object_store(self.policy, "copy", || {
-            self.inner.copy_opts(from, to, options.clone())
-        })
+        retry_object_store(
+            self.policy,
+            ObjectStoreOperation::Copy,
+            &self.metrics,
+            || self.inner.copy_opts(from, to, options.clone()),
+        )
         .await
     }
 

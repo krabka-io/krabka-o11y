@@ -14,7 +14,7 @@ pub async fn run_compactor_consumer_loop_with_clock<C, S, Stop, Clock>(
     index_sink: &S,
     config: CompactionLoopConfig,
     mut should_stop: Stop,
-    clock: &Clock,
+    context: CompactionLoopContext<'_, Clock>,
 ) -> Result<CompactionLoopResult, CompactionPollError>
 where
     C: CompactionConsumerPoll + CompactionConsumerCommitMut + ?Sized,
@@ -25,7 +25,11 @@ where
     let mut summary = CompactionLoopResult::default();
     let mut buffer = CompactionBuffer::new();
     loop {
-        let records = consumer.poll(config.poll_timeout).await?;
+        let records = consumer
+            .poll(config.poll_timeout)
+            .await
+            .inspect_err(|_| context.metrics.wal_consumer.record_poll_failure())?;
+        context.metrics.wal_consumer.record_poll(&records);
         let polled_records = records.len();
         let wal_records =
             compaction_wal_records_from_consumer_records(&config.wal_topic, &records)?;
@@ -37,7 +41,7 @@ where
         // compaction work and correctly carries no span.
         let span = compaction_batch_span(&records, compacted_records);
 
-        let now = clock.now();
+        let now = context.clock.now();
         buffer.extend(wal_records, now);
 
         let mut iteration_offsets = Vec::new();
@@ -49,6 +53,7 @@ where
                 consumer,
                 &buffered,
                 &mut summary,
+                context.metrics,
             )
             .instrument(span)
             .await?;
@@ -73,8 +78,15 @@ where
         if should_stop(&result) {
             // Shutdown: flush whatever is still buffered so no records are lost.
             let buffered = buffer.take();
-            flush_buffer_with_consumer(block_writer, index_sink, consumer, &buffered, &mut summary)
-                .await?;
+            flush_buffer_with_consumer(
+                block_writer,
+                index_sink,
+                consumer,
+                &buffered,
+                &mut summary,
+                context.metrics,
+            )
+            .await?;
             break;
         }
     }

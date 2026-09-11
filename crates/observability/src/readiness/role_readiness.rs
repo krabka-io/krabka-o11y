@@ -1,4 +1,4 @@
-use super::{Arc, Mutex, ReadinessGate};
+use super::{Arc, PanicSafeShared, ReadinessGate};
 
 /// The preconditions a role must meet before an orchestrator routes traffic
 /// to it.
@@ -12,9 +12,16 @@ use super::{Arc, Mutex, ReadinessGate};
 /// A role with no gates is ready from construction. That is the honest answer
 /// for a role whose whole startup runs before its listener binds: there is no
 /// window in which it is listening and not yet able to serve.
+///
+/// The gate list sits behind a [`PanicSafeShared`] rather than a plain
+/// `Mutex`, because `/ready` is the one route every role serves and the one an
+/// orchestrator believes. A panic anywhere else in the process that happened
+/// to be holding a plain lock here would poison it, and the probe would then
+/// fail for the life of the pod with no way back -- a role marked permanently
+/// unready by a fault that had nothing to do with its readiness.
 #[derive(Clone, Default)]
 pub struct RoleReadiness {
-    gates: Arc<Mutex<Vec<ReadinessGate>>>,
+    gates: Arc<PanicSafeShared<Vec<ReadinessGate>>>,
 }
 
 impl RoleReadiness {
@@ -26,40 +33,28 @@ impl RoleReadiness {
 
     /// Registers a precondition, which starts unmet, and returns the handle
     /// that the component satisfying it holds.
-    ///
-    /// # Panics
-    /// Panics if another thread panicked while holding the gate list.
     #[must_use]
     pub fn gate(&self, name: &'static str) -> ReadinessGate {
         let gate = ReadinessGate::unmet(name);
-        self.gates
-            .lock()
-            .expect("readiness gate list")
-            .push(gate.clone());
+        self.gates.update(|gates| gates.push(gate.clone()));
         gate
     }
 
     /// Whether every registered precondition currently holds.
-    ///
-    /// # Panics
-    /// Panics if another thread panicked while holding the gate list.
     #[must_use]
     pub fn is_ready(&self) -> bool {
         self.pending().is_empty()
     }
 
     /// The names of the preconditions still unmet, in registration order.
-    ///
-    /// # Panics
-    /// Panics if another thread panicked while holding the gate list.
     #[must_use]
     pub fn pending(&self) -> Vec<&'static str> {
-        self.gates
-            .lock()
-            .expect("readiness gate list")
-            .iter()
-            .filter(|gate| !gate.is_ready())
-            .map(ReadinessGate::name)
-            .collect()
+        self.gates.read(|gates| {
+            gates
+                .iter()
+                .filter(|gate| !gate.is_ready())
+                .map(ReadinessGate::name)
+                .collect()
+        })
     }
 }

@@ -19,6 +19,7 @@ mod labels;
 mod log_blockstore;
 mod matcher;
 mod merge;
+mod metrics;
 mod nested_set;
 mod profile_block;
 mod profile_index;
@@ -82,6 +83,9 @@ pub use matcher::{
 pub use merge::{
     BlockBatchStream, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, SortedMerge, open_block_stream,
     versioned_compaction_key,
+};
+pub use metrics::{
+    MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
 };
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
 pub use profile_block::{ProfileSampleRow, encode_profile_samples};

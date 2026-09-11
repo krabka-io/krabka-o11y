@@ -200,11 +200,14 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     let config = cli.service;
-    let dependencies =
-        build_service_dependencies_with_client_resource_policy(&config, client_resource_policy)
-            .await?
-            .with_metrics(metrics)
-            .with_readiness(readiness);
+    let dependencies = build_service_dependencies_with_client_resource_policy(
+        &config,
+        client_resource_policy,
+        metrics.wal_consumer.clone(),
+    )
+    .await?
+    .with_metrics(metrics)
+    .with_readiness(readiness);
     serve_service(config, dependencies, None).await?;
 
     telemetry.shutdown();

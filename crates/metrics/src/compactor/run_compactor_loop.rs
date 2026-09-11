@@ -1,7 +1,7 @@
 use super::{
     BlockWriter, CompactionConsumerPoll, CompactionIndexSink, CompactionLoopConfig,
-    CompactionLoopResult, CompactionOffsetCommitter, CompactionPollError, CompactionPollResult,
-    SystemCompactionClock, run_compactor_loop_with_clock,
+    CompactionLoopContext, CompactionLoopResult, CompactionOffsetCommitter, CompactionPollError,
+    CompactionPollResult, ServiceMetrics, SystemCompactionClock, run_compactor_loop_with_clock,
 };
 
 /// Runs the compactor polling loop until `should_stop` returns true. It uses the
@@ -15,6 +15,7 @@ pub async fn run_compactor_loop<P, S, C, Stop>(
     committer: &C,
     config: CompactionLoopConfig,
     should_stop: Stop,
+    metrics: &ServiceMetrics,
 ) -> Result<CompactionLoopResult, CompactionPollError>
 where
     P: CompactionConsumerPoll + ?Sized,
@@ -29,7 +30,7 @@ where
         committer,
         config,
         should_stop,
-        &SystemCompactionClock,
+        CompactionLoopContext::new(&SystemCompactionClock, metrics),
     )
     .await
 }

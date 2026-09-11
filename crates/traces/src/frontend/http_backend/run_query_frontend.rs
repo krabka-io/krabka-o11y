@@ -26,7 +26,7 @@ pub async fn run_query_frontend(
     ));
     let app = crate::frontend::server::router_with_backend(qf);
     let listener = tokio::net::TcpListener::bind(listen_addr).await?;
-    axum::serve(listener, app)
+    axum::serve(listener, krabka_observability::contain_handler_panics(app))
         .with_graceful_shutdown(async move { shutdown.cancelled().await })
         .await
 }

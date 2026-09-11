@@ -1,10 +1,12 @@
 use super::{
     AutoOffsetReset, ClientResourcePolicy, Consumer, ConsumerError, KafkaWalHeader, KafkaWalRecord,
-    LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError, WalPosition, async_trait,
+    LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError, WalConsumerMetrics,
+    WalPosition, async_trait,
 };
 
 pub struct KafkaLogWalConsumer {
     pub(crate) consumer: Consumer,
+    metrics: WalConsumerMetrics,
 }
 
 impl KafkaLogWalConsumer {
@@ -46,7 +48,21 @@ impl KafkaLogWalConsumer {
             .subscribe(vec![topic])
             .build()
             .await?;
-        Ok(Self { consumer })
+        Ok(Self {
+            consumer,
+            metrics: WalConsumerMetrics::unregistered(),
+        })
+    }
+
+    /// The same consumer, with its polls counted in `metrics`.
+    ///
+    /// A consumer built without this records nothing, so the role that owns it
+    /// must call this. Both the hot-tail poller and the compactor read through
+    /// this one type, so one call covers the logs signal.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: WalConsumerMetrics) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     #[cfg_attr(test, mutants::skip)]
@@ -59,9 +75,15 @@ impl KafkaLogWalConsumer {
 impl LogWalConsumer for KafkaLogWalConsumer {
     #[cfg_attr(test, mutants::skip)]
     async fn poll(&mut self, timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
-        self.consumer
+        let records = self
+            .consumer
             .poll(timeout)
-            .await?
+            .await
+            .inspect_err(|_| self.metrics.record_poll_failure())?;
+        // Recorded before the mapping below, so a poll that arrived is counted
+        // even when a record in it turns out to carry no value.
+        self.metrics.record_poll(&records);
+        records
             .into_iter()
             .map(|record| {
                 let value = record

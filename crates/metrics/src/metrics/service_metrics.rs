@@ -1,6 +1,7 @@
 use super::{
-    Arc, ByteSize, ByteSizeExt, Counter, Family, Histogram, Mutex, Registry, SharedRegistry,
-    StatusLabel, TenantLabel, Time, TimeExt,
+    Arc, ByteSize, ByteSizeExt, CompactionMetrics, Counter, Family, Histogram, Mutex,
+    ObjectStoreMetrics, Registry, SharedRegistry, StatusLabel, TenantLabel, Time, TimeExt,
+    WalConsumerMetrics,
 };
 
 /// Cheaply-clonable bundle of metric handles. Construct it once with
@@ -20,6 +21,18 @@ pub struct ServiceMetrics {
     // COMPACTOR role.
     /// Metric blocks written to object storage by the compactor.
     pub blocks_compacted: Counter,
+    // WAL-CONSUMER, COMPACTOR and OBJECT-STORE roles.
+    /// WAL consumer progress and receive delay. See
+    /// [`WalConsumerMetrics`] for what lag this measures and what it leaves
+    /// to the broker.
+    pub wal_consumer: WalConsumerMetrics,
+    /// Compaction passes, their outcome and their output.
+    pub compaction: CompactionMetrics,
+    /// Object-store requests, latencies, failures and retries. Give this to
+    /// [`MeteredObjectStore::wrap`](krabka_blockstore::MeteredObjectStore::wrap)
+    /// where the service builds its store, so every read and write this
+    /// process makes is counted once.
+    pub object_store: ObjectStoreMetrics,
 }
 
 impl ServiceMetrics {
@@ -75,8 +88,19 @@ impl ServiceMetrics {
             "Metric blocks written to object storage by the compactor.",
             blocks_compacted.clone(),
         );
+
+        // These three come from the shared modules, so the four signals export
+        // the same instrument under their own prefix and one dashboard reads
+        // all four.
+        let wal_consumer = WalConsumerMetrics::register(&mut registry);
+        let compaction = CompactionMetrics::register(&mut registry);
+        let object_store = ObjectStoreMetrics::register(&mut registry);
+
         Self {
             registry: Arc::new(Mutex::new(registry)),
+            wal_consumer,
+            compaction,
+            object_store,
             ingest_requests,
             ingest_bytes,
             ingest_items,

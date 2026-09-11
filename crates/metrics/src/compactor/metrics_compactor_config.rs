@@ -2,8 +2,8 @@ use super::{
     Arc, AutoOffsetReset, BlockWriter, CompactionLoopConfig, Consumer, DEFAULT_FLUSH_MAX_AGE,
     DEFAULT_FLUSH_MAX_ROWS, DurableCompactionConsumer, MetricsCompactorBuildError,
     MetricsCompactorConfigError, MetricsCompactorRuntime, ObjectStore,
-    ObjectStoreCompactionIndexSink, ObjectStoreRetryPolicy, RetryingObjectStore, Time, TimeExt,
-    consumer_build_error, secs, validate_non_empty,
+    ObjectStoreCompactionIndexSink, ObjectStoreMetrics, ObjectStoreRetryPolicy,
+    RetryingObjectStore, Time, TimeExt, consumer_build_error, secs, validate_non_empty,
 };
 
 /// Configuration for the metrics compactor role.
@@ -69,6 +69,7 @@ impl MetricsCompactorConfig {
     pub fn build_runtime(
         &self,
         store: Arc<dyn ObjectStore>,
+        metrics: ObjectStoreMetrics,
     ) -> Result<MetricsCompactorRuntime, MetricsCompactorConfigError> {
         self.validate()?;
         Ok(MetricsCompactorRuntime {
@@ -80,10 +81,12 @@ impl MetricsCompactorConfig {
             block_writer: BlockWriter::with_retry_policy(
                 Arc::clone(&store),
                 self.object_store_retry,
-            ),
+            )
+            .with_metrics(metrics.clone()),
             index_sink: ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
                 store,
                 self.object_store_retry,
+                metrics,
             )),
             loop_config: CompactionLoopConfig {
                 wal_topic: self.wal_topic.clone(),

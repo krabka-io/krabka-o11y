@@ -3828,6 +3828,7 @@ dependencies = [
  "num-traits",
  "object_store",
  "parquet",
+ "prometheus-client",
  "proptest",
  "refined_type",
  "regex",

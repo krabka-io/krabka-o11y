@@ -1,3 +1,5 @@
+use krabka_observability::{CriticalTaskError, SupervisedTasks};
+
 use super::{
     Arc, CancellationToken, Cli, DistributorState, KafkaSink, Producer, ServiceMetrics, SocketAddr,
     distributor, ingest_rate_from_cli,
@@ -36,19 +38,24 @@ pub(crate) async fn run_distributor(
     let jaeger_compact_addr: SocketAddr = cli.jaeger_compact_listen.parse()?;
     let jaeger_http_addr: SocketAddr = cli.jaeger_http_listen.parse()?;
     let zipkin_addr: SocketAddr = cli.zipkin_listen.parse()?;
+
+    // Seven listeners, one role. A distributor that has lost one of them still
+    // binds the other six and still passes a liveness probe, while everything
+    // pushed to the lost port is dropped. Each accept loop is therefore
+    // supervised by name, and any of them ending -- including by a panic,
+    // which no `if let Err` in the task body could have seen -- ends the role.
+    let mut tasks = SupervisedTasks::new(shutdown.clone());
+
     let grpc_shutdown = shutdown.clone();
-    let grpc_failure = shutdown.clone();
     let grpc_state = Arc::clone(&state);
-    tokio::spawn(async move {
+    tasks.spawn("traces distributor OTLP/gRPC", async move {
         if let Err(err) = distributor::serve_otlp_grpc(grpc_addr, grpc_state, grpc_shutdown).await {
             tracing::error!(error = %err, "traces distributor OTLP/gRPC server stopped");
-            grpc_failure.cancel();
         }
     });
     let jaeger_grpc_shutdown = shutdown.clone();
-    let jaeger_grpc_failure = shutdown.clone();
     let jaeger_grpc_state = Arc::clone(&state);
-    tokio::spawn(async move {
+    tasks.spawn("traces distributor Jaeger gRPC", async move {
         if let Err(err) = distributor::serve_jaeger_grpc(
             jaeger_grpc_addr,
             jaeger_grpc_state,
@@ -57,27 +64,38 @@ pub(crate) async fn run_distributor(
         .await
         {
             tracing::error!(error = %err, "traces distributor Jaeger gRPC server stopped");
-            jaeger_grpc_failure.cancel();
         }
     });
-    let jaeger_compact_bound = distributor::serve_jaeger_compact_udp(
+    let (jaeger_compact_bound, jaeger_compact) = distributor::serve_jaeger_compact_udp(
         jaeger_compact_addr,
         Arc::clone(&state),
         shutdown.clone(),
     )
     .await?;
+    tasks.adopt("traces distributor Jaeger compact UDP", jaeger_compact);
     tracing::info!(%jaeger_compact_bound, "traces distributor Jaeger compact UDP listening");
-    let otlp_http_bound =
+    let (otlp_http_bound, otlp_http) =
         distributor::serve(otlp_http_addr, Arc::clone(&state), shutdown.clone()).await?;
+    tasks.adopt("traces distributor OTLP/HTTP", otlp_http);
     tracing::info!(%otlp_http_bound, "traces distributor OTLP/HTTP listening");
-    let jaeger_http_bound =
+    let (jaeger_http_bound, jaeger_http) =
         distributor::serve(jaeger_http_addr, Arc::clone(&state), shutdown.clone()).await?;
+    tasks.adopt("traces distributor Jaeger thrift HTTP", jaeger_http);
     tracing::info!(%jaeger_http_bound, "traces distributor Jaeger thrift HTTP listening");
-    let zipkin_bound =
+    let (zipkin_bound, zipkin) =
         distributor::serve(zipkin_addr, Arc::clone(&state), shutdown.clone()).await?;
+    tasks.adopt("traces distributor Zipkin HTTP", zipkin);
     tracing::info!(%zipkin_bound, "traces distributor Zipkin HTTP listening");
-    let bound = distributor::serve(addr, state, shutdown.clone()).await?;
+    let (bound, primary) = distributor::serve(addr, state, shutdown.clone()).await?;
+    tasks.adopt("traces distributor HTTP", primary);
     tracing::info!(%bound, "traces distributor listening");
-    shutdown.cancelled().await;
-    Ok(())
+
+    let outcome = tokio::select! {
+        () = shutdown.cancelled() => Ok(()),
+        name = tasks.first_unexpected_exit() => Err(
+            Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)),
+        ),
+    };
+    tasks.shutdown().await;
+    outcome
 }

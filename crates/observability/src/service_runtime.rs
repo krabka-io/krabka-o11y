@@ -1,13 +1,13 @@
 use crate::{
-    AllowAllIngestLimiter, Arc, BufferedLogHotTail, CancellationToken, JoinHandle, ObjectStore,
-    Role, Router, ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceRuntimeError,
-    SharedLogDeleteRequests, SharedLokiRules, SwappableQueryAuthorizer, TcpListener,
-    build_configured_object_store, build_configured_querier_state, build_querier_state,
-    compactor_delete_requests_for_config, compactor_router_with_delete_requests,
-    distributor_router_with_sink, load_querier_shared_compaction_frontier,
-    loki_router_with_readiness, querier_object_store_prefix, run_compactor_until_shutdown,
-    spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller, spawn_query_authorizer_connect,
-    spawn_wal_hot_tail_connect_and_poll,
+    AllowAllIngestLimiter, Arc, BufferedLogHotTail, CancellationToken, CriticalTaskError,
+    JoinHandle, ObjectStore, Role, Router, ServiceConfig, ServiceConfigError, ServiceDependencies,
+    ServiceRuntimeError, SharedLogDeleteRequests, SharedLokiRules, SupervisedTasks,
+    SwappableQueryAuthorizer, TcpListener, build_configured_object_store,
+    build_configured_querier_state, build_querier_state, compactor_delete_requests_for_config,
+    compactor_router_with_delete_requests, contain_handler_panics, distributor_router_with_sink,
+    load_querier_shared_compaction_frontier, loki_router_with_readiness,
+    querier_object_store_prefix, run_compactor_until_shutdown, spawn_compaction_frontier_refresher,
+    spawn_log_hot_tail_poller, spawn_query_authorizer_connect, spawn_wal_hot_tail_connect_and_poll,
 };
 
 mod build_service_router;

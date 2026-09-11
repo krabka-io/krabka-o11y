@@ -19,7 +19,9 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+pub mod compaction_metrics;
 pub mod topic_contract;
+pub mod wal_consumer_metrics;
 
 use async_trait::async_trait;
 use axum::{
@@ -122,7 +124,7 @@ use tokio::{
     task::JoinHandle,
     time::{Duration, sleep},
 };
-use tokio_util::sync::CancellationToken;
+pub use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::metrics::ServiceMetrics;
@@ -136,11 +138,13 @@ mod distributor;
 mod error;
 mod http;
 mod log_level;
+mod panic_containment;
 mod querier;
 mod readiness;
 mod ruler;
 mod service;
 mod service_runtime;
+mod supervision;
 mod wal;
 
 pub use compactor::{
@@ -176,6 +180,7 @@ pub use log_level::{
     LogLevelControl, LogLevelError, Telemetry, init_telemetry, install_json_logging,
     json_logging_layer,
 };
+pub use panic_containment::{PanicSafeShared, contain_handler_panics};
 pub use querier::{
     QuerierState, build_querier_state, execute_metric_query,
     execute_metric_query_from_object_store, execute_metric_query_range,
@@ -195,6 +200,7 @@ pub use service::{
 pub use service_runtime::{
     build_service_router, serve_service, serve_service_listener, shutdown_signal,
 };
+pub use supervision::{CriticalTaskError, SupervisedTasks};
 pub use wal::{
     BufferedLogHotTail, HotTailPollError, InMemoryWalSink, IngestLimitError, KafkaLogWalConsumer,
     KafkaLogWalSink, LogHotTail, LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink,

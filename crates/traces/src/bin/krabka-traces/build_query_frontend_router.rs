@@ -9,7 +9,7 @@ pub(crate) async fn build_query_frontend_router(
 
     let addr: SocketAddr = cli.listen.parse()?;
     let cfg = frontend_config_from_cli(cli, addr)?;
-    let catalog = build_trace_index_catalog(cli).await?;
+    let catalog = build_trace_index_catalog(cli, &ServiceMetrics::new()).await?;
     let backend = HttpQuerier::new(cfg.querier_addrs.clone(), cfg.request_timeout.to_std())?;
     let qf = Arc::new(QueryFrontend::new(
         Arc::new(backend),

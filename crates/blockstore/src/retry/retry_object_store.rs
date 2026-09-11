@@ -1,4 +1,7 @@
-use super::{Error, Future, ObjectStoreRetryPolicy, sleep, transient_object_store_error, warn};
+use super::{
+    Error, Future, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, sleep,
+    transient_object_store_error, warn,
+};
 
 /// Runs `attempt` until it succeeds, fails permanently, or runs out of budget.
 ///
@@ -10,12 +13,18 @@ use super::{Error, Future, ObjectStoreRetryPolicy, sleep, transient_object_store
 /// operation that allocated a fresh name per attempt would need a different
 /// mechanism, and must not use this one.
 ///
+/// Every retry this function fires moves `metrics.operation_retries_total`
+/// for `operation`. That counter is the only thing a store which degrades and
+/// then succeeds on the second attempt moves: the caller gets its result, the
+/// role does not exit, and without the counter the degradation is invisible.
+///
 /// # Errors
 /// Returns the last error `attempt` produced: the first permanent one, or the
 /// transient one that exhausted `policy.max_attempts`.
 pub async fn retry_object_store<T, E, Op, Fut>(
     policy: ObjectStoreRetryPolicy,
-    operation: &str,
+    operation: ObjectStoreOperation,
+    metrics: &ObjectStoreMetrics,
     mut attempt: Op,
 ) -> Result<T, E>
 where
@@ -36,15 +45,16 @@ where
         }
         if attempts_left == 0 {
             warn!(
-                operation,
+                operation = operation.as_str(),
                 attempts = policy.max_attempts.get(),
                 %error,
                 "object-store retry budget exhausted; failing the operation"
             );
             return Err(error);
         }
+        metrics.record_retry(operation);
         warn!(
-            operation,
+            operation = operation.as_str(),
             attempts_left,
             backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
             %error,

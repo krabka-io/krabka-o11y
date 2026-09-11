@@ -156,9 +156,16 @@ async fn querier_over(record: &ProfileRecord) -> axum::Router {
         .add_series(TENANT, labels.fingerprint(), &labels)
         .expect("the record carries __profile_type__");
 
-    let metas = build_block(&store, TENANT, 0, std::slice::from_ref(record), (0, 0))
-        .await
-        .expect("build profiles block");
+    let metas = build_block(
+        &store,
+        TENANT,
+        0,
+        std::slice::from_ref(record),
+        (0, 0),
+        &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+    )
+    .await
+    .expect("build profiles block");
     assert!(!metas.is_empty());
     for meta in &metas {
         index.add_block(meta);

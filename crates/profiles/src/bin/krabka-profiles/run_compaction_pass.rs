@@ -1,5 +1,5 @@
 use super::{
-    Arc, Cli, CompactionPolicy, DownsamplePolicy, ObjectStore, ProfileIndex,
+    Arc, Cli, CompactionPolicy, DownsamplePolicy, ObjectStore, ProfileIndex, ServiceMetrics,
     compact_once_with_policy,
 };
 
@@ -15,6 +15,7 @@ pub(crate) async fn run_compaction_pass(
     cli: &Cli,
     policy: CompactionPolicy,
     downsample: Option<DownsamplePolicy>,
+    metrics: &ServiceMetrics,
 ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let mut index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
         store,
@@ -29,6 +30,7 @@ pub(crate) async fn run_compaction_pass(
     if metas.is_empty() {
         return Ok(0);
     }
+    metrics.compaction.record_output(metas.len() as u64);
     index
         .save_latest_snapshot_with_retain(store, index_key, cli.index_snapshot_retain)
         .await?;

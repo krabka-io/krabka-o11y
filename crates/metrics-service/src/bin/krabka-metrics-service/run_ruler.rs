@@ -1,3 +1,5 @@
+use krabka_observability::{CriticalTaskError, SupervisedTasks};
+
 use super::{
     Arc, AutoOffsetReset, Cli, Consumer, KafkaRecordingRuleWalSink, KafkaRulerStateSink,
     ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink, RoleReadiness,
@@ -111,29 +113,28 @@ pub(crate) async fn run_ruler(
     );
 
     // The ruler state consumer and evaluation loop are critical: both feed
-    // ruler correctness. Their stop predicate observes the shared shutdown, and
-    // if either returns (the loops only return on error, never voluntarily) we
-    // surface it with `error!` and trigger shutdown so the process winds down
-    // loudly rather than silently running headless.
-    let consumer_shutdown = shutdown.clone();
-    let consumer_stop = consumer_shutdown.rx.clone();
-    tokio::spawn(async move {
+    // ruler correctness, and neither loop returns voluntarily. Supervising
+    // them means an exit of any kind -- an error, an early return, or a panic
+    // that no `if let Err` could have seen -- ends the role by name instead of
+    // leaving a ruler that serves its API and evaluates nothing.
+    let mut tasks = SupervisedTasks::new(shutdown.token().clone());
+    let consumer_stop = shutdown.clone();
+    tasks.spawn("metrics ruler state consumer", async move {
         let result = run_ruler_state_consumer_loop(
             &mut state_consumer,
             &state_for_replay,
             &state_topic,
             poll_timeout,
-            move |_| *consumer_stop.borrow(),
+            move |_| consumer_stop.is_triggered(),
         )
         .await;
         if let Err(error) = result {
-            tracing::error!(%error, "metrics ruler state consumer stopped; shutting down");
+            tracing::error!(%error, "metrics ruler state consumer stopped");
         }
-        consumer_shutdown.trigger();
     });
     let eval_shutdown = shutdown.clone();
     let eval_alert_sink = alert_sink.clone();
-    let evaluator = tokio::spawn(async move {
+    tasks.spawn("metrics ruler evaluation", async move {
         let result = run_ruler_evaluation_loop(
             state,
             (wal_sink, eval_alert_sink, state_sink),
@@ -144,9 +145,8 @@ pub(crate) async fn run_ruler(
         )
         .await;
         if let Err(error) = result {
-            tracing::error!(%error, "metrics ruler evaluation loop stopped; shutting down");
+            tracing::error!(%error, "metrics ruler evaluation loop stopped");
         }
-        eval_shutdown.trigger();
     });
 
     let (bound, server) =
@@ -154,12 +154,16 @@ pub(crate) async fn run_ruler(
     tracing::info!(%bound, "metrics-service ruler listening");
     // Join the server task so in-flight requests drain (graceful shutdown)
     // before the process exits.
-    let server_result = server.await;
+    let outcome = tokio::select! {
+        result = server => result.map_err(Into::into),
+        name = tasks.first_unexpected_exit() => Err(Box::<dyn std::error::Error>::from(
+            CriticalTaskError(name),
+        )),
+    };
     shutdown.trigger();
-    let evaluator_result = evaluator.await;
+    tasks.shutdown().await;
     let drain_result = alert_sink.shutdown().await;
-    server_result?;
-    evaluator_result?;
+    outcome?;
     drain_result?;
     Ok(())
 }

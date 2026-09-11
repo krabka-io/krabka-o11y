@@ -52,10 +52,20 @@ pub async fn run<C>(
 where
     C: WalConsumerPoll + WalConsumerCommit,
 {
-    let object_store = RetryingObjectStore::wrap(object_store, ObjectStoreRetryPolicy::DEFAULT);
+    let object_store = RetryingObjectStore::wrap(
+        object_store,
+        ObjectStoreRetryPolicy::DEFAULT,
+        metrics.object_store.clone(),
+    );
     let mut accumulator = FlushAccumulator::new();
     while !shutdown.is_cancelled() {
-        let records = consumer.poll(config.window).await?;
+        let records = consumer
+            .poll(config.window)
+            .await
+            .inspect_err(|_| metrics.wal_consumer.record_poll_failure())?;
+        // Recorded before the decode, so a poll that arrived is counted even
+        // when the records in it turn out to be unreadable.
+        metrics.wal_consumer.record_poll(&records);
         let windows = decode_consumer_records(&records)?;
 
         // One consume span per NON-EMPTY poll batch (NOT per record). Parent it

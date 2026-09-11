@@ -1,7 +1,7 @@
 use super::{
     ObjectStore, ServiceConfig, ServiceDependencies, ServiceRuntimeError, TcpListener,
     compactor_delete_requests_for_config, compactor_router_with_delete_requests,
-    run_compactor_until_shutdown, shutdown_signal,
+    contain_handler_panics, run_compactor_until_shutdown, shutdown_signal,
 };
 
 pub(crate) async fn serve_compactor_service_listener(
@@ -15,7 +15,7 @@ pub(crate) async fn serve_compactor_service_listener(
     let app = compactor_router_with_delete_requests(delete_requests.clone());
     let dependencies = dependencies.with_delete_requests(delete_requests);
     let (http_shutdown_tx, http_shutdown_rx) = tokio::sync::oneshot::channel();
-    let server = axum::serve(listener, app)
+    let server = axum::serve(listener, contain_handler_panics(app))
         .with_graceful_shutdown(async {
             let _ = http_shutdown_rx.await;
         })

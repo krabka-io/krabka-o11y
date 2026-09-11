@@ -24,14 +24,15 @@ use krabka_blockstore::{
 };
 use krabka_client_consumer::ConsumerError;
 use krabka_observability::{
-    CompactionFrontier, CompactionOffsetCommitter, KafkaWalHeader, KafkaWalRecord, LogWalConsumer,
-    Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig, ServiceDependencies,
-    ServiceRuntimeError, SharedCompactionFrontier, WalConsumerError, WalLogRecord, WalPosition,
-    build_kafka_wal_record, build_service_router, compact_kafka_wal_records_to_object_store,
-    compact_log_block_to_object_store, compact_next_kafka_wal_batch_to_object_store,
-    compact_wal_records_to_object_store, read_compaction_frontier_from_object_store,
-    run_compactor_once, run_compactor_until_idle, run_compactor_until_shutdown, serve_service,
-    serve_service_listener, write_compaction_frontier_to_object_store,
+    CompactionFrontier, CompactionOffsetCommitter, CriticalTaskError, KafkaWalHeader,
+    KafkaWalRecord, LogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role,
+    ServiceConfig, ServiceDependencies, ServiceRuntimeError, SharedCompactionFrontier,
+    WalConsumerError, WalLogRecord, WalPosition, build_kafka_wal_record, build_service_router,
+    compact_kafka_wal_records_to_object_store, compact_log_block_to_object_store,
+    compact_next_kafka_wal_batch_to_object_store, compact_wal_records_to_object_store,
+    read_compaction_frontier_from_object_store, run_compactor_once, run_compactor_until_idle,
+    run_compactor_until_shutdown, serve_service, serve_service_listener,
+    write_compaction_frontier_to_object_store,
 };
 use krabka_units::{Time, bytes, millis};
 use object_store::{
@@ -1969,7 +1970,7 @@ async fn querier_service_stops_serving_when_its_spawned_wal_consumer_loop_panics
     // serving on.
     assert!(matches!(
         error,
-        ServiceRuntimeError::CriticalTask("querier WAL hot-tail")
+        ServiceRuntimeError::CriticalTask(CriticalTaskError("querier WAL hot-tail"))
     ));
     assert!(TcpStream::connect(addr).await.is_err());
 }

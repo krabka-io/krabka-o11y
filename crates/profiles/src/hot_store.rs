@@ -7,6 +7,7 @@ use std::{
 
 use krabka_blockstore::LabelMatcher;
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 use krabka_pprof::{InMemoryProfileStore, ProfileError, ProfileScan, ProfileStats, ProfileStore};
 use krabka_units::{Time, convert::TimeExt as _, hours};
 
@@ -439,6 +440,7 @@ mod retained_state;
 mod retention_config;
 mod run_wal_tail;
 mod run_wal_tail_with_topic;
+mod wal_tail_config;
 mod wal_tail_profile_store;
 
 use apply_record::apply_record;
@@ -450,4 +452,5 @@ use retained_state::RetainedState;
 pub use retention_config::RetentionConfig;
 pub use run_wal_tail::run_wal_tail;
 pub use run_wal_tail_with_topic::run_wal_tail_with_topic;
+pub use wal_tail_config::WalTailConfig;
 pub use wal_tail_profile_store::WalTailProfileStore;

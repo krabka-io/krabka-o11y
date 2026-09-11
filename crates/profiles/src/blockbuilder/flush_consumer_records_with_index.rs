@@ -1,6 +1,6 @@
 use super::{
-    Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, Labels, ObjectStore, ProfileIndex,
-    ProfileRecord, ProfilesError, STACKTRACE_PARTITION, build_block,
+    Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, Labels, ObjectStore, ObjectStoreMetrics,
+    ProfileIndex, ProfileRecord, ProfilesError, STACKTRACE_PARTITION, build_block,
 };
 
 ///
@@ -11,6 +11,7 @@ pub async fn flush_consumer_records_with_index(
     index: &mut ProfileIndex,
     records: &[ConsumerRecord],
     flush_records: usize,
+    metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     let mut batches: BTreeMap<(String, i32), Vec<(i64, ProfileRecord)>> = BTreeMap::new();
     for record in records {
@@ -50,6 +51,7 @@ pub async fn flush_consumer_records_with_index(
                 partition,
                 &profile_records,
                 (min_offset, max_offset),
+                metrics,
             )
             .await?;
             for meta in &built {

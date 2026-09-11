@@ -5,8 +5,9 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use arrow::record_batch::RecordBatch;
 use krabka_blockstore::{
     BlockIndex, BlockMeta, BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels,
-    ObjectStoreRetryPolicy, ProfileIndex, ProfileSampleRow, RetryingObjectStore, SummaryColumns,
-    encode_profile_samples, profile_samples_decl, retry_object_store,
+    ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, ProfileIndex,
+    ProfileSampleRow, RetryingObjectStore, SummaryColumns, encode_profile_samples,
+    profile_samples_decl, retry_object_store,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};
@@ -182,9 +183,16 @@ mod tests {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let records = vec![rec("cpu", 5), rec("cpu", 7)];
 
-        let metas = build_block(&store, "t", 0, &records, (10, 20))
-            .await
-            .unwrap();
+        let metas = build_block(
+            &store,
+            "t",
+            0,
+            &records,
+            (10, 20),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap();
 
         assert!(metas.len() == 1);
         check!(metas[0].tenant == "t");
@@ -212,9 +220,15 @@ mod tests {
             consumer_record(1, 3, tenant_b),
         ];
 
-        let metas = flush_consumer_records_with_index(&store, &mut index, &records, 100)
-            .await
-            .unwrap();
+        let metas = flush_consumer_records_with_index(
+            &store,
+            &mut index,
+            &records,
+            100,
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap();
 
         check!(metas.len() == 2);
         for (tenant, row_count) in [("t", 2), ("u", 1)] {

@@ -14,6 +14,7 @@ use crate::{
     },
 };
 
+mod a_panicking_update_leaves_the_head_readable_and_writable;
 mod a_snapshot_never_sees_part_of_a_batch;
 mod bulk_wal_replay_and_retention_are_observable;
 mod cloned_wal_head_sees_records_replayed_through_original_handle;

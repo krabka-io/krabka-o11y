@@ -16,7 +16,8 @@ use arrow::{
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use krabka_blockstore::{
-    BlockMeta, BlockStoreError, BlockWriter, ObjectStoreRetryPolicy, RetryingObjectStore,
+    BlockMeta, BlockStoreError, BlockWriter, ObjectStoreMetrics, ObjectStoreRetryPolicy,
+    RetryingObjectStore,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
 use krabka_ids::{Offset, PartitionIndex};
@@ -29,6 +30,7 @@ use tracing::Instrument as _;
 use crate::{
     NativeHistogram, encode_float_samples, encode_native_histograms,
     histogram::HistogramCodecError,
+    metrics::ServiceMetrics,
     schema::{
         CCOL_CLOCK, CCOL_EST_ERROR_NANOS, CCOL_FREQUENCY_PPB, CCOL_GM_CLOCK_ACCURACY,
         CCOL_GM_CLOCK_CLASS, CCOL_GNSS_FIX, CCOL_INGEST_UNIX_NANOS, CCOL_LAST_STEP_NANOS,
@@ -119,7 +121,8 @@ mod tests {
     use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory};
 
     use super::{
-        ObjectStoreRetryPolicy, RetryingObjectStore, compact_wal_records, encode_tenant_batches,
+        CompactionLoopContext, ObjectStoreMetrics, ObjectStoreRetryPolicy, RetryingObjectStore,
+        ServiceMetrics, compact_wal_records, encode_tenant_batches,
     };
     use crate::{
         BucketSpan, FloatRow, NativeHistogram, ResetHint,
@@ -626,7 +629,7 @@ mod tests {
         };
 
         let runtime = cfg
-            .build_runtime(object_store.clone())
+            .build_runtime(object_store.clone(), ObjectStoreMetrics::unregistered())
             .expect("build runtime");
         assert_eq!(
             runtime.loop_config,
@@ -1111,6 +1114,7 @@ mod tests {
             &committer,
             crate::WAL_TOPIC,
             millis(1),
+            &ServiceMetrics::new(),
         )
         .await
         .expect("poll compactor once");
@@ -1191,6 +1195,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             &mut stop_after_empty,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor loop");
@@ -1261,6 +1266,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             &mut stop_after_empty,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor loop");
@@ -1352,7 +1358,7 @@ mod tests {
                 flush_max_age: minutes(1),
             },
             &mut stop_after_three,
-            clock.as_ref(),
+            CompactionLoopContext::new(clock.as_ref(), &ServiceMetrics::new()),
         )
         .await
         .expect("run compactor loop with clock");
@@ -1409,6 +1415,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor consumer loop");
@@ -1559,6 +1566,7 @@ mod tests {
         let sink = super::ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
             Arc::clone(&store) as Arc<dyn ObjectStore>,
             retry,
+            ObjectStoreMetrics::unregistered(),
         ));
         let record = krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
@@ -1591,6 +1599,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("the flush rides out the transient failures");
@@ -1617,6 +1626,7 @@ mod tests {
         let sink = super::ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
             Arc::clone(&store) as Arc<dyn ObjectStore>,
             retry,
+            ObjectStoreMetrics::unregistered(),
         ));
         let record = krabka_client_consumer::ConsumerRecord {
             topic: crate::WAL_TOPIC.to_string(),
@@ -1649,6 +1659,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
         )
         .await;
 
@@ -1694,6 +1705,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor consumer loop");
@@ -1824,6 +1836,7 @@ mod tests {
                 flush_max_age: hours(1),
             },
             |result| result.polled_records == 0,
+            &ServiceMetrics::new(),
         )
         .await
         .expect("run compactor loop");
@@ -2192,6 +2205,7 @@ mod compaction_index_key;
 mod compaction_index_manifest;
 mod compaction_index_sink;
 mod compaction_loop_config;
+mod compaction_loop_context;
 mod compaction_loop_result;
 mod compaction_object_key;
 mod compaction_object_plan;
@@ -2278,6 +2292,7 @@ use compaction_index_key::compaction_index_key;
 pub use compaction_index_manifest::CompactionIndexManifest;
 pub use compaction_index_sink::CompactionIndexSink;
 pub use compaction_loop_config::CompactionLoopConfig;
+pub use compaction_loop_context::CompactionLoopContext;
 pub use compaction_loop_result::CompactionLoopResult;
 pub use compaction_object_key::compaction_object_key;
 pub use compaction_object_plan::CompactionObjectPlan;

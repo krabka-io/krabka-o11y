@@ -3,14 +3,20 @@ use super::{
     ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceRuntimeError,
     connect_with_startup_retry, validate_distributor_policy,
 };
+use crate::wal_consumer_metrics::WalConsumerMetrics;
 
 /// Builds role dependencies with one validated Kafka client policy.
+///
+/// `metrics` is the WAL consumer bundle the compactor's consumer records into.
+/// Pass the one the service's registry holds. An unregistered bundle leaves the
+/// compactor reading its WAL with every consumer series absent.
 ///
 /// # Errors
 /// Returns an error when a required Kafka dependency cannot connect.
 pub async fn build_service_dependencies_with_client_resource_policy(
     config: &ServiceConfig,
     client_resource_policy: ClientResourcePolicy,
+    metrics: WalConsumerMetrics,
 ) -> Result<ServiceDependencies, ServiceRuntimeError> {
     match config.target {
         Role::Distributor => {
@@ -84,7 +90,8 @@ pub async fn build_service_dependencies_with_client_resource_policy(
                 topic,
                 client_resource_policy,
             )
-            .await?;
+            .await?
+            .with_metrics(metrics);
             Ok(ServiceDependencies::default().with_wal_consumer(consumer))
         }
         Role::Querier => {
@@ -103,6 +110,7 @@ pub async fn build_service_dependencies_with_client_resource_policy(
                     config.wal_group_id.clone(),
                     config.wal_topic.clone(),
                     client_resource_policy,
+                    metrics,
                 ),
             )
         }

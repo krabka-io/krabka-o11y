@@ -269,7 +269,12 @@ async fn querier_dependencies_require_wal_bootstrap_server() {
         ..ServiceConfig::default()
     };
 
-    match build_service_dependencies(&config).await {
+    match build_service_dependencies(
+        &config,
+        krabka_observability::wal_consumer_metrics::WalConsumerMetrics::unregistered(),
+    )
+    .await
+    {
         Ok(_) => panic!("querier dependencies should require WAL bootstrap config"),
         Err(error) => {
             assert!(error.to_string().contains("missing --wal-bootstrap-server"));

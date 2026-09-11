@@ -35,10 +35,10 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
             match cli.target {
                 Target::Distributor => run_distributor(cli, metrics, shutdown).await?,
                 Target::BlockBuilder => run_block_builder(cli, metrics, shutdown).await?,
-                Target::LiveStore => run_live_store(cli, shutdown).await?,
+                Target::LiveStore => run_live_store(cli, metrics, shutdown).await?,
                 Target::Querier => run_querier(cli, metrics, shutdown).await?,
-                Target::QueryFrontend => run_query_frontend(cli, shutdown).await?,
-                Target::Compactor => run_compactor(cli, shutdown).await?,
+                Target::QueryFrontend => run_query_frontend(cli, metrics, shutdown).await?,
+                Target::Compactor => run_compactor(cli, metrics, shutdown).await?,
                 Target::MetricsGenerator => run_metrics_generator(cli, shutdown).await?,
             }
             Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())

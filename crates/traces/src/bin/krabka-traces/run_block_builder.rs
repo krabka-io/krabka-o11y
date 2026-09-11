@@ -19,8 +19,9 @@ pub(crate) async fn run_block_builder(
         cli.client_frame_max,
     )
     .await?;
-    let configured = build_object_store(&cli)?;
-    let writer = BlockWriter::new(configured.store.clone());
+    let configured = build_object_store(&cli, metrics.object_store.clone())?;
+    let writer =
+        BlockWriter::new(configured.store.clone()).with_metrics(metrics.object_store.clone());
     let object_key_prefix = configured.prefix.to_string();
     let trace_index_key = configured.object_key(&cli.trace_index_key);
     let initial_index = TraceIndex::load_latest_snapshot_or_empty_with_max_bytes(
