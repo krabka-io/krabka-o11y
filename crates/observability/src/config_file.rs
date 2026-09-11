@@ -37,6 +37,8 @@ mod config_file_args;
 mod config_file_error;
 mod expand_config_env;
 mod file_argument_overrides;
+#[cfg(test)]
+mod tests;
 mod yaml_scalar;
 
 pub use argv_with_config_file::argv_with_config_file;

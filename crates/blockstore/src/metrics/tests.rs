@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use assert2::check;
-use futures::StreamExt as _;
+use futures::{StreamExt as _, future::BoxFuture};
 use object_store::{
     Error as ObjectStoreError, ObjectStore, ObjectStoreExt as _, PutPayload, memory::InMemory,
     path::Path,
@@ -252,6 +252,111 @@ async fn every_object_store_instrument_reaches_a_scrape_under_the_service_prefix
     ] {
         check!(buffer.contains(needle), "missing {needle} in:\n{buffer}");
     }
+}
+
+/// `put` and `get` are not the only requests a store serves, and
+/// [`ObjectStoreOperation`] is the `operation` label's whole domain. Every
+/// method the decorator wraps is driven here and checked against its own
+/// series, so a method that was left unwrapped -- invisible to the request
+/// rate an operator reads -- or wrapped under the wrong label fails a case.
+#[tokio::test]
+async fn each_wrapped_method_moves_its_own_operation_series_and_no_other() {
+    let inner = Arc::new(BreakableStore::new(0, false));
+    let seed = |key: &'static str| {
+        let inner = Arc::clone(&inner);
+        async move {
+            inner
+                .put(&Path::from(key), PutPayload::from_static(b"x"))
+                .await
+                .expect("seeding the inner store leaves the counters alone");
+        }
+    };
+
+    // One store per case, so "no other series moved" is a statement about
+    // this one call rather than about everything the case did before it.
+    for (operation, drive) in object_store_cases() {
+        let metrics = ObjectStoreMetrics::unregistered();
+        seed("blocks/a").await;
+        let store =
+            MeteredObjectStore::wrap(Arc::clone(&inner) as Arc<dyn ObjectStore>, metrics.clone());
+
+        drive(&store).await;
+
+        check!(
+            metrics.operations(operation) == 1,
+            "{operation} records one attempt"
+        );
+        check!(
+            metrics.failures(operation) == 0,
+            "{operation} succeeded against an in-memory store"
+        );
+        for other in ObjectStoreOperation::all() {
+            if other == operation {
+                continue;
+            }
+            check!(
+                metrics.operations(other) == 0,
+                "{operation} must not move the {other} series"
+            );
+        }
+    }
+}
+
+/// One call against a wrapped store, driven to completion.
+type DriveOperation = for<'store> fn(&'store Arc<dyn ObjectStore>) -> BoxFuture<'store, ()>;
+
+/// The methods driven by the case above, each with the label it must land on.
+fn object_store_cases() -> Vec<(ObjectStoreOperation, DriveOperation)> {
+    vec![
+        (ObjectStoreOperation::PutMultipart, |store| {
+            Box::pin(async move {
+                let upload = store
+                    .put_multipart(&Path::from("blocks/multipart"))
+                    .await
+                    .expect("the in-memory store opens an upload");
+                drop(upload);
+            })
+        }),
+        (ObjectStoreOperation::ListWithDelimiter, |store| {
+            Box::pin(async move {
+                let listed = store
+                    .list_with_delimiter(Some(&Path::from("blocks")))
+                    .await
+                    .expect("a listing");
+                check!(listed.objects.len() == 1, "the listing is the real one");
+            })
+        }),
+        (ObjectStoreOperation::Copy, |store| {
+            Box::pin(async move {
+                store
+                    .copy(&Path::from("blocks/a"), &Path::from("blocks/b"))
+                    .await
+                    .expect("a copy");
+            })
+        }),
+        (ObjectStoreOperation::DeleteStream, |store| {
+            Box::pin(async move {
+                let deleted: Vec<_> = store
+                    .delete_stream(futures::stream::iter(vec![Ok(Path::from("blocks/a"))]).boxed())
+                    .collect()
+                    .await;
+                check!(deleted.len() == 1);
+                check!(deleted[0].is_ok());
+            })
+        }),
+    ]
+}
+
+/// A decorator that renamed the store would make every `object_store` error
+/// and every log line name the wrapper rather than the backend behind it.
+#[tokio::test]
+async fn a_metered_store_still_reports_itself_as_the_store_it_wraps() {
+    let store = MeteredObjectStore::wrap(
+        Arc::new(BreakableStore::new(0, false)),
+        ObjectStoreMetrics::unregistered(),
+    );
+
+    check!(store.to_string() == "BreakableStore");
 }
 
 #[test]

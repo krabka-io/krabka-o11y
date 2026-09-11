@@ -400,3 +400,77 @@ fn a_structure_check_reads_the_shard_count_instead_of_comparing_it() {
             }]
     );
 }
+
+/// `provision_topics` logs every advisory difference with `topic` as a field
+/// and the difference as the message, so an operator can filter the warnings
+/// for one topic. The field comes from [`TopicDrift::topic`], and the enum is
+/// `#[non_exhaustive]`: a variant added without a `topic` arm is a compile
+/// error, but a variant added to the *wrong* arm is not, and would file the
+/// warning under another topic's name.
+#[test]
+fn every_difference_names_the_topic_it_is_about_and_says_whether_it_is_fatal() {
+    let cases = [
+        (
+            TopicDrift::Missing {
+                topic: "krabka.logs.wal".to_string(),
+                purpose: "the log write-ahead log",
+            },
+            "krabka.logs.wal",
+            true,
+        ),
+        (
+            TopicDrift::Unreadable {
+                topic: "krabka.logs.state".to_string(),
+                error: "TOPIC_AUTHORIZATION_FAILED".to_string(),
+            },
+            "krabka.logs.state",
+            true,
+        ),
+        (
+            TopicDrift::PartitionCount {
+                topic: "krabka.metrics.wal".to_string(),
+                expected: 4,
+                actual: 8,
+                purpose: "the metrics write path",
+            },
+            "krabka.metrics.wal",
+            true,
+        ),
+        (
+            TopicDrift::CleanupPolicy {
+                topic: "krabka.metrics.ha".to_string(),
+                actual: None,
+                purpose: "the HA dedup state",
+            },
+            "krabka.metrics.ha",
+            true,
+        ),
+        (
+            TopicDrift::ReplicationFactor {
+                topic: "krabka.traces.wal".to_string(),
+                expected: 3,
+                actual: 1,
+            },
+            "krabka.traces.wal",
+            false,
+        ),
+        (
+            TopicDrift::Retention {
+                topic: "krabka.profiles.wal".to_string(),
+                expected: 900_000,
+                actual: Some("60000".to_string()),
+            },
+            "krabka.profiles.wal",
+            false,
+        ),
+    ];
+
+    for (drift, topic, fatal) in cases {
+        check!(drift.topic() == topic, "{drift:?}");
+        check!(drift.is_fatal() == fatal, "{drift:?}");
+        check!(
+            drift.to_string().contains(topic),
+            "the message names the topic too, so a line read without its fields still says which"
+        );
+    }
+}

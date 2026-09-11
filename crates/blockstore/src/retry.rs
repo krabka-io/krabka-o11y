@@ -42,12 +42,27 @@ mod tests {
 
     use super::*;
 
-    /// An object store whose first `failures` calls to `put_opts` fail with
-    /// `error`, and which counts every attempt. Everything else delegates to
-    /// an in-memory store, so what a retry actually wrote can be read back.
+    /// The one operation a [`FlakyObjectStore`] fails.
+    ///
+    /// Naming it is what lets a case tell "the wrapper retried" from "the
+    /// wrapper retried *this* operation": a decorator that retried every call
+    /// under one label passes a test that only ever breaks `put`.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum FlakyOperation {
+        Put,
+        PutMultipart,
+        ListWithDelimiter,
+        Copy,
+    }
+
+    /// An object store whose first `failures` calls to one named operation
+    /// fail with `error`, and which counts every attempt at it. Everything
+    /// else delegates to an in-memory store, so what a retry actually wrote
+    /// can be read back.
     #[derive(Debug)]
     struct FlakyObjectStore {
         inner: Arc<InMemory>,
+        flaky: FlakyOperation,
         remaining_failures: AtomicUsize,
         attempts: AtomicUsize,
         error: fn() -> ObjectStoreError,
@@ -55,12 +70,35 @@ mod tests {
 
     impl FlakyObjectStore {
         fn new(failures: usize, error: fn() -> ObjectStoreError) -> Self {
+            Self::failing(FlakyOperation::Put, failures, error)
+        }
+
+        fn failing(
+            flaky: FlakyOperation,
+            failures: usize,
+            error: fn() -> ObjectStoreError,
+        ) -> Self {
             Self {
                 inner: Arc::new(InMemory::new()),
+                flaky,
                 remaining_failures: AtomicUsize::new(failures),
                 attempts: AtomicUsize::new(0),
                 error,
             }
+        }
+
+        /// Counts one attempt at `operation` and says whether it fails.
+        fn refuse(&self, operation: FlakyOperation) -> Option<ObjectStoreError> {
+            if operation != self.flaky {
+                return None;
+            }
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            self.remaining_failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    (left > 0).then(|| left - 1)
+                })
+                .is_ok()
+                .then(self.error)
         }
 
         fn attempts(&self) -> usize {
@@ -97,15 +135,8 @@ mod tests {
             payload: PutPayload,
             options: PutOptions,
         ) -> object_store::Result<PutResult> {
-            self.attempts.fetch_add(1, Ordering::SeqCst);
-            if self
-                .remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    (left > 0).then(|| left - 1)
-                })
-                .is_ok()
-            {
-                return Err((self.error)());
+            if let Some(error) = self.refuse(FlakyOperation::Put) {
+                return Err(error);
             }
             self.inner.put_opts(location, payload, options).await
         }
@@ -115,6 +146,9 @@ mod tests {
             location: &Path,
             options: PutMultipartOptions,
         ) -> object_store::Result<Box<dyn MultipartUpload>> {
+            if let Some(error) = self.refuse(FlakyOperation::PutMultipart) {
+                return Err(error);
+            }
             self.inner.put_multipart_opts(location, options).await
         }
 
@@ -137,6 +171,9 @@ mod tests {
             &self,
             prefix: Option<&Path>,
         ) -> object_store::Result<ListResult> {
+            if let Some(error) = self.refuse(FlakyOperation::ListWithDelimiter) {
+                return Err(error);
+            }
             self.inner.list_with_delimiter(prefix).await
         }
 
@@ -146,6 +183,9 @@ mod tests {
             to: &Path,
             options: CopyOptions,
         ) -> object_store::Result<()> {
+            if let Some(error) = self.refuse(FlakyOperation::Copy) {
+                return Err(error);
+            }
             self.inner.copy_opts(from, to, options).await
         }
 
@@ -350,6 +390,157 @@ mod tests {
         // add a second object.
         let listed = flaky.keys().await;
         check!(listed == vec!["index/manifest".to_string()]);
+    }
+
+    /// `put` is not the only single-shot operation the index makes. A snapshot
+    /// lists a prefix with a delimiter and copies a manifest into place, and
+    /// either can meet the same 503. Each is driven separately, and each is
+    /// checked against its *own* retry series, so a wrapper that retried
+    /// everything under one label would fail here.
+    #[tokio::test]
+    async fn every_single_shot_operation_retries_under_its_own_label() {
+        let cases: Vec<(FlakyOperation, ObjectStoreOperation)> = vec![
+            (FlakyOperation::Put, ObjectStoreOperation::Put),
+            (
+                FlakyOperation::ListWithDelimiter,
+                ObjectStoreOperation::ListWithDelimiter,
+            ),
+            (FlakyOperation::Copy, ObjectStoreOperation::Copy),
+        ];
+
+        for (flaky_operation, labelled) in cases {
+            let flaky = Arc::new(FlakyObjectStore::failing(flaky_operation, 2, timeout));
+            let metrics = ObjectStoreMetrics::unregistered();
+            let store = RetryingObjectStore::wrap(
+                Arc::clone(&flaky) as Arc<dyn ObjectStore>,
+                ObjectStoreRetryPolicy::immediate(4),
+                metrics.clone(),
+            );
+            // The source of the copy has to exist before the copy runs, and
+            // putting it is itself an operation the wrapper covers -- so it
+            // goes in through the inner store, leaving the counters alone.
+            flaky
+                .inner
+                .put(&Path::from("index/a"), PutPayload::from_static(b"v1"))
+                .await
+                .expect("seeding the inner store");
+
+            match flaky_operation {
+                FlakyOperation::Put => {
+                    store
+                        .put(&Path::from("index/b"), PutPayload::from_static(b"v1"))
+                        .await
+                        .expect("the third attempt succeeds");
+                }
+                FlakyOperation::ListWithDelimiter => {
+                    let listed = store
+                        .list_with_delimiter(Some(&Path::from("index")))
+                        .await
+                        .expect("the third attempt succeeds");
+                    check!(listed.objects.len() == 1, "the listing is the real one");
+                }
+                FlakyOperation::Copy => {
+                    store
+                        .copy(&Path::from("index/a"), &Path::from("index/b"))
+                        .await
+                        .expect("the third attempt succeeds");
+                }
+                FlakyOperation::PutMultipart => unreachable!("not a retried operation"),
+            }
+
+            check!(
+                flaky.attempts() == 3,
+                "{flaky_operation:?} is attempted three times"
+            );
+            check!(
+                metrics.retries(labelled) == 2,
+                "{flaky_operation:?} counts its two retries under {labelled}"
+            );
+            for other in ObjectStoreOperation::all() {
+                if other == labelled {
+                    continue;
+                }
+                check!(
+                    metrics.retries(other) == 0,
+                    "{flaky_operation:?} must not move the {other} retry series"
+                );
+            }
+        }
+    }
+
+    /// The two operations the wrapper deliberately does not retry, and the
+    /// reason it does not: a multipart upload hands out part numbers, so a
+    /// second attempt at a failed part leaves a hole `complete` rejects.
+    /// Re-driving the whole block write is the only correct unit, and
+    /// [`BlockWriter`](crate::BlockWriter) is what does that.
+    #[tokio::test]
+    async fn a_multipart_upload_is_reported_on_its_first_attempt_and_not_retried() {
+        let flaky = Arc::new(FlakyObjectStore::failing(
+            FlakyOperation::PutMultipart,
+            2,
+            timeout,
+        ));
+        let metrics = ObjectStoreMetrics::unregistered();
+        let store = RetryingObjectStore::wrap(
+            Arc::clone(&flaky) as Arc<dyn ObjectStore>,
+            ObjectStoreRetryPolicy::immediate(4),
+            metrics.clone(),
+        );
+
+        let refused = store.put_multipart(&Path::from("blocks/a.parquet")).await;
+
+        check!(refused.is_err());
+        check!(
+            flaky.attempts() == 1,
+            "the same error under `put` would have been retried three more times"
+        );
+        check!(metrics.retries(ObjectStoreOperation::PutMultipart) == 0);
+    }
+
+    /// `delete_stream` is passed through rather than retried, but it is passed
+    /// through: a wrapper that dropped the stream would leave every object in
+    /// place and report nothing.
+    #[tokio::test]
+    async fn a_delete_stream_reaches_the_store_it_wraps() {
+        let flaky = Arc::new(FlakyObjectStore::new(0, timeout));
+        let store = RetryingObjectStore::wrap(
+            Arc::clone(&flaky) as Arc<dyn ObjectStore>,
+            ObjectStoreRetryPolicy::immediate(4),
+            ObjectStoreMetrics::unregistered(),
+        );
+        for key in ["index/a", "index/b"] {
+            store
+                .put(&Path::from(key), PutPayload::from_static(b"v1"))
+                .await
+                .expect("a put");
+        }
+        check!(flaky.keys().await == vec!["index/a".to_string(), "index/b".to_string()]);
+
+        let deleted: Vec<_> = store
+            .delete_stream(
+                futures::stream::iter(vec![Ok(Path::from("index/a")), Ok(Path::from("index/b"))])
+                    .boxed(),
+            )
+            .collect()
+            .await;
+
+        check!(deleted.len() == 2);
+        check!(deleted.iter().all(Result::is_ok));
+        check!(flaky.keys().await == Vec::<String>::new());
+    }
+
+    /// A decorator that renamed the store would make every log line and every
+    /// `object_store` error name the wrapper instead of the backend it stands
+    /// in front of.
+    #[tokio::test]
+    async fn a_wrapped_store_still_reports_itself_as_the_store_it_wraps() {
+        let store = RetryingObjectStore::wrap(
+            Arc::new(FlakyObjectStore::new(0, timeout)) as Arc<dyn ObjectStore>,
+            ObjectStoreRetryPolicy::immediate(4),
+            ObjectStoreMetrics::unregistered(),
+        );
+
+        check!(store.to_string() == "FlakyObjectStore");
     }
 }
 

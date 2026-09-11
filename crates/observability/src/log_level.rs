@@ -33,6 +33,8 @@ mod json_logging_layer;
 mod log_level_control;
 mod log_level_error;
 mod telemetry;
+#[cfg(test)]
+mod tests;
 
 pub use init_telemetry::init_telemetry;
 pub use install_json_logging::install_json_logging;
