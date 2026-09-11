@@ -1,14 +1,15 @@
 use krabka_client_admin::AdminClient;
+use krabka_client_core::ClientSecurity;
 
 use super::{TopicContract, TopicContractError, TopicReport, TopicSettings, ensure_topics};
 
-/// Connects to the broker, provisions the named topics, and reports what it
-/// found.
+/// Connects to the broker under `security`, provisions the named topics, and
+/// reports what it found.
 ///
-/// This is the call a service binary makes at startup, before it builds a
-/// producer or joins a consumer group. It logs the live shard count for each
-/// topic and warns about every advisory difference, so an under-replicated or
-/// short-retention topic is visible without stopping the role.
+/// This is the call a deployment step makes before the roles start. It logs
+/// the live shard count for each topic and warns about every advisory
+/// difference, so an under-replicated or short-retention topic is visible
+/// without stopping the role. `None` connects in plain text.
 ///
 /// # Errors
 /// Returns the error [`ensure_topics`] returns, and a connection error when
@@ -17,8 +18,9 @@ pub async fn provision_topics(
     bootstrap: &str,
     topics: &[TopicContract],
     settings: &TopicSettings,
+    security: Option<ClientSecurity>,
 ) -> Result<TopicReport, TopicContractError> {
-    let mut admin = AdminClient::connect(&[bootstrap.to_string()]).await?;
+    let mut admin = AdminClient::connect_secured(&[bootstrap.to_string()], security).await?;
     let report = ensure_topics(&mut admin, topics, settings).await?;
     for topic in &report.observed {
         tracing::info!(

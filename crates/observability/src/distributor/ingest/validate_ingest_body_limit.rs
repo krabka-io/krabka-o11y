@@ -1,19 +1,16 @@
-use super::{ByteSize, ByteSizeExt, DistributorError, DistributorState};
+use super::{ByteSize, ByteSizeExt, DistributorError, Limits};
 
 pub(crate) fn validate_ingest_body_limit(
-    state: &DistributorState,
+    limits: &Limits,
     body: ByteSize,
 ) -> Result<(), DistributorError> {
-    let Some(max) = state.max_ingest_body else {
+    if limits.max_ingest_body <= ByteSize::ZERO || body <= limits.max_ingest_body {
         return Ok(());
-    };
-    if body > max {
-        // The error carries plain integers so its rendered message is fixed by
-        // the `#[error]` format string alone.
-        return Err(DistributorError::IngestBodyTooLarge {
-            body_bytes: body.bytes_usize(),
-            max_bytes: max.bytes_usize(),
-        });
     }
-    Ok(())
+    // The error carries plain integers so its rendered message is fixed by
+    // the `#[error]` format string alone.
+    Err(DistributorError::IngestBodyTooLarge {
+        body_bytes: body.bytes_usize(),
+        max_bytes: limits.max_ingest_body.bytes_usize(),
+    })
 }

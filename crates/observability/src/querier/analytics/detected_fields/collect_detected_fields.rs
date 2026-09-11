@@ -1,23 +1,31 @@
 use super::{
     BTreeMap, DetectedFieldStats, DetectedFieldsParams, HeaderMap, HttpQueryError, QuerierState,
-    QueryError, TimeRange, active_log_delete_filters, authorized_tenant,
-    detect_detected_level_field, detect_json_fields, detect_logfmt_fields,
-    detect_structured_metadata_fields, is_deleted_log_entry, parse_query, plan_stream_query,
-    read_log_block, read_log_block_from_object_store, validate_loki_volume_query_range_limit,
-    validate_query_bytes_limit, validate_query_length_limit, validate_query_range_limit,
-    validate_query_series_limit,
+    QueryError, RequestSecurity, TenantErrorSurface, TimeRange, active_log_delete_filters,
+    authorized_tenant, clamp_query_lookback, current_unix_time_ns, detect_detected_level_field,
+    detect_json_fields, detect_logfmt_fields, detect_structured_metadata_fields,
+    is_deleted_log_entry, parse_query, plan_stream_query, read_log_block,
+    read_log_block_from_object_store, validate_loki_volume_query_range_limit,
+    validate_query_bytes_limit, validate_query_range_limit, validate_query_series_limit,
+    validate_query_string_bytes_limit,
 };
 
 pub(crate) async fn collect_detected_fields(
     state: &QuerierState,
+    security: &RequestSecurity,
     headers: &HeaderMap,
     params: &DetectedFieldsParams,
 ) -> Result<BTreeMap<String, DetectedFieldStats>, HttpQueryError> {
-    let tenant = authorized_tenant(state, headers).await?;
+    let tenant =
+        authorized_tenant(state, security, headers, TenantErrorSurface::QuerierRead).await?;
+    // One resolution for the whole request: every check below reads the
+    // tenant's limits from this state.
+    let state = &state.with_tenant_limits(&tenant);
+    let tenant = tenant.as_str();
     let time_range = TimeRange::new(params.start, params.end)?;
-    validate_loki_volume_query_range_limit(time_range)?;
+    let time_range = clamp_query_lookback(&state.limits, time_range, current_unix_time_ns());
+    validate_loki_volume_query_range_limit(state, time_range)?;
     validate_query_range_limit(state, time_range)?;
-    validate_query_length_limit(state, &params.query)?;
+    validate_query_string_bytes_limit(state, &params.query)?;
     let state = state.with_request_tenant_index(tenant, time_range).await?;
     let query = parse_query(&params.query).map_err(|source| HttpQueryError::LokiParse {
         query: params.query.clone(),

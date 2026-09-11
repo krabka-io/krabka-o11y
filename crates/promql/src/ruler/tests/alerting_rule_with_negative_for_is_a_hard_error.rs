@@ -18,7 +18,12 @@ for: -5m
     let mut state = super::super::RulerAlertState::default();
 
     let result = super::super::evaluate_and_dispatch_alerting_rule_with_state(
-        &engine, &sink, &mut state, "tenant-a", &rule, 60_000,
+        &engine,
+        &sink,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &rule,
+        60_000,
     )
     .await;
     assert2::assert!(result.is_err());

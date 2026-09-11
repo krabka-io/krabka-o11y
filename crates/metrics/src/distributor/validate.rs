@@ -1,45 +1,33 @@
-use super::{
-    ByteSizeExt, DecodedSeries, TenantLimits, WireError, is_valid_label_name,
-    validate_exemplar_labels,
-};
+use super::{DecodedSeries, Limits, WireError, is_valid_label_name, validate_exemplar_labels};
 
-/// Validates the decoded series against the structural limits.
+/// Validates the shape of the decoded series against the tenant's limits.
+///
+/// Label lengths are not checked here. `enforce_label_limits` applies them,
+/// from the same resolved [`Limits`], so one request gets one verdict on a
+/// label and gets it in Mimir's error shape.
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
-pub fn validate(series: &[DecodedSeries], limits: &TenantLimits) -> Result<(), WireError> {
-    if series.len() > limits.max_series_per_request {
+pub fn validate(series: &[DecodedSeries], limits: &Limits) -> Result<(), WireError> {
+    let series_count = u64::try_from(series.len()).unwrap_or(u64::MAX);
+    if series_count > limits.max_series_per_request {
         return Err(WireError::Invalid(format!(
-            "series per request {} exceeds limit {}",
-            series.len(),
+            "series per request {series_count} exceeds limit {}",
             limits.max_series_per_request
         )));
     }
 
     for series in series {
         let sample_count = series.samples.len() + series.histograms.len() + series.exemplars.len();
+        let sample_count = u64::try_from(sample_count).unwrap_or(u64::MAX);
         if sample_count > limits.max_samples_per_series {
             return Err(WireError::Invalid(format!(
                 "samples per series {sample_count} exceeds limit {}",
                 limits.max_samples_per_series
             )));
         }
-        for (name, value) in series.labels.iter() {
+        for (name, _) in series.labels.iter() {
             if !is_valid_label_name(name) {
                 return Err(WireError::Invalid(format!("invalid label name `{name}`")));
-            }
-            let name_limit = limits.max_label_name_len.bytes_usize();
-            if name.len() > name_limit {
-                return Err(WireError::Invalid(format!(
-                    "label name length {} exceeds limit {name_limit}",
-                    name.len(),
-                )));
-            }
-            let value_limit = limits.max_label_value_len.bytes_usize();
-            if value.len() > value_limit {
-                return Err(WireError::Invalid(format!(
-                    "label value length {} exceeds limit {value_limit}",
-                    value.len(),
-                )));
             }
         }
         for exemplar in &series.exemplars {

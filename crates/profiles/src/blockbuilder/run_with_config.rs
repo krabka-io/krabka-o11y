@@ -84,6 +84,7 @@ pub async fn run_with_config(
         () = shutdown.cancelled() => return Ok(()),
         built = Consumer::builder()
             .bootstrap(config.bootstrap)
+            .maybe_security(config.security)
             .dispatch_queue_capacity(config.client_dispatch_queue_capacity.get())
             .frame_max(config.client_frame_max.size())
             .group_id(config.group_id.clone())

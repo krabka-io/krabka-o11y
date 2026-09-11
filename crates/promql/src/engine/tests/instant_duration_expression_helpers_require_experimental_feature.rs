@@ -9,7 +9,7 @@ pub(crate) async fn instant_duration_expression_helpers_require_experimental_fea
 
     for query in ["range()", "step()", "start()", "end()"] {
         let error = engine
-            .query_instant("tenant-a", query, 120_000)
+            .query_instant(&tenant_id("tenant-a"), query, 120_000)
             .await
             .unwrap_err();
 

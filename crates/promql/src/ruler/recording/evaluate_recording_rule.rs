@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, MetricStore, PromqlEngine, PromqlError, QueryResult, SamplePayload, SampleValue,
-    WalRecord, recording_labels,
+    TenantId, WalRecord, recording_labels,
 };
 
 /// Evaluates one recording rule and materializes the result as metrics WAL
@@ -20,7 +20,7 @@ use super::{
 /// a remote endpoint fails.
 pub async fn evaluate_recording_rule<S: MetricStore>(
     engine: &PromqlEngine<S>,
-    tenant: &str,
+    tenant: &TenantId,
     record_name: &str,
     expr: &str,
     rule_labels: &BTreeMap<String, String>,

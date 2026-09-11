@@ -1,4 +1,6 @@
-use super::{AllStage, Arc, Cli, ObjectStore, ServiceMetrics, block_builder_config};
+use super::{
+    AllStage, Arc, Cli, ClientSecurity, ObjectStore, ServiceMetrics, block_builder_config,
+};
 
 /// The block builder, as `--target all` runs it.
 ///
@@ -12,6 +14,7 @@ pub(crate) fn block_builder_stage(
     store: &Arc<dyn ObjectStore>,
     index_key: &str,
     metrics: &ServiceMetrics,
+    wal_security: Option<ClientSecurity>,
 ) -> AllStage {
     let cli = Arc::clone(cli);
     let store = Arc::clone(store);
@@ -19,7 +22,7 @@ pub(crate) fn block_builder_stage(
     let metrics = metrics.clone();
     Box::new(move |token| {
         Box::pin(async move {
-            let config = block_builder_config(&cli, store, index_key, metrics);
+            let config = block_builder_config(&cli, store, index_key, metrics, wal_security);
             if let Err(error) = krabka_profiles::blockbuilder::run_with_config(config, token).await
             {
                 tracing::error!(%error, "profiles block builder stopped");

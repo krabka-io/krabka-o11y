@@ -86,7 +86,7 @@ pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
         ),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"));
         let QueryResult::InstantVector(samples) = result else {

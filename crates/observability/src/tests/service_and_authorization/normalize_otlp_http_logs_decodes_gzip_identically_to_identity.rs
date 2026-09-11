@@ -44,14 +44,15 @@ pub(crate) fn normalize_otlp_http_logs_decodes_gzip_identically_to_identity() {
     let raw = request.encode_to_vec();
 
     let mut headers = HeaderMap::new();
-    headers.insert("X-Scope-OrgID", "demo".parse().unwrap());
     headers.insert(CONTENT_TYPE, "application/x-protobuf".parse().unwrap());
 
     // Identity (no Content-Encoding) decodes to a single record.
-    let identity = normalize_otlp_http_logs(&headers, &raw, None, None)
+    let limits = Limits::unenforced();
+    let tenant = TenantId::new("demo").expect("a valid tenant id");
+    let identity = normalize_otlp_http_logs(&tenant, &headers, &raw, &limits)
         .expect("uncompressed OTLP proto logs should decode");
-    assert_eq!(identity.len(), 1);
-    assert_eq!(identity[0].line, "hello world");
+    check!(identity.len() == 1);
+    check!(identity[0].line == "hello world");
 
     // The gzip-compressed body must decode to exactly the same records.
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -60,7 +61,7 @@ pub(crate) fn normalize_otlp_http_logs_decodes_gzip_identically_to_identity() {
 
     let mut gz_headers = headers.clone();
     gz_headers.insert(CONTENT_ENCODING, "gzip".parse().unwrap());
-    let from_gzip = normalize_otlp_http_logs(&gz_headers, &gzipped, None, None)
+    let from_gzip = normalize_otlp_http_logs(&tenant, &gz_headers, &gzipped, &limits)
         .expect("gzip-compressed OTLP proto logs should decode");
-    assert_eq!(from_gzip, identity);
+    check!(from_gzip == identity);
 }

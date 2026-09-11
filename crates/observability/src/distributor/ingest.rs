@@ -6,11 +6,11 @@ use prost::Message;
 
 use crate::{
     ByteSize, CONTENT_ENCODING, DeflateDecoder, DistributorError, DistributorState, GzDecoder,
-    HeaderMap, Instant, LogIngestLimiter, LokiProtoPushRequest, LokiPushRequest,
-    LokiTypedPushRequest, ProtoExportLogsServiceRequest, Response, SnappyDecoder, StatusCode, Time,
-    Value, WalLogRecord, is_loki_json_content_type, is_protobuf_content_type,
+    HeaderMap, Instant, Limits, LogIngestLimiter, LokiProtoPushRequest, LokiPushRequest,
+    LokiTypedPushRequest, ProtoExportLogsServiceRequest, RequestSecurity, Response, SnappyDecoder,
+    StatusCode, TenantId, Value, WalLogRecord, is_loki_json_content_type, is_protobuf_content_type,
     loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
-    normalize_otlp_logs, normalize_otlp_proto_logs, quote_logql_string,
+    normalize_otlp_logs, normalize_otlp_proto_logs, quote_logql_string, server_security::Principal,
 };
 
 mod append_distributor_wal_records;

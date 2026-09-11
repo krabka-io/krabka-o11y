@@ -17,7 +17,7 @@ pub(crate) async fn instant_double_exponential_smoothing_validates_factors() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let error = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "double_exponential_smoothing(queue_depth[2m], 1, 0.5)",
             60_000,
         )

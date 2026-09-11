@@ -26,7 +26,7 @@ pub(crate) async fn smoothed_delta_extrapolates_only_within_the_sample_interval_
         ("70s past it clamps to the last value", 130_000, 50.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", "delta(smoothed(m[2m]))", eval_ms)
+            .query_instant(&tenant_id("tenant-a"), "delta(smoothed(m[2m]))", eval_ms)
             .await
             .unwrap();
 
@@ -39,7 +39,7 @@ pub(crate) async fn smoothed_delta_extrapolates_only_within_the_sample_interval_
 
     // `delta` stops at the difference; only `rate` divides by the range.
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", "rate(smoothed(m[3m]))", 123_000)
+        .query_instant(&tenant_id("tenant-a"), "rate(smoothed(m[3m]))", 123_000)
         .await
         .expect("a smoothed rate")
     else {

@@ -1,3 +1,5 @@
+use super::TenantId;
+
 /// A by-id job: fetch one trace's spans from one querier.
 ///
 /// By-id does **not** fan per-block, because the querier reassembles a trace
@@ -5,7 +7,8 @@
 /// responses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceByIdJobRequest {
-    pub tenant: String,
+    /// The resolved tenant, which the transport sends as `X-Scope-OrgID`.
+    pub tenant: TenantId,
     pub trace_id: [u8; 16],
     pub start_ns: i64,
     pub end_ns: i64,

@@ -1,7 +1,7 @@
 use super::{
-    Arc, BlockIndex, ByteSize, ColdObjectStoreState, DynamicIndexCache, DynamicIndexSource,
-    HotTailState, LabelIndex, LogQueryAuthorizer, NonZeroUsize, PathBuf, ServiceMetrics,
-    SharedLogDeleteRequests, SharedLokiRules, SharedPrometheusAlertStates, Time,
+    Arc, BlockIndex, ColdObjectStoreState, DynamicIndexCache, DynamicIndexSource, HotTailState,
+    LabelIndex, Limits, LogQueryAuthorizer, NonZeroUsize, OverridesProvider, PathBuf,
+    ServiceMetrics, SharedLogDeleteRequests, SharedLokiRules, SharedPrometheusAlertStates,
 };
 
 #[derive(Clone)]
@@ -18,11 +18,17 @@ pub struct QuerierState {
     pub(crate) rules: SharedLokiRules,
     pub(crate) alert_states: SharedPrometheusAlertStates,
     pub(crate) query_authorizer: Arc<dyn LogQueryAuthorizer>,
-    pub(crate) max_query_range: Option<Time>,
-    /// A count of series, not a data volume, so it stays a plain integer.
-    pub(crate) max_query_series: Option<usize>,
-    pub(crate) max_query_read: Option<ByteSize>,
-    pub(crate) max_query_length: Option<ByteSize>,
+    /// The one provider this service resolves every tenant's limits through.
+    ///
+    /// It is shared with the distributor, so a read gate and an ingest gate
+    /// answer the same tenant with the same numbers.
+    pub(crate) overrides: Arc<OverridesProvider>,
+    /// The limits of the tenant the request in hand names.
+    ///
+    /// [`QuerierState::with_tenant_limits`] resolves them once, at the top of
+    /// each per-tenant read path, and every check below reads them from here.
+    /// Before that resolution they are the provider's defaults.
+    pub(crate) limits: Limits,
     /// Shared RED-metrics bundle. It is `None` for test routers that do not
     /// wire metrics. The binary threads a shared bundle in with
     /// [`QuerierState::with_metrics`].

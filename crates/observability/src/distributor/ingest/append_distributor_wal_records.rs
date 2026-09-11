@@ -1,12 +1,28 @@
-use super::{DistributorError, DistributorState, TimeExt, WalLogRecord, check_ingest_quota};
+use super::{
+    DistributorError, DistributorState, RequestSecurity, TenantId, TimeExt, WalLogRecord,
+    check_ingest_quota,
+};
 
 pub(crate) async fn append_distributor_wal_records(
     state: &DistributorState,
+    security: &RequestSecurity,
+    tenant: &TenantId,
     records: Vec<WalLogRecord>,
 ) -> Result<(), DistributorError> {
     // A quota/rate-limit reject is a 4xx client error, NOT a WAL-append
     // failure, so it must not bump the WAL failure counter.
-    check_ingest_quota(state.ingest_limiter.as_ref(), &records).await?;
+    check_ingest_quota(
+        state.ingest_limiter.as_ref(),
+        &security.principal,
+        tenant,
+        &records,
+    )
+    .await
+    .inspect_err(|error| {
+        if let DistributorError::IngestQuota(error) = error {
+            security.record_write_refusal(error);
+        }
+    })?;
     let total = records.len();
     // One pipelined batch, not one produce per entry. The sink enqueues the
     // records in this order, so a stream's entries stay ordered on the

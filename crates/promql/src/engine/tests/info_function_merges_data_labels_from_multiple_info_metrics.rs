@@ -39,7 +39,7 @@ pub(crate) async fn info_function_merges_data_labels_from_multiple_info_metrics(
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"info(http_requests_total, {__name__=~".+_info"})"#,
             10_000,
         )

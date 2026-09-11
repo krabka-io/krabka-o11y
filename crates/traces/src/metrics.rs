@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use krabka_blockstore::ObjectStoreMetrics;
+use krabka_blockstore::{ObjectStoreMetrics, TenantId};
 use krabka_observability::{
     compaction_metrics::CompactionMetrics, wal_consumer_metrics::WalConsumerMetrics,
     wal_produce::WalProduceMetrics,
@@ -36,13 +36,17 @@ mod tests {
 
     use super::*;
 
+    fn tenant(id: &str) -> TenantId {
+        TenantId::new(id).expect("a valid tenant id")
+    }
+
     #[tokio::test]
     async fn registry_has_traces_prefix_and_all_metrics() {
         let m = ServiceMetrics::new();
         m.record_ingest(true, kibibytes(1), 7, millis(10));
         m.record_ingest(false, ByteSize::ZERO, 0, millis(2));
         m.record_wal_append_failure();
-        m.record_ingest_spans("tenant-a", 7);
+        m.record_ingest_spans(&tenant("tenant-a"), 7);
         m.record_block_flushed();
         m.record_query("search", true, 0.05);
         m.record_query("trace_by_id", false, 0.2);
@@ -120,11 +124,11 @@ mod tests {
     #[test]
     fn ingest_spans_split_by_tenant_and_blocks_flushed_accumulate() {
         let m = ServiceMetrics::new();
-        m.record_ingest_spans("tenant-a", 3);
-        m.record_ingest_spans("tenant-a", 2);
-        m.record_ingest_spans("tenant-b", 4);
+        m.record_ingest_spans(&tenant("tenant-a"), 3);
+        m.record_ingest_spans(&tenant("tenant-a"), 2);
+        m.record_ingest_spans(&tenant("tenant-b"), 4);
         // A zero-span request must not create a tenant series.
-        m.record_ingest_spans("tenant-c", 0);
+        m.record_ingest_spans(&tenant("tenant-c"), 0);
         m.record_block_flushed();
         m.record_block_flushed();
 

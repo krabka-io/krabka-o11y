@@ -1,3 +1,5 @@
+use super::{TenantDenied, TenantResolveError};
+
 /// Errors across the traces ingest and query pipeline.
 #[derive(Debug, thiserror::Error)]
 pub enum TracesError {
@@ -7,6 +9,19 @@ pub enum TracesError {
     Decode(String),
     #[error("invalid request: {0}")]
     Invalid(String),
+    /// The request names a tenant that is not a valid tenant id, or names no
+    /// tenant under a policy that requires one.
+    ///
+    /// The message is the [`TenantResolveError`] text alone, which is the text
+    /// Grafana Mimir and Grafana Loki send for the same header.
+    #[error(transparent)]
+    Tenant(#[from] TenantResolveError),
+    /// An authenticated principal named a tenant outside its grant.
+    ///
+    /// The HTTP doors answer 403 and the gRPC doors answer
+    /// `PermissionDenied`, before they decode the body.
+    #[error(transparent)]
+    TenantDenied(#[from] TenantDenied),
     #[error("limit exceeded: {0}")]
     Limit(String),
     #[error("rate limit exceeded: {0}")]
@@ -51,7 +66,12 @@ impl TracesError {
     pub fn status_code(&self) -> u16 {
         match self {
             Self::UnsupportedContentType(_) => 415,
-            Self::Decode(_) | Self::Invalid(_) | Self::Limit(_) | Self::TooLarge { .. } => 400,
+            Self::Decode(_)
+            | Self::Invalid(_)
+            | Self::Tenant(_)
+            | Self::Limit(_)
+            | Self::TooLarge { .. } => 400,
+            Self::TenantDenied(_) => 403,
             Self::RateLimit(_) => 429,
             Self::Wal(_) | Self::Produce(_) | Self::ProduceBatch { .. } | Self::Block(_) => 500,
         }

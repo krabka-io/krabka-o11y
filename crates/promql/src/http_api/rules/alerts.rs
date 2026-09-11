@@ -1,13 +1,15 @@
 use super::{
-    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State, json,
-    prometheus_alerts_json, success_data_response, tenant_from_headers,
+    ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
+    Response, State, authorized_tenant_from_headers, json, prometheus_alerts_json,
+    success_data_response,
 };
 
 pub(crate) async fn alerts<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
 ) -> Response {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };

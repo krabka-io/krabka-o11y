@@ -20,7 +20,7 @@ pub(crate) async fn scalar_function_converts_single_sample_vector_and_nan_otherw
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let single = engine
-        .query_instant("tenant-a", "scalar(single_value)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "scalar(single_value)", 10_000)
         .await
         .unwrap();
     assert2::assert!(
@@ -33,7 +33,7 @@ pub(crate) async fn scalar_function_converts_single_sample_vector_and_nan_otherw
 
     for query in ["scalar(missing_metric)", "scalar(multi_value)"] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
         let QueryResult::Scalar { ts_ms, value } = result else {

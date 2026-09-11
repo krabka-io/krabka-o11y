@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Producer, RecordingRuleWalSink, RulerWalError, WalRecord, keyed_producer_record,
+    partition_key,
+};
 
 pub struct KafkaRecordingRuleWalSink {
     pub(crate) producer: Arc<Producer>,

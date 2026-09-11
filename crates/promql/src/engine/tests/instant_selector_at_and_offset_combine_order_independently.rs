@@ -26,7 +26,7 @@ pub(crate) async fn instant_selector_at_and_offset_combine_order_independently()
     );
     for query in ["up @ 120 offset 1m", "up offset 1m @ 120"] {
         let result = engine
-            .query_instant("tenant-a", query, 999_000)
+            .query_instant(&tenant_id("tenant-a"), query, 999_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

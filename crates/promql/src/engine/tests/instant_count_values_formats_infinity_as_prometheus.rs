@@ -21,7 +21,11 @@ pub(crate) async fn instant_count_values_formats_infinity_as_prometheus() {
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", r#"count_values("v", ratio)"#, 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            r#"count_values("v", ratio)"#,
+            10_000,
+        )
         .await
         .unwrap()
     else {

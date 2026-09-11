@@ -9,10 +9,10 @@ pub use overrides::{OverridesError, OverridesProvider};
 
 /// A configured extent that must not be negative.
 ///
-/// `human::time` accepts a signed magnitude, and `QueryEnforcer::check_range`
-/// applies only a cap greater than zero. A runtime override of `"-1s"` would
-/// therefore load cleanly and mean *unlimited*, but zero is the documented way
-/// to turn a cap off. A rejection at parse time keeps one sentinel.
+/// `human::time` accepts a signed magnitude, and an enforcer applies only a cap
+/// greater than zero. A runtime override of `"-1s"` would therefore load
+/// cleanly and mean *unlimited*, but zero is the documented way to turn a cap
+/// off. A rejection at parse time keeps one sentinel.
 pub mod non_negative_time {
     use serde::{Deserializer, Serializer, de::Error as _};
 
@@ -36,7 +36,7 @@ pub mod non_negative_time {
         let value = serde_units::human::time::deserialize(deserializer)?;
         if value < Time::default() {
             return Err(D::Error::custom(
-                "query span caps cannot be negative; use 0 to disable the cap",
+                "this limit cannot be negative; use 0 to disable the cap",
             ));
         }
         Ok(value)
@@ -64,7 +64,7 @@ pub(crate) mod option_non_negative_time {
         let value = serde_units::human::option_time::deserialize(deserializer)?;
         if value.is_some_and(|value| value < Time::default()) {
             return Err(D::Error::custom(
-                "query span caps cannot be negative; use 0 to disable the cap",
+                "this limit cannot be negative; use 0 to disable the cap",
             ));
         }
         Ok(value)

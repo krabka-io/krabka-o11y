@@ -22,7 +22,11 @@ rules:
     let sink = RecordingSink::default();
 
     let appended = super::super::evaluate_and_append_recording_rule_group(
-        &engine, &sink, "tenant-a", &group, 60_000,
+        &engine,
+        &sink,
+        &tenant_id("tenant-a"),
+        &group,
+        60_000,
     )
     .await
     .expect("recording rule group append");

@@ -1,11 +1,12 @@
 use super::{
-    Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response,
-    State, StatusCode, Uri, backend_error_response, exemplar_limit, metrics_query_param,
-    optional_seconds, query_param, required_time_bounds, tenant,
+    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Principal, QuerierBackend,
+    QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, exemplar_limit,
+    metrics_query_param, optional_seconds, query_param, request_tenant, required_time_bounds,
 };
 
 pub(crate) async fn query_instant<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     uri: Uri,
 ) -> Response
@@ -13,7 +14,10 @@ where
     B: QuerierBackend + 'static,
     C: BlockCatalog + 'static,
 {
-    let tenant = tenant(&headers);
+    let tenant = match request_tenant(&headers, &principal, &qf.cfg.tenant_policy) {
+        Ok(tenant) => tenant,
+        Err(rejection) => return *rejection,
+    };
     let Some(query) = metrics_query_param(&uri) else {
         return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response();
     };

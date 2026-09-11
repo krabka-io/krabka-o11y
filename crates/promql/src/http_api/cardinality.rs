@@ -10,10 +10,10 @@ use axum::{
 use krabka_blockstore::Labels;
 
 use super::{
-    ApiError, CardinalityParams, PrometheusApiState, active_series_response, apply_limit,
-    cardinality_label_names_response, cardinality_label_values_response,
-    enforce_selected_series_limit, labels_key, parse_cardinality_form, parse_cardinality_params,
-    selector_matchers, tenant_from_headers,
+    ApiError, CardinalityParams, Extension, Principal, PrometheusApiState, active_series_response,
+    apply_limit, authorized_tenant_from_headers, cardinality_label_names_response,
+    cardinality_label_values_response, enforce_selected_series_limit, labels_key,
+    parse_cardinality_form, parse_cardinality_params, selector_matchers,
 };
 use crate::MetricStore;
 

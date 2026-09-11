@@ -1,6 +1,7 @@
 use std::{
     ffi::OsStr,
     net::SocketAddr,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,11 +13,12 @@ use clap::{
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_core::{
-    ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
+    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
 use krabka_client_producer::Producer;
 use krabka_metrics::{
-    DEFAULT_MAX_RATE_BUCKETS, MetricsCompactorConfig,
+    DEFAULT_MAX_RATE_BUCKETS, MetricsCompactorConfig, OverridesProvider,
     distributor::{
         DistributorState, HA_TRACKER_TOPIC, KafkaHaElectionSink, KafkaSink,
         router as distributor_router, run_ha_election_consumer_loop,
@@ -25,8 +27,14 @@ use krabka_metrics::{
     run_compactor_consumer_loop,
 };
 use krabka_observability::{
-    ConfigFileArgs, RoleReadiness, argv_with_config_file, readiness_router,
+    ConfigFileArgs, RoleReadiness, argv_with_config_file,
+    audit::AuditArgs,
+    readiness_router,
+    server_security::{
+        ServerListener, ServerSecurity, ServerSecurityArgs, install_crypto_provider, serve_router,
+    },
     topic_contract::{METRICS_TOPICS, require_topics},
+    wal_client_security::WalClientSecurityArgs,
 };
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
@@ -295,6 +303,56 @@ mod tests {
         check!(from_cli.distributor_max_decompressed == kibibytes(128));
     }
 
+    /// The distributor's per-tenant limits come from a runtime overrides
+    /// file. Without the flag every tenant is pinned at the built-in
+    /// defaults, with nothing able to move them. The flag and its environment
+    /// variable are spelled as `krabka-metrics-service` spells them, so one
+    /// file configures the write path and the read path together.
+    #[test]
+    fn parses_the_runtime_overrides_path() {
+        let cli = Cli::try_parse_from([
+            "krabka-metrics",
+            "--target",
+            "distributor",
+            "--runtime-overrides",
+            "/etc/krabka/runtime.yaml",
+        ])
+        .unwrap();
+
+        check!(cli.runtime_overrides == Some(PathBuf::from("/etc/krabka/runtime.yaml")));
+    }
+
+    /// The loader turns that path into the limits the distributor enforces.
+    /// An absent path is not a failure, because no overrides file is the
+    /// documented default; a named file that is not there is.
+    #[test]
+    fn loads_per_tenant_limits_from_the_named_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("runtime.yaml");
+        std::fs::write(
+            &path,
+            "overrides:\n  tenant-tight:\n    max_series_per_request: 3\n",
+        )
+        .expect("write runtime overrides");
+
+        let overrides = load_runtime_overrides(Some(path.as_path()))
+            .expect("load runtime overrides")
+            .expect("a named file yields a provider");
+        check!(overrides.for_tenant("tenant-tight").max_series_per_request == 3);
+        check!(
+            overrides.for_tenant("tenant-other").max_series_per_request
+                == krabka_metrics::Limits::default().max_series_per_request,
+            "an unlisted tenant keeps the default"
+        );
+
+        check!(
+            load_runtime_overrides(None)
+                .expect("no path is not a failure")
+                .is_none()
+        );
+        check!(load_runtime_overrides(Some(dir.path().join("absent.yaml").as_path())).is_err());
+    }
+
     #[test]
     fn parses_distributor_ha_tracker_options() {
         let cli = Cli::try_parse_from([
@@ -458,6 +516,118 @@ mod tests {
         assert!(Cli::try_parse_from(["krabka-metrics", "--target", "bogus"]).is_err());
     }
 
+    /// The server, audit and write-ahead log security flags are the shared
+    /// ones, flattened. With none set, the data port serves plain HTTP with no
+    /// authentication, the audit layer is off, and the broker connections are
+    /// plain text, as Grafana Mimir and the Kafka clients default to.
+    #[test]
+    fn parses_the_server_audit_and_wal_security_flags() {
+        let defaults = Cli::try_parse_from(["krabka-metrics", "--target", "distributor"]).unwrap();
+        check!(defaults.server_security.server_tls_cert_path.is_none());
+        check!(defaults.server_security.auth_credentials_config.is_none());
+        check!(
+            defaults
+                .server_security
+                .internal_client_token_path
+                .is_none()
+        );
+        check!(!defaults.audit.is_enabled());
+        check!(defaults.wal_security == WalClientSecurityArgs::default());
+
+        let configured = Cli::try_parse_from([
+            "krabka-metrics",
+            "--target",
+            "distributor",
+            "--server-tls-cert-path",
+            "/etc/krabka/tls.crt",
+            "--server-tls-key-path",
+            "/etc/krabka/tls.key",
+            "--auth-credentials-config",
+            "/etc/krabka/credentials.yaml",
+            "--internal-client-token-path",
+            "/etc/krabka/internal-token",
+            "--audit-topic",
+            "krabka-audit",
+            "--audit-partition",
+            "3",
+            "--wal-security-protocol",
+            "SASL_SSL",
+            "--wal-tls-ca-path",
+            "/etc/krabka/broker-ca.pem",
+            "--wal-tls-server-name",
+            "broker.internal",
+            "--wal-sasl-mechanism",
+            "SCRAM-SHA-512",
+            "--wal-sasl-username",
+            "krabka-metrics",
+            "--wal-sasl-password-path",
+            "/etc/krabka/wal-password",
+        ])
+        .unwrap();
+        check!(
+            configured.server_security.server_tls_cert_path
+                == Some(PathBuf::from("/etc/krabka/tls.crt"))
+        );
+        check!(
+            configured.server_security.server_tls_key_path
+                == Some(PathBuf::from("/etc/krabka/tls.key"))
+        );
+        check!(
+            configured.server_security.auth_credentials_config
+                == Some(PathBuf::from("/etc/krabka/credentials.yaml"))
+        );
+        check!(
+            configured.server_security.internal_client_token_path
+                == Some(PathBuf::from("/etc/krabka/internal-token"))
+        );
+        check!(configured.audit.topic.as_deref() == Some("krabka-audit"));
+        check!(configured.audit.partition == krabka_ids::PartitionIndex(3));
+        check!(
+            configured.wal_security
+                == WalClientSecurityArgs {
+                    wal_security_protocol:
+                        krabka_observability::wal_client_security::WalSecurityProtocol::SaslSsl,
+                    wal_tls_ca_path: Some(PathBuf::from("/etc/krabka/broker-ca.pem")),
+                    wal_tls_server_name: Some("broker.internal".to_string()),
+                    wal_sasl_mechanism: Some(
+                        krabka_observability::wal_client_security::WalSaslMechanism::ScramSha512
+                    ),
+                    wal_sasl_username: Some("krabka-metrics".to_string()),
+                    wal_sasl_password_path: Some(PathBuf::from("/etc/krabka/wal-password")),
+                    ..WalClientSecurityArgs::default()
+                }
+        );
+    }
+
+    /// A security flag set that cannot work stops the start with a message
+    /// that names the flag, before the role binds a port or reaches a broker.
+    #[tokio::test]
+    async fn a_security_flag_set_that_cannot_work_stops_the_start() {
+        let cases = [
+            (
+                vec!["--server-tls-cert-path", "/etc/krabka/tls.crt"],
+                "--server-tls-key-path",
+            ),
+            (vec!["--wal-security-protocol", "SSL"], "--wal-tls-ca-path"),
+        ];
+
+        for (flags, named) in cases {
+            let mut argv = vec![
+                "krabka-metrics",
+                "--target",
+                "distributor",
+                "--admin-listen-addr",
+                "127.0.0.1:0",
+            ];
+            argv.extend(flags);
+            let cli = Cli::try_parse_from(argv).expect("the flags parse");
+
+            let error = run(cli).await.expect_err("the start stops");
+
+            check!(error.to_string().contains(named), "{error}");
+        }
+    }
+
     /// The contract has to stop a start, not merely describe one.
     ///
     /// The broker here holds a metrics WAL topic that meets the contract and
@@ -489,7 +659,7 @@ mod tests {
 
         for target in [Target::Distributor, Target::BlockBuilder] {
             let cli = cli_for(target, &bootstrap);
-            let error = require_role_topics(&cli)
+            let error = require_role_topics(&cli, None)
                 .await
                 .expect_err("a role that reaches this broker refuses to start");
             check!(error.to_string().contains(METRICS_HA_TOPIC), "{target:?}");
@@ -508,7 +678,7 @@ mod tests {
 
         for target in [Target::Distributor, Target::BlockBuilder] {
             let cli = cli_for(target, &bootstrap);
-            check!(require_role_topics(&cli).await.is_err(), "{target:?}");
+            check!(require_role_topics(&cli, None).await.is_err(), "{target:?}");
         }
     }
 
@@ -583,6 +753,7 @@ mod alloc;
 mod build_object_store;
 mod cli;
 mod ingest_rate_bucket_cap;
+mod load_runtime_overrides;
 mod parse_client_dispatch_queue_capacity;
 mod parse_client_frame_max;
 mod parse_distributor_max_decompressed;
@@ -604,6 +775,7 @@ mod unix_time_ms;
 use build_object_store::build_object_store;
 use cli::Cli;
 use ingest_rate_bucket_cap::IngestRateBucketCap;
+use load_runtime_overrides::load_runtime_overrides;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
 use parse_distributor_max_decompressed::parse_distributor_max_decompressed;
@@ -623,6 +795,9 @@ use unix_time_ms::unix_time_ms;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // First: rustls has two crypto providers compiled in, and the first TLS
+    // client or server that asks for the process default panics without one.
+    install_crypto_provider();
     let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(

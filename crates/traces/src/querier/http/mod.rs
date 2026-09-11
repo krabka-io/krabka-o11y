@@ -2,13 +2,17 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode, Uri, header},
+    extract::{Extension, Path, State},
+    http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
 };
 use base64::Engine;
-use krabka_observability::RoleReadiness;
+use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy};
+use krabka_observability::{
+    RoleReadiness,
+    server_security::{Principal, authorize_tenant},
+};
 use krabka_traceql::{
     AttrValue, ComparisonOp, Field, FieldExpr, Intrinsic, ScanJob, ScanOptions, Scope, ScopedTag,
     SearchOptions, SearchResponse, SpanRef, SpanStore, SpansetExpr, TagScope, TraceMetricsResponse,
@@ -434,6 +438,29 @@ mod tests {
     use super::*;
     use crate::querier::store::{KrabkaSpanStore, SharedTraceIndex};
 
+    // Every query route reads its principal from the request extensions,
+    // where the authentication layer puts it. The tests drive the routers
+    // behind the unconfigured layer, which serves every request as
+    // unauthenticated.
+    fn router<S: SpanStore + 'static>(engine: Arc<TraceqlEngine<S>>) -> axum::Router {
+        authenticated(super::router(engine))
+    }
+
+    fn router_with_config<S: SpanStore + 'static>(
+        engine: Arc<TraceqlEngine<S>>,
+        cfg: HttpConfig,
+        readiness: RoleReadiness,
+    ) -> axum::Router {
+        authenticated(super::router_with_config(engine, cfg, readiness))
+    }
+
+    fn authenticated(router: axum::Router) -> axum::Router {
+        krabka_observability::server_security::authenticate_requests(
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+        )
+    }
+
     fn shared_index(index: TraceIndex) -> SharedTraceIndex {
         Arc::new(ArcSwap::from_pointee(index))
     }
@@ -590,7 +617,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(uri)
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -606,7 +633,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(uri)
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -622,7 +649,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(uri)
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -638,7 +665,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri(uri)
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -849,7 +876,7 @@ mod tests {
                     .uri(
                         "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=0&end=1&step=1&block=blocks%2Frow-groups.parquet&rowGroupStart=1&rowGroupEnd=2",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -884,7 +911,7 @@ mod tests {
                     .uri(
                         "/api/v2/search/tag/span:name/values?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=0&end=1&block=blocks%2Frow-groups.parquet&rowGroupStart=1&rowGroupEnd=2",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -944,7 +971,7 @@ mod tests {
                     .uri(
                         "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=0&end=1&step=1&exemplars=1",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1209,13 +1236,11 @@ mod tests {
     #[tokio::test]
     async fn search_rejects_limit_above_http_limits() {
         let app = app_with_http_config(HttpConfig {
-            max_trace_spans: usize::MAX,
-            tag_query_filter_autocomplete_limit: 25,
-            limits: crate::limits::Limits {
+            overrides: crate::limits::OverridesProvider::new(crate::limits::Limits {
                 max_traces_per_search: 1,
                 ..crate::limits::Limits::default()
-            },
-            overrides: None,
+            }),
+            ..HttpConfig::default()
         });
         let (status, body) = get_json_with_app(
             app,
@@ -1235,26 +1260,22 @@ mod tests {
     #[tokio::test]
     async fn search_applies_tenant_limit_overrides() {
         let app = app_with_http_config(HttpConfig {
-            max_trace_spans: usize::MAX,
-            tag_query_filter_autocomplete_limit: 25,
-            limits: crate::limits::Limits::default(),
-            overrides: Some(
-                crate::limits::OverridesProvider::from_yaml(
-                    r"
+            overrides: crate::limits::OverridesProvider::from_yaml(
+                r"
 overrides:
   tenant-tight:
     max_traces_per_search: 1
 ",
-                )
-                .unwrap(),
-            ),
+            )
+            .unwrap(),
+            ..HttpConfig::default()
         });
         let tight = app
             .clone()
             .oneshot(
                 Request::builder()
                     .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=0&end=1&limit=2")
-                    .header("x-scope-orgid", "tenant-tight")
+                    .header(TENANT_HEADER, "tenant-tight")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1264,7 +1285,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=0&end=1&limit=2")
-                    .header("x-scope-orgid", "tenant-loose")
+                    .header(TENANT_HEADER, "tenant-loose")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1282,16 +1303,63 @@ overrides:
         assert2::assert!(loose.status() == StatusCode::OK);
     }
 
+    /// `max_search_duration` is per tenant, and the read gates resolve it
+    /// through the same provider `max_traces_per_search` comes from. It had no
+    /// route from configuration at all while the distributor projected its own
+    /// limit type onto the shared one and pinned this field to the compiled
+    /// default, so a file that named it changed nothing.
+    #[tokio::test]
+    async fn query_range_applies_a_tenant_search_duration_override() {
+        let app = app_with_http_config(HttpConfig {
+            overrides: crate::limits::OverridesProvider::from_yaml(
+                r"
+overrides:
+  tenant-tight:
+    max_search_duration_secs: 1
+",
+            )
+            .unwrap(),
+            ..HttpConfig::default()
+        });
+        let uri = "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=0&end=3&step=1";
+        let ask = |tenant: &'static str| {
+            let app = app.clone();
+            async move {
+                app.oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(TENANT_HEADER, tenant)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+            }
+        };
+
+        let tight = ask("tenant-tight").await;
+        let loose = ask("tenant-loose").await;
+
+        check!(tight.status() == StatusCode::BAD_REQUEST);
+        let body = tight.into_body().collect().await.unwrap().to_bytes();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        check!(
+            body["error"]
+                .as_str()
+                .is_some_and(|message| message.contains("max search duration"))
+        );
+        // The unlisted tenant keeps the provider's default, which is unlimited.
+        check!(loose.status() == StatusCode::OK);
+    }
+
     #[tokio::test]
     async fn metrics_query_range_rejects_duration_above_http_limits() {
         let app = app_with_http_config(HttpConfig {
-            max_trace_spans: usize::MAX,
-            tag_query_filter_autocomplete_limit: 25,
-            limits: crate::limits::Limits {
+            overrides: crate::limits::OverridesProvider::new(crate::limits::Limits {
                 max_search_duration: secs(1),
                 ..crate::limits::Limits::default()
-            },
-            overrides: None,
+            }),
+            ..HttpConfig::default()
         });
         let (status, body) = get_json_with_app(
             app,
@@ -1329,7 +1397,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&start=1.4&end=1.6")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1408,7 +1476,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=2s&start=0&end=10")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1439,7 +1507,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=1000001ns&start=0&end=10")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1479,7 +1547,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&maxDuration=2s&start=0&end=10")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1518,7 +1586,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&minDuration=2s&limit=1&start=0&end=10")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1554,7 +1622,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search?q=%7B%20.svc%20%21%3D%20nil%20%7D&limit=1&start=0&end=10")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2038,7 +2106,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .header("accept", "application/protobuf")
                     .body(Body::empty())
                     .unwrap(),
@@ -2068,7 +2136,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .header("accept", "Application/Protobuf; q=1")
                     .body(Body::empty())
                     .unwrap(),
@@ -2105,7 +2173,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .header("accept", "application/protobuf")
                     .body(Body::empty())
                     .unwrap(),
@@ -2134,7 +2202,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2157,7 +2225,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .header("accept", "application/json")
                     .body(Body::empty())
                     .unwrap(),
@@ -2186,7 +2254,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2220,7 +2288,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2263,7 +2331,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2355,7 +2423,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/09090909090909090909090909090909?start=4&end=6")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2417,7 +2485,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/09090909090909090909090909090909")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2501,7 +2569,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=span")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2555,7 +2623,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=instrumentation")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2797,7 +2865,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D&scope=span")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2863,7 +2931,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/search/tags?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2999,7 +3067,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/search/tag/target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3166,7 +3234,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/search/tag/resource.service.name/values?q=%7B%20resource.service.name%20%3D%20%22krabka-broker%22%20%7D&limit=5000")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3284,7 +3352,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/search/tag/.svc/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3317,7 +3385,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3379,7 +3447,7 @@ overrides:
                     .uri(
                         "/api/v2/search/tag/resource.service.name/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3441,7 +3509,7 @@ overrides:
                     .uri(
                         "/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&start=0&end=2",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3472,7 +3540,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri(uri)
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3673,7 +3741,7 @@ overrides:
                     .uri(
                         "/api/v2/search/tag/event:name/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3702,7 +3770,7 @@ overrides:
                     .uri(
                         "/api/v2/search/tag/link:traceID/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3758,7 +3826,7 @@ overrides:
                     .uri(
                         "/api/v2/search/tag/cache.key/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3788,7 +3856,7 @@ overrides:
                     .uri(
                         "/api/v2/search/tag/event.cache.key/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3818,7 +3886,7 @@ overrides:
                     .uri(
                         "/api/v2/search/tag/link.kind/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3847,7 +3915,7 @@ overrides:
                     .uri(
                         "/api/v2/search/tag/link.link.kind/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D",
                     )
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3899,7 +3967,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -3970,7 +4038,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&limit=1")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -4019,7 +4087,7 @@ overrides:
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/search/tag/.target/values?q=%7B%20.env%20%3D%20%22prod%22%20%7D&limit=5000")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -4107,6 +4175,7 @@ mod query_instant_inner;
 mod query_param;
 mod query_range;
 mod query_range_inner;
+mod request_tenant;
 mod required_seconds_param;
 mod resource_attrs;
 mod resource_span_group;
@@ -4147,8 +4216,6 @@ mod tag_scope_name;
 mod tag_values_from_traces;
 mod tags_to_traceql;
 mod tempo_tag_alias;
-mod tenant;
-mod tenant_header;
 mod trace_by_id;
 mod trace_by_id_inner;
 mod trace_by_id_response;
@@ -4241,6 +4308,7 @@ use query_instant_inner::query_instant_inner;
 use query_param::query_param;
 use query_range::query_range;
 use query_range_inner::query_range_inner;
+use request_tenant::request_tenant;
 use required_seconds_param::required_seconds_param;
 use resource_attrs::ResourceAttrs;
 use resource_span_group::ResourceSpanGroup;
@@ -4281,8 +4349,6 @@ use tag_scope_name::tag_scope_name;
 use tag_values_from_traces::tag_values_from_traces;
 use tags_to_traceql::tags_to_traceql;
 use tempo_tag_alias::tempo_tag_alias;
-use tenant::tenant;
-use tenant_header::TENANT_HEADER;
 use trace_by_id::trace_by_id;
 use trace_by_id_inner::trace_by_id_inner;
 use trace_by_id_response::TraceByIdResponse;

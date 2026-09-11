@@ -1,17 +1,19 @@
 use super::{
-    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, Response, State,
-    SystemTime, json, success_data_response, tenant_from_headers, unix_time_string,
+    ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
+    Response, State, SystemTime, authorized_tenant_from_headers, json, success_data_response,
+    unix_time_string,
 };
 
 pub(crate) async fn runtime_info<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
 ) -> Response {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };
-    let tsdb_stats = match state.store.tsdb_stats(&tenant).await {
+    let tsdb_stats = match state.store.tsdb_stats(tenant.as_str()).await {
         Ok(tsdb_stats) => tsdb_stats,
         Err(error) => return ApiError::from(error).into_response(),
     };

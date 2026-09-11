@@ -1,6 +1,8 @@
 use super::{MetricBlockKind, PartitionIndex, escape_object_path_segment};
 
 /// Deterministic object key for one tenant/kind/WAL partition/offset window.
+///
+/// The tenant is one escaped path segment, as in [`super::compaction_object_key`].
 #[must_use]
 pub fn compaction_partition_object_key(
     tenant: &str,

@@ -1,22 +1,32 @@
-use krabka_observability::contain_handler_panics;
-
-use super::{Arc, DistributorState, Future, SocketAddr, TcpListener, router};
+use super::{
+    Arc, DistributorState, Future, ServerListener, ServerSecurity, SocketAddr, TcpListener, router,
+    serve_router,
+};
 
 /// Binds and serves the metrics distributor until `shutdown` resolves.
+///
+/// `security` decides whether the listener serves TLS and whether a request
+/// needs a credential. `ServerSecurity::default()` serves plain HTTP with no
+/// authentication, as Grafana Mimir does by default.
+///
 /// # Errors
-/// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
+///
+/// Returns an error when the address cannot be bound, or when the bound
+/// socket cannot report its local address.
 pub async fn serve(
     addr: SocketAddr,
     state: Arc<DistributorState>,
+    security: &ServerSecurity,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<SocketAddr> {
-    let listener = TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
+    let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
+        .map_err(std::io::Error::other)?;
+    let bound = listener.local_addr();
+    let server = serve_router(listener, router(state), security)
+        .with_graceful_shutdown(shutdown)
+        .into_future();
     tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, contain_handler_panics(router(state)))
-            .with_graceful_shutdown(shutdown)
-            .await
-        {
+        if let Err(error) = server.await {
             tracing::warn!(%error, "metrics distributor server stopped with error");
         }
     });

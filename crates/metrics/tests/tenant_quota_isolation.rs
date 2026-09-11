@@ -19,6 +19,7 @@ use krabka_metrics::{
     distributor::{DistributorState, ProduceError, WalSink, serve},
     wire::pb,
 };
+use krabka_observability::server_security::ServerSecurity;
 use prost::Message;
 
 const ORG_A: &str = "org-a";
@@ -93,6 +94,7 @@ async fn boot_distributor() -> (SocketAddr, Arc<RecordingSink>) {
     let addr = serve(
         "127.0.0.1:0".parse().expect("socket addr"),
         state,
+        &ServerSecurity::default(),
         std::future::pending(),
     )
     .await

@@ -14,8 +14,8 @@ use serde_json::{Value, json};
 use url::form_urlencoded;
 
 use super::{
-    ApiError, PrometheusApiState, apply_limit, parse_limit_parameter, success_data_response,
-    tenant_from_headers,
+    ApiError, Extension, Principal, PrometheusApiState, apply_limit,
+    authorized_tenant_from_headers, parse_limit_parameter, success_data_response,
 };
 use crate::{
     MetricStore,

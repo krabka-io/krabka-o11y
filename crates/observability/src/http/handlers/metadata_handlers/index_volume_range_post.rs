@@ -1,10 +1,12 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State, StatusCode,
-    VolumeKind, execute_index_volume_query, json_response, post_query_params_body_first,
+    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
+    StatusCode, VolumeKind, execute_index_volume_query, json_response,
+    post_query_params_body_first,
 };
 
 pub(crate) async fn index_volume_range_post(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
     body: Bytes,
@@ -13,7 +15,15 @@ pub(crate) async fn index_volume_range_post(
         Ok(raw_query) => raw_query,
         Err(error) => return error.into_response(),
     };
-    match execute_index_volume_query(&state, &headers, Some(&raw_query), VolumeKind::Range).await {
+    match execute_index_volume_query(
+        &state,
+        &security,
+        &headers,
+        Some(&raw_query),
+        VolumeKind::Range,
+    )
+    .await
+    {
         Ok(value) => json_response(StatusCode::OK, &value),
         Err(error) => error.into_response(),
     }

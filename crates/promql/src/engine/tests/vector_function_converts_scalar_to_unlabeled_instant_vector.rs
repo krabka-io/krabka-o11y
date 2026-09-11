@@ -4,7 +4,7 @@ use super::*;
 pub(crate) async fn vector_function_converts_scalar_to_unlabeled_instant_vector() {
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "vector(2 * 3)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "vector(2 * 3)", 10_000)
         .await
         .unwrap();
 

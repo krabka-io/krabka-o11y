@@ -41,7 +41,11 @@ pub(crate) async fn instant_irate_reads_the_last_two_samples_and_recovers_from_a
 
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
         let result = engine
-            .query_instant("tenant-a", "irate(http_requests_total[5m])", 60_000)
+            .query_instant(
+                &tenant_id("tenant-a"),
+                "irate(http_requests_total[5m])",
+                60_000,
+            )
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

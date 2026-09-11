@@ -26,7 +26,10 @@ pub(crate) async fn prometheus_query_reads_float_samples_from_blockstore() {
 
     let store = MetricBlockStore::new(block_store);
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine.query_instant("tenant-a", "up", 1_000).await.unwrap();
+    let result = engine
+        .query_instant(&tenant_id("tenant-a"), "up", 1_000)
+        .await
+        .unwrap();
 
     let QueryResult::InstantVector(samples) = result else {
         panic!("expected instant vector");

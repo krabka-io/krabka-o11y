@@ -1,7 +1,8 @@
 use crate::{
     HttpQueryError, LokiDirection, LokiStreamEncoding, QuerierState, QueryKind, QueryParams,
-    TimeRange, Value, add_loki_query_stats, apply_label_join_to_loki_result,
-    apply_label_replace_to_loki_result, execute_http_label_replace_metric_binary_expression,
+    TenantId, TimeRange, Value, add_loki_query_stats, apply_label_join_to_loki_result,
+    apply_label_replace_to_loki_result, clamp_query_lookback, current_unix_time_ns,
+    execute_http_label_replace_metric_binary_expression,
     execute_http_metric_binary_arithmetic_query, execute_http_metric_binary_comparison_query,
     execute_http_metric_binary_set_query, execute_http_metric_expression_query,
     execute_http_metric_query, execute_http_metric_scalar_arithmetic_query,
@@ -17,7 +18,8 @@ use crate::{
     parse_metric_vector_set_expression, parse_sort_vector_expression,
     reject_signed_vector_function_literal, resolved_range_step, scalar_vector_expression_result,
     strip_outer_parenthesized_expression, time_range, validate_loki_query_range_resolution,
-    validate_loki_range_query_range_limit, validate_query_length_limit, validate_query_range_limit,
+    validate_loki_range_query_range_limit, validate_query_entries_limit,
+    validate_query_range_limit, validate_query_string_bytes_limit,
 };
 
 mod execute_http_query_for_tenant;

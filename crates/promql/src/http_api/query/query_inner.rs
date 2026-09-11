@@ -1,11 +1,12 @@
 use super::{
-    Arc, HeaderMap, InstantQueryParams, MetricStore, PrometheusApiState, Response,
+    Arc, HeaderMap, InstantQueryParams, MetricStore, Principal, PrometheusApiState, Response,
     acquire_query_permit, query_dispatch, record_query_response,
 };
 
 pub(crate) async fn query_inner<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,
     headers: HeaderMap,
+    principal: Principal,
     params: InstantQueryParams,
 ) -> Response {
     let started = std::time::Instant::now();
@@ -13,7 +14,7 @@ pub(crate) async fn query_inner<S: MetricStore>(
     // Held across dispatch so `active_queries` reflects queries admitted past
     // the concurrency gate and now executing; decremented on drop.
     let _active = state.active_query_guard();
-    let response = query_dispatch(&state, &headers, params).await;
+    let response = query_dispatch(&state, &headers, &principal, params).await;
     record_query_response(&state, "query", &response, started);
     response
 }

@@ -22,7 +22,7 @@ pub(crate) async fn instant_calendar_functions_extract_utc_fields_from_sample_va
         ("minute(event_timestamp_seconds)", 41.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

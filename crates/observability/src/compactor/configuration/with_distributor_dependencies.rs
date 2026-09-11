@@ -1,18 +1,23 @@
 use super::{
-    BrokerBackedIngestLimiter, ClientResourcePolicy, KafkaLogWalSink, ServiceConfig,
-    ServiceConfigError, ServiceDependencies, ServiceRuntimeError, connect_with_startup_retry,
-    validate_distributor_policy,
+    BrokerAccessPolicy, BrokerBackedIngestLimiter, ClientResourcePolicy, ClientSecurity,
+    KafkaLogWalSink, ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceRuntimeError,
+    connect_with_startup_retry, validate_distributor_policy,
 };
 
 /// Adds what the distributor role cannot take a push without: the WAL sink it
 /// writes to, and the broker-backed limiter it checks a tenant's quota
 /// against.
+///
+/// Both connect under `security`, the WAL client security that the service
+/// loaded. `None` connects in plain text.
 pub(crate) async fn with_distributor_dependencies(
     dependencies: ServiceDependencies,
     config: &ServiceConfig,
     client_resource_policy: ClientResourcePolicy,
+    security: Option<&ClientSecurity>,
 ) -> Result<ServiceDependencies, ServiceRuntimeError> {
     validate_distributor_policy(config)?;
+    let access_policy = BrokerAccessPolicy::for_config(config)?;
     let bootstrap = config
         .wal_bootstrap_server
         .as_deref()
@@ -28,9 +33,15 @@ pub(crate) async fn with_distributor_dependencies(
         || {
             let b = bootstrap_owned.clone();
             let t = topic.clone();
+            let s = security.cloned();
             async move {
-                KafkaLogWalSink::connect_with_client_resource_policy(&b, t, client_resource_policy)
-                    .await
+                KafkaLogWalSink::connect_with_client_resource_policy(
+                    &b,
+                    t,
+                    client_resource_policy,
+                    s,
+                )
+                .await
             }
         },
     )
@@ -51,7 +62,9 @@ pub(crate) async fn with_distributor_dependencies(
                     &b,
                     t,
                     client_resource_policy,
+                    security,
                     config.ingest_quota_burst_window,
+                    access_policy,
                 )
                 .await
             }

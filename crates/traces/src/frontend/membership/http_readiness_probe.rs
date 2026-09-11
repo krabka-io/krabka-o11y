@@ -1,4 +1,7 @@
-use super::{BackendError, Duration, QuerierHealth, ReadinessProbe, async_trait};
+use super::{
+    BackendError, Duration, InternalClient, QuerierHealth, QuerierScheme, ReadinessProbe,
+    async_trait,
+};
 
 /// Reads a querier's `/ready`, the endpoint every Krabka role already serves.
 ///
@@ -8,6 +11,7 @@ use super::{BackendError, Duration, QuerierHealth, ReadinessProbe, async_trait};
 /// and its gate names go into the response warning verbatim.
 pub struct HttpReadinessProbe {
     http: reqwest::Client,
+    scheme: QuerierScheme,
 }
 
 impl HttpReadinessProbe {
@@ -15,21 +19,30 @@ impl HttpReadinessProbe {
     /// be far shorter than a query timeout: a probe that hangs holds up the
     /// whole refresh.
     ///
+    /// The probe dials `scheme://addr/ready` with `internal_client` applied.
+    /// `/ready` needs no credential, but a querier that serves TLS needs the
+    /// CA bundle of the internal client to verify.
+    ///
     /// # Errors
     /// Returns `BackendError::Transport` when the HTTP client cannot be built.
-    pub fn new(timeout: Duration) -> Result<Self, BackendError> {
-        let http = reqwest::Client::builder()
-            .timeout(timeout)
+    pub fn new(
+        timeout: Duration,
+        scheme: QuerierScheme,
+        internal_client: &InternalClient,
+    ) -> Result<Self, BackendError> {
+        let http = internal_client
+            .apply(reqwest::Client::builder().timeout(timeout))
             .build()
             .map_err(|e| BackendError::Transport(e.to_string()))?;
-        Ok(Self { http })
+        Ok(Self { http, scheme })
     }
 }
 
 #[async_trait]
 impl ReadinessProbe for HttpReadinessProbe {
     async fn probe(&self, addr: &str) -> QuerierHealth {
-        let resp = match self.http.get(format!("http://{addr}/ready")).send().await {
+        let url = format!("{}://{addr}/ready", self.scheme.as_str());
+        let resp = match self.http.get(url).send().await {
             Ok(resp) => resp,
             Err(error) => {
                 return QuerierHealth::Unreachable {

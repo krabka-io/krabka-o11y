@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerGroupEvaluation, evaluate_and_append_recording_rule_group,
+    RulerAlertState, RulerGroupEvaluation, TenantId, evaluate_and_append_recording_rule_group,
     evaluate_and_dispatch_alerting_rule_group,
 };
 
@@ -13,7 +13,7 @@ pub async fn evaluate_ruler_rule_group<S, W, A>(
     wal_sink: &W,
     alert_sink: &A,
     alert_state: &mut RulerAlertState,
-    tenant: &str,
+    tenant: &TenantId,
     group: &serde_yaml::Value,
     eval_time_ms: i64,
 ) -> Result<RulerGroupEvaluation, PromqlError>

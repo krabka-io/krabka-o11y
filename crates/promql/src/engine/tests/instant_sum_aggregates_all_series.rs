@@ -18,7 +18,7 @@ pub(crate) async fn instant_sum_aggregates_all_series() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "sum(up)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "sum(up)", 10_000)
         .await
         .unwrap();
 

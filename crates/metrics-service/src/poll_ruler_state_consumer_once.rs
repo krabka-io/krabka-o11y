@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    MetricStore, PrometheusApiState, RulerStateConsumerError, Time, WalHeadConsumerCommit,
+    WalHeadConsumerPoll, WalHeadConsumerRecord, WalHeadReplayResult, replay_ruler_state_records,
+};
 
 #[tracing::instrument(
     level = "debug",

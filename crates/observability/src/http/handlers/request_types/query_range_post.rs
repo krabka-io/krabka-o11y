@@ -1,10 +1,11 @@
 use super::{
-    Bytes, HeaderMap, Instant, IntoResponse, QuerierState, QueryKind, RawQuery, Response, State,
-    handle_query, post_query_params_body_first,
+    Bytes, HeaderMap, Instant, IntoResponse, QuerierState, QueryKind, RawQuery, RequestSecurity,
+    Response, State, handle_query, post_query_params_body_first,
 };
 
 pub(crate) async fn query_range_post(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
     body: Bytes,
@@ -18,7 +19,14 @@ pub(crate) async fn query_range_post(
             return resp;
         }
     };
-    let resp = handle_query(state.clone(), headers, Some(&raw_query), QueryKind::Range).await;
+    let resp = handle_query(
+        state.clone(),
+        security,
+        headers,
+        Some(&raw_query),
+        QueryKind::Range,
+    )
+    .await;
     state.record_query("query_range", resp.status().is_success(), start);
     resp
 }

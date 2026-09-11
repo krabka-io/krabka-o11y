@@ -7,13 +7,17 @@ use std::{
 };
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::DefaultBodyLimit,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use krabka_metrics::{LimitError, OverridesProvider, wire::WireError};
+use krabka_blockstore::TenantId;
+use krabka_metrics::{
+    LimitError, Limits, OverridesProvider, authorized_tenant_from_headers, wire::WireError,
+};
+use krabka_observability::{audit::AuditHandle, server_security::Principal};
 use krabka_units::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -52,10 +56,10 @@ use query::{
 use remote_read::remote_read;
 use request::{
     CardinalityParams, DiscoveryParams, apply_limit, apply_result_limit, check_range_resolution,
-    discovery_matchers, discovery_window, duration_param, enforce_sample_count,
-    enforce_selected_series_limit, optional_timestamp_ms, parse_cardinality_form,
-    parse_cardinality_params, parse_discovery_form, parse_discovery_params, parse_limit_parameter,
-    required_form_param, selector_matchers, tenant_from_headers, timestamp_ms, unix_now_ms,
+    discovery_matchers, discovery_window, duration_param, enforce_query_range_limit,
+    enforce_sample_count, enforce_selected_series_limit, optional_timestamp_ms,
+    parse_cardinality_form, parse_cardinality_params, parse_discovery_form, parse_discovery_params,
+    parse_limit_parameter, required_form_param, selector_matchers, timestamp_ms,
     validate_timestamp_range,
 };
 pub(crate) use response::format_sample_value;

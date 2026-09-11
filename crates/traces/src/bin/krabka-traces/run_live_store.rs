@@ -1,6 +1,4 @@
-use krabka_observability::{
-    CriticalTaskError, RoleReadiness, SupervisedTasks, contain_handler_panics,
-};
+use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
 
 use super::*;
 
@@ -15,6 +13,7 @@ pub(crate) async fn run_live_store(
     readiness: RoleReadiness,
     shutdown: CancellationToken,
     listener: tokio::net::TcpListener,
+    security: &ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // The consumer is the live tier. Without it the role keeps its port and
     // answers every search from a store that stopped at the last record it
@@ -22,13 +21,10 @@ pub(crate) async fn run_live_store(
     // the connect and goes back down when the loop ends.
     let wal_consumer_gate = readiness.gate("wal-consumer");
     let consumer = wal_consumer(
-        cli.bootstrap.clone(),
+        &cli,
         "krabka-traces-live-store",
         None,
-        cli.wal_fetch_max,
-        cli.wal_fetch_partition_max,
-        cli.client_dispatch_queue_capacity,
-        cli.client_frame_max,
+        security.wal.as_ref(),
     )
     .await?;
     let store = Arc::new(RwLock::new(LiveStore::new(cli.retention.nanos_i64())));
@@ -43,13 +39,11 @@ pub(crate) async fn run_live_store(
         wal_consumer_gate.mark_unready();
     });
 
-    let bound = listener.local_addr()?;
+    let listener = ServerListener::bind(listener, &security.server)?;
+    let bound = listener.local_addr();
     tracing::info!(%bound, "traces live-store listening");
-    let server_shutdown = shutdown.clone();
-    let server =
-        axum::serve(listener, contain_handler_panics(router)).with_graceful_shutdown(async move {
-            server_shutdown.cancelled().await;
-        });
+    let server = serve_router(listener, router, &security.server)
+        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
     let outcome = tokio::select! {
         result = server => result.map_err(Into::into),
         name = tasks.first_unexpected_exit() => Err(

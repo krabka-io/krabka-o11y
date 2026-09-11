@@ -1,9 +1,9 @@
 use super::{
-    ActiveQueryGuard, AlertStateKey, Arc, BTreeMap, ByteSize, EngineOpts, MetricStore,
-    OverridesProvider, PromqlEngine, QueryFrontendCache, QueryFrontendOptions, QueryFrontendState,
-    RangeQueryCache, RulerAlertStateRecord, RulerAlertStateStore, RulerGroupState,
-    RulerGroupStateRecord, RulerRuleStore, RwLock, Semaphore, ServiceMetrics, SystemTime, Time,
-    mebibytes,
+    ActiveQueryGuard, AlertStateKey, Arc, AuditHandle, BTreeMap, ByteSize, EngineOpts, Limits,
+    MetricStore, OverridesProvider, PromqlEngine, QueryFrontendCache, QueryFrontendOptions,
+    QueryFrontendState, RangeQueryCache, RulerAlertStateRecord, RulerAlertStateStore,
+    RulerGroupState, RulerGroupStateRecord, RulerRuleStore, RwLock, Semaphore, ServiceMetrics,
+    SystemTime, TenantId, Time, mebibytes,
 };
 
 /// Shared state for the Prometheus HTTP query API.
@@ -16,11 +16,15 @@ pub struct PrometheusApiState<S: MetricStore> {
     pub(crate) ruler_group_state: RwLock<RulerGroupState>,
     pub(crate) ruler_evaluation_time_ms: RwLock<i64>,
     pub(crate) query_frontend: Option<QueryFrontendState>,
-    pub(crate) query_limits: Option<OverridesProvider>,
+    /// The per-tenant query limits. A state built without
+    /// [`PrometheusApiState::with_query_limits`] applies `Limits::default()` to
+    /// every tenant, as Mimir applies its defaults without a runtime config.
+    pub(crate) query_limits: OverridesProvider,
     pub(crate) query_gate: Option<Arc<Semaphore>>,
     pub(crate) max_concurrent_queries: usize,
     pub(crate) remote_read_max_body: ByteSize,
     pub(crate) metrics: Option<ServiceMetrics>,
+    pub(crate) audit: AuditHandle,
     pub(crate) start_time: SystemTime,
 }
 
@@ -36,18 +40,31 @@ impl<S: MetricStore> PrometheusApiState<S> {
             ruler_group_state: RwLock::new(RulerGroupState::default()),
             ruler_evaluation_time_ms: RwLock::new(0),
             query_frontend: None,
-            query_limits: None,
+            query_limits: OverridesProvider::new(Limits::default()),
             query_gate: None,
             max_concurrent_queries: 0,
             remote_read_max_body: mebibytes(64),
             metrics: None,
+            audit: AuditHandle::disabled(),
             start_time: SystemTime::now(),
         }
     }
 
+    /// Records every ruler config mutation through `audit`.
+    ///
+    /// Without this call the state holds a disabled handle, and the ruler
+    /// config API records nothing, as a service with no `--audit-topic` does.
+    #[must_use]
+    pub fn with_audit(mut self, audit: AuditHandle) -> Self {
+        self.audit = audit;
+        self
+    }
+
+    /// Resolves each tenant's query limits through `limits`, in place of
+    /// `Limits::default()`.
     #[must_use]
     pub fn with_query_limits(mut self, limits: OverridesProvider) -> Self {
-        self.query_limits = Some(limits);
+        self.query_limits = limits;
         self
     }
 
@@ -133,14 +150,27 @@ impl<S: MetricStore> PrometheusApiState<S> {
     }
 
     #[must_use]
-    pub fn engine_for_tenant(&self, tenant: &str) -> PromqlEngine<S> {
+    pub fn engine_for_tenant(&self, tenant: &TenantId) -> PromqlEngine<S> {
         let mut opts = self.engine_opts;
-        if let Some(limits) = &self.query_limits {
-            let max_samples = limits.for_tenant(tenant).max_samples_per_query;
-            if max_samples != 0 {
-                opts.max_samples = usize::try_from(max_samples).unwrap_or(usize::MAX);
-            }
+        let tenant_limits = self.query_limits.for_tenant(tenant.as_str());
+        // The engine options are the process caps, as Mimir's
+        // `-querier.max-samples` is. A tenant's cap can lower a process cap and
+        // cannot raise it. A tenant cap of zero leaves the process cap alone.
+        // The engine has no value that turns its sample cap off, because a zero
+        // cap would refuse the first row.
+        let max_samples = tenant_limits.max_samples_per_query;
+        if max_samples != 0 {
+            opts.max_samples = opts
+                .max_samples
+                .min(usize::try_from(max_samples).unwrap_or(usize::MAX));
         }
+        // Zero is "no series cap" at both levels, so the lower non-zero cap wins.
+        let tenant_series =
+            usize::try_from(tenant_limits.max_fetched_series_per_query).unwrap_or(usize::MAX);
+        opts.max_fetched_series = match (opts.max_fetched_series, tenant_series) {
+            (0, cap) | (cap, 0) => cap,
+            (process, tenant) => process.min(tenant),
+        };
         PromqlEngine::new(Arc::clone(&self.store), opts)
     }
 
@@ -148,7 +178,7 @@ impl<S: MetricStore> PrometheusApiState<S> {
     #[must_use]
     pub fn ruler_rule_set(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
     ) -> BTreeMap<String, BTreeMap<String, serde_yaml::Value>> {
         self.ruler_rules
             .read()

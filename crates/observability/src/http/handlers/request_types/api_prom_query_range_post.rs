@@ -1,10 +1,11 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State,
+    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
     handle_api_prom_query_range, post_query_params_body_first,
 };
 
 pub(crate) async fn api_prom_query_range_post(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
     body: Bytes,
@@ -13,5 +14,5 @@ pub(crate) async fn api_prom_query_range_post(
         Ok(raw_query) => raw_query,
         Err(error) => return error.into_response(),
     };
-    handle_api_prom_query_range(state, headers, Some(&raw_query)).await
+    handle_api_prom_query_range(state, security, headers, Some(&raw_query)).await
 }

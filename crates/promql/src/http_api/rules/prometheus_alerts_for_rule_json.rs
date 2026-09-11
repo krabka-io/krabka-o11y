@@ -1,13 +1,13 @@
 use super::{
     AlertStateKey, BTreeMap, BTreeSet, MetricStore, PrometheusApiState, PromqlError, QueryResult,
-    SampleValue, Time, TimeExt, Value, alert_labels_map, expand_alert_mapping_json,
+    SampleValue, TenantId, Time, TimeExt, Value, alert_labels_map, expand_alert_mapping_json,
     expand_alert_template, json, labels_from_map, labels_map_json, rfc3339_time_string,
     sample_string, yaml_duration, yaml_mapping_json, yaml_optional_string, yaml_string,
 };
 
 pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
     state: &PrometheusApiState<S>,
-    tenant: &str,
+    tenant: &TenantId,
     rule: &serde_yaml::Value,
     eval_time_ms: i64,
 ) -> Result<Vec<Value>, PromqlError> {
@@ -32,7 +32,7 @@ pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
         };
         let labels = alert_labels_map(&sample.labels, rule, &name);
         let key = AlertStateKey {
-            tenant: tenant.to_string(),
+            tenant: tenant.as_str().to_owned(),
             rule_id: rule_id.clone(),
             labels: labels.clone(),
         };
@@ -45,7 +45,7 @@ pub(crate) async fn prometheus_alerts_for_rule_json<S: MetricStore>(
         .write()
         .map_err(|_| PromqlError::Exec("ruler alert state lock poisoned".into()))?;
     alert_states.retain(|key, _| {
-        (key.tenant != tenant || key.rule_id != rule_id) || active_keys.contains(key)
+        (key.tenant != tenant.as_str() || key.rule_id != rule_id) || active_keys.contains(key)
     });
 
     let mut alerts = Vec::new();

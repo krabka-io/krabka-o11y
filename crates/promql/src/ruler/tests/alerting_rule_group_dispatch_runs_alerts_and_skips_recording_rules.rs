@@ -24,7 +24,12 @@ rules:
     let mut state = super::super::RulerAlertState::default();
 
     let pending = super::super::evaluate_and_dispatch_alerting_rule_group(
-        &engine, &sink, &mut state, "tenant-a", &group, 60_000,
+        &engine,
+        &sink,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &group,
+        60_000,
     )
     .await
     .expect("pending group alert evaluation");
@@ -32,7 +37,12 @@ rules:
     assert2::assert!(sink.alerts().is_empty());
 
     let firing = super::super::evaluate_and_dispatch_alerting_rule_group(
-        &engine, &sink, &mut state, "tenant-a", &group, 360_000,
+        &engine,
+        &sink,
+        &mut state,
+        &tenant_id("tenant-a"),
+        &group,
+        360_000,
     )
     .await
     .expect("firing group alert evaluation");

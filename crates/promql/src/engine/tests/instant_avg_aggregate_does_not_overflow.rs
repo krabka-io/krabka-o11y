@@ -21,7 +21,7 @@ pub(crate) async fn instant_avg_aggregate_does_not_overflow() {
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let QueryResult::InstantVector(avg) = engine
-        .query_instant("tenant-a", "avg(huge)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "avg(huge)", 10_000)
         .await
         .unwrap()
     else {

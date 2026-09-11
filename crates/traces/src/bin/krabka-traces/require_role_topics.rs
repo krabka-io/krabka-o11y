@@ -1,6 +1,6 @@
 use krabka_observability::topic_contract::{TRACES_TOPICS, TopicContractError, require_topics};
 
-use super::{Cli, Target};
+use super::{Cli, ClientSecurity, Target};
 
 /// Refuses to let this role start on topics that do not meet the contract.
 ///
@@ -20,14 +20,21 @@ use super::{Cli, Target};
 /// contract four times would cost four round trips to say the same thing, and
 /// would let a process report the same misconfigured topic four times over.
 ///
+/// The check connects with `security`, the WAL client security of the
+/// process, as the producers and consumers do after it. `None` connects in
+/// plain text.
+///
 /// # Errors
 /// Returns [`TopicContractError`] when no bootstrap address answers, or when a
 /// topic is absent.
-pub(crate) async fn require_role_topics(cli: &Cli) -> Result<(), TopicContractError> {
+pub(crate) async fn require_role_topics(
+    cli: &Cli,
+    security: Option<&ClientSecurity>,
+) -> Result<(), TopicContractError> {
     if !touches_the_wal(cli) {
         return Ok(());
     }
-    require_topics(&cli.bootstrap, &TRACES_TOPICS).await?;
+    require_topics(&cli.bootstrap, &TRACES_TOPICS, security.cloned()).await?;
     Ok(())
 }
 

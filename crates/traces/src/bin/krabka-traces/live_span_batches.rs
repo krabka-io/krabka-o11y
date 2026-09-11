@@ -1,7 +1,16 @@
-use super::{Arc, LiveSource, LiveStore, RwLock, live_i64_param, trace_querier};
+use krabka_observability::server_security::{Principal, authorize_tenant};
+
+use super::{
+    Arc, LiveSource, LiveStore, RwLock, TENANT_HEADER, TenantId, TenantPolicy, live_i64_param,
+    trace_querier,
+};
 
 pub(crate) async fn live_span_batches(
-    axum::extract::State(live_store): axum::extract::State<Arc<RwLock<LiveStore>>>,
+    axum::extract::State((live_store, tenant_policy)): axum::extract::State<(
+        Arc<RwLock<LiveStore>>,
+        TenantPolicy,
+    )>,
+    axum::extract::Extension(principal): axum::extract::Extension<Principal>,
     headers: axum::http::HeaderMap,
     uri: axum::http::Uri,
 ) -> axum::response::Response {
@@ -18,13 +27,25 @@ pub(crate) async fn live_span_batches(
     if end < start {
         return (axum::http::StatusCode::BAD_REQUEST, "end must be >= start").into_response();
     }
-    let tenant = headers
-        .get("x-scope-orgid")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("anonymous");
+    // Tempo with multi-tenancy off ignores this header. Krabka does not: the
+    // live store holds spans by tenant. So a malformed value is a 400 here,
+    // and the read never runs as the fallback tenant.
+    let tenant = match TenantId::resolve(
+        headers
+            .get(TENANT_HEADER)
+            .map(axum::http::HeaderValue::as_bytes),
+        &tenant_policy,
+    ) {
+        Ok(tenant) => tenant,
+        Err(err) => {
+            return (axum::http::StatusCode::BAD_REQUEST, err.to_string()).into_response();
+        }
+    };
+    if let Err(denied) = authorize_tenant(&principal, &tenant) {
+        return denied.into_response();
+    }
     let guard = live_store.read().await;
-    let batches = match guard.span_batches(tenant, start, end).await {
+    let batches = match guard.span_batches(tenant.as_str(), start, end).await {
         Ok(batches) => batches,
         Err(err) => {
             return (

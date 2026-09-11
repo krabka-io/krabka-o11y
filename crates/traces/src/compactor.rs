@@ -24,7 +24,7 @@ use krabka_blockstore::{
     SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID, SCOL_ROOT_SERVICE_NAME,
     SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID, SCOL_START_NANO, SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID,
     SCOL_TRACE_START_NANO, ShardedTraceBloom, SortedMerge, SummaryColumns, TraceBlockStats,
-    TraceIndex, input_key_fingerprint, open_block_stream,
+    TraceIndex, escape_object_path_segment, input_key_fingerprint, open_block_stream,
     plan_compactions as plan_level_compactions, span_block_decl,
     span_block_schema_with_promoted_attrs, versioned_compaction_key,
 };

@@ -1,8 +1,9 @@
 use krabka_observability::RoleReadiness;
 
 use super::{
-    Arc, BlockStoreGates, BlockWriter, CancellationToken, Cli, Mutex, ServiceMetrics,
-    SharedObjectStore, TraceIndex, blockbuilder, promoted_attrs_from_cli, wal_consumer,
+    Arc, BlockStoreGates, BlockWriter, CancellationToken, Cli, Mutex, ProcessSecurity,
+    ServiceMetrics, SharedObjectStore, TraceIndex, blockbuilder, promoted_attrs_from_cli,
+    wal_consumer,
 };
 
 /// Consumes the traces WAL and writes blocks.
@@ -17,6 +18,7 @@ pub(crate) async fn run_block_builder(
     readiness: RoleReadiness,
     shutdown: CancellationToken,
     object_store: &SharedObjectStore,
+    security: &ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // The role has no data port, so the admin port is the only place these
     // report. It still needs them: a block builder that has not reached the
@@ -25,13 +27,10 @@ pub(crate) async fn run_block_builder(
     let gates = BlockStoreGates::register(&readiness);
     let promoted_attrs = promoted_attrs_from_cli(&cli)?;
     let consumer = wal_consumer(
-        cli.bootstrap.clone(),
+        &cli,
         "krabka-traces-block-builder",
         None,
-        cli.wal_fetch_max,
-        cli.wal_fetch_partition_max,
-        cli.client_dispatch_queue_capacity,
-        cli.client_frame_max,
+        security.wal.as_ref(),
     )
     .await?;
     wal_consumer_gate.mark_ready();

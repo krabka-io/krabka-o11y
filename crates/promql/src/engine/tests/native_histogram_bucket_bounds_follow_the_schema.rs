@@ -34,7 +34,7 @@ pub(crate) async fn native_histogram_bucket_bounds_follow_the_schema() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", "histogram_quantile(0.5, h)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "histogram_quantile(0.5, h)", 10_000)
         .await
         .expect("a quantile")
     else {

@@ -1,15 +1,14 @@
 use super::{
-    DistributorState, HeaderMap, PushError, PushSuccess, WireFormat, WrittenCounts,
+    DistributorState, HeaderMap, PushError, PushSuccess, TenantId, WireFormat, WrittenCounts,
     append_decoded_series, decode_v1, decode_v2, negotiate, require_snappy_encoding,
-    tenant_from_headers,
 };
 
 pub(crate) async fn push_inner(
     state: &DistributorState,
+    tenant: &TenantId,
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<(PushSuccess, u64), PushError> {
-    let tenant = tenant_from_headers(headers)?;
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok());
@@ -37,7 +36,7 @@ pub(crate) async fn push_inner(
     }
 
     if let Some(metrics) = &state.metrics {
-        metrics.record_ingest_series(tenant, items);
+        metrics.record_ingest_series(tenant.as_str(), items);
     }
     Ok((PushSuccess::NoContent { counts }, items))
 }

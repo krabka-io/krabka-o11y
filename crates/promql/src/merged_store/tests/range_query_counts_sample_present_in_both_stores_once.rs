@@ -18,7 +18,7 @@ pub(crate) async fn range_query_counts_sample_present_in_both_stores_once() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
     let result = engine
-        .query_instant("tenant-a", "count_over_time(up[1m])", 30_000)
+        .query_instant(&tenant_id("tenant-a"), "count_over_time(up[1m])", 30_000)
         .await
         .unwrap();
     let QueryResult::InstantVector(samples) = result else {
@@ -31,7 +31,7 @@ pub(crate) async fn range_query_counts_sample_present_in_both_stores_once() {
 
     // A windowed sum must likewise see each timestamp once.
     let result = engine
-        .query_instant("tenant-a", "sum_over_time(up[1m])", 30_000)
+        .query_instant(&tenant_id("tenant-a"), "sum_over_time(up[1m])", 30_000)
         .await
         .unwrap();
     let QueryResult::InstantVector(samples) = result else {

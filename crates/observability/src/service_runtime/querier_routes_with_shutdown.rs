@@ -1,10 +1,11 @@
 use super::{
-    BufferedLogHotTail, CancellationToken, JoinHandle, ObjectStore, Router, ServiceConfig,
-    ServiceConfigError, ServiceDependencies, ServiceMetrics, SharedLogDeleteRequests,
-    SharedLokiRules, SwappableQueryAuthorizer, build_configured_object_store,
-    build_configured_querier_state, build_querier_state, load_querier_shared_compaction_frontier,
-    loki_query_routes, querier_object_store_prefix, spawn_compaction_frontier_refresher,
-    spawn_log_hot_tail_poller, spawn_query_authorizer_connect, spawn_wal_hot_tail_connect_and_poll,
+    Arc, BufferedLogHotTail, CancellationToken, JoinHandle, ObjectStore, OverridesProvider, Router,
+    ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceMetrics,
+    SharedLogDeleteRequests, SharedLokiRules, build_configured_object_store,
+    build_configured_querier_state, build_querier_state_with_overrides,
+    load_querier_shared_compaction_frontier, loki_query_routes, querier_object_store_prefix,
+    spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller,
+    spawn_wal_hot_tail_connect_and_poll,
 };
 use crate::RoleReadiness;
 
@@ -25,6 +26,7 @@ pub(crate) async fn querier_routes_with_shutdown(
     token: CancellationToken,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
+    overrides: Arc<OverridesProvider>,
 ) -> Result<(Router, Vec<(&'static str, JoinHandle<()>)>), ServiceConfigError> {
     let mut background_tasks = Vec::new();
     let configured_store = if object_store.is_none() {
@@ -33,15 +35,18 @@ pub(crate) async fn querier_routes_with_shutdown(
         None
     };
     let mut state = if let Some(configured_store) = configured_store.as_ref() {
-        build_configured_querier_state(config, configured_store).await?
+        build_configured_querier_state(config, configured_store, overrides).await?
     } else {
-        build_querier_state(config, object_store).await?
+        build_querier_state_with_overrides(config, object_store, overrides).await?
     };
     if let Some(configured_store) = configured_store.as_ref()
         && let Some(prefix) = querier_object_store_prefix(config, Some(&configured_store.prefix))?
     {
         state = state.with_cold_object_store_source(configured_store.store.clone(), prefix);
     }
+    // The ruler routes share this state, so they check tenants against the
+    // same authorizer as the reads. The caller resolves which authorizer that
+    // is, with `query_authorizer_for_role`.
     if let Some(query_authorizer) = dependencies.query_authorizer {
         state = state.with_query_authorizer_source(query_authorizer);
     }
@@ -95,13 +100,12 @@ pub(crate) async fn querier_routes_with_shutdown(
             state = state.with_hot_tail(hot_tail, i64::MIN);
         }
     } else if let Some(deferred) = dependencies.deferred_wal_consumer_connect {
-        // Two things a deferred querier cannot answer correctly without:
-        // the hot tail it reads recent logs from, and the broker-backed
-        // authorizer it checks tenants against. Each gate is marked by
-        // the task that satisfies it, so `/ready` reports real progress.
+        // A deferred querier cannot answer correctly without the hot tail it
+        // reads recent logs from. The task that connects it marks this gate,
+        // so `/ready` reports real progress. The authorizer has a gate of its
+        // own, from `query_authorizer_for_role`.
         let wal_tail = readiness.gate("wal-tail");
-        let authorization = readiness.gate("query-authorization");
-        // Deferred connect: the consumer and authorizer connect asynchronously so the
+        // Deferred connect: the consumer connects asynchronously so the
         // querier's HTTP port binds without waiting for the broker to be ready (FIX B2).
         let hot_tail = BufferedLogHotTail::with_bucket_width(config.querier_hot_tail_bucket_width);
         let (frontier, refresh_source) = load_querier_shared_compaction_frontier(
@@ -131,7 +135,7 @@ pub(crate) async fn querier_routes_with_shutdown(
         background_tasks.push((
             "querier WAL hot-tail",
             spawn_wal_hot_tail_connect_and_poll(
-                deferred.clone(),
+                deferred,
                 hot_tail.clone(),
                 frontier.clone(),
                 token.clone(),
@@ -140,22 +144,6 @@ pub(crate) async fn querier_routes_with_shutdown(
                 wal_tail,
             ),
         ));
-
-        // Fail closed until the broker-backed authorizer connects.
-        let (swappable, slot) = SwappableQueryAuthorizer::new();
-        background_tasks.push((
-            "querier authorization",
-            spawn_query_authorizer_connect(
-                deferred.bootstrap,
-                deferred.topic,
-                slot,
-                deferred.client_resource_policy,
-                config.querier_dependency_reconnect_interval,
-                token.clone(),
-                authorization,
-            ),
-        ));
-        state = state.with_query_authorizer(swappable);
 
         if let Some(frontier) = frontier {
             state = state.with_hot_tail_shared_frontier(hot_tail, frontier);

@@ -8,7 +8,7 @@ pub(crate) async fn instant_double_exponential_smoothing_requires_experimental_f
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let error = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "double_exponential_smoothing(gauge[5m], 0.5, 0.5)",
             120_000,
         )

@@ -1,5 +1,6 @@
 use super::{
-    BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink, evaluate_recording_rule,
+    BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink, TenantId,
+    evaluate_recording_rule,
 };
 
 /// Evaluates one recording rule and appends its materialized samples to the WAL
@@ -13,7 +14,7 @@ use super::{
 pub async fn evaluate_and_append_recording_rule<S, W>(
     engine: &PromqlEngine<S>,
     sink: &W,
-    tenant: &str,
+    tenant: &TenantId,
     record_name: &str,
     expr: &str,
     rule_labels: &BTreeMap<String, String>,

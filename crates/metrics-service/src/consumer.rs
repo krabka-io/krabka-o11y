@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Consumer, ConsumerRecord, Time, WalHeadConsumerCommit, WalHeadConsumerError,
+    WalHeadConsumerPoll,
+};
 
 #[async_trait::async_trait]
 impl WalHeadConsumerPoll for Consumer {

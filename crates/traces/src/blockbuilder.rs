@@ -9,7 +9,8 @@ use arrow::{compute::concat_batches, record_batch::RecordBatch};
 use krabka_blockstore::{
     BlockMeta, BlockWriter, IndexSnapshotRetain, ObjectStoreRetryPolicy, PromotedSpanAttr,
     RetryingObjectStore, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom, SummaryColumns,
-    TraceBlockStats, TraceIndex, span_block_decl, span_block_schema_with_promoted_attrs,
+    TraceBlockStats, TraceIndex, escape_object_path_segment, span_block_decl,
+    span_block_schema_with_promoted_attrs,
 };
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_units::{

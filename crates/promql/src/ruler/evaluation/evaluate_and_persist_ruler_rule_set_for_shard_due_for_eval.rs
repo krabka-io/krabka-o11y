@@ -1,7 +1,7 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
     RulerAlertState, RulerGroupEvaluation, RulerGroupState, RulerGroupStateRecord, RulerShard,
-    RulerStateSink, evaluate_and_persist_ruler_rule_set,
+    RulerStateSink, TenantId, evaluate_and_persist_ruler_rule_set,
     filter_ruler_rule_set_for_shard_due_for_eval,
 };
 
@@ -13,7 +13,7 @@ pub async fn evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval<S, W, A,
     engine: &PromqlEngine<S>,
     sinks: (&W, &A, &R),
     alert_state: &mut RulerAlertState,
-    tenant: &str,
+    tenant: &TenantId,
     rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
     schedule: (&mut RulerGroupState, RulerShard, i64),
 ) -> Result<RulerGroupEvaluation, PromqlError>
@@ -26,7 +26,7 @@ where
     let (wal_sink, alert_sink, state_sink) = sinks;
     let (group_state, shard, eval_time_ms) = schedule;
     let scheduled = filter_ruler_rule_set_for_shard_due_for_eval(
-        tenant,
+        tenant.as_str(),
         rules,
         group_state,
         shard,

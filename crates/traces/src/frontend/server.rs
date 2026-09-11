@@ -13,12 +13,16 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode, Uri},
+    extract::{Extension, Path, State},
+    http::{HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
 };
-use krabka_observability::RoleReadiness;
+use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy};
+use krabka_observability::{
+    RoleReadiness,
+    server_security::{Principal, authorize_tenant},
+};
 use serde_json::json;
 
 use crate::{
@@ -334,6 +338,7 @@ mod parse_step_to_ns;
 mod query_instant;
 mod query_param;
 mod query_range;
+mod request_tenant;
 mod required_seconds;
 mod required_step;
 mod required_time_bounds;
@@ -345,8 +350,6 @@ mod search_query;
 mod search_tag_values_v2;
 mod search_tags_v2;
 mod tags_to_traceql;
-mod tenant;
-mod tenant_header;
 mod trace_by_id;
 
 use backend_error_response::backend_error_response;
@@ -367,6 +370,7 @@ use parse_step_to_ns::parse_step_to_ns;
 use query_instant::query_instant;
 use query_param::query_param;
 use query_range::query_range;
+use request_tenant::request_tenant;
 use required_seconds::required_seconds;
 use required_step::required_step;
 use required_time_bounds::required_time_bounds;
@@ -378,6 +382,4 @@ use search_query::search_query;
 use search_tag_values_v2::search_tag_values_v2;
 use search_tags_v2::search_tags_v2;
 use tags_to_traceql::tags_to_traceql;
-use tenant::tenant;
-use tenant_header::TENANT_HEADER;
 use trace_by_id::trace_by_id;

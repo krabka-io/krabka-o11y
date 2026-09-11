@@ -1,5 +1,6 @@
 use super::{
-    RemoteWriteSink, SeriesPayload, SinkError, async_trait, encode_write_request, to_timeseries,
+    InternalClient, RemoteWriteSink, SeriesPayload, SinkError, TENANT_HEADER, async_trait,
+    encode_write_request, to_timeseries,
 };
 
 /// HTTP client for Prometheus `remote_write`.
@@ -9,12 +10,25 @@ pub struct PrometheusRemoteWriteSink {
 }
 
 impl PrometheusRemoteWriteSink {
-    #[must_use]
-    pub fn new(url: impl Into<String>) -> Self {
-        Self {
+    /// A sink that writes to `url` with `internal_client` applied.
+    ///
+    /// The target is a Krabka metrics distributor, so the sink presents the
+    /// internal client: its token as the `Authorization` header, its
+    /// certificate as the TLS identity, and its CA bundle as the only roots
+    /// that the distributor certificate can chain to. With no
+    /// `--internal-client-*` flag, the client is a plain `reqwest` client.
+    ///
+    /// # Errors
+    /// Returns the `reqwest` error when the client cannot be built, for
+    /// example from an identity that the TLS backend refuses.
+    pub fn new(
+        url: impl Into<String>,
+        internal_client: &InternalClient,
+    ) -> Result<Self, reqwest::Error> {
+        Ok(Self {
             url: url.into(),
-            http: reqwest::Client::new(),
-        }
+            http: internal_client.apply(reqwest::Client::builder()).build()?,
+        })
     }
 }
 
@@ -29,7 +43,7 @@ impl RemoteWriteSink for PrometheusRemoteWriteSink {
             .header("Content-Type", "application/x-protobuf")
             .header("Content-Encoding", "snappy")
             .header("X-Prometheus-Remote-Write-Version", "0.1.0")
-            .header("X-Scope-OrgID", &payload.tenant)
+            .header(TENANT_HEADER, &payload.tenant)
             .body(body)
             .send()
             .await

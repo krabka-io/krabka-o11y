@@ -1,6 +1,7 @@
 use super::{
     ActiveLogDeleteFilterError, BlockStoreError, Error, LogDeleteRequestStoreError,
-    LokiRuleStoreError, ParseError, PlanError, QueryAuthorizationError, QueryError,
+    LokiRuleStoreError, ParseError, PlanError, QueryAuthorizationError, QueryError, TenantDenied,
+    TenantErrorSurface, TenantRequestError,
 };
 
 #[derive(Debug, Error)]
@@ -37,27 +38,42 @@ pub(crate) enum HttpQueryError {
         "could not parse '{name}' parameter: strconv.ParseInt: parsing \"{value}\": invalid syntax"
     )]
     InvalidTimestampQueryParameter { name: &'static str, value: String },
-    #[error("invalid tenant header")]
-    InvalidTenant,
+    /// The request's `X-Scope-OrgID` does not name the tenant the handler
+    /// needs. `surface` picks which of Loki's answers the response copies.
+    #[error("{source}")]
+    Tenant {
+        source: TenantRequestError,
+        surface: TenantErrorSurface,
+    },
     #[error("missing query parameter `{0}`")]
     MissingQueryParameter(&'static str),
-    #[error("missing X-Scope-OrgID header")]
-    MissingTenant,
     #[error("query range {range_ns}ns exceeds configured limit {max_range_ns}ns")]
     QueryRangeTooLarge { range_ns: i64, max_range_ns: i64 },
-    #[error("the query time range exceeds the limit (query length: {query_length}, limit: 30d1h)")]
-    LokiQueryRangeTooLarge { query_length: String },
+    /// `Loki`'s `ErrQueryTooLong`, raised by the tenant's `max_query_length`.
+    ///
+    /// The two sides are rendered by two different formatters, because `Loki`
+    /// renders them with two different Go types. See
+    /// [`format_loki_model_duration`](crate::format_loki_model_duration).
+    #[error(
+        "the query time range exceeds the limit (query length: {query_length}, limit: {limit})"
+    )]
+    LokiQueryRangeTooLarge { query_length: String, limit: String },
     #[error(
         "exceeded maximum resolution of 11,000 points per time series. Try increasing the value of the step parameter"
     )]
     QueryResolutionTooHigh,
     #[error("query planned {planned_bytes} bytes, exceeding configured limit {max_bytes}")]
     QueryBytesTooLarge { planned_bytes: u64, max_bytes: u64 },
-    #[error("query length {query_length} bytes exceeds configured limit {max_query_length}")]
-    QueryLengthTooLarge {
-        query_length: usize,
-        max_query_length: usize,
+    #[error("query length {query_bytes} bytes exceeds configured limit {max_bytes}")]
+    QueryStringTooLong {
+        query_bytes: usize,
+        max_bytes: usize,
     },
+    /// `Loki`'s `max_entries_limit_per_query`, with `Loki`'s own message.
+    #[error(
+        "max entries limit per query exceeded, limit > max_entries_limit_per_query ({limit} > {max})"
+    )]
+    MaxEntriesLimitPerQuery { limit: u64, max: u64 },
     #[error("query matched {series} series, exceeding configured limit {max_series}")]
     QuerySeriesTooLarge { series: usize, max_series: usize },
     #[error("approx_topk is not enabled. See -limits.shard_aggregations")]
@@ -70,6 +86,10 @@ pub(crate) enum HttpQueryError {
     LokiFormatPlainParse(String),
     #[error(transparent)]
     QueryAuthorization(#[from] QueryAuthorizationError),
+    /// The request's principal may not use the tenant it names. The response
+    /// is the 403 that [`TenantDenied`] gives.
+    #[error(transparent)]
+    TenantDenied(#[from] TenantDenied),
     #[error("{source}")]
     LokiParse { query: String, source: ParseError },
     #[error("{source}")]

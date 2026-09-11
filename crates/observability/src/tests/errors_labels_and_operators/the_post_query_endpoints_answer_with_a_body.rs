@@ -26,6 +26,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
             "detected_fields",
             super::super::prelude::detected_fields_post(
                 State(state.clone()),
+                super::super::prelude::RequestSecurity::unauthenticated(),
                 headers.clone(),
                 axum::extract::RawQuery(None),
                 body(),
@@ -36,6 +37,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
             "detected_labels",
             super::super::prelude::detected_labels_post(
                 State(state.clone()),
+                super::super::prelude::RequestSecurity::unauthenticated(),
                 headers.clone(),
                 axum::extract::RawQuery(None),
                 body(),
@@ -46,6 +48,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
             "index_volume",
             super::super::prelude::index_volume_post(
                 State(state.clone()),
+                super::super::prelude::RequestSecurity::unauthenticated(),
                 headers.clone(),
                 axum::extract::RawQuery(None),
                 body(),
@@ -56,6 +59,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
             "label_names",
             super::super::prelude::api_prom_label_names_post(
                 State(state.clone()),
+                super::super::prelude::RequestSecurity::unauthenticated(),
                 headers.clone(),
                 axum::extract::RawQuery(None),
                 body(),

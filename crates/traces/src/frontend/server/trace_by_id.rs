@@ -1,11 +1,12 @@
 use super::{
-    Arc, BlockCatalog, HeaderMap, IntoResponse, Json, Path, QuerierBackend, QueryFrontend,
-    Response, State, StatusCode, TraceStatus, Uri, backend_error_response, json,
-    optional_time_bounds, parse_hex16, tenant,
+    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Path, Principal, QuerierBackend,
+    QueryFrontend, Response, State, StatusCode, TraceStatus, Uri, backend_error_response, json,
+    optional_time_bounds, parse_hex16, request_tenant,
 };
 
 pub(crate) async fn trace_by_id<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     Path(trace_id): Path<String>,
     uri: Uri,
@@ -17,7 +18,10 @@ where
     if trace_id.len() != 32 || hex::decode(&trace_id).is_err() {
         return (StatusCode::BAD_REQUEST, "trace id must be 32 hex chars").into_response();
     }
-    let tenant = tenant(&headers);
+    let tenant = match request_tenant(&headers, &principal, &qf.cfg.tenant_policy) {
+        Ok(tenant) => tenant,
+        Err(rejection) => return *rejection,
+    };
     let (start_ns, end_ns) = match optional_time_bounds(&uri) {
         Ok(bounds) => bounds,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),

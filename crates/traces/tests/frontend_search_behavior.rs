@@ -49,7 +49,12 @@ use tower::ServiceExt as _;
 /// carry a scheme and may use the comma form, plus a pre-resolved block catalog
 /// and a frontend config.
 fn build_router(querier_urls: &str, cfg: FrontendConfig, catalog: TraceIndexCatalog) -> Router {
-    let backend = HttpQuerier::new(cfg.request_timeout.to_std()).unwrap();
+    let backend = HttpQuerier::new(
+        cfg.request_timeout.to_std(),
+        cfg.querier_scheme,
+        &krabka_observability::server_security::InternalClient::default(),
+    )
+    .unwrap();
     // The membership the binary's probe loop would have published, with every
     // configured querier ready.
     let membership = MembershipView::fixed(parse_addrs(querier_urls));
@@ -59,7 +64,7 @@ fn build_router(querier_urls: &str, cfg: FrontendConfig, catalog: TraceIndexCata
         cfg,
         membership,
     ));
-    router_with_backend(qf, RoleReadiness::new())
+    authenticated(router_with_backend(qf, RoleReadiness::new()))
 }
 
 /// Strip the scheme from a comma-separated querier URL list into bare host:port,
@@ -1246,4 +1251,14 @@ async fn search_propagates_upstream_querier_error() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let text = String::from_utf8(body.to_vec()).unwrap();
     assert2::assert!(text.contains("parse error: unexpected token"));
+}
+
+// The routers read the principal from the request extensions, where the
+// authentication layer puts it. This is that layer with no security flags,
+// which serves every request as unauthenticated.
+fn authenticated(router: axum::Router) -> axum::Router {
+    krabka_observability::server_security::authenticate_requests(
+        router,
+        &krabka_observability::server_security::ServerSecurity::default(),
+    )
 }

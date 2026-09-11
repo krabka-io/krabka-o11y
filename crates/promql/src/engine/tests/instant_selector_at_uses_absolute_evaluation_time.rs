@@ -25,7 +25,7 @@ pub(crate) async fn instant_selector_at_uses_absolute_evaluation_time() {
         },
     );
     let result = engine
-        .query_instant("tenant-a", "up @ 60", 120_000)
+        .query_instant(&tenant_id("tenant-a"), "up @ 60", 120_000)
         .await
         .unwrap();
 

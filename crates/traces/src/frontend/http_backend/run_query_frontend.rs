@@ -1,3 +1,5 @@
+use std::future::IntoFuture as _;
+
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::*;
@@ -7,6 +9,11 @@ use super::*;
 /// This builds the querier transport, resolves and probes the querier pool
 /// once so the first query sees real membership rather than an empty one, then
 /// serves the router on `cfg.listen_addr` until `shutdown` fires.
+///
+/// `security` decides how the listener serves, and it gives the internal
+/// client that the transport and the probe dial the queriers with. Every
+/// route checks the request's principal against the tenant before it plans a
+/// job.
 ///
 /// The membership refresh runs as a supervised task, not a bare `tokio::spawn`.
 /// If it stopped unnoticed the frontend would keep fanning out over whichever
@@ -28,13 +35,23 @@ pub async fn run_query_frontend(
     cfg: FrontendConfig,
     catalog: TraceIndexCatalog,
     readiness: RoleReadiness,
+    security: &ServerSecurity,
     shutdown: CancellationToken,
 ) -> std::io::Result<()> {
-    let backend = HttpQuerier::new(cfg.request_timeout.to_std())
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let internal_client = security.internal_client();
+    let backend = HttpQuerier::new(
+        cfg.request_timeout.to_std(),
+        cfg.querier_scheme,
+        internal_client,
+    )
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
     let probe: Arc<dyn crate::frontend::membership::ReadinessProbe> = Arc::new(
-        HttpReadinessProbe::new(cfg.readiness_timeout.to_std())
-            .map_err(|e| std::io::Error::other(e.to_string()))?,
+        HttpReadinessProbe::new(
+            cfg.readiness_timeout.to_std(),
+            cfg.querier_scheme,
+            internal_client,
+        )
+        .map_err(|e| std::io::Error::other(e.to_string()))?,
     );
     let membership_gate = readiness.gate(QUERIER_MEMBERSHIP_GATE);
     let membership = MembershipView::empty();
@@ -52,7 +69,8 @@ pub async fn run_query_frontend(
         membership.clone(),
     ));
     let app = crate::frontend::server::router_with_backend(qf, readiness);
-    let listener = tokio::net::TcpListener::bind(listen_addr).await?;
+    let tcp = tokio::net::TcpListener::bind(listen_addr).await?;
+    let listener = ServerListener::bind(tcp, security).map_err(std::io::Error::other)?;
 
     let mut tasks = SupervisedTasks::new(shutdown.clone());
     let refresh_shutdown = shutdown.clone();
@@ -68,9 +86,9 @@ pub async fn run_query_frontend(
         ),
     );
 
-    let server_shutdown = shutdown.clone();
-    let server = axum::serve(listener, krabka_observability::contain_handler_panics(app))
-        .with_graceful_shutdown(async move { server_shutdown.cancelled().await });
+    let server = serve_router(listener, app, security)
+        .with_graceful_shutdown(shutdown.clone().cancelled_owned())
+        .into_future();
     let outcome = tokio::select! {
         result = server => result,
         name = tasks.first_unexpected_exit() => Err(std::io::Error::other(CriticalTaskError(name))),

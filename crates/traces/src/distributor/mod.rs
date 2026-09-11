@@ -5,18 +5,25 @@ use std::{collections::BTreeMap, io::Read, net::SocketAddr, sync::Arc};
 use axum::{
     Router,
     body::Bytes,
-    extract::State,
-    http::{HeaderMap, StatusCode, header},
+    extract::{Extension, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
 use flate2::read::GzDecoder;
+use krabka_blockstore::{TENANT_HEADER, TenantId, TenantPolicy};
 use krabka_client_producer::{Header, Producer, ProducerRecord};
-use krabka_observability::wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined};
+use krabka_observability::{
+    server_security::{
+        GrpcAuthenticationLayer, Principal, ServerListener, ServerSecurity, authorize_tenant,
+        grpc_incoming, serve_router,
+    },
+    wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
+};
 use krabka_units::{
-    ByteSize, Frequency,
-    convert::{ByteSizeExt as _, FrequencyExt, StdDurationExt as _},
-    kibibytes, mebibytes,
+    ByteSize,
+    convert::{ByteSizeExt as _, StdDurationExt as _},
+    mebibytes,
 };
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{
@@ -28,8 +35,8 @@ use opentelemetry_proto::tonic::{
 use prost::Message as _;
 use tokio_util::sync::CancellationToken;
 use tonic::{
-    Request as GrpcRequest, Response as GrpcResponse, Status as GrpcStatus, metadata::MetadataMap,
-    transport::Server as GrpcServer,
+    Request as GrpcRequest, Response as GrpcResponse, Status as GrpcStatus,
+    metadata::AsciiMetadataValue, transport::Server as GrpcServer,
 };
 use tracing::Instrument as _;
 
@@ -61,6 +68,7 @@ mod tests {
     use axum::{body::Body, http::Request};
     use flate2::{Compression, write::GzEncoder};
     use http_body_util::BodyExt as _;
+    use krabka_blockstore::TenantResolveError;
     use krabka_units::{bytes, per_sec};
     use opentelemetry_proto::tonic::{
         collector::trace::v1::ExportTraceServiceRequest,
@@ -72,19 +80,14 @@ mod tests {
 
     use super::*;
 
-    /// `usize::MAX` is the "no limit" sentinel and converts to the zero the
-    /// wire format reads as unlimited. Every other value converts to itself,
-    /// which is what separates the sentinel test from its negation: inverted,
-    /// it is every ordinary value that collapses to zero.
-    #[test]
-    fn the_no_limit_sentinel_converts_to_zero_and_nothing_else_does() {
-        let limit = super::u64_limit_from_usize;
-
-        check!(limit(usize::MAX) == 0, "the sentinel means unlimited");
-        check!(limit(0) == 0, "and a real zero is already zero");
-        check!(limit(1) == 1);
-        check!(limit(7) == 7);
-        check!(limit(usize::MAX - 1) == u64::try_from(usize::MAX - 1).expect("fits in u64"));
+    // The push doors read their principal from the request extensions, where
+    // the authentication layer puts it. The tests drive the router behind the
+    // unconfigured layer, which serves every request as unauthenticated.
+    fn router(state: Arc<DistributorState>) -> Router {
+        krabka_observability::server_security::authenticate_requests(
+            super::router(state),
+            &ServerSecurity::default(),
+        )
     }
 
     /// `decode_body` bounds how far a compressed body may expand. It reads
@@ -148,6 +151,10 @@ mod tests {
             super::decode_body(&encoded("br"), &exact, limit));
     }
 
+    /// A case name, the raw tenant header or none, and the tenant the push is
+    /// stored as, or none when the push is rejected.
+    type TenantHeaderCase = (&'static str, Option<&'static [u8]>, Option<&'static str>);
+
     #[derive(Default)]
     struct RecordingSink {
         records: Mutex<Vec<SpanRecord>>,
@@ -176,26 +183,13 @@ mod tests {
     }
 
     fn test_state() -> (Arc<DistributorState>, Arc<RecordingSink>) {
-        test_state_with_limits(TenantLimits::default())
+        test_state_with_limits(crate::limits::Limits::default())
     }
 
-    fn test_state_with_limits(limits: TenantLimits) -> (Arc<DistributorState>, Arc<RecordingSink>) {
-        let sink = Arc::new(RecordingSink::default());
-        let mut state = DistributorState::new(sink.clone());
-        state.shared_limits = limits.to_shared_limits();
-        state.limits = limits;
-        state.max_decompressed = mebibytes(1);
-        (Arc::new(state), sink)
-    }
-
-    fn test_state_with_shared_limits(
+    fn test_state_with_limits(
         limits: crate::limits::Limits,
     ) -> (Arc<DistributorState>, Arc<RecordingSink>) {
-        let sink = Arc::new(RecordingSink::default());
-        let mut state = DistributorState::new(sink.clone());
-        state.shared_limits = limits;
-        state.max_decompressed = mebibytes(1);
-        (Arc::new(state), sink)
+        test_state_with_overrides(crate::limits::OverridesProvider::new(limits))
     }
 
     fn test_state_with_overrides(
@@ -203,7 +197,7 @@ mod tests {
     ) -> (Arc<DistributorState>, Arc<RecordingSink>) {
         let sink = Arc::new(RecordingSink::default());
         let mut state = DistributorState::new(sink.clone());
-        state.overrides = Some(overrides);
+        state.overrides = overrides;
         state.max_decompressed = mebibytes(1);
         (Arc::new(state), sink)
     }
@@ -266,7 +260,7 @@ mod tests {
                     .method("POST")
                     .uri("/v1/traces")
                     .header("content-type", "application/x-protobuf")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::from(otlp_body()))
                     .unwrap(),
             )
@@ -372,7 +366,8 @@ mod tests {
                 .resource_spans,
         });
         req.metadata_mut()
-            .insert("x-scope-orgid", "tenant-a".parse().unwrap());
+            .insert(TENANT_HEADER, "tenant-a".parse().unwrap());
+        req.extensions_mut().insert(Principal::Unauthenticated);
 
         let resp = service.export(req).await.unwrap();
 
@@ -422,7 +417,8 @@ mod tests {
             }),
         });
         req.metadata_mut()
-            .insert("x-scope-orgid", "tenant-a".parse().unwrap());
+            .insert(TENANT_HEADER, "tenant-a".parse().unwrap());
+        req.extensions_mut().insert(Principal::Unauthenticated);
 
         let resp = service.post_spans(req).await.unwrap();
 
@@ -459,7 +455,7 @@ mod tests {
                     .method("POST")
                     .uri("/api/v2/spans")
                     .header("content-type", "application/json")
-                    .header("x-scope-orgid", "t")
+                    .header(TENANT_HEADER, "t")
                     .body(Body::from(body))
                     .unwrap(),
             )
@@ -477,7 +473,7 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri("/api/traces")
-                    .header("x-scope-orgid", "t")
+                    .header(TENANT_HEADER, "t")
                     .body(Body::from(
                         crate::wire::jaeger::test_support::encode_sample_batch(),
                     ))
@@ -499,7 +495,7 @@ mod tests {
                     .method("POST")
                     .uri("/api/traces")
                     .header("content-type", "application/vnd.apache.thrift.binary")
-                    .header("x-scope-orgid", "t")
+                    .header(TENANT_HEADER, "t")
                     .body(Body::from(jaeger_binary_batch()))
                     .unwrap(),
             )
@@ -511,28 +507,93 @@ mod tests {
         assert2::assert!(sink.span_name(0) == "GET /binary".to_string());
     }
 
+    /// A datagram names no tenant, so the policy alone decides where its spans
+    /// go. A receiver that wrote a fixed name would store the first two rows
+    /// alike, and one that ignored a required policy would store the third.
     #[tokio::test]
-    async fn jaeger_compact_datagram_appends() {
-        let (state, sink) = test_state();
+    async fn a_jaeger_compact_datagram_takes_the_tenant_its_policy_gives() {
+        let datagram = crate::wire::jaeger::test_support::encode_sample_batch();
+        let cases = [
+            ("anonymous", TenantPolicy::anonymous(), Some("anonymous")),
+            (
+                "fallback",
+                TenantPolicy::Fallback(TenantId::new("tenant-a").unwrap()),
+                Some("tenant-a"),
+            ),
+            ("required", TenantPolicy::Required, None),
+        ];
 
-        handle_jaeger_compact_datagram(
-            &state,
-            "tenant-a",
-            &crate::wire::jaeger::test_support::encode_sample_batch(),
-        )
-        .await
-        .unwrap();
+        for (name, policy, stored) in cases {
+            let sink = Arc::new(RecordingSink::default());
+            let mut state = DistributorState::new(sink.clone());
+            state.tenant_policy = policy;
 
-        assert2::assert!(sink.count() == 1);
-        assert2::assert!(sink.tenant(0) == "tenant-a".to_string());
-        assert2::assert!(sink.span_name(0) == "GET /".to_string());
+            let result = handle_jaeger_compact_datagram(&state, &datagram).await;
+
+            if let Some(tenant) = stored {
+                check!(result.is_ok(), "{name}");
+                check!(sink.count() == 1, "{name}");
+                check!(sink.tenant(0) == tenant, "{name}");
+                check!(sink.span_name(0) == "GET /", "{name}");
+            } else {
+                check!(
+                    let Err(TracesError::Tenant(TenantResolveError::Missing)) = result,
+                    "{name}"
+                );
+                check!(sink.count() == 0, "{name}");
+            }
+        }
+    }
+
+    /// The Jaeger Thrift HTTP door resolves its tenant in its own handler, so
+    /// it gets its own check beside the doors that
+    /// `tests/tenant_isolation.rs` drives. A malformed tenant is a 400 that
+    /// stores nothing, and never a push stored as the anonymous tenant.
+    #[tokio::test]
+    async fn the_jaeger_thrift_door_resolves_its_tenant_like_every_door() {
+        let cases: [TenantHeaderCase; 5] = [
+            ("absent", None, Some("anonymous")),
+            ("empty", Some(b""), Some("anonymous")),
+            ("named", Some(b"tenant-a"), Some("tenant-a")),
+            ("separator", Some(b"a/b"), None),
+            ("not UTF-8", Some(b"\xff"), None),
+        ];
+
+        for (name, value, stored) in cases {
+            let (state, sink) = test_state();
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/api/traces")
+                .header("content-type", "application/vnd.apache.thrift.binary");
+            if let Some(value) = value {
+                request = request.header(TENANT_HEADER, HeaderValue::from_bytes(value).unwrap());
+            }
+            let resp = router(state)
+                .oneshot(request.body(Body::from(jaeger_binary_batch())).unwrap())
+                .await
+                .unwrap();
+
+            if let Some(tenant) = stored {
+                check!(resp.status() == StatusCode::ACCEPTED, "{name}");
+                check!(sink.count() == 1, "{name}");
+                check!(sink.tenant(0) == tenant, "{name}");
+            } else {
+                let expected = TenantId::resolve(value, &TenantPolicy::anonymous())
+                    .expect_err("the case is malformed")
+                    .to_string();
+                check!(resp.status() == StatusCode::BAD_REQUEST, "{name}");
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                check!(body.as_ref() == expected.as_bytes(), "{name}");
+                check!(sink.count() == 0, "{name}");
+            }
+        }
     }
 
     #[tokio::test]
     async fn over_span_limit_is_400() {
-        let limits = TenantLimits {
-            max_spans_per_request: 0,
-            ..TenantLimits::default()
+        let limits = crate::limits::Limits {
+            max_spans_per_request: 1,
+            ..crate::limits::Limits::default()
         };
         let (state, sink) = test_state_with_limits(limits);
         let resp = router(state)
@@ -540,7 +601,7 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .body(Body::from(otlp_body()))
+                    .body(Body::from(otlp_body_with_spans(2)))
                     .unwrap(),
             )
             .await
@@ -549,11 +610,14 @@ mod tests {
         assert2::assert!(sink.count() == 0);
     }
 
+    /// A request of exactly the cap is appended. The cap and its refusal differ
+    /// only at this boundary, so a `>=` written for `>` passes every test that
+    /// only pushes an over-limit request.
     #[tokio::test]
-    async fn oversized_trace_limit_is_400() {
-        let limits = TenantLimits {
-            max_spans_per_trace: 0,
-            ..TenantLimits::default()
+    async fn a_request_of_exactly_the_span_limit_is_appended() {
+        let limits = crate::limits::Limits {
+            max_spans_per_request: 2,
+            ..crate::limits::Limits::default()
         };
         let (state, sink) = test_state_with_limits(limits);
         let resp = router(state)
@@ -561,14 +625,14 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .body(Body::from(otlp_body()))
+                    .body(Body::from(otlp_body_with_spans(2)))
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
-        assert2::assert!(sink.count() == 0);
+        check!(resp.status() == StatusCode::OK);
+        check!(sink.count() == 2);
     }
 
     #[tokio::test]
@@ -577,7 +641,7 @@ mod tests {
             max_spans_per_trace: 1,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_shared_limits(limits);
+        let (state, sink) = test_state_with_limits(limits);
 
         let resp = router(state)
             .oneshot(
@@ -621,7 +685,7 @@ overrides:
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .header("x-scope-orgid", "tenant-tight")
+                    .header(TENANT_HEADER, "tenant-tight")
                     .body(Body::from(otlp_body_with_spans(2)))
                     .unwrap(),
             )
@@ -632,7 +696,7 @@ overrides:
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .header("x-scope-orgid", "tenant-loose")
+                    .header(TENANT_HEADER, "tenant-loose")
                     .body(Body::from(otlp_body_with_spans(2)))
                     .unwrap(),
             )
@@ -653,7 +717,7 @@ overrides:
             ingestion_burst_spans: 1,
             ..crate::limits::Limits::default()
         };
-        let (state, sink) = test_state_with_shared_limits(limits);
+        let (state, sink) = test_state_with_limits(limits);
         let app = router(state);
 
         let first = app
@@ -662,7 +726,7 @@ overrides:
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::from(otlp_body()))
                     .unwrap(),
             )
@@ -674,7 +738,7 @@ overrides:
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::from(otlp_body()))
                     .unwrap(),
             )
@@ -685,7 +749,7 @@ overrides:
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .header("x-scope-orgid", "tenant-b")
+                    .header(TENANT_HEADER, "tenant-b")
                     .body(Body::from(otlp_body()))
                     .unwrap(),
             )
@@ -710,10 +774,10 @@ overrides:
 
     #[tokio::test]
     async fn ingest_rate_limit_is_per_tenant() {
-        let limits = TenantLimits {
-            max_ingest_rate: per_sec(1),
-            ingest_rate_burst: 1,
-            ..TenantLimits::default()
+        let limits = crate::limits::Limits {
+            ingestion_rate: per_sec(1),
+            ingestion_burst_spans: 1,
+            ..crate::limits::Limits::default()
         };
         let (state, sink) = test_state_with_limits(limits);
         let app = router(state);
@@ -724,7 +788,7 @@ overrides:
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::from(otlp_body()))
                     .unwrap(),
             )
@@ -736,7 +800,7 @@ overrides:
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::from(otlp_body()))
                     .unwrap(),
             )
@@ -747,7 +811,7 @@ overrides:
                 Request::builder()
                     .method("POST")
                     .uri("/v1/traces")
-                    .header("x-scope-orgid", "tenant-b")
+                    .header(TENANT_HEADER, "tenant-b")
                     .body(Body::from(otlp_body()))
                     .unwrap(),
             )
@@ -764,17 +828,18 @@ overrides:
 
     #[tokio::test]
     async fn otlp_grpc_limit_errors_are_resource_exhausted() {
-        let limits = TenantLimits {
-            max_spans_per_request: 0,
-            ..TenantLimits::default()
+        let limits = crate::limits::Limits {
+            max_spans_per_request: 1,
+            ..crate::limits::Limits::default()
         };
         let (state, sink) = test_state_with_limits(limits);
         let service = OtlpGrpcService::new(state);
-        let req = GrpcRequest::new(ExportTraceServiceRequest {
-            resource_spans: TracesData::decode(otlp_body().as_slice())
+        let mut req = GrpcRequest::new(ExportTraceServiceRequest {
+            resource_spans: TracesData::decode(otlp_body_with_spans(2).as_slice())
                 .unwrap()
                 .resource_spans,
         });
+        req.extensions_mut().insert(Principal::Unauthenticated);
 
         let err = service.export(req).await.unwrap_err();
 
@@ -783,10 +848,10 @@ overrides:
     }
 
     #[test]
-    fn validate_rejects_large_attribute_values() {
-        let limits = TenantLimits {
-            max_attr_value: bytes(2),
-            ..TenantLimits::default()
+    fn validate_shared_rejects_large_attribute_values() {
+        let limits = crate::limits::Limits {
+            max_attribute: bytes(2),
+            ..crate::limits::Limits::default()
         };
         let span = Span {
             trace_id: [1; 16],
@@ -799,7 +864,7 @@ overrides:
             status: crate::span::StatusCode::Unset,
             status_message: String::new(),
             resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
+                key: "k".into(),
                 value: AttrValue::Str("api".into()),
             }],
             span_attrs: Vec::new(),
@@ -808,14 +873,14 @@ overrides:
             instrumentation_scope: String::new(),
             instrumentation_version: String::new(),
         };
-        assert2::assert!(validate(&[span], &limits).is_err());
+        assert2::assert!(validate_shared(&[span], &limits).is_err());
     }
 
     #[test]
-    fn validate_rejects_large_attribute_keys() {
-        let limits = TenantLimits {
-            max_attr_value: bytes(4),
-            ..TenantLimits::default()
+    fn validate_shared_rejects_large_attribute_keys() {
+        let limits = crate::limits::Limits {
+            max_attribute: bytes(4),
+            ..crate::limits::Limits::default()
         };
         let span = Span {
             trace_id: [1; 16],
@@ -838,14 +903,14 @@ overrides:
             instrumentation_version: String::new(),
         };
 
-        assert2::assert!(validate(&[span], &limits).is_err());
+        assert2::assert!(validate_shared(&[span], &limits).is_err());
     }
 
     #[test]
-    fn validate_rejects_traces_over_span_limit() {
-        let limits = TenantLimits {
+    fn validate_shared_rejects_traces_over_span_limit() {
+        let limits = crate::limits::Limits {
             max_spans_per_trace: 1,
-            ..TenantLimits::default()
+            ..crate::limits::Limits::default()
         };
         let first = Span {
             trace_id: [1; 16],
@@ -873,8 +938,8 @@ overrides:
             ..first.clone()
         };
 
-        assert2::assert!(validate(&[first.clone(), other_trace], &limits).is_ok());
-        assert2::assert!(validate(&[first, second], &limits).is_err());
+        assert2::assert!(validate_shared(&[first.clone(), other_trace], &limits).is_ok());
+        assert2::assert!(validate_shared(&[first, second], &limits).is_err());
     }
 
     fn jaeger_binary_batch() -> Vec<u8> {
@@ -997,6 +1062,7 @@ mod otlp_push;
 mod otlp_success_response;
 mod produce_spans;
 mod record_ingest_response;
+mod request_principal;
 mod require_content_type;
 mod router;
 mod serve;
@@ -1004,13 +1070,6 @@ mod serve_jaeger_compact_udp;
 mod serve_jaeger_grpc;
 mod serve_otlp_grpc;
 mod shared_attr_measured;
-mod tenant;
-mod tenant_header;
-mod tenant_limits;
-mod tenant_metadata;
-mod u64_limit_from_usize;
-mod validate;
-mod validate_attrs;
 mod validate_shared;
 mod wal_sink;
 mod zipkin_push;
@@ -1034,6 +1093,7 @@ use otlp_push::otlp_push;
 use otlp_success_response::otlp_success_response;
 pub use produce_spans::produce_spans;
 use record_ingest_response::record_ingest_response;
+use request_principal::request_principal;
 use require_content_type::require_content_type;
 pub use router::router;
 pub use serve::serve;
@@ -1041,13 +1101,6 @@ pub use serve_jaeger_compact_udp::serve_jaeger_compact_udp;
 pub use serve_jaeger_grpc::serve_jaeger_grpc;
 pub use serve_otlp_grpc::serve_otlp_grpc;
 use shared_attr_measured::shared_attr_measured;
-use tenant::tenant;
-use tenant_header::TENANT_HEADER;
-pub use tenant_limits::TenantLimits;
-use tenant_metadata::tenant_metadata;
-use u64_limit_from_usize::u64_limit_from_usize;
-pub use validate::validate;
-use validate_attrs::validate_attrs;
 use validate_shared::validate_shared;
 pub use wal_sink::WalSink;
 use zipkin_push::zipkin_push;

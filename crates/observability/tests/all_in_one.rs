@@ -18,7 +18,9 @@ use std::{
 use assert2::{assert, check};
 use krabka_blockstore::{BlockKey, TimeRange, read_log_block_from_object_store};
 use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
+use krabka_client_admin::{
+    AclEntry, AclOperation, AdminClient, CreateTopicSpec, PatternType, PermissionType, ResourceType,
+};
 use krabka_observability::{
     CancellationToken, QuerierIndexSource, Role, ServiceConfig, build_service_dependencies,
     serve_all_service_listener, wal_consumer_metrics::WalConsumerMetrics,
@@ -163,6 +165,7 @@ impl AllInOne {
         let bootstrap = broker.listen_addr().to_string();
         let wal_topic = ServiceConfig::default().wal_topic;
         create_wal_topic(&bootstrap, &wal_topic).await;
+        grant_tenant_wal_access_for_test(&bootstrap, &wal_topic, TENANT).await;
 
         let object_dir = tempfile::tempdir().expect("object store tempdir");
         let data_root = tempfile::tempdir().expect("data root");
@@ -398,6 +401,31 @@ fn late_push_body() -> Value {
             "values": [["30", "api stopping"]],
         }],
     })
+}
+
+/// Grants `tenant` every operation on the WAL topic.
+///
+/// The pinned in-process broker runs an authorizer and answers `DescribeAcls`
+/// with the ACLs it holds, so the logs path reads its ACLs as configured. With
+/// no ACL at all it would refuse every tenant, as Kafka's authorizer does. A
+/// broker that answers `SECURITY_DISABLED` instead allows every tenant.
+async fn grant_tenant_wal_access_for_test(bootstrap: &str, wal_topic: &str, tenant: &str) {
+    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
+        .await
+        .expect("admin connect");
+    let outcomes = admin
+        .create_acls(&[AclEntry {
+            resource_type: ResourceType::Topic,
+            resource_name: wal_topic.to_string(),
+            pattern_type: PatternType::Literal,
+            principal: format!("User:{tenant}"),
+            host: "*".to_string(),
+            operation: AclOperation::All,
+            permission_type: PermissionType::Allow,
+        }])
+        .await
+        .expect("create the tenant's WAL topic ACL");
+    assert!(outcomes.iter().all(|outcome| outcome.error.is_none()));
 }
 
 async fn create_wal_topic(bootstrap: &str, wal_topic: &str) {

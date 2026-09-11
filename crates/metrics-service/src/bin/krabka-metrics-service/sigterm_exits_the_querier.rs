@@ -21,7 +21,7 @@ use std::{
 
 use clap::Parser as _;
 
-use super::{Cli, RoleReadiness, run_querier};
+use super::{AuditHandle, Cli, RoleReadiness, ServerSecurity, run_querier};
 
 /// Set on the child re-execution of this test binary, and carries the address
 /// the child binds its query port on.
@@ -121,6 +121,9 @@ fn run_querier_child() {
             cli,
             krabka_promql::metrics::ServiceMetrics::new(),
             RoleReadiness::new(),
+            &ServerSecurity::default(),
+            None,
+            AuditHandle::disabled(),
         )
         .await
         .expect("the querier role returns on SIGTERM");

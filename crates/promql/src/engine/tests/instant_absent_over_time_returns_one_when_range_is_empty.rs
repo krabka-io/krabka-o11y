@@ -13,7 +13,7 @@ pub(crate) async fn instant_absent_over_time_returns_one_when_range_is_empty() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"absent_over_time(up{job="api"}[1m])"#,
             120_000,
         )

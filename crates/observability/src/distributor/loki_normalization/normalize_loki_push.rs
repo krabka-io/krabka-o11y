@@ -1,25 +1,24 @@
 use super::{
-    DistributorError, HeaderMap, LokiTypedPushRequest, Time, Value, WalLogRecord,
+    DistributorError, Limits, LokiTypedPushRequest, TenantId, Value, WalLogRecord,
     discover_service_name_label, loki_json_line_parse_error, loki_json_timestamp_parse_error,
-    loki_push_entry_labels, parse_structured_metadata, tenant, validate_ingest_timestamp_ns,
-    validate_loki_empty_json_value_timestamp_window, validate_loki_stream_labels,
-    validate_loki_timestamp_window,
+    loki_push_entry_labels, parse_structured_metadata, validate_ingest_timestamp_ns,
+    validate_loki_empty_json_value_timestamp_window, validate_loki_line_size,
+    validate_loki_stream_labels, validate_loki_timestamp_window,
 };
 
 pub(crate) fn normalize_loki_push(
-    headers: &HeaderMap,
+    tenant: &TenantId,
     payload: LokiTypedPushRequest,
-    reject_old_samples_max_age: Option<Time>,
-    creation_grace_period: Option<Time>,
+    limits: &Limits,
 ) -> Result<Vec<WalLogRecord>, DistributorError> {
-    let tenant = tenant(headers)?.to_string();
+    let tenant = tenant.as_str();
     let mut records = Vec::new();
 
     for stream in payload.streams {
         let Some(original_stream_labels) = stream.stream else {
             continue;
         };
-        validate_loki_stream_labels(&original_stream_labels)?;
+        validate_loki_stream_labels(&original_stream_labels, limits)?;
         let mut stream_labels = original_stream_labels.clone();
         discover_service_name_label(&mut stream_labels);
 
@@ -62,19 +61,15 @@ pub(crate) fn normalize_loki_push(
             if is_empty_value {
                 validate_loki_empty_json_value_timestamp_window(
                     &stream_labels,
-                    reject_old_samples_max_age,
+                    limits.reject_old_samples_max_age,
                 )?;
             }
-            validate_loki_timestamp_window(
-                timestamp_ns,
-                &stream_labels,
-                reject_old_samples_max_age,
-                creation_grace_period,
-            )?;
+            validate_loki_timestamp_window(timestamp_ns, &stream_labels, limits)?;
+            validate_loki_line_size(line, &stream_labels, limits)?;
             let labels = loki_push_entry_labels(&stream_labels, line);
 
             records.push(WalLogRecord {
-                tenant: tenant.clone(),
+                tenant: tenant.to_owned(),
                 labels,
                 timestamp_ns,
                 line: line.to_string(),

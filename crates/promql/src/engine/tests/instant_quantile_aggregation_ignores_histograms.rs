@@ -29,7 +29,7 @@ pub(crate) async fn instant_quantile_aggregation_ignores_histograms() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "quantile by (job) (0.5, latency_seconds)",
             10_000,
         )

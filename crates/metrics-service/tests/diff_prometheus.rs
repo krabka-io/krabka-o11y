@@ -317,9 +317,14 @@ async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let router = query_router.merge(krabka_metrics::distributor::router(distributor));
     let (tx, rx) = oneshot::channel();
     let addr: SocketAddr = "127.0.0.1:0".parse()?;
-    let bound = krabka_metrics_service::serve_prometheus_router(addr, router, async move {
-        let _ = rx.await;
-    })
+    let bound = krabka_metrics_service::serve_prometheus_router(
+        addr,
+        router,
+        &krabka_observability::server_security::ServerSecurity::default(),
+        async move {
+            let _ = rx.await;
+        },
+    )
     .await?;
 
     Ok(KrabkaServer {

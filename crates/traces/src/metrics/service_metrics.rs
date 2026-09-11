@@ -1,7 +1,7 @@
 use super::{
     Arc, ByteSize, ByteSizeExt, CompactionMetrics, Counter, Family, Histogram, Mutex,
     ObjectStoreMetrics, Registry, RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel,
-    TenantLabel, Time, TimeExt, WalConsumerMetrics, WalProduceMetrics,
+    TenantId, TenantLabel, Time, TimeExt, WalConsumerMetrics, WalProduceMetrics,
 };
 
 /// Cheaply-clonable bundle of metric handles plus the shared registry.
@@ -174,13 +174,13 @@ impl ServiceMetrics {
     /// Call this once per successful push request with the batch size, not once
     /// per span record. Per-tenant span volume is then visible without a
     /// high-cardinality per-record hop.
-    pub fn record_ingest_spans(&self, tenant: &str, count: u64) {
+    pub fn record_ingest_spans(&self, tenant: &TenantId, count: u64) {
         if count == 0 {
             return;
         }
         self.ingest_spans
             .get_or_create(&TenantLabel {
-                tenant: tenant.into(),
+                tenant: tenant.as_str().to_owned(),
             })
             .inc_by(count);
     }

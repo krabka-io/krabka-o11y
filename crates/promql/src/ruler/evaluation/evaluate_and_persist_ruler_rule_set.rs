@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerGroupEvaluation, RulerGroupStateRecord, RulerStateSink,
+    RulerAlertState, RulerGroupEvaluation, RulerGroupStateRecord, RulerStateSink, TenantId,
     evaluate_and_persist_ruler_rule_group,
 };
 
@@ -12,7 +12,7 @@ pub async fn evaluate_and_persist_ruler_rule_set<S, W, A, R>(
     engine: &PromqlEngine<S>,
     sinks: (&W, &A, &R),
     alert_state: &mut RulerAlertState,
-    tenant: &str,
+    tenant: &TenantId,
     rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
     eval_time_ms: i64,
 ) -> Result<RulerGroupEvaluation, PromqlError>

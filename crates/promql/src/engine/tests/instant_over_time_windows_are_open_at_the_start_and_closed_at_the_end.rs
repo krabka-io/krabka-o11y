@@ -23,7 +23,7 @@ pub(crate) async fn instant_over_time_windows_are_open_at_the_start_and_closed_a
         ("count_over_time(queue_depth[50s])", 1.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 60_000)
+            .query_instant(&tenant_id("tenant-a"), query, 60_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

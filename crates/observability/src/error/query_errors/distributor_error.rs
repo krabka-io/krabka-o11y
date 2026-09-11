@@ -20,6 +20,28 @@ pub(crate) enum DistributorError {
     InvalidPushValue,
     #[error("invalid Loki push labels")]
     InvalidPushLabels,
+    /// `Loki`'s `LineTooLongErrorMsg`, raised by `max_line_size`.
+    #[error(
+        "Max entry size '{limit_bytes}' bytes exceeded for stream '{stream}' while adding an entry with length '{line_bytes}' bytes\n"
+    )]
+    LineTooLong {
+        stream: String,
+        limit_bytes: usize,
+        line_bytes: usize,
+    },
+    /// `Loki`'s `MaxLabelNamesPerSeriesErrorMsg`.
+    #[error("entry for stream '{stream}' has {observed} label names; limit {limit}\n")]
+    TooManyLabelNames {
+        stream: String,
+        observed: u64,
+        limit: u64,
+    },
+    /// `Loki`'s `LabelNameTooLongErrorMsg`.
+    #[error("stream '{stream}' has label name too long: '{name}'\n")]
+    LabelNameTooLong { stream: String, name: String },
+    /// `Loki`'s `LabelValueTooLongErrorMsg`.
+    #[error("stream '{stream}' has label value too long: '{value}'\n")]
+    LabelValueTooLong { stream: String, value: String },
     #[error("{0}")]
     InvalidPushLabelSyntax(String),
     #[error("{0}")]
@@ -78,6 +100,14 @@ pub(crate) enum DistributorError {
     InvalidLokiContentType(String),
     #[error("invalid OTLP protobuf payload: {0}")]
     OtlpDecode(prost::DecodeError),
+    /// A normalized record names a tenant other than the one the request
+    /// resolved. The distributor never builds such a batch, so this is a
+    /// defect, and the push is refused rather than checked as one tenant.
+    #[error("ingest batch for tenant `{tenant}` holds a record for tenant `{record_tenant}`")]
+    RecordTenantMismatch {
+        tenant: String,
+        record_tenant: String,
+    },
     #[error("wal append timed out")]
     WalAppendTimeout,
     /// A push whose WAL batch appended in part or not at all.
@@ -121,7 +151,12 @@ impl IntoResponse for DistributorError {
             }
             Self::NoValidStreams => StatusCode::UNPROCESSABLE_ENTITY,
             Self::WalAppendTimeout | Self::WalBatch(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::RecordTenantMismatch { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             Self::EmptyStreamLabels
+            | Self::LineTooLong { .. }
+            | Self::TooManyLabelNames { .. }
+            | Self::LabelNameTooLong { .. }
+            | Self::LabelValueTooLong { .. }
             | Self::InvalidOtlpAttribute
             | Self::InvalidOtlpPayload
             | Self::InvalidPushLabels
@@ -153,6 +188,10 @@ impl IntoResponse for DistributorError {
                 | Self::InvalidJsonPushValueSyntax(_)
                 | Self::InvalidJsonTimestampSyntax(_)
                 | Self::InvalidStructuredMetadataSyntax(_)
+                | Self::LineTooLong { .. }
+                | Self::TooManyLabelNames { .. }
+                | Self::LabelNameTooLong { .. }
+                | Self::LabelValueTooLong { .. }
                 | Self::NoValidStreams
                 | Self::TimestampTooOld { .. }
                 | Self::TimestampTooOldString { .. }

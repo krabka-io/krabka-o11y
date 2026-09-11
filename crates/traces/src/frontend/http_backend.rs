@@ -21,11 +21,16 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use krabka_observability::RoleReadiness;
+use krabka_blockstore::TENANT_HEADER;
+use krabka_observability::{
+    RoleReadiness,
+    server_security::{InternalClient, ServerListener, ServerSecurity, serve_router},
+};
 use krabka_units::convert::TimeExt as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::frontend::{
+    QuerierScheme,
     backend::{
         BackendError, MetricsJobRequest, MetricsPartial, QuerierBackend, SearchJobRequest,
         SearchPartial, TagNamesJobRequest, TagNamesPartial, TagValuesJobRequest, TagValuesPartial,
@@ -140,7 +145,6 @@ mod scope_param;
 mod scope_tags_json;
 mod tag_values_body;
 mod tags_body;
-mod tenant_header;
 mod typed_value_json;
 
 use build_url::build_url;
@@ -154,5 +158,4 @@ use scope_param::scope_param;
 use scope_tags_json::ScopeTagsJson;
 use tag_values_body::TagValuesBody;
 use tags_body::TagsBody;
-use tenant_header::TENANT_HEADER;
 use typed_value_json::TypedValueJson;

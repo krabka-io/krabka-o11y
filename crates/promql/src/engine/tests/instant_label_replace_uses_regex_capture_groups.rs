@@ -13,7 +13,7 @@ pub(crate) async fn instant_label_replace_uses_regex_capture_groups() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"label_replace(up, "host", "$1", "instance", "([^:]+):.*")"#,
             10_000,
         )

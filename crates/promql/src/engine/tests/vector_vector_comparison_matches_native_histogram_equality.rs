@@ -25,19 +25,27 @@ pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality()
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let equal = engine
-        .query_instant("tenant-a", "histogram_count(a == on (x) b)", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "histogram_count(a == on (x) b)",
+            10_000,
+        )
         .await
         .unwrap();
     assert_single_float_sample(&equal, "api", 4.0, "a == b");
 
     let not_equal = engine
-        .query_instant("tenant-a", "histogram_count(a != on (x) c)", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "histogram_count(a != on (x) c)",
+            10_000,
+        )
         .await
         .unwrap();
     assert_single_float_sample(&not_equal, "api", 4.0, "a != c");
 
     let false_filter = engine
-        .query_instant("tenant-a", "a == on (x) c", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "a == on (x) c", 10_000)
         .await
         .unwrap();
     let QueryResult::InstantVector(samples) = false_filter else {
@@ -46,7 +54,7 @@ pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality()
     assert2::assert!(samples.is_empty());
 
     let bool_result = engine
-        .query_instant("tenant-a", "a == bool on (x) c", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "a == bool on (x) c", 10_000)
         .await
         .unwrap();
     let QueryResult::InstantVector(samples) = bool_result else {
@@ -59,7 +67,7 @@ pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality()
     check!(approx_eq(float_value(&samples[0].value), 0.0));
 
     let invalid = engine
-        .query_instant("tenant-a", "a > bool on (x) b", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "a > bool on (x) b", 10_000)
         .await
         .unwrap();
     let QueryResult::InstantVector(samples) = invalid else {

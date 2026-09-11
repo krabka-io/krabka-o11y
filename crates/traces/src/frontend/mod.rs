@@ -40,6 +40,7 @@ pub use job::{
     BlockCatalog, BlockMetaInfo, CatalogError, JobPlan, JobShard, MockCatalog, RowGroupInfo,
     TraceIndexCatalog, blocks_for_tenant, plan_search_jobs,
 };
+use krabka_blockstore::TenantId;
 pub use membership::{
     HttpReadinessProbe, Membership, MembershipView, QUERIER_MEMBERSHIP_GATE, QuerierHealth,
     QuerierMember, ReadinessProbe, refresh_membership, run_membership_refresh,
@@ -73,6 +74,10 @@ mod orch_tests {
         job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
         wire::{Metrics, SpanJson, SpanSetJson, TraceJson},
     };
+
+    fn tenant_t1() -> TenantId {
+        TenantId::new("t1").unwrap()
+    }
 
     fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
         let row_groups = rgs
@@ -144,7 +149,7 @@ mod orch_tests {
             MembershipView::fixed(["q1:3200"]),
         );
 
-        let resp = qf.search("t1", "{ }", 0, 300, 20, 3).await.unwrap();
+        let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 20, 3).await.unwrap();
         assert2::assert!(qf.backend_ref().search_calls().len() == 3);
         assert2::assert!(
             qf.backend_ref()
@@ -196,7 +201,7 @@ mod orch_tests {
             cfg,
             MembershipView::fixed(["q1:3200"]),
         );
-        let resp = qf.search("t1", "{ }", 0, 300, 1, 3).await.unwrap();
+        let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 1, 3).await.unwrap();
         assert2::assert!(resp.traces.len() == 1);
         assert2::assert!(resp.traces[0].start_time_unix_nano.as_str() == "300");
     }
@@ -215,7 +220,8 @@ mod orch_tests {
             cfg,
             MembershipView::fixed(["q1:3200", "q2:3200", "q3:3200"]),
         );
-        let (_t, metrics, status, warnings) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
+        let (_t, metrics, status, warnings) =
+            qf.trace_by_id(&tenant_t1(), [9; 16], 0, 300).await.unwrap();
         // One job per ready querier (3), each addressed by name, none returned
         // the trace => Complete + None.
         check!(
@@ -251,7 +257,7 @@ mod orch_tests {
             cfg,
             MembershipView::fixed(["q1:3200", "q2:3200", "q3:3200"]),
         );
-        let resp = qf.search("t1", "{ }", 0, 300, 20, 3).await.unwrap();
+        let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 20, 3).await.unwrap();
 
         let calls = qf.backend_ref().search_calls();
         let live: std::collections::BTreeSet<String> = calls
@@ -295,7 +301,7 @@ mod orch_tests {
         ]);
         let qf = QueryFrontend::new(Arc::new(backend), Arc::new(catalog), cfg, membership);
 
-        let resp = qf.search("t1", "{ }", 0, 300, 20, 3).await.unwrap();
+        let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 20, 3).await.unwrap();
         let calls = qf.backend_ref().search_calls();
         check!(
             calls.iter().all(|c| c.querier == "up:3200"),
@@ -329,7 +335,10 @@ mod orch_tests {
             FrontendConfig::default(),
             membership,
         );
-        let err = qf.search("t1", "{ }", 0, 300, 20, 3).await.unwrap_err();
+        let err = qf
+            .search(&tenant_t1(), "{ }", 0, 300, 20, 3)
+            .await
+            .unwrap_err();
         check!(matches!(err, BackendError::Transport(_)));
         check!(qf.backend_ref().search_calls().is_empty());
     }
@@ -402,7 +411,7 @@ mod orch_tests {
         };
         let qf = QueryFrontend::new(Arc::new(backend), Arc::new(catalog), cfg, membership);
 
-        let resp = qf.search("t1", "{ }", 0, 300, 20, 3).await.unwrap();
+        let resp = qf.search(&tenant_t1(), "{ }", 0, 300, 20, 3).await.unwrap();
         check!(resp.warnings.len() == 1, "{:?}", resp.warnings);
         check!(resp.warnings[0].contains("the querier pool changed"));
     }
@@ -436,7 +445,10 @@ mod orch_tests {
             FrontendConfig::default(),
             MembershipView::fixed(["q1:3200"]),
         );
-        let err = qf.search("t1", "{ }", 0, 300, 20, 3).await.unwrap_err();
+        let err = qf
+            .search(&tenant_t1(), "{ }", 0, 300, 20, 3)
+            .await
+            .unwrap_err();
         assert2::assert!(matches!(err, BackendError::Transport(_)));
         // The backend was never fanned out — the catalog error short-circuits.
         assert2::assert!(qf.backend_ref().search_calls().is_empty());
@@ -451,7 +463,7 @@ mod orch_tests {
             FrontendConfig::default(),
             MembershipView::fixed(["q1:3200"]),
         );
-        let err = qf.tag_names("t1", None, 0, 300).await.unwrap_err();
+        let err = qf.tag_names(&tenant_t1(), None, 0, 300).await.unwrap_err();
         assert2::assert!(matches!(err, BackendError::Transport(_)));
     }
 
@@ -464,13 +476,18 @@ mod orch_tests {
             FrontendConfig::default(),
             MembershipView::fixed(["q1:3200"]),
         );
-        let err = qf.tag_values("t1", "span.name", 0, 300).await.unwrap_err();
+        let err = qf
+            .tag_values(&tenant_t1(), "span.name", 0, 300)
+            .await
+            .unwrap_err();
         assert2::assert!(matches!(err, BackendError::Transport(_)));
     }
 }
 
 mod catalog_error;
+mod querier_scheme;
 mod query_frontend;
 
 use catalog_error::catalog_error;
+pub use querier_scheme::QuerierScheme;
 pub use query_frontend::QueryFrontend;

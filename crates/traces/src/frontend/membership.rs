@@ -41,10 +41,10 @@ use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use krabka_observability::ReadinessGate;
+use krabka_observability::{ReadinessGate, server_security::InternalClient};
 use tokio_util::sync::CancellationToken;
 
-use crate::frontend::backend::BackendError;
+use crate::frontend::{QuerierScheme, backend::BackendError};
 
 #[cfg(test)]
 mod tests {
@@ -172,7 +172,12 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-        let probe = HttpReadinessProbe::new(Duration::from_secs(5)).unwrap();
+        let probe = HttpReadinessProbe::new(
+            Duration::from_secs(5),
+            QuerierScheme::Http,
+            &InternalClient::default(),
+        )
+        .unwrap();
         check!(
             probe.probe(&addr.to_string()).await
                 == QuerierHealth::NotReady {

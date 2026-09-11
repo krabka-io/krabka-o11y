@@ -1,16 +1,25 @@
 //! Metrics-generator processor orchestration.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    sync::Arc,
+};
 
 use crate::metricsgen::{
-    checkpoint::CheckpointCodecError, clock::Clock, config::MetricsGenConfig, contract::SpanRecord,
-    series::SeriesPayload, servicegraph::EdgeStore, spanmetrics::SpanMetricsRegistry,
+    checkpoint::CheckpointCodecError,
+    clock::Clock,
+    config::MetricsGenConfig,
+    contract::SpanRecord,
+    series::SeriesPayload,
+    servicegraph::{EdgeStore, RecordOutcome},
+    spanmetrics::SpanMetricsRegistry,
 };
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
+    use assert2::check;
     use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
     use super::*;
@@ -79,6 +88,62 @@ mod tests {
                 .iter()
                 .any(|s| s.name == "traces_service_graph_request_total")
         );
+    }
+
+    /// The tenant map is the third unbounded map of the generator, and one WAL
+    /// topic carries every tenant. A new tenant is refused once the map is
+    /// full, and the spans of the tenants already held keep flowing.
+    #[tokio::test]
+    async fn tenant_map_full_refuses_new_tenants() {
+        let cfg = MetricsGenConfig {
+            max_tenants: 2,
+            ..MetricsGenConfig::default()
+        };
+        let mut generator = MetricsGenerator::new(cfg, Arc::new(MockClock::new(0)));
+
+        check!(
+            generator.process(&span("A", "frontend", SpanKind::Server, [0xA; 8], [0; 8]))
+                == RecordOutcome::Recorded
+        );
+        check!(
+            generator.process(&span("B", "frontend", SpanKind::Server, [0xB; 8], [0; 8]))
+                == RecordOutcome::Recorded
+        );
+        check!(
+            generator.process(&span("C", "frontend", SpanKind::Server, [0xC; 8], [0; 8]))
+                == RecordOutcome::Dropped
+        );
+        // A tenant already held is unaffected by the map being full.
+        check!(
+            generator.process(&span("A", "frontend", SpanKind::Server, [0xD; 8], [0; 8]))
+                == RecordOutcome::Recorded
+        );
+
+        check!(generator.discarded_tenant_spans() == 1);
+        let payloads = generator.collect(1_000);
+        let mut tenants: Vec<String> = payloads.iter().map(|p| p.tenant.clone()).collect();
+        tenants.sort();
+        check!(tenants == vec!["A".to_string(), "B".to_string()]);
+    }
+
+    /// Zero is "no cap", as it is for every other limit here.
+    #[tokio::test]
+    async fn a_zero_tenant_cap_is_unlimited() {
+        let cfg = MetricsGenConfig {
+            max_tenants: 0,
+            ..MetricsGenConfig::default()
+        };
+        let mut generator = MetricsGenerator::new(cfg, Arc::new(MockClock::new(0)));
+
+        for tenant in ["A", "B", "C", "D"] {
+            check!(
+                generator.process(&span(tenant, "svc", SpanKind::Server, [0xA; 8], [0; 8]))
+                    == RecordOutcome::Recorded
+            );
+        }
+
+        check!(generator.discarded_tenant_spans() == 0);
+        check!(generator.collect(1_000).len() == 4);
     }
 
     #[tokio::test]

@@ -42,7 +42,7 @@ pub(crate) async fn histogram_stdvar_places_each_bucket_at_its_own_midpoint() {
         ("histogram_stddev(h)", 1.859_989_216_495_654_6),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"));
         let QueryResult::InstantVector(samples) = result else {

@@ -1,7 +1,8 @@
 use super::{
-    Arc, Cli, ObjectStore, PrometheusApiState, QueryFrontendOptions, RoleReadiness, Shutdown,
-    WalHead, load_runtime_overrides, prometheus_router, query_engine_opts, readiness_router,
-    serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
+    Arc, AuditHandle, Cli, ObjectStore, PrometheusApiState, QueryFrontendOptions, RoleReadiness,
+    ServerSecurity, Shutdown, WalHead, load_runtime_overrides, prometheus_router,
+    query_engine_opts, readiness_router, serve_prometheus_router_joinable,
+    spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -15,6 +16,8 @@ pub(crate) async fn run_query_frontend(
     cli: Cli,
     metrics: krabka_promql::metrics::ServiceMetrics,
     readiness: RoleReadiness,
+    security: &ServerSecurity,
+    audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
@@ -27,10 +30,11 @@ pub(crate) async fn run_query_frontend(
     )
     .with_cold_cache_ttl(cli.cold_cache_ttl)
     .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
-    let mut state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
+    let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
         .with_remote_read_max_body(cli.remote_read_max_body)
         .with_metrics(metrics)
+        .with_audit(audit)
         .with_query_frontend_cache(
             QueryFrontendOptions {
                 split_interval: cli.query_frontend_split,
@@ -41,15 +45,19 @@ pub(crate) async fn run_query_frontend(
                 cli.query_frontend_cache_prefix.clone(),
             )),
         );
-    if let Some(overrides) = load_runtime_overrides(cli.runtime_overrides.as_deref())? {
-        state = state.with_query_limits(overrides);
-    }
+    let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
     let router = prometheus_router(Arc::new(state)).merge(readiness_router(readiness));
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
     let (bound, server) =
-        serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
-    tracing::info!(%bound, "metrics-service query-frontend listening");
+        serve_prometheus_router_joinable(cli.listen, router, security, shutdown.signalled())
+            .await?;
+    tracing::info!(
+        %bound,
+        tls = security.tls_enabled(),
+        authentication = security.authentication_enabled(),
+        "metrics-service query-frontend listening"
+    );
     // Join the server task so in-flight requests drain (graceful shutdown)
     // before the process exits.
     server.await?;

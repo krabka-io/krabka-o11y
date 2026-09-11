@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use krabka_blockstore::Labels;
+use krabka_blockstore::{Labels, TenantId};
 use krabka_metrics::{SamplePayload, WalRecord};
 
 use super::{

@@ -21,7 +21,7 @@ pub(crate) async fn unary_minus_negates_native_histogram_values_and_marks_gauge(
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "-request_duration_seconds", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "-request_duration_seconds", 10_000)
         .await
         .unwrap();
 

@@ -1,10 +1,11 @@
 use super::{
-    Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response, State,
-    instant_query_params_from_form, query_inner,
+    Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState, RawQuery,
+    Response, State, instant_query_params_from_form, query_inner,
 };
 
 pub(crate) async fn query<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
@@ -13,5 +14,5 @@ pub(crate) async fn query<S: MetricStore>(
             Ok(params) => params,
             Err(error) => return error.into_response(),
         };
-    query_inner(state, headers, params).await
+    query_inner(state, headers, principal, params).await
 }

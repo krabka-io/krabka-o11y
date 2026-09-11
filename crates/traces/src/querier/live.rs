@@ -6,6 +6,8 @@ use arrow::{
     ipc::{reader::StreamReader, writer::StreamWriter},
     record_batch::RecordBatch,
 };
+use krabka_blockstore::TENANT_HEADER;
+use krabka_observability::server_security::InternalClient;
 use krabka_traceql::{
     AttrValue, EventRef, LinkRef, ScopedTag, SpanRef, TagScope, TraceSpans, TraceqlError,
     TypedValue,
@@ -73,7 +75,7 @@ mod tests {
                         // Refuse anything but the tenant under test, so a
                         // request that sends a fixed tenant fails outright.
                         if headers
-                            .get("x-scope-orgid")
+                            .get(super::TENANT_HEADER)
                             .map(object_store::HeaderValue::as_bytes)
                             != Some(b"t".as_slice())
                         {
@@ -97,7 +99,7 @@ mod tests {
                         // request that drops either is distinguishable from one
                         // that sends it.
                         let tenant = headers
-                            .get("x-scope-orgid")
+                            .get(super::TENANT_HEADER)
                             .and_then(|value| value.to_str().ok())
                             .unwrap_or("none")
                             .to_string();
@@ -145,7 +147,9 @@ mod tests {
             Arc::new(arc_swap::ArcSwap::from_pointee(
                 krabka_blockstore::TraceIndex::new(),
             )),
-        );
+            &InternalClient::default(),
+        )
+        .expect("the client builds");
 
         // Span batches come back as sent, not as an empty tier.
         check!(
@@ -266,7 +270,9 @@ mod tests {
             Arc::new(arc_swap::ArcSwap::from_pointee(
                 krabka_blockstore::TraceIndex::new(),
             )),
-        );
+            &InternalClient::default(),
+        )
+        .expect("the client builds");
 
         // Present: the trace comes back, and it is the one that was asked for.
         let trace = source
@@ -365,7 +371,9 @@ mod tests {
         let source = RemoteLiveSource::new(
             Url::parse("http://localhost:1/").expect("a valid url"),
             Arc::new(ArcSwap::from_pointee(index)),
-        );
+            &InternalClient::default(),
+        )
+        .expect("the client builds");
 
         check!(
             source.block_builder_frontier_ns("t") == 901,

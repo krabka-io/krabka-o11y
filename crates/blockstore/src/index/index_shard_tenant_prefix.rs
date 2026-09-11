@@ -1,12 +1,17 @@
-use super::index_shards_prefix_for_key;
+use super::{escape_object_path_segment, index_shards_prefix_for_key};
 
 /// Object prefix holding one tenant's index shards.
 ///
-/// The tenant is a path segment, as it is on the logs path, so a tenant-scoped
-/// load lists its own prefix and never sees another tenant's objects. A tenant
-/// name carrying `/` would split into two segments here; the logs path has the
-/// same exposure and the same expectation that tenant names are plain.
+/// The tenant is one path segment, as it is on the logs path, so a
+/// tenant-scoped load lists its own prefix and never sees another tenant's
+/// objects. [`escape_object_path_segment`] is what holds the tenant inside
+/// that one segment: a name carrying `/`, `.` or `..` would otherwise reach
+/// another tenant's prefix.
 #[must_use]
 pub fn index_shard_tenant_prefix(key: &str, tenant: &str) -> String {
-    format!("{}/tenant={tenant}", index_shards_prefix_for_key(key))
+    format!(
+        "{}/tenant={}",
+        index_shards_prefix_for_key(key),
+        escape_object_path_segment(tenant)
+    )
 }

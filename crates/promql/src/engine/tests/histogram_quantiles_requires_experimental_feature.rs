@@ -7,7 +7,7 @@ pub(crate) async fn histogram_quantiles_requires_experimental_feature() {
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());
     let error = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"histogram_quantiles(vector(1), "quantile", 0.5)"#,
             10_000,
         )

@@ -24,7 +24,7 @@ for: 5m
         &alert_sink,
         &state_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rule,
         60_000,
     )
@@ -35,7 +35,7 @@ for: 5m
         &alert_sink,
         &state_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rule,
         120_000,
     )

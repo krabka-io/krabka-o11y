@@ -1,12 +1,13 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, Response, SpanStore, StatusCode, Uri,
+    AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode, Uri,
     exact_tag_value_filter, filter_tag_values, is_match_all_query, matching_traces,
-    optional_time_bounds, q_filter_limit, query_param, scan_options_param, search_tag_values_json,
-    tag_values_from_traces, tempo_tag_alias, tenant, traceql_query_error_response,
+    optional_time_bounds, q_filter_limit, query_param, request_tenant, scan_options_param,
+    search_tag_values_json, tag_values_from_traces, tempo_tag_alias, traceql_query_error_response,
 };
 
 pub(crate) async fn search_tag_values_inner<S>(
     state: &AppState<S>,
+    principal: &Principal,
     headers: HeaderMap,
     tag: String,
     uri: Uri,
@@ -14,7 +15,10 @@ pub(crate) async fn search_tag_values_inner<S>(
 where
     S: SpanStore + 'static,
 {
-    let tenant = tenant(&headers);
+    let tenant = match request_tenant(&headers, principal, &state.cfg.tenant_policy) {
+        Ok(tenant) => tenant,
+        Err(rejection) => return *rejection,
+    };
     let tag = tempo_tag_alias(&tag);
     let (start_ns, end_ns) = match optional_time_bounds(&uri) {
         Ok(bounds) => bounds,
@@ -24,7 +28,7 @@ where
         if is_match_all_query(&query) {
             return match state
                 .engine
-                .tag_values(&tenant, tag, start_ns, end_ns)
+                .tag_values(tenant.as_str(), tag, start_ns, end_ns)
                 .await
             {
                 Ok(values) => Json(search_tag_values_json(&values)).into_response(),
@@ -35,7 +39,7 @@ where
             Ok(Some(expected)) => {
                 return match state
                     .engine
-                    .tag_values(&tenant, tag, start_ns, end_ns)
+                    .tag_values(tenant.as_str(), tag, start_ns, end_ns)
                     .await
                 {
                     Ok(values) => Json(search_tag_values_json(&filter_tag_values(
@@ -64,7 +68,7 @@ where
         };
         match matching_traces(
             state.engine.as_ref(),
-            &tenant,
+            tenant.as_str(),
             &query,
             start_ns,
             end_ns,
@@ -82,7 +86,7 @@ where
     } else {
         match state
             .engine
-            .tag_values(&tenant, tag, start_ns, end_ns)
+            .tag_values(tenant.as_str(), tag, start_ns, end_ns)
             .await
         {
             Ok(values) => Json(search_tag_values_json(&values)).into_response(),

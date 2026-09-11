@@ -19,7 +19,7 @@ pub(crate) async fn instant_count_values_counts_by_sample_value() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"count_values("code", http_responses_total)"#,
             10_000,
         )

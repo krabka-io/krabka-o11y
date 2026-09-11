@@ -1,15 +1,17 @@
 use super::{
-    ApiError, Arc, Bytes, HeaderMap, IntoResponse, Message, MetricStore, PrometheusApiState,
-    Response, State, StatusCode, header, pb, remote_read_response, require_remote_read_headers,
-    require_remote_read_samples_response, snappy_block_decode, tenant_from_headers,
+    ApiError, Arc, Bytes, Extension, HeaderMap, IntoResponse, Message, MetricStore, Principal,
+    PrometheusApiState, Response, State, StatusCode, authorized_tenant_from_headers, header, pb,
+    remote_read_response, require_remote_read_headers, require_remote_read_samples_response,
+    snappy_block_decode,
 };
 
 pub(crate) async fn remote_read<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };

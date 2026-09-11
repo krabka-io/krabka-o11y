@@ -8,9 +8,10 @@ use axum::{
 };
 
 use super::{
-    ApiError, DiscoveryParams, PrometheusApiState, apply_limit, discovery_matchers,
-    discovery_window, enforce_selected_series_limit, labels_json, labels_key, parse_discovery_form,
-    parse_discovery_params, record_query_response, success_data_response, tenant_from_headers,
+    ApiError, DiscoveryParams, Extension, Principal, PrometheusApiState, apply_limit,
+    authorized_tenant_from_headers, discovery_matchers, discovery_window,
+    enforce_query_range_limit, enforce_selected_series_limit, labels_json, labels_key,
+    parse_discovery_form, parse_discovery_params, record_query_response, success_data_response,
 };
 use crate::MetricStore;
 

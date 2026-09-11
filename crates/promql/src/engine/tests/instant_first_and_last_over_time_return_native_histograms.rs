@@ -24,7 +24,7 @@ pub(crate) async fn instant_first_and_last_over_time_return_native_histograms() 
         ),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 120_000)
+            .query_instant(&tenant_id("tenant-a"), query, 120_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

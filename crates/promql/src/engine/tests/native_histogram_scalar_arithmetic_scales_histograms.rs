@@ -10,7 +10,7 @@ pub(crate) async fn native_histogram_scalar_arithmetic_scales_histograms() {
         ("histogram_sum(request_duration_seconds / 2)", 5.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
 

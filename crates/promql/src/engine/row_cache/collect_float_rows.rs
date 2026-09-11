@@ -1,5 +1,6 @@
 use super::{
-    AsArray, Float64Type, FloatRow, Int64Type, PromqlError, Result, ScanResult, UInt64Type,
+    AsArray, Float64Type, FloatRow, Int64Type, Result, ScanResult, UInt64Type,
+    samples_per_query_exceeded,
 };
 
 pub(crate) async fn collect_float_rows(
@@ -27,10 +28,13 @@ pub(crate) async fn collect_float_rows(
         let timestamps = batch.column(1).as_primitive::<Int64Type>();
         let values = batch.column(2).as_primitive::<Float64Type>();
         for row in 0..batch.num_rows() {
+            // The cap trips on the row that would take the count past it, so the
+            // count this row would produce is what the tenant is told.
             if rows.len() >= max_samples {
-                return Err(PromqlError::Exec(format!(
-                    "query exceeds max_samples={max_samples}"
-                )));
+                return Err(samples_per_query_exceeded(
+                    max_samples,
+                    rows.len().saturating_add(1),
+                ));
             }
             rows.push(FloatRow {
                 fp: fps.value(row),

@@ -1,10 +1,11 @@
 use super::{
-    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, Response, State, StatusCode,
-    execute_index_stats_query, json_response, post_query_params_body_first,
+    Bytes, HeaderMap, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
+    StatusCode, execute_index_stats_query, json_response, post_query_params_body_first,
 };
 
 pub(crate) async fn index_stats_post(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
     body: Bytes,
@@ -13,7 +14,7 @@ pub(crate) async fn index_stats_post(
         Ok(raw_query) => raw_query,
         Err(error) => return error.into_response(),
     };
-    match execute_index_stats_query(&state, &headers, Some(&raw_query)).await {
+    match execute_index_stats_query(&state, &security, &headers, Some(&raw_query)).await {
         Ok(value) => json_response(StatusCode::OK, &value),
         Err(error) => error.into_response(),
     }

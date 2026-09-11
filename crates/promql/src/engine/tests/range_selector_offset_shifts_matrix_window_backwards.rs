@@ -10,7 +10,7 @@ pub(crate) async fn range_selector_offset_shifts_matrix_window_backwards() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "up[2m] offset 1m", 180_000)
+        .query_instant(&tenant_id("tenant-a"), "up[2m] offset 1m", 180_000)
         .await
         .unwrap();
 

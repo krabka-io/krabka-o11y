@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use krabka_blockstore::Labels;
+use krabka_blockstore::{Labels, TenantId};
 use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 
 use crate::{
@@ -39,6 +39,7 @@ mod store_with_labeled_series;
 mod store_with_series;
 mod store_with_series_multi;
 mod tenant;
+mod tenant_id;
 
 pub(crate) use eval_instant::eval_instant;
 pub(crate) use eval_instant_err::eval_instant_err;
@@ -48,3 +49,4 @@ use spans_and_counts::spans_and_counts;
 pub(crate) use store_with_series::store_with_series;
 pub(crate) use store_with_series_multi::store_with_series_multi;
 use tenant::TENANT;
+pub(crate) use tenant_id::tenant_id;

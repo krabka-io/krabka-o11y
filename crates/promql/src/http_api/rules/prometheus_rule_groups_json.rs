@@ -1,12 +1,12 @@
 use super::{
-    BTreeMap, MetricStore, PrometheusApiState, PromqlError, RuleRenderOptions, TimeExt, Value,
-    json, prometheus_rules_json, rfc3339_time_string, yaml_duration, yaml_string,
+    BTreeMap, MetricStore, PrometheusApiState, PromqlError, RuleRenderOptions, TenantId, TimeExt,
+    Value, json, prometheus_rules_json, rfc3339_time_string, yaml_duration, yaml_string,
     zero_evaluation_time,
 };
 
 pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
     state: &PrometheusApiState<S>,
-    tenant: &str,
+    tenant: &TenantId,
     rules: BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
     options: RuleRenderOptions,
 ) -> Result<Vec<Value>, PromqlError> {
@@ -19,7 +19,7 @@ pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
             }
             let group_name = yaml_string(&group, "name");
             let last_evaluation = state
-                .ruler_group_last_eval_ms(tenant, &namespace, &group_name)
+                .ruler_group_last_eval_ms(tenant.as_str(), &namespace, &group_name)
                 .map_or_else(|| zero_evaluation_time().to_string(), rfc3339_time_string);
             groups.push(json!({
                 "name": group_name,

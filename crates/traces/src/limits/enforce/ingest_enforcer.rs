@@ -59,9 +59,27 @@ impl IngestEnforcer {
         }
     }
 
+    /// Enforce the per-request span-count cap.
     ///
     /// # Errors
-    /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
+    /// Returns [`LimitError::MaxSpansPerRequest`] when the request carries more
+    /// spans than `limits.max_spans_per_request`.
+    pub fn check_spans_per_request(limits: &Limits, spans: u64) -> Result<(), LimitError> {
+        let limit = limits.max_spans_per_request;
+        if limit != 0 && spans > limit {
+            return Err(LimitError::MaxSpansPerRequest {
+                limit,
+                observed: spans,
+            });
+        }
+        Ok(())
+    }
+
+    /// Enforce the per-trace span-count cap.
+    ///
+    /// # Errors
+    /// Returns [`LimitError::MaxSpansPerTrace`] when one trace in the request
+    /// carries more spans than `limits.max_spans_per_trace`.
     pub fn check_trace_size(limits: &Limits, spans_in_trace: u64) -> Result<(), LimitError> {
         let limit = limits.max_spans_per_trace;
         if limit != 0 && spans_in_trace > limit {

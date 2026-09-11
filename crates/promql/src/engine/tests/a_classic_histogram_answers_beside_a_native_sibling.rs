@@ -32,7 +32,7 @@ pub(crate) async fn a_classic_histogram_answers_beside_a_native_sibling() {
         ("histogram_fraction(0, 1, hk)", 0.3),
     ] {
         let QueryResult::InstantVector(samples) = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"))
         else {

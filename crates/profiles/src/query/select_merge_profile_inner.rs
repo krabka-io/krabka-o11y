@@ -1,18 +1,22 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Message,
-    ProfileError, ProfileStore, QuerierState, connect_error, merge_profile_id_selector, pb,
-    stack_trace_call_sites, tenant_from_headers,
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Message, Principal,
+    ProfileError, ProfileStore, QuerierState, authorize_tenant, connect_error,
+    merge_profile_id_selector, pb, stack_trace_call_sites, tenant_connect_error,
+    tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn select_merge_profile_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     req: ConnectRequest<pb::querier::v1::SelectMergeProfileRequest>,
 ) -> Result<ConnectResponse<pb::google::v1::Profile>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers).map_err(connect_error)?;
+    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
+        .map_err(|error| tenant_connect_error(&error))?;
+    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
     let req = req.0;
     let label_selector = merge_profile_id_selector(&req.label_selector, &req.profile_id_selector)
         .map_err(connect_error)?;
@@ -24,7 +28,7 @@ where
     let profile = state
         .engine
         .select_merge_profile_with_max_nodes_and_stack_trace_selector(
-            (&tenant, &req.profile_type_id, &label_selector),
+            (tenant.as_str(), &req.profile_type_id, &label_selector),
             (req.start, req.end),
             max_nodes,
             &stack_trace_call_sites,

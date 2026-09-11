@@ -8,6 +8,13 @@ pub struct Limits {
     pub ingestion_rate: Frequency,
     /// Tempo `ingestion_burst_size_bytes` analog, counted as spans.
     pub ingestion_burst_spans: u64,
+    /// Ceiling on the spans of one push request. Zero is unlimited.
+    ///
+    /// Tempo has no counterpart. It caps a trace and a rate, and leaves the
+    /// request itself to the body-size limit. Krabka decodes the whole request
+    /// before it appends, so a request of millions of spans costs the memory
+    /// whatever its compressed size was.
+    pub max_spans_per_request: u64,
     /// Per-tenant ceiling for `/api/search`'s `limit` query parameter. `0` is
     /// unlimited.
     pub max_traces_per_search: u64,
@@ -27,6 +34,7 @@ impl Default for Limits {
         Self {
             ingestion_rate: per_sec(100_000),
             ingestion_burst_spans: 100_000,
+            max_spans_per_request: 10_000,
             max_traces_per_search: 1000,
             max_spans_per_trace: 200_000,
             max_attribute: bytes(2048),

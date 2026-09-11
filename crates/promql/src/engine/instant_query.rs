@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use krabka_blockstore::TenantId;
 use promql_parser::parser::Expr;
 
 use super::{
@@ -21,7 +22,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// Returns parse, store, execution, or unsupported-expression errors.
     pub async fn query_instant(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         query: &str,
         time_ms: i64,
     ) -> Result<QueryResult> {
@@ -47,7 +48,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     )]
     pub async fn query_instant_with_annotations(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         query: &str,
         time_ms: i64,
     ) -> Result<(QueryResult, Annotations)> {
@@ -58,7 +59,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     DurationExprContext::instant(time_ms),
                 )?;
                 let result = self
-                    .eval_top_level_instant_expr(tenant, &expr, time_ms)
+                    .eval_top_level_instant_expr(tenant.as_str(), &expr, time_ms)
                     .await?;
                 validate_unique_instant_labelsets(&result)?;
                 let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());

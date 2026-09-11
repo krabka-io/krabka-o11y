@@ -1,17 +1,25 @@
 use super::{
-    HeaderMap, IntoResponse, PrometheusRulesFilters, QuerierState, RawQuery, Response, State,
-    StatusCode, current_unix_time_ns, json, json_response, loki_ruler_tenant,
-    prometheus_alerts_response,
+    HeaderMap, IntoResponse, PrometheusRulesFilters, QuerierState, RawQuery, RequestSecurity,
+    Response, State, StatusCode, TenantErrorSurface, authorized_ruler_tenant, current_unix_time_ns,
+    json, json_response, prometheus_alerts_response,
 };
 
 pub(crate) async fn prometheus_alerts(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
-    let tenant = match loki_ruler_tenant(&headers) {
+    let tenant = match authorized_ruler_tenant(
+        &state,
+        &security,
+        &headers,
+        TenantErrorSurface::PrometheusRuler,
+    )
+    .await
+    {
         Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+        Err(response) => return response,
     };
     let filters = match PrometheusRulesFilters::parse(raw_query.as_deref()) {
         Ok(filters) => filters,
@@ -23,7 +31,7 @@ pub(crate) async fn prometheus_alerts(
         .tenants
         .lock()
         .expect("Loki rule store lock poisoned")
-        .get(&tenant)
+        .get(tenant.as_str())
         .cloned();
     let alerts = match namespaces {
         Some(namespaces) => {

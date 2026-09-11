@@ -54,7 +54,7 @@ async fn format_query_endpoint_is_available_on_distributor_and_compactor_routers
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()

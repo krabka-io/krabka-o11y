@@ -53,7 +53,7 @@ pub(crate) async fn range_at_start_end_selector_planner_matches_interpreter() {
         // carries the SAME value at every one of the 6 steps (the value it
         // had at the pinned eval instant), matching Prometheus.
         let QueryResult::RangeMatrix(series) = engine
-            .query_range("t", query, start, end, step)
+            .query_range(&tenant_id("t"), query, start, end, step)
             .await
             .unwrap_or_else(|error| panic!("planner `{query}`: {error}"))
         else {
@@ -75,6 +75,8 @@ pub(crate) async fn range_at_start_end_selector_planner_matches_interpreter() {
     // A bare `@ start()` selector in an INSTANT query has no range bounds, so it
     // must raise the SAME hard error on the planner path as the interpreter —
     // never silently produce a result or fall back.
-    let instant_err = engine.query_instant("t", "m @ start()", 120_000).await;
+    let instant_err = engine
+        .query_instant(&tenant_id("t"), "m @ start()", 120_000)
+        .await;
     assert2::assert!(matches!(instant_err, Err(PromqlError::Unsupported(_))));
 }

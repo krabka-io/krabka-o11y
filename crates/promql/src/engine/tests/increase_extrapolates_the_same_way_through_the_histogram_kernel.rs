@@ -85,7 +85,7 @@ pub(crate) async fn increase_extrapolates_the_same_way_through_the_histogram_ker
         ("delta(k_thr_edge[1m])", 30.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 100_000)
+            .query_instant(&tenant_id("tenant-a"), query, 100_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"));
         let QueryResult::InstantVector(samples) = result else {
@@ -99,7 +99,7 @@ pub(crate) async fn increase_extrapolates_the_same_way_through_the_histogram_ker
     }
 
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", "increase(k_no_points[1m])", 100_000)
+        .query_instant(&tenant_id("tenant-a"), "increase(k_no_points[1m])", 100_000)
         .await
         .expect("a window with no float points is not an error")
     else {

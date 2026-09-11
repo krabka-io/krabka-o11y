@@ -42,7 +42,7 @@ pub(crate) async fn instant_min_max_and_std_aggregations_ignore_histograms() {
         ("stdvar by (job) (mixed_metric)", 4.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
 

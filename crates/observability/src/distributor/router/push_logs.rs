@@ -1,16 +1,31 @@
 use super::{
-    ByteSizeExt, Bytes, DistributorState, HeaderMap, Instant, Instrument, IntoResponse, Response,
-    State, StatusCode, append_distributor_wal_records, ingest_tenant, measured_size,
-    normalize_loki_http_push, record_ingest_response, validate_ingest_body_limit,
+    ByteSizeExt, Bytes, DistributorState, HeaderMap, Instant, Instrument, IntoResponse,
+    RequestSecurity, Response, State, StatusCode, TenantErrorSurface,
+    append_distributor_wal_records, measured_size, normalize_loki_http_push,
+    record_ingest_response, resolve_single_tenant, tenant_error_response, tenant_header_value,
+    validate_ingest_body_limit,
 };
 
 pub(crate) async fn push_logs(
     State(state): State<DistributorState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let start = Instant::now();
     let body_size = measured_size(body.len());
-    let tenant = ingest_tenant(&headers);
+    // The tenant is resolved before anything reads the body, so a malformed
+    // tenant never picks limits and never reaches the WAL.
+    let tenant = match resolve_single_tenant(tenant_header_value(&headers)) {
+        Ok(tenant) => tenant,
+        Err(error) => {
+            let response = tenant_error_response(&error, TenantErrorSurface::Push);
+            return record_ingest_response(&state, response, body_size, 0, start);
+        }
+    };
+    if let Err(denied) = security.authorize_tenant(&tenant) {
+        return record_ingest_response(&state, denied.into_response(), body_size, 0, start);
+    }
     // ONE server span per push request (not per log line): wraps the whole
     // ingest body so the produce-side WAL append (which injects `traceparent`)
     // and downstream compaction stitch onto this trace. `krabka.ingest.lines`
@@ -25,21 +40,20 @@ pub(crate) async fn push_logs(
         krabka.ingest.bytes = body_size.bytes_u64(),
     );
     async move {
-        let start = Instant::now();
-        if let Err(error) = validate_ingest_body_limit(&state, body_size) {
+        // One resolution for the whole push: the body cap, the line cap, the
+        // label caps and the two timestamp windows all come from this set.
+        let limits = state.limits_for(&tenant).clone();
+        if let Err(error) = validate_ingest_body_limit(&limits, body_size) {
             return record_ingest_response(&state, error.into_response(), body_size, 0, start);
         }
-        let resp = match normalize_loki_http_push(
-            &headers,
-            &body,
-            state.reject_old_samples_max_age,
-            state.creation_grace_period,
-        ) {
+        let resp = match normalize_loki_http_push(&tenant, &headers, &body, &limits) {
             Ok(records) => {
                 let items = records.len() as u64;
                 tracing::Span::current().record("krabka.ingest.lines", items);
-                state.metrics.record_ingest_lines(&tenant, items);
-                let resp = match append_distributor_wal_records(&state, records).await {
+                state.metrics.record_ingest_lines(tenant.as_str(), items);
+                let resp = match append_distributor_wal_records(&state, &security, &tenant, records)
+                    .await
+                {
                     Ok(()) => StatusCode::NO_CONTENT.into_response(),
                     Err(error) => error.into_response(),
                 };

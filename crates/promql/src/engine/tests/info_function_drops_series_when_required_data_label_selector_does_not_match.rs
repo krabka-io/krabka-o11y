@@ -28,7 +28,7 @@ pub(crate) async fn info_function_drops_series_when_required_data_label_selector
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"info(http_requests_total, {region="west"})"#,
             10_000,
         )

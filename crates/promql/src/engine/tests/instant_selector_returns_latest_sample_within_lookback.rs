@@ -32,7 +32,7 @@ pub(crate) async fn instant_selector_returns_latest_sample_within_lookback() {
     );
 
     let result = engine
-        .query_instant("tenant-a", "up", 30_000)
+        .query_instant(&tenant_id("tenant-a"), "up", 30_000)
         .await
         .unwrap();
     let QueryResult::InstantVector(samples) = result else {

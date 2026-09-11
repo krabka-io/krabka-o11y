@@ -1,5 +1,10 @@
-use krabka_observability::{RoleKind, contain_handler_panics};
-use krabka_traces::frontend::{HttpQuerier, MembershipView, QueryFrontend};
+use std::future::IntoFuture as _;
+
+use krabka_observability::{
+    RoleKind,
+    server_security::{ServerListener, serve_router},
+};
+use krabka_traces::frontend::{HttpQuerier, MembershipView, QuerierScheme, QueryFrontend};
 use krabka_units::{
     ByteSize,
     convert::{ByteSizeExt as _, TimeExt as _},
@@ -33,6 +38,10 @@ use super::{
 /// speaks the same job protocol it would to a querier in another pod, so the
 /// path this target exercises is the deployed one.
 ///
+/// The querier's loopback port serves with the process security, so the
+/// fan-out dials it over TLS when the listeners serve TLS, and presents the
+/// internal client credential.
+///
 /// [`RoleReadiness`]: krabka_observability::RoleReadiness
 ///
 /// # Errors
@@ -47,15 +56,21 @@ pub(crate) async fn run_all_query_frontend(
     let readiness = ctx.readiness.for_role(RoleKind::QueryFrontend);
     let gates = (ctx.cli.target_bytes_per_job > ByteSize::from_bytes(0))
         .then(|| BlockStoreGates::register(&readiness));
+    let security = &ctx.security.server;
     let mut cfg = frontend_config_from_cli(&ctx.cli, listener.local_addr()?)?;
     // `--querier-url` names queriers in other processes. There are none: the
     // only querier this frontend may fan out to is the one in this process,
     // on the port it bound a moment ago.
     cfg.querier_addrs = vec![querier_addr.to_string()];
+    cfg.querier_scheme = QuerierScheme::serving_tls(security.tls_enabled());
     let catalog =
         build_trace_index_catalog(&ctx.cli, &ctx.metrics, gates.as_ref(), &ctx.object_store)
             .await?;
-    let backend = HttpQuerier::new(cfg.request_timeout.to_std())?;
+    let backend = HttpQuerier::new(
+        cfg.request_timeout.to_std(),
+        cfg.querier_scheme,
+        security.internal_client(),
+    )?;
     let membership = MembershipView::fixed(cfg.querier_addrs.clone());
     let qf = Arc::new(QueryFrontend::new(
         Arc::new(backend),
@@ -64,10 +79,12 @@ pub(crate) async fn run_all_query_frontend(
         membership,
     ));
     let app = frontend::server::router_with_backend(qf, readiness);
-    let bound = listener.local_addr()?;
+    let listener = ServerListener::bind(listener, security)?;
+    let bound = listener.local_addr();
     tracing::info!(%bound, %querier_addr, "traces all-in-one Tempo API listening");
-    axum::serve(listener, contain_handler_panics(app))
-        .with_graceful_shutdown(async move { shutdown.cancelled().await })
+    serve_router(listener, app, security)
+        .with_graceful_shutdown(shutdown.cancelled_owned())
+        .into_future()
         .await?;
     Ok(())
 }

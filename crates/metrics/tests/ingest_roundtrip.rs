@@ -19,18 +19,28 @@ use krabka_ids::{Offset, PartitionIndex};
 use krabka_metrics::{
     CompactionPartitionOffset, MetricBlockKind, MetricsCompactorConfig, SamplePayload, WAL_TOPIC,
     WalRecord, compaction_partition_object_key,
-    distributor::{DistributorState, KafkaSink, router},
+    distributor::{DistributorState, KafkaSink},
     metrics::ServiceMetrics,
     run_compactor_consumer_loop,
     wire::pb,
 };
-use krabka_observability::topic_contract::{
-    METRICS_TOPICS, PartitionCount, TopicSettings, provision_topics,
+use krabka_observability::{
+    server_security::{ServerSecurity, authenticate_requests},
+    topic_contract::{METRICS_TOPICS, PartitionCount, TopicSettings, provision_topics},
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, memory::InMemory};
 use prost::Message;
 use tower::ServiceExt as _;
+
+// Every request goes through the authentication layer, as it does on a served
+// listener. With no credentials file, the layer lets each request through.
+fn router(state: Arc<DistributorState>) -> axum::Router {
+    authenticate_requests(
+        krabka_metrics::distributor::router(state),
+        &ServerSecurity::default(),
+    )
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_write_v1_lands_as_block() {
@@ -97,7 +107,7 @@ async fn remote_write_v1_lands_as_block() {
         .build_runtime(object_store.clone(), metrics.object_store.clone())
         .expect("compactor runtime");
     let mut consumer = config
-        .build_consumer(&metrics.wal_consumer)
+        .build_consumer(&metrics.wal_consumer, None)
         .await
         .expect("compactor consumer");
     let result = run_compactor_consumer_loop(
@@ -205,9 +215,14 @@ async fn check_instruments_moved(metrics: &ServiceMetrics) {
 /// runs against a topic created the way a deployment creates it rather than
 /// one the test hand-rolls.
 async fn create_metrics_wal_topic(bootstrap: &str) {
-    let report = provision_topics(bootstrap, &METRICS_TOPICS, &TopicSettings::single_broker())
-        .await
-        .expect("provision the metrics topics");
+    let report = provision_topics(
+        bootstrap,
+        &METRICS_TOPICS,
+        &TopicSettings::single_broker(),
+        None,
+    )
+    .await
+    .expect("provision the metrics topics");
     check!(report.partitions(WAL_TOPIC) == PartitionCount::new(1).ok());
 }
 

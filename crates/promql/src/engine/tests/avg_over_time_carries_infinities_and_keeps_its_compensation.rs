@@ -63,7 +63,7 @@ pub(crate) async fn avg_over_time_carries_infinities_and_keeps_its_compensation(
     ] {
         let query = format!("avg_over_time({name}[1m])");
         let QueryResult::InstantVector(samples) = engine
-            .query_instant("tenant-a", &query, 60_000)
+            .query_instant(&tenant_id("tenant-a"), &query, 60_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"))
         else {
@@ -83,7 +83,11 @@ pub(crate) async fn avg_over_time_carries_infinities_and_keeps_its_compensation(
     }
 
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", "avg_over_time(compensated[1m])", 60_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "avg_over_time(compensated[1m])",
+            60_000,
+        )
         .await
         .expect("a compensated mean")
     else {

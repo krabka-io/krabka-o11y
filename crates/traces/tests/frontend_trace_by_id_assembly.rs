@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use krabka_blockstore::TenantId;
 use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     backend::{MockQuerier, TracePartial},
@@ -88,7 +89,10 @@ async fn trace_split_across_queriers_reassembles() {
         MembershipView::fixed(["qa:3200", "qb:3200"]),
     );
 
-    let (trace, metrics, status, warnings) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
+    let (trace, metrics, status, warnings) = qf
+        .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
+        .await
+        .unwrap();
     assert2::assert!(warnings.is_empty());
     // One by-id job per querier.
     assert2::assert!(qf.backend_ref().trace_calls().len() == 2);
@@ -117,7 +121,10 @@ async fn oversized_trace_is_partial() {
         MembershipView::fixed(["qa:3200"]),
     );
 
-    let (trace, _m, status, warnings) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
+    let (trace, _m, status, warnings) = qf
+        .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
+        .await
+        .unwrap();
     assert2::assert!(trace.is_some());
     assert2::assert!(warnings == vec!["trace exceeds max size; returned partially".to_string()]);
     assert2::assert!(matches!(status, TraceStatus::Partial));
@@ -138,7 +145,10 @@ async fn missing_trace_is_none() {
         cfg,
         MembershipView::fixed(["qa:3200", "qb:3200"]),
     );
-    let (trace, _m, status, _w) = qf.trace_by_id("t1", [9; 16], 0, 300).await.unwrap();
+    let (trace, _m, status, _w) = qf
+        .trace_by_id(&TenantId::new("t1").unwrap(), [9; 16], 0, 300)
+        .await
+        .unwrap();
     assert2::assert!(trace.is_none());
     assert2::assert!(matches!(status, TraceStatus::Complete));
 }

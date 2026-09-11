@@ -25,7 +25,7 @@ pub(crate) async fn instant_bottomk_without_selects_smallest_sample_per_group_wi
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "bottomk without (instance) (1, memory_bytes)",
             10_000,
         )

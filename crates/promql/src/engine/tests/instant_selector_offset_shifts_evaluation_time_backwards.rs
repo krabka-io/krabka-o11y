@@ -25,7 +25,7 @@ pub(crate) async fn instant_selector_offset_shifts_evaluation_time_backwards() {
         },
     );
     let result = engine
-        .query_instant("tenant-a", "up offset 1m", 120_000)
+        .query_instant(&tenant_id("tenant-a"), "up offset 1m", 120_000)
         .await
         .unwrap();
 

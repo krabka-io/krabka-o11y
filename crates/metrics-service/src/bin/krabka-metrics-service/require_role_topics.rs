@@ -2,7 +2,7 @@ use krabka_observability::topic_contract::{
     METRICS_SERVICE_TOPICS, TopicContractError, require_topics,
 };
 
-use super::Cli;
+use super::{Cli, ClientSecurity};
 
 /// Refuses to let this role start on topics that do not meet the contract.
 ///
@@ -17,13 +17,19 @@ use super::Cli;
 /// is no topic to check. The ruler, which does require the flag, fails on its
 /// own with a message naming it.
 ///
+/// `security` is the write-ahead log client security that the binary loaded.
+/// `None` connects in plain text.
+///
 /// # Errors
 /// Returns [`TopicContractError`] when no bootstrap address answers, or when a
 /// topic is absent or not compacted.
-pub(crate) async fn require_role_topics(cli: &Cli) -> Result<(), TopicContractError> {
+pub(crate) async fn require_role_topics(
+    cli: &Cli,
+    security: Option<ClientSecurity>,
+) -> Result<(), TopicContractError> {
     let Some(bootstrap) = cli.wal_bootstrap.as_deref() else {
         return Ok(());
     };
-    require_topics(bootstrap, &METRICS_SERVICE_TOPICS).await?;
+    require_topics(bootstrap, &METRICS_SERVICE_TOPICS, security).await?;
     Ok(())
 }

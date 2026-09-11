@@ -187,7 +187,7 @@ async fn configured_object_store_query_returns_partial_warning_for_missing_block
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -289,7 +289,7 @@ async fn configured_object_store_backward_limited_query_stops_after_newest_block
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -394,7 +394,7 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -498,7 +498,7 @@ async fn configured_object_store_metric_query_returns_partial_warning_for_missin
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -595,7 +595,7 @@ async fn configured_object_store_index_stats_endpoint_counts_entries_from_object
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -677,7 +677,7 @@ async fn configured_object_store_index_stats_endpoint_loads_request_tenant_manif
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -759,7 +759,7 @@ async fn configured_object_store_index_volume_endpoint_loads_request_tenant_mani
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -864,7 +864,7 @@ async fn configured_object_store_patterns_endpoint_loads_request_tenant_manifest
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -951,7 +951,7 @@ async fn configured_object_store_detected_fields_endpoint_loads_request_tenant_m
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1074,7 +1074,7 @@ async fn configured_object_store_querier_loads_manifest_for_request_tenant_heade
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1154,7 +1154,7 @@ async fn configured_object_store_labels_endpoint_loads_manifest_for_request_tena
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1229,7 +1229,7 @@ async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -1326,7 +1326,7 @@ async fn configured_object_store_shard_catalog_labels_endpoint_loads_request_ten
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()

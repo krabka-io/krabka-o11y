@@ -85,7 +85,12 @@ pub(crate) async fn empty_valued_label_planner_path_matches_interpreter() {
 
     // The bare selector `m` must yield exactly three rows (a, b, c) — proving
     // the present-empty (a) and absent (c) series were not collapsed.
-    let bare = normalize(engine.query_instant("t", "m", time_ms).await.unwrap());
+    let bare = normalize(
+        engine
+            .query_instant(&tenant_id("t"), "m", time_ms)
+            .await
+            .unwrap(),
+    );
     assert2::assert!(bare.len() == 3);
 
     // (b) RANGE/matrix path: a rate over the empty-valued-label series must
@@ -95,7 +100,7 @@ pub(crate) async fn empty_valued_label_planner_path_matches_interpreter() {
     let (start, end, step) = (0_i64, 120_000_i64, millis(60_000));
     let query = "rate(m[2m])";
     let QueryResult::RangeMatrix(mut series) = engine
-        .query_range("t", query, start, end, step)
+        .query_range(&tenant_id("t"), query, start, end, step)
         .await
         .unwrap()
     else {

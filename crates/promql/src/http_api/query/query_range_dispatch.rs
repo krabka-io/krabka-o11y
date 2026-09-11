@@ -1,16 +1,18 @@
 use super::{
-    ApiError, Arc, FrontendRangeRequest, HeaderMap, IntoResponse, MetricStore, PrometheusApiState,
-    QueryEnforcer, RangeQueryParams, Response, StdDurationExt, apply_result_limit,
-    check_range_resolution, duration_param, execute_range_query_frontend, success_response,
-    tenant_from_headers, timestamp_ms, unix_now_ms, validate_timestamp_range,
+    ApiError, Arc, FrontendRangeRequest, HeaderMap, IntoResponse, MetricStore, Principal,
+    PrometheusApiState, RangeQueryParams, Response, StdDurationExt, apply_result_limit,
+    authorized_tenant_from_headers, check_range_resolution, duration_param,
+    enforce_query_range_limit, execute_range_query_frontend, success_response, timestamp_ms,
+    validate_timestamp_range,
 };
 
 pub(crate) async fn query_range_dispatch<S: MetricStore>(
     state: &Arc<PrometheusApiState<S>>,
     headers: &HeaderMap,
+    principal: &Principal,
     params: RangeQueryParams,
 ) -> Response {
-    let tenant = match tenant_from_headers(headers) {
+    let tenant = match authorized_tenant_from_headers(headers, principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };
@@ -32,16 +34,8 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
     if let Err(error) = check_range_resolution(start_ms, end_ms, step) {
         return error.into_response();
     }
-    if let Some(limits) = &state.query_limits {
-        let now_ms = match unix_now_ms() {
-            Ok(now_ms) => now_ms,
-            Err(error) => return error.into_response(),
-        };
-        if let Err(error) =
-            QueryEnforcer::check_range(limits.for_tenant(&tenant), start_ms, end_ms, now_ms)
-        {
-            return ApiError::from(error).into_response();
-        }
+    if let Err(error) = enforce_query_range_limit(state, &tenant, start_ms, end_ms) {
+        return error.into_response();
     }
 
     // Time the pure range eval (through the frontend cache/split when enabled),

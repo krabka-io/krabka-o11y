@@ -1,6 +1,7 @@
 use super::{
-    Arc, CancellationToken, Cli, ColdProfileStore, ObjectStore, ServiceMetrics, UnionProfileStore,
-    WalTailProfileStore, client_resource_policy, spawn_profile_index_refresh, spawn_wal_tail,
+    Arc, CancellationToken, Cli, ClientSecurity, ColdProfileStore, ObjectStore, ServiceMetrics,
+    UnionProfileStore, WalTailProfileStore, client_resource_policy, spawn_profile_index_refresh,
+    spawn_wal_tail,
 };
 
 /// What a profiles read role queries: the WAL tail in front of the blocks.
@@ -49,11 +50,14 @@ impl ProfileReadPath {
     /// tail leaves the last few minutes of profiles absent in the same way.
     /// Both failures look exactly like "no profiles matched", which is why the
     /// handles come back rather than being dropped here.
+    ///
+    /// `wal_security` is the TLS and SASL of the WAL tail's consumer.
     pub(crate) fn spawn_background(
         &self,
         cli: &Cli,
         metrics: &ServiceMetrics,
         shutdown: &CancellationToken,
+        wal_security: Option<&ClientSecurity>,
     ) -> [(&'static str, tokio::task::JoinHandle<()>); 2] {
         let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
         [
@@ -76,6 +80,7 @@ impl ProfileReadPath {
                     client_dispatch_queue_capacity,
                     client_frame_max,
                     metrics.wal_consumer.clone(),
+                    wal_security.cloned(),
                     shutdown.clone(),
                 ),
             ),

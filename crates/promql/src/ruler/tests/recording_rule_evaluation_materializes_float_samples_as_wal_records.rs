@@ -20,7 +20,7 @@ pub(crate) async fn recording_rule_evaluation_materializes_float_samples_as_wal_
 
     let records = super::super::evaluate_recording_rule(
         &engine,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         "job:http_requests:sum",
         "sum by (job) (http_requests_total)",
         &BTreeMap::new(),

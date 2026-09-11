@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use assert2::check;
+use krabka_blockstore::TenantId;
 use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     backend::{MockQuerier, SearchPartial},
@@ -99,7 +100,10 @@ async fn sharded_search_equals_unsharded() {
         MembershipView::fixed(["q1:3200"]),
     );
 
-    let resp = qf.search("t1", "{ }", 0, 300, 20, 10).await.unwrap();
+    let resp = qf
+        .search(&TenantId::new("t1").unwrap(), "{ }", 0, 300, 20, 10)
+        .await
+        .unwrap();
 
     let t1_spans: usize = resp.traces[1]
         .span_sets
@@ -147,7 +151,10 @@ async fn limit_and_spss_applied_after_merge() {
         MembershipView::fixed(["q1:3200"]),
     );
     // limit 2 (newest-first => 300, 200), spss 2.
-    let resp = qf.search("t1", "{ }", 0, 300, 2, 2).await.unwrap();
+    let resp = qf
+        .search(&TenantId::new("t1").unwrap(), "{ }", 0, 300, 2, 2)
+        .await
+        .unwrap();
     assert2::assert!(
         resp.traces
             .iter()

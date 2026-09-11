@@ -28,7 +28,7 @@ pub(crate) async fn instant_double_exponential_smoothing_weights_each_factor_dis
         ("double_exponential_smoothing(pair[2m], 0.3, 0.4)", 2.0),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 180_000)
+            .query_instant(&tenant_id("tenant-a"), query, 180_000)
             .await
             .unwrap_or_else(|error| panic!("{query}: {error}"));
         let QueryResult::InstantVector(samples) = result else {

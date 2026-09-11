@@ -1,5 +1,6 @@
 use super::*;
 
+/// A live tier that a querier reads from a live-store over HTTP.
 pub struct RemoteLiveSource {
     pub(crate) base_url: Url,
     pub(crate) trace_index: SharedTraceIndex,
@@ -7,13 +8,26 @@ pub struct RemoteLiveSource {
 }
 
 impl RemoteLiveSource {
-    #[must_use]
-    pub fn new(base_url: Url, trace_index: SharedTraceIndex) -> Self {
-        Self {
+    /// A source that reads the live-store at `base_url` with `internal_client` applied.
+    ///
+    /// The client carries the token, the certificate and the CA bundle of the
+    /// internal client, so a live-store with authentication or TLS on serves
+    /// the querier as the internal principal. The querier has already checked
+    /// the end user against the tenant.
+    ///
+    /// # Errors
+    /// Returns the `reqwest` error when the client cannot be built, for
+    /// example from an identity that the TLS backend refuses.
+    pub fn new(
+        base_url: Url,
+        trace_index: SharedTraceIndex,
+        internal_client: &InternalClient,
+    ) -> std::result::Result<Self, reqwest::Error> {
+        Ok(Self {
             base_url,
             trace_index,
-            http: reqwest::Client::new(),
-        }
+            http: internal_client.apply(reqwest::Client::builder()).build()?,
+        })
     }
 }
 
@@ -35,7 +49,7 @@ impl LiveSource for RemoteLiveSource {
         let resp = self
             .http
             .get(url)
-            .header("x-scope-orgid", tenant)
+            .header(TENANT_HEADER, tenant)
             .send()
             .await
             .map_err(|err| TraceqlError::Plan(err.to_string()))?;
@@ -64,7 +78,7 @@ impl LiveSource for RemoteLiveSource {
         let resp = self
             .http
             .get(url)
-            .header("x-scope-orgid", tenant)
+            .header(TENANT_HEADER, tenant)
             .header("accept", "application/x-protobuf")
             .send()
             .await
@@ -144,7 +158,7 @@ impl RemoteLiveSource {
         let resp = self
             .http
             .get(url)
-            .header("x-scope-orgid", tenant)
+            .header(TENANT_HEADER, tenant)
             .send()
             .await
             .map_err(|err| TraceqlError::Plan(err.to_string()))?;

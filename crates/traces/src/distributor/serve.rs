@@ -1,7 +1,17 @@
-use super::{Arc, CancellationToken, DistributorState, SocketAddr, router};
+use std::future::IntoFuture as _;
+
+use super::{
+    Arc, CancellationToken, DistributorState, ServerListener, ServerSecurity, SocketAddr, router,
+    serve_router,
+};
 
 /// Serve the distributor until cancelled, returning the bound address and the
 /// accept loop's handle.
+///
+/// The listener serves as `security` says: plain HTTP with every request
+/// unauthenticated when no security flag is set, and TLS, a credential, or
+/// both, when the flags ask for them. Each push door then checks that the
+/// request's principal may use the tenant it names.
 ///
 /// The handle is half the return value because the caller has to keep it. A
 /// listener that stops accepting -- because the loop errored, or because it
@@ -17,14 +27,16 @@ use super::{Arc, CancellationToken, DistributorState, SocketAddr, router};
 pub async fn serve(
     addr: SocketAddr,
     state: Arc<DistributorState>,
+    security: &ServerSecurity,
     shutdown: CancellationToken,
 ) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
-    let app = krabka_observability::contain_handler_panics(router(state));
+    let tcp = tokio::net::TcpListener::bind(addr).await?;
+    let listener = ServerListener::bind(tcp, security).map_err(std::io::Error::other)?;
+    let bound = listener.local_addr();
+    let server = serve_router(listener, router(state), security)
+        .with_graceful_shutdown(shutdown.cancelled_owned())
+        .into_future();
     let handle = tokio::spawn(async move {
-        let server = axum::serve(listener, app)
-            .with_graceful_shutdown(async move { shutdown.cancelled().await });
         if let Err(err) = server.await {
             tracing::error!(error = %err, "traces distributor server stopped");
         }

@@ -21,7 +21,7 @@ pub mod metrics;
 pub mod query;
 pub mod query_frontend;
 pub mod symbolizer;
-pub mod tenant;
+mod tenant_from_headers;
 pub mod wal;
 pub mod wire;
 
@@ -37,9 +37,16 @@ pub use wal::{
     WalSymbolSet, partition_key,
 };
 
+use self::tenant_from_headers::tenant_from_headers;
+
 #[cfg(test)]
 mod tests {
     use assert2::check;
+    use axum::http::{HeaderMap, HeaderValue};
+    use krabka_blockstore::{
+        TENANT_HEADER, TenantId, TenantIdError, TenantPolicy, TenantResolveError,
+    };
+    use krabka_observability::server_security::TenantDenied;
 
     use super::*;
 
@@ -48,6 +55,14 @@ mod tests {
         for (err, want) in [
             (ProfilesError::UnsupportedFormat("x".into()), 415),
             (ProfilesError::Decode("x".into()), 400),
+            (ProfilesError::Tenant(TenantResolveError::Missing), 400),
+            (
+                ProfilesError::TenantDenied(TenantDenied {
+                    principal: "grafana".into(),
+                    tenant: TenantId::new("tenant-b").unwrap(),
+                }),
+                403,
+            ),
             (
                 ProfilesError::from(LimitError::MaxSeries {
                     limit: 1,
@@ -57,6 +72,82 @@ mod tests {
             ),
         ] {
             check!(err.status_code() == want);
+        }
+    }
+
+    // The resolver hands the raw header bytes to `TenantId::resolve`, so the
+    // policy it is given settles a request without a tenant, and a malformed
+    // value is an error under every policy. A non-UTF-8 value in particular
+    // is an error and never a request without a tenant.
+    #[test]
+    fn the_resolver_reads_the_header_bytes_under_the_policy_it_is_given() {
+        let header = |value: &[u8]| {
+            let mut headers = HeaderMap::new();
+            headers.insert(TENANT_HEADER, HeaderValue::from_bytes(value).unwrap());
+            headers
+        };
+        let named = |name: &str| Ok(TenantId::new(name).unwrap());
+        let unsupported = |tenant: &str, character| {
+            Err(TenantResolveError::Invalid(
+                TenantIdError::UnsupportedCharacter {
+                    tenant: tenant.into(),
+                    character,
+                },
+            ))
+        };
+        let single = TenantPolicy::Fallback(TenantId::new("single").unwrap());
+        let cases = [
+            (
+                "absent",
+                HeaderMap::new(),
+                named("anonymous"),
+                named("single"),
+                Err(TenantResolveError::Missing),
+            ),
+            (
+                "empty",
+                header(b""),
+                named("anonymous"),
+                named("single"),
+                Err(TenantResolveError::Missing),
+            ),
+            (
+                "named",
+                header(b"tenant-a"),
+                named("tenant-a"),
+                named("tenant-a"),
+                named("tenant-a"),
+            ),
+            (
+                "separator",
+                header(b"a/b"),
+                unsupported("a/b", '/'),
+                unsupported("a/b", '/'),
+                unsupported("a/b", '/'),
+            ),
+            (
+                "not UTF-8",
+                header(b"a\xff"),
+                // dskit names the raw byte `0xFF` as a code point, which is `ÿ`.
+                unsupported("a\u{fffd}", '\u{ff}'),
+                unsupported("a\u{fffd}", '\u{ff}'),
+                unsupported("a\u{fffd}", '\u{ff}'),
+            ),
+        ];
+
+        for (name, headers, anonymous, fallen_back, required) in cases {
+            check!(
+                tenant_from_headers(&headers, &TenantPolicy::anonymous()) == anonymous,
+                "{name}"
+            );
+            check!(
+                tenant_from_headers(&headers, &single) == fallen_back,
+                "{name}"
+            );
+            check!(
+                tenant_from_headers(&headers, &TenantPolicy::Required) == required,
+                "{name}"
+            );
         }
     }
 }

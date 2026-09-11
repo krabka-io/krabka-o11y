@@ -1,15 +1,17 @@
 use super::{
-    ApiError, Arc, BTreeMap, ExemplarsQueryParams, HeaderMap, IntoResponse, MetricStore,
-    PrometheusApiState, Response, exemplar_key, exemplars_json, selector_matchers,
-    success_data_response, tenant_from_headers, timestamp_ms, validate_timestamp_range,
+    ApiError, Arc, BTreeMap, ExemplarsQueryParams, HeaderMap, IntoResponse, MetricStore, Principal,
+    PrometheusApiState, Response, authorized_tenant_from_headers, enforce_query_range_limit,
+    exemplar_key, exemplars_json, selector_matchers, success_data_response, timestamp_ms,
+    validate_timestamp_range,
 };
 
 pub(crate) async fn query_exemplars_inner<S: MetricStore>(
     state: Arc<PrometheusApiState<S>>,
     headers: HeaderMap,
+    principal: Principal,
     params: ExemplarsQueryParams,
 ) -> Response {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };
@@ -28,12 +30,15 @@ pub(crate) async fn query_exemplars_inner<S: MetricStore>(
     if let Err(error) = validate_timestamp_range(start_ms, end_ms) {
         return error.into_response();
     }
+    if let Err(error) = enforce_query_range_limit(&state, &tenant, start_ms, end_ms) {
+        return error.into_response();
+    }
 
     let mut by_key = BTreeMap::new();
     for matchers in matcher_sets {
         match state
             .store
-            .exemplars(&tenant, &matchers, start_ms, end_ms)
+            .exemplars(tenant.as_str(), &matchers, start_ms, end_ms)
             .await
         {
             Ok(exemplars) => {

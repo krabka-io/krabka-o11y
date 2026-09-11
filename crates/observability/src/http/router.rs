@@ -1,19 +1,24 @@
 use axum::response::IntoResponse;
 
 use crate::{
-    BLOCK_BUILDER_OPS, Bytes, CompactorDeleteState, DRAINING_GATE, DistributorState, Extension,
-    HttpQueryError, LogLevelControl, LogLevelError, QUERIER_OPS, QuerierState, RawQuery, Response,
-    RoleOps, RoleReadiness, Router, SharedLogDeleteRequests, State, StatusCode,
-    api_prom_label_names, api_prom_label_names_post, api_prom_label_values,
-    api_prom_label_values_post, api_prom_query, api_prom_query_post, api_prom_query_range,
-    api_prom_query_range_post, api_prom_series, api_prom_series_post, cancel_delete_request,
-    create_delete_request, decode_form_component, detected_field_values,
+    Arc, BLOCK_BUILDER_OPS, Bytes, CompactorDeleteState, DRAINING_GATE, DistributorState,
+    Extension, HttpQueryError, LogLevelControl, LogLevelError, LogQueryAuthorizer, QUERIER_OPS,
+    QuerierState, RawQuery, RequestSecurity, Response, RoleOps, RoleReadiness, Router,
+    SharedLogDeleteRequests, State, StatusCode, api_prom_label_names, api_prom_label_names_post,
+    api_prom_label_values, api_prom_label_values_post, api_prom_query, api_prom_query_post,
+    api_prom_query_range, api_prom_query_range_post, api_prom_series, api_prom_series_post,
+    audit::{
+        AuditOutcome, OPERATION_INGESTER_FLUSH, OPERATION_INGESTER_PREPARE_SHUTDOWN_SET,
+        OPERATION_INGESTER_PREPARE_SHUTDOWN_UNSET, OPERATION_INGESTER_SHUTDOWN,
+        OPERATION_LOG_LEVEL_SET, RESOURCE_LOG_LEVEL, resource,
+    },
+    cancel_delete_request, create_delete_request, decode_form_component, detected_field_values,
     detected_field_values_post, detected_fields, detected_fields_post, detected_labels,
     detected_labels_post, form_body_query, format_query, format_query_post, get, index_stats,
     index_stats_post, index_volume, index_volume_post, index_volume_range, index_volume_range_post,
     json, json_response, label_names, label_names_post, label_values, label_values_post,
     list_delete_requests, patterns, patterns_post, query, query_post, query_range,
-    query_range_post,
+    query_range_post, require_org_id,
     ruler::{
         create_loki_rule_group, delete_loki_rule_group, delete_loki_rule_namespace,
         loki_page_not_found, loki_rule_group, loki_rule_namespace, loki_rules, prometheus_alerts,

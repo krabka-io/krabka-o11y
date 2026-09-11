@@ -38,9 +38,13 @@ pub(crate) async fn a_dynamic_tenant_index_needs_both_no_tenant_and_a_tenant_ind
             data_root: dir.path().to_path_buf(),
             ..ServiceConfig::default()
         };
-        let state = build_configured_querier_state(&config, &configured)
-            .await
-            .expect("the configuration is valid");
+        let state = build_configured_querier_state(
+            &config,
+            &configured,
+            Arc::new(OverridesProvider::new(Limits::default())),
+        )
+        .await
+        .expect("the configuration is valid");
         check!(
             state.dynamic_index.is_some() == dynamic,
             "{tenant:?} with {source:?}"

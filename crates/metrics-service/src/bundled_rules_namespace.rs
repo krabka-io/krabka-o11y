@@ -1,4 +1,4 @@
-use super::*;
+use super::{BundledRulesError, StdPath};
 
 /// Names the rule namespace of a bundled rule file from its file stem.
 pub(crate) fn bundled_rules_namespace(path: &StdPath) -> Result<String, BundledRulesError> {

@@ -14,7 +14,13 @@ pub(crate) async fn build_querier_router(
         &gates,
         readiness,
         &SharedObjectStore::new(),
+        &InternalClient::default(),
     )
     .await?;
-    Ok(router)
+    Ok(
+        krabka_observability::server_security::authenticate_requests(
+            router,
+            &ServerSecurity::default(),
+        ),
+    )
 }

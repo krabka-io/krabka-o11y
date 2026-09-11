@@ -24,7 +24,7 @@ pub(crate) async fn instant_basic_over_time_functions_reduce_range_samples() {
         ("present_over_time(queue_depth[2m])", 1.0, false),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 120_000)
+            .query_instant(&tenant_id("tenant-a"), query, 120_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

@@ -80,7 +80,7 @@ pub(crate) async fn instant_unary_numeric_functions_transform_vector_values() {
         ),
     ] {
         let result = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

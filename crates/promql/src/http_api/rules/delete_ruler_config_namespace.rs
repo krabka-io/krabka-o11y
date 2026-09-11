@@ -1,18 +1,22 @@
 use super::{
-    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, Path, PrometheusApiState, Response, State,
-    StatusCode, tenant_from_headers,
+    ApiError, Arc, ConnectInfo, Extension, HeaderMap, IntoResponse, MetricStore,
+    OPERATION_RULE_NAMESPACE_DELETE, Path, PeerAddr, Principal, PrometheusApiState,
+    RESOURCE_RULE_NAMESPACE, RESOURCE_TENANT, Response, State, StatusCode,
+    authorized_tenant_from_headers, record_ruler_config_change, resource,
 };
 
 pub(crate) async fn delete_ruler_config_namespace<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
+    peer: Option<Extension<ConnectInfo<PeerAddr>>>,
     headers: HeaderMap,
     Path(namespace): Path<String>,
 ) -> Response {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };
-    match state.ruler_rules.write() {
+    let response = match state.ruler_rules.write() {
         Ok(mut rules) => {
             if let Some(namespaces) = rules.get_mut(&tenant) {
                 namespaces.remove(&namespace);
@@ -20,5 +24,17 @@ pub(crate) async fn delete_ruler_config_namespace<S: MetricStore>(
             StatusCode::ACCEPTED.into_response()
         }
         Err(_) => ApiError::internal("ruler rules lock poisoned").into_response(),
-    }
+    };
+    record_ruler_config_change(
+        &state.audit,
+        &principal,
+        peer,
+        OPERATION_RULE_NAMESPACE_DELETE,
+        vec![
+            resource(RESOURCE_TENANT, tenant.as_str()),
+            resource(RESOURCE_RULE_NAMESPACE, namespace.as_str()),
+        ],
+        &response,
+    );
+    response
 }

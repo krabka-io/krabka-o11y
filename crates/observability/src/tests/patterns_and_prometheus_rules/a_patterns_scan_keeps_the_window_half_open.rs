@@ -53,6 +53,7 @@ pub(crate) async fn a_patterns_scan_keeps_the_window_half_open() {
     headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
     let value = super::super::prelude::execute_patterns_query(
         &state,
+        &super::super::prelude::RequestSecurity::unauthenticated(),
         &headers,
         Some("query=%7Bapp%3D%22web%22%7D&start=10&end=30&step=1h"),
     )

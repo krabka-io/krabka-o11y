@@ -23,7 +23,11 @@ pub(crate) async fn instant_topk_by_selects_largest_sample_per_group_with_origin
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "topk by (job) (1, memory_bytes)", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "topk by (job) (1, memory_bytes)",
+            10_000,
+        )
         .await
         .unwrap();
 

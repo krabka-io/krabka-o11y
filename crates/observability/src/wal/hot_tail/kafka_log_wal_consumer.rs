@@ -1,7 +1,7 @@
 use super::{
-    AutoOffsetReset, ClientResourcePolicy, Consumer, ConsumerError, KafkaWalHeader, KafkaWalRecord,
-    LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError, WalConsumerMetrics,
-    WalPosition, async_trait,
+    AutoOffsetReset, ClientResourcePolicy, ClientSecurity, Consumer, ConsumerError, KafkaWalHeader,
+    KafkaWalRecord, LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError,
+    WalConsumerMetrics, WalPosition, async_trait,
 };
 use crate::wal_group_assignment::WalAssignmentWatch;
 
@@ -13,8 +13,10 @@ pub struct KafkaLogWalConsumer {
 
 impl KafkaLogWalConsumer {
     #[cfg_attr(test, mutants::skip)]
+    /// Connects in plain text with the default Kafka connection limits.
+    ///
     /// # Errors
-    /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
+    /// Returns an error when the consumer cannot start.
     pub async fn connect(
         bootstrap: impl Into<String>,
         group_id: impl Into<String>,
@@ -25,11 +27,15 @@ impl KafkaLogWalConsumer {
             group_id,
             topic,
             ClientResourcePolicy::default(),
+            None,
         )
         .await
     }
 
-    /// Connects with the supplied validated Kafka connection limits.
+    /// Connects with the supplied validated Kafka connection limits, under the
+    /// WAL client `security` that the service loaded.
+    ///
+    /// `None` connects in plain text.
     ///
     /// # Errors
     /// Returns an error when the consumer cannot start.
@@ -38,6 +44,7 @@ impl KafkaLogWalConsumer {
         group_id: impl Into<String>,
         topic: impl Into<String>,
         client_resource_policy: ClientResourcePolicy,
+        security: Option<ClientSecurity>,
     ) -> Result<Self, ConsumerError> {
         let topic = topic.into();
         let consumer = Consumer::builder()
@@ -45,6 +52,7 @@ impl KafkaLogWalConsumer {
             .client_id("krabka-observability-block-builder")
             .dispatch_queue_capacity(client_resource_policy.dispatch_queue_capacity.get())
             .frame_max(client_resource_policy.frame_max.size())
+            .maybe_security(security)
             .group_id(group_id)
             .auto_offset_reset(AutoOffsetReset::Earliest)
             .subscribe(vec![topic])

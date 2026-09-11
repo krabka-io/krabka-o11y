@@ -25,7 +25,7 @@ pub(crate) async fn quantile_out_of_range_phi_returns_signed_inf_with_warning() 
         ("quantile(NaN, m)", "NaN", f64::is_nan),
     ] {
         let (result, annotations) = engine
-            .query_instant_with_annotations("t", query, time_ms)
+            .query_instant_with_annotations(&tenant_id("t"), query, time_ms)
             .await
             .unwrap_or_else(|error| panic!("`{query}` must NOT error: {error}"));
 

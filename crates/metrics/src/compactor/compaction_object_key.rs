@@ -12,6 +12,11 @@ use super::{MetricBlockKind, escape_object_path_segment};
 /// identical `(series, ts, value)` rows, and the timestamp-keyed `PromQL`
 /// operator engine deduplicates them at query time, so they do not
 /// double-count.
+///
+/// The tenant is one path segment, escaped with
+/// [`krabka_blockstore::escape_object_path_segment`]. A tenant name therefore
+/// cannot add a segment or step out of the `metrics/` prefix, and the object
+/// store keeps the key exactly as this function writes it.
 #[must_use]
 pub fn compaction_object_key(
     tenant: &str,

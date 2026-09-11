@@ -9,16 +9,12 @@ pub(crate) fn varint_encoding_and_ingest_limits_pin_boundaries() {
     encode_varint(300, &mut body);
     assert_eq!(body, vec![0x00, 0x7f, 0x80, 0x01, 0xac, 0x02]);
 
-    let state = DistributorState {
-        sink: Arc::new(InMemoryWalSink::default()),
-        ingest_limiter: Arc::new(AllowAllIngestLimiter),
-        prepare_shutdown: ReadinessGate::unmet(DRAINING_GATE),
-        metrics: ServiceMetrics::new(),
-        max_ingest_body: Some(bytes(5)),
-        wal_append_timeout: None,
-        reject_old_samples_max_age: None,
-        creation_grace_period: None,
+    let limits = Limits {
+        max_ingest_body: bytes(5),
+        ..Limits::unenforced()
     };
-    assert!(validate_ingest_body_limit(&state, bytes(5)).is_ok());
-    assert!(validate_ingest_body_limit(&state, bytes(6)).is_err());
+    assert!(validate_ingest_body_limit(&limits, bytes(5)).is_ok());
+    assert!(validate_ingest_body_limit(&limits, bytes(6)).is_err());
+    // Zero is the sentinel for "no cap", so a body of any size passes.
+    assert!(validate_ingest_body_limit(&Limits::unenforced(), bytes(6)).is_ok());
 }

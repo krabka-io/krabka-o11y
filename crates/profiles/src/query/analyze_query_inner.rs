@@ -1,18 +1,22 @@
 use super::{
-    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, ProfileStore,
-    QuerierState, connect_error, is_internal_label, merge_profile_type_selector,
-    parse_label_selector, parse_render_query, pb, tenant_from_headers,
+    Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
+    ProfileStore, QuerierState, authorize_tenant, connect_error, is_internal_label,
+    merge_profile_type_selector, parse_label_selector, parse_render_query, pb,
+    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn analyze_query_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     req: ConnectRequest<pb::querier::v1::AnalyzeQueryRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::AnalyzeQueryResponse>, ConnectError>
 where
     S: ProfileStore,
 {
-    let tenant = tenant_from_headers(&headers).map_err(connect_error)?;
+    let tenant = tenant_from_headers(&headers, &state.tenant_policy)
+        .map_err(|error| tenant_connect_error(&error))?;
+    authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
     let req = req.0;
     state
         .validate_query_range(&tenant, req.start, req.end)
@@ -22,13 +26,13 @@ where
     let matchers = parse_label_selector(&selector).map_err(connect_error)?;
     let mut label_names = state
         .store
-        .label_names(&tenant, &matchers, req.start, req.end)
+        .label_names(tenant.as_str(), &matchers, req.start, req.end)
         .await
         .map_err(connect_error)?;
     label_names.retain(|name| !is_internal_label(name));
     let series_count = state
         .store
-        .series(&tenant, &matchers, &label_names, req.start, req.end)
+        .series(tenant.as_str(), &matchers, &label_names, req.start, req.end)
         .await
         .map_err(connect_error)?
         .len() as u64;

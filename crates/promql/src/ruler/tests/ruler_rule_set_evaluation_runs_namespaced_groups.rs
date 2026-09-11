@@ -45,7 +45,7 @@ rules:
         &wal_sink,
         &alert_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rules,
         60_000,
     )
@@ -65,7 +65,7 @@ rules:
         &wal_sink,
         &alert_sink,
         &mut state,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         &rules,
         360_000,
     )

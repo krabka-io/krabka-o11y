@@ -1,11 +1,12 @@
 use super::{
-    Arc, BlockCatalog, HeaderMap, IntoResponse, Json, QuerierBackend, QueryFrontend, Response,
-    State, StatusCode, Uri, backend_error_response, bounded_count, required_time_bounds,
-    search_query, tenant,
+    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Principal, QuerierBackend,
+    QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, bounded_count,
+    request_tenant, required_time_bounds, search_query,
 };
 
 pub(crate) async fn search<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     uri: Uri,
 ) -> Response
@@ -13,7 +14,10 @@ where
     B: QuerierBackend + 'static,
     C: BlockCatalog + 'static,
 {
-    let tenant = tenant(&headers);
+    let tenant = match request_tenant(&headers, &principal, &qf.cfg.tenant_policy) {
+        Ok(tenant) => tenant,
+        Err(rejection) => return *rejection,
+    };
     let query = match search_query(&uri) {
         Ok(Some(q)) => q,
         Ok(None) => return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response(),

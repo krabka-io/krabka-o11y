@@ -44,7 +44,7 @@ async fn otlp_lands_as_span_block() {
         producer,
     )))));
 
-    let resp = router(state)
+    let resp = authenticated(router(state))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -200,4 +200,14 @@ fn otlp_body() -> Vec<u8> {
         }],
     }
     .encode_to_vec()
+}
+
+// The routers read the principal from the request extensions, where the
+// authentication layer puts it. This is that layer with no security flags,
+// which serves every request as unauthenticated.
+fn authenticated(router: axum::Router) -> axum::Router {
+    krabka_observability::server_security::authenticate_requests(
+        router,
+        &krabka_observability::server_security::ServerSecurity::default(),
+    )
 }

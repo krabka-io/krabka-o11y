@@ -1,8 +1,8 @@
 use krabka_observability::{CancellationToken, CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Cli, ClientFrameMax, ConnectionDispatchQueueCapacity, MetricsCompactorConfig, RoleReadiness,
-    ServiceMetrics, Time, TimeExt, build_object_store, run_compactor_consumer_loop,
+    Cli, ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity, MetricsCompactorConfig,
+    RoleReadiness, ServiceMetrics, Time, TimeExt, build_object_store, run_compactor_consumer_loop,
     spawn_retention_sweeper,
 };
 
@@ -12,6 +12,7 @@ pub(crate) async fn run_block_builder(
     cli: Cli,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
+    wal_security: Option<ClientSecurity>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // The block builder serves no data port, so `/ready` on the admin port is
     // the only place an orchestrator can ask. It is ready once it holds the
@@ -34,7 +35,9 @@ pub(crate) async fn run_block_builder(
     config.flush_max_rows = cli.block_builder_flush_max_rows;
     config.flush_max_age = cli.block_builder_flush_max_age;
     let runtime = config.build_runtime(store.clone(), metrics.object_store.clone())?;
-    let mut consumer = config.build_consumer(&metrics.wal_consumer).await?;
+    let mut consumer = config
+        .build_consumer(&metrics.wal_consumer, wal_security)
+        .await?;
     wal_consumer_gate.mark_ready();
     let stopping = CancellationToken::new();
     let mut tasks = SupervisedTasks::new(stopping.clone());

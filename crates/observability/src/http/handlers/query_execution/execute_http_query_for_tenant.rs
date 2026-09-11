@@ -1,6 +1,7 @@
 use super::{
-    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, Value,
+    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, TenantId, Value,
     add_loki_query_stats, apply_label_join_to_loki_result, apply_label_replace_to_loki_result,
+    clamp_query_lookback, current_unix_time_ns,
     execute_http_label_replace_metric_binary_expression, execute_http_metric_expression_query,
     execute_http_metric_query, execute_http_remaining_query, execute_http_sort_vector_expression,
     loki_direction, loki_instant_scalar_or_vector_response, loki_range_vector_response,
@@ -8,20 +9,27 @@ use super::{
     parse_metric_label_join_query, parse_metric_label_replace_query, parse_sort_vector_expression,
     reject_signed_vector_function_literal, resolved_range_step, scalar_vector_expression_result,
     time_range, validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
-    validate_query_length_limit, validate_query_range_limit,
+    validate_query_entries_limit, validate_query_range_limit, validate_query_string_bytes_limit,
 };
 
 pub(crate) async fn execute_http_query_for_tenant(
     state: &QuerierState,
-    tenant: &str,
+    tenant: &TenantId,
     params: &QueryParams,
     kind: QueryKind,
     encoding: LokiStreamEncoding,
 ) -> Result<Value, HttpQueryError> {
+    // One resolution for the whole query: every check below, and every
+    // validator the helpers call, reads the tenant's limits from this state.
+    let state = &state.with_tenant_limits(tenant);
+    let tenant = tenant.as_str();
     let time_range = time_range(params, kind)?;
-    validate_loki_range_query_range_limit(kind, time_range)?;
+    // Clamped before the window caps, as `Loki`'s limits middleware does.
+    let time_range = clamp_query_lookback(&state.limits, time_range, current_unix_time_ns());
+    validate_loki_range_query_range_limit(state, kind, time_range)?;
     validate_query_range_limit(state, time_range)?;
-    validate_query_length_limit(state, &params.query)?;
+    validate_query_string_bytes_limit(state, &params.query)?;
+    validate_query_entries_limit(state, params.limit)?;
     validate_loki_query_range_resolution(params, kind, time_range)?;
     let limit = params.limit;
     let direction = loki_direction(params.direction.as_deref())?;

@@ -25,7 +25,7 @@ pub(crate) async fn a_range_query_over_or_matchers_counts_a_doubly_matched_serie
     // instance is `a`.
     let result = engine
         .query_range(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"sum by (job) (up{job="api" or instance="a"})"#,
             0,
             120_000,

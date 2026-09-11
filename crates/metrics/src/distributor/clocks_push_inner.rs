@@ -1,14 +1,14 @@
 use super::{
-    DistributorState, HeaderMap, PushError, PushSuccess, append_clock_readings,
-    decode_clock_readings, ingest_stamp, require_snappy_encoding, tenant_from_headers,
+    DistributorState, HeaderMap, PushError, PushSuccess, TenantId, append_clock_readings,
+    decode_clock_readings, ingest_stamp, require_snappy_encoding,
 };
 
 pub(crate) async fn clocks_push_inner(
     state: &DistributorState,
+    tenant: &TenantId,
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<(PushSuccess, u64), PushError> {
-    let tenant = tenant_from_headers(headers)?;
     require_snappy_encoding(headers)?;
     let readings = decode_clock_readings(body, state.max_decompressed)?;
     // Stamp the receive time once for the whole request. A per-record stamp
@@ -25,7 +25,7 @@ pub(crate) async fn clocks_push_inner(
     }
 
     if let Some(metrics) = &state.metrics {
-        metrics.record_ingest_series(tenant, items);
+        metrics.record_ingest_series(tenant.as_str(), items);
     }
     Ok((PushSuccess::NoContent { counts: None }, items))
 }

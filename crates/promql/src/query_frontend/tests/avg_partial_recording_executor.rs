@@ -9,7 +9,7 @@ pub(crate) struct AvgPartialRecordingExecutor {
 impl RangeQueryExecutor for AvgPartialRecordingExecutor {
     async fn execute_range_query(
         &self,
-        _tenant: &str,
+        _tenant: &TenantId,
         query: &FrontendRangeQuery,
     ) -> Result<QueryResult, PromqlError> {
         self.calls

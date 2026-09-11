@@ -19,7 +19,7 @@ pub(crate) async fn instant_histogram_stddev_returns_native_histogram_population
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "histogram_stddev(request_duration_seconds)",
             10_000,
         )

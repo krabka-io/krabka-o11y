@@ -13,7 +13,7 @@ pub(crate) async fn instant_absent_over_time_treats_native_histograms_as_present
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"absent_over_time(request_duration_seconds{job="api"}[1m])"#,
             120_000,
         )

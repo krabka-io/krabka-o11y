@@ -5,7 +5,7 @@ pub(crate) async fn instant_absent_over_time_with_or_matchers_returns_unlabeled_
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"absent_over_time(up{job="api" or job="web"}[1m])"#,
             120_000,
         )

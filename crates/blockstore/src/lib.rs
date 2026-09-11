@@ -21,6 +21,7 @@ mod matcher;
 mod merge;
 mod metrics;
 mod nested_set;
+mod path_escape;
 mod profile_block;
 mod profile_index;
 mod profile_schema;
@@ -30,6 +31,7 @@ mod span_block;
 mod span_id;
 mod span_schema;
 mod store;
+mod tenant;
 mod trace_index;
 mod writer;
 
@@ -88,6 +90,7 @@ pub use metrics::{
     MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
 };
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
+pub use path_escape::{escape_object_path_segment, unescape_object_path_segment};
 pub use profile_block::{ProfileSampleRow, encode_profile_samples};
 pub use profile_index::{LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileIndex};
 pub use profile_schema::{
@@ -122,6 +125,10 @@ pub use span_schema::{
     span_block_decl, span_block_schema, span_block_schema_with_promoted_attrs,
 };
 pub use store::{BlockScan, BlockStore, ScanReport, ScanTableRequest};
+pub use tenant::{
+    ANONYMOUS_TENANT, MAX_TENANT_ID_LEN, TENANT_HEADER, TenantId, TenantIdError, TenantPolicy,
+    TenantResolveError,
+};
 pub use trace_index::{TraceBlockStats, TraceIndex};
 pub use writer::{
     BLOCK_ROW_GROUP_ROWS, BLOCK_ZSTD_LEVEL, BlockStreamWriter, BlockWriter, SummaryColumns,

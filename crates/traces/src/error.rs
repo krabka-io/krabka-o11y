@@ -5,6 +5,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use krabka_blockstore::TenantResolveError;
+use krabka_observability::server_security::TenantDenied;
 use serde_json::json;
 
 use crate::limits::LimitError;
@@ -20,6 +22,14 @@ mod tests {
             (TracesError::UnsupportedContentType("x".into()), 415),
             (TracesError::Decode("x".into()), 400),
             (TracesError::Invalid("x".into()), 400),
+            (TracesError::Tenant(TenantResolveError::Missing), 400),
+            (
+                TracesError::TenantDenied(TenantDenied {
+                    principal: "grafana".into(),
+                    tenant: krabka_blockstore::TenantId::new("tenant-b").unwrap(),
+                }),
+                403,
+            ),
             (TracesError::Limit("x".into()), 400),
             (TracesError::RateLimit("x".into()), 429),
             (TracesError::TooLarge { limit: 1 }, 400),

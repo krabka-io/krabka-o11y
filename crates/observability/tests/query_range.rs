@@ -16,7 +16,9 @@ use datafusion::arrow::{
 use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels, write_log_block,
 };
-use krabka_observability::{InMemoryWalSink, LogWalSink, QuerierState, WalLogRecord, loki_router};
+use krabka_observability::{
+    InMemoryWalSink, Limits, LogWalSink, QuerierState, WalLogRecord, loki_router,
+};
 use krabka_units::{convert::ByteSizeExt as _, nanos};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use serde_json::{Value, json};
@@ -2082,7 +2084,10 @@ async fn query_range_endpoint_returns_loki_error_for_invalid_start() {
 
 #[tokio::test]
 async fn query_range_endpoint_rejects_ranges_over_configured_limit() {
-    let state = fixture().with_max_query_range(nanos(20));
+    let state = fixture().with_limits(Limits {
+        max_query_range: nanos(20),
+        ..Limits::default()
+    });
     let app = loki_router(state);
 
     let response = app

@@ -3,10 +3,10 @@ use super::{
     EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapSpanExemplarsBySeries,
     InMemoryProfileStore, LabelMatcher, LabeledHeatmap, Limits, MatchOp, OverridesProvider,
     PROFILE_ID_LABEL, ProfileError, ProfileStats, ProfileStore, QueryExecution, QueryRange,
-    QueryTarget, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs, Time,
-    bin_heatmap, heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan,
-    individual_exemplars_from_scan, parse_label_selector, span_exemplars_from_scan,
-    span_heatmap_points_from_scan, split_inclusive_range,
+    QueryTarget, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs, TenantId,
+    TenantPolicy, Time, bin_heatmap, heatmap_individual_exemplars_from_scan,
+    heatmap_span_exemplars_from_scan, individual_exemplars_from_scan, parse_label_selector,
+    span_exemplars_from_scan, span_heatmap_points_from_scan, split_inclusive_range,
 };
 
 pub struct QuerierState<S: ProfileStore = DefaultStore> {
@@ -14,6 +14,9 @@ pub struct QuerierState<S: ProfileStore = DefaultStore> {
     pub(crate) engine: FlameEngine<S>,
     pub(crate) execution: QueryExecution,
     pub(crate) overrides: OverridesProvider,
+    /// What a query that names no tenant resolves to. Every querier handler
+    /// resolves the `X-Scope-OrgID` header under this one value.
+    pub(crate) tenant_policy: TenantPolicy,
     pub(crate) metrics: ServiceMetrics,
     pub(crate) heatmap_value_buckets: usize,
     pub(crate) heatmap_time_buckets_max: usize,
@@ -72,6 +75,9 @@ impl<S: ProfileStore> QuerierState<S> {
             engine,
             execution,
             overrides,
+            // Pyroscope keeps multi-tenancy off by default and serves a query
+            // without a tenant from the `anonymous` tenant.
+            tenant_policy: TenantPolicy::anonymous(),
             // A self-contained default registry; the binary `main` attaches the
             // process-shared bundle (the one wired to `/metrics`) via
             // [`Self::with_metrics`] so query handlers feed the exported series.
@@ -100,7 +106,7 @@ impl<S: ProfileStore> QuerierState<S> {
 
     pub(crate) fn validate_query_range(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         start_ms: i64,
         end_ms: i64,
     ) -> Result<(), ProfileError> {
@@ -119,12 +125,12 @@ impl<S: ProfileStore> QuerierState<S> {
     /// screen even when the tenant has data.
     pub(crate) async fn global_profile_stats(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
     ) -> Result<ProfileStats, ProfileError> {
-        self.store.stats(tenant, 0, i64::MAX).await
+        self.store.stats(tenant.as_str(), 0, i64::MAX).await
     }
 
-    pub(crate) fn effective_max_nodes(&self, tenant: &str, requested: i64) -> i64 {
+    pub(crate) fn effective_max_nodes(&self, tenant: &TenantId, requested: i64) -> i64 {
         self.overrides
             .for_tenant(tenant)
             .effective_max_nodes(requested)
@@ -132,7 +138,7 @@ impl<S: ProfileStore> QuerierState<S> {
 
     pub(crate) async fn select_merge_stacktraces(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         profile_type: &str,
         label_selector: &str,
         start_ms: i64,
@@ -173,7 +179,7 @@ impl<S: ProfileStore> QuerierState<S> {
         let max_nodes = self.effective_max_nodes(tenant, max_nodes);
         self.engine
             .select_merge_stacktraces_grouped(
-                tenant,
+                tenant.as_str(),
                 profile_type,
                 label_selector,
                 (start_ms, end_ms),
@@ -198,7 +204,7 @@ impl<S: ProfileStore> QuerierState<S> {
             QueryExecution::Direct => {
                 self.engine
                     .select_merge_stacktraces_with_stack_trace_selector(
-                        tenant,
+                        tenant.as_str(),
                         profile_type,
                         label_selector,
                         (start_ms, end_ms),
@@ -211,7 +217,7 @@ impl<S: ProfileStore> QuerierState<S> {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
                     .select_merge_stacktraces_with_stack_trace_selector_sharded(
-                        tenant,
+                        tenant.as_str(),
                         profile_type,
                         label_selector,
                         &shards,
@@ -238,7 +244,7 @@ impl<S: ProfileStore> QuerierState<S> {
             QueryExecution::Direct => {
                 self.engine
                     .select_merge_stacktraces_tree_with_stack_trace_selector(
-                        tenant,
+                        tenant.as_str(),
                         profile_type,
                         label_selector,
                         (start_ms, end_ms),
@@ -251,7 +257,7 @@ impl<S: ProfileStore> QuerierState<S> {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
                     .select_merge_stacktraces_tree_with_stack_trace_selector_sharded(
-                        tenant,
+                        tenant.as_str(),
                         profile_type,
                         label_selector,
                         &shards,
@@ -279,7 +285,7 @@ impl<S: ProfileStore> QuerierState<S> {
             QueryExecution::Direct => {
                 self.engine
                     .select_series_with_stack_trace_selector(
-                        (tenant, profile_type, label_selector),
+                        (tenant.as_str(), profile_type, label_selector),
                         group_by,
                         step,
                         agg,
@@ -292,7 +298,7 @@ impl<S: ProfileStore> QuerierState<S> {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
                     .select_series_with_stack_trace_selector_sharded(
-                        (tenant, profile_type, label_selector),
+                        (tenant.as_str(), profile_type, label_selector),
                         group_by,
                         step,
                         agg,
@@ -320,7 +326,7 @@ impl<S: ProfileStore> QuerierState<S> {
             vec![Vec::new()]
         } else {
             self.store
-                .series(tenant, &base_matchers, group_by, start_ms, end_ms)
+                .series(tenant.as_str(), &base_matchers, group_by, start_ms, end_ms)
                 .await?
         };
         let mut out = BTreeMap::new();
@@ -333,7 +339,7 @@ impl<S: ProfileStore> QuerierState<S> {
             );
             let scan = self
                 .store
-                .select(tenant, profile_type, &matchers, start_ms, end_ms)
+                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
                 .await?;
             let exemplars = span_exemplars_from_scan(&scan, step, &labels, call_sites).await?;
             if !exemplars.is_empty() {
@@ -361,7 +367,13 @@ impl<S: ProfileStore> QuerierState<S> {
         }
         let groups = self
             .store
-            .series(tenant, &base_matchers, &profile_group_by, start_ms, end_ms)
+            .series(
+                tenant.as_str(),
+                &base_matchers,
+                &profile_group_by,
+                start_ms,
+                end_ms,
+            )
             .await?;
         let mut out: SpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
@@ -385,7 +397,7 @@ impl<S: ProfileStore> QuerierState<S> {
             );
             let scan = self
                 .store
-                .select(tenant, profile_type, &matchers, start_ms, end_ms)
+                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
                 .await?;
             let exemplars = individual_exemplars_from_scan(
                 &scan,
@@ -418,7 +430,7 @@ impl<S: ProfileStore> QuerierState<S> {
             vec![Vec::new()]
         } else {
             self.store
-                .series(tenant, &base_matchers, group_by, start_ms, end_ms)
+                .series(tenant.as_str(), &base_matchers, group_by, start_ms, end_ms)
                 .await?
         };
         let mut out = BTreeMap::new();
@@ -431,7 +443,7 @@ impl<S: ProfileStore> QuerierState<S> {
             );
             let scan = self
                 .store
-                .select(tenant, profile_type, &matchers, start_ms, end_ms)
+                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
                 .await?;
             let exemplars =
                 heatmap_span_exemplars_from_scan(&scan, start_ms, end_ms, time_buckets, &labels)
@@ -460,7 +472,13 @@ impl<S: ProfileStore> QuerierState<S> {
         }
         let groups = self
             .store
-            .series(tenant, &base_matchers, &profile_group_by, start_ms, end_ms)
+            .series(
+                tenant.as_str(),
+                &base_matchers,
+                &profile_group_by,
+                start_ms,
+                end_ms,
+            )
             .await?;
         let mut out: HeatmapSpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
@@ -484,7 +502,7 @@ impl<S: ProfileStore> QuerierState<S> {
             );
             let scan = self
                 .store
-                .select(tenant, profile_type, &matchers, start_ms, end_ms)
+                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
                 .await?;
             let exemplars = heatmap_individual_exemplars_from_scan(
                 &scan,
@@ -519,7 +537,7 @@ impl<S: ProfileStore> QuerierState<S> {
             vec![Vec::new()]
         } else {
             self.store
-                .series(tenant, &base_matchers, group_by, start_ms, end_ms)
+                .series(tenant.as_str(), &base_matchers, group_by, start_ms, end_ms)
                 .await?
         };
         let mut out = Vec::new();
@@ -532,7 +550,7 @@ impl<S: ProfileStore> QuerierState<S> {
             );
             let scan = self
                 .store
-                .select(tenant, profile_type, &matchers, start_ms, end_ms)
+                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
                 .await?;
             let points = span_heatmap_points_from_scan(&scan).await?;
             if points.is_empty() && !group_by.is_empty() {
@@ -561,7 +579,7 @@ impl<S: ProfileStore> QuerierState<S> {
             QueryExecution::Direct => {
                 self.engine
                     .select_merge_span_profile(
-                        (tenant, profile_type, label_selector),
+                        (tenant.as_str(), profile_type, label_selector),
                         span_ids,
                         (start_ms, end_ms),
                         max_nodes,
@@ -572,7 +590,7 @@ impl<S: ProfileStore> QuerierState<S> {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
                     .select_merge_span_profile_sharded(
-                        tenant,
+                        tenant.as_str(),
                         profile_type,
                         label_selector,
                         span_ids,
@@ -599,7 +617,7 @@ impl<S: ProfileStore> QuerierState<S> {
             QueryExecution::Direct => {
                 self.engine
                     .select_merge_span_profile_tree(
-                        (tenant, profile_type, label_selector),
+                        (tenant.as_str(), profile_type, label_selector),
                         span_ids,
                         (start_ms, end_ms),
                         max_nodes,
@@ -610,7 +628,7 @@ impl<S: ProfileStore> QuerierState<S> {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
                     .select_merge_span_profile_tree_sharded(
-                        tenant,
+                        tenant.as_str(),
                         profile_type,
                         label_selector,
                         span_ids,

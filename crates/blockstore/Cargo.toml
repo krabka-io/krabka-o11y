@@ -24,6 +24,7 @@ arrow = { workspace = true }
 bytes = { workspace = true }
 parquet = { workspace = true }
 datafusion = { workspace = true }
+derive_more = { workspace = true }
 krabka-object-store = { version = "0.4.0" }
 krabka-units = { workspace = true }
 object_store = { workspace = true }

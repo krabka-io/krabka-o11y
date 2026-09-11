@@ -4,7 +4,11 @@ use super::*;
 pub(crate) async fn vector_or_returns_left_union_unmatched_right_samples() {
     let engine = PromqlEngine::new(Arc::new(set_op_store()), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "up or on (instance) target_info", 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "up or on (instance) target_info",
+            10_000,
+        )
         .await
         .unwrap();
 

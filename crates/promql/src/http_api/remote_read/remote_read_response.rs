@@ -1,23 +1,29 @@
 use super::{
-    ApiError, BTreeMap, Labels, MetricStore, PrometheusApiState, SeriesFingerprint,
+    ApiError, BTreeMap, Labels, MetricStore, PrometheusApiState, SeriesFingerprint, TenantId,
     append_remote_read_exemplars, append_remote_read_float_samples,
-    append_remote_read_histogram_samples, enforce_selected_series_limit, pb, remote_read_matchers,
-    validate_timestamp_range,
+    append_remote_read_histogram_samples, enforce_query_range_limit, enforce_selected_series_limit,
+    pb, remote_read_matchers, validate_timestamp_range,
 };
 
 pub(crate) async fn remote_read_response<S: MetricStore>(
     state: &PrometheusApiState<S>,
-    tenant: &str,
+    tenant: &TenantId,
     request: pb::v1::ReadRequest,
 ) -> Result<pb::v1::ReadResponse, ApiError> {
     let mut results = Vec::with_capacity(request.queries.len());
     for query in request.queries {
         validate_timestamp_range(query.start_timestamp_ms, query.end_timestamp_ms)?;
+        enforce_query_range_limit(
+            state,
+            tenant,
+            query.start_timestamp_ms,
+            query.end_timestamp_ms,
+        )?;
         let matchers = remote_read_matchers(&query.matchers)?;
         let labels = state
             .store
             .series(
-                tenant,
+                tenant.as_str(),
                 &matchers,
                 query.start_timestamp_ms,
                 query.end_timestamp_ms,
@@ -32,7 +38,7 @@ pub(crate) async fn remote_read_response<S: MetricStore>(
         let scan = state
             .store
             .scan(
-                tenant,
+                tenant.as_str(),
                 &matchers,
                 query.start_timestamp_ms,
                 query.end_timestamp_ms,
@@ -71,7 +77,7 @@ pub(crate) async fn remote_read_response<S: MetricStore>(
 
         append_remote_read_exemplars(
             state.store.as_ref(),
-            tenant,
+            tenant.as_str(),
             &matchers,
             query.start_timestamp_ms,
             query.end_timestamp_ms,

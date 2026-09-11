@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use krabka_blockstore::TenantId;
+
 use super::{
     AlertmanagerSink, RecordingRuleWalSink, RulerAlertState, RulerGroupEvaluation, RulerGroupState,
     RulerGroupStateRecord, RulerShard, RulerStateSink, evaluate_and_append_recording_rule_group,

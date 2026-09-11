@@ -1,12 +1,12 @@
 use super::{
     ApiError, BTreeMap, Labels, MetricStore, PrometheusApiState, PromqlError, ScanResult,
-    SeriesFingerprint, decode_native_histograms, enforce_sample_count, pb, remote_read_histogram,
-    remote_read_series,
+    SeriesFingerprint, TenantId, decode_native_histograms, enforce_sample_count, pb,
+    remote_read_histogram, remote_read_series,
 };
 
 pub(crate) async fn append_remote_read_histogram_samples<S: MetricStore>(
     state: &PrometheusApiState<S>,
-    tenant: &str,
+    tenant: &TenantId,
     scan: &ScanResult,
     table: &str,
     labels_by_fp: &BTreeMap<SeriesFingerprint, Labels>,

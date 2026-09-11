@@ -1,15 +1,23 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, QueryEnforcer, Response, SearchOptions, SpanStore,
-    StatusCode, Uri, duration_param, filter_search_duration, limit_error_response,
-    optional_usize_param, required_seconds_param, scan_options_param, search_json, search_query,
-    tenant,
+    AppState, HeaderMap, IntoResponse, Json, Principal, QueryEnforcer, Response, SearchOptions,
+    SpanStore, StatusCode, Uri, duration_param, filter_search_duration, limit_error_response,
+    optional_usize_param, request_tenant, required_seconds_param, scan_options_param, search_json,
+    search_query,
 };
 
-pub(crate) async fn search_inner<S>(state: &AppState<S>, headers: HeaderMap, uri: Uri) -> Response
+pub(crate) async fn search_inner<S>(
+    state: &AppState<S>,
+    principal: &Principal,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response
 where
     S: SpanStore + 'static,
 {
-    let tenant = tenant(&headers);
+    let tenant = match request_tenant(&headers, principal, &state.cfg.tenant_policy) {
+        Ok(tenant) => tenant,
+        Err(rejection) => return *rejection,
+    };
     let query = match search_query(&uri) {
         Ok(Some(query)) => query,
         Ok(None) => {
@@ -71,7 +79,7 @@ where
     match state
         .engine
         .search_with_options(
-            &tenant,
+            tenant.as_str(),
             &query,
             start_ns,
             end_ns,

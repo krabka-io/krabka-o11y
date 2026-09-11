@@ -1,18 +1,20 @@
 use super::{
-    HeaderMap, Instant, IntoResponse, QuerierState, RawQuery, Response, State, StatusCode,
-    execute_index_stats_query, json_response,
+    HeaderMap, Instant, IntoResponse, QuerierState, RawQuery, RequestSecurity, Response, State,
+    StatusCode, execute_index_stats_query, json_response,
 };
 
 pub(crate) async fn index_stats(
     State(state): State<QuerierState>,
+    security: RequestSecurity,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
     let start = Instant::now();
-    let resp = match execute_index_stats_query(&state, &headers, raw_query.as_deref()).await {
-        Ok(value) => json_response(StatusCode::OK, &value),
-        Err(error) => error.into_response(),
-    };
+    let resp =
+        match execute_index_stats_query(&state, &security, &headers, raw_query.as_deref()).await {
+            Ok(value) => json_response(StatusCode::OK, &value),
+            Err(error) => error.into_response(),
+        };
     state.record_query("index_stats", resp.status().is_success(), start);
     resp
 }

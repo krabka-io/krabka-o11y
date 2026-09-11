@@ -1,11 +1,12 @@
 use super::{
-    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, PrometheusApiState, RawQuery, Response,
-    RuleRenderOptions, RuleTypeFilter, State, json, parse_rules_params,
-    prometheus_rule_groups_json, success_data_response, tenant_from_headers,
+    ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
+    RawQuery, Response, RuleRenderOptions, RuleTypeFilter, State, authorized_tenant_from_headers,
+    json, parse_rules_params, prometheus_rule_groups_json, success_data_response,
 };
 
 pub(crate) async fn rules<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
@@ -13,7 +14,7 @@ pub(crate) async fn rules<S: MetricStore>(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };

@@ -21,7 +21,7 @@ use krabka_metrics::{
     compact_wal_records, compaction_object_key,
     distributor::{
         CLOCK_READING_METRIC, DistributorState, ProduceError, WalSink, clock_series,
-        clock_wal_records, router,
+        clock_wal_records,
     },
     encode_tenant_batches,
     schema::{
@@ -34,9 +34,19 @@ use krabka_metrics::{
         NtpReading, PtpReading, UnixNanos, decode_clock_readings, pb,
     },
 };
+use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use krabka_units::prelude::*;
 use prost::Message as _;
 use tower::ServiceExt as _;
+
+// Every request goes through the authentication layer, as it does on a served
+// listener. With no credentials file, the layer lets each request through.
+fn router(state: Arc<DistributorState>) -> axum::Router {
+    authenticate_requests(
+        krabka_metrics::distributor::router(state),
+        &ServerSecurity::default(),
+    )
+}
 
 /// A round nanosecond instant, so every expected second value in this suite is
 /// exact in binary floating point.
@@ -806,6 +816,9 @@ async fn a_malformed_batch_is_rejected_and_writes_nothing() {
     check!(sink.records.lock().expect("sink").is_empty());
 }
 
+/// The clock push resolves its tenant as the remote-write push does, so a
+/// batch without `X-Scope-OrgID` gets Grafana Mimir's answer to a push without
+/// a tenant: `401` and `no org id`.
 #[tokio::test]
 async fn a_batch_without_a_tenant_is_rejected() {
     let sink = Arc::new(RecordingSink::default());
@@ -823,7 +836,11 @@ async fn a_batch_without_a_tenant_is_rejected() {
         .await
         .expect("clocks response");
 
-    check!(response.status() == StatusCode::BAD_REQUEST);
+    check!(response.status() == StatusCode::UNAUTHORIZED);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("clocks response body");
+    check!(body.as_ref() == b"no org id\n");
     check!(sink.records.lock().expect("sink").is_empty());
 }
 

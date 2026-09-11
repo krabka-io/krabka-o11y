@@ -1,11 +1,11 @@
 use super::{
-    ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    AuditArgs, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
     DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
-    IndexSnapshotRetain, Parser, SocketAddr, Target, Time, parse,
-    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
-    parse_min_two_usize, parse_non_empty_string, parse_positive_time_or_legacy_millis,
-    parse_positive_time_or_legacy_nanos, parse_positive_u32, parse_positive_usize,
-    parse_positive_whole_byte_size,
+    IndexSnapshotRetain, Parser, ServerSecurityArgs, SocketAddr, Target, Time,
+    WalClientSecurityArgs, parse, parse_client_dispatch_queue_capacity, parse_client_frame_max,
+    parse_consumer_fetch_size, parse_min_two_usize, parse_non_empty_string,
+    parse_positive_time_or_legacy_millis, parse_positive_time_or_legacy_nanos, parse_positive_u32,
+    parse_positive_usize, parse_positive_whole_byte_size,
 };
 
 #[derive(Debug, Parser)]
@@ -14,6 +14,16 @@ pub(crate) struct Cli {
     pub(crate) config_file: ConfigFileArgs,
     #[command(flatten)]
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
+    // TLS, authentication and the internal client credential of `--listen`.
+    // With none of these flags, the listener serves as Pyroscope does.
+    #[command(flatten)]
+    pub(crate) server_security: ServerSecurityArgs,
+    // The audit trail of refused credentials and denied tenants.
+    #[command(flatten)]
+    pub(crate) audit: AuditArgs,
+    // TLS and SASL for every broker connection of the role.
+    #[command(flatten)]
+    pub(crate) wal_security: WalClientSecurityArgs,
     #[arg(long, env = "KRABKA_PROFILES_TARGET")]
     pub(crate) target: Target,
     /// HTTP ingest and query listen address. Default: `0.0.0.0:4040`.
@@ -21,12 +31,20 @@ pub(crate) struct Cli {
     /// Every interface, as Pyroscope defaults to. A container that binds
     /// loopback is unreachable from outside its pod, and the only symptom is
     /// a health check timing out with nothing in the logs.
+    ///
+    /// The `--server-tls-*` and `--auth-credentials-config` flags apply to this
+    /// listener.
     #[arg(
         long,
         env = "KRABKA_PROFILES_LISTEN_ADDR",
         default_value = "0.0.0.0:4040"
     )]
     pub(crate) listen: SocketAddr,
+    /// Admin listen address for `/metrics`, `/ready` and the profiling endpoints. Default: `0.0.0.0:9404`.
+    ///
+    /// This port always serves plain HTTP with no authentication. The
+    /// `--server-tls-*` and `--auth-credentials-config` flags do not apply to
+    /// it, so an operator should bind it to a private address.
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
     /// How long each role gets to finish when `--target all` stops. Default:
@@ -210,8 +228,12 @@ pub(crate) struct Cli {
         value_parser = parse_positive_time_or_legacy_millis
     )]
     pub(crate) query_frontend_shard_width: Time,
-    #[arg(long, env = "KRABKA_PROFILES_TENANT_LIMITS_CONFIG")]
-    pub(crate) tenant_limits_config: Option<std::path::PathBuf>,
+    /// The YAML file of per-tenant limits, in the Pyroscope runtime-overrides
+    /// shape.
+    ///
+    /// Its `defaults` block sets the limits every tenant starts from, and each
+    /// entry under `overrides` names one tenant's departures from them. Every
+    /// ingest and query gate resolves its cap from this one file.
     #[arg(long, env = "KRABKA_PROFILES_LIMITS_OVERRIDES_CONFIG")]
     pub(crate) profiles_limits_overrides_config: Option<std::path::PathBuf>,
     /// The Kafka consumer group the profiles query WAL tail joins.

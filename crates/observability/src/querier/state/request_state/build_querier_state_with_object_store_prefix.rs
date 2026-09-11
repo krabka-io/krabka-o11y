@@ -1,12 +1,13 @@
 use super::{
-    ObjectPath, ObjectStore, QuerierIndexSource, QuerierState, ServiceConfig, ServiceConfigError,
-    TimeRange, querier_object_store_inputs,
+    Arc, ObjectPath, ObjectStore, OverridesProvider, QuerierIndexSource, QuerierState,
+    ServiceConfig, ServiceConfigError, TimeRange, querier_object_store_inputs,
 };
 
 pub(crate) async fn build_querier_state_with_object_store_prefix(
     config: &ServiceConfig,
     object_store: Option<&dyn ObjectStore>,
     object_store_prefix: Option<&ObjectPath>,
+    overrides: Arc<OverridesProvider>,
 ) -> Result<QuerierState, ServiceConfigError> {
     let state = match config.querier_index_source {
         QuerierIndexSource::LocalManifest => QuerierState::from_manifest(config.data_root.clone())?,
@@ -35,30 +36,9 @@ pub(crate) async fn build_querier_state_with_object_store_prefix(
             )
             .await?
         }
-    }
-    .with_runtime_policy(config);
-
-    let state = if let Some(max_query_range) = config.max_query_range {
-        state.with_max_query_range(max_query_range)
-    } else {
-        state
     };
 
-    let state = if let Some(max_query_series) = config.max_query_series {
-        state.with_max_query_series(max_query_series)
-    } else {
-        state
-    };
-
-    let state = if let Some(max_query_read) = config.max_query_read {
-        state.with_max_query_read(max_query_read)
-    } else {
-        state
-    };
-
-    Ok(if let Some(max_query_length) = config.max_query_length {
-        state.with_max_query_length(max_query_length)
-    } else {
-        state
-    })
+    Ok(state
+        .with_runtime_policy(config)
+        .with_limits_overrides_source(overrides))
 }

@@ -10,7 +10,10 @@ use axum::{
 use krabka_blockstore::{LabelIndex, LogBlockIndex as BlockIndex, write_log_index_manifest};
 use krabka_observability::{Role, ServiceDependencies, build_service_router, loki_router};
 use serde_json::{Value, json};
-use support::{assert_loki_error, fixture, json_body, test_service_config, text_body};
+use support::{
+    TenantDenyingQueryAuthorizer, assert_loki_error, fixture, json_body, test_service_config,
+    text_body,
+};
 use tower::ServiceExt as _;
 
 #[tokio::test]
@@ -23,6 +26,7 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
         .oneshot(
             Request::builder()
                 .uri("/loki/api/v1/rules")
+                .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -39,7 +43,7 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
     let body = text_body(loki_rules_response).await;
     assert!(content_type.starts_with("text/plain"));
     assert!(
-        body == "unable to read rule dir /loki/rules/fake: open /loki/rules/fake: no such file or directory\n"
+        body == "unable to read rule dir /loki/rules/tenant-a: open /loki/rules/tenant-a: no such file or directory\n"
     );
 
     let prometheus_rules_response = app
@@ -47,6 +51,7 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
         .oneshot(
             Request::builder()
                 .uri("/prometheus/api/v1/rules")
+                .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -71,6 +76,7 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
         .oneshot(
             Request::builder()
                 .uri("/api/prom/rules")
+                .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -87,7 +93,7 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
     let body = text_body(api_prom_rules_response).await;
     assert!(content_type.starts_with("text/plain"));
     assert!(
-        body == "unable to read rule dir /loki/rules/fake: open /loki/rules/fake: no such file or directory\n"
+        body == "unable to read rule dir /loki/rules/tenant-a: open /loki/rules/tenant-a: no such file or directory\n"
     );
 
     let prometheus_alerts_response = app
@@ -95,6 +101,7 @@ async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
         .oneshot(
             Request::builder()
                 .uri("/prometheus/api/v1/alerts")
+                .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -144,14 +151,20 @@ async fn ruler_rule_group_read_endpoints_return_loki_not_found_errors() {
     for uri in ["/loki/api/v1/rules/default", "/api/prom/rules/default"] {
         let response = app
             .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
         assert!(response.status() == StatusCode::BAD_REQUEST);
         let body = text_body(response).await;
         assert!(
-            body == "error parsing /loki/rules/fake/default: /loki/rules/fake/default: open /loki/rules/fake/default: no such file or directory\n"
+            body == "error parsing /loki/rules/tenant-a/default: /loki/rules/tenant-a/default: open /loki/rules/tenant-a/default: no such file or directory\n"
         );
     }
 
@@ -161,7 +174,13 @@ async fn ruler_rule_group_read_endpoints_return_loki_not_found_errors() {
     ] {
         let response = app
             .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -464,6 +483,130 @@ rules:
     for needle in ["default:", "- name: api-errors\n", "alert: ApiErrors\n"] {
         check!(body.contains(needle));
     }
+}
+
+/// Sends one ruler call and gives back its status and body text.
+async fn ruler_call_for_test(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    tenant: Option<&str>,
+    body: &str,
+) -> (StatusCode, String) {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/yaml");
+    if let Some(tenant) = tenant {
+        request = request.header("X-Scope-OrgID", tenant);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    (status, text_body(response).await)
+}
+
+const RULE_GROUP_FOR_TEST: &str = "\
+name: api-errors
+rules:
+  - alert: ApiErrors
+    expr: count_over_time({app=\"api\"} |= \"error\" [5m]) > 0
+";
+
+/// Loki's ruler, with `auth_enabled: true`, answers a request that names no
+/// tenant with 401. It does not serve the request as tenant `fake`, so a
+/// caller without a tenant can neither read nor write any rule group.
+#[tokio::test]
+async fn a_ruler_request_without_a_tenant_is_refused_and_not_served_as_tenant_fake() {
+    let app = loki_router(fixture());
+
+    for (method, uri, body) in [
+        ("GET", "/loki/api/v1/rules", ""),
+        ("POST", "/loki/api/v1/rules/default", RULE_GROUP_FOR_TEST),
+        ("GET", "/api/prom/rules", ""),
+        ("GET", "/prometheus/api/v1/rules", ""),
+    ] {
+        check!(
+            ruler_call_for_test(&app, method, uri, None, body).await
+                == (StatusCode::UNAUTHORIZED, "no org id\n".to_string()),
+            "{method} {uri}"
+        );
+    }
+
+    check!(
+        ruler_call_for_test(&app, "GET", "/loki/api/v1/rules", Some("fake"), "").await
+            == (
+                StatusCode::BAD_REQUEST,
+                "unable to read rule dir /loki/rules/fake: open /loki/rules/fake: no such file or directory\n"
+                    .to_string()
+            )
+    );
+}
+
+/// Every ruler route asks the query authorizer, the routes that change rule
+/// groups too. A refused tenant reads nothing, creates nothing and deletes
+/// nothing, and another tenant on the same rule store is not affected.
+#[tokio::test]
+async fn a_refused_tenant_can_neither_read_nor_create_nor_delete_its_rule_groups() {
+    let state = fixture();
+    let allowed = loki_router(state.clone());
+    let refusing = loki_router(
+        state.with_query_authorizer(TenantDenyingQueryAuthorizer { denied: "tenant-a" }),
+    );
+    let (status, _) = ruler_call_for_test(
+        &allowed,
+        "POST",
+        "/loki/api/v1/rules/default",
+        Some("tenant-a"),
+        RULE_GROUP_FOR_TEST,
+    )
+    .await;
+    assert!(status == StatusCode::ACCEPTED);
+    let before =
+        ruler_call_for_test(&allowed, "GET", "/loki/api/v1/rules", Some("tenant-a"), "").await;
+    assert!(before.0 == StatusCode::OK);
+
+    let other_group = RULE_GROUP_FOR_TEST.replace("api-errors", "other");
+    for (method, uri, body) in [
+        ("GET", "/loki/api/v1/rules", ""),
+        ("GET", "/loki/api/v1/rules/default", ""),
+        ("GET", "/loki/api/v1/rules/default/api-errors", ""),
+        ("POST", "/loki/api/v1/rules/default", other_group.as_str()),
+        ("POST", "/loki/api/v1/rules/second", other_group.as_str()),
+        ("DELETE", "/loki/api/v1/rules/default/api-errors", ""),
+        ("DELETE", "/loki/api/v1/rules/default", ""),
+        ("GET", "/api/prom/rules", ""),
+        ("POST", "/api/prom/rules/default", other_group.as_str()),
+        ("DELETE", "/api/prom/rules/default", ""),
+        ("GET", "/prometheus/api/v1/rules", ""),
+        ("GET", "/prometheus/api/v1/alerts", ""),
+    ] {
+        let (status, body) =
+            ruler_call_for_test(&refusing, method, uri, Some("tenant-a"), body).await;
+        check!(status == StatusCode::FORBIDDEN, "{method} {uri}");
+        assert_loki_error(
+            &serde_json::from_str(&body).unwrap(),
+            "forbidden",
+            "tenant read ACL denied",
+        );
+    }
+
+    check!(
+        ruler_call_for_test(&allowed, "GET", "/loki/api/v1/rules", Some("tenant-a"), "").await
+            == before
+    );
+    let (status, _) = ruler_call_for_test(
+        &refusing,
+        "POST",
+        "/loki/api/v1/rules/default",
+        Some("tenant-b"),
+        RULE_GROUP_FOR_TEST,
+    )
+    .await;
+    check!(status == StatusCode::ACCEPTED);
 }
 
 async fn post_loki_rule_group_for_test(app: &axum::Router, namespace: &str, rule_group: &str) {

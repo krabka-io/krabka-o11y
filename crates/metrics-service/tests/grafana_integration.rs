@@ -1406,9 +1406,14 @@ async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     // Bind 0.0.0.0 so the Grafana container can reach the server through the
     // Docker host gateway; the OS picks the port.
     let addr: SocketAddr = "0.0.0.0:0".parse()?;
-    let bound = krabka_metrics_service::serve_prometheus_router(addr, router, async move {
-        let _ = rx.await;
-    })
+    let bound = krabka_metrics_service::serve_prometheus_router(
+        addr,
+        router,
+        &krabka_observability::server_security::ServerSecurity::default(),
+        async move {
+            let _ = rx.await;
+        },
+    )
     .await?;
 
     Ok(KrabkaServer {

@@ -3,16 +3,18 @@ use krabka_units::convert::ByteSizeExt;
 use tracing::Instrument;
 
 use crate::{
-    AllowAllIngestLimiter, Arc, ByteSize, Bytes, CONTENT_ENCODING, CONTENT_TYPE, DRAINING_GATE,
-    Deserialize, Extension, HeaderMap, Instant, Labels, LogIngestLimiter, LogWalSink, LogsService,
-    LogsServiceServer, ProtoExportLogsServiceRequest, ProtoExportLogsServiceResponse,
-    ReadinessGate, Response, RoleReadiness, Router, ServiceMetrics, State, StatusCode, Time, Value,
+    AllowAllIngestLimiter, Arc, Bytes, CONTENT_ENCODING, CONTENT_TYPE, DRAINING_GATE, Deserialize,
+    Extension, HeaderMap, Instant, Labels, Limits, LogIngestLimiter, LogWalSink, LogsService,
+    LogsServiceServer, OverridesProvider, ProtoExportLogsServiceRequest,
+    ProtoExportLogsServiceResponse, ReadinessGate, RequestSecurity, Response, RoleReadiness,
+    Router, ServiceMetrics, State, StatusCode, TenantErrorSurface, TenantId, Time, Value,
     append_distributor_wal_records, build_info, distributor_error_to_grpc_status,
     flush_ingester_chunks, format_query, format_query_post, get, get_prepare_shutdown, grpc_tenant,
     log_level, log_level_post, measured_size, memberlist_status, normalize_loki_http_push,
     normalize_otlp_http_logs, normalize_otlp_proto_logs_for_tenant, otlp_http_error_response, post,
-    ready, record_ingest_response, role_config, role_metrics, role_ring, role_services,
-    set_prepare_shutdown, shutdown_ingester, unset_prepare_shutdown, validate_ingest_body_limit,
+    ready, record_ingest_response, require_org_id, resolve_single_tenant, role_config,
+    role_metrics, role_ring, role_services, set_prepare_shutdown, shutdown_ingester,
+    tenant_error_response, tenant_header_value, unset_prepare_shutdown, validate_ingest_body_limit,
 };
 
 mod all_ops;
@@ -22,7 +24,6 @@ mod distributor_push_routes;
 mod distributor_router;
 mod distributor_router_with_sink;
 mod distributor_state;
-mod ingest_tenant;
 mod loki_proto_entry;
 mod loki_proto_label_pair;
 mod loki_proto_push_request;
@@ -53,10 +54,9 @@ pub(crate) use all_ops::ALL_OPS;
 pub(crate) use block_builder_ops::BLOCK_BUILDER_OPS;
 pub(crate) use distributor_ops::DISTRIBUTOR_OPS;
 pub(crate) use distributor_push_routes::distributor_push_routes;
-pub use distributor_router::distributor_router;
+pub use distributor_router::{distributor_router, distributor_router_with_overrides};
 pub(crate) use distributor_router_with_sink::distributor_router_with_sink;
 pub use distributor_state::DistributorState;
-pub(crate) use ingest_tenant::ingest_tenant;
 pub(crate) use loki_proto_entry::LokiProtoEntry;
 pub(crate) use loki_proto_label_pair::LokiProtoLabelPair;
 pub(crate) use loki_proto_push_request::LokiProtoPushRequest;

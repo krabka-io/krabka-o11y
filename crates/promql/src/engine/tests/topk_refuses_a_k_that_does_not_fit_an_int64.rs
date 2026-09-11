@@ -24,7 +24,7 @@ pub(crate) async fn topk_refuses_a_k_that_does_not_fit_an_int64() {
         "topk(9223372036854774784, memory_bytes)",
     ] {
         let error = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .unwrap_err();
 
@@ -36,7 +36,7 @@ pub(crate) async fn topk_refuses_a_k_that_does_not_fit_an_int64() {
     // selects everything.
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "topk(9223372036854773760, memory_bytes)",
             10_000,
         )

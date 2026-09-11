@@ -1,5 +1,5 @@
 use super::{
-    FrontendRangeQuery, PromqlError, QueryResult, RangeQueryCache, RangeQueryExecutor,
+    FrontendRangeQuery, PromqlError, QueryResult, RangeQueryCache, RangeQueryExecutor, TenantId,
     execute_single_range_query,
 };
 
@@ -15,7 +15,7 @@ use super::{
 pub(crate) async fn execute_planned_range_queries<E, C>(
     executor: &E,
     cache: &C,
-    tenant: &str,
+    tenant: &TenantId,
     planned: Vec<FrontendRangeQuery>,
 ) -> Result<Vec<QueryResult>, PromqlError>
 where

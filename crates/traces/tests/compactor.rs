@@ -7,15 +7,15 @@ use arrow::{
 };
 use assert2::check;
 use krabka_blockstore::{
-    BlockMeta, BlockWriter, CompactionJob, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID,
-    TraceIndex, level_above, read_block,
+    BlockLevel, BlockMeta, BlockWriter, CompactionJob, PromotedSpanAttr, SCOL_START_NANO,
+    SCOL_TRACE_ID, TraceIndex, level_above, read_block, unescape_object_path_segment,
 };
 use krabka_traces::{
     AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode,
     blockbuilder::{build_blocks, build_blocks_with_promoted_attrs},
     compactor::{compact_block_keys, planned_compacted_object_key},
 };
-use object_store::{ObjectStore, memory::InMemory};
+use object_store::{ObjectStore, memory::InMemory, path::Path};
 
 fn span(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> Span {
     Span {
@@ -70,6 +70,45 @@ fn planned_job_keys(tenant: &str, inputs: &[&BlockMeta]) -> (Vec<String>, String
     };
     let output_key = planned_compacted_object_key(&job);
     (job.input_keys, output_key)
+}
+
+/// The compacted key escapes its tenant as the block-builder key does. Each
+/// row must stay one path segment that the store keeps byte for byte, and must
+/// read back as the tenant the job named.
+#[test]
+fn a_compacted_key_escapes_the_tenant_into_one_segment_that_reads_back() {
+    let cases = [
+        ("plain", "tenant-a", "tenant-a"),
+        ("star", "a*b", "a!2Ab"),
+        ("escape marker", "a!b", "a!21b"),
+        ("quote", "a'b", "a!27b"),
+    ];
+
+    for (name, tenant, segment) in cases {
+        let key = planned_compacted_object_key(&CompactionJob {
+            tenant: tenant.to_string(),
+            input_keys: vec!["in-1".into(), "in-2".into()],
+            output_level: BlockLevel::INGESTED.next(),
+            min_ts: 10,
+            max_ts: 20,
+            row_count: 2,
+        });
+        check!(
+            key.starts_with(&format!("traces/{segment}/compacted/l1-10-20-")),
+            "{name}: {key}"
+        );
+        let path = Path::from(key.as_str());
+        check!(
+            path.as_ref() == key,
+            "{name}: the store keeps the key as written"
+        );
+        let parts: Vec<_> = path.parts().collect();
+        check!(parts.len() == 4, "{name}");
+        check!(
+            unescape_object_path_segment(parts[1].as_ref()) == Some(tenant.to_string()),
+            "{name}"
+        );
+    }
 }
 
 fn rec(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> SpanRecord {

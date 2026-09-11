@@ -5,20 +5,28 @@ use std::{
 
 use axum::{
     body::Bytes,
-    extract::{Path, RawQuery, State},
+    extract::{ConnectInfo, Path, RawQuery, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use krabka_blockstore::Labels;
+use krabka_blockstore::{Labels, TenantId};
+use krabka_observability::{
+    audit::{
+        AuditOutcome, AuditResource, OPERATION_RULE_GROUP_DELETE, OPERATION_RULE_GROUP_SET,
+        OPERATION_RULE_NAMESPACE_DELETE, RESOURCE_RULE_GROUP, RESOURCE_RULE_NAMESPACE,
+        RESOURCE_TENANT, audit_principal_of, resource, source_endpoint, unknown_source_endpoint,
+    },
+    server_security::PeerAddr,
+};
 use krabka_units::prelude::*;
 use serde_json::{Map, Value, json};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::form_urlencoded;
 
 use super::{
-    AlertStateKey, ApiError, PrometheusApiState, RulesParams,
+    AlertStateKey, ApiError, AuditHandle, Extension, Principal, PrometheusApiState, RulesParams,
     alert_templates::{expand_alert_mapping_json, expand_alert_template, labels_from_map},
-    sample_string, success_data_response, tenant_from_headers,
+    authorized_tenant_from_headers, sample_string, success_data_response,
 };
 use crate::{MetricStore, PromqlError, QueryResult, SampleValue, parse_promql};
 
@@ -34,6 +42,7 @@ mod prometheus_alerts_json;
 mod prometheus_rule_groups_json;
 mod prometheus_rule_json;
 mod prometheus_rules_json;
+mod record_ruler_config_change;
 mod require_yaml_content_type;
 mod rfc3339_time_string;
 mod rule_group_name;
@@ -44,6 +53,7 @@ mod ruler_config_namespace;
 mod ruler_config_rules;
 mod rules_fn;
 mod set_ruler_config_group;
+mod store_ruler_config_group;
 mod validate_rule;
 mod validate_rule_group;
 mod yaml_duration;
@@ -65,6 +75,7 @@ use prometheus_alerts_json::prometheus_alerts_json;
 use prometheus_rule_groups_json::prometheus_rule_groups_json;
 use prometheus_rule_json::prometheus_rule_json;
 use prometheus_rules_json::prometheus_rules_json;
+use record_ruler_config_change::record_ruler_config_change;
 use require_yaml_content_type::require_yaml_content_type;
 use rfc3339_time_string::rfc3339_time_string;
 use rule_group_name::rule_group_name;
@@ -75,6 +86,7 @@ pub(super) use ruler_config_namespace::ruler_config_namespace;
 pub(super) use ruler_config_rules::ruler_config_rules;
 pub(super) use rules_fn::rules;
 pub(super) use set_ruler_config_group::set_ruler_config_group;
+use store_ruler_config_group::store_ruler_config_group;
 use validate_rule::validate_rule;
 use validate_rule_group::validate_rule_group;
 use yaml_duration::yaml_duration;

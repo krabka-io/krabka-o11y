@@ -24,7 +24,11 @@ pub(crate) async fn instant_selector_or_matchers_union_matching_series() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", r#"up{job="api" or job="web"}"#, 10_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            r#"up{job="api" or job="web"}"#,
+            10_000,
+        )
         .await
         .unwrap();
 

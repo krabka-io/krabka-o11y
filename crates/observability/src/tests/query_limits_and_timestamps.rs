@@ -1,7 +1,8 @@
 use krabka_units::convert::TimeExt as _;
 
 use super::prelude::{
-    BTreeMap, BTreeSet, BlockIndex, HttpQueryError, LabelIndex, Labels, LokiStreamEntry, check,
+    BTreeMap, BTreeSet, BlockIndex, HttpQueryError, LabelIndex, Labels, Limits, LokiStreamEntry,
+    QuerierState, check,
 };
 
 mod a_loki_stream_interval_keeps_the_first_entry_of_each_window;

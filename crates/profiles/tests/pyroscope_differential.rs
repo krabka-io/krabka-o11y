@@ -14,12 +14,13 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use flate2::{Compression, write::GzEncoder};
+use krabka_blockstore::TenantPolicy;
+use krabka_observability::server_security::ServerSecurity;
 use krabka_pprof::{PprofProfile, proto};
 use krabka_profiles::{
     ProfileRecord, ProfilesError,
     distributor::{self, DistributorState, WalSink},
     hot_store::WalTailProfileStore,
-    ingest::TenantLimitConfig,
     limits::{Limits, OverridesProvider},
     query::{self, QuerierState},
 };
@@ -844,8 +845,8 @@ async fn start_krabka_pair(
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
-        limits: TenantLimitConfig::default(),
-        profile_overrides: OverridesProvider::new(Limits::default()),
+        overrides: OverridesProvider::new(Limits::default()),
+        tenant_policy: TenantPolicy::anonymous(),
         active_series: Mutex::default(),
         ingestion_buckets: Mutex::default(),
         relabel: Vec::new(),
@@ -854,11 +855,15 @@ async fn start_krabka_pair(
         legacy_decode_limits: krabka_profiles::ingest::LegacyDecodeLimits::default(),
         metrics: krabka_profiles::metrics::ServiceMetrics::new(),
     });
-    let distributor_addr =
-        distributor::serve("127.0.0.1:0".parse()?, distributor_state, async move {
+    let distributor_addr = distributor::serve(
+        "127.0.0.1:0".parse()?,
+        distributor_state,
+        &ServerSecurity::default(),
+        async move {
             let _ = distributor_rx.await;
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     let (querier_shutdown, querier_rx) = oneshot::channel();
     // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
@@ -870,9 +875,14 @@ async fn start_krabka_pair(
             ..Default::default()
         },
     ));
-    let querier_addr = query::serve("127.0.0.1:0".parse()?, querier_state, async move {
-        let _ = querier_rx.await;
-    })
+    let querier_addr = query::serve(
+        "127.0.0.1:0".parse()?,
+        querier_state,
+        &ServerSecurity::default(),
+        async move {
+            let _ = querier_rx.await;
+        },
+    )
     .await?;
 
     Ok(KrabkaPair {
@@ -2530,8 +2540,8 @@ async fn start_krabka_public(
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
-        limits: TenantLimitConfig::default(),
-        profile_overrides: OverridesProvider::new(Limits::default()),
+        overrides: OverridesProvider::new(Limits::default()),
+        tenant_policy: TenantPolicy::anonymous(),
         active_series: Mutex::default(),
         ingestion_buckets: Mutex::default(),
         relabel: Vec::new(),
@@ -2540,11 +2550,15 @@ async fn start_krabka_public(
         legacy_decode_limits: krabka_profiles::ingest::LegacyDecodeLimits::default(),
         metrics: krabka_profiles::metrics::ServiceMetrics::new(),
     });
-    let distributor_addr =
-        distributor::serve("127.0.0.1:0".parse()?, distributor_state, async move {
+    let distributor_addr = distributor::serve(
+        "127.0.0.1:0".parse()?,
+        distributor_state,
+        &ServerSecurity::default(),
+        async move {
             let _ = distributor_rx.await;
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     let (querier_shutdown, querier_rx) = oneshot::channel();
     // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
@@ -2556,9 +2570,14 @@ async fn start_krabka_public(
             ..Default::default()
         },
     ));
-    let querier_addr = query::serve("0.0.0.0:0".parse()?, querier_state, async move {
-        let _ = querier_rx.await;
-    })
+    let querier_addr = query::serve(
+        "0.0.0.0:0".parse()?,
+        querier_state,
+        &ServerSecurity::default(),
+        async move {
+            let _ = querier_rx.await;
+        },
+    )
     .await?;
 
     Ok(KrabkaPublic {

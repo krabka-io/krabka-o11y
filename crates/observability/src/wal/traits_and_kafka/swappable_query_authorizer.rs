@@ -1,5 +1,6 @@
 use super::{
-    Arc, LogQueryAuthorizer, QueryAuthorizationError, UnavailableQueryAuthorizer, async_trait,
+    Arc, LogQueryAuthorizer, Principal, QueryAuthorizationError, TenantId,
+    UnavailableQueryAuthorizer, async_trait,
 };
 
 /// A [`LogQueryAuthorizer`] whose underlying implementation can change after
@@ -28,8 +29,12 @@ impl SwappableQueryAuthorizer {
 
 #[async_trait]
 impl LogQueryAuthorizer for SwappableQueryAuthorizer {
-    async fn check(&self, tenant: &str) -> Result<(), QueryAuthorizationError> {
+    async fn check(
+        &self,
+        principal: &Principal,
+        tenant: &TenantId,
+    ) -> Result<(), QueryAuthorizationError> {
         let authorizer = self.inner.read().await.clone();
-        authorizer.check(tenant).await
+        authorizer.check(principal, tenant).await
     }
 }

@@ -14,7 +14,11 @@ pub(crate) async fn instant_irate_uses_last_two_samples_per_second() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "irate(http_requests_total[2m])", 90_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "irate(http_requests_total[2m])",
+            90_000,
+        )
         .await
         .unwrap();
 

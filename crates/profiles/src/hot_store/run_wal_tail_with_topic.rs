@@ -30,6 +30,7 @@ pub async fn run_wal_tail_with_topic(
         client_dispatch_queue_capacity,
         client_frame_max,
         metrics,
+        security,
     } = config;
     // Raced against the token rather than awaited: an unreachable broker makes
     // this connect take as long as it takes, and a shutdown that arrives
@@ -39,6 +40,7 @@ pub async fn run_wal_tail_with_topic(
         () = shutdown.cancelled() => return Ok(()),
         built = Consumer::builder()
             .bootstrap(bootstrap)
+            .maybe_security(security)
             .dispatch_queue_capacity(client_dispatch_queue_capacity.get())
             .frame_max(client_frame_max.size())
             .group_id(group_id)

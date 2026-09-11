@@ -1,14 +1,15 @@
 use super::{
-    ApiError, Arc, HeaderMap, IntoResponse, MetricStore, Path, PrometheusApiState, Response, State,
-    StatusCode, tenant_from_headers, yaml_response,
+    ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Path, Principal,
+    PrometheusApiState, Response, State, StatusCode, authorized_tenant_from_headers, yaml_response,
 };
 
 pub(crate) async fn ruler_config_group<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     Path((namespace, group_name)): Path<(String, String)>,
 ) -> Response {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };

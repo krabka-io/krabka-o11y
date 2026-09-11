@@ -1,9 +1,9 @@
-use super::{QueryFrontendOptions, Time};
+use super::{QueryFrontendOptions, TenantId, Time};
 
 /// One user range query that enters the query-frontend.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrontendRangeRequest {
-    pub tenant: String,
+    pub tenant: TenantId,
     pub query: String,
     pub start_ms: i64,
     pub end_ms: i64,

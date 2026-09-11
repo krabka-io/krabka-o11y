@@ -17,7 +17,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use krabka_blockstore::Labels;
+use krabka_blockstore::{Labels, TenantId};
 use krabka_metrics::{
     SamplePayload, WalRecord,
     distributor::clock_series,
@@ -28,7 +28,9 @@ use krabka_metrics::{
 };
 use krabka_metrics_service::{
     evaluate_ruler_once, install_bundled_rule_groups, prometheus_api_state_for_store,
+    serve_prometheus_router,
 };
+use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use krabka_promql::{
     AlertmanagerAlert, AlertmanagerSink, InMemoryMetricStore, PrometheusApiState,
     RecordingRuleWalSink, RulerAlertState, RulerAlertStateRecord, RulerGroupState,
@@ -38,6 +40,10 @@ use krabka_units::prelude::*;
 use tower::ServiceExt as _;
 
 const TENANT: &str = "tenant-a";
+
+fn tenant() -> TenantId {
+    TenantId::new(TENANT).expect("the test tenant is a valid tenant id")
+}
 
 /// One five-hundred-and-twelfth of a second, in nanoseconds.
 ///
@@ -260,9 +266,25 @@ impl Ruler {
     async fn with_store(store: InMemoryMetricStore) -> Self {
         let state = prometheus_api_state_for_store(store);
         let router = prometheus_router(Arc::clone(&state));
-        let installed = install_bundled_rule_groups(&router, &bundle_path(), TENANT)
-            .await
-            .expect("the shipped bundle installs");
+        // The ruler installs its bundle through its own listener. The test
+        // runtime stops the server when the test ends.
+        let listener = serve_prometheus_router(
+            "127.0.0.1:0".parse().expect("a socket address"),
+            router.clone(),
+            &ServerSecurity::default(),
+            std::future::pending(),
+        )
+        .await
+        .expect("the ruler API serves");
+        let router = authenticate_requests(router, &ServerSecurity::default());
+        let installed = install_bundled_rule_groups(
+            listener,
+            &ServerSecurity::default(),
+            &bundle_path(),
+            &tenant(),
+        )
+        .await
+        .expect("the shipped bundle installs");
         check!(
             installed
                 == vec![
@@ -298,7 +320,7 @@ impl Ruler {
             (&self.wal, &self.alerts, &NoRulerState),
             &mut self.alert_state,
             &mut self.group_state,
-            TENANT,
+            &tenant(),
             RulerShard::new(1, 1).expect("one shard of one"),
             eval_time_ms,
         )
@@ -625,7 +647,7 @@ async fn the_bundle_installs_as_two_groups_of_one_namespace() {
 
     let installed = ruler
         .state
-        .ruler_rule_set(TENANT)
+        .ruler_rule_set(&tenant())
         .into_iter()
         .map(|(namespace, groups)| (namespace, groups.into_keys().collect::<Vec<_>>()))
         .collect::<BTreeMap<_, _>>();

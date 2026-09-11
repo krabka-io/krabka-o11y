@@ -5,22 +5,32 @@ use clap::{ArgAction, Args, Parser, ValueEnum};
 use krabka_blockstore::{
     BlockLevel, BlockStore, BlockWriter, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB,
     DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, PromotedSpanAttr,
-    TraceIndex,
+    TENANT_HEADER, TenantId, TenantPolicy, TraceIndex,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerFetchMaxBytes};
 use krabka_client_core::{
-    ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
+    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
 use krabka_client_producer::Producer;
-use krabka_observability::{ConfigFileArgs, argv_with_config_file};
+use krabka_observability::{
+    ConfigFileArgs, argv_with_config_file,
+    audit::AuditArgs,
+    server_security::{
+        InternalClient, ServerListener, ServerSecurity, ServerSecurityArgs,
+        install_crypto_provider, serve_router,
+    },
+    wal_client_security::WalClientSecurityArgs,
+};
 use krabka_telemetry::OtlpConfig;
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    LiveStore, TRACES_WAL_TOPIC, blockbuilder,
+    Limits, LiveStore, TRACES_WAL_TOPIC, blockbuilder,
     compactor::compact_once_with_policy,
     distributor::{self, DistributorState, KafkaSink},
     frontend::{self, FrontendConfig, TraceIndexCatalog},
     ids::UnixNano,
+    limits::OverridesProvider,
     livestore,
     metrics::ServiceMetrics,
     metricsgen::{
@@ -64,6 +74,22 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+
+    // The live-store routes read their principal from the request extensions,
+    // where the authentication layer puts it. The tests serve the router
+    // behind the unconfigured layer, as `serve_router` does with no flags.
+    fn build_live_store_router(
+        cli: &Cli,
+        live_store: Arc<RwLock<LiveStore>>,
+        readiness: RoleReadiness,
+    ) -> Result<axum::Router, Box<dyn std::error::Error + Send + Sync>> {
+        super::build_live_store_router(cli, live_store, readiness).map(|router| {
+            krabka_observability::server_security::authenticate_requests(
+                router,
+                &ServerSecurity::default(),
+            )
+        })
+    }
 
     /// Every listener this binary binds, and not one of them on loopback. A
     /// container that binds loopback is unreachable from outside the pod, and
@@ -889,6 +915,189 @@ mod tests {
         assert2::assert!(Cli::try_parse_from(["krabka-traces", "--target", "bogus"]).is_err());
     }
 
+    // The three security flag groups parse into their own structs, beside
+    // the flags this binary already had.
+    #[test]
+    fn server_security_audit_and_wal_security_flags_parse() {
+        let cli = Cli::try_parse_from([
+            "krabka-traces",
+            "--target",
+            "distributor",
+            "--server-tls-cert-path",
+            "server.pem",
+            "--server-tls-key-path",
+            "server-key.pem",
+            "--auth-credentials-config",
+            "credentials.yaml",
+            "--internal-client-token-path",
+            "internal-token",
+            "--audit-topic",
+            "krabka-audit",
+            "--audit-partition",
+            "3",
+            "--wal-security-protocol",
+            "SASL_SSL",
+            "--wal-tls-ca-path",
+            "broker-ca.pem",
+            "--wal-tls-server-name",
+            "broker.internal",
+            "--wal-sasl-mechanism",
+            "SCRAM-SHA-512",
+            "--wal-sasl-username",
+            "traces",
+            "--wal-sasl-password-path",
+            "wal-password",
+        ])
+        .unwrap();
+
+        check!(
+            (
+                cli.server_security.server_tls_cert_path.as_deref(),
+                cli.server_security.server_tls_key_path.as_deref(),
+                cli.server_security.auth_credentials_config.as_deref(),
+                cli.server_security.internal_client_token_path.as_deref(),
+            ) == (
+                Some(std::path::Path::new("server.pem")),
+                Some(std::path::Path::new("server-key.pem")),
+                Some(std::path::Path::new("credentials.yaml")),
+                Some(std::path::Path::new("internal-token")),
+            )
+        );
+        check!(
+            cli.audit
+                == krabka_observability::audit::AuditArgs {
+                    topic: Some("krabka-audit".to_string()),
+                    bootstrap: None,
+                    partition: krabka_observability::PartitionIndex(3),
+                    spool_dir: None,
+                    spool_max: krabka_observability::audit::DEFAULT_AUDIT_SPOOL_MAX,
+                    queue_capacity: krabka_observability::audit::DEFAULT_AUDIT_QUEUE_CAPACITY,
+                    checkpoint_every: krabka_observability::audit::DEFAULT_AUDIT_CHECKPOINT_EVERY,
+                    signing_key_path: None,
+                    signing_key_id: None,
+                }
+        );
+        check!(
+            cli.wal_security
+                == WalClientSecurityArgs {
+                    wal_security_protocol:
+                        krabka_observability::wal_client_security::WalSecurityProtocol::SaslSsl,
+                    wal_tls_ca_path: Some("broker-ca.pem".into()),
+                    wal_tls_server_name: Some("broker.internal".to_string()),
+                    wal_sasl_mechanism: Some(
+                        krabka_observability::wal_client_security::WalSaslMechanism::ScramSha512
+                    ),
+                    wal_sasl_username: Some("traces".to_string()),
+                    wal_sasl_password_path: Some("wal-password".into()),
+                    ..WalClientSecurityArgs::default()
+                }
+        );
+    }
+
+    // No security flag is the upstream default: plain listeners without
+    // authentication, a plain-text broker connection, and no audit trail.
+    #[test]
+    fn no_security_flag_loads_the_upstream_default() {
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "all"]).unwrap();
+
+        let server = cli.server_security.load().unwrap();
+        check!(
+            (
+                server.tls_enabled(),
+                server.authentication_enabled(),
+                server.internal_client().is_configured(),
+            ) == (false, false, false)
+        );
+        check!(cli.wal_security.load().unwrap().is_none());
+        check!(!cli.audit.is_enabled());
+        check!(require_internal_credential(&server).is_ok());
+    }
+
+    // Under `--target all` the frontend and the querier call the roles beside
+    // them through listeners that authenticate, so authentication without an
+    // internal credential cannot serve a query and refuses to start.
+    #[test]
+    fn the_all_in_one_refuses_authentication_without_an_internal_credential() {
+        let directory = tempfile::tempdir().unwrap();
+        let credentials = directory.path().join("credentials.yaml");
+        std::fs::write(
+            &credentials,
+            format!(
+                "principals:\n  - name: internal\n    token_sha256: [\"{}\"]\n    tenants: [\"*\"]\n",
+                "0".repeat(64)
+            ),
+        )
+        .unwrap();
+        let token = directory.path().join("internal-token");
+        std::fs::write(&token, "internal-token-value\n").unwrap();
+        let credentials = credentials.to_str().unwrap();
+        let token = token.to_str().unwrap();
+
+        let cases: [(&str, &[&str], bool); 4] = [
+            ("no flag", &[], true),
+            (
+                "authentication only",
+                &["--auth-credentials-config", credentials],
+                false,
+            ),
+            (
+                "authentication and an internal token",
+                &[
+                    "--auth-credentials-config",
+                    credentials,
+                    "--internal-client-token-path",
+                    token,
+                ],
+                true,
+            ),
+            (
+                "an internal token only",
+                &["--internal-client-token-path", token],
+                true,
+            ),
+        ];
+        for (case, flags, starts) in cases {
+            let mut argv = vec!["krabka-traces", "--target", "all"];
+            argv.extend_from_slice(flags);
+            let security = Cli::try_parse_from(argv)
+                .unwrap()
+                .server_security
+                .load()
+                .unwrap();
+            check!(
+                require_internal_credential(&security).is_ok() == starts,
+                "{case}"
+            );
+        }
+    }
+
+    // One pool, one scheme: the frontend dials every querier with one
+    // client, so `https` selects TLS and a list that mixes schemes is refused.
+    #[test]
+    fn querier_urls_name_one_scheme_for_the_whole_pool() {
+        check!(
+            parse_querier_addrs("http://querier-a:3200, http://querier-b:3200").unwrap()
+                == (
+                    krabka_traces::frontend::QuerierScheme::Http,
+                    vec!["querier-a:3200".to_string(), "querier-b:3200".to_string()],
+                )
+        );
+        check!(
+            parse_querier_addrs("https://querier-a:3200").unwrap()
+                == (
+                    krabka_traces::frontend::QuerierScheme::Https,
+                    vec!["querier-a:3200".to_string()],
+                )
+        );
+        for refused in [
+            "http://querier-a:3200,https://querier-b:3200",
+            "ftp://querier-a:3200",
+            "",
+        ] {
+            check!(parse_querier_addrs(refused).is_err(), "{refused:?}");
+        }
+    }
+
     #[test]
     fn parses_live_store_retention() {
         let cli = Cli::try_parse_from([
@@ -949,7 +1158,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/07070707070707070707070707070707")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -999,7 +1208,9 @@ mod tests {
         let source = trace_querier::live::RemoteLiveSource::new(
             Url::parse(&format!("http://{addr}")).unwrap(),
             Arc::new(ArcSwap::from_pointee(index)),
-        );
+            &InternalClient::default(),
+        )
+        .unwrap();
 
         let batches = source.span_batches("tenant-a", 1_000, 2_000).await.unwrap();
 
@@ -1031,7 +1242,9 @@ mod tests {
         let source = trace_querier::live::RemoteLiveSource::new(
             Url::parse(&format!("http://{addr}")).unwrap(),
             Arc::new(ArcSwap::from_pointee(TraceIndex::new())),
-        );
+            &InternalClient::default(),
+        )
+        .unwrap();
 
         let trace = source
             .trace_spans("tenant-a", &[9; 16])
@@ -1063,7 +1276,9 @@ mod tests {
         let source = trace_querier::live::RemoteLiveSource::new(
             Url::parse(&format!("http://{addr}")).unwrap(),
             Arc::new(ArcSwap::from_pointee(TraceIndex::new())),
-        );
+            &InternalClient::default(),
+        )
+        .unwrap();
 
         let tags = source
             .tag_names(
@@ -1115,7 +1330,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/v2/traces/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a")
-                    .header("x-scope-orgid", "tenant-a")
+                    .header(TENANT_HEADER, "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1438,6 +1653,231 @@ mod tests {
                 Cli::try_parse_from(["krabka-traces", "--target=metrics-generator", flag]).is_err()
             );
         }
+    }
+
+    /// `usize::MAX` is the "no limit" sentinel and converts to the zero the
+    /// shared limits read as unlimited. Every other value converts to itself,
+    /// which is what separates the sentinel test from its negation: inverted,
+    /// it is every ordinary value that collapses to zero.
+    #[test]
+    fn the_no_limit_sentinel_converts_to_zero_and_nothing_else_does() {
+        let limit = u64_limit_from_usize;
+
+        check!(limit(usize::MAX) == 0, "the sentinel means unlimited");
+        check!(limit(0) == 0, "and a real zero is already zero");
+        check!(limit(1) == 1);
+        check!(limit(7) == 7);
+        check!(limit(usize::MAX - 1) == u64::try_from(usize::MAX - 1).expect("fits in u64"));
+    }
+
+    /// Every limit flag reaches the provider's defaults, and each one lands in
+    /// its own field. The whole struct is compared, so a flag wired to the
+    /// neighbouring field, or a field left on the compiled default, fails here.
+    /// `max_traces_per_search` and `max_search_duration` had no route from the
+    /// command line at all: the distributor projected its own limit type onto
+    /// the shared one and pinned those two to `Limits::default()`.
+    #[test]
+    fn every_limit_flag_reaches_the_provider_defaults() {
+        let cli = Cli::try_parse_from([
+            "krabka-traces",
+            "--target",
+            "distributor",
+            "--max-ingest-spans-per-second",
+            "11",
+            "--ingest-rate-burst",
+            "22",
+            "--max-spans-per-request",
+            "33",
+            "--max-traces-per-search",
+            "44",
+            "--max-spans-per-trace",
+            "55",
+            "--max-attr-value-len",
+            "66",
+            "--max-search-duration",
+            "77s",
+        ])
+        .unwrap();
+
+        check!(
+            limits_from_cli(&cli)
+                == Limits {
+                    ingestion_rate: krabka_units::per_sec(11),
+                    ingestion_burst_spans: 22,
+                    max_spans_per_request: 33,
+                    max_traces_per_search: 44,
+                    max_spans_per_trace: 55,
+                    max_attribute: krabka_units::bytes(66),
+                    max_search_duration: secs(77),
+                }
+        );
+    }
+
+    #[test]
+    fn parses_traces_limits_overrides_config() {
+        let cli = Cli::try_parse_from([
+            "krabka-traces",
+            "--target",
+            "querier",
+            "--traces-limits-overrides-config",
+            "overrides.yaml",
+        ])
+        .unwrap();
+
+        check!(
+            cli.traces_limits_overrides_config.as_deref()
+                == Some(std::path::Path::new("overrides.yaml"))
+        );
+    }
+
+    /// With no file, every tenant gets the flags. This is why the loader hands
+    /// back a provider and not an `Option`: a role with no overrides file still
+    /// resolves a tenant through the one provider it built.
+    #[test]
+    fn absent_overrides_file_leaves_every_tenant_on_the_flags() {
+        let cli = Cli::try_parse_from([
+            "krabka-traces",
+            "--target",
+            "distributor",
+            "--max-spans-per-request",
+            "9",
+        ])
+        .unwrap();
+
+        let overrides = load_traces_limits_overrides_config(None, limits_from_cli(&cli)).unwrap();
+
+        check!(*overrides.for_tenant("tenant-a") == limits_from_cli(&cli));
+        check!(overrides.for_tenant("tenant-a").max_spans_per_request == 9);
+    }
+
+    /// A listed tenant takes the keys of its entry and keeps the flags for the
+    /// rest. The whole struct is compared, so a merge that reset an unnamed
+    /// field to the compiled default fails here rather than in production.
+    #[test]
+    fn loads_traces_limits_overrides_config_from_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overrides.yaml");
+        std::fs::write(
+            &path,
+            r"
+overrides:
+  tenant-a:
+    max_traces_per_search: 3
+    max_search_duration_secs: 30
+    max_spans_per_request: 4
+",
+        )
+        .unwrap();
+        let cli = Cli::try_parse_from([
+            "krabka-traces",
+            "--target",
+            "querier",
+            "--max-spans-per-trace",
+            "500",
+            "--traces-limits-overrides-config",
+            path.to_str().unwrap(),
+        ])
+        .unwrap();
+
+        let overrides = load_traces_limits_overrides_config(
+            cli.traces_limits_overrides_config.as_deref(),
+            limits_from_cli(&cli),
+        )
+        .unwrap();
+
+        check!(
+            *overrides.for_tenant("tenant-a")
+                == Limits {
+                    ingestion_rate: <Frequency as FrequencyExt>::ZERO,
+                    ingestion_burst_spans: 0,
+                    max_spans_per_request: 4,
+                    max_traces_per_search: 3,
+                    max_spans_per_trace: 500,
+                    max_attribute: krabka_units::kibibytes(64),
+                    max_search_duration: secs(30),
+                }
+        );
+        // A tenant the file does not name keeps the flags, not the compiled
+        // defaults: `--max-spans-per-trace` reaches it too.
+        check!(*overrides.for_tenant("tenant-b") == limits_from_cli(&cli));
+        check!(overrides.for_tenant("tenant-b").max_spans_per_trace == 500);
+    }
+
+    /// End to end through the flag: a file named on the command line reaches
+    /// the querier's read gate and changes the answer one tenant gets.
+    #[tokio::test]
+    async fn an_overrides_file_reaches_the_querier_read_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overrides.yaml");
+        std::fs::write(
+            &path,
+            r"
+overrides:
+  tenant-tight:
+    max_traces_per_search: 1
+",
+        )
+        .unwrap();
+        let cli = Cli::try_parse_from([
+            "krabka-traces",
+            "--target",
+            "querier",
+            "--traces-limits-overrides-config",
+            path.to_str().unwrap(),
+        ])
+        .unwrap();
+        let router = build_querier_router(&cli).await.unwrap();
+        let search = |tenant: &'static str| {
+            let router = router.clone();
+            async move {
+                router
+                    .oneshot(
+                        Request::builder()
+                            .uri("/api/search?q=%7B%7D&start=0&end=1&limit=2")
+                            .header(TENANT_HEADER, tenant)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .status()
+            }
+        };
+
+        check!(search("tenant-tight").await == HttpStatusCode::BAD_REQUEST);
+        check!(search("tenant-loose").await == HttpStatusCode::OK);
+    }
+
+    /// The two cardinality caps reach the generator's config from the command
+    /// line, and a file value survives when the flag is absent. A flag that
+    /// parsed but was never applied would leave an operator with a map as wide
+    /// as the process default, and nothing to show for the number typed.
+    #[test]
+    fn cardinality_cap_flags_reach_the_metrics_generator_config() {
+        let mut cfg = MetricsGenConfig {
+            max_active_series: 2_000,
+            max_tenants: 33,
+            ..MetricsGenConfig::default()
+        };
+        let without = Cli::try_parse_from(["krabka-traces", "--target", "metrics-generator"])
+            .expect("no cap flags parses");
+
+        apply_metrics_generator_cli_overrides(&mut cfg, &without);
+        check!((cfg.max_active_series, cfg.max_tenants) == (2_000, 33));
+
+        let with = Cli::try_parse_from([
+            "krabka-traces",
+            "--target",
+            "metrics-generator",
+            "--max-active-series",
+            "77",
+            "--metrics-generator-max-tenants",
+            "5",
+        ])
+        .expect("cap flags parse");
+
+        apply_metrics_generator_cli_overrides(&mut cfg, &with);
+        check!((cfg.max_active_series, cfg.max_tenants) == (77, 5));
     }
 
     #[test]
@@ -1909,7 +2349,7 @@ mod tests {
 
         for (args, refuses) in roles {
             let cli = cli_with(args, &bootstrap);
-            let outcome = require_role_topics(&cli).await;
+            let outcome = require_role_topics(&cli, None).await;
             check!(outcome.is_err() == refuses, "{args:?} before provisioning");
             if let Err(error) = outcome {
                 check!(error.to_string().contains(TRACES_WAL_TOPIC), "{args:?}");
@@ -1920,7 +2360,7 @@ mod tests {
 
         for (args, _) in roles {
             check!(
-                require_role_topics(&cli_with(args, &bootstrap))
+                require_role_topics(&cli_with(args, &bootstrap), None)
                     .await
                     .is_ok(),
                 "{args:?} after provisioning"
@@ -1938,9 +2378,14 @@ mod tests {
     /// Provisions the traces WAL topic the way the deployment step does,
     /// through the same call `krabka-o11y-bootstrap` makes.
     async fn create_traces_wal_topic(bootstrap: &str) {
-        provision_topics(bootstrap, &TRACES_TOPICS, &TopicSettings::single_broker())
-            .await
-            .expect("provision the traces WAL topic");
+        provision_topics(
+            bootstrap,
+            &TRACES_TOPICS,
+            &TopicSettings::single_broker(),
+            None,
+        )
+        .await
+        .expect("provision the traces WAL topic");
     }
 }
 
@@ -1971,8 +2416,10 @@ mod f64_from_usize;
 mod frontend_config_from_cli;
 mod indexed_live_source;
 mod ingest_rate_from_cli;
+mod limits_from_cli;
 mod live_i64_param;
 mod live_span_batches;
+mod load_traces_limits_overrides_config;
 mod log_role_outcome;
 mod max_trace_size;
 mod metrics_flags;
@@ -1994,7 +2441,9 @@ mod parse_querier_addrs;
 mod parse_scan_concat_max;
 mod parse_time_or_legacy_i64;
 mod parse_unix_nano;
+mod process_security;
 mod promoted_attrs_from_cli;
+mod require_internal_credential;
 mod require_role_topics;
 mod run;
 mod run_all;
@@ -2009,6 +2458,7 @@ mod run_querier;
 mod run_query_frontend;
 mod shared_object_store;
 mod target;
+mod u64_limit_from_usize;
 mod wal_consumer;
 
 // `alloc` deliberately has no `use` line. `#[global_allocator]` registers
@@ -2036,8 +2486,10 @@ use f64_from_usize::f64_from_usize;
 use frontend_config_from_cli::frontend_config_from_cli;
 use indexed_live_source::IndexedLiveSource;
 use ingest_rate_from_cli::ingest_rate_from_cli;
+use limits_from_cli::limits_from_cli;
 use live_i64_param::live_i64_param;
 use live_span_batches::live_span_batches;
+use load_traces_limits_overrides_config::load_traces_limits_overrides_config;
 use log_role_outcome::log_role_outcome;
 use max_trace_size::max_trace_size;
 use metrics_flags::MetricsFlags;
@@ -2059,7 +2511,9 @@ use parse_querier_addrs::parse_querier_addrs;
 use parse_scan_concat_max::parse_scan_concat_max;
 use parse_time_or_legacy_i64::parse_time_or_legacy_i64;
 use parse_unix_nano::parse_unix_nano;
+use process_security::ProcessSecurity;
 use promoted_attrs_from_cli::promoted_attrs_from_cli;
+use require_internal_credential::require_internal_credential;
 use require_role_topics::require_role_topics;
 use run::run;
 use run_all::run_all;
@@ -2074,10 +2528,14 @@ use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
 use shared_object_store::SharedObjectStore;
 use target::Target;
+use u64_limit_from_usize::u64_limit_from_usize;
 use wal_consumer::wal_consumer;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // First, before anything can open a TLS connection: the Kafka client,
+    // `reqwest` and tonic all panic without a process-wide rustls provider.
+    install_crypto_provider();
     let argv = match argv_with_config_file::<Cli>(std::env::args_os()) {
         Ok(argv) => argv,
         Err(error) => {

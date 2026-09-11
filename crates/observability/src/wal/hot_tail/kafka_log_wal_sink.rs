@@ -1,8 +1,8 @@
 use std::future::Future;
 
 use super::{
-    Acks, Arc, ClientResourcePolicy, LogWalSink, Producer, ProducerError, WalLogRecord,
-    WalSinkError, async_trait, build_kafka_wal_record,
+    Acks, Arc, ClientResourcePolicy, ClientSecurity, LogWalSink, Producer, ProducerError,
+    WalLogRecord, WalSinkError, async_trait, build_kafka_wal_record,
 };
 use crate::wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined};
 
@@ -22,17 +22,27 @@ impl KafkaLogWalSink {
     }
 
     #[cfg_attr(test, mutants::skip)]
+    /// Connects in plain text with the default Kafka connection limits.
+    ///
     /// # Errors
-    /// Returns an error when telemetry input is malformed, a query cannot be evaluated, or the configured storage or export backend fails.
+    /// Returns an error when the producer cannot start.
     pub async fn connect(
         bootstrap: impl Into<String>,
         topic: impl Into<String>,
     ) -> Result<Self, ProducerError> {
-        Self::connect_with_client_resource_policy(bootstrap, topic, ClientResourcePolicy::default())
-            .await
+        Self::connect_with_client_resource_policy(
+            bootstrap,
+            topic,
+            ClientResourcePolicy::default(),
+            None,
+        )
+        .await
     }
 
-    /// Connects with the supplied validated Kafka connection limits.
+    /// Connects with the supplied validated Kafka connection limits, under the
+    /// WAL client `security` that the service loaded.
+    ///
+    /// `None` connects in plain text.
     ///
     /// # Errors
     /// Returns an error when the producer cannot start.
@@ -40,12 +50,14 @@ impl KafkaLogWalSink {
         bootstrap: impl Into<String>,
         topic: impl Into<String>,
         client_resource_policy: ClientResourcePolicy,
+        security: Option<ClientSecurity>,
     ) -> Result<Self, ProducerError> {
         let producer = Producer::builder()
             .bootstrap(bootstrap)
             .client_id("krabka-observability-distributor")
             .dispatch_queue_capacity(client_resource_policy.dispatch_queue_capacity.get())
             .frame_max(client_resource_policy.frame_max.size())
+            .maybe_security(security)
             .acks(Acks::All)
             .build()
             .await?;

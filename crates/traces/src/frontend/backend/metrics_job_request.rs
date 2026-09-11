@@ -1,4 +1,4 @@
-use super::JobShard;
+use super::{JobShard, TenantId};
 
 /// A `TraceQL`-metrics job over a window with a step.
 ///
@@ -6,7 +6,8 @@ use super::JobShard;
 /// selects the instant-query path.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricsJobRequest {
-    pub tenant: String,
+    /// The resolved tenant, which the transport sends as `X-Scope-OrgID`.
+    pub tenant: TenantId,
     pub query: String,
     pub start_ns: i64,
     pub end_ns: i64,

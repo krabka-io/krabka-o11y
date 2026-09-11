@@ -22,7 +22,7 @@ pub(crate) async fn instant_stdvar_aggregate_is_stable_for_large_offset_group() 
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let QueryResult::InstantVector(stdvar) = engine
-        .query_instant("tenant-a", "stdvar(big)", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "stdvar(big)", 10_000)
         .await
         .unwrap()
     else {

@@ -24,7 +24,7 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
         &executor,
         &cache,
         &FrontendRangeRequest {
-            tenant: "tenant-a".into(),
+            tenant: tenant_id("tenant-a"),
             query: "up".into(),
             start_ms: 0,
             end_ms: 180_000,

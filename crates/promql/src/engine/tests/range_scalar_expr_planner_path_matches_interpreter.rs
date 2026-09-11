@@ -30,7 +30,7 @@ pub(crate) async fn range_scalar_expr_planner_path_matches_interpreter() {
         }
         assert2::assert!(super::super::range_expr_routes_through_planner(probe));
         let planner = engine
-            .query_range("t", query, start, end, step)
+            .query_range(&tenant_id("t"), query, start, end, step)
             .await
             .unwrap_or_else(|error| panic!("planner `{query}`: {error}"));
         // A scalar range query stitches a single no-label series, one float

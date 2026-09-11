@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BTreeMap, Offset, PartitionIndex, WalHead, WalHeadConsumerRecord, WalHeadPartitionOffset,
+    WalHeadReplayError, WalHeadReplayResult, WalRecord, wal_record_max_timestamp_ms,
+};
 
 #[tracing::instrument(
     level = "debug",

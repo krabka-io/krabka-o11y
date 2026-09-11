@@ -20,4 +20,9 @@ pub struct WalTailConfig {
     pub client_frame_max: krabka_client_core::ClientFrameMax,
     /// The instruments every poll is recorded into.
     pub metrics: WalConsumerMetrics,
+    /// TLS and SASL for the consumer. `None` connects in plain text.
+    ///
+    /// The policy holds the SASL password, and `krabka-client-core` prints it
+    /// under `{:?}`. That is why this struct has no `Debug`.
+    pub security: Option<krabka_client_core::ClientSecurity>,
 }

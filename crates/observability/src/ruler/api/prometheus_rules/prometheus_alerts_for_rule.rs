@@ -1,12 +1,12 @@
 use super::{
-    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, Value,
+    HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, TenantId, Value,
     execute_http_query_for_tenant, loki_yaml_mapping, prometheus_alerts_from_query_result,
     yaml_string_field,
 };
 
 pub(crate) async fn prometheus_alerts_for_rule(
     state: &QuerierState,
-    tenant: &str,
+    tenant: &TenantId,
     rule: &serde_yaml::Value,
     evaluation_time: i64,
 ) -> Result<Vec<Value>, HttpQueryError> {
@@ -41,7 +41,7 @@ pub(crate) async fn prometheus_alerts_for_rule(
     .await?;
     Ok(prometheus_alerts_from_query_result(
         &state.alert_states,
-        tenant,
+        tenant.as_str(),
         alert_name,
         fields,
         query,

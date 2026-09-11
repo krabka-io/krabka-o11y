@@ -1,8 +1,8 @@
 use krabka_observability::RoleReadiness;
 
-use super::{Cli, ServiceMetrics, SharedObjectStore};
+use super::{Cli, ProcessSecurity, ServiceMetrics, SharedObjectStore};
 
-/// The four things every role of `--target all` needs, and one of each.
+/// The five things every role of `--target all` needs, and one of each.
 ///
 /// Each field is shared rather than per-role, and each for its own reason:
 ///
@@ -18,10 +18,15 @@ use super::{Cli, ServiceMetrics, SharedObjectStore};
 ///   that four of the roles could have registered.
 /// * `object_store` is one store. See [`SharedObjectStore`] for what four of
 ///   them would do to a `memory:///` deployment.
+/// * `security` is one loaded posture, so every listener serves alike and one
+///   audit trail records what all of them report. See
+///   [`run_all`](super::run_all::run_all) for what that means for the
+///   loopback ports.
 #[derive(Clone)]
 pub(crate) struct AllRoleContext {
     pub(crate) cli: Cli,
     pub(crate) metrics: ServiceMetrics,
     pub(crate) readiness: RoleReadiness,
     pub(crate) object_store: SharedObjectStore,
+    pub(crate) security: ProcessSecurity,
 }

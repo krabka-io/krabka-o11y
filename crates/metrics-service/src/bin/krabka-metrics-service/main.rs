@@ -11,12 +11,14 @@ use std::{
 };
 
 use clap::{Parser, ValueEnum};
+use krabka_blockstore::TenantId;
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_core::{
-    ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
+    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
 use krabka_client_producer::Producer;
-use krabka_metrics::{OverridesProvider, WAL_TOPIC};
+use krabka_metrics::{Limits, OverridesProvider, WAL_TOPIC};
 use krabka_metrics_service::{
     KafkaRecordingRuleWalSink, KafkaRulerStateSink, PrometheusRulerStateSink, RULER_STATE_TOPIC,
     RulerAlertmanagerSink, RulerStateFanoutSink, WalHeadConsumerCommit, WalHeadConsumerPoll,
@@ -24,7 +26,12 @@ use krabka_metrics_service::{
     run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
 use krabka_observability::{
-    ConfigFileArgs, ReadinessGate, RoleReadiness, argv_with_config_file, readiness_router,
+    CancellationToken, ConfigFileArgs, CriticalTaskError, ReadinessGate, RoleReadiness,
+    SupervisedTasks, argv_with_config_file,
+    audit::{AuditArgs, AuditHandle, AuditService, krabka_product},
+    readiness_router,
+    server_security::{ServerSecurity, ServerSecurityArgs, install_crypto_provider},
+    wal_client_security::WalClientSecurityArgs,
 };
 use krabka_promql::{
     EngineOpts, PrometheusApiState, QueryFrontendOptions, RulerShard, WalHead, prometheus_router,
@@ -145,6 +152,26 @@ mod tests {
             cli.ruler_bundled_rules.as_deref()
                 == Some(Path::new("/etc/krabka/rules/krabka-clock.yaml"))
         );
+    }
+
+    /// The ruler writes recording-rule samples and reads rules under this
+    /// tenant, so it goes through the same tenant rules as a request header.
+    /// A name that could not come from a request is refused at start, and the
+    /// default is the anonymous tenant.
+    #[test]
+    fn the_ruler_tenant_is_a_valid_tenant_id_and_defaults_to_anonymous() {
+        let parse = |tenant: Option<&str>| {
+            let mut args = vec!["krabka-metrics-service", "--target", "ruler"];
+            if let Some(tenant) = tenant {
+                args.extend(["--ruler-tenant", tenant]);
+            }
+            Cli::try_parse_from(args)
+        };
+
+        check!(parse(None).map(|cli| cli.ruler_tenant).ok() == Some(TenantId::anonymous()));
+        for invalid in ["a/b", "..", "a|b"] {
+            check!(parse(Some(invalid)).is_err(), "{invalid}");
+        }
     }
 
     #[test]
@@ -574,6 +601,85 @@ mod tests {
         );
     }
 
+    /// The server, audit and write-ahead log security flags are the shared
+    /// ones, flattened. With none set, the data port serves plain HTTP with no
+    /// authentication, the audit layer is off, and the broker connections are
+    /// plain text, as Grafana Mimir and the Kafka clients default to.
+    #[test]
+    fn parses_the_server_audit_and_wal_security_flags() {
+        let defaults =
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "ruler"]).unwrap();
+        check!(defaults.server_security.server_tls_cert_path.is_none());
+        check!(defaults.server_security.auth_credentials_config.is_none());
+        check!(
+            defaults
+                .server_security
+                .internal_client_tls_ca_path
+                .is_none()
+        );
+        check!(!defaults.audit.is_enabled());
+        check!(defaults.wal_security == WalClientSecurityArgs::default());
+
+        let configured = Cli::try_parse_from([
+            "krabka-metrics-service",
+            "--target",
+            "ruler",
+            "--server-tls-cert-path",
+            "/etc/krabka/tls.crt",
+            "--server-tls-key-path",
+            "/etc/krabka/tls.key",
+            "--auth-credentials-config",
+            "/etc/krabka/credentials.yaml",
+            "--internal-client-token-path",
+            "/etc/krabka/internal-token",
+            "--internal-client-tls-ca-path",
+            "/etc/krabka/ca.pem",
+            "--audit-topic",
+            "krabka-audit",
+            "--audit-bootstrap",
+            "audit-broker:9092",
+            "--wal-security-protocol",
+            "SSL",
+            "--wal-tls-ca-path",
+            "/etc/krabka/broker-ca.pem",
+            "--wal-tls-server-name",
+            "broker.internal",
+        ])
+        .unwrap();
+        check!(
+            configured.server_security.server_tls_cert_path
+                == Some(PathBuf::from("/etc/krabka/tls.crt"))
+        );
+        check!(
+            configured.server_security.server_tls_key_path
+                == Some(PathBuf::from("/etc/krabka/tls.key"))
+        );
+        check!(
+            configured.server_security.auth_credentials_config
+                == Some(PathBuf::from("/etc/krabka/credentials.yaml"))
+        );
+        check!(
+            configured.server_security.internal_client_token_path
+                == Some(PathBuf::from("/etc/krabka/internal-token"))
+        );
+        check!(
+            configured.server_security.internal_client_tls_ca_path
+                == Some(PathBuf::from("/etc/krabka/ca.pem"))
+        );
+        check!(configured.audit.topic.as_deref() == Some("krabka-audit"));
+        check!(configured.audit.bootstrap.as_deref() == Some("audit-broker:9092"));
+        check!(
+            configured.wal_security
+                == WalClientSecurityArgs {
+                    wal_security_protocol:
+                        krabka_observability::wal_client_security::WalSecurityProtocol::Ssl,
+                    wal_tls_ca_path: Some(PathBuf::from("/etc/krabka/broker-ca.pem")),
+                    wal_tls_server_name: Some("broker.internal".to_string()),
+                    ..WalClientSecurityArgs::default()
+                }
+        );
+    }
+
     #[tokio::test]
     async fn shutdown_signalled_resolves_after_trigger() {
         let shutdown = Shutdown::new();
@@ -731,7 +837,10 @@ mod tests {
         for target in ["querier", "query-frontend", "ruler"] {
             let without = Cli::try_parse_from(["krabka-metrics-service", "--target", target])
                 .expect("cli without a broker");
-            check!(require_role_topics(&without).await.is_ok(), "{target}");
+            check!(
+                require_role_topics(&without, None).await.is_ok(),
+                "{target}"
+            );
 
             let with = Cli::try_parse_from([
                 "krabka-metrics-service",
@@ -741,7 +850,7 @@ mod tests {
                 &unreachable,
             ])
             .expect("cli with an unreachable broker");
-            check!(require_role_topics(&with).await.is_err(), "{target}");
+            check!(require_role_topics(&with, None).await.is_err(), "{target}");
         }
     }
 
@@ -817,6 +926,9 @@ use target::Target;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // First: rustls has two crypto providers compiled in, and the first TLS
+    // client or server that asks for the process default panics without one.
+    install_crypto_provider();
     let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
@@ -830,6 +942,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "krabka-metrics-service",
     )?;
     let result = async {
+        // Every security flag is checked, and every file it names is read,
+        // before the process binds a port or reaches a broker. With no
+        // security flag set, both values are the upstream default: plain
+        // text, and no credentials.
+        let server_security = cli.server_security.load()?;
+        let wal_security = cli.wal_security.load()?;
         let metrics = krabka_promql::metrics::ServiceMetrics::new();
         // One readiness for the process. The admin port answers `/ready` from
         // the moment it binds, which is what a probe that cannot reach the
@@ -850,17 +968,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // provisioned reads a re-mapped key space, and a ruler started
             // against an uncompacted state topic loses every pending alert at
             // the retention window; neither reports itself.
-            require_role_topics(&cli).await?;
+            require_role_topics(&cli, wal_security.clone()).await?;
             // The role in the vocabulary every signal shares, not this
             // binary's own spelling of it. An operator reading four services'
             // logs should see one word for one stage.
             tracing::info!(role = %cli.target.kind(), "krabka-metrics-service starting");
-            match cli.target {
-                Target::Querier => run_querier(cli, metrics, readiness).await?,
-                Target::QueryFrontend => run_query_frontend(cli, metrics, readiness).await?,
-                Target::Ruler => run_ruler(cli, metrics, readiness).await?,
+            // With no `--audit-topic` this spawns nothing and reaches no
+            // broker.
+            let audit_stop = CancellationToken::new();
+            let (audit, audit_writer) = AuditService::start(
+                &cli.audit,
+                krabka_product("krabka-metrics-service", env!("CARGO_PKG_VERSION")),
+                cli.wal_bootstrap.as_deref(),
+                wal_security.as_ref(),
+                audit_stop.clone(),
+            )
+            .await?
+            .into_parts();
+            let mut audit_tasks = SupervisedTasks::new(audit_stop);
+            if let Some(writer) = audit_writer {
+                audit_tasks.adopt("audit writer", writer);
             }
-            Ok::<(), Box<dyn std::error::Error>>(())
+            let server_security = server_security.with_security_events(Arc::new(audit.clone()));
+            // Boxed, so the start-up future stays small: the role's own future
+            // holds its whole serving state.
+            let serve_role = Box::pin(async {
+                match cli.target {
+                    Target::Querier => {
+                        run_querier(
+                            cli,
+                            metrics,
+                            readiness,
+                            &server_security,
+                            wal_security,
+                            audit,
+                        )
+                        .await
+                    }
+                    Target::QueryFrontend => {
+                        run_query_frontend(cli, metrics, readiness, &server_security, audit).await
+                    }
+                    Target::Ruler => {
+                        run_ruler(
+                            cli,
+                            metrics,
+                            readiness,
+                            &server_security,
+                            wal_security,
+                            audit,
+                        )
+                        .await
+                    }
+                }
+            });
+            let outcome: Result<(), Box<dyn std::error::Error>> = tokio::select! {
+                result = serve_role => result,
+                name = audit_tasks.first_unexpected_exit() => Err(CriticalTaskError(name).into()),
+            };
+            // The role has stopped its listener, so no request emits an audit
+            // event after the writer closes its queue.
+            audit_tasks.shutdown().await;
+            outcome
         };
         tokio::select! {
             result = role => result?,

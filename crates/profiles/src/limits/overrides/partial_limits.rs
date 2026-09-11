@@ -33,36 +33,31 @@ pub(crate) struct PartialLimits {
 impl PartialLimits {
     /// Validate numeric ranges before the merge of the partial into full limits.
     ///
-    /// Rejects the following, each with [`OverridesError::Invalid`]:
+    /// Returns the reason a block is unusable, for the caller to name the block
+    /// it came from. Rejects the following:
     /// - a non-finite (`NaN` or `inf`) or negative
     ///   `ingestion_rate_profiles_per_sec`,
     /// - a negative flamegraph node cap, either `max_flamegraph_nodes_default`
     ///   or `max_flamegraph_nodes_max`.
     ///
     /// The remaining caps are `u64` and therefore cannot be negative. Serde
-    /// already rejects an out-of-range YAML literal for them at
-    /// deserialization.
-    pub(crate) fn validate(&self, tenant: &str) -> Result<(), OverridesError> {
-        let invalid = |reason: &str| OverridesError::Invalid {
-            tenant: tenant.to_string(),
-            reason: reason.to_string(),
-        };
+    /// already rejects an out-of-range, fractional, or negative YAML literal for
+    /// them at deserialization, and that covers every byte cap.
+    pub(crate) fn validate(&self) -> Result<(), String> {
         if let Some(rate) = self.ingestion_rate_profiles_per_sec
             && (!rate.is_finite() || rate < 0.0)
         {
-            return Err(invalid(
-                "ingestion_rate_profiles_per_sec must be finite and >= 0",
-            ));
+            return Err("ingestion_rate_profiles_per_sec must be finite and >= 0".to_string());
         }
         if let Some(nodes) = self.max_flamegraph_nodes_default
             && nodes < 0
         {
-            return Err(invalid("max_flamegraph_nodes_default must be >= 0"));
+            return Err("max_flamegraph_nodes_default must be >= 0".to_string());
         }
         if let Some(nodes) = self.max_flamegraph_nodes_max
             && nodes < 0
         {
-            return Err(invalid("max_flamegraph_nodes_max must be >= 0"));
+            return Err("max_flamegraph_nodes_max must be >= 0".to_string());
         }
         Ok(())
     }

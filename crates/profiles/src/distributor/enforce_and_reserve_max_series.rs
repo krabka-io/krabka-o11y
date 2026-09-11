@@ -1,4 +1,4 @@
-use super::{BTreeSet, DistributorState, ProfileRecord, ProfilesError, evict_one_tenant};
+use super::{BTreeSet, DistributorState, ProfileRecord, ProfilesError, TenantId, evict_one_tenant};
 
 /// Tests the per-tenant max-series limit and reserves the new fingerprints.
 ///
@@ -16,10 +16,10 @@ use super::{BTreeSet, DistributorState, ProfileRecord, ProfilesError, evict_one_
 /// track cardinality in that case.
 pub(crate) fn enforce_and_reserve_max_series(
     state: &DistributorState,
-    tenant: &str,
+    tenant: &TenantId,
     records: &[ProfileRecord],
 ) -> Result<Vec<u64>, ProfilesError> {
-    let limit = state.profile_overrides.for_tenant(tenant).max_series;
+    let limit = state.overrides.for_tenant(tenant).max_series;
     if limit == 0 {
         return Ok(Vec::new());
     }
@@ -31,10 +31,10 @@ pub(crate) fn enforce_and_reserve_max_series(
 
     // Bound per-tenant map growth: evict an arbitrary existing tenant before
     // admitting a brand-new one once the cap is hit.
-    if !active.contains_key(tenant) && active.len() >= state.max_tracked_tenants {
+    if !active.contains_key(tenant.as_str()) && active.len() >= state.max_tracked_tenants {
         evict_one_tenant(&mut active);
     }
-    let entry = active.entry(tenant.to_string()).or_default();
+    let entry = active.entry(tenant.as_str().to_owned()).or_default();
 
     // Compute the DISTINCT fingerprints this request would newly add, without
     // mutating `entry` yet, so a rejection leaves the set untouched (no partial

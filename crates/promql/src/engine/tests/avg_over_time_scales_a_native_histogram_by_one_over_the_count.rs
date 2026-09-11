@@ -36,7 +36,7 @@ pub(crate) async fn avg_over_time_scales_a_native_histogram_by_one_over_the_coun
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", "avg_over_time(h[5m])", 20_000)
+        .query_instant(&tenant_id("tenant-a"), "avg_over_time(h[5m])", 20_000)
         .await
         .expect("a histogram average")
     else {

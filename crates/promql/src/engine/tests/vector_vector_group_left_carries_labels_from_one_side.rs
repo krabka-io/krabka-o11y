@@ -29,7 +29,7 @@ pub(crate) async fn vector_vector_group_left_carries_labels_from_one_side() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "http_requests_total / on (job) group_left(region) target_info",
             10_000,
         )

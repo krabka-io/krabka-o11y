@@ -23,7 +23,7 @@ pub(crate) async fn a_fill_modifier_is_refused_on_a_set_operator() {
         "a unless on (job) fill(0) b",
     ] {
         let error = engine
-            .query_instant("tenant-a", query, 10_000)
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
             .await
             .expect_err("a fill modifier on a set operator is a planning error");
         assert2::assert!(

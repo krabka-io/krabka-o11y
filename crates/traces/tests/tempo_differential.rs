@@ -791,7 +791,7 @@ async fn start_krabka_pair_on(
 ) -> TestResult<KrabkaPair> {
     let sink = CapturingSink::default();
     let distributor_state = Arc::new(DistributorState::new(Arc::new(sink.clone())));
-    let resp = distributor::router(distributor_state)
+    let resp = authenticated(distributor::router(distributor_state))
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -813,7 +813,7 @@ async fn start_krabka_pair_on(
         Arc::new(span_store_from_records(&records)),
         EngineOpts::default(),
     ));
-    let app = krabka_traces::querier::http::router(store);
+    let app = authenticated(krabka_traces::querier::http::router(store));
     let listener = tokio::net::TcpListener::bind(format!("{bind_host}:0")).await?;
     let addr = listener.local_addr()?;
     let port = addr.port();
@@ -1352,4 +1352,14 @@ fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
         }),
         ..OtlpKeyValue::default()
     }
+}
+
+// The routers read the principal from the request extensions, where the
+// authentication layer puts it. This is that layer with no security flags,
+// which serves every request as unauthenticated.
+fn authenticated(router: axum::Router) -> axum::Router {
+    krabka_observability::server_security::authenticate_requests(
+        router,
+        &krabka_observability::server_security::ServerSecurity::default(),
+    )
 }

@@ -11,10 +11,18 @@ use krabka_blockstore::{
 };
 use krabka_client_consumer::ConsumerFetchMaxBytes;
 use krabka_client_core::{
-    ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
+    DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
 use krabka_client_producer::Producer;
-use krabka_observability::{ConfigFileArgs, argv_with_config_file};
+use krabka_observability::{
+    ConfigFileArgs, argv_with_config_file,
+    audit::{AuditArgs, AuditService, krabka_product},
+    server_security::{
+        ServerListener, ServerSecurity, ServerSecurityArgs, install_crypto_provider, serve_router,
+    },
+    wal_client_security::WalClientSecurityArgs,
+};
 use krabka_pprof::{DebuginfodConfig, UnionProfileStore};
 use krabka_profiles::{
     blockbuilder::BlockBuilderConfig,
@@ -22,7 +30,7 @@ use krabka_profiles::{
     compactor::{DownsamplePolicy, compact_once_with_policy},
     distributor::{DistributorState, KafkaSink, serve_supervised},
     hot_store::{RetentionConfig, WalTailProfileStore},
-    ingest::{RelabelConfig, TenantLimitConfig},
+    ingest::RelabelConfig,
     limits::{Limits, OverridesProvider},
     metrics::ServiceMetrics,
     query::{QuerierState, serve_supervised as serve_querier},
@@ -46,7 +54,11 @@ mod tests {
     use assert2::{assert, check};
     use clap::{CommandFactory, Parser};
     use krabka_broker::{Broker, BrokerConfig};
-    use krabka_observability::topic_contract::{PROFILES_TOPICS, TopicSettings, provision_topics};
+    use krabka_observability::{
+        server_security::ClientAuth,
+        topic_contract::{PROFILES_TOPICS, TopicSettings, provision_topics},
+        wal_client_security::{WalSaslMechanism, WalSecurityProtocol},
+    };
     use krabka_units::{bytes, per_sec};
 
     use super::*;
@@ -800,41 +812,16 @@ mod tests {
     }
 
     #[test]
-    fn loads_tenant_limits_config_from_json() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("limits.json");
-        std::fs::write(
-            &path,
-            r#"{
-              "default": {
-                "max_label_names_per_series": 10,
-                "max_label_value": "100B",
-                "session_id_buckets": 32
-              },
-              "tenants": {
-                "tenant-a": {
-                  "max_label_names_per_series": 2,
-                  "max_label_value": "3B",
-                  "session_id_buckets": 4
-                }
-              }
-            }"#,
-        )
-        .unwrap();
-
-        let config = load_tenant_limits_config(Some(&path)).unwrap();
-
-        assert!(config.default.max_label_names_per_series == 10);
-        assert!(config.for_tenant("tenant-a").max_label_value == bytes(3));
-    }
-
-    #[test]
     fn loads_profiles_limits_overrides_config_from_yaml() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("overrides.yaml");
         std::fs::write(
             &path,
             r"
+defaults:
+  max_label_value_length: 100
+  max_label_names_per_series: 10
+  max_session_id_cardinality: 32
 overrides:
   tenant-a:
     max_query_length_secs: 30
@@ -846,25 +833,146 @@ overrides:
         let overrides = load_profiles_limits_overrides_config(Some(&path)).unwrap();
 
         assert!(
-            *overrides.for_tenant("tenant-a")
+            *overrides.for_tenant(&"tenant-a".parse().unwrap())
                 == krabka_profiles::limits::Limits {
                     ingestion_rate: per_sec(10_000),
                     ingestion_burst_profiles: 10_000,
                     max_series: 0,
                     max_label_name: bytes(1024),
-                    max_label_value: bytes(2048),
-                    max_label_names_per_series: 40,
+                    max_label_value: bytes(100),
+                    max_label_names_per_series: 10,
                     max_flamegraph_nodes_default: 2048,
                     max_flamegraph_nodes_max: 512,
                     max_query_length: secs(30),
-                    max_session_id_cardinality: 0,
+                    max_session_id_cardinality: 32,
                 }
         );
-        // An unlisted tenant inherits the process default query-length cap.
-        check!(
-            overrides.for_tenant("tenant-b").max_query_length
-                == krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH
+        // An unlisted tenant takes the file's defaults, and the process default
+        // for every cap the file leaves alone.
+        assert!(
+            *overrides.for_tenant(&"tenant-b".parse().unwrap())
+                == krabka_profiles::limits::Limits {
+                    ingestion_rate: per_sec(10_000),
+                    ingestion_burst_profiles: 10_000,
+                    max_series: 0,
+                    max_label_name: bytes(1024),
+                    max_label_value: bytes(100),
+                    max_label_names_per_series: 10,
+                    max_flamegraph_nodes_default: 2048,
+                    max_flamegraph_nodes_max: 0,
+                    max_query_length: krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH,
+                    max_session_id_cardinality: 32,
+                }
         );
+    }
+
+    #[test]
+    fn an_absent_overrides_config_leaves_the_process_defaults() {
+        let overrides = load_profiles_limits_overrides_config(None).unwrap();
+
+        check!(
+            *overrides.for_tenant(&"tenant-a".parse().unwrap())
+                == krabka_profiles::limits::Limits::default()
+        );
+    }
+
+    #[test]
+    fn the_server_audit_and_wal_security_flags_parse() {
+        let base = ["krabka-profiles", "--target", "distributor"];
+        let defaults = Cli::try_parse_from(base).unwrap();
+        let cli = Cli::try_parse_from(base.into_iter().chain([
+            "--server-tls-cert-path",
+            "server.pem",
+            "--server-tls-key-path",
+            "server-key.pem",
+            "--server-tls-client-ca-path",
+            "client-ca.pem",
+            "--server-tls-client-auth",
+            "RequireAndVerifyClientCert",
+            "--server-tls-handshake-timeout",
+            "5s",
+            "--auth-credentials-config",
+            "credentials.yaml",
+            "--internal-client-token-path",
+            "internal-token",
+            "--audit-topic",
+            "krabka-audit",
+            "--audit-partition",
+            "3",
+            "--audit-spool-dir",
+            "audit-spool",
+            "--wal-security-protocol",
+            "SASL_SSL",
+            "--wal-tls-ca-path",
+            "wal-ca.pem",
+            "--wal-tls-server-name",
+            "broker.internal",
+            "--wal-sasl-mechanism",
+            "SCRAM-SHA-512",
+            "--wal-sasl-username",
+            "profiles",
+            "--wal-sasl-password-path",
+            "wal-password",
+        ]))
+        .unwrap();
+
+        let server = &cli.server_security;
+        check!(server.server_tls_cert_path.as_deref() == Some(Path::new("server.pem")));
+        check!(server.server_tls_key_path.as_deref() == Some(Path::new("server-key.pem")));
+        check!(server.server_tls_client_ca_path.as_deref() == Some(Path::new("client-ca.pem")));
+        check!(server.server_tls_client_auth == ClientAuth::RequireAndVerifyClientCert);
+        check!(server.server_tls_handshake_timeout == secs(5));
+        check!(server.auth_credentials_config.as_deref() == Some(Path::new("credentials.yaml")));
+        check!(server.internal_client_token_path.as_deref() == Some(Path::new("internal-token")));
+        let mut audit = defaults.audit;
+        audit.topic = Some("krabka-audit".to_owned());
+        audit.partition.0 = 3;
+        audit.spool_dir = Some("audit-spool".into());
+        check!(cli.audit == audit);
+        check!(
+            cli.wal_security
+                == WalClientSecurityArgs {
+                    wal_security_protocol: WalSecurityProtocol::SaslSsl,
+                    wal_tls_ca_path: Some("wal-ca.pem".into()),
+                    wal_tls_server_name: Some("broker.internal".to_owned()),
+                    wal_sasl_mechanism: Some(WalSaslMechanism::ScramSha512),
+                    wal_sasl_username: Some("profiles".to_owned()),
+                    wal_sasl_password_path: Some("wal-password".into()),
+                    ..WalClientSecurityArgs::default()
+                }
+        );
+    }
+
+    // With no security flag, the process serves and connects as Pyroscope
+    // does. A combination that cannot work stops the start instead.
+    #[test]
+    fn process_security_loads_no_flags_and_refuses_a_combination_that_cannot_work() {
+        let base = ["krabka-profiles", "--target", "distributor"];
+        let unconfigured = ProcessSecurity::load(&Cli::try_parse_from(base).unwrap())
+            .expect("no security flag is a usable combination");
+        check!(
+            (
+                unconfigured.server.tls_enabled(),
+                unconfigured.server.authentication_enabled(),
+                unconfigured.wal.is_none()
+            ) == (false, false, true)
+        );
+
+        for flags in [
+            &["--server-tls-cert-path", "server.pem"][..],
+            &["--server-tls-client-auth", "RequireAndVerifyClientCert"],
+            &["--wal-security-protocol", "SSL"],
+            &["--wal-tls-ca-path", "wal-ca.pem"],
+            &[
+                "--wal-security-protocol",
+                "SASL_PLAINTEXT",
+                "--wal-sasl-mechanism",
+                "PLAIN",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(base.into_iter().chain(flags.iter().copied())).unwrap();
+            check!(ProcessSecurity::load(&cli).is_err(), "{flags:?}");
+        }
     }
 
     #[test]
@@ -900,7 +1008,7 @@ overrides:
         ];
 
         for (target, refuses) in roles {
-            let outcome = require_role_topics(&cli_for(target, &bootstrap)).await;
+            let outcome = require_role_topics(&cli_for(target, &bootstrap), None).await;
             check!(outcome.is_err() == refuses, "{target} before provisioning");
             if let Err(error) = outcome {
                 check!(
@@ -917,13 +1025,14 @@ overrides:
             &bootstrap,
             &PROFILES_TOPICS,
             &TopicSettings::single_broker(),
+            None,
         )
         .await
         .expect("provision the profiles WAL topic");
 
         for (target, _) in roles {
             check!(
-                require_role_topics(&cli_for(target, &bootstrap))
+                require_role_topics(&cli_for(target, &bootstrap), None)
                     .await
                     .is_ok(),
                 "{target} after provisioning"
@@ -978,7 +1087,6 @@ mod compactor_stage;
 mod configured_object_store;
 mod debuginfod_config;
 mod load_profiles_limits_overrides_config;
-mod load_tenant_limits_config;
 mod parse_client_dispatch_queue_capacity;
 mod parse_client_frame_max;
 mod parse_consumer_fetch_size;
@@ -990,6 +1098,7 @@ mod parse_positive_time_or_legacy_nanos;
 mod parse_positive_u32;
 mod parse_positive_usize;
 mod parse_positive_whole_byte_size;
+mod process_security;
 mod profile_read_path;
 mod read_path_stage;
 mod require_role_topics;
@@ -1028,7 +1137,6 @@ use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
 use debuginfod_config::debuginfod_config;
 use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
-use load_tenant_limits_config::load_tenant_limits_config;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
 use parse_consumer_fetch_size::parse_consumer_fetch_size;
@@ -1040,6 +1148,7 @@ use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
 use parse_positive_u32::parse_positive_u32;
 use parse_positive_usize::parse_positive_usize;
 use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
+use process_security::ProcessSecurity;
 use profile_read_path::ProfileReadPath;
 use read_path_stage::read_path_stage;
 use require_role_topics::require_role_topics;
@@ -1060,6 +1169,10 @@ use target::Target;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // First, because the workspace compiles rustls with two providers. The
+    // first TLS connection of the Kafka client or of `reqwest` panics while
+    // no provider is the process default.
+    install_crypto_provider();
     let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(

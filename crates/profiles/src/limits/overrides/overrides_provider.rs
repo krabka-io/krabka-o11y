@@ -1,4 +1,4 @@
-use super::{HashMap, Limits, OverridesError, RuntimeFile};
+use super::{HashMap, Limits, OverridesError, RuntimeFile, TenantId};
 
 /// Pyroscope-style runtime overrides resolved into full per-tenant limits.
 #[derive(Clone, Debug)]
@@ -20,18 +20,27 @@ impl OverridesProvider {
     /// # Errors
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub fn from_yaml(yaml: &str) -> Result<Self, OverridesError> {
-        Self::from_yaml_with_defaults(yaml, Limits::default())
+        Self::from_yaml_with_defaults(yaml, &Limits::default())
     }
 
     ///
     /// # Errors
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-    pub fn from_yaml_with_defaults(yaml: &str, defaults: Limits) -> Result<Self, OverridesError> {
+    pub fn from_yaml_with_defaults(yaml: &str, defaults: &Limits) -> Result<Self, OverridesError> {
         let parsed: RuntimeFile =
             serde_yaml::from_str(yaml).map_err(|err| OverridesError::Yaml(err.to_string()))?;
+        parsed
+            .defaults
+            .validate()
+            .map_err(|reason| OverridesError::InvalidDefaults { reason })?;
+        // The file's `defaults` block lands first, so a tenant entry departs
+        // from what the operator wrote rather than from the compiled-in value.
+        let defaults = parsed.defaults.merge_over(defaults);
         let mut per_tenant = HashMap::new();
         for (tenant, partial) in parsed.overrides {
-            partial.validate(&tenant)?;
+            if let Err(reason) = partial.validate() {
+                return Err(OverridesError::Invalid { tenant, reason });
+            }
             per_tenant.insert(tenant, partial.merge_over(&defaults));
         }
         Ok(Self {
@@ -40,13 +49,12 @@ impl OverridesProvider {
         })
     }
 
+    /// The limits of `tenant`: its own entry, or the defaults when the file
+    /// lists no entry for it.
     #[must_use]
-    pub fn for_tenant(&self, tenant: &str) -> &Limits {
-        self.per_tenant.get(tenant).unwrap_or(&self.defaults)
-    }
-
-    #[must_use]
-    pub fn has_tenant_override(&self, tenant: &str) -> bool {
-        self.per_tenant.contains_key(tenant)
+    pub fn for_tenant(&self, tenant: &TenantId) -> &Limits {
+        self.per_tenant
+            .get(tenant.as_str())
+            .unwrap_or(&self.defaults)
     }
 }

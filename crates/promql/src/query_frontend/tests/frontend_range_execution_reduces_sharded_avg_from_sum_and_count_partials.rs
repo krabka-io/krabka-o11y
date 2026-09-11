@@ -9,7 +9,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_avg_from_sum_and_co
         &executor,
         &cache,
         &FrontendRangeRequest {
-            tenant: "tenant-a".into(),
+            tenant: tenant_id("tenant-a"),
             query: "avg(up)".into(),
             start_ms: 0,
             end_ms: 0,

@@ -6,8 +6,11 @@ use super::*;
 /// through it would serve a query those limits refuse.
 #[tokio::test]
 pub(crate) async fn a_single_tenant_query_still_meets_the_configured_range_limit() {
-    let state = QuerierState::new(".", LabelIndex::default(), BlockIndex::default())
-        .with_max_query_range(Time::from_nanos(1_000_000_000));
+    let state =
+        QuerierState::new(".", LabelIndex::default(), BlockIndex::default()).with_limits(Limits {
+            max_query_range: Time::from_nanos(1_000_000_000),
+            ..Limits::default()
+        });
     let mut headers = HeaderMap::new();
     headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
     let params = QueryParams {
@@ -23,8 +26,14 @@ pub(crate) async fn a_single_tenant_query_still_meets_the_configured_range_limit
         delay_for: None,
     };
 
-    let error = execute_http_query(&state, &headers, params, QueryKind::Range)
-        .await
-        .expect_err("ten seconds is past the one-second maximum");
+    let error = execute_http_query(
+        &state,
+        &super::super::prelude::RequestSecurity::unauthenticated(),
+        &headers,
+        params,
+        QueryKind::Range,
+    )
+    .await
+    .expect_err("ten seconds is past the one-second maximum");
     check!(matches!(error, HttpQueryError::QueryRangeTooLarge { .. }));
 }

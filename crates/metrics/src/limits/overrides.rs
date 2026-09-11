@@ -23,7 +23,56 @@ overrides:
     out_of_order_time_window: "1500ms"
     max_query_length: "1h"
     max_query_lookback: "7d"
+  tenant-d:
+    max_series_per_request: 3
+    max_samples_per_series: 5
+    active_series_idle_timeout: "2m"
+    otlp_delta_max_stale: "90s"
+    otlp_delta_max_streams: 7
 "#;
+
+    /// The request-shape limits reach the same per-tenant override path as
+    /// every other limit. Both are counts with neighbouring names, so the two
+    /// values differ: a field that reads its neighbour still parses, and only
+    /// distinct numbers show it.
+    #[test]
+    fn request_shape_limits_are_settable_per_tenant() {
+        let p = OverridesProvider::from_yaml(YAML).unwrap();
+        let d = p.for_tenant("tenant-d");
+
+        check!(d.max_series_per_request == 3);
+        check!(d.max_samples_per_series == 5, "not the series cap");
+        check!(
+            p.for_tenant("tenant-a").max_series_per_request
+                == Limits::default().max_series_per_request,
+            "an unlisted field keeps the default"
+        );
+        check!(
+            p.for_tenant("tenant-a").max_samples_per_series
+                == Limits::default().max_samples_per_series
+        );
+    }
+
+    /// The two eviction windows and the OTLP stream cap are per-tenant too,
+    /// because a tenant with long-lived series and one with churn need
+    /// different windows. Each value here is distinct from the others and
+    /// from every default.
+    #[test]
+    fn eviction_windows_are_settable_per_tenant() {
+        let p = OverridesProvider::from_yaml(YAML).unwrap();
+        let d = p.for_tenant("tenant-d");
+
+        check!(d.active_series_idle_timeout == minutes(2));
+        check!(d.otlp_delta_max_stale == secs(90), "not the idle timeout");
+        check!(d.otlp_delta_max_streams == 7);
+
+        let a = p.for_tenant("tenant-a");
+        check!(
+            a.active_series_idle_timeout == minutes(20),
+            "Mimir's default"
+        );
+        check!(a.otlp_delta_max_stale == minutes(5));
+    }
 
     #[test]
     fn tenant_override_merges_over_defaults() {

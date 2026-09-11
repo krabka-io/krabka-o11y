@@ -1,16 +1,14 @@
 use super::{
-    Arc, ByteSize, DISTRIBUTOR_OPS, DRAINING_GATE, DistributorState, LogIngestLimiter, LogWalSink,
-    RoleReadiness, Router, ServiceMetrics, Time, distributor_push_routes, format_query,
-    format_query_post, get, with_role_ops_routes,
+    Arc, DISTRIBUTOR_OPS, DRAINING_GATE, DistributorState, LogIngestLimiter, LogWalSink,
+    OverridesProvider, RoleReadiness, Router, ServiceMetrics, Time, distributor_push_routes,
+    format_query, format_query_post, get, with_role_ops_routes,
 };
 
 pub(crate) fn distributor_router_with_sink(
     sink: Arc<dyn LogWalSink>,
     ingest_limiter: Arc<dyn LogIngestLimiter>,
-    max_ingest_body: Option<ByteSize>,
+    overrides: Arc<OverridesProvider>,
     wal_append_timeout: Option<Time>,
-    reject_old_samples_max_age: Option<Time>,
-    creation_grace_period: Option<Time>,
     metrics: ServiceMetrics,
 ) -> Router {
     // The one gate this role owns. It starts met -- a distributor that has
@@ -29,10 +27,8 @@ pub(crate) fn distributor_router_with_sink(
             sink,
             ingest_limiter,
             prepare_shutdown: accepting_writes,
-            max_ingest_body,
+            overrides,
             wal_append_timeout,
-            reject_old_samples_max_age,
-            creation_grace_period,
             metrics,
         }))
 }

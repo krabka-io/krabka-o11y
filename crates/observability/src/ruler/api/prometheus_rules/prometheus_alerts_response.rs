@@ -1,11 +1,11 @@
 use super::{
-    HttpQueryError, LokiRuleNamespaces, QuerierState, Value, loki_yaml_mapping,
+    HttpQueryError, LokiRuleNamespaces, QuerierState, TenantId, Value, loki_yaml_mapping,
     prometheus_alerts_for_rule, serde_yaml_key,
 };
 
 pub(crate) async fn prometheus_alerts_response(
     state: &QuerierState,
-    tenant: &str,
+    tenant: &TenantId,
     namespaces: &LokiRuleNamespaces,
     evaluation_time: i64,
 ) -> Result<Vec<Value>, HttpQueryError> {

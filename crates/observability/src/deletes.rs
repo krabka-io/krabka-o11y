@@ -1,6 +1,6 @@
 use crate::{
-    Arc, Deserialize, ErrorKind, FsPath, LogDeleteRequestStoreError, Mutex, PathBuf, Serialize,
-    SharedLogDeleteRequests, StreamQuery, TimeRange,
+    Arc, Deserialize, ErrorKind, FsPath, LogDeleteRequestStoreError, LogQueryAuthorizer, Mutex,
+    PathBuf, Serialize, SharedLogDeleteRequests, StreamQuery, TimeRange,
 };
 
 mod active_log_delete_filter;

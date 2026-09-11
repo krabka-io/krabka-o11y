@@ -8,6 +8,7 @@ use krabka_observability::{
     ClientResourcePolicy, ConfigFileArgs, RoleReadiness, ServiceConfig, argv_with_config_file,
     build_service_dependencies_with_client_resource_policy, init_telemetry,
     metrics::ServiceMetrics, readiness_router, serve_service,
+    server_security::install_crypto_provider,
 };
 use krabka_units::{ByteSize, parse};
 
@@ -155,7 +156,7 @@ mod tests {
 
         for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
             let config = config_for(target, Some(bootstrap.clone()));
-            let error = require_role_topics(&config)
+            let error = require_role_topics(&config, None)
                 .await
                 .expect_err("the role refuses to start");
             check!(error.to_string().contains(LOGS_WAL_TOPIC), "{target:?}");
@@ -165,7 +166,7 @@ mod tests {
 
         for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
             check!(
-                require_role_topics(&config_for(target, Some(bootstrap.clone())))
+                require_role_topics(&config_for(target, Some(bootstrap.clone())), None)
                     .await
                     .is_ok(),
                 "{target:?}"
@@ -180,7 +181,9 @@ mod tests {
     async fn a_role_with_no_broker_configured_is_not_held_up_by_the_contract() {
         for target in [Role::Distributor, Role::BlockBuilder, Role::Querier] {
             check!(
-                require_role_topics(&config_for(target, None)).await.is_ok(),
+                require_role_topics(&config_for(target, None), None)
+                    .await
+                    .is_ok(),
                 "{target:?}"
             );
         }
@@ -230,6 +233,10 @@ pub(crate) use require_role_topics::require_role_topics;
 
 #[tokio::main]
 pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // First of all. The workspace compiles rustls with two crypto providers,
+    // so the first TLS connection panics until one of them is installed. The
+    // OTLP exporter, the WAL clients and the listener all open TLS.
+    install_crypto_provider();
     let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let client_resource_policy = ClientResourcePolicy {
         dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity::new(
@@ -253,6 +260,10 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "info",
         "krabka-logs",
     )?;
+    // Loaded once, before any port opens and before any broker connection, so
+    // a bad combination of security flags stops the start with its own error.
+    let server_security = cli.service.server_security.load()?;
+    let wal_security = cli.service.wal_client_security.load()?;
     let metrics = ServiceMetrics::new();
     // One readiness for the process: the role's own router reports it on the
     // data port, and the admin port echoes it, so a probe that cannot reach
@@ -272,15 +283,17 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Before the WAL producer and consumer exist. A role that started against
     // a topic whose partition count is not the one the deployment provisioned
     // would read or write a re-mapped key space and report nothing.
-    require_role_topics(&config).await?;
+    require_role_topics(&config, wal_security.clone()).await?;
     let dependencies = build_service_dependencies_with_client_resource_policy(
         &config,
         client_resource_policy,
+        wal_security,
         metrics.wal_consumer.clone(),
     )
     .await?
     .with_metrics(metrics)
-    .with_readiness(readiness);
+    .with_readiness(readiness)
+    .with_server_security(server_security);
     serve_service(config, dependencies, None).await?;
 
     telemetry.shutdown();

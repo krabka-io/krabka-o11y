@@ -74,7 +74,7 @@ pub(crate) async fn changes_compares_histogram_counts_bitwise_and_the_zero_thres
 
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
         let result = engine
-            .query_instant("tenant-a", "changes(h[5m])", 30_000)
+            .query_instant(&tenant_id("tenant-a"), "changes(h[5m])", 30_000)
             .await
             .expect("a changes count");
         let QueryResult::InstantVector(samples) = result else {

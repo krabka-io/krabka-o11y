@@ -136,7 +136,7 @@ pub(crate) async fn increase_refuses_native_histograms_that_do_not_line_up() {
     for (index, (field, _)) in variants.iter().enumerate() {
         let query = format!("increase(hx{index}[5m])");
         let QueryResult::InstantVector(samples) = engine
-            .query_instant("tenant-a", &query, 20_000)
+            .query_instant(&tenant_id("tenant-a"), &query, 20_000)
             .await
             .unwrap_or_else(|error| panic!("{field}: {error}"))
         else {
@@ -146,7 +146,7 @@ pub(crate) async fn increase_refuses_native_histograms_that_do_not_line_up() {
     }
 
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", "increase(ok[5m])", 20_000)
+        .query_instant(&tenant_id("tenant-a"), "increase(ok[5m])", 20_000)
         .await
         .expect("a matched pair")
     else {

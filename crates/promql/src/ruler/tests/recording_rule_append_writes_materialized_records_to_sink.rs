@@ -11,7 +11,7 @@ pub(crate) async fn recording_rule_append_writes_materialized_records_to_sink() 
     let appended = super::super::evaluate_and_append_recording_rule(
         &engine,
         &sink,
-        "tenant-a",
+        &tenant_id("tenant-a"),
         "job:up:current",
         "up",
         &BTreeMap::new(),

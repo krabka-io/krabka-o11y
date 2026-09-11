@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use futures::TryStreamExt;
 use krabka_blockstore::{
     BlockMeta, BlockStoreError, BlockWriter, ObjectStoreMetrics, ObjectStoreRetryPolicy,
-    RetryingObjectStore,
+    RetryingObjectStore, escape_object_path_segment,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
 use krabka_ids::{Offset, PartitionIndex};
@@ -262,36 +262,87 @@ mod tests {
         let cases = [
             (
                 super::MetricBlockKind::Float,
-                "metrics/tenant%2Fa/float/00000000000000000042-00000000000000000099.parquet",
+                "metrics/tenant!2Fa/float/00000000000000000042-00000000000000000099.parquet",
             ),
             (
                 super::MetricBlockKind::NativeHistograms,
-                "metrics/tenant%2Fa/native-histograms/00000000000000000042-00000000000000000099.parquet",
+                "metrics/tenant!2Fa/native-histograms/00000000000000000042-00000000000000000099.parquet",
             ),
             (
                 super::MetricBlockKind::Exemplars,
-                "metrics/tenant%2Fa/exemplars/00000000000000000042-00000000000000000099.parquet",
+                "metrics/tenant!2Fa/exemplars/00000000000000000042-00000000000000000099.parquet",
             ),
         ];
         for (kind, expected) in cases {
-            assert_eq!(
-                super::compaction_object_key("tenant/a", kind, 42, 99),
-                expected,
+            check!(
+                super::compaction_object_key("tenant/a", kind, 42, 99) == expected,
                 "kind {kind:?}"
             );
         }
     }
 
+    /// A tenant of exactly `.` or `..` must not survive as a relative path
+    /// segment in the object key. An interior dot is part of a valid tenant
+    /// name and stays as it is.
     #[test]
     fn tenant_dot_segments_cannot_form_path_traversal() {
-        // Defense in depth: a tenant of exactly "." or ".." must not survive as
-        // a relative-path component in the object key.
-        assert!(super::escape_object_path_segment(".") == "%2E");
-        assert!(super::escape_object_path_segment("..") == "%2E%2E");
-        let key = super::compaction_object_key("..", super::MetricBlockKind::Float, 42, 99);
-        assert!(key == "metrics/%2E%2E/float/00000000000000000042-00000000000000000099.parquet");
-        // Interior dots in a legitimate tenant id are still allowed verbatim.
-        assert!(super::escape_object_path_segment("a.b") == "a.b");
+        let key =
+            |tenant| super::compaction_object_key(tenant, super::MetricBlockKind::Float, 42, 99);
+        check!(
+            key("..") == "metrics/!2E!2E/float/00000000000000000042-00000000000000000099.parquet"
+        );
+        check!(key(".") == "metrics/!2E/float/00000000000000000042-00000000000000000099.parquet");
+        check!(key("a.b") == "metrics/a.b/float/00000000000000000042-00000000000000000099.parquet");
+    }
+
+    /// Both key builders put the tenant in one escaped segment, and the
+    /// object store keeps that key byte for byte. The retention sweep compares
+    /// a listed location with the key in a manifest, so an escape that the
+    /// store rewrote would make the two differ. The segment also reads back as
+    /// the tenant it came from.
+    #[test]
+    fn an_escaped_tenant_is_one_key_segment_that_reads_back_as_the_tenant() {
+        let cases = [
+            ("plain", "tenant-a", "tenant-a"),
+            ("star and parentheses", "team*(1)", "team!2A!281!29"),
+            ("bang", "a!b", "a!21b"),
+            ("apostrophe", "o'brien", "o!27brien"),
+            ("separator", "tenant/a", "tenant!2Fa"),
+            ("dot dot", "..", "!2E!2E"),
+        ];
+        for (name, tenant, segment) in cases {
+            let keys = [
+                (
+                    4,
+                    super::compaction_object_key(tenant, super::MetricBlockKind::Float, 42, 99),
+                ),
+                (
+                    5,
+                    super::compaction_partition_object_key(
+                        tenant,
+                        super::MetricBlockKind::Float,
+                        super::PartitionIndex(3),
+                        42,
+                        99,
+                    ),
+                ),
+            ];
+            for (segment_count, key) in keys {
+                let segments = key.split('/').collect::<Vec<_>>();
+                check!(segments.len() == segment_count, "{name}: {key}");
+                check!(segments[0] == "metrics", "{name}");
+                check!(segments[1] == segment, "{name}");
+                check!(
+                    krabka_blockstore::unescape_object_path_segment(segments[1])
+                        == Some(tenant.to_string()),
+                    "{name}"
+                );
+                check!(
+                    object_store::path::Path::from(key.as_str()).as_ref() == key,
+                    "{name}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -300,11 +351,11 @@ mod tests {
 
         assert!(
             plan.block_key
-                == "metrics/tenant%2Fa/float/00000000000000000042-00000000000000000099.parquet"
+                == "metrics/tenant!2Fa/float/00000000000000000042-00000000000000000099.parquet"
         );
         assert!(
             plan.index_key
-                == "metrics/tenant%2Fa/float/00000000000000000042-00000000000000000099.index"
+                == "metrics/tenant!2Fa/float/00000000000000000042-00000000000000000099.index"
         );
     }
 
@@ -322,9 +373,8 @@ mod tests {
             99,
         );
 
-        assert_eq!(
-            plan,
-            super::CompactionObjectPlan {
+        assert!(
+            plan == super::CompactionObjectPlan {
                 block_key:
                     "metrics/tenant-a/float/00000000000000000042-00000000000000000099.parquet"
                         .to_string(),
@@ -370,28 +420,29 @@ mod tests {
         let encoded = manifest.encode().expect("encode manifest");
         let decoded = super::CompactionIndexManifest::decode(&encoded).expect("decode manifest");
 
-        assert_eq!(decoded, manifest);
-        assert_eq!(
-            decoded,
-            super::CompactionIndexManifest {
-                tenant: "tenant-a".to_string(),
-                kind: super::MetricBlockKind::Float,
-                block_key:
-                    "metrics/tenant-a/float/00000000000000000042-00000000000000000099.parquet"
-                        .to_string(),
-                index_key: "metrics/tenant-a/float/00000000000000000042-00000000000000000099.index"
-                    .to_string(),
-                first_offset: 42,
-                last_offset: 99,
-                row_count: 2,
-                min_ts: 1_000,
-                max_ts: 2_000,
-                fingerprints: vec![7, 9],
-                series: vec![super::CompactionSeriesLabels {
-                    fingerprint: 7,
-                    labels: labels(&[("__name__", "up")]),
-                }],
-            }
+        assert!(decoded == manifest);
+        assert!(
+            decoded
+                == super::CompactionIndexManifest {
+                    tenant: "tenant-a".to_string(),
+                    kind: super::MetricBlockKind::Float,
+                    block_key:
+                        "metrics/tenant-a/float/00000000000000000042-00000000000000000099.parquet"
+                            .to_string(),
+                    index_key:
+                        "metrics/tenant-a/float/00000000000000000042-00000000000000000099.index"
+                            .to_string(),
+                    first_offset: 42,
+                    last_offset: 99,
+                    row_count: 2,
+                    min_ts: 1_000,
+                    max_ts: 2_000,
+                    fingerprints: vec![7, 9],
+                    series: vec![super::CompactionSeriesLabels {
+                        fingerprint: 7,
+                        labels: labels(&[("__name__", "up")]),
+                    }],
+                }
         );
     }
 
@@ -498,13 +549,13 @@ mod tests {
             .await
             .expect("enforce retention");
 
-        assert_eq!(
-            stats,
-            super::CompactionRetentionStats {
-                manifests_scanned: 2,
-                manifests_deleted: 1,
-                blocks_deleted: 1,
-            }
+        assert!(
+            stats
+                == super::CompactionRetentionStats {
+                    manifests_scanned: 2,
+                    manifests_deleted: 1,
+                    blocks_deleted: 1,
+                }
         );
         check!(
             object_store
@@ -529,6 +580,54 @@ mod tests {
                 .head(&object_store::path::Path::from(fresh.block_key.clone()))
                 .await
                 .is_ok()
+        );
+    }
+
+    /// A tenant name with a character that needs an escape still ages out.
+    /// The sweep compares each listed location with the key its manifest
+    /// holds, and it stops on a mismatch. An escape that the object store
+    /// rewrites on the way in would make every such block a mismatch, and no
+    /// block of that tenant would ever be deleted.
+    #[tokio::test]
+    async fn retention_deletes_the_blocks_of_a_tenant_whose_name_is_escaped() {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
+        let sink = super::ObjectStoreCompactionIndexSink::new(object_store.clone());
+        let rows = super::TenantCompactionRows {
+            tenant: "team*(1)".to_string(),
+            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]))]),
+            float_rows: vec![FloatRow {
+                fingerprint: 7,
+                timestamp_ms: 1_000,
+                value: 1.0,
+            }],
+            histogram_rows: Vec::new(),
+            exemplar_rows: Vec::new(),
+            metadata_rows: Vec::new(),
+            clock_rows: Vec::new(),
+        };
+        let writes = super::write_compacted_tenant_blocks(&block_writer, &sink, &rows, 1, 2)
+            .await
+            .expect("write compacted blocks");
+        assert!(writes.len() == 1);
+        check!(
+            writes[0]
+                .manifest
+                .index_key
+                .starts_with("metrics/team!2A!281!29/float/")
+        );
+
+        let stats = super::enforce_compaction_retention(object_store.clone(), 10_000, secs(5))
+            .await
+            .expect("enforce retention");
+
+        check!(
+            stats
+                == super::CompactionRetentionStats {
+                    manifests_scanned: 1,
+                    manifests_deleted: 1,
+                    blocks_deleted: 1,
+                }
         );
     }
 
@@ -631,14 +730,14 @@ mod tests {
         let runtime = cfg
             .build_runtime(object_store.clone(), ObjectStoreMetrics::unregistered())
             .expect("build runtime");
-        assert_eq!(
-            runtime.loop_config,
-            super::CompactionLoopConfig {
-                wal_topic: crate::WAL_TOPIC.to_string(),
-                poll_timeout: millis(250),
-                flush_max_rows: 12_345,
-                flush_max_age: secs(7),
-            }
+        assert!(
+            runtime.loop_config
+                == super::CompactionLoopConfig {
+                    wal_topic: crate::WAL_TOPIC.to_string(),
+                    poll_timeout: millis(250),
+                    flush_max_rows: 12_345,
+                    flush_max_age: secs(7),
+                }
         );
 
         let manifest = super::CompactionIndexManifest::from_plan(
@@ -2236,7 +2335,6 @@ mod encode_exemplar_rows;
 mod encode_metadata_rows;
 mod encode_tenant_batches;
 mod enforce_compaction_retention;
-mod escape_object_path_segment;
 mod exemplar_row;
 mod float_row;
 mod flush_buffer;
@@ -2326,7 +2424,6 @@ use encode_exemplar_rows::encode_exemplar_rows;
 use encode_metadata_rows::encode_metadata_rows;
 pub use encode_tenant_batches::encode_tenant_batches;
 pub use enforce_compaction_retention::enforce_compaction_retention;
-use escape_object_path_segment::escape_object_path_segment;
 pub use exemplar_row::ExemplarRow;
 use exemplar_row::exemplar_row;
 pub use float_row::FloatRow;

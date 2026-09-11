@@ -1,6 +1,4 @@
-use krabka_observability::{
-    CriticalTaskError, RoleReadiness, SupervisedTasks, contain_handler_panics,
-};
+use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
 
 use super::*;
 
@@ -19,6 +17,7 @@ pub(crate) async fn run_querier(
     shutdown: CancellationToken,
     listener: tokio::net::TcpListener,
     object_store: &SharedObjectStore,
+    security: &ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Registered before any of the work, and in the order the start meets it.
     // The object store, the index snapshot and the embedded live-store
@@ -42,6 +41,7 @@ pub(crate) async fn run_querier(
         &gates,
         readiness,
         object_store,
+        security.server.internal_client(),
     )
     .await?;
     // Both loops below decide what this querier can see. Supervised, so that a
@@ -50,13 +50,10 @@ pub(crate) async fn run_querier(
     let mut tasks = SupervisedTasks::new(shutdown.clone());
     if let Some(live_store) = live_store {
         let consumer = wal_consumer(
-            cli.bootstrap.clone(),
+            &cli,
             "krabka-traces-querier-live-store",
             None,
-            cli.wal_fetch_max,
-            cli.wal_fetch_partition_max,
-            cli.client_dispatch_queue_capacity,
-            cli.client_frame_max,
+            security.wal.as_ref(),
         )
         .await?;
         let live_shutdown = shutdown.clone();
@@ -103,13 +100,11 @@ pub(crate) async fn run_querier(
             }
         }
     });
-    let bound = listener.local_addr()?;
+    let listener = ServerListener::bind(listener, &security.server)?;
+    let bound = listener.local_addr();
     tracing::info!(%bound, "traces querier listening");
-    let server_shutdown = shutdown.clone();
-    let server =
-        axum::serve(listener, contain_handler_panics(router)).with_graceful_shutdown(async move {
-            server_shutdown.cancelled().await;
-        });
+    let server = serve_router(listener, router, &security.server)
+        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
     let outcome = tokio::select! {
         result = server => result.map_err(Into::into),
         name = tasks.first_unexpected_exit() => Err(

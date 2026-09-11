@@ -1,13 +1,13 @@
 use super::{
     FrontendRangeQuery, MetricStore, PromqlEngine, PromqlError, QueryResult, RangeQueryExecutor,
-    async_trait, query_with_shard_selector,
+    TenantId, async_trait, query_with_shard_selector,
 };
 
 #[async_trait]
 impl<S: MetricStore> RangeQueryExecutor for PromqlEngine<S> {
     async fn execute_range_query(
         &self,
-        tenant: &str,
+        tenant: &TenantId,
         query: &FrontendRangeQuery,
     ) -> Result<QueryResult, PromqlError> {
         let query_text = match query.shard {

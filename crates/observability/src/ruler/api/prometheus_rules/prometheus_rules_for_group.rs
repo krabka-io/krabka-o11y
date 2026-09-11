@@ -1,11 +1,11 @@
 use super::{
-    HttpQueryError, PrometheusRulesFilters, QuerierState, Value, json, loki_yaml_mapping,
+    HttpQueryError, PrometheusRulesFilters, QuerierState, TenantId, Value, json, loki_yaml_mapping,
     prometheus_alerts_for_rule, prometheus_rule_response, serde_yaml_key,
 };
 
 pub(crate) async fn prometheus_rules_for_group(
     state: &QuerierState,
-    tenant: &str,
+    tenant: &TenantId,
     group: &serde_yaml::Value,
     filters: &PrometheusRulesFilters,
     evaluation_time: i64,

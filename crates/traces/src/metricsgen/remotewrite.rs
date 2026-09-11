@@ -1,6 +1,8 @@
 //! Prometheus `remote_write` sink implementation.
 
 use async_trait::async_trait;
+use krabka_blockstore::TENANT_HEADER;
+use krabka_observability::server_security::InternalClient;
 use prost::Message as _;
 
 use crate::metricsgen::{

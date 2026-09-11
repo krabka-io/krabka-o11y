@@ -12,6 +12,7 @@ use crate::{
         LabelNameCardinality, LabelValueCardinality, MetricStore, NamedTsdbStat, ScanResult,
         TsdbHeadStats,
     },
+    test_support::tenant_id,
 };
 
 mod a_panicking_update_leaves_the_head_readable_and_writable;

@@ -52,12 +52,12 @@ fn parses_unit_bearing_query_length() {
         "krabka-observability",
         "--target",
         "querier",
-        "--max-query-length",
+        "--max-query-string-bytes",
         "64B",
     ])
     .unwrap();
 
-    assert!(config.max_query_length.is_some());
+    assert!(config.max_query_string_bytes.is_some());
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn rejects_negative_quantity_limits() {
     for (flag, value) in [
         ("--max-query-range", "-1ns"),
         ("--max-query-read", "-1B"),
-        ("--max-query-length", "-1B"),
+        ("--max-query-string-bytes", "-1B"),
         ("--max-ingest-body", "-1B"),
         ("--wal-append-timeout", "-1ms"),
     ] {
@@ -111,7 +111,7 @@ fn parses_querier_object_store_shard_catalog_config() {
         "10",
         "--max-query-read",
         "1KiB",
-        "--max-query-length",
+        "--max-query-string-bytes",
         "64B",
     ])
     .unwrap();
@@ -134,7 +134,7 @@ fn parses_querier_object_store_shard_catalog_config() {
                 max_query_range: Some(nanos(20)),
                 max_query_series: Some(10),
                 max_query_read: Some(kibibytes(1)),
-                max_query_length: Some(bytes(64)),
+                max_query_string_bytes: Some(bytes(64)),
                 max_ingest_body: None,
                 wal_append_timeout: None,
                 ..ServiceConfig::default()
@@ -177,7 +177,7 @@ fn parses_distributor_wal_config() {
                 max_query_range: None,
                 max_query_series: None,
                 max_query_read: None,
-                max_query_length: None,
+                max_query_string_bytes: None,
                 max_ingest_body: Some(kibibytes(2)),
                 wal_append_timeout: Some(millis(250)),
                 ..ServiceConfig::default()
@@ -222,7 +222,7 @@ fn parses_block_builder_wal_consumer_config() {
                 max_query_range: None,
                 max_query_series: None,
                 max_query_read: None,
-                max_query_length: None,
+                max_query_string_bytes: None,
                 max_ingest_body: None,
                 wal_append_timeout: None,
                 ..ServiceConfig::default()
@@ -263,7 +263,7 @@ fn parses_querier_wal_tail_config() {
                 max_query_range: None,
                 max_query_series: None,
                 max_query_read: None,
-                max_query_length: None,
+                max_query_string_bytes: None,
                 max_ingest_body: None,
                 wal_append_timeout: None,
                 ..ServiceConfig::default()
@@ -289,7 +289,7 @@ async fn querier_dependencies_require_wal_bootstrap_server() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()

@@ -1,14 +1,19 @@
 use super::*;
 
+/// Gate a batch against the tenant's ingestion rate and burst.
+///
+/// The limits come from the one overrides provider, so a tenant with no entry
+/// of its own is gated by the file's defaults. A zero `ingestion_rate` is
+/// unlimited, as in Pyroscope, and turns the gate off for that tenant.
 pub(crate) fn enforce_ingestion_rate(
     state: &DistributorState,
-    tenant: &str,
+    tenant: &TenantId,
     profile_count: usize,
 ) -> Result<(), ProfilesError> {
-    if profile_count == 0 || !state.profile_overrides.has_tenant_override(tenant) {
+    if profile_count == 0 {
         return Ok(());
     }
-    let limits = state.profile_overrides.for_tenant(tenant);
+    let limits = state.overrides.for_tenant(tenant);
     if limits.ingestion_rate.per_sec_f64() <= 0.0 {
         return Ok(());
     }
@@ -22,8 +27,11 @@ pub(crate) fn enforce_ingestion_rate(
     }
 
     let configured_rate = rate_tokens_per_sec(limits);
-    let bucket =
-        ingestion_bucket_for_tenant(state, tenant, Frequency::from_per_sec_u64(configured_rate))?;
+    let bucket = ingestion_bucket_for_tenant(
+        state,
+        tenant.as_str(),
+        Frequency::from_per_sec_u64(configured_rate),
+    )?;
     let granted = bucket.try_consume(requested);
     if granted < requested {
         return Err(crate::limits::LimitError::IngestionRateExceeded {

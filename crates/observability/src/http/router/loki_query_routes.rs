@@ -8,8 +8,8 @@ use super::{
     index_volume, index_volume_post, index_volume_range, index_volume_range_post, label_names,
     label_names_post, label_values, label_values_post, loki_page_not_found, loki_rule_group,
     loki_rule_namespace, loki_rules, patterns, patterns_post, prometheus_alerts, prometheus_rules,
-    query, query_post, query_range, query_range_post, ruler_ring, scheduler_ring, series,
-    series_post, tail,
+    query, query_post, query_range, query_range_post, require_org_id, ruler_ring, scheduler_ring,
+    series, series_post, tail,
 };
 
 /// Every `Loki` read route, with no ops routes on it.
@@ -20,7 +20,9 @@ use super::{
 /// this surface with the distributor's push routes and still answer `/ready`
 /// once, for the whole process, rather than twice with two different answers.
 pub(crate) fn loki_query_routes(state: QuerierState) -> Router {
-    Router::new()
+    // `dskit`'s auth middleware guards every route that reads a tenant, so a
+    // request without `X-Scope-OrgID` gets 401 before its parameters are read.
+    let tenant_routes = Router::new()
         .route("/loki/api/v1/rules", get(loki_rules))
         .route(
             "/loki/api/v1/rules/{namespace}",
@@ -34,11 +36,6 @@ pub(crate) fn loki_query_routes(state: QuerierState) -> Router {
         )
         .route("/prometheus/api/v1/rules", get(prometheus_rules))
         .route("/prometheus/api/v1/alerts", get(prometheus_alerts))
-        .route("/ruler/ring", get(ruler_ring))
-        .route(
-            "/loki/api/v1/format_query",
-            get(format_query).post(format_query_post),
-        )
         .route("/loki/api/v1/patterns", get(patterns).post(patterns_post))
         .route(
             "/loki/api/v1/detected_fields",
@@ -79,8 +76,6 @@ pub(crate) fn loki_query_routes(state: QuerierState) -> Router {
             get(api_prom_query_range).post(api_prom_query_range_post),
         )
         .route("/api/prom/rules", get(loki_rules))
-        .route("/api/prom/alerts", get(loki_page_not_found))
-        .route("/scheduler/ring", get(scheduler_ring))
         .route(
             "/api/prom/rules/{namespace}",
             get(loki_rule_namespace)
@@ -117,5 +112,15 @@ pub(crate) fn loki_query_routes(state: QuerierState) -> Router {
             get(index_volume_range).post(index_volume_range_post),
         )
         .route("/loki/api/v1/tail", get(tail))
+        .route_layer(axum::middleware::from_fn(require_org_id));
+    Router::new()
+        .route("/ruler/ring", get(ruler_ring))
+        .route(
+            "/loki/api/v1/format_query",
+            get(format_query).post(format_query_post),
+        )
+        .route("/api/prom/alerts", get(loki_page_not_found))
+        .route("/scheduler/ring", get(scheduler_ring))
+        .merge(tenant_routes)
         .with_state(state)
 }

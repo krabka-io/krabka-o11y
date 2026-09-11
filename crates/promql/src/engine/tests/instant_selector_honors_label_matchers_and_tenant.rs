@@ -24,7 +24,7 @@ pub(crate) async fn instant_selector_honors_label_matchers_and_tenant() {
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", r#"up{job=~"a.*"}"#, 10_000)
+        .query_instant(&tenant_id("tenant-a"), r#"up{job=~"a.*"}"#, 10_000)
         .await
         .unwrap();
 

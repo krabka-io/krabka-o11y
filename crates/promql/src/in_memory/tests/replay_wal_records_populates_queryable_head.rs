@@ -56,7 +56,7 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
 
     let engine = PromqlEngine::new(std::sync::Arc::new(store.clone()), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "up", 10_000)
+        .query_instant(&tenant_id("tenant-a"), "up", 10_000)
         .await
         .expect("query");
     let QueryResult::InstantVector(vector) = result else {

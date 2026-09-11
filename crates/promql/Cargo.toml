@@ -26,6 +26,7 @@ assert2 = { workspace = true }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
 krabka-ids = { version = "0.4.0" }
 krabka-metrics = { path = "../metrics", version = "0.4.0" }
+krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-units = { workspace = true }
 arrow = { workspace = true }
 datafusion = { workspace = true }
@@ -52,6 +53,7 @@ time = { version = "0.3", default-features = false, features = ["parsing", "form
 [dev-dependencies]
 axum = { workspace = true, features = ["json", "query"] }
 datatest-stable = { workspace = true }
+krabka-audit = { version = "0.4.0" }
 krabka-units = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true }

@@ -20,7 +20,10 @@ use krabka_observability::{
 };
 use krabka_units::convert::ByteSizeExt as _;
 use serde_json::{Value, json};
-use support::{expected_loki_stats_with, json_body, test_service_config, text_body};
+use support::{
+    TenantDenyingQueryAuthorizer, assert_loki_error, expected_loki_stats_with, json_body,
+    test_service_config, text_body,
+};
 use tokio::{
     net::TcpListener,
     time::{Duration, timeout},
@@ -47,7 +50,7 @@ async fn compactor_delete_endpoint_tracks_and_cancels_delete_requests() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -150,7 +153,7 @@ async fn compactor_delete_endpoint_accepts_form_post_query_with_raw_ampersand() 
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -212,7 +215,7 @@ async fn compactor_delete_endpoint_rejects_invalid_requests() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -232,13 +235,9 @@ async fn compactor_delete_endpoint_rejects_invalid_requests() {
         )
         .await
         .unwrap();
-    assert!(missing_tenant_response.status() == StatusCode::BAD_REQUEST);
-    assert!(
-        json_body(missing_tenant_response).await["error"]
-            .as_str()
-            .unwrap()
-            .contains("X-Scope-OrgID")
-    );
+    // Loki's auth middleware answers before the handler reads a parameter.
+    assert!(missing_tenant_response.status() == StatusCode::UNAUTHORIZED);
+    assert!(text_body(missing_tenant_response).await == "no org id\n");
 
     let missing_start_response = app
         .clone()
@@ -298,7 +297,7 @@ async fn compactor_delete_requests_filter_querier_stream_results() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -363,7 +362,7 @@ async fn compactor_delete_requests_filter_querier_stream_results() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -450,7 +449,7 @@ async fn compactor_delete_requests_persist_for_configured_querier() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -488,7 +487,7 @@ async fn compactor_delete_requests_persist_for_configured_querier() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -547,7 +546,7 @@ async fn compactor_delete_requests_filter_querier_metric_results() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -612,7 +611,7 @@ async fn compactor_delete_requests_filter_querier_metric_results() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -678,7 +677,7 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -749,7 +748,7 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
-        max_query_length: None,
+        max_query_string_bytes: None,
         max_ingest_body: None,
         wal_append_timeout: None,
         ..ServiceConfig::default()
@@ -986,6 +985,79 @@ async fn compactor_delete_requests_filter_querier_detected_fields_results() {
                 "limit": 10
             })
     );
+}
+
+/// Sends one delete-request call as `tenant` and gives back the status and
+/// body.
+async fn delete_api_call_for_test(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    tenant: &str,
+) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("X-Scope-OrgID", tenant)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = text_body(response).await;
+    (
+        status,
+        serde_json::from_str(&body).unwrap_or(Value::String(body)),
+    )
+}
+
+/// A delete request removes a tenant's logs for good, so the delete API asks
+/// the query authorizer on every call. A refused tenant can create no request,
+/// read none of its requests, and cancel none. The refusal persists nothing,
+/// and another tenant on the same store is not affected.
+#[tokio::test]
+async fn a_refused_tenant_can_neither_create_nor_list_nor_cancel_delete_requests() {
+    let delete_requests = SharedLogDeleteRequests::default();
+    let config = test_service_config(Role::BlockBuilder, ".");
+    let allowed = build_service_router(
+        &config,
+        ServiceDependencies::default().with_delete_requests(delete_requests.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let refusing = build_service_router(
+        &config,
+        ServiceDependencies::default()
+            .with_delete_requests(delete_requests.clone())
+            .with_query_authorizer(TenantDenyingQueryAuthorizer { denied: "tenant-a" }),
+        None,
+    )
+    .await
+    .unwrap();
+    let create = "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D&start=1&end=2";
+    let list = "/loki/api/v1/delete";
+    let (status, _) = delete_api_call_for_test(&allowed, "POST", create, "tenant-a").await;
+    assert!(status == StatusCode::NO_CONTENT);
+    let (_, before) = delete_api_call_for_test(&allowed, "GET", list, "tenant-a").await;
+    assert!(before.as_array().map(Vec::len) == Some(1));
+    let request_id = before[0]["request_id"].as_str().unwrap().to_string();
+    let cancel = format!("/loki/api/v1/delete?request_id={request_id}");
+
+    for (method, uri) in [("POST", create), ("GET", list), ("DELETE", cancel.as_str())] {
+        let (status, body) = delete_api_call_for_test(&refusing, method, uri, "tenant-a").await;
+        check!(status == StatusCode::FORBIDDEN, "{method}");
+        assert_loki_error(&body, "forbidden", "tenant read ACL denied");
+    }
+
+    let (_, after) = delete_api_call_for_test(&allowed, "GET", list, "tenant-a").await;
+    check!(after == before);
+    let (status, _) = delete_api_call_for_test(&refusing, "POST", create, "tenant-b").await;
+    check!(status == StatusCode::NO_CONTENT);
 }
 
 async fn create_secret_delete_request(delete_requests: &SharedLogDeleteRequests) {

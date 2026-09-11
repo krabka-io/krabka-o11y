@@ -19,8 +19,11 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+pub mod audit;
 pub mod compaction_metrics;
+pub mod server_security;
 pub mod topic_contract;
+pub mod wal_client_security;
 pub mod wal_consumer_metrics;
 pub mod wal_group_assignment;
 pub mod wal_produce;
@@ -62,7 +65,7 @@ pub use ids::{Offset, PartitionIndex};
 use krabka_blockstore::{
     BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex,
     LogBlockStoreError as BlockStoreError, LogLabels as Labels, LogRow,
-    LogSeriesFingerprint as SeriesFingerprint, TimeRange, read_log_block,
+    LogSeriesFingerprint as SeriesFingerprint, TenantId, TimeRange, read_log_block,
     read_log_block_from_object_store, read_log_index_manifest,
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
@@ -139,12 +142,15 @@ mod deletes_api;
 mod distributor;
 mod error;
 mod http;
+mod limits;
 mod log_level;
 mod panic_containment;
 mod querier;
 mod readiness;
+mod request_tenant;
 mod role;
 mod ruler;
+mod security_context;
 mod service;
 mod service_runtime;
 mod supervision;
@@ -174,11 +180,12 @@ pub(crate) use deletes_api::{
     create_delete_request, list_delete_requests,
 };
 pub use distributor::{
-    DistributorState, OtlpGrpcLogsService, distributor_router, otlp_grpc_logs_service,
-    otlp_grpc_logs_service_with_limiter,
+    DistributorState, OtlpGrpcLogsService, distributor_router, distributor_router_with_overrides,
+    otlp_grpc_logs_service, otlp_grpc_logs_service_with_limiter,
 };
 pub use error::QueryError;
 pub use http::loki_router;
+pub use limits::{Limits, OverridesError, OverridesProvider};
 pub use log_level::{
     LogLevelControl, LogLevelError, Telemetry, init_telemetry, install_json_logging,
     json_logging_layer,
@@ -247,14 +254,14 @@ pub(crate) use self::{
     config::LOKI_REJECT_OLD_SAMPLES_MAX_AGE,
     distributor::{
         ingest::{
-            append_distributor_wal_records, loki_decode_error_context, measured_size,
-            normalize_loki_http_push, normalize_otlp_http_logs, otlp_http_error_response,
-            record_ingest_response, validate_ingest_body_limit,
+            append_distributor_wal_records, encode_otlp_status_message, loki_decode_error_context,
+            measured_size, normalize_loki_http_push, normalize_otlp_http_logs,
+            otlp_http_error_response, record_ingest_response, validate_ingest_body_limit,
         },
         loki_normalization::{
             is_loki_json_content_type, is_loki_label_name, is_protobuf_content_type,
             loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
-            normalize_otlp_logs,
+            normalize_otlp_logs, validate_loki_label_limits, validate_loki_line_size,
         },
         otlp_normalization::{
             detect_log_level, discover_detected_level_label, discover_service_name_label,
@@ -265,7 +272,7 @@ pub(crate) use self::{
             rfc3339_seconds, validate_ingest_timestamp_ns, validate_loki_timestamp_window,
         },
         router::{
-            ALL_OPS, BLOCK_BUILDER_OPS, LokiProtoLabelPair, LokiProtoPushRequest,
+            ALL_OPS, BLOCK_BUILDER_OPS, DISTRIBUTOR_OPS, LokiProtoLabelPair, LokiProtoPushRequest,
             LokiProtoTimestamp, LokiPushRequest, LokiTypedPushRequest, OtlpAnyValue, OtlpKeyValue,
             OtlpLogRecord, OtlpLogsRequest, QUERIER_OPS, RoleOps, distributor_push_routes,
             distributor_router_with_sink, with_role_ops_routes,
@@ -312,11 +319,10 @@ pub(crate) use self::{
             value_decoding::{
                 LOKI_DEFAULT_QUERY_RANGE, LOKI_DEFAULT_TAIL_LIMIT,
                 LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS, LOKI_MAX_TAIL_DELAY,
-                LOKI_METADATA_DEFAULT_INDEX_RANGE, LOKI_VOLUME_MAX_QUERY_RANGE, LokiDirection,
-                QueryKind, authorized_tenant, authorized_tenants, current_unix_time_ns,
-                decode_form_component, grpc_tenant, loki_direction, optional_start_end_range,
-                parse_decimal_seconds_timestamp, parse_usize_query_param, start_or_since, tenant,
-                time_range,
+                LOKI_METADATA_DEFAULT_INDEX_RANGE, LokiDirection, QueryKind, authorized_tenant,
+                authorized_tenants, current_unix_time_ns, decode_form_component, loki_direction,
+                optional_start_end_range, parse_decimal_seconds_timestamp, parse_usize_query_param,
+                start_or_since, time_range,
             },
         },
         params_format::{
@@ -381,6 +387,7 @@ pub(crate) use self::{
             shutdown_ingester, unset_prepare_shutdown,
         },
     },
+    limits::{clamp_query_lookback, limits_provider_for_config},
     querier::{
         aggregate::{
             metric_values::{
@@ -463,7 +470,8 @@ pub(crate) use self::{
                 ScalarSample, execute_http_metric_query, gcd_signed, parse_scalar_sample,
                 resolved_range_step, validate_loki_query_range_resolution,
                 validate_loki_range_query_range_limit, validate_loki_volume_query_range_limit,
-                validate_query_length_limit, validate_query_range_limit,
+                validate_query_entries_limit, validate_query_range_limit,
+                validate_query_string_bytes_limit,
             },
             validation::{
                 VectorScalarExpressionParser, apply_label_join_to_loki_result,
@@ -497,7 +505,9 @@ pub(crate) use self::{
                 build_configured_querier_state, effective_object_store_prefix,
                 querier_object_store_inputs, querier_object_store_prefix,
             },
-            request_state::build_querier_state_with_object_store_prefix,
+            request_state::{
+                build_querier_state_with_object_store_prefix, build_querier_state_with_overrides,
+            },
             types::{
                 ColdObjectStoreState, DynamicIndexCache, DynamicIndexCacheKey, DynamicIndexSource,
                 DynamicShardIndexCacheKey, DynamicShardRangesCacheKey, HotTailState,
@@ -508,7 +518,13 @@ pub(crate) use self::{
         },
         tail::{hot_tail_snapshot, prepare_http_tail, send_tail_stream},
     },
-    service::DeferredWalConsumerConnect,
+    request_tenant::{
+        TenantErrorSurface, TenantRequestError, grpc_tenant, require_org_id,
+        resolve_federated_tenants, resolve_single_tenant, tenant_error_response,
+        tenant_header_value,
+    },
+    security_context::{RequestSecurity, ServiceAudit, with_service_audit},
+    service::{DeferredQueryAuthorizerConnect, DeferredWalConsumerConnect},
     wal::{
         hot_tail::{poll_log_hot_tail_once_with_frontier, spawn_log_hot_tail_poller},
         pollers_and_records::{
@@ -516,8 +532,9 @@ pub(crate) use self::{
             spawn_query_authorizer_connect, spawn_wal_hot_tail_connect_and_poll,
         },
         traits_and_kafka::{
-            AllowAllIngestLimiter, AllowAllQueryAuthorizer, BrokerBackedIngestLimiter,
-            BrokerBackedQueryAuthorizer, SwappableQueryAuthorizer, hot_tail_bucket_key,
+            AllowAllIngestLimiter, AllowAllQueryAuthorizer, BrokerAccessPolicy,
+            BrokerBackedIngestLimiter, BrokerBackedQueryAuthorizer, SwappableQueryAuthorizer,
+            hot_tail_bucket_key,
         },
     },
 };

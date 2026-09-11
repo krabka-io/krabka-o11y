@@ -1,5 +1,5 @@
 use super::{
-    AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RulerAlertState,
+    AlertmanagerSink, MetricStore, PromqlEngine, PromqlError, RulerAlertState, TenantId,
     evaluate_and_dispatch_alerting_rule_with_state,
 };
 
@@ -12,7 +12,7 @@ use super::{
 pub async fn evaluate_and_dispatch_alerting_rule<S, A>(
     engine: &PromqlEngine<S>,
     sink: &A,
-    tenant: &str,
+    tenant: &TenantId,
     rule: &serde_yaml::Value,
     eval_time_ms: i64,
 ) -> Result<usize, PromqlError>

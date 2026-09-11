@@ -5,7 +5,7 @@ pub(crate) async fn instant_histogram_avg_returns_native_histogram_average() {
     let engine = PromqlEngine::new(Arc::new(native_histogram_store()), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "histogram_avg(request_duration_seconds)",
             10_000,
         )

@@ -1,4 +1,7 @@
-use super::{HistogramRow, PromqlError, Result, ScanResult, decode_native_histograms};
+use super::{
+    HistogramRow, PromqlError, Result, ScanResult, decode_native_histograms,
+    samples_per_query_exceeded,
+};
 
 pub(crate) async fn collect_histogram_rows(
     scan: ScanResult,
@@ -16,10 +19,13 @@ pub(crate) async fn collect_histogram_rows(
         let decoded = decode_native_histograms(&batch)
             .map_err(|error| PromqlError::Store(error.to_string()))?;
         for (fp, ts_ms, hist) in decoded {
+            // The cap trips on the row that would take the count past it, so the
+            // count this row would produce is what the tenant is told.
             if rows.len() >= max_samples {
-                return Err(PromqlError::Exec(format!(
-                    "query exceeds max_samples={max_samples}"
-                )));
+                return Err(samples_per_query_exceeded(
+                    max_samples,
+                    rows.len().saturating_add(1),
+                ));
             }
             rows.push(HistogramRow { fp, ts_ms, hist });
         }

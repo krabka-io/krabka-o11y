@@ -4,7 +4,7 @@ use super::*;
 pub(crate) async fn instant_time_returns_evaluation_timestamp_seconds() {
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "time()", 123_456)
+        .query_instant(&tenant_id("tenant-a"), "time()", 123_456)
         .await
         .unwrap();
 

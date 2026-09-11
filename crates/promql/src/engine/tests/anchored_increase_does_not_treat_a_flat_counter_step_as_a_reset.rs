@@ -13,7 +13,11 @@ pub(crate) async fn anchored_increase_does_not_treat_a_flat_counter_step_as_a_re
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
-        .query_instant("tenant-a", "increase(anchored(ctr[5m]))", 120_000)
+        .query_instant(
+            &tenant_id("tenant-a"),
+            "increase(anchored(ctr[5m]))",
+            120_000,
+        )
         .await
         .unwrap();
 
@@ -26,7 +30,7 @@ pub(crate) async fn anchored_increase_does_not_treat_a_flat_counter_step_as_a_re
     // The same fold as `rate`, divided by the range in seconds. `increase`
     // never reaches that division.
     let QueryResult::InstantVector(samples) = engine
-        .query_instant("tenant-a", "rate(anchored(ctr[5m]))", 120_000)
+        .query_instant(&tenant_id("tenant-a"), "rate(anchored(ctr[5m]))", 120_000)
         .await
         .expect("an anchored rate")
     else {

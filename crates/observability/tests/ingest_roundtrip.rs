@@ -25,7 +25,9 @@ use krabka_blockstore::{
     BlockKey, TimeRange, labels, read_log_block_from_object_store, series_fingerprint,
 };
 use krabka_broker::{Broker, BrokerConfig};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
+use krabka_client_admin::{
+    AclEntry, AclOperation, AdminClient, CreateTopicSpec, PatternType, PermissionType, ResourceType,
+};
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::{
     KafkaLogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig,
@@ -40,6 +42,9 @@ use tower::ServiceExt as _;
 
 /// The tenant every step of the round trip is scoped to.
 const TENANT: &str = "tenant-a";
+
+/// A tenant the broker holds no ACL for.
+const UNGRANTED_TENANT: &str = "tenant-b";
 
 /// Where the compactor writes blocks and shard indexes, and where the querier
 /// reads them from.
@@ -61,6 +66,7 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     let bootstrap = broker.listen_addr().to_string();
     let wal_topic = ServiceConfig::default().wal_topic;
     create_wal_topic(&bootstrap, &wal_topic).await;
+    grant_tenant_wal_access_for_test(&bootstrap, &wal_topic, TENANT).await;
 
     // 1. The real HTTP door. Same router the distributor role serves, same
     //    Loki push body a client would send, and a sink that produces to the
@@ -78,21 +84,26 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
         build_service_dependencies(&distributor_config, WalConsumerMetrics::unregistered())
             .await
             .expect("distributor dependencies");
-    let response = build_service_router(&distributor_config, dependencies, None)
+    let distributor = build_service_router(&distributor_config, dependencies, None)
         .await
-        .expect("distributor router")
-        .oneshot(
+        .expect("distributor router");
+    let push_as = |tenant: &'static str| {
+        distributor.clone().oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/loki/api/v1/push")
                 .header("content-type", "application/json")
-                .header("X-Scope-OrgID", TENANT)
+                .header("X-Scope-OrgID", tenant)
                 .body(Body::from(push_body().to_string()))
                 .expect("push request"),
         )
-        .await
-        .expect("push response");
+    };
+    let response = push_as(TENANT).await.expect("push response");
     assert!(response.status() == StatusCode::NO_CONTENT);
+    // The broker holds ACLs, and none of them names this tenant, so its push
+    // is refused and nothing of it reaches the WAL read back below.
+    let refused = push_as(UNGRANTED_TENANT).await.expect("push response");
+    check!(refused.status() == StatusCode::FORBIDDEN);
 
     // 2. The WAL, read back off the broker with an ordinary consumer. This is
     //    the step every other suite here stubs out.
@@ -205,6 +216,18 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    let refused = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0&end=30")
+                .header("X-Scope-OrgID", UNGRANTED_TENANT)
+                .body(Body::empty())
+                .expect("query request"),
+        )
+        .await
+        .expect("query response");
+    check!(refused.status() == StatusCode::FORBIDDEN);
     let response = app
         .oneshot(
             Request::builder()
@@ -368,6 +391,31 @@ fn roundtrip_config(
         index_prefix: Some(INDEX_PREFIX.to_string()),
         ..ServiceConfig::default()
     }
+}
+
+/// Grants `tenant` every operation on the WAL topic.
+///
+/// The pinned in-process broker runs an authorizer and answers `DescribeAcls`
+/// with the ACLs it holds, so the logs path reads its ACLs as configured. With
+/// no ACL at all it would refuse every tenant, as Kafka's authorizer does. A
+/// broker that answers `SECURITY_DISABLED` instead allows every tenant.
+async fn grant_tenant_wal_access_for_test(bootstrap: &str, wal_topic: &str, tenant: &str) {
+    let mut admin = AdminClient::connect(&[bootstrap.to_string()])
+        .await
+        .expect("admin connect");
+    let outcomes = admin
+        .create_acls(&[AclEntry {
+            resource_type: ResourceType::Topic,
+            resource_name: wal_topic.to_string(),
+            pattern_type: PatternType::Literal,
+            principal: format!("User:{tenant}"),
+            host: "*".to_string(),
+            operation: AclOperation::All,
+            permission_type: PermissionType::Allow,
+        }])
+        .await
+        .expect("create the tenant's WAL topic ACL");
+    assert!(outcomes.iter().all(|outcome| outcome.error.is_none()));
 }
 
 async fn create_wal_topic(bootstrap: &str, wal_topic: &str) {

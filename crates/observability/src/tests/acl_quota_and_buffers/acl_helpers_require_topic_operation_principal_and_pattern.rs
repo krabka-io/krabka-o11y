@@ -132,31 +132,40 @@ pub(crate) fn acl_helpers_require_topic_operation_principal_and_pattern() {
         "User:tenant-a",
         "__krabka_observability_logs_wal",
     ));
+    let tenant = TenantId::new("tenant-a").expect("a valid tenant id");
     check!(
         check_tenant_wal_write_acl(
-            "tenant-a",
+            &Principal::Unauthenticated,
+            &tenant,
             "__krabka_observability_logs_wal",
-            std::slice::from_ref(&allow_write)
+            &AclSet::Configured(vec![allow_write.clone()])
         )
         .is_ok()
     );
     check!(
         check_tenant_wal_read_acl(
-            "tenant-a",
+            &Principal::Unauthenticated,
+            &tenant,
             "__krabka_observability_logs_wal",
-            std::slice::from_ref(&allow_read)
+            &AclSet::Configured(vec![allow_read])
         )
         .is_ok()
     );
     check!(
-        check_tenant_wal_write_acl("tenant-a", "__krabka_observability_logs_wal", &[deny_write])
-            .is_err()
+        check_tenant_wal_write_acl(
+            &Principal::Unauthenticated,
+            &tenant,
+            "__krabka_observability_logs_wal",
+            &AclSet::Configured(vec![deny_write])
+        )
+        .is_err()
     );
     check!(
         check_tenant_wal_read_acl(
-            "tenant-a",
+            &Principal::Unauthenticated,
+            &tenant,
             "__krabka_observability_logs_wal",
-            &[allow_write]
+            &AclSet::Configured(vec![allow_write])
         )
         .is_err()
     );

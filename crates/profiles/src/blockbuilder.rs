@@ -7,7 +7,7 @@ use krabka_blockstore::{
     BlockIndex, BlockMeta, BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels,
     ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreRetryPolicy, ProfileIndex,
     ProfileSampleRow, RetryingObjectStore, SummaryColumns, encode_profile_samples,
-    profile_samples_decl, retry_object_store,
+    escape_object_path_segment, profile_samples_decl, retry_object_store,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_observability::{
@@ -128,6 +128,46 @@ mod tests {
 
         assert!(a == b);
         assert!(a != c);
+    }
+
+    // A tenant id may hold `*`, `!`, `'`, `(` and `)`. Each one becomes one
+    // escaped segment that the object store keeps as it is, and the unescape
+    // gives back the tenant the WAL record named.
+    #[test]
+    fn the_tenant_is_one_escaped_segment_that_reads_back_as_the_tenant() {
+        let cases = [
+            ("plain", "tenant-a", "tenant-a"),
+            ("star", "a*b", "a!2Ab"),
+            ("escape marker", "a!b", "a!21b"),
+            ("quote and parentheses", "a'(b)", "a!27!28b!29"),
+            ("dots", "a.b", "a.b"),
+        ];
+
+        for (name, tenant, segment) in cases {
+            let key = object_key(tenant, 3, 10, 20, 100, 200);
+            check!(
+                key == format!(
+                    "blocks/{segment}/00003/00000000000000000010-00000000000000000020-100-200.parquet"
+                ),
+                "{name}"
+            );
+            let path = Path::from(key.as_str());
+            check!(
+                path.as_ref() == key,
+                "{name}: the object store keeps the key"
+            );
+            let parts: Vec<_> = path.parts().collect();
+            check!(parts.len() == 4, "{name}: {key}");
+            check!(
+                parts
+                    .get(1)
+                    .and_then(|part| krabka_blockstore::unescape_object_path_segment(
+                        part.as_ref()
+                    ))
+                    == Some(tenant.to_string()),
+                "{name}"
+            );
+        }
     }
 
     #[test]

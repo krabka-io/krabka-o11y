@@ -1,19 +1,28 @@
+use axum::http::Extensions;
 use clap::Parser as _;
 use prost::Message as _;
+use tower::ServiceExt as _;
 
 use super::prelude::{
-    Arc, BTreeMap, CONTENT_ENCODING, CONTENT_TYPE, Duration, HeaderMap, Mutex, ObjectStore,
-    ProtoAnyValue, ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord,
-    QueryAuthorizationError, RoleReadiness, ServiceConfig, UnavailableQueryAuthorizer, Url,
-    WalLogRecord, build_compactor_configured_object_store, check, ingest_tenant,
-    normalize_otlp_http_logs, proto_any_value, sleep,
+    Arc, BTreeMap, BlockIndex, BrokerAccessPolicy, CONTENT_ENCODING, CONTENT_TYPE,
+    CancellationToken, ClientResourcePolicy, DeferredQueryAuthorizerConnect, Duration, HeaderMap,
+    LabelIndex, Limits, Mutex, ObjectStore, Principal, ProtoAnyValue,
+    ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord, QueryAuthorizationError, Role,
+    RoleReadiness, ServiceConfig, ServiceDependencies, StatusCode, TenantId,
+    UnavailableQueryAuthorizer, Url, Value, WalLogRecord, build_compactor_configured_object_store,
+    build_service_router_with_shutdown, check, json, normalize_otlp_http_logs, proto_any_value,
+    sleep, write_log_index_manifest,
 };
-use crate::LogQueryAuthorizer as _;
+use crate::{
+    LogQueryAuthorizer as _,
+    security_context::{MissingPrincipal, RequestSecurity, ServiceAudit},
+};
 
+mod a_request_through_no_listener_fails_closed_when_authentication_is_required;
+mod a_role_with_a_broker_fails_closed_on_rules_and_deletes_until_its_authorizer_connects;
 mod brute_force_in_range;
 mod compactor_configured_object_store_builds_when_not_injected;
 mod hot_tail_test_record;
-mod ingest_tenant_reads_header_or_falls_back;
 mod normalize_otlp_http_logs_decodes_gzip_identically_to_identity;
 mod recording_object_store;
 mod service_readiness_requires_wal_and_authorization;

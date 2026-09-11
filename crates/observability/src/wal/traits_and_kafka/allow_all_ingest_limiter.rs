@@ -1,4 +1,4 @@
-use super::{IngestLimitError, LogIngestLimiter, WalLogRecord, async_trait};
+use super::{IngestLimitError, LogIngestLimiter, Principal, TenantId, WalLogRecord, async_trait};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AllowAllIngestLimiter;
@@ -7,7 +7,8 @@ pub(crate) struct AllowAllIngestLimiter;
 impl LogIngestLimiter for AllowAllIngestLimiter {
     async fn check(
         &self,
-        _tenant: &str,
+        _principal: &Principal,
+        _tenant: &TenantId,
         _records: &[WalLogRecord],
     ) -> Result<(), IngestLimitError> {
         Ok(())

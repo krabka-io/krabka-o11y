@@ -1,4 +1,4 @@
-use super::*;
+use super::{RulerAlertStateRecord, RulerGroupStateRecord, RulerStateWalRecordError};
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum RulerStateWalRecord {

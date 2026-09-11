@@ -1,16 +1,16 @@
 use super::{
-    DistributorError, HeaderMap, OtlpLogsRequest, Time, WalLogRecord, discover_service_name_label,
+    DistributorError, Limits, OtlpLogsRequest, TenantId, WalLogRecord, discover_service_name_label,
     otlp_attributes_to_labels, otlp_log_record_structured_metadata, otlp_timestamp_ns,
-    otlp_value_to_string, tenant, validate_loki_timestamp_window,
+    otlp_value_to_string, validate_loki_label_limits, validate_loki_line_size,
+    validate_loki_timestamp_window,
 };
 
 pub(crate) fn normalize_otlp_logs(
-    headers: &HeaderMap,
+    tenant: &TenantId,
     payload: OtlpLogsRequest,
-    reject_old_samples_max_age: Option<Time>,
-    creation_grace_period: Option<Time>,
+    limits: &Limits,
 ) -> Result<Vec<WalLogRecord>, DistributorError> {
-    let tenant = tenant(headers)?.to_string();
+    let tenant = tenant.as_str();
     let mut records = Vec::new();
 
     for resource_logs in payload.resource_logs {
@@ -33,24 +33,25 @@ pub(crate) fn normalize_otlp_logs(
             if labels.is_empty() {
                 return Err(DistributorError::EmptyStreamLabels);
             }
+            // The OTLP paths do not check the label *syntax*: the attribute
+            // names come through `otlp_attributes_to_labels`, which already
+            // shapes them. The caps are a different question and apply here.
+            validate_loki_label_limits(&labels, limits)?;
 
             for log_record in scope_logs.log_records {
                 let timestamp_ns = otlp_timestamp_ns(&log_record.time_unix_nano)?;
-                validate_loki_timestamp_window(
-                    timestamp_ns,
-                    &labels,
-                    reject_old_samples_max_age,
-                    creation_grace_period,
-                )?;
+                validate_loki_timestamp_window(timestamp_ns, &labels, limits)?;
+                let line = log_record
+                    .body
+                    .as_ref()
+                    .map(otlp_value_to_string)
+                    .unwrap_or_default();
+                validate_loki_line_size(&line, &labels, limits)?;
                 records.push(WalLogRecord {
-                    tenant: tenant.clone(),
+                    tenant: tenant.to_owned(),
                     labels: labels.clone(),
                     timestamp_ns,
-                    line: log_record
-                        .body
-                        .as_ref()
-                        .map(otlp_value_to_string)
-                        .unwrap_or_default(),
+                    line,
                     structured_metadata: otlp_log_record_structured_metadata(&log_record)?,
                     position: None,
                 });

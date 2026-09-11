@@ -1,21 +1,26 @@
 use super::{
-    Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, ProfileStore, QuerierState,
-    RawQuery, Response, flamebearer_diff_json, parse_render_query, profile_error_response,
-    query_param_i64, query_param_render_time, tenant_from_headers, unix_now_ms,
+    Arc, DefaultMs, Extension, HeaderMap, IntoResponse, Json, NowMs, Principal, ProfileStore,
+    QuerierState, RawQuery, Response, authorize_tenant, flamebearer_diff_json, parse_render_query,
+    profile_error_response, query_param_i64, query_param_render_time, tenant_error_response,
+    tenant_from_headers, unix_now_ms,
 };
 
 pub(crate) async fn render_diff_inner<S>(
     Extension(state): Extension<Arc<QuerierState<S>>>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Response
 where
     S: ProfileStore,
 {
-    let tenant = match tenant_from_headers(&headers) {
+    let tenant = match tenant_from_headers(&headers, &state.tenant_policy) {
         Ok(tenant) => tenant,
-        Err(err) => return profile_error_response(err),
+        Err(error) => return tenant_error_response(&error),
     };
+    if let Err(denied) = authorize_tenant(&principal, &tenant) {
+        return denied.into_response();
+    }
     let params = url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
         .into_owned()
         .collect::<Vec<_>>();
@@ -73,7 +78,7 @@ where
     match state
         .engine
         .diff(
-            &tenant,
+            tenant.as_str(),
             (&left_type, &left_selector, left_start, left_end),
             (&right_type, &right_selector, right_start, right_end),
             state.effective_max_nodes(&tenant, query_param_i64(&params, "maxNodes").unwrap_or(0)),

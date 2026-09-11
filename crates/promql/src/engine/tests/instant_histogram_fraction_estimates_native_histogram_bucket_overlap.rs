@@ -19,7 +19,7 @@ pub(crate) async fn instant_histogram_fraction_estimates_native_histogram_bucket
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             "histogram_fraction(1, 2, request_duration_seconds)",
             10_000,
         )

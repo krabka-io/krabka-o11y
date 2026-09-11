@@ -1,9 +1,10 @@
 use krabka_observability::RoleReadiness;
 
 use super::{
-    Arc, ArcSwap, BlockStore, BlockStoreGates, Cli, HttpConfig, IndexedLiveSource, KrabkaSpanStore,
-    LiveStore, LiveTier, ObjectStore, RemoteLiveSource, RwLock, ServiceMetrics, SharedObjectStore,
-    SharedTraceIndex, TraceIndex, TraceqlEngine, Url, engine_opts_from_cli, trace_querier,
+    Arc, ArcSwap, BlockStore, BlockStoreGates, Cli, HttpConfig, IndexedLiveSource, InternalClient,
+    KrabkaSpanStore, LiveStore, LiveTier, ObjectStore, RemoteLiveSource, RwLock, ServiceMetrics,
+    SharedObjectStore, SharedTraceIndex, TenantPolicy, TraceIndex, TraceqlEngine, Url,
+    engine_opts_from_cli, limits_from_cli, load_traces_limits_overrides_config, trace_querier,
 };
 
 pub(crate) async fn build_querier_router_with_live(
@@ -13,10 +14,17 @@ pub(crate) async fn build_querier_router_with_live(
     gates: &BlockStoreGates,
     readiness: RoleReadiness,
     object_store: &SharedObjectStore,
+    internal_client: &InternalClient,
 ) -> Result<
     (axum::Router, Arc<dyn ObjectStore>, String, SharedTraceIndex),
     Box<dyn std::error::Error + Send + Sync>,
 > {
+    // Built first, so that a malformed overrides file stops the role before it
+    // reaches the object store.
+    let overrides = load_traces_limits_overrides_config(
+        cli.traces_limits_overrides_config.as_deref(),
+        limits_from_cli(cli),
+    )?;
     let configured = object_store.get(cli, metrics.object_store.clone()).await?;
     gates.object_store.mark_ready();
     let trace_index_key = configured.object_key(&cli.trace_index_key);
@@ -39,10 +47,13 @@ pub(crate) async fn build_querier_router_with_live(
             Arc::clone(&trace_index),
         ))))
     } else if let Some(url) = &cli.querier_live_store_url {
+        // The live-store serves with the same security, so the querier calls it
+        // as the internal principal.
         Some(LiveTier::new(Arc::new(RemoteLiveSource::new(
             Url::parse(url)?,
             Arc::clone(&trace_index),
-        ))))
+            internal_client,
+        )?)))
     } else {
         None
     };
@@ -58,7 +69,8 @@ pub(crate) async fn build_querier_router_with_live(
         HttpConfig {
             max_trace_spans: cli.max_trace_spans,
             tag_query_filter_autocomplete_limit: cli.tag_query_filter_autocomplete_limit,
-            ..HttpConfig::default()
+            overrides,
+            tenant_policy: TenantPolicy::anonymous(),
         },
         metrics,
         readiness,

@@ -56,7 +56,11 @@ pub(crate) async fn instant_avg_over_time_holds_an_infinite_mean_until_it_is_con
 
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
         let result = engine
-            .query_instant("tenant-a", "avg_over_time(queue_depth[5m])", 60_000)
+            .query_instant(
+                &tenant_id("tenant-a"),
+                "avg_over_time(queue_depth[5m])",
+                60_000,
+            )
             .await
             .unwrap();
         let QueryResult::InstantVector(samples) = result else {

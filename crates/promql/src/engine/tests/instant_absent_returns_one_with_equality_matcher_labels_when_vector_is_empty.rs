@@ -13,7 +13,7 @@ pub(crate) async fn instant_absent_returns_one_with_equality_matcher_labels_when
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let result = engine
         .query_instant(
-            "tenant-a",
+            &tenant_id("tenant-a"),
             r#"absent(up{job="worker",instance=~".*"})"#,
             10_000,
         )

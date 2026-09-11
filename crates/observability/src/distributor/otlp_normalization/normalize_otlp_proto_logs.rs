@@ -1,19 +1,12 @@
 use super::{
-    DistributorError, HeaderMap, ProtoExportLogsServiceRequest, Time, WalLogRecord,
-    normalize_otlp_proto_logs_for_tenant, tenant,
+    DistributorError, Limits, ProtoExportLogsServiceRequest, TenantId, WalLogRecord,
+    normalize_otlp_proto_logs_for_tenant,
 };
 
 pub(crate) fn normalize_otlp_proto_logs(
-    headers: &HeaderMap,
+    tenant: &TenantId,
     payload: ProtoExportLogsServiceRequest,
-    reject_old_samples_max_age: Option<Time>,
-    creation_grace_period: Option<Time>,
+    limits: &Limits,
 ) -> Result<Vec<WalLogRecord>, DistributorError> {
-    let tenant = tenant(headers)?;
-    normalize_otlp_proto_logs_for_tenant(
-        tenant,
-        payload,
-        reject_old_samples_max_age,
-        creation_grace_period,
-    )
+    normalize_otlp_proto_logs_for_tenant(tenant, payload, limits)
 }
