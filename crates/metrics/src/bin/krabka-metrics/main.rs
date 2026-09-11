@@ -23,6 +23,7 @@ use krabka_metrics::{
     metrics::ServiceMetrics,
     run_compactor_consumer_loop,
 };
+use krabka_observability::{RoleReadiness, readiness_router};
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
@@ -472,20 +473,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let result = async {
         let metrics = ServiceMetrics::new();
+        // The admin port binds before the role reaches its broker or object
+        // store, so `/ready` there is 503 for exactly as long as the role's
+        // remaining startup takes. The compactor has no data port at all, and
+        // this is the only place it can be asked.
+        let readiness = RoleReadiness::new();
         let admin = krabka_telemetry::profiling::spawn_admin_with_config(
             cli.admin_listen_addr,
-            krabka_metrics::metrics::metrics_router(metrics.registry.clone()),
+            krabka_metrics::metrics::metrics_router(metrics.registry.clone())
+                .merge(readiness_router(readiness.clone())),
             cli.profiling.clone(),
         )
         .await?;
 
         let role = async {
             match cli.target {
-                Target::Distributor => run_distributor(cli, metrics).await?,
-                Target::Compactor => run_compactor(cli, metrics).await?,
-                Target::Querier => run_querier(cli).await?,
-                Target::QueryFrontend => run_query_frontend(cli).await?,
-                Target::Ruler => run_ruler(cli).await?,
+                Target::Distributor => run_distributor(cli, metrics, readiness).await?,
+                Target::Compactor => run_compactor(cli, metrics, readiness).await?,
+                Target::Querier => run_querier(cli, readiness).await?,
+                Target::QueryFrontend => run_query_frontend(cli, readiness).await?,
+                Target::Ruler => run_ruler(cli, readiness).await?,
             }
             Ok::<(), Box<dyn std::error::Error>>(())
         };

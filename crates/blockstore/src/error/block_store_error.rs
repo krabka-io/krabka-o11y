@@ -35,6 +35,30 @@ pub enum BlockStoreError {
     #[error("invalid block: {0}")]
     InvalidBlock(String),
 
+    /// A profile series was offered to the profile index without the label
+    /// that carries its profile type.
+    ///
+    /// The profile type is not stored beside the series: a load recomputes it
+    /// from this label. A series that lacks the label therefore has no type to
+    /// be found under, now or after a reload, and a profile written under it
+    /// would store without complaint and answer no query. Ingest's
+    /// multi-value split sets the label on every series it emits, so a series
+    /// without it is a fault in the writer, not in a client's payload.
+    #[error(
+        "profile series {{{labels}}} of tenant `{tenant}` (fingerprint {fingerprint}) \
+         has no `{label}` label, so no profile-type selector could ever reach it"
+    )]
+    MissingProfileTypeLabel {
+        /// The label the series must carry, so the message names it.
+        label: &'static str,
+        /// The tenant the series was offered for.
+        tenant: String,
+        /// The fingerprint the series would have been registered under.
+        fingerprint: u64,
+        /// The series' own labels, rendered `name="value"`, comma separated.
+        labels: String,
+    },
+
     #[error("index snapshot serialization error: {0}")]
     Serde(String),
 }

@@ -95,7 +95,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in [&rec_a, &rec_b] {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta_a);
         index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
@@ -146,7 +148,9 @@ mod tests {
             let mut index = ProfileIndex::new();
             for record in [first_record, &other_record] {
                 let labels = Labels::from_pairs(record.labels.iter().cloned());
-                index.add_series("t", labels.fingerprint(), &labels);
+                index
+                    .add_series("t", labels.fingerprint(), &labels)
+                    .unwrap();
             }
             for meta in [first, &other_input] {
                 index.add_block(meta);
@@ -247,7 +251,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in [&rec_a, &rec_b, &rec_c] {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta_a);
         index.add_profile_block("t", &meta_a.object_key, vec![STACKTRACE_PARTITION]);
@@ -296,7 +302,9 @@ mod tests {
         let mut metas = Vec::new();
         for (idx, rec) in [&rec_a, &rec_b, &rec_c, &rec_d].into_iter().enumerate() {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
             let offset = i64::try_from(idx).unwrap();
             let bounds = (offset, offset);
             let meta = build_block(&store, "t", 0, std::slice::from_ref(rec), bounds)
@@ -491,7 +499,9 @@ mod tests {
         for n in 0..4_i64 {
             let rec = record_at("t", "api", 1, "main", 1_000 + n);
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
             let block = build_block(&store, "t", 0, std::slice::from_ref(&rec), (n, n))
                 .await
                 .unwrap()

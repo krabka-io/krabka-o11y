@@ -28,12 +28,15 @@ pub async fn run_wal_tail_with_topic(
         let records = consumer.poll(poll_timeout).await.map_err(|err| {
             ProfilesError::Wal(format!("hot WAL-tail consumer poll failed: {err}"))
         })?;
-        for record in records {
-            let Some(value) = record.value.as_deref() else {
-                continue;
-            };
-            store.append_record(ProfileRecord::decode(value)?)?;
-        }
+        // Decoded outside the store's write lock, then applied as one batch:
+        // the store copies itself on write while a query holds a snapshot, and
+        // a batch pays that once instead of once per record.
+        let decoded = records
+            .iter()
+            .filter_map(|record| record.value.as_deref())
+            .map(ProfileRecord::decode)
+            .collect::<Result<Vec<_>, _>>()?;
+        store.append_records(decoded)?;
         consumer
             .commit_sync()
             .await

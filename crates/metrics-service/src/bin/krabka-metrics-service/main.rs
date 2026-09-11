@@ -23,6 +23,7 @@ use krabka_metrics_service::{
     install_bundled_rule_groups, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
     run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
+use krabka_observability::{ReadinessGate, RoleReadiness, readiness_router};
 use krabka_promql::{
     EngineOpts, PrometheusApiState, QueryFrontendOptions, RulerShard, WalHead, prometheus_router,
 };
@@ -572,6 +573,7 @@ mod tests {
     async fn wal_head_consumer_startup_runs_in_background() {
         let shutdown = Shutdown::new();
         let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let readiness = RoleReadiness::new();
 
         let task = spawn_wal_head_consumer_task(
             || async move {
@@ -582,12 +584,91 @@ mod tests {
             "__krabka_metrics_wal".to_string(),
             millis(1),
             shutdown.clone(),
+            readiness.gate("wal-head"),
         );
 
         let signalled = tokio::time::timeout(millis(25).to_std(), shutdown.signalled()).await;
         task.abort();
 
         assert2::assert!(signalled.is_err());
+    }
+
+    /// `GET /ready` against a router, as a probe would ask it.
+    async fn probe_ready(router: &axum::Router) -> (axum::http::StatusCode, String) {
+        use tower::ServiceExt as _;
+
+        let response = router
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/ready")
+                    .body(axum::body::Body::empty())
+                    .expect("readiness probe request"),
+            )
+            .await
+            .expect("readiness probe response");
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("readiness probe body");
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// The querier binds its listener before its WAL head consumer has reached
+    /// the broker. Between the two it can answer a query for the recent window
+    /// with nothing at all -- no error, just an empty result -- so the probe
+    /// must fail until the consumer attaches.
+    ///
+    /// Nothing here sets a readiness flag. The only thing that moves the gate
+    /// is the consumer's own connect resolving, which is what the querier's
+    /// start really waits on.
+    #[tokio::test]
+    async fn readiness_is_false_until_the_wal_head_consumer_attaches() {
+        let readiness = RoleReadiness::new();
+        // The admin port's shape exactly: `/ready` merged beside `/metrics`, so
+        // a lost `Extension` layer shows up here as a 500 rather than in
+        // production as one.
+        let metrics = krabka_promql::metrics::ServiceMetrics::new();
+        let router = krabka_promql::metrics::metrics_router(metrics.registry.clone())
+            .merge(readiness_router(readiness.clone()));
+        let shutdown = Shutdown::new();
+        let (connect_tx, connect_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let task = spawn_wal_head_consumer_task(
+            || async move {
+                let _ = connect_rx.await;
+                Ok(PendingWalHeadConsumer)
+            },
+            krabka_promql::WalHead::new(),
+            "__krabka_metrics_wal".to_string(),
+            millis(1),
+            shutdown.clone(),
+            readiness.gate("wal-head"),
+        );
+
+        assert2::assert!(
+            probe_ready(&router).await
+                == (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "not ready: wal-head\n".to_string()
+                )
+        );
+
+        connect_tx.send(()).expect("release the consumer connect");
+        // Progress poll, not a run-duration budget: wait for the connect the
+        // line above released to be observed, however loaded the machine is.
+        for _ in 0..2_000 {
+            if readiness.is_ready() {
+                break;
+            }
+            tokio::time::sleep(millis(1).to_std()).await;
+        }
+
+        assert2::assert!(
+            probe_ready(&router).await == (axum::http::StatusCode::OK, "ready\n".to_string())
+        );
+
+        task.abort();
     }
 
     struct PendingWalHeadConsumer;
@@ -668,18 +749,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let result = async {
         let metrics = krabka_promql::metrics::ServiceMetrics::new();
+        // One readiness for the process. The admin port answers `/ready` from
+        // the moment it binds, which is what a probe that cannot reach the
+        // data port needs, and the data port's own `/ready` reports the same
+        // gates.
+        let readiness = RoleReadiness::new();
         let admin = krabka_telemetry::profiling::spawn_admin_from_env_with_config(
             "0.0.0.0:9404",
-            krabka_promql::metrics::metrics_router(metrics.registry.clone()),
+            krabka_promql::metrics::metrics_router(metrics.registry.clone())
+                .merge(readiness_router(readiness.clone())),
             cli.profiling.clone(),
         )
         .await?;
 
         let role = async {
             match cli.target {
-                Target::Querier => run_querier(cli, metrics).await?,
-                Target::QueryFrontend => run_query_frontend(cli, metrics).await?,
-                Target::Ruler => run_ruler(cli, metrics).await?,
+                Target::Querier => run_querier(cli, metrics, readiness).await?,
+                Target::QueryFrontend => run_query_frontend(cli, metrics, readiness).await?,
+                Target::Ruler => run_ruler(cli, metrics, readiness).await?,
             }
             Ok::<(), Box<dyn std::error::Error>>(())
         };

@@ -3406,6 +3406,7 @@ dependencies = [
  "criterion",
  "datafusion",
  "krabka-blockstore",
+ "krabka-metrics",
  "krabka-pprof",
  "krabka-promql",
  "krabka-traceql",

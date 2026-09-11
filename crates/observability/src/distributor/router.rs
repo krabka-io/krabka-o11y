@@ -3,10 +3,10 @@ use krabka_units::convert::ByteSizeExt;
 use tracing::Instrument;
 
 use crate::{
-    AllowAllIngestLimiter, Arc, AtomicBool, AtomicOrdering, ByteSize, Bytes, CONTENT_ENCODING,
-    CONTENT_TYPE, Deserialize, Extension, HeaderMap, Instant, Labels, LogIngestLimiter, LogWalSink,
-    LogsService, LogsServiceServer, ProtoExportLogsServiceRequest, ProtoExportLogsServiceResponse,
-    Response, Router, ServiceMetrics, State, StatusCode, Time, Value,
+    AllowAllIngestLimiter, Arc, AtomicBool, ByteSize, Bytes, CONTENT_ENCODING, CONTENT_TYPE,
+    Deserialize, Extension, HeaderMap, Instant, Labels, LogIngestLimiter, LogWalSink, LogsService,
+    LogsServiceServer, ProtoExportLogsServiceRequest, ProtoExportLogsServiceResponse, Response,
+    RoleReadiness, Router, ServiceMetrics, State, StatusCode, Time, Value,
     append_distributor_wal_records, build_info, distributor_error_to_grpc_status,
     flush_ingester_chunks, format_query, format_query_post, get, get_prepare_shutdown, grpc_tenant,
     log_level, log_level_post, measured_size, memberlist_status, normalize_loki_http_push,
@@ -45,7 +45,6 @@ mod push_logs;
 mod push_otlp_logs;
 mod querier_ops;
 mod role_ops;
-mod service_readiness;
 mod with_role_ops_routes;
 
 pub(crate) use compactor_ops::COMPACTOR_OPS;
@@ -78,5 +77,4 @@ pub(crate) use push_logs::push_logs;
 pub(crate) use push_otlp_logs::push_otlp_logs;
 pub(crate) use querier_ops::QUERIER_OPS;
 pub(crate) use role_ops::RoleOps;
-pub(crate) use service_readiness::ServiceReadiness;
 pub(crate) use with_role_ops_routes::with_role_ops_routes;

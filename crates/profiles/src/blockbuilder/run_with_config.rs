@@ -1,9 +1,20 @@
 use super::*;
 
+/// Builds profile blocks from the WAL until `shutdown` is cancelled.
+///
+/// The cancellation is a drain, not an abort. Whatever the accumulator holds
+/// when the signal arrives is flushed into a block, the index snapshot is
+/// saved, and the consumer's offset is committed -- in that order -- before
+/// the loop returns. Returning any earlier would abandon a partially written
+/// block and leave the offset behind it uncommitted, so the next start would
+/// replay that window: work silently lost on an ordinary rolling restart.
 ///
 /// # Errors
 /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-pub async fn run_with_config(config: BlockBuilderConfig) -> Result<(), ProfilesError> {
+pub async fn run_with_config(
+    config: BlockBuilderConfig,
+    shutdown: CancellationToken,
+) -> Result<(), ProfilesError> {
     let mut index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
         &config.store,
         &config.index_key,
@@ -27,16 +38,25 @@ pub async fn run_with_config(config: BlockBuilderConfig) -> Result<(), ProfilesE
     let mut accumulator =
         ConsumerRecordAccumulator::new(config.flush_records, config.flush_max_age);
     loop {
-        let records = consumer
-            .poll(config.poll_timeout)
-            .await
-            .map_err(|err| ProfilesError::Block(format!("consumer poll failed: {err}")))?;
+        let records = tokio::select! {
+            biased;
+            () = shutdown.cancelled() => Vec::new(),
+            polled = consumer.poll(config.poll_timeout) => polled
+                .map_err(|err| ProfilesError::Block(format!("consumer poll failed: {err}")))?,
+        };
+        let draining = shutdown.is_cancelled();
         let now = Instant::now();
         accumulator.push(records, now);
-        if !accumulator.should_flush(now) {
+        if !draining && !accumulator.should_flush(now) {
             continue;
         }
         let records = accumulator.take();
+        if records.is_empty() {
+            if draining {
+                return Ok(());
+            }
+            continue;
+        }
         // ONE consumer span per poll batch (not per record). Re-parent it onto
         // the ingest span of a record carrying `traceparent`, stitching the
         // block-build stage onto the distributed trace that produced the WAL.
@@ -83,5 +103,8 @@ pub async fn run_with_config(config: BlockBuilderConfig) -> Result<(), ProfilesE
         }
         .instrument(build_span)
         .await?;
+        if draining {
+            return Ok(());
+        }
     }
 }

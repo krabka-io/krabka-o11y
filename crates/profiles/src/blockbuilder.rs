@@ -13,6 +13,7 @@ use krabka_units::{
     ByteSize, Time, convert::StdDurationExt as _, kibibytes, mebibytes, millis, secs,
 };
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
 
 use crate::{

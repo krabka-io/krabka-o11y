@@ -1,7 +1,7 @@
 use super::{
     Arc, AtomicBool, Cli, ClientFrameMax, ConnectionDispatchQueueCapacity, MetricsCompactorConfig,
-    Ordering, ServiceMetrics, Time, TimeExt, build_object_store, run_compactor_consumer_loop,
-    spawn_retention_sweeper,
+    Ordering, RoleReadiness, ServiceMetrics, Time, TimeExt, build_object_store,
+    run_compactor_consumer_loop, spawn_retention_sweeper,
 };
 
 // cargo-mutants: live compactor I/O wiring is covered by integration workflows.
@@ -9,8 +9,15 @@ use super::{
 pub(crate) async fn run_compactor(
     cli: Cli,
     metrics: ServiceMetrics,
+    readiness: RoleReadiness,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // The compactor serves no data port, so `/ready` on the admin port is the
+    // only place an orchestrator can ask. It is ready once it holds the two
+    // things it compacts between: the object store and the WAL consumer.
+    let object_store_gate = readiness.gate("object-store");
+    let wal_consumer_gate = readiness.gate("wal-consumer");
     let store = build_object_store(&cli.object_store_url)?;
+    object_store_gate.mark_ready();
     let retention = cli.compactor_retention;
     let sweep_interval = cli.compactor_retention_sweep_interval;
     let mut config = MetricsCompactorConfig::new(cli.bootstrap);
@@ -26,6 +33,7 @@ pub(crate) async fn run_compactor(
     config.flush_max_age = cli.compactor_flush_max_age;
     let runtime = config.build_runtime(store.clone())?;
     let mut consumer = config.build_consumer().await?;
+    wal_consumer_gate.mark_ready();
     let stopping = Arc::new(AtomicBool::new(false));
     if retention > Time::ZERO {
         spawn_retention_sweeper(store, retention, sweep_interval, Arc::clone(&stopping));

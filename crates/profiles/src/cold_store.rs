@@ -138,7 +138,9 @@ mod tests {
             .remove(0);
         let mut index = ProfileIndex::new();
         let labels = Labels::from_pairs(rec_a.labels.iter().cloned());
-        index.add_series("t", labels.fingerprint(), &labels);
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
         index.add_block(&meta_a);
         index.add_block(&meta_b);
         let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
@@ -163,7 +165,9 @@ mod tests {
             .remove(0);
         let mut index = ProfileIndex::new();
         let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index.add_series("t", labels.fingerprint(), &labels);
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
 
@@ -191,7 +195,9 @@ mod tests {
             .remove(0);
         let mut index = ProfileIndex::new();
         let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index.add_series("t", labels.fingerprint(), &labels);
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
 
@@ -220,7 +226,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in [&first, &later] {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
@@ -261,7 +269,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in [&early, &late] {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta_early);
         index.add_block(&meta_late);
@@ -313,7 +323,9 @@ mod tests {
             .remove(0);
         let mut index = ProfileIndex::new();
         let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index.add_series("t", labels.fingerprint(), &labels);
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
 
@@ -341,7 +353,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in &records {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
@@ -361,7 +375,9 @@ mod tests {
             .remove(0);
         let mut index = ProfileIndex::new();
         let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index.add_series("t", labels.fingerprint(), &labels);
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
 
@@ -386,7 +402,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in &records {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
@@ -409,7 +427,9 @@ mod tests {
             .remove(0);
         let mut index = ProfileIndex::new();
         let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index.add_series("t", labels.fingerprint(), &labels);
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
 
@@ -434,7 +454,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in &records {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
@@ -454,7 +476,9 @@ mod tests {
             .remove(0);
         let mut index = ProfileIndex::new();
         let labels = Labels::from_pairs(rec.labels.iter().cloned());
-        index.add_series("t", labels.fingerprint(), &labels);
+        index
+            .add_series("t", labels.fingerprint(), &labels)
+            .unwrap();
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
 
@@ -479,7 +503,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in &records {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta);
         let cold = ColdProfileStore::new(store, Arc::new(index));
@@ -508,7 +534,9 @@ mod tests {
         let mut index = ProfileIndex::new();
         for rec in &records {
             let labels = Labels::from_pairs(rec.labels.iter().cloned());
-            index.add_series("t", labels.fingerprint(), &labels);
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
         }
         index.add_block(&meta);
         store

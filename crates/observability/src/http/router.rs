@@ -2,17 +2,17 @@ use axum::response::IntoResponse;
 
 use crate::{
     AtomicOrdering, Bytes, COMPACTOR_OPS, CompactorDeleteState, DistributorState, Extension,
-    HttpQueryError, QUERIER_OPS, QuerierState, RawQuery, Response, RoleOps, Router,
-    ServiceReadiness, SharedLogDeleteRequests, State, StatusCode, api_prom_label_names,
-    api_prom_label_names_post, api_prom_label_values, api_prom_label_values_post, api_prom_query,
-    api_prom_query_post, api_prom_query_range, api_prom_query_range_post, api_prom_series,
-    api_prom_series_post, cancel_delete_request, create_delete_request, decode_form_component,
-    detected_field_values, detected_field_values_post, detected_fields, detected_fields_post,
-    detected_labels, detected_labels_post, form_body_query, format_query, format_query_post, get,
-    index_stats, index_stats_post, index_volume, index_volume_post, index_volume_range,
-    index_volume_range_post, json, json_response, label_names, label_names_post, label_values,
-    label_values_post, list_delete_requests, patterns, patterns_post, query, query_post,
-    query_range, query_range_post,
+    HttpQueryError, QUERIER_OPS, QuerierState, RawQuery, Response, RoleOps, RoleReadiness, Router,
+    SharedLogDeleteRequests, State, StatusCode, api_prom_label_names, api_prom_label_names_post,
+    api_prom_label_values, api_prom_label_values_post, api_prom_query, api_prom_query_post,
+    api_prom_query_range, api_prom_query_range_post, api_prom_series, api_prom_series_post,
+    cancel_delete_request, create_delete_request, decode_form_component, detected_field_values,
+    detected_field_values_post, detected_fields, detected_fields_post, detected_labels,
+    detected_labels_post, form_body_query, format_query, format_query_post, get, index_stats,
+    index_stats_post, index_volume, index_volume_post, index_volume_range, index_volume_range_post,
+    json, json_response, label_names, label_names_post, label_values, label_values_post,
+    list_delete_requests, patterns, patterns_post, query, query_post, query_range,
+    query_range_post,
     ruler::{
         create_loki_rule_group, delete_loki_rule_group, delete_loki_rule_namespace,
         loki_page_not_found, loki_rule_group, loki_rule_namespace, loki_rules, prometheus_alerts,
@@ -33,7 +33,6 @@ mod loki_router_with_readiness;
 mod memberlist_status;
 mod parse_log_level_param;
 mod query_param_value;
-mod ready;
 mod role_config;
 mod role_metrics;
 mod role_ring;
@@ -58,7 +57,6 @@ pub(crate) use loki_router_with_readiness::loki_router_with_readiness;
 pub(crate) use memberlist_status::memberlist_status;
 pub(crate) use parse_log_level_param::parse_log_level_param;
 pub(crate) use query_param_value::query_param_value;
-pub(crate) use ready::ready;
 pub(crate) use role_config::role_config;
 pub(crate) use role_metrics::role_metrics;
 pub(crate) use role_ring::role_ring;

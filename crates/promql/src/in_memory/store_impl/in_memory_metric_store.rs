@@ -1,9 +1,9 @@
 use super::{
     Arc, BTreeMap, BTreeSet, ExemplarRecord, InMemoryMetricStore, LabelMatcher,
     LabelNameCardinality, LabelValueCardinality, Labels, MemTable, MetadataRecord, MetricStore,
-    PromqlError, Result, ScanResult, SeriesFingerprint, SessionContext, TsdbBlock, TsdbHeadStats,
-    TsdbStats, all_match, encode_float_samples, encode_native_histograms, float_sample_schema,
-    named_stats, native_histogram_schema, prepare_matchers, row_matches,
+    PromqlError, Result, RowChunks, ScanResult, SeriesFingerprint, SessionContext, TsdbBlock,
+    TsdbHeadStats, TsdbStats, all_match, encode_float_samples, encode_native_histograms,
+    float_sample_schema, named_stats, native_histogram_schema, prepare_matchers, row_matches,
 };
 
 #[async_trait::async_trait]
@@ -20,7 +20,7 @@ impl MetricStore for InMemoryMetricStore {
 
         let mut float_rows = Vec::new();
         if let Some(rows) = self.floats.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 if row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms) {
                     float_rows.push((row.fp, row.ts_ms, row.value));
                 }
@@ -39,9 +39,9 @@ impl MetricStore for InMemoryMetricStore {
 
         let mut hist_rows = Vec::new();
         if let Some(rows) = self.hists.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 if row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms) {
-                    hist_rows.push((row.fp, row.ts_ms, row.hist.clone()));
+                    hist_rows.push((row.fp, row.ts_ms, row.hist.as_ref().clone()));
                 }
             }
         }
@@ -116,7 +116,7 @@ impl MetricStore for InMemoryMetricStore {
         let matchers = prepare_matchers(matchers)?;
         let mut exemplars = Vec::new();
         if let Some(rows) = self.exemplars.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 if row.ts_ms >= start_ms
                     && row.ts_ms <= end_ms
                     && all_match(
@@ -126,8 +126,8 @@ impl MetricStore for InMemoryMetricStore {
                     )
                 {
                     exemplars.push(ExemplarRecord {
-                        series_labels: row.series_labels.clone(),
-                        labels: row.labels.clone(),
+                        series_labels: row.series_labels.as_ref().clone(),
+                        labels: row.labels.as_ref().clone(),
                         ts_ms: row.ts_ms,
                         value: row.value,
                     });
@@ -143,7 +143,7 @@ impl MetricStore for InMemoryMetricStore {
             .metadata
             .get(tenant)
             .into_iter()
-            .flatten()
+            .flat_map(RowChunks::iter)
             .filter(|record| {
                 metric.is_none_or(|metric| metric == record.metric_family_name.as_str())
             })
@@ -162,14 +162,14 @@ impl MetricStore for InMemoryMetricStore {
     async fn cardinality_label_names(&self, tenant: &str) -> Result<Vec<LabelNameCardinality>> {
         let mut by_name = BTreeMap::<String, BTreeSet<SeriesFingerprint>>::new();
         if let Some(rows) = self.floats.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 for (name, _) in row.labels.iter() {
                     by_name.entry(name.clone()).or_default().insert(row.fp);
                 }
             }
         }
         if let Some(rows) = self.hists.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 for (name, _) in row.labels.iter() {
                     by_name.entry(name.clone()).or_default().insert(row.fp);
                 }
@@ -195,7 +195,7 @@ impl MetricStore for InMemoryMetricStore {
     async fn cardinality_label_values(&self, tenant: &str) -> Result<Vec<LabelValueCardinality>> {
         let mut by_value = BTreeMap::<(String, String), BTreeSet<SeriesFingerprint>>::new();
         if let Some(rows) = self.floats.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 for (name, value) in row.labels.iter() {
                     by_value
                         .entry((name.clone(), value.clone()))
@@ -205,7 +205,7 @@ impl MetricStore for InMemoryMetricStore {
             }
         }
         if let Some(rows) = self.hists.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 for (name, value) in row.labels.iter() {
                     by_value
                         .entry((name.clone(), value.clone()))
@@ -238,13 +238,17 @@ impl MetricStore for InMemoryMetricStore {
     async fn cardinality_active_series(&self, tenant: &str) -> Result<Vec<Labels>> {
         let mut by_fp = BTreeMap::<SeriesFingerprint, Labels>::new();
         if let Some(rows) = self.floats.get(tenant) {
-            for row in rows {
-                by_fp.entry(row.fp).or_insert_with(|| row.labels.clone());
+            for row in rows.iter() {
+                by_fp
+                    .entry(row.fp)
+                    .or_insert_with(|| row.labels.as_ref().clone());
             }
         }
         if let Some(rows) = self.hists.get(tenant) {
-            for row in rows {
-                by_fp.entry(row.fp).or_insert_with(|| row.labels.clone());
+            for row in rows.iter() {
+                by_fp
+                    .entry(row.fp)
+                    .or_insert_with(|| row.labels.as_ref().clone());
             }
         }
 
@@ -268,19 +272,23 @@ impl MetricStore for InMemoryMetricStore {
         let mut max_time = i64::MIN;
 
         if let Some(rows) = self.floats.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 sample_count += 1;
                 min_time = min_time.min(row.ts_ms);
                 max_time = max_time.max(row.ts_ms);
-                series.entry(row.fp).or_insert_with(|| row.labels.clone());
+                series
+                    .entry(row.fp)
+                    .or_insert_with(|| row.labels.as_ref().clone());
             }
         }
         if let Some(rows) = self.hists.get(tenant) {
-            for row in rows {
+            for row in rows.iter() {
                 sample_count += 1;
                 min_time = min_time.min(row.ts_ms);
                 max_time = max_time.max(row.ts_ms);
-                series.entry(row.fp).or_insert_with(|| row.labels.clone());
+                series
+                    .entry(row.fp)
+                    .or_insert_with(|| row.labels.as_ref().clone());
             }
         }
         if series.is_empty() {

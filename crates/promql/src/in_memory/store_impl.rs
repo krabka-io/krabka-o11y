@@ -10,7 +10,7 @@ use krabka_metrics::{
 };
 
 use super::{
-    InMemoryMetricStore,
+    InMemoryMetricStore, RowChunks,
     matcher::{all_match, prepare_matchers, row_matches},
 };
 use crate::{

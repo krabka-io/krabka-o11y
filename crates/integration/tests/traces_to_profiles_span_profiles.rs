@@ -98,9 +98,9 @@ fn profile_record(span_ids: [u64; 2]) -> ProfileRecord {
     ProfileRecord {
         tenant: TENANT.to_string(),
         // `__profile_type__` is not decoration: `ProfileIndex::add_series`
-        // registers a series under a profile type only when this label is
-        // present, and the query resolves its type selector through that
-        // registration. Ingest's `split` inserts it for exactly this reason.
+        // refuses a series that does not carry it, because the query resolves
+        // its type selector through the registration this label drives.
+        // Ingest's `split` inserts it for exactly this reason.
         labels: vec![
             (LABEL_PROFILE_TYPE.to_string(), PROFILE_TYPE.to_string()),
             ("__name__".to_string(), "process_cpu".to_string()),
@@ -152,7 +152,9 @@ async fn querier_over(record: &ProfileRecord) -> axum::Router {
     let mut index = ProfileIndex::new();
 
     let labels = Labels::from_pairs(record.labels.iter().cloned());
-    index.add_series(TENANT, labels.fingerprint(), &labels);
+    index
+        .add_series(TENANT, labels.fingerprint(), &labels)
+        .expect("the record carries __profile_type__");
 
     let metas = build_block(&store, TENANT, 0, std::slice::from_ref(record), (0, 0))
         .await

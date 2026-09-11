@@ -1,12 +1,12 @@
 use super::{
     AllowAllIngestLimiter, Arc, BufferedLogHotTail, CancellationToken, JoinHandle, ObjectStore,
-    Role, Router, ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceReadiness,
-    SharedLogDeleteRequests, SharedLokiRules, SwappableQueryAuthorizer,
-    build_configured_object_store, build_configured_querier_state, build_querier_state,
-    compactor_delete_requests_for_config, compactor_router_with_delete_requests,
-    distributor_router_with_sink, load_querier_shared_compaction_frontier,
-    loki_router_with_readiness, querier_object_store_prefix, spawn_compaction_frontier_refresher,
-    spawn_log_hot_tail_poller, spawn_query_authorizer_connect, spawn_wal_hot_tail_connect_and_poll,
+    Role, Router, ServiceConfig, ServiceConfigError, ServiceDependencies, SharedLogDeleteRequests,
+    SharedLokiRules, SwappableQueryAuthorizer, build_configured_object_store,
+    build_configured_querier_state, build_querier_state, compactor_delete_requests_for_config,
+    compactor_router_with_delete_requests, distributor_router_with_sink,
+    load_querier_shared_compaction_frontier, loki_router_with_readiness,
+    querier_object_store_prefix, spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller,
+    spawn_query_authorizer_connect, spawn_wal_hot_tail_connect_and_poll,
 };
 
 pub(crate) async fn build_service_router_with_shutdown(
@@ -16,6 +16,9 @@ pub(crate) async fn build_service_router_with_shutdown(
     token: CancellationToken,
 ) -> Result<(Router, Vec<(&'static str, JoinHandle<()>)>), ServiceConfigError> {
     let metrics = dependencies.metrics.clone().unwrap_or_default();
+    // The binary may have handed in the same readiness its admin port serves,
+    // so a probe on `:9404` and a probe on the data port agree.
+    let readiness = dependencies.readiness.clone().unwrap_or_default();
     match config.target {
         Role::Distributor => {
             let sink = dependencies
@@ -39,7 +42,6 @@ pub(crate) async fn build_service_router_with_shutdown(
         }
         Role::Querier => {
             let mut background_tasks = Vec::new();
-            let mut readiness = ServiceReadiness::ready();
             let configured_store = if object_store.is_none() {
                 build_configured_object_store(config)?
             } else {
@@ -105,7 +107,12 @@ pub(crate) async fn build_service_router_with_shutdown(
                     state = state.with_hot_tail(hot_tail, i64::MIN);
                 }
             } else if let Some(deferred) = dependencies.deferred_wal_consumer_connect {
-                readiness = ServiceReadiness::deferred_querier();
+                // Two things a deferred querier cannot answer correctly without:
+                // the hot tail it reads recent logs from, and the broker-backed
+                // authorizer it checks tenants against. Each gate is marked by
+                // the task that satisfies it, so `/ready` reports real progress.
+                let wal_tail = readiness.gate("wal-tail");
+                let authorization = readiness.gate("query-authorization");
                 // Deferred connect: the consumer and authorizer connect asynchronously so the
                 // querier's HTTP port binds without waiting for the broker to be ready (FIX B2).
                 let hot_tail =
@@ -138,7 +145,7 @@ pub(crate) async fn build_service_router_with_shutdown(
                         token.clone(),
                         config.querier_hot_tail_interval,
                         config.querier_dependency_reconnect_interval,
-                        readiness.clone(),
+                        wal_tail,
                     ),
                 ));
 
@@ -153,7 +160,7 @@ pub(crate) async fn build_service_router_with_shutdown(
                         deferred.client_resource_policy,
                         config.querier_dependency_reconnect_interval,
                         token.clone(),
-                        readiness.clone(),
+                        authorization,
                     ),
                 ));
                 state = state.with_query_authorizer(swappable);

@@ -3,8 +3,9 @@
 
 use clap::Parser;
 use krabka_observability::{
-    ClientResourcePolicy, ServiceConfig, build_service_dependencies_with_client_resource_policy,
-    metrics::ServiceMetrics, serve_service,
+    ClientResourcePolicy, RoleReadiness, ServiceConfig,
+    build_service_dependencies_with_client_resource_policy, metrics::ServiceMetrics,
+    readiness_router, serve_service,
 };
 use krabka_units::{ByteSize, parse};
 
@@ -179,11 +180,16 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "krabka-logs",
     )?;
     let metrics = ServiceMetrics::new();
+    // One readiness for the process: the role's own router reports it on the
+    // data port, and the admin port echoes it, so a probe that cannot reach
+    // the data port still gets the truth rather than "the listener is up".
+    let readiness = RoleReadiness::new();
     // CPU/heap profiling admin server (Alloy pyroscope.scrape target) plus the
-    // Prometheus RED-metrics exporter on the same :9404 admin port.
+    // Prometheus RED-metrics exporter and `/ready` on the same :9404 admin port.
     krabka_telemetry::profiling::serve_admin_from_env_with_config(
         "0.0.0.0:9404",
-        krabka_observability::metrics::metrics_router(metrics.registry.clone()),
+        krabka_observability::metrics::metrics_router(metrics.registry.clone())
+            .merge(readiness_router(readiness.clone())),
         cli.profiling.clone(),
     )
     .await?;
@@ -192,7 +198,8 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dependencies =
         build_service_dependencies_with_client_resource_policy(&config, client_resource_policy)
             .await?
-            .with_metrics(metrics);
+            .with_metrics(metrics)
+            .with_readiness(readiness);
     serve_service(config, dependencies, None).await?;
 
     telemetry.shutdown();

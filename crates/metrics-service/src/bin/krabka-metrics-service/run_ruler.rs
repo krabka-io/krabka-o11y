@@ -1,10 +1,10 @@
 use super::{
     Arc, AutoOffsetReset, Cli, Consumer, KafkaRecordingRuleWalSink, KafkaRulerStateSink,
-    ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink, RulerAlertmanagerSink,
-    RulerShard, RulerStateFanoutSink, Shutdown, WalHead, install_bundled_rule_groups,
-    load_runtime_overrides, prometheus_router, query_engine_opts, run_ruler_evaluation_loop,
-    run_ruler_state_consumer_loop, serve_prometheus_router_joinable,
-    spawn_shutdown_signal_listener,
+    ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink, RoleReadiness,
+    RulerAlertmanagerSink, RulerShard, RulerStateFanoutSink, Shutdown, WalHead,
+    install_bundled_rule_groups, load_runtime_overrides, prometheus_router, query_engine_opts,
+    readiness_router, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
+    serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -17,6 +17,7 @@ use super::{
 pub(crate) async fn run_ruler(
     cli: Cli,
     metrics: krabka_promql::metrics::ServiceMetrics,
+    readiness: RoleReadiness,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
@@ -37,7 +38,7 @@ pub(crate) async fn run_ruler(
         state = state.with_query_limits(overrides);
     }
     let state = Arc::new(state);
-    let router = prometheus_router(Arc::clone(&state));
+    let router = prometheus_router(Arc::clone(&state)).merge(readiness_router(readiness));
     let shard = RulerShard::new(cli.ruler_shard_index, cli.ruler_shard_total)?;
 
     // Install the bundled rules before the ruler reaches Kafka, so a rule file

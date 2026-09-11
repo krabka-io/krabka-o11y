@@ -171,6 +171,7 @@ pub(crate) mod prelude {
             state::{object_store_support::*, request_state::*, types::*},
             tail::*,
         },
+        readiness::*,
         ruler::{
             api::{loki_api::*, prometheus_alerts::*, prometheus_rules::*},
             store::*,

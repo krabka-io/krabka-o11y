@@ -1,7 +1,7 @@
 use super::{
-    Arc, AutoOffsetReset, Cli, Consumer, ObjectStore, PrometheusApiState, Shutdown, WalHead,
-    load_runtime_overrides, prometheus_router, query_engine_opts, serve_prometheus_router_joinable,
-    spawn_shutdown_signal_listener, spawn_wal_head_consumer_task,
+    Arc, AutoOffsetReset, Cli, Consumer, ObjectStore, PrometheusApiState, RoleReadiness, Shutdown,
+    WalHead, load_runtime_overrides, prometheus_router, query_engine_opts, readiness_router,
+    serve_prometheus_router_joinable, spawn_shutdown_signal_listener, spawn_wal_head_consumer_task,
 };
 
 #[tracing::instrument(
@@ -14,6 +14,7 @@ use super::{
 pub(crate) async fn run_querier(
     cli: Cli,
     metrics: krabka_promql::metrics::ServiceMetrics,
+    readiness: RoleReadiness,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
@@ -22,6 +23,10 @@ pub(crate) async fn run_querier(
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
     if let Some(bootstrap) = cli.wal_bootstrap.clone() {
+        // Configured to read the WAL, so the querier is not ready until it
+        // does: until then its answers stop at the last compacted block and
+        // silently omit everything since.
+        let wal_head_gate = readiness.gate("wal-head");
         let wal_head = head.clone();
         let wal_topic = cli.wal_topic.clone();
         let poll_timeout = cli.wal_poll_timeout;
@@ -46,6 +51,7 @@ pub(crate) async fn run_querier(
             wal_topic,
             poll_timeout,
             shutdown.clone(),
+            wal_head_gate,
         );
     }
     let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
@@ -63,7 +69,7 @@ pub(crate) async fn run_querier(
     if let Some(overrides) = load_runtime_overrides(cli.runtime_overrides.as_deref())? {
         state = state.with_query_limits(overrides);
     }
-    let router = prometheus_router(Arc::new(state));
+    let router = prometheus_router(Arc::new(state)).merge(readiness_router(readiness));
     let (bound, server) =
         serve_prometheus_router_joinable(cli.listen, router, shutdown.signalled()).await?;
     tracing::info!(%bound, "metrics-service querier listening");

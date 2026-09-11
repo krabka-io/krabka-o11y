@@ -7,7 +7,6 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     convert::Infallible,
-    future::pending,
     io::ErrorKind,
     net::SocketAddr,
     num::NonZeroUsize,
@@ -132,6 +131,7 @@ mod distributor;
 mod error;
 mod http;
 mod querier;
+mod readiness;
 mod ruler;
 mod service;
 mod service_runtime;
@@ -175,6 +175,8 @@ pub use querier::{
     execute_stream_query_with_hot_tail_frontier, execute_tail_query,
     execute_tail_query_with_frontier, metric_plan_scan_sql, stream_plan_scan_sql,
 };
+pub(crate) use readiness::ready;
+pub use readiness::{ReadinessGate, RoleReadiness, readiness_router};
 pub use service::{
     ActiveLogDeleteFilterError, ClientResourcePolicy, LogDeleteRequestStoreError,
     LokiRuleStoreError, ServiceDependencies, ServiceStatus, SharedLogDeleteRequests, run,
@@ -244,7 +246,7 @@ pub(crate) use self::{
         router::{
             COMPACTOR_OPS, LokiProtoLabelPair, LokiProtoPushRequest, LokiProtoTimestamp,
             LokiPushRequest, LokiTypedPushRequest, OtlpAnyValue, OtlpKeyValue, OtlpLogRecord,
-            OtlpLogsRequest, QUERIER_OPS, RoleOps, ServiceReadiness, distributor_router_with_sink,
+            OtlpLogsRequest, QUERIER_OPS, RoleOps, distributor_router_with_sink,
             with_role_ops_routes,
         },
         value_conversion::{
@@ -353,9 +355,9 @@ pub(crate) use self::{
         },
         router::{
             compactor_router_with_delete_requests, flush_ingester_chunks, get_prepare_shutdown,
-            log_level, log_level_post, loki_router_with_readiness, memberlist_status, ready,
-            role_config, role_metrics, role_ring, role_services, set_prepare_shutdown,
-            shutdown_ingester, unset_prepare_shutdown,
+            log_level, log_level_post, loki_router_with_readiness, memberlist_status, role_config,
+            role_metrics, role_ring, role_services, set_prepare_shutdown, shutdown_ingester,
+            unset_prepare_shutdown,
         },
     },
     querier::{

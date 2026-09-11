@@ -5,9 +5,15 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(&cli);
     let debuginfod_config = debuginfod_config(&cli)?;
     let metrics = ServiceMetrics::new();
+    // The admin port binds first, before the role reaches its object store or
+    // its broker, so `/ready` there reports the rest of the start rather than
+    // "a listener exists". The roles with a data port echo the same gates on
+    // it.
+    let readiness = krabka_observability::RoleReadiness::new();
     let admin = krabka_telemetry::profiling::spawn_admin_with_config(
         cli.admin_listen_addr,
-        krabka_profiles::metrics::metrics_router(metrics.registry.clone()),
+        krabka_profiles::metrics::metrics_router(metrics.registry.clone())
+            .merge(krabka_observability::readiness_router(readiness.clone())),
         cli.profiling.clone(),
     )
     .await?;
@@ -15,6 +21,8 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let role = async move {
         match cli.target {
             Target::Distributor => {
+                // Nowhere to put a push until the WAL producer has a broker.
+                let wal_broker = readiness.gate("wal-broker");
                 let limits = load_tenant_limits_config(cli.tenant_limits_config.as_deref())?;
                 let profile_overrides = load_profiles_limits_overrides_config(
                     cli.profiles_limits_overrides_config.as_deref(),
@@ -25,6 +33,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     .frame_max(client_frame_max.size())
                     .build()
                     .await?;
+                wal_broker.mark_ready();
                 let state = Arc::new(DistributorState {
                     sink: Arc::new(KafkaSink::with_topic(Arc::new(producer), cli.wal_topic)),
                     limits,
@@ -42,13 +51,17 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     metrics: metrics.clone(),
                 });
                 let shutdown = role_shutdown_token();
-                let bound = serve_supervised(cli.listen, state, shutdown.clone()).await?;
+                let bound =
+                    serve_supervised(cli.listen, state, readiness, shutdown.clone()).await?;
                 tracing::info!(%bound, "profiles distributor listening");
                 shutdown.cancelled().await;
             }
             Target::BlockBuilder => {
+                let object_store_gate = readiness.gate("object-store");
+                let shutdown = role_shutdown_token();
                 let configured = build_object_store(&cli.object_store_url)
                     .map_err(|e| format!("object store: {e}"))?;
+                object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
                 let mut config =
                     BlockBuilderConfig::new(cli.bootstrap, configured.store).with_metrics(metrics);
@@ -64,15 +77,21 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 config.poll_timeout = cli.wal_poll_timeout;
                 config.index_snapshot_max = cli.index_snapshot_max;
                 config.index_snapshot_retain = cli.index_snapshot_retain;
-                krabka_profiles::blockbuilder::run_with_config(config).await?;
+                krabka_profiles::blockbuilder::run_with_config(config, shutdown).await?;
             }
             Target::Querier => {
+                // A querier that answers before its block index is loaded
+                // returns an empty result rather than an error, and the
+                // frontend in front of it cannot tell the two apart.
+                let object_store_gate = readiness.gate("object-store");
+                let profile_index_gate = readiness.gate("profile-index");
                 let shutdown = role_shutdown_token();
                 let overrides = load_profiles_limits_overrides_config(
                     cli.profiles_limits_overrides_config.as_deref(),
                 )?;
                 let configured = build_object_store(&cli.object_store_url)
                     .map_err(|e| format!("object store: {e}"))?;
+                object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
                 let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
                     &configured.store,
@@ -80,6 +99,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     cli.index_snapshot_max,
                 )
                 .await?;
+                profile_index_gate.mark_ready();
                 let refresh_store = Arc::clone(&configured.store);
                 let cold = Arc::new(ColdProfileStore::new_with_debuginfod_config(
                     configured.store,
@@ -114,7 +134,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .with_metrics(metrics.clone()),
                 );
-                let bound = serve_querier(cli.listen, state, shutdown.clone()).await?;
+                let bound = serve_querier(cli.listen, state, readiness, shutdown.clone()).await?;
                 tracing::info!(%bound, "profiles querier listening");
                 tokio::select! {
                     () = shutdown.cancelled() => {}
@@ -125,12 +145,18 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Target::QueryFrontend => {
+                // A querier that answers before its block index is loaded
+                // returns an empty result rather than an error, and the
+                // frontend in front of it cannot tell the two apart.
+                let object_store_gate = readiness.gate("object-store");
+                let profile_index_gate = readiness.gate("profile-index");
                 let shutdown = role_shutdown_token();
                 let overrides = load_profiles_limits_overrides_config(
                     cli.profiles_limits_overrides_config.as_deref(),
                 )?;
                 let configured = build_object_store(&cli.object_store_url)
                     .map_err(|e| format!("object store: {e}"))?;
+                object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
                 let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
                     &configured.store,
@@ -138,6 +164,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     cli.index_snapshot_max,
                 )
                 .await?;
+                profile_index_gate.mark_ready();
                 let refresh_store = Arc::clone(&configured.store);
                 let cold = Arc::new(ColdProfileStore::new_with_debuginfod_config(
                     configured.store,
@@ -175,7 +202,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
                     .with_metrics(metrics.clone()),
                 );
-                let bound = serve_querier(cli.listen, state, shutdown.clone()).await?;
+                let bound = serve_querier(cli.listen, state, readiness, shutdown.clone()).await?;
                 tracing::info!(
                     %bound,
                     shard_width = %cli.query_frontend_shard_width.human(),
@@ -197,8 +224,10 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 .await?;
             }
             Target::Compactor => {
+                let object_store_gate = readiness.gate("object-store");
                 let configured = build_object_store(&cli.object_store_url)
                     .map_err(|e| format!("object store: {e}"))?;
+                object_store_gate.mark_ready();
                 let index_key = configured.object_key(&cli.index_object_key);
                 let policy = compaction_policy_from_cli(&cli);
                 let downsample =

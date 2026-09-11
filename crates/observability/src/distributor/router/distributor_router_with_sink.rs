@@ -1,6 +1,6 @@
 use super::{
     Arc, AtomicBool, ByteSize, DISTRIBUTOR_OPS, DistributorState, LogIngestLimiter, LogWalSink,
-    LogsServiceServer, OtlpGrpcLogsService, Router, ServiceMetrics, ServiceReadiness, Time,
+    LogsServiceServer, OtlpGrpcLogsService, RoleReadiness, Router, ServiceMetrics, Time,
     flush_ingester_chunks, format_query, format_query_post, get, get_prepare_shutdown, post,
     push_logs, push_otlp_logs, set_prepare_shutdown, shutdown_ingester, unset_prepare_shutdown,
     with_role_ops_routes,
@@ -22,7 +22,7 @@ pub(crate) fn distributor_router_with_sink(
         metrics: metrics.clone(),
     };
 
-    with_role_ops_routes(Router::new(), DISTRIBUTOR_OPS, ServiceReadiness::ready())
+    with_role_ops_routes(Router::new(), DISTRIBUTOR_OPS, RoleReadiness::new())
         .route("/flush", post(flush_ingester_chunks))
         .route(
             "/ingester/prepare_shutdown",

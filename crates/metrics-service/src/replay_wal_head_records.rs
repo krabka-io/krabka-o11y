@@ -17,7 +17,12 @@ pub fn replay_wal_head_records(
 ) -> Result<WalHeadReplayResult, WalHeadReplayError> {
     let mut committed_offsets = BTreeMap::<PartitionIndex, Offset>::new();
     let mut newest_timestamp_ms: Option<i64> = None;
-    let mut replayed_records = 0;
+    // Decoded first, applied second. Decoding touches no shared state, so it
+    // stays outside the head's write lock, and the whole poll then reaches the
+    // head as one batch: one lock acquisition and at most one copy-on-write
+    // clone, rather than one of each per record. A query running beside the
+    // tail sees the poll's records all at once or not at all.
+    let mut decoded = Vec::with_capacity(records.len());
     for record in records {
         if record.topic != wal_topic {
             continue;
@@ -37,13 +42,18 @@ pub fn replay_wal_head_records(
         }
         // partition/offset are now the shared krabka_ids types promql also uses,
         // so they pass straight through with no conversion at the seam.
-        head.apply_wal_record_at(&wal_record, record.partition, record.offset);
-        replayed_records += 1;
+        decoded.push((wal_record, record.partition, record.offset));
         committed_offsets
             .entry(record.partition)
             .and_modify(|offset| *offset = (*offset).max(record.offset + 1))
             .or_insert(record.offset + 1);
     }
+    let replayed_records = decoded.len();
+    head.apply_wal_records_at(
+        decoded
+            .iter()
+            .map(|(record, partition, offset)| (record, *partition, *offset)),
+    );
     if let Some(timestamp_ms) = newest_timestamp_ms {
         let _ = head.prune(timestamp_ms);
     }

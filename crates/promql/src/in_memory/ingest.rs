@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_metrics::{NativeHistogram, SamplePayload, WalRecord};
@@ -11,7 +14,20 @@ use crate::{
 };
 
 impl InMemoryMetricStore {
-    pub fn push_float(&mut self, tenant: &str, labels: Labels, ts_ms: i64, value: f64) {
+    /// Appends a float sample.
+    ///
+    /// `labels` is taken as `impl Into<Arc<Labels>>` so a caller that already
+    /// holds the series' shared label set -- as
+    /// [`InMemoryMetricStore::apply_wal_record`] does -- hands it over instead
+    /// of building a second copy per sample.
+    pub fn push_float(
+        &mut self,
+        tenant: &str,
+        labels: impl Into<Arc<Labels>>,
+        ts_ms: i64,
+        value: f64,
+    ) {
+        let labels = labels.into();
         let fp = labels.fingerprint();
         self.floats
             .entry(tenant.to_string())
@@ -24,13 +40,16 @@ impl InMemoryMetricStore {
             });
     }
 
+    /// Appends a native-histogram sample. See [`InMemoryMetricStore::push_float`]
+    /// for why the label set and the histogram arrive as `Into<Arc<_>>`.
     pub fn push_histogram(
         &mut self,
         tenant: &str,
-        labels: Labels,
+        labels: impl Into<Arc<Labels>>,
         ts_ms: i64,
-        hist: NativeHistogram,
+        hist: impl Into<Arc<NativeHistogram>>,
     ) {
+        let labels = labels.into();
         let fp = labels.fingerprint();
         self.hists
             .entry(tenant.to_string())
@@ -39,15 +58,17 @@ impl InMemoryMetricStore {
                 fp,
                 labels,
                 ts_ms,
-                hist,
+                hist: hist.into(),
             });
     }
 
+    /// Appends an exemplar. See [`InMemoryMetricStore::push_float`] for why the
+    /// label sets arrive as `Into<Arc<Labels>>`.
     pub fn push_exemplar(
         &mut self,
         tenant: &str,
-        series_labels: Labels,
-        labels: Labels,
+        series_labels: impl Into<Arc<Labels>>,
+        labels: impl Into<Arc<Labels>>,
         ts_ms: i64,
         value: f64,
     ) {
@@ -55,8 +76,8 @@ impl InMemoryMetricStore {
             .entry(tenant.to_string())
             .or_default()
             .push(ExemplarRow {
-                series_labels,
-                labels,
+                series_labels: series_labels.into(),
+                labels: labels.into(),
                 ts_ms,
                 value,
             });
@@ -104,17 +125,25 @@ impl InMemoryMetricStore {
 
     /// Applies one decoded metrics WAL record to this in-memory head.
     pub fn apply_wal_record(&mut self, record: &WalRecord) {
-        let series_labels = record.labels();
+        // One shared label set for the sample and every exemplar the record
+        // carries, so a record costs one label-set allocation rather than one
+        // per row, and every row that shares it clones by refcount afterwards.
+        let series_labels = Arc::new(record.labels());
         match &record.payload {
             SamplePayload::Float {
                 timestamp_ms,
                 value,
                 ..
-            } => self.push_float(&record.tenant, series_labels.clone(), *timestamp_ms, *value),
+            } => self.push_float(
+                &record.tenant,
+                Arc::clone(&series_labels),
+                *timestamp_ms,
+                *value,
+            ),
             SamplePayload::Hist { timestamp_ms, hist } => {
                 self.push_histogram(
                     &record.tenant,
-                    series_labels.clone(),
+                    Arc::clone(&series_labels),
                     *timestamp_ms,
                     hist.clone(),
                 );
@@ -134,8 +163,8 @@ impl InMemoryMetricStore {
         for exemplar in &record.exemplars {
             self.push_exemplar(
                 &record.tenant,
-                series_labels.clone(),
-                exemplar.labels.iter().cloned().collect(),
+                Arc::clone(&series_labels),
+                exemplar.labels.iter().cloned().collect::<Labels>(),
                 exemplar.timestamp_ms,
                 exemplar.value,
             );

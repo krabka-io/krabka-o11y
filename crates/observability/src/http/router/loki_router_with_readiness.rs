@@ -1,5 +1,5 @@
 use super::{
-    QUERIER_OPS, QuerierState, Router, ServiceReadiness, api_prom_label_names,
+    QUERIER_OPS, QuerierState, RoleReadiness, Router, api_prom_label_names,
     api_prom_label_names_post, api_prom_label_values, api_prom_label_values_post, api_prom_query,
     api_prom_query_post, api_prom_query_range, api_prom_query_range_post, api_prom_series,
     api_prom_series_post, create_loki_rule_group, delete_loki_rule_group,
@@ -12,10 +12,7 @@ use super::{
     ruler_ring, scheduler_ring, series, series_post, tail, with_role_ops_routes,
 };
 
-pub(crate) fn loki_router_with_readiness(
-    state: QuerierState,
-    readiness: ServiceReadiness,
-) -> Router {
+pub(crate) fn loki_router_with_readiness(state: QuerierState, readiness: RoleReadiness) -> Router {
     with_role_ops_routes(Router::new(), QUERIER_OPS, readiness)
         .route("/loki/api/v1/rules", get(loki_rules))
         .route(

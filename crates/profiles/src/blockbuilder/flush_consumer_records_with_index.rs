@@ -20,7 +20,14 @@ pub async fn flush_consumer_records_with_index(
             .ok_or_else(|| ProfilesError::Wal("profiles WAL record has no value".to_string()))?;
         let decoded = ProfileRecord::decode(value)?;
         let labels = Labels::from_pairs(decoded.labels.iter().cloned());
-        index.add_series(&decoded.tenant, labels.fingerprint(), &labels);
+        // The index refuses a series that carries no `__profile_type__`, and
+        // the flush stops with it rather than writing a block whose series no
+        // profile-type selector can reach. Ingest's split stamps the label on
+        // every series it emits, so this is a fault in whoever produced the
+        // record, and the flush must not advance past it in silence.
+        index
+            .add_series(&decoded.tenant, labels.fingerprint(), &labels)
+            .map_err(|error| ProfilesError::Block(error.to_string()))?;
         batches
             .entry((decoded.tenant.clone(), record.partition))
             .or_default()

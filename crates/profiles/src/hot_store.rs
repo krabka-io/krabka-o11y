@@ -401,6 +401,33 @@ mod tests {
             .unwrap();
         assert!(after.newest_profile_time == Some(2), "{after:?}");
     }
+
+    /// A WAL poll reaches the store as one batch, and a query that started
+    /// before it sees none of the batch while one that starts after sees all of
+    /// it. Batching is what removes the per-record copy-on-write clone, and a
+    /// reader catching a prefix of the batch is the way that trade goes wrong.
+    #[tokio::test]
+    async fn a_batch_of_records_reaches_a_query_all_at_once() {
+        let store = super::WalTailProfileStore::new();
+        store.append_record(record_at(5, 1_000_000)).unwrap();
+        let before = store.snapshot().unwrap();
+
+        store
+            .append_records([record_at(11, 2_000_000), record_at(13, 3_000_000)])
+            .unwrap();
+        let after = store.snapshot().unwrap();
+
+        let total = async |snapshot: Arc<krabka_pprof::InMemoryProfileStore>| {
+            FlameEngine::new(snapshot, EngineOpts::default())
+                .select_merge_stacktraces("tenant-a", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+                .await
+                .unwrap()
+                .total
+        };
+
+        assert!(total(before).await == 5);
+        assert!(total(after).await == 5 + 11 + 13);
+    }
 }
 
 mod apply_record;

@@ -14,6 +14,7 @@ use super::prelude::{
 
 // --- FIX B1 tests ---
 
+mod a_cancelled_frontier_refresher_joins_cleanly_through_its_handle;
 mod appending_log_index_shard_does_not_rewrite_historical_shards_or_full_manifest;
 mod compaction_frontier_refresh_prunes_hot_tail_from_object_store;
 mod compaction_frontier_refresh_treats_absent_manifest_as_empty;
@@ -27,4 +28,5 @@ mod instant_scalar_expression_keeps_loki_seconds_timestamp;
 mod instant_synthetic_vector_uses_raw_loki_timestamp;
 mod querier_state_with_request_tenant_index_tolerates_absent_manifest;
 mod querier_state_with_request_tenant_index_tolerates_absent_shards;
+mod the_frontier_refresher_hands_back_a_handle_that_carries_its_panic;
 mod the_shard_catalog_lists_each_compacted_range_exactly_once;

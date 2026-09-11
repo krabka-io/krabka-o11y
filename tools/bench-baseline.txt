@@ -114,3 +114,9 @@ traceql_filter/parse/attr_eq              unseeded
 traceql_filter/parse/conjunction          unseeded
 traceql_filter/parse/descendant           unseeded
 traceql_filter/parse/intrinsic_duration   unseeded
+wal_head_apply/per_batch_no_reader/1000       unseeded
+wal_head_apply/per_batch_no_reader/5000       unseeded
+wal_head_apply/per_batch_with_reader/1000     unseeded
+wal_head_apply/per_batch_with_reader/5000     unseeded
+wal_head_apply/per_record_with_reader/1000    unseeded
+wal_head_apply/per_record_with_reader/5000    unseeded

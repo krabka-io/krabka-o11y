@@ -1,8 +1,8 @@
 use super::{
     Arc, ClientResourcePolicy, CompactionFrontier, CompactionFrontierSource,
     DeferredWalConsumerConnect, HotTailDependency, LogHotTail, LogIngestLimiter,
-    LogQueryAuthorizer, LogWalConsumer, LogWalSink, ServiceMetrics, SharedCompactionFrontier,
-    SharedLogDeleteRequests,
+    LogQueryAuthorizer, LogWalConsumer, LogWalSink, RoleReadiness, ServiceMetrics,
+    SharedCompactionFrontier, SharedLogDeleteRequests,
 };
 
 #[derive(Clone, Default)]
@@ -23,6 +23,10 @@ pub struct ServiceDependencies {
     /// through here, so the `:9404` exporter and the handlers share the same
     /// registry.
     pub(crate) metrics: Option<ServiceMetrics>,
+    /// Readiness shared with the binary, so the `:9404` admin port and the
+    /// data port report the same startup state. `None` leaves the role with a
+    /// readiness of its own.
+    pub(crate) readiness: Option<RoleReadiness>,
 }
 
 impl ServiceDependencies {
@@ -32,6 +36,14 @@ impl ServiceDependencies {
     #[must_use]
     pub fn with_metrics(mut self, metrics: ServiceMetrics) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    /// Shares one readiness between the role's router and whatever else the
+    /// binary exposes it on, above all the admin listener.
+    #[must_use]
+    pub fn with_readiness(mut self, readiness: RoleReadiness) -> Self {
+        self.readiness = Some(readiness);
         self
     }
 

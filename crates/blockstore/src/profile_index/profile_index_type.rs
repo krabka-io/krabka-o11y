@@ -6,7 +6,8 @@ use super::{
     SeriesFingerprint, SnapshotManifest, TenantProfileExtras, UNBOUNDED_SHARD_RANGE,
     decode_profile_shard, encode_profile_shard, instrument, level_above, profile_block_fingerprint,
     put_manifest_snapshot, put_shard_payload, read_latest_snapshot_manifest, read_shard_payload,
-    shard_payload_content_hash, shard_payload_object_key, shard_ranges_for_span,
+    render_series_labels, shard_payload_content_hash, shard_payload_object_key,
+    shard_ranges_for_span,
 };
 
 /// How an oversized or unreadable profile-index snapshot names itself in errors.
@@ -48,17 +49,51 @@ impl ProfileIndex {
         Self::default()
     }
 
-    pub fn add_series(&mut self, tenant: &str, fp: SeriesFingerprint, labels: &Labels) {
+    /// Registers `labels` as a series of `tenant`, under the profile type its
+    /// [`LABEL_PROFILE_TYPE`] label names.
+    ///
+    /// The label is required, and a series without it is refused rather than
+    /// half-registered. Every query the profile API serves selects on a
+    /// profile type first — a Pyroscope `query` is a type plus a matcher set —
+    /// and that selection is resolved through the postings this call builds.
+    /// The postings are not published either: a load replays them from the
+    /// same label (see [`Self::load_latest_snapshot`]), so a series admitted
+    /// without it has no type to recover, not merely none registered.
+    ///
+    /// Nothing legitimate arrives without the label. Every profile reaches the
+    /// WAL through the ingest split, which stamps `__profile_type__` on each
+    /// series it emits after relabelling has run, so no relabel rule can strip
+    /// it. Accepting such a series would store a profile that queries empty
+    /// and reports nothing at either end, which is the one outcome worth
+    /// refusing.
+    ///
+    /// # Errors
+    /// Returns [`BlockStoreError::MissingProfileTypeLabel`], naming the label
+    /// and the series, when `labels` does not carry [`LABEL_PROFILE_TYPE`].
+    pub fn add_series(
+        &mut self,
+        tenant: &str,
+        fp: SeriesFingerprint,
+        labels: &Labels,
+    ) -> Result<()> {
+        let Some(profile_type) = labels.get(LABEL_PROFILE_TYPE) else {
+            return Err(BlockStoreError::MissingProfileTypeLabel {
+                label: LABEL_PROFILE_TYPE,
+                tenant: tenant.to_string(),
+                fingerprint: fp,
+                labels: render_series_labels(labels),
+            });
+        };
+        let profile_type = profile_type.to_string();
         self.series.add_series(tenant, fp, labels);
-        if let Some(profile_type) = labels.get(LABEL_PROFILE_TYPE) {
-            self.extras
-                .entry(tenant.to_string())
-                .or_default()
-                .profile_types
-                .entry(profile_type.to_string())
-                .or_default()
-                .insert(fp);
-        }
+        self.extras
+            .entry(tenant.to_string())
+            .or_default()
+            .profile_types
+            .entry(profile_type)
+            .or_default()
+            .insert(fp);
+        Ok(())
     }
 
     /// # Errors
@@ -849,6 +884,19 @@ impl ProfileIndex {
         for tenant in self.series.tenant_names().cloned().collect::<Vec<_>>() {
             for (fingerprint, labels) in self.series.series_pairs(&tenant) {
                 let Some(profile_type) = labels.get(LABEL_PROFILE_TYPE) else {
+                    // `add_series` refuses a series without the label, so a
+                    // published shard should hold none. If one does, it came
+                    // from bytes this build did not write, and the series is
+                    // about to become unqueryable by type: say so rather than
+                    // drop it quietly.
+                    tracing::warn!(
+                        %tenant,
+                        %fingerprint,
+                        label = LABEL_PROFILE_TYPE,
+                        series = %render_series_labels(&labels),
+                        "profile series in a loaded shard has no profile-type label; \
+                         no profile-type selector will reach it"
+                    );
                     continue;
                 };
                 self.extras
