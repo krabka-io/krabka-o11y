@@ -67,18 +67,6 @@ coverage:
 # the test file alone.
 ignore:
   - "crates/*/tests/**"
-  # The same reasoning, for the tests this workspace keeps beside the code it
-  # tests. Every one of these is reached through a `#[cfg(test)] mod tests;`,
-  # so it compiles only for a test binary -- but the binary is instrumented, so
-  # the file lands in the report as ordinary source. It then reads as
-  # *uncovered*, because the coverage run records the library's lines rather
-  # than the harness's, which turns the `patch` target into a penalty for
-  # adding tests: a change that adds a hundred lines of test needs a hundred
-  # more lines of covered code to stay level. Measured on #193, 406 of the
-  # missed lines were test files that had run and passed.
-  - "crates/*/src/tests/**"
-  - "crates/*/src/**/tests/**"
-  - "crates/*/src/**/tests.rs"
 
 comment:
   layout: "condensed_header, diff, files"
