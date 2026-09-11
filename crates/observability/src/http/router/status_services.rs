@@ -1,24 +1,44 @@
-use super::{Response, StatusCode, text_response};
+use super::{
+    DRAINING_GATE, LOKI_SERVICE_MODULES, Response, RoleReadiness, StatusCode, text_response,
+};
 
-pub(crate) fn status_services(_name: &'static str) -> Response {
-    text_response(
-        StatusCode::OK,
-        "query-scheduler => Running\n\
-         ingester-querier => Running\n\
-         query-frontend => Running\n\
-         server => Running\n\
-         querier => Running\n\
-         rule-evaluator => Running\n\
-         memberlist-kv => Running\n\
-         query-frontend-tripperware => Running\n\
-         analytics => Running\n\
-         ruler => Running\n\
-         cache-generation-loader => Running\n\
-         store => Running\n\
-         ring => Running\n\
-         ingester => Running\n\
-         compactor => Running\n\
-         distributor => Running\n\
-         query-scheduler-ring => Running\n",
-    )
+/// The `/services` page, reporting each module's state.
+///
+/// `Loki` lists the modules its process runs and the state each is in. Krabka
+/// serves the whole `Loki` surface from every role, so the list is the
+/// single-binary one -- see [`LOKI_CONFIG_TARGET`](super::LOKI_CONFIG_TARGET)
+/// -- but the states are this process's own. A module reads `Starting` while
+/// any readiness gate is unmet, which is exactly when `/ready` answers 503, so
+/// the two pages cannot disagree. Before this took its state from
+/// [`RoleReadiness`] it said `Running` for everything from the first bound
+/// port onwards, and a rollout watching `/services` saw a healthy process at
+/// the same moment `/ready` was refusing traffic.
+///
+/// `server` is the exception: the HTTP listener answered the request that got
+/// here, so it is running whatever else is still coming up.
+pub(crate) fn status_services(readiness: &RoleReadiness) -> Response {
+    let pending = readiness.pending();
+    let state = if pending.is_empty() {
+        "Running"
+    } else if pending.contains(&DRAINING_GATE) {
+        // An operator asked this process to leave rotation. `Loki` calls that
+        // `Stopping`, and calling it `Starting` would send a runbook the wrong
+        // way at the one moment it is being read.
+        "Stopping"
+    } else {
+        "Starting"
+    };
+    let mut page = String::new();
+    for module in LOKI_SERVICE_MODULES {
+        let module_state = if *module == "server" {
+            "Running"
+        } else {
+            state
+        };
+        page.push_str(module);
+        page.push_str(" => ");
+        page.push_str(module_state);
+        page.push('\n');
+    }
+    text_response(StatusCode::OK, &page)
 }

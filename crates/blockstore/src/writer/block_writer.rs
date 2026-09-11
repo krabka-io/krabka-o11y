@@ -1,19 +1,39 @@
 use super::{
     AbortOnPartFailureStore, Arc, AsyncArrowWriter, BlockMeta, BlockSchema, BlockStreamWriter,
-    BufWriter, ObjectStore, Path, RecordBatch, Result, SchemaRef, SortKeyCheck, SummaryColumns,
-    block_writer_properties, debug, instrument, is_sorted_by_key, series_block_schema,
-    sort_batches_by_key, validate_against, validate_batch_schemas,
+    BufWriter, ObjectStore, ObjectStoreRetryPolicy, Path, RecordBatch, Result, SchemaRef,
+    SortKeyCheck, SummaryColumns, block_writer_properties, debug, instrument, is_sorted_by_key,
+    retry_object_store, series_block_schema, sort_batches_by_key, validate_against,
+    validate_batch_schemas,
 };
 
 /// Writes Parquet blocks to an object store.
+///
+/// A block write that fails transiently is retried here, as a whole write,
+/// because that is the only unit a block can be retried in: the bytes leave
+/// through a [`BufWriter`], and past its buffer that is a multipart upload
+/// whose parts cannot be replayed in place. Re-running the write from the
+/// record batches starts a fresh upload to the same -- caller-supplied, so
+/// unchanged -- key, and overwrites rather than duplicating. See
+/// [`ObjectStoreRetryPolicy`] for the budget and
+/// [`RetryingObjectStore`](crate::RetryingObjectStore) for why the store a
+/// writer holds must not be wrapped as well.
 pub struct BlockWriter {
     pub(crate) store: Arc<dyn ObjectStore>,
+    retry: ObjectStoreRetryPolicy,
 }
 
 impl BlockWriter {
+    /// A writer that retries transient block writes under
+    /// [`ObjectStoreRetryPolicy::DEFAULT`].
     #[must_use]
     pub fn new(store: Arc<dyn ObjectStore>) -> Self {
-        Self { store }
+        Self::with_retry_policy(store, ObjectStoreRetryPolicy::DEFAULT)
+    }
+
+    /// [`Self::new`] with the retry budget chosen by the caller.
+    #[must_use]
+    pub fn with_retry_policy(store: Arc<dyn ObjectStore>, retry: ObjectStoreRetryPolicy) -> Self {
+        Self { store, retry }
     }
 
     /// Writes `batches` as a single Parquet block at `object_key`.
@@ -91,13 +111,26 @@ impl BlockWriter {
         };
         let batches = sorted.as_ref().map_or(batches, std::slice::from_ref);
 
-        // The order is settled above, either by the caller or by the sort, so
-        // the stream writer has nothing left to check.
-        let mut block = self.open(tenant, object_key, schema, decl, summary, None)?;
-        for batch in batches {
-            block.write_batch(batch).await?;
-        }
-        block.finish().await
+        // Only the write is retried. The validation and the sort above are
+        // deterministic and can only fail permanently, so repeating them would
+        // burn the budget on work whose answer cannot change.
+        retry_object_store(self.retry, "write block", || async {
+            // The order is settled above, either by the caller or by the sort,
+            // so the stream writer has nothing left to check.
+            let mut block = self.open(
+                tenant,
+                object_key,
+                schema.clone(),
+                decl,
+                summary.clone(),
+                None,
+            )?;
+            for batch in batches {
+                block.write_batch(batch).await?;
+            }
+            block.finish().await
+        })
+        .await
     }
 
     /// Opens a block to be written one batch at a time.

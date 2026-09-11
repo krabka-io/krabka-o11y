@@ -14,6 +14,7 @@ use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
 use krabka_client_producer::Producer;
+use krabka_observability::{ConfigFileArgs, argv_with_config_file};
 use krabka_pprof::{DebuginfodConfig, UnionProfileStore};
 use krabka_profiles::{
     blockbuilder::BlockBuilderConfig,
@@ -48,6 +49,19 @@ mod tests {
     use krabka_units::{bytes, per_sec};
 
     use super::*;
+
+    /// A service that binds loopback inside a container is unreachable from
+    /// outside the pod, and the symptom is a health check that fails with
+    /// nothing in the logs. Pyroscope defaults its HTTP listener to every
+    /// interface; so does this.
+    #[test]
+    fn default_listen_addresses_are_reachable_from_outside_the_container() {
+        let cli = Cli::try_parse_from(["krabka-profiles", "--target", "distributor"]).unwrap();
+
+        check!(cli.listen.ip().is_unspecified());
+        check!(cli.listen.port() == 4040);
+        check!(cli.admin_listen_addr.ip().is_unspecified());
+    }
 
     #[test]
     fn client_resource_policy_parses_defaults_and_overrides() {
@@ -918,7 +932,7 @@ use target::Target;
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),

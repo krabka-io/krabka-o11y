@@ -1,12 +1,13 @@
 use super::{
-    ArgAction, ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_BLOCKS_PER_JOB,
-    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, MetricsFlags, Parser,
-    SocketAddr, Target, Time, UnixNano, parse, parse_client_dispatch_queue_capacity,
-    parse_client_frame_max, parse_consumer_fetch_size, parse_min_two_usize,
-    parse_non_negative_time_or_secs, parse_non_negative_whole_byte_size_or_bytes,
-    parse_positive_time_or_millis, parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64,
-    parse_positive_time_or_secs, parse_positive_u32, parse_positive_usize,
-    parse_positive_whole_byte_size, parse_scan_concat_max, parse_unix_nano,
+    ArgAction, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
+    IndexSnapshotRetain, MetricsFlags, Parser, SocketAddr, Target, Time, UnixNano, parse,
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_min_two_usize, parse_non_negative_time_or_secs,
+    parse_non_negative_whole_byte_size_or_bytes, parse_positive_time_or_millis,
+    parse_positive_time_or_nanos, parse_positive_time_or_nanos_f64, parse_positive_time_or_secs,
+    parse_positive_u32, parse_positive_usize, parse_positive_whole_byte_size,
+    parse_scan_concat_max, parse_unix_nano,
 };
 
 #[derive(Debug, Parser)]
@@ -14,47 +15,55 @@ use super::{
 #[command(about = "Tempo-compatible traces service for Krabka")]
 pub(crate) struct Cli {
     #[command(flatten)]
+    pub(crate) config_file: ConfigFileArgs,
+    #[command(flatten)]
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
     #[arg(long, env = "KRABKA_TRACES_TARGET")]
     pub(crate) target: Target,
-    #[arg(long, env = "KRABKA_TRACES_LISTEN", default_value = "127.0.0.1:3200")]
+    /// HTTP query listen address. Default: `0.0.0.0:3200`.
+    ///
+    /// Every interface, as Tempo defaults to -- and so does every receiver
+    /// below it. A container that binds loopback is unreachable from outside
+    /// its pod, and the only symptom is a health check timing out with
+    /// nothing in the logs.
+    #[arg(long, env = "KRABKA_TRACES_LISTEN", default_value = "0.0.0.0:3200")]
     pub(crate) listen: String,
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,
     #[arg(
         long,
         env = "KRABKA_TRACES_GRPC_LISTEN",
-        default_value = "127.0.0.1:4317"
+        default_value = "0.0.0.0:4317"
     )]
     pub(crate) grpc_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_OTLP_HTTP_LISTEN",
-        default_value = "127.0.0.1:4318"
+        default_value = "0.0.0.0:4318"
     )]
     pub(crate) otlp_http_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_JAEGER_GRPC_LISTEN",
-        default_value = "127.0.0.1:14250"
+        default_value = "0.0.0.0:14250"
     )]
     pub(crate) jaeger_grpc_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_JAEGER_COMPACT_LISTEN",
-        default_value = "127.0.0.1:6831"
+        default_value = "0.0.0.0:6831"
     )]
     pub(crate) jaeger_compact_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_JAEGER_HTTP_LISTEN",
-        default_value = "127.0.0.1:14268"
+        default_value = "0.0.0.0:14268"
     )]
     pub(crate) jaeger_http_listen: String,
     #[arg(
         long,
         env = "KRABKA_TRACES_ZIPKIN_LISTEN",
-        default_value = "127.0.0.1:9411"
+        default_value = "0.0.0.0:9411"
     )]
     pub(crate) zipkin_listen: String,
     #[arg(

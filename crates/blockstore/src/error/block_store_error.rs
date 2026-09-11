@@ -1,8 +1,10 @@
-use super::{BlockReadFailure, BlockSkipReason, SkippedBlock};
+use super::{BlockReadFailure, BlockSkipReason, ParquetError, SkippedBlock};
 
 /// Errors raised by the block store. Backend errors are stringified so public
-/// errors stay stable across dependency details, except in
-/// [`Self::BlockUnreadable`], where the caller's whole job is to inspect them.
+/// errors stay stable across dependency details, except where a caller's whole
+/// job is to inspect them: [`Self::BlockUnreadable`], which says whether a
+/// scan may leave one block out, and [`Self::Parquet`], which says whether a
+/// failed write is worth attempting again.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BlockStoreError {
@@ -26,8 +28,19 @@ pub enum BlockStoreError {
     #[error("object store error: {0}")]
     ObjectStore(String),
 
+    /// The Parquet layer failed.
+    ///
+    /// The error is kept whole, not stringified, for the same reason
+    /// [`Self::BlockUnreadable`] keeps its source: a *write* that fails
+    /// because the object store went away arrives here and nowhere else. The
+    /// block is streamed through a `BufWriter`, so the Parquet writer is what
+    /// notices, and it reports an [`External`](ParquetError::External) error
+    /// wrapping the I/O error wrapping the backend error. A caller deciding
+    /// whether to retry has to be able to reach that, and a string does not
+    /// let it. See
+    /// [`transient_object_store_error`](crate::transient_object_store_error).
     #[error("parquet error: {0}")]
-    Parquet(String),
+    Parquet(#[source] Box<ParquetError>),
 
     #[error("datafusion error: {0}")]
     DataFusion(String),
@@ -113,9 +126,9 @@ impl From<object_store::Error> for BlockStoreError {
     }
 }
 
-impl From<parquet::errors::ParquetError> for BlockStoreError {
-    fn from(error: parquet::errors::ParquetError) -> Self {
-        Self::Parquet(error.to_string())
+impl From<ParquetError> for BlockStoreError {
+    fn from(error: ParquetError) -> Self {
+        Self::Parquet(Box::new(error))
     }
 }
 

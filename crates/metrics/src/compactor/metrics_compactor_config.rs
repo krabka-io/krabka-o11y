@@ -2,7 +2,8 @@ use super::{
     Arc, AutoOffsetReset, BlockWriter, CompactionLoopConfig, Consumer, DEFAULT_FLUSH_MAX_AGE,
     DEFAULT_FLUSH_MAX_ROWS, DurableCompactionConsumer, MetricsCompactorBuildError,
     MetricsCompactorConfigError, MetricsCompactorRuntime, ObjectStore,
-    ObjectStoreCompactionIndexSink, Time, TimeExt, consumer_build_error, secs, validate_non_empty,
+    ObjectStoreCompactionIndexSink, ObjectStoreRetryPolicy, RetryingObjectStore, Time, TimeExt,
+    consumer_build_error, secs, validate_non_empty,
 };
 
 /// Configuration for the metrics compactor role.
@@ -20,6 +21,11 @@ pub struct MetricsCompactorConfig {
     pub flush_max_rows: usize,
     /// Flush the accumulated buffer once its oldest record reaches this age.
     pub flush_max_age: Time,
+    /// How hard a flush tries again when the object store fails in a way that
+    /// could clear on its own. The default rides out a short outage and then
+    /// gives up, so a permanent fault is still reported rather than retried
+    /// forever. Tests inject a schedule that does not sleep.
+    pub object_store_retry: ObjectStoreRetryPolicy,
 }
 
 impl MetricsCompactorConfig {
@@ -38,6 +44,7 @@ impl MetricsCompactorConfig {
             auto_offset_reset: AutoOffsetReset::Earliest,
             flush_max_rows: DEFAULT_FLUSH_MAX_ROWS,
             flush_max_age: DEFAULT_FLUSH_MAX_AGE,
+            object_store_retry: ObjectStoreRetryPolicy::DEFAULT,
         }
     }
 
@@ -65,8 +72,19 @@ impl MetricsCompactorConfig {
     ) -> Result<MetricsCompactorRuntime, MetricsCompactorConfigError> {
         self.validate()?;
         Ok(MetricsCompactorRuntime {
-            block_writer: BlockWriter::new(store.clone()),
-            index_sink: ObjectStoreCompactionIndexSink::new(store),
+            // Two retry layers, each applied once. The block writer retries a
+            // whole block write, which is the only unit a streamed Parquet
+            // block can be retried in; the sidecar sink's store retries its
+            // single-shot manifest put and get. The writer's store is left
+            // unwrapped so the two budgets are not multiplied together.
+            block_writer: BlockWriter::with_retry_policy(
+                Arc::clone(&store),
+                self.object_store_retry,
+            ),
+            index_sink: ObjectStoreCompactionIndexSink::new(RetryingObjectStore::wrap(
+                store,
+                self.object_store_retry,
+            )),
             loop_config: CompactionLoopConfig {
                 wal_topic: self.wal_topic.clone(),
                 poll_timeout: self.poll_timeout,

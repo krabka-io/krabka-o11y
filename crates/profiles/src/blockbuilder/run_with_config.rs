@@ -9,14 +9,37 @@ use super::*;
 /// block and leave the offset behind it uncommitted, so the next start would
 /// replay that window: work silently lost on an ordinary rolling restart.
 ///
+/// # Object-store failures
+///
+/// An object store that fails in a way that could clear on its own -- a 503, a
+/// timeout, a reset connection -- no longer ends the role. The profile index's
+/// snapshot reads and writes go through a [`RetryingObjectStore`] carrying
+/// [`BlockBuilderConfig::object_store_retry`], and each block write is retried
+/// as a whole by [`BlockWriter`](krabka_blockstore::BlockWriter). A failure
+/// that says the request itself is wrong -- a 403, a 404, a failed
+/// precondition -- is reported on the first attempt instead, and so is one
+/// that outlasts the budget. The role still exits in that case, which is the
+/// point: a wrong bucket must not turn into a role that is up and doing
+/// nothing.
+///
+/// The flush is retried underneath `accumulator.take()`, never around it, so
+/// the records are not re-drained and each block keeps the key its WAL offset
+/// range gives it. A retry overwrites its own object rather than adding one.
+///
 /// # Errors
 /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
 pub async fn run_with_config(
     config: BlockBuilderConfig,
     shutdown: CancellationToken,
 ) -> Result<(), ProfilesError> {
+    // The index store is a separate handle on purpose. `config.store` stays
+    // unwrapped because `build_block` hands it to a `BlockWriter`, which does
+    // its own whole-write retry; wrapping it as well would multiply the two
+    // budgets together.
+    let index_store =
+        RetryingObjectStore::wrap(Arc::clone(&config.store), config.object_store_retry);
     let mut index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
-        &config.store,
+        &index_store,
         &config.index_key,
         config.index_snapshot_max,
     )
@@ -89,7 +112,7 @@ pub async fn run_with_config(
             }
             index
                 .save_latest_snapshot_with_retain(
-                    &config.store,
+                    &index_store,
                     &config.index_key,
                     config.index_snapshot_retain,
                 )

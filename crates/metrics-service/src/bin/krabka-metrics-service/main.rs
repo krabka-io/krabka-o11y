@@ -23,7 +23,9 @@ use krabka_metrics_service::{
     install_bundled_rule_groups, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
     run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
-use krabka_observability::{ReadinessGate, RoleReadiness, readiness_router};
+use krabka_observability::{
+    ConfigFileArgs, ReadinessGate, RoleReadiness, argv_with_config_file, readiness_router,
+};
 use krabka_promql::{
     EngineOpts, PrometheusApiState, QueryFrontendOptions, RulerShard, WalHead, prometheus_router,
 };
@@ -40,6 +42,19 @@ mod tests {
     use super::*;
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// A service that binds loopback inside a container is unreachable from
+    /// outside the pod, and the symptom is a health check that fails with
+    /// nothing in the logs.
+    #[test]
+    fn default_listen_addresses_are_reachable_from_outside_the_container() {
+        let cli = Cli::try_parse_from(["krabka-metrics-service", "--target", "querier"]).unwrap();
+
+        assert2::check!(cli.listen.ip().is_unspecified());
+        assert2::check!(cli.listen.port() == 4041);
+        assert2::check!(cli.admin_listen_addr.ip().is_unspecified());
+        assert2::check!(cli.admin_listen_addr.port() == 9404);
+    }
 
     #[test]
     fn parses_querier_target() {
@@ -735,7 +750,7 @@ use target::Target;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
@@ -754,8 +769,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // data port needs, and the data port's own `/ready` reports the same
         // gates.
         let readiness = RoleReadiness::new();
-        let admin = krabka_telemetry::profiling::spawn_admin_from_env_with_config(
-            "0.0.0.0:9404",
+        let admin = krabka_telemetry::profiling::spawn_admin_with_config(
+            cli.admin_listen_addr,
             krabka_promql::metrics::metrics_router(metrics.registry.clone())
                 .merge(readiness_router(readiness.clone())),
             cli.profiling.clone(),

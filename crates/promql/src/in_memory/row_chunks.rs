@@ -37,6 +37,18 @@ impl<R> RowChunks<R> {
         self.len == 0
     }
 
+    /// The frozen chunks, oldest first.
+    ///
+    /// Exposed so a test can assert that a clone or a [`RowChunks::retain`]
+    /// shares a chunk by pointer rather than copying it. That is the property
+    /// this type exists for, and it is invisible from the rows alone -- and it
+    /// is why this is a test-only seam: nothing in the running engine needs to
+    /// look at a chunk as a chunk.
+    #[cfg(test)]
+    pub(crate) fn sealed_chunks(&self) -> impl Iterator<Item = &Arc<[R]>> {
+        self.sealed.iter()
+    }
+
     /// Every row in insertion order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = &R> {
         self.sealed

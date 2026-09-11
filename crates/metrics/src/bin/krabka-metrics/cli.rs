@@ -1,5 +1,5 @@
 use super::{
-    ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_RATE_BUCKETS,
+    ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_RATE_BUCKETS,
     HA_TRACKER_TOPIC, Parser, SocketAddr, Target, Time, parse,
     parse_client_dispatch_queue_capacity, parse_client_frame_max,
     parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap,
@@ -8,10 +8,17 @@ use super::{
 #[derive(Debug, Parser)]
 pub(crate) struct Cli {
     #[command(flatten)]
+    pub(crate) config_file: ConfigFileArgs,
+    #[command(flatten)]
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
     #[arg(long, env = "KRABKA_METRICS_TARGET")]
     pub(crate) target: Target,
-    #[arg(long, env = "KRABKA_METRICS_LISTEN", default_value = "127.0.0.1:4041")]
+    /// HTTP ingest and query listen address. Default: `0.0.0.0:4041`.
+    ///
+    /// Every interface, as Prometheus and Mimir default to. A container that
+    /// binds loopback is unreachable from outside its pod, and the only
+    /// symptom is a health check timing out with nothing in the logs.
+    #[arg(long, env = "KRABKA_METRICS_LISTEN", default_value = "0.0.0.0:4041")]
     pub(crate) listen: SocketAddr,
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
     pub(crate) admin_listen_addr: SocketAddr,

@@ -1,11 +1,13 @@
 //! `krabka-observability` is a role-selectable Loki-compatible logs service.
 //! It self-instruments with OTLP traces, JSON logs, and CPU and heap pprof.
 
+use std::net::SocketAddr;
+
 use clap::Parser;
 use krabka_observability::{
-    ClientResourcePolicy, RoleReadiness, ServiceConfig,
-    build_service_dependencies_with_client_resource_policy, metrics::ServiceMetrics,
-    readiness_router, serve_service,
+    ClientResourcePolicy, ConfigFileArgs, RoleReadiness, ServiceConfig, argv_with_config_file,
+    build_service_dependencies_with_client_resource_policy, init_telemetry,
+    metrics::ServiceMetrics, readiness_router, serve_service,
 };
 use krabka_units::{ByteSize, parse};
 
@@ -159,7 +161,7 @@ pub(crate) use parse_frame_max::parse_frame_max;
 
 #[tokio::main]
 pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let client_resource_policy = ClientResourcePolicy {
         dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity::new(
             cli.client_dispatch_queue_capacity,
@@ -168,7 +170,10 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
         frame_max: krabka_client_core::ClientFrameMax::try_from(cli.client_frame_max)
             .expect("validated client frame maximum"),
     };
-    let telemetry = krabka_telemetry::init(
+    // `init_telemetry`, not `krabka_telemetry::init`: without OTLP it installs
+    // the same JSON stdout layer over a reloadable filter, which is what makes
+    // `POST /log_level` move the level rather than report that it did.
+    let (telemetry, _log_level) = init_telemetry(
         krabka_telemetry::OtlpConfig::from_env(
             |k| std::env::var(k).ok(),
             "krabka-logs",
@@ -186,8 +191,8 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let readiness = RoleReadiness::new();
     // CPU/heap profiling admin server (Alloy pyroscope.scrape target) plus the
     // Prometheus RED-metrics exporter and `/ready` on the same :9404 admin port.
-    krabka_telemetry::profiling::serve_admin_from_env_with_config(
-        "0.0.0.0:9404",
+    krabka_telemetry::profiling::serve_admin_with_config(
+        cli.admin_listen_addr,
         krabka_observability::metrics::metrics_router(metrics.registry.clone())
             .merge(readiness_router(readiness.clone())),
         cli.profiling.clone(),

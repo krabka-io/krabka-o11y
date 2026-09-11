@@ -23,7 +23,9 @@ use krabka_metrics::{
     metrics::ServiceMetrics,
     run_compactor_consumer_loop,
 };
-use krabka_observability::{RoleReadiness, readiness_router};
+use krabka_observability::{
+    ConfigFileArgs, RoleReadiness, argv_with_config_file, readiness_router,
+};
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
 use object_store::ObjectStore;
@@ -42,6 +44,41 @@ mod tests {
     use super::*;
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    /// A service that binds loopback inside a container is unreachable from
+    /// outside the pod, and the symptom is a health check that fails with
+    /// nothing in the logs. Prometheus and Mimir default their HTTP listener
+    /// to every interface; so does this.
+    #[test]
+    fn default_listen_addresses_are_reachable_from_outside_the_container() {
+        let cli = Cli::try_parse_from(["krabka-metrics", "--target", "distributor"]).unwrap();
+
+        check!(cli.listen.ip().is_unspecified());
+        check!(cli.listen.port() == 4041);
+        check!(cli.admin_listen_addr.ip().is_unspecified());
+    }
+
+    /// The binary's own flags, out of a file. The generic precedence rules
+    /// have their own suite; this one is here because a `Cli` that forgot to
+    /// flatten `ConfigFileArgs` would pass every one of those and still
+    /// ignore an operator's file.
+    #[test]
+    fn a_config_file_supplies_this_binary_s_flags() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("krabka.yaml");
+        std::fs::write(&path, "target: compactor\nlisten: 0.0.0.0:4444\n").unwrap();
+
+        let argv = krabka_observability::argv_with_config_file::<Cli>(vec![
+            "krabka-metrics".into(),
+            "--config.file".into(),
+            path.into_os_string(),
+        ])
+        .unwrap();
+        let cli = Cli::parse_from(argv);
+
+        check!(cli.target == Target::Compactor);
+        check!(cli.listen.port() == 4444);
+    }
 
     #[test]
     fn client_resource_policy_parses_defaults_and_overrides() {
@@ -459,7 +496,7 @@ use unix_time_ms::unix_time_ms;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(argv_with_config_file::<Cli>(std::env::args_os())?);
     let telemetry = krabka_telemetry::init(
         OtlpConfig::from_env(
             |k| std::env::var(k).ok(),

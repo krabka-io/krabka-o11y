@@ -7,12 +7,13 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     convert::Infallible,
+    ffi::OsString,
     io::ErrorKind,
     net::SocketAddr,
     num::NonZeroUsize,
     path::{Path as FsPath, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering as AtomicOrdering},
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -36,7 +37,9 @@ use axum::{
     routing::{get, post},
 };
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use clap::{Parser, ValueEnum};
+use clap::{
+    ArgAction, ArgMatches, Command, CommandFactory, Parser, ValueEnum, parser::ValueSource,
+};
 use datafusion::{
     arrow::{
         array::{
@@ -110,6 +113,7 @@ use parquet::arrow::arrow_writer::ArrowWriter;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use serde_yaml::Value as YamlValue;
 use snap::raw::Decoder as SnappyDecoder;
 use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -125,11 +129,13 @@ use crate::metrics::ServiceMetrics;
 
 mod compactor;
 mod config;
+mod config_file;
 mod deletes;
 mod deletes_api;
 mod distributor;
 mod error;
 mod http;
+mod log_level;
 mod querier;
 mod readiness;
 mod ruler;
@@ -150,6 +156,7 @@ pub use compactor::{
 pub use config::{
     QuerierIndexSource, Role, ServiceConfig, ServiceConfigError, ServiceRuntimeError,
 };
+pub use config_file::{ConfigFileArgs, ConfigFileError, argv_with_config_file};
 pub(crate) use deletes::{
     ActiveLogDeleteFilter, CompactorDeleteRequest, CompactorDeleteRequestResponse,
     CompactorDeleteRequests, CompactorDeleteState, CreateDeleteRequestParams,
@@ -165,6 +172,10 @@ pub use distributor::{
 };
 pub use error::QueryError;
 pub use http::loki_router;
+pub use log_level::{
+    LogLevelControl, LogLevelError, Telemetry, init_telemetry, install_json_logging,
+    json_logging_layer,
+};
 pub use querier::{
     QuerierState, build_querier_state, execute_metric_query,
     execute_metric_query_from_object_store, execute_metric_query_range,
@@ -176,7 +187,7 @@ pub use querier::{
     execute_tail_query_with_frontier, metric_plan_scan_sql, stream_plan_scan_sql,
 };
 pub(crate) use readiness::ready;
-pub use readiness::{ReadinessGate, RoleReadiness, readiness_router};
+pub use readiness::{DRAINING_GATE, ReadinessGate, RoleReadiness, readiness_router};
 pub use service::{
     ActiveLogDeleteFilterError, ClientResourcePolicy, LogDeleteRequestStoreError,
     LokiRuleStoreError, ServiceDependencies, ServiceStatus, SharedLogDeleteRequests, run,

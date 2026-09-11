@@ -12,6 +12,7 @@ use krabka_client_core::{
     ClientFrameMax, ConnectionDispatchQueueCapacity, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
 use krabka_client_producer::Producer;
+use krabka_observability::{ConfigFileArgs, argv_with_config_file};
 use krabka_telemetry::OtlpConfig;
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
@@ -58,6 +59,50 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+
+    /// Every listener this binary binds, and not one of them on loopback. A
+    /// container that binds loopback is unreachable from outside the pod, and
+    /// the symptom is a health check that fails with nothing in the logs.
+    /// Tempo defaults its receivers to every interface; so does this.
+    #[test]
+    fn default_listen_addresses_are_reachable_from_outside_the_container() {
+        let cli = Cli::try_parse_from(["krabka-traces", "--target", "distributor"]).unwrap();
+
+        for (name, addr) in [
+            ("listen", &cli.listen),
+            ("grpc-listen", &cli.grpc_listen),
+            ("otlp-http-listen", &cli.otlp_http_listen),
+            ("jaeger-grpc-listen", &cli.jaeger_grpc_listen),
+            ("jaeger-compact-listen", &cli.jaeger_compact_listen),
+            ("jaeger-http-listen", &cli.jaeger_http_listen),
+            ("zipkin-listen", &cli.zipkin_listen),
+        ] {
+            let parsed: std::net::SocketAddr = addr.parse().expect(name);
+            check!(parsed.ip().is_unspecified(), "--{name} defaults to {addr}");
+        }
+        check!(cli.admin_listen_addr.ip().is_unspecified());
+    }
+
+    /// The binary's own flags, out of a file. The generic precedence rules
+    /// have their own suite; this one is here because a `Cli` that forgot to
+    /// flatten `ConfigFileArgs` would pass every one of those and still
+    /// ignore an operator's file.
+    #[test]
+    fn a_config_file_supplies_this_binary_s_flags() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("krabka.yaml");
+        std::fs::write(&path, "target: querier\nlisten: 0.0.0.0:4444\n").unwrap();
+
+        let argv = krabka_observability::argv_with_config_file::<Cli>(vec![
+            "krabka-traces".into(),
+            "--config.file".into(),
+            path.into_os_string(),
+        ])
+        .unwrap();
+        let cli = Cli::parse_from(argv);
+
+        check!(cli.listen == "0.0.0.0:4444");
+    }
 
     #[test]
     fn non_dimensioned_cli_arguments_have_environment_backing() {
@@ -333,10 +378,10 @@ mod tests {
     fn distributor_defaults_include_tempo_push_ports() {
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "distributor"]).unwrap();
 
-        assert2::assert!(cli.otlp_http_listen.as_str() == "127.0.0.1:4318");
-        assert2::assert!(cli.jaeger_grpc_listen.as_str() == "127.0.0.1:14250");
-        assert2::assert!(cli.jaeger_http_listen.as_str() == "127.0.0.1:14268");
-        assert2::assert!(cli.zipkin_listen.as_str() == "127.0.0.1:9411");
+        assert2::assert!(cli.otlp_http_listen.as_str() == "0.0.0.0:4318");
+        assert2::assert!(cli.jaeger_grpc_listen.as_str() == "0.0.0.0:14250");
+        assert2::assert!(cli.jaeger_http_listen.as_str() == "0.0.0.0:14268");
+        assert2::assert!(cli.zipkin_listen.as_str() == "0.0.0.0:9411");
     }
 
     #[test]
@@ -1883,7 +1928,14 @@ use wal_consumer::wal_consumer;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let argv = match argv_with_config_file::<Cli>(std::env::args_os()) {
+        Ok(argv) => argv,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(2);
+        }
+    };
+    let cli = Cli::parse_from(argv);
     // `run` fans out over every role, so its state machine is large; boxing keeps
     // it off the startup task's stack.
     match Box::pin(run(cli)).await {

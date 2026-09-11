@@ -12,11 +12,13 @@ use crate::{
     get,
 };
 
+mod draining_gate;
 mod readiness_gate;
 mod readiness_router;
 mod ready;
 mod role_readiness;
 
+pub use draining_gate::DRAINING_GATE;
 pub use readiness_gate::ReadinessGate;
 pub use readiness_router::readiness_router;
 pub(crate) use ready::ready;

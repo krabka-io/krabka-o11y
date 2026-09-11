@@ -1,22 +1,30 @@
 use super::{
-    ByteSize, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY, DEFAULT_MAX_BLOCKS_PER_JOB,
-    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, Parser, SocketAddr,
-    Target, Time, parse, parse_client_dispatch_queue_capacity, parse_client_frame_max,
-    parse_consumer_fetch_size, parse_min_two_usize, parse_non_empty_string,
-    parse_positive_time_or_legacy_millis, parse_positive_time_or_legacy_nanos, parse_positive_u32,
-    parse_positive_usize, parse_positive_whole_byte_size,
+    ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
+    IndexSnapshotRetain, Parser, SocketAddr, Target, Time, parse,
+    parse_client_dispatch_queue_capacity, parse_client_frame_max, parse_consumer_fetch_size,
+    parse_min_two_usize, parse_non_empty_string, parse_positive_time_or_legacy_millis,
+    parse_positive_time_or_legacy_nanos, parse_positive_u32, parse_positive_usize,
+    parse_positive_whole_byte_size,
 };
 
 #[derive(Debug, Parser)]
 pub(crate) struct Cli {
     #[command(flatten)]
+    pub(crate) config_file: ConfigFileArgs,
+    #[command(flatten)]
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
     #[arg(long, env = "KRABKA_PROFILES_TARGET")]
     pub(crate) target: Target,
+    /// HTTP ingest and query listen address. Default: `0.0.0.0:4040`.
+    ///
+    /// Every interface, as Pyroscope defaults to. A container that binds
+    /// loopback is unreachable from outside its pod, and the only symptom is
+    /// a health check timing out with nothing in the logs.
     #[arg(
         long,
         env = "KRABKA_PROFILES_LISTEN_ADDR",
-        default_value = "127.0.0.1:4040"
+        default_value = "0.0.0.0:4040"
     )]
     pub(crate) listen: SocketAddr,
     #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]

@@ -12,6 +12,32 @@ use super::*;
 /// The loop commits WAL offsets only after it durably writes the merged blocks.
 /// It drains the remaining buffer on shutdown, so no spans are lost.
 ///
+/// # Object-store failures
+///
+/// A single 503 or reset connection during a flush used to leave `run`, leave
+/// `main`, and end the process. Nothing was lost -- the offsets are committed
+/// after the write, never before -- but the role came back cold and re-read
+/// the same window, so a fault outlasting a restart became an unbounded retry
+/// at *process* granularity. Two bounded retries in place replace it:
+///
+/// - the trace index's snapshot writes go through a [`RetryingObjectStore`],
+///   which retries the backend failures that could clear on their own and
+///   reports at once the ones that cannot -- a 403, a 404, a failed
+///   precondition; and
+/// - `writer` retries each block write as a whole. See [`BlockWriter`] for
+///   why the whole write is the only unit a block can be retried in.
+///
+/// The buffer is not re-taken between attempts: `flush_and_commit` drains the
+/// accumulator once and the retries happen underneath it. The block key stays
+/// the function of the buffered offset range that [`FlushAccumulator`]
+/// promises, so a retried write overwrites its own half-written object instead
+/// of leaving a second block beside it, and the commit that follows a
+/// successful flush still happens exactly once.
+///
+/// Both budgets are finite. When one runs out the error propagates and the
+/// role exits, because a wrong bucket or a revoked credential must not become
+/// a role that is up and silently doing nothing.
+///
 /// # Errors
 /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
 pub async fn run<C>(
@@ -26,6 +52,7 @@ pub async fn run<C>(
 where
     C: WalConsumerPoll + WalConsumerCommit,
 {
+    let object_store = RetryingObjectStore::wrap(object_store, ObjectStoreRetryPolicy::DEFAULT);
     let mut accumulator = FlushAccumulator::new();
     while !shutdown.is_cancelled() {
         let records = consumer.poll(config.window).await?;

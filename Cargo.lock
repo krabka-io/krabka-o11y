@@ -4261,6 +4261,7 @@ dependencies = [
  "krabka-client-core",
  "krabka-client-producer",
  "krabka-ids",
+ "krabka-logfmt",
  "krabka-logql",
  "krabka-telemetry",
  "krabka-units",

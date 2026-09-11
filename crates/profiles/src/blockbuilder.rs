@@ -5,7 +5,8 @@ use std::{collections::BTreeMap, sync::Arc, time::Instant};
 use arrow::record_batch::RecordBatch;
 use krabka_blockstore::{
     BlockIndex, BlockMeta, BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels,
-    ProfileIndex, ProfileSampleRow, SummaryColumns, encode_profile_samples, profile_samples_decl,
+    ObjectStoreRetryPolicy, ProfileIndex, ProfileSampleRow, RetryingObjectStore, SummaryColumns,
+    encode_profile_samples, profile_samples_decl, retry_object_store,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};

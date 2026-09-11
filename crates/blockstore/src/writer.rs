@@ -28,6 +28,7 @@ use crate::{
     compaction::BlockLevel,
     error::{BlockStoreError, Result},
     labels::SeriesFingerprint,
+    retry::{ObjectStoreRetryPolicy, retry_object_store},
 };
 
 #[cfg(test)]
@@ -44,7 +45,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use bytes::Bytes;
-    use futures::{FutureExt, stream::BoxStream};
+    use futures::{FutureExt, StreamExt as _, stream::BoxStream};
     use object_store::{
         CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
         ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, UploadPart,
@@ -221,6 +222,179 @@ mod tests {
 
         let head = store.head(&Path::from("blocks/tenant-a/b1.parquet")).await;
         assert2::assert!(head.is_ok());
+    }
+
+    /// A store whose first `failures` puts fail with `error`, counting every
+    /// attempt. Every other operation delegates to an in-memory store, so what
+    /// a retried write actually left behind can be read back.
+    #[derive(Debug)]
+    struct FlakyPutStore {
+        inner: InMemory,
+        remaining_failures: std::sync::atomic::AtomicUsize,
+        attempts: std::sync::atomic::AtomicUsize,
+        error: fn() -> object_store::Error,
+    }
+
+    impl FlakyPutStore {
+        fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
+            Self {
+                inner: InMemory::new(),
+                remaining_failures: std::sync::atomic::AtomicUsize::new(failures),
+                attempts: std::sync::atomic::AtomicUsize::new(0),
+                error,
+            }
+        }
+
+        fn attempts(&self) -> usize {
+            self.attempts.load(Ordering::SeqCst)
+        }
+    }
+
+    impl std::fmt::Display for FlakyPutStore {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("FlakyPutStore")
+        }
+    }
+
+    #[async_trait]
+    impl ObjectStore for FlakyPutStore {
+        async fn put_opts(
+            &self,
+            location: &ObjectPath,
+            payload: PutPayload,
+            options: PutOptions,
+        ) -> object_store::Result<PutResult> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            if self
+                .remaining_failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    (left > 0).then(|| left - 1)
+                })
+                .is_ok()
+            {
+                return Err((self.error)());
+            }
+            self.inner.put_opts(location, payload, options).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &ObjectPath,
+            options: PutMultipartOptions,
+        ) -> object_store::Result<Box<dyn MultipartUpload>> {
+            self.inner.put_multipart_opts(location, options).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &ObjectPath,
+            options: GetOptions,
+        ) -> object_store::Result<GetResult> {
+            self.inner.get_opts(location, options).await
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&ObjectPath>,
+        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&ObjectPath>,
+        ) -> object_store::Result<ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &ObjectPath,
+            to: &ObjectPath,
+            options: CopyOptions,
+        ) -> object_store::Result<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
+
+        fn delete_stream(
+            &self,
+            locations: BoxStream<'static, object_store::Result<ObjectPath>>,
+        ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
+            self.inner.delete_stream(locations)
+        }
+    }
+
+    fn timed_out() -> object_store::Error {
+        object_store::Error::Generic {
+            store: "S3",
+            source: "operation timed out".into(),
+        }
+    }
+
+    fn forbidden() -> object_store::Error {
+        object_store::Error::PermissionDenied {
+            path: "blocks/tenant-a/b1.parquet".to_string(),
+            source: "403".into(),
+        }
+    }
+
+    /// A block write that meets a transient backend failure must finish, and
+    /// must finish as ONE block.
+    ///
+    /// The key is the caller's, so every attempt writes to the same location
+    /// and the last one overwrites whatever the failed ones left. That is what
+    /// makes the retry safe to put under a flush that has already drained its
+    /// buffer: the flush sees one success, commits one offset, and the store
+    /// holds one object.
+    #[tokio::test]
+    async fn a_block_write_that_fails_transiently_is_retried_into_a_single_block() {
+        let store = Arc::new(FlakyPutStore::new(2, timed_out));
+        let writer = BlockWriter::with_retry_policy(
+            Arc::clone(&store) as Arc<dyn ObjectStore>,
+            crate::ObjectStoreRetryPolicy::immediate(4),
+        );
+        let schema = log_schema();
+        let batch = sample_batch(&schema);
+
+        let meta = writer
+            .write_block("tenant-a", "blocks/tenant-a/b1.parquet", schema, &[batch])
+            .await
+            .expect("the third attempt writes the block");
+
+        assert2::check!(meta.row_count == 4);
+        assert2::check!(store.attempts() == 3);
+        let objects: Vec<String> = store
+            .inner
+            .list(None)
+            .map(|meta| {
+                meta.expect("listing an in-memory store")
+                    .location
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .await;
+        assert2::check!(objects == vec!["blocks/tenant-a/b1.parquet".to_string()]);
+    }
+
+    /// A refused credential is not a blip. Spending the budget on it would
+    /// delay the report of the one fault an operator has to act on, so it is
+    /// reported on the first attempt.
+    #[tokio::test]
+    async fn a_permanently_refused_block_write_is_reported_without_retrying() {
+        let store = Arc::new(FlakyPutStore::new(usize::MAX, forbidden));
+        let writer = BlockWriter::with_retry_policy(
+            Arc::clone(&store) as Arc<dyn ObjectStore>,
+            crate::ObjectStoreRetryPolicy::immediate(4),
+        );
+        let schema = log_schema();
+        let batch = sample_batch(&schema);
+
+        let failure = writer
+            .write_block("tenant-a", "blocks/tenant-a/b1.parquet", schema, &[batch])
+            .await;
+
+        assert2::check!(failure.is_err());
+        assert2::check!(store.attempts() == 1);
     }
 
     fn span_summary_batch() -> RecordBatch {

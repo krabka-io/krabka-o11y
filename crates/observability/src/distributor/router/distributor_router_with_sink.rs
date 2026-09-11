@@ -1,5 +1,5 @@
 use super::{
-    Arc, AtomicBool, ByteSize, DISTRIBUTOR_OPS, DistributorState, LogIngestLimiter, LogWalSink,
+    Arc, ByteSize, DISTRIBUTOR_OPS, DRAINING_GATE, DistributorState, LogIngestLimiter, LogWalSink,
     LogsServiceServer, OtlpGrpcLogsService, RoleReadiness, Router, ServiceMetrics, Time,
     flush_ingester_chunks, format_query, format_query_post, get, get_prepare_shutdown, post,
     push_logs, push_otlp_logs, set_prepare_shutdown, shutdown_ingester, unset_prepare_shutdown,
@@ -22,7 +22,14 @@ pub(crate) fn distributor_router_with_sink(
         metrics: metrics.clone(),
     };
 
-    with_role_ops_routes(Router::new(), DISTRIBUTOR_OPS, RoleReadiness::new())
+    // The one gate this role owns. It starts met -- a distributor that has
+    // bound its listener can take writes -- and an operator's drain request
+    // drops it, which is the only thing `/ready` on this role reports.
+    let readiness = RoleReadiness::new();
+    let accepting_writes = readiness.gate(DRAINING_GATE);
+    accepting_writes.mark_ready();
+
+    with_role_ops_routes(Router::new(), DISTRIBUTOR_OPS, readiness)
         .route("/flush", post(flush_ingester_chunks))
         .route(
             "/ingester/prepare_shutdown",
@@ -49,7 +56,7 @@ pub(crate) fn distributor_router_with_sink(
         .with_state(DistributorState {
             sink,
             ingest_limiter,
-            prepare_shutdown: Arc::new(AtomicBool::new(false)),
+            prepare_shutdown: accepting_writes,
             max_ingest_body,
             wal_append_timeout,
             reject_old_samples_max_age,

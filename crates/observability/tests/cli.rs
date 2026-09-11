@@ -137,7 +137,7 @@ fn parses_distributor_wal_config() {
         config
             == ServiceConfig {
                 target: Role::Distributor,
-                listen_addr: "127.0.0.1:3100".parse().unwrap(),
+                listen_addr: "0.0.0.0:3100".parse().unwrap(),
                 object_store_url: None,
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
                 wal_topic: "__krabka_observability_logs_wal".to_string(),
@@ -182,7 +182,7 @@ fn parses_compactor_wal_consumer_config() {
         config
             == ServiceConfig {
                 target: Role::Compactor,
-                listen_addr: "127.0.0.1:3100".parse().unwrap(),
+                listen_addr: "0.0.0.0:3100".parse().unwrap(),
                 object_store_url: Some("file:///tmp/krabka-observability".to_string()),
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
                 wal_topic: "__krabka_observability_logs_wal".to_string(),
@@ -223,7 +223,7 @@ fn parses_querier_wal_tail_config() {
         config
             == ServiceConfig {
                 target: Role::Querier,
-                listen_addr: "127.0.0.1:3100".parse().unwrap(),
+                listen_addr: "0.0.0.0:3100".parse().unwrap(),
                 object_store_url: None,
                 wal_bootstrap_server: Some("127.0.0.1:9092".to_string()),
                 wal_topic: "__krabka_observability_logs_wal".to_string(),
@@ -290,4 +290,17 @@ fn rejects_unknown_target() {
         .unwrap_err();
 
     assert!(error.to_string().contains("invalid value"));
+}
+
+/// A service that binds loopback inside a container is unreachable from
+/// outside the pod, and the only symptom is a health check that fails with
+/// nothing in the logs. Loki, Mimir and Tempo all default their HTTP listener
+/// to every interface; so does this.
+#[test]
+fn the_default_listen_address_is_reachable_from_outside_the_container() {
+    let config =
+        ServiceConfig::try_parse_from(["krabka-observability", "--target", "querier"]).unwrap();
+
+    assert!(config.listen_addr.ip().is_unspecified());
+    assert!(config.listen_addr.port() == 3100);
 }

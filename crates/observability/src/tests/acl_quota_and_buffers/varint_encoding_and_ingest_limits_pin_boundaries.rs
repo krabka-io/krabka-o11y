@@ -12,7 +12,7 @@ pub(crate) fn varint_encoding_and_ingest_limits_pin_boundaries() {
     let state = DistributorState {
         sink: Arc::new(InMemoryWalSink::default()),
         ingest_limiter: Arc::new(AllowAllIngestLimiter),
-        prepare_shutdown: Arc::new(AtomicBool::new(false)),
+        prepare_shutdown: ReadinessGate::unmet(DRAINING_GATE),
         metrics: ServiceMetrics::new(),
         max_ingest_body: Some(bytes(5)),
         wal_append_timeout: None,

@@ -13,10 +13,15 @@ pub struct ServiceConfig {
     #[arg(long, env = "KRABKA_OBSERVABILITY_TARGET", value_enum)]
     pub target: Role,
 
+    /// HTTP query and ingest listen address. Default: `0.0.0.0:3100`.
+    ///
+    /// Every interface, as `Loki`'s own default is. A container that binds
+    /// loopback is unreachable from outside its pod, and the only symptom is
+    /// a health check timing out with nothing in the logs.
     #[arg(
         long,
         env = "KRABKA_OBSERVABILITY_LISTEN_ADDR",
-        default_value = "127.0.0.1:3100"
+        default_value = "0.0.0.0:3100"
     )]
     pub listen_addr: SocketAddr,
 
@@ -191,7 +196,7 @@ impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
             target: Role::Distributor,
-            listen_addr: "127.0.0.1:3100"
+            listen_addr: "0.0.0.0:3100"
                 .parse()
                 .expect("default observability listen address is valid"),
             object_store_url: None,

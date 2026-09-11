@@ -3,10 +3,10 @@ use krabka_units::convert::ByteSizeExt;
 use tracing::Instrument;
 
 use crate::{
-    AllowAllIngestLimiter, Arc, AtomicBool, ByteSize, Bytes, CONTENT_ENCODING, CONTENT_TYPE,
+    AllowAllIngestLimiter, Arc, ByteSize, Bytes, CONTENT_ENCODING, CONTENT_TYPE, DRAINING_GATE,
     Deserialize, Extension, HeaderMap, Instant, Labels, LogIngestLimiter, LogWalSink, LogsService,
-    LogsServiceServer, ProtoExportLogsServiceRequest, ProtoExportLogsServiceResponse, Response,
-    RoleReadiness, Router, ServiceMetrics, State, StatusCode, Time, Value,
+    LogsServiceServer, ProtoExportLogsServiceRequest, ProtoExportLogsServiceResponse,
+    ReadinessGate, Response, RoleReadiness, Router, ServiceMetrics, State, StatusCode, Time, Value,
     append_distributor_wal_records, build_info, distributor_error_to_grpc_status,
     flush_ingester_chunks, format_query, format_query_post, get, get_prepare_shutdown, grpc_tenant,
     log_level, log_level_post, measured_size, memberlist_status, normalize_loki_http_push,

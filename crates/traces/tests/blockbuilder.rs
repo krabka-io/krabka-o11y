@@ -14,8 +14,8 @@ use assert2::check;
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use krabka_blockstore::{
-    BlockLevel, BlockWriter, PromotedSpanAttr, SCOL_START_NANO, SCOL_TRACE_ID, ShardedTraceBloom,
-    TraceBlockStats, TraceIndex, read_block,
+    BlockLevel, BlockWriter, ObjectStoreRetryPolicy, PromotedSpanAttr, SCOL_START_NANO,
+    SCOL_TRACE_ID, ShardedTraceBloom, TraceBlockStats, TraceIndex, read_block,
 };
 use krabka_client_consumer::ConsumerRecord;
 use krabka_traces::{
@@ -697,29 +697,55 @@ async fn a_written_block_is_ordered_by_trace_id_then_start() {
 type EventLog = Arc<StdMutex<Vec<String>>>;
 
 /// Object store that records every `put`, that is every block or index write,
-/// into a shared event log. It can also fail `put` once a flush is reached.
-/// Everything else delegates to an inner [`InMemory`] store.
+/// into a shared event log. Its first `remaining_failures` puts fail with
+/// `error`, and it counts every attempt so a test can tell a retry from a
+/// single try. Everything else delegates to an inner [`InMemory`] store.
 struct RecordingObjectStore {
     inner: Arc<InMemory>,
     events: EventLog,
-    fail_puts: bool,
+    remaining_failures: AtomicUsize,
+    put_attempts: AtomicUsize,
+    error: fn() -> object_store::Error,
+}
+
+/// A 5xx, a timeout or a reset connection, which is what the `object_store`
+/// clients report once their own retry budget is spent.
+fn transient_failure() -> object_store::Error {
+    object_store::Error::Generic {
+        store: "RecordingObjectStore",
+        source: "injected put failure".into(),
+    }
+}
+
+/// A credential the store refuses. No amount of waiting changes the answer.
+fn permanent_failure() -> object_store::Error {
+    object_store::Error::PermissionDenied {
+        path: "traces".to_string(),
+        source: "injected 403".into(),
+    }
 }
 
 impl RecordingObjectStore {
     fn recording(events: EventLog) -> Self {
-        Self {
-            inner: Arc::new(InMemory::new()),
-            events,
-            fail_puts: false,
-        }
+        Self::flaky(events, 0, transient_failure)
     }
 
     fn failing(events: EventLog) -> Self {
+        Self::flaky(events, usize::MAX, permanent_failure)
+    }
+
+    fn flaky(events: EventLog, failures: usize, error: fn() -> object_store::Error) -> Self {
         Self {
             inner: Arc::new(InMemory::new()),
             events,
-            fail_puts: true,
+            remaining_failures: AtomicUsize::new(failures),
+            put_attempts: AtomicUsize::new(0),
+            error,
         }
+    }
+
+    fn put_attempts(&self) -> usize {
+        self.put_attempts.load(Ordering::SeqCst)
     }
 }
 
@@ -743,11 +769,15 @@ impl ObjectStore for RecordingObjectStore {
         payload: PutPayload,
         opts: PutOptions,
     ) -> object_store::Result<PutResult> {
-        if self.fail_puts {
-            return Err(object_store::Error::Generic {
-                store: "RecordingObjectStore",
-                source: "injected put failure".into(),
-            });
+        self.put_attempts.fetch_add(1, Ordering::SeqCst);
+        if self
+            .remaining_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                (left > 0).then(|| left - 1)
+            })
+            .is_ok()
+        {
+            return Err((self.error)());
         }
         self.events
             .lock()
@@ -983,6 +1013,134 @@ async fn run_does_not_commit_when_the_flush_write_fails() {
     assert2::assert!(commit_calls.load(Ordering::SeqCst) == 0);
     let recorded = events.lock().expect("events lock").clone();
     assert2::assert!(recorded.iter().all(|e| e != "commit"));
+}
+
+/// A flush that meets a transient object-store failure must finish, and must
+/// still commit exactly once.
+///
+/// This is the failure the block-builder used to die of. A single 503 during
+/// `flush_and_commit` left `run`, left `main`, and ended the process; nothing
+/// was lost, because the offsets sit behind the write, but the role came back
+/// cold and re-read the same window, so a fault that outlasted a restart
+/// became an unbounded retry at process granularity. Here the store refuses
+/// the first two puts and then recovers, and the flush rides it out.
+///
+/// The schedule is injected rather than waited on: `immediate` retries without
+/// sleeping, so raising the production budget cannot make this test slower.
+#[tokio::test]
+async fn run_commits_exactly_once_after_the_object_store_recovers() {
+    let events: EventLog = Arc::new(StdMutex::new(Vec::new()));
+    // Two transient failures, then the store works. The first puts of a flush
+    // are the span block's, so this is the block write failing and recovering.
+    let store = Arc::new(RecordingObjectStore::flaky(
+        Arc::clone(&events),
+        2,
+        transient_failure,
+    ));
+    let object_store: Arc<dyn ObjectStore> = store.clone();
+    let writer =
+        BlockWriter::with_retry_policy(object_store.clone(), ObjectStoreRetryPolicy::immediate(4));
+    let index = Arc::new(Mutex::new(TraceIndex::new()));
+    let shutdown = CancellationToken::new();
+    let commit_calls = Arc::new(AtomicUsize::new(0));
+
+    let batch = vec![
+        consumer_record(3, 10, &rec("tenant-a", [1; 16], 1, None, 100)),
+        consumer_record(3, 11, &rec("tenant-a", [1; 16], 2, Some(1), 200)),
+    ];
+    let consumer = ScriptedConsumer::new(
+        vec![batch],
+        shutdown.clone(),
+        Arc::clone(&commit_calls),
+        Arc::clone(&events),
+    );
+
+    run(
+        consumer,
+        writer,
+        Arc::clone(&index),
+        object_store.clone(),
+        block_builder_config(),
+        ServiceMetrics::new(),
+        shutdown,
+    )
+    .await
+    .expect("the flush rides out the transient failures");
+
+    // The write really was attempted more than once ...
+    check!(store.put_attempts() > 2);
+    // ... and the offsets were committed exactly once, after it succeeded.
+    assert2::assert!(commit_calls.load(Ordering::SeqCst) == 1);
+    let recorded = events.lock().expect("events lock").clone();
+    check!(recorded.iter().filter(|e| *e == "commit").count() == 1);
+    check!(recorded.last().map(String::as_str) == Some("commit"));
+
+    // One block, at the key the buffered offset range derives, holding both
+    // spans. A retry that re-derived its key would have left two.
+    let key = "traces/tenant-a/00003/00000000000000000010-00000000000000000011-100.parquet";
+    let written: Vec<String> = recorded
+        .iter()
+        .filter_map(|event| event.strip_prefix("put:"))
+        .filter(|location| location.starts_with("traces/"))
+        .map(ToString::to_string)
+        .collect();
+    check!(written == vec![key.to_string()]);
+    let batches = read_block(object_store, key).await.unwrap();
+    check!(
+        batches
+            .iter()
+            .map(arrow::record_batch::RecordBatch::num_rows)
+            .sum::<usize>()
+            == 2
+    );
+}
+
+/// A store that refuses the credential is reported at once, not after the
+/// budget is spent.
+///
+/// Retrying a 403 buys nothing and costs the operator the delay before the
+/// only fault they can act on is reported, so the classifier stops on it. The
+/// attempt count is the assertion: one, not four.
+#[tokio::test]
+async fn run_reports_a_permanent_object_store_failure_without_spending_the_budget() {
+    let events: EventLog = Arc::new(StdMutex::new(Vec::new()));
+    let store = Arc::new(RecordingObjectStore::flaky(
+        Arc::clone(&events),
+        usize::MAX,
+        permanent_failure,
+    ));
+    let object_store: Arc<dyn ObjectStore> = store.clone();
+    let writer =
+        BlockWriter::with_retry_policy(object_store.clone(), ObjectStoreRetryPolicy::immediate(4));
+    let index = Arc::new(Mutex::new(TraceIndex::new()));
+    let shutdown = CancellationToken::new();
+    let commit_calls = Arc::new(AtomicUsize::new(0));
+
+    let consumer = ScriptedConsumer::new(
+        vec![vec![consumer_record(
+            3,
+            10,
+            &rec("tenant-a", [1; 16], 1, None, 100),
+        )]],
+        shutdown.clone(),
+        Arc::clone(&commit_calls),
+        Arc::clone(&events),
+    );
+
+    let result = run(
+        consumer,
+        writer,
+        Arc::clone(&index),
+        object_store,
+        block_builder_config(),
+        ServiceMetrics::new(),
+        shutdown,
+    )
+    .await;
+
+    assert2::assert!(result.is_err());
+    check!(store.put_attempts() == 1);
+    assert2::assert!(commit_calls.load(Ordering::SeqCst) == 0);
 }
 
 #[tokio::test]
