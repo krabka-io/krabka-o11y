@@ -823,7 +823,13 @@ async fn wait_for_seeded(client: &reqwest::Client, base: &str, timeline: &Timeli
         let mut seeded = true;
         for uid in [KRABKA_UID, LOKI_UID] {
             let answer = probe(client, base, uid, &case).await?;
-            seeded &= answer["result"].as_array().is_some_and(|r| r.len() == 3);
+            // Three pushed streams, and no fewer than three in the answer.
+            // Not exactly three: the default encoding folds `detected_level`
+            // into the stream labels, so a pushed stream whose lines carry
+            // two levels comes back as two streams.
+            seeded &= answer["result"]
+                .as_array()
+                .is_some_and(|result| result.len() >= 3);
         }
         if seeded {
             return Ok(());

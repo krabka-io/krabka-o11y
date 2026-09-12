@@ -114,7 +114,7 @@ for itself, so run the command before every role, as the manifests in
 
 ## Differential suites
 
-Six suites boot a real Grafana-stack component and compare against it, rather
+Nine suites boot a real Grafana-stack component and compare against it, rather
 than against a fixture of what it was once believed to do:
 
 | Suite | Compares against |
@@ -124,6 +124,9 @@ than against a fixture of what it was once believed to do:
 | `metrics-service/grafana_integration` | Grafana |
 | `traces/tempo_differential` | Grafana Tempo |
 | `traces/grafana_e2e` | Grafana, Prometheus |
+| `observability/loki_differential` | Grafana Loki |
+| `observability/grafana_integration` | Grafana |
+| `observability/grafana_e2e` | Grafana, Grafana Loki |
 | `profiles/pyroscope_differential` | Grafana Pyroscope |
 
 They need a Docker daemon and are tagged `docker`, which keeps them out of a
