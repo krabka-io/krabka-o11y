@@ -25,9 +25,9 @@ use krabka_blockstore::{
     CompactionPolicy, DEFAULT_BLOCK_SWEEP_GRACE, ERASURE_REQUEST_PREFIX, ErasureRequest, Index,
     Labels, LifecycleError, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, ObjectStoreMetrics,
     ObjectStoreRetryPolicy, OrphanSweepStats, RetentionWindows, RetryingObjectStore, SortedMerge,
-    SummaryColumns, delete_blocks, delete_erasure_request, escape_object_path_segment,
-    input_key_fingerprint, list_erasure_requests, open_block_stream, plan_compactions,
-    plan_expired_blocks, reconcile_orphans, series_block_schema, versioned_compaction_key,
+    SummaryColumns, delete_blocks, escape_object_path_segment, input_key_fingerprint,
+    list_erasure_requests, open_block_stream, plan_compactions, plan_expired_blocks,
+    reconcile_orphans, series_block_schema, versioned_compaction_key,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
 use krabka_ids::{Offset, PartitionIndex};

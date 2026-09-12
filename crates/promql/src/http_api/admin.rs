@@ -3,7 +3,7 @@ use axum::body::Bytes;
 use super::{
     ApiError, Arc, ERASURE_REQUEST_PREFIX, ErasureRequest, Extension, HeaderMap, Index,
     IntoResponse, MetricStore, Principal, PrometheusApiState, Response, State, StatusCode,
-    SystemTime, authorized_tenant_from_headers, discovery_window, list_erasure_requests,
+    SystemTime, authorize_admin, authorized_tenant_from_headers, discovery_window,
     parse_discovery_form, put_erasure_request, selector_matchers,
 };
 
@@ -13,6 +13,9 @@ pub(crate) async fn delete_series<S: MetricStore>(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Err(error) = authorize_admin(&principal) {
+        return error.into_response();
+    }
     let Some(erasure_store) = &state.erasure_store else {
         return ApiError::not_found("admin API is disabled").into_response();
     };
@@ -29,11 +32,7 @@ pub(crate) async fn delete_series<S: MetricStore>(
         Ok(window) => window,
         Err(error) => return error.into_response(),
     };
-    let created_at_ns = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |duration| {
-            i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX)
-        });
+    let mut requests = Vec::with_capacity(params.matches.len());
     for selector in &params.matches {
         let matcher_sets = match selector_matchers(selector) {
             Ok(matcher_sets) => matcher_sets,
@@ -44,6 +43,14 @@ pub(crate) async fn delete_series<S: MetricStore>(
                 return ApiError::bad_data(error.to_string()).into_response();
             }
         }
+        requests.push((selector, matcher_sets));
+    }
+    let created_at_ns = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX)
+        });
+    for (selector, matcher_sets) in requests {
         let request = ErasureRequest::new(
             tenant.as_str(),
             selector,
@@ -66,27 +73,17 @@ pub(crate) async fn clean_tombstones<S: MetricStore>(
     Extension(principal): Extension<Principal>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(erasure_store) = &state.erasure_store else {
-        return ApiError::not_found("admin API is disabled").into_response();
-    };
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return ApiError::bad_data(error.to_string()).into_response(),
-    };
-    let requests = match list_erasure_requests(erasure_store, ERASURE_REQUEST_PREFIX).await {
-        Ok(requests) => requests,
-        Err(error) => return ApiError::internal(error.to_string()).into_response(),
-    };
-    for mut request in requests
-        .into_iter()
-        .filter(|request| request.tenant == tenant.as_str())
-    {
-        request.clean_requested = true;
-        if let Err(error) =
-            put_erasure_request(erasure_store, ERASURE_REQUEST_PREFIX, &request).await
-        {
-            return ApiError::internal(error.to_string()).into_response();
-        }
+    if let Err(error) = authorize_admin(&principal) {
+        return error.into_response();
     }
+    if state.erasure_store.is_none() {
+        return ApiError::not_found("admin API is disabled").into_response();
+    }
+    match authorized_tenant_from_headers(&headers, &principal) {
+        Ok(_) => {}
+        Err(error) => return ApiError::bad_data(error.to_string()).into_response(),
+    }
+    // Durable requests stay active until a WAL publication watermark exists;
+    // retiring one here could let unflushed matching samples reappear.
     StatusCode::NO_CONTENT.into_response()
 }

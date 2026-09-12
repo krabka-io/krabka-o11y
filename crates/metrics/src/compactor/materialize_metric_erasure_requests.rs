@@ -3,8 +3,8 @@ use super::{
     CompactionIndexManifest, CompactionIndexSink, CompactionObjectPlan, CompactionSeriesLabels,
     ERASURE_REQUEST_PREFIX, ErasureRequest, Index, MetricBlockKind, MetricCompactionError,
     MetricCompactionPass, ObjectStore, StreamExt, SummaryColumns, UInt64Array, delete_blocks,
-    delete_erasure_request, filter_record_batch, list_compaction_manifests, list_erasure_requests,
-    open_block_stream, series_block_schema, versioned_compaction_key,
+    filter_record_batch, list_compaction_manifests, list_erasure_requests, open_block_stream,
+    series_block_schema, versioned_compaction_key,
 };
 use crate::clock_reading_decl;
 
@@ -58,7 +58,6 @@ where
             sidecars: Vec::new(),
         })
         .collect::<Vec<_>>();
-    let rewrote_blocks = !retired.is_empty();
     let report = delete_blocks(store, &deletions).await;
     let failed = report
         .failures
@@ -71,11 +70,6 @@ where
         .map(|(block_key, _)| block_key)
         .collect();
     pass.manifests_retired = report.into();
-    if !rewrote_blocks {
-        for request in requests.iter().filter(|request| request.clean_requested) {
-            delete_erasure_request(store, ERASURE_REQUEST_PREFIX, request).await?;
-        }
-    }
     Ok((pass, retired_blocks))
 }
 

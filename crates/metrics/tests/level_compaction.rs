@@ -532,7 +532,7 @@ async fn an_erasure_request_rewrites_only_its_series_and_time_range() {
         &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0), (9, NOW_MS, 3.0)],
     )
     .await;
-    let mut request = ErasureRequest::new(
+    let request = ErasureRequest::new(
         "tenant-a",
         "{__name__=\"series_7\"}",
         vec![vec![LabelMatcher::new("__name__", MatchOp::Eq, "series_7")]],
@@ -540,7 +540,6 @@ async fn an_erasure_request_rewrites_only_its_series_and_time_range() {
         (NOW_MS + 1_000) * 1_000_000,
         NOW_MS * 1_000_000,
     );
-    request.clean_requested = true;
     put_erasure_request(&store, ERASURE_REQUEST_PREFIX, &request)
         .await
         .expect("persist erasure request");
@@ -561,17 +560,6 @@ async fn an_erasure_request_rewrites_only_its_series_and_time_range() {
             .len()
             == 1,
         "a rewriting pass keeps the request"
-    );
-
-    let cleaning = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
-
-    check!(cleaning.outputs.is_empty());
-    check!(
-        list_erasure_requests(&store, ERASURE_REQUEST_PREFIX)
-            .await
-            .expect("list erasure requests")
-            .is_empty(),
-        "a clean pass retires the request"
     );
 }
 

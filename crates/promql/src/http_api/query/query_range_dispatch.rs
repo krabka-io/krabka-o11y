@@ -1,10 +1,10 @@
 use super::{
-    AnnotatedQueryResult, ApiError, Arc, FrontendRangeRequest, HeaderMap, IntoResponse,
-    MetricStore, Principal, PrometheusApiState, QueryRequestTiming, QueryResponseStats,
-    RangeQueryParams, Response, StdDurationExt, TimeExt, apply_result_limit,
+    AnnotatedQueryResult, ApiError, Arc, ERASURE_REQUEST_PREFIX, FrontendRangeRequest, HeaderMap,
+    IntoResponse, MetricStore, Principal, PrometheusApiState, QueryRequestTiming,
+    QueryResponseStats, RangeQueryParams, Response, StdDurationExt, TimeExt, apply_result_limit,
     authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
-    duration_param, enforce_query_range_limit, execute_range_query_frontend, success_response,
-    success_response_with_stats, timestamp_ms, validate_timestamp_range,
+    duration_param, enforce_query_range_limit, execute_range_query_frontend, has_erasure_requests,
+    success_response, success_response_with_stats, timestamp_ms, validate_timestamp_range,
 };
 
 pub(crate) async fn query_range_dispatch<S: MetricStore>(
@@ -46,13 +46,26 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
         .as_deref()
         .is_some_and(|stats| !stats.is_empty());
     let per_step_stats = params.stats.as_deref() == Some("all");
+    // ponytail: one object-store listing per range query; add a generation
+    // cache when erasure-enabled query throughput makes that measurable.
+    let erasure_active = match &state.erasure_store {
+        Some(store) => {
+            match has_erasure_requests(store, ERASURE_REQUEST_PREFIX, tenant.as_str()).await {
+                Ok(active) => active,
+                Err(error) => return ApiError::internal(error.to_string()).into_response(),
+            }
+        }
+        None => false,
+    };
     let preparation = preparation_started.elapsed();
     // Time the pure range eval (through the frontend cache/split when enabled),
     // labelled `type="range"`; the whole-handler span stays on
     // `query_duration{route="query_range"}`.
     let eval_started = std::time::Instant::now();
     let evaluate = async {
-        if let Some(frontend) = &state.query_frontend {
+        if let Some(frontend) = &state.query_frontend
+            && !erasure_active
+        {
             let engine = state.engine_for_tenant(&tenant);
             execute_range_query_frontend(
                 &engine,

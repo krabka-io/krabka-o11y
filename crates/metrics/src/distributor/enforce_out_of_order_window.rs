@@ -13,6 +13,7 @@ pub(crate) fn enforce_out_of_order_window(
     limits: &Limits,
     tenant: &TenantId,
     series: &[DecodedSeries],
+    clock_uncertainty: Time,
     now: Instant,
 ) -> Result<(), PushError> {
     if limits.out_of_order_time_window < Time::ZERO {
@@ -26,6 +27,7 @@ pub(crate) fn enforce_out_of_order_window(
     let window_ms = limits
         .out_of_order_time_window
         .max(tracked.clock_uncertainty)
+        .max(clock_uncertainty)
         .millis_i64();
     let mut updates = Vec::new();
     for series in series {

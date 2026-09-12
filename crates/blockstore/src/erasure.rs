@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use futures::TryStreamExt as _;
+use futures::{StreamExt as _, TryStreamExt as _};
 use object_store::{ObjectStore, ObjectStoreExt as _, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};
 
@@ -23,9 +23,6 @@ pub struct ErasureRequest {
     pub end_ns: i64,
     /// Unix nanosecond time at which the request was accepted.
     pub created_at_ns: i64,
-    /// Whether the operator asked compaction to retire this request after a clean pass.
-    #[serde(default)]
-    pub clean_requested: bool,
 }
 
 impl ErasureRequest {
@@ -62,7 +59,6 @@ impl ErasureRequest {
             start_ns,
             end_ns,
             created_at_ns,
-            clean_requested: false,
         }
     }
 
@@ -111,23 +107,24 @@ pub async fn list_erasure_requests(
     Ok(requests)
 }
 
-/// Removes a materialised or cancelled request.
+/// Reports whether a tenant has a durable metric erasure request.
 ///
 /// # Errors
-/// Returns an error when object-store deletion fails.
-pub async fn delete_erasure_request(
+/// Returns an error when object-store listing fails.
+pub async fn has_erasure_requests(
     store: &Arc<dyn ObjectStore>,
     prefix: &str,
-    request: &ErasureRequest,
-) -> Result<()> {
-    store
-        .delete(&Path::from(erasure_request_key(
-            prefix,
-            &request.tenant,
-            &request.id,
-        )))
-        .await?;
-    Ok(())
+    tenant: &str,
+) -> Result<bool> {
+    let path = Path::from(format!(
+        "{}/{}",
+        prefix.trim_end_matches('/'),
+        escape_object_path_segment(tenant)
+    ));
+    match store.list(Some(&path)).next().await {
+        Some(object) => object.map(|_| true).map_err(Into::into),
+        None => Ok(false),
+    }
 }
 
 fn erasure_request_key(prefix: &str, tenant: &str, id: &str) -> String {
@@ -176,14 +173,15 @@ mod tests {
         check!(request.overlaps(20, 40));
         check!(!request.overlaps(21, 40));
 
-        delete_erasure_request(&store, ERASURE_REQUEST_PREFIX, &request)
-            .await
-            .unwrap();
         check!(
-            list_erasure_requests(&store, ERASURE_REQUEST_PREFIX)
+            has_erasure_requests(&store, ERASURE_REQUEST_PREFIX, "tenant/a")
                 .await
                 .unwrap()
-                .is_empty()
+        );
+        check!(
+            !has_erasure_requests(&store, ERASURE_REQUEST_PREFIX, "other")
+                .await
+                .unwrap()
         );
     }
 }

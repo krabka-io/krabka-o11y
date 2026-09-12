@@ -14,13 +14,17 @@ use axum::{
     routing::{get, post},
 };
 use krabka_blockstore::{
-    ERASURE_REQUEST_PREFIX, ErasureRequest, Index, TenantId, list_erasure_requests,
+    ERASURE_REQUEST_PREFIX, ErasureRequest, Index, TenantId, has_erasure_requests,
     put_erasure_request,
 };
 use krabka_metrics::{
     LimitError, Limits, OverridesProvider, authorized_tenant_from_headers, wire::WireError,
 };
-use krabka_observability::{ReadinessGate, audit::AuditHandle, server_security::Principal};
+use krabka_observability::{
+    ReadinessGate,
+    audit::AuditHandle,
+    server_security::{Principal, authorize_admin},
+};
 use krabka_units::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
