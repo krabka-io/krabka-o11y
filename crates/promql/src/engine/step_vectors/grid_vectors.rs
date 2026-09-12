@@ -31,8 +31,8 @@ impl GridVectors {
         Self {
             grid,
             labels_by_fp,
-            steps,
             drop_name,
+            steps,
         }
     }
 

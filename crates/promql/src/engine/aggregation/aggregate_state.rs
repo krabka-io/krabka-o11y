@@ -3,6 +3,7 @@ use super::{
     kahan_sum_inc,
 };
 
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct AggregateState {
     pub(crate) labels: Labels,
     pub(crate) drop_name: bool,

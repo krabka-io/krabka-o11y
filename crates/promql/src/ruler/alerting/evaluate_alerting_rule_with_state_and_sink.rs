@@ -6,6 +6,7 @@ use super::{
     yaml_required_string, yaml_string_map,
 };
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn evaluate_alerting_rule_with_state_and_sink<S, W, A, R>(
     engine: &PromqlEngine<S>,
     sinks: (&W, &A, &R),
@@ -267,6 +268,7 @@ where
         .await
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn active_alert_records(
     tenant: &TenantId,
     labels: &BTreeMap<String, String>,

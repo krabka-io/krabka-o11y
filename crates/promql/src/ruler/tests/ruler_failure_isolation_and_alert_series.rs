@@ -7,13 +7,13 @@ async fn a_bad_rule_does_not_skip_the_next_rule() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let tenant = tenant_id("tenant-a");
     let group: serde_yaml::Value = serde_yaml::from_str(
-        r#"
+        r"
 name: mixed
 rules:
   - record: broken
   - record: good
     expr: up
-"#,
+",
     )
     .unwrap();
     let rules = BTreeMap::from([(
@@ -51,13 +51,13 @@ async fn alert_rules_write_pending_firing_and_stale_synthetic_series() {
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let tenant = tenant_id("tenant-a");
     let group: serde_yaml::Value = serde_yaml::from_str(
-        r#"
+        r"
 name: alerts
 rules:
   - alert: InstanceUp
     expr: up == 1
     for: 1m
-"#,
+",
     )
     .unwrap();
     let wal = RecordingSink::default();

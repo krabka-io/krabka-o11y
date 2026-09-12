@@ -57,5 +57,5 @@ pub(crate) async fn created_timestamps_inject_counter_zeros_in_planner_and_inter
         panic!("expected vector");
     };
     assert2::assert!(samples.len() == 1);
-    assert2::assert!(float_value(&samples[0].value) == 1.0);
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 1.0));
 }

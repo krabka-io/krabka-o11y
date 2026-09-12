@@ -38,6 +38,9 @@ where
 }
 
 /// Scheduled variant that retains per-rule and per-group status.
+///
+/// # Errors
+/// Returns an error when metric input is malformed or a limit is exceeded.
 pub async fn evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report<S, W, A, R>(
     engine: &PromqlEngine<S>,
     sinks: (&W, &A, &R),

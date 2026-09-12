@@ -201,8 +201,8 @@ mod tests {
     fn xor_series_split_at_prometheus_chunk_sample_limit() {
         let samples = (0..121)
             .map(|timestamp| v1::Sample {
-                timestamp,
-                value: timestamp as f64,
+                timestamp: i64::from(timestamp),
+                value: f64::from(timestamp),
             })
             .collect::<Vec<_>>();
 

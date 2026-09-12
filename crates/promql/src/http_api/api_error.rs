@@ -53,22 +53,6 @@ impl ApiError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn query_termination_errors_match_prometheus_statuses() {
-        let timeout = ApiError::timeout("deadline");
-        assert2::assert!(timeout.status == StatusCode::SERVICE_UNAVAILABLE);
-        assert2::assert!(timeout.error_type == "timeout");
-
-        let canceled = ApiError::canceled("gone");
-        assert2::assert!(canceled.status.as_u16() == 499);
-        assert2::assert!(canceled.error_type == "canceled");
-    }
-}
-
 impl From<WireError> for ApiError {
     fn from(error: WireError) -> Self {
         let status = StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
@@ -95,9 +79,10 @@ impl From<PromqlError> for ApiError {
     fn from(error: PromqlError) -> Self {
         let (status, error_type) = match &error {
             PromqlError::Parse(_) | PromqlError::Plan(_) => (StatusCode::BAD_REQUEST, "bad_data"),
-            PromqlError::Unsupported(_) => (StatusCode::UNPROCESSABLE_ENTITY, "execution"),
+            PromqlError::Unsupported(_) | PromqlError::Exec(_) => {
+                (StatusCode::UNPROCESSABLE_ENTITY, "execution")
+            }
             PromqlError::Limit(limit_error) => return Self::from(limit_error.clone()),
-            PromqlError::Exec(_) => (StatusCode::UNPROCESSABLE_ENTITY, "execution"),
             PromqlError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "execution"),
         };
         Self {
@@ -119,5 +104,21 @@ impl IntoResponse for ApiError {
             })),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_termination_errors_match_prometheus_statuses() {
+        let timeout = ApiError::timeout("deadline");
+        assert2::assert!(timeout.status == StatusCode::SERVICE_UNAVAILABLE);
+        assert2::assert!(timeout.error_type == "timeout");
+
+        let canceled = ApiError::canceled("gone");
+        assert2::assert!(canceled.status.as_u16() == 499);
+        assert2::assert!(canceled.error_type == "canceled");
     }
 }

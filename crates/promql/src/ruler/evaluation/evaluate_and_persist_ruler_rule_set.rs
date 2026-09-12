@@ -39,6 +39,9 @@ where
 ///
 /// A bad rule or failed group-state write is recorded in the report and does
 /// not prevent later rules or groups from running.
+///
+/// # Errors
+/// Returns an error when metric input is malformed or a limit is exceeded.
 pub async fn evaluate_and_persist_ruler_rule_set_with_report<S, W, A, R>(
     engine: &PromqlEngine<S>,
     sinks: (&W, &A, &R),

@@ -13,16 +13,16 @@ use crate::{AnnotatedQueryResult, PromqlError};
 
 const DEFAULT_RESULT_CACHE_TTL: Duration = Duration::from_hours(7 * 24);
 
-/// A PromQL result cache backed by a shared query-frontend cache.
+/// A `PromQL` result cache backed by a shared query-frontend cache.
 pub struct PromqlQueryFrontendCache<C> {
     inner: C,
     execution_options: ExecutionOptions,
 }
 
-/// The process-local PromQL range-result cache.
+/// The process-local `PromQL` range-result cache.
 pub type QueryFrontendCache = PromqlQueryFrontendCache<InMemoryCache<AnnotatedQueryResult>>;
 
-/// The object-store-backed PromQL range-result cache.
+/// The object-store-backed `PromQL` range-result cache.
 pub type ObjectStoreQueryFrontendCache =
     PromqlQueryFrontendCache<ObjectStoreCache<AnnotatedQueryResult>>;
 
@@ -136,7 +136,7 @@ where
     }
 }
 
-/// A PromQL result cache that supplies shared fan-out policy.
+/// A `PromQL` result cache that supplies shared fan-out policy.
 pub trait RangeQueryCache:
     QueryCache<AnnotatedQueryResult, Error = PromqlError> + Send + Sync
 {
