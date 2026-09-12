@@ -1,5 +1,8 @@
-use super::{MetricLabelJoin, Value, json};
+#[cfg(test)]
+use super::MetricLabelJoin;
+use super::{Value, json};
 
+#[cfg(test)]
 pub(crate) fn apply_label_join_to_loki_result(value: &mut Value, label_join: &MetricLabelJoin) {
     apply_label_join_fields(
         value,

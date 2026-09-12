@@ -1,8 +1,10 @@
+#[cfg(test)]
+use super::MetricScalarComparison;
 use super::{
-    MetricScalarComparison, MetricValue, Value, json, metric_scalar_comparison_matches,
-    parse_metric_sample_value,
+    MetricValue, Value, json, metric_scalar_comparison_matches, parse_metric_sample_value,
 };
 
+#[cfg(test)]
 pub(crate) fn apply_metric_scalar_comparison_to_sample(
     sample: &mut Value,
     comparison: &MetricScalarComparison,

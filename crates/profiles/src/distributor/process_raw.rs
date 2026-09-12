@@ -1,7 +1,8 @@
 use super::{
-    DistributorState, ProfileRecord, ProfilesError, TenantId, WalSample, apply_relabel,
-    cap_session_id, enforce_and_reserve_max_series, enforce_ingestion_rate, enforce_limits,
-    extract_symbols, require_service_name, rollback_reserved_series, split_sample_types,
+    CumulativeProfileCache, DistributorState, ProfileRecord, ProfilesError, TenantId, WalSample,
+    apply_relabel, cap_session_id, enforce_and_reserve_max_series, enforce_ingestion_rate,
+    enforce_limits, extract_symbols, require_service_name, rollback_reserved_series,
+    split_sample_types,
 };
 
 ///
@@ -54,6 +55,11 @@ pub async fn process_raw(
 
     let mut cumulative_profiles = state.cumulative_profiles.lock().await;
     let mut next_cumulative_profiles = cumulative_profiles.clone();
+    let reservation_records = decoded
+        .iter()
+        .map(|(record, _)| record.clone())
+        .collect::<Vec<_>>();
+    let reserved = enforce_and_reserve_max_series(state, tenant, &reservation_records)?;
     let mut pending = Vec::with_capacity(decoded.len());
     for (mut record, cumulative) in decoded {
         if cumulative {
@@ -68,12 +74,6 @@ pub async fn process_raw(
         return Ok(());
     }
 
-    // Atomically check the max-series limit AND reserve the new fingerprints
-    // under a single lock hold (see `enforce_and_reserve_max_series`). The
-    // returned set lists fingerprints that were newly inserted by this call and
-    // must be rolled back if the subsequent WAL append fails, so a rejected or
-    // failed write never permanently inflates the tenant's series count.
-    let reserved = enforce_and_reserve_max_series(state, tenant, &pending)?;
     if let Err(err) = enforce_ingestion_rate(state, tenant, pending.len()) {
         rollback_reserved_series(state, tenant.as_str(), &reserved);
         return Err(err);
@@ -106,10 +106,7 @@ pub async fn process_raw(
 fn apply_cumulative_delta(
     record: &mut ProfileRecord,
     tenant: &str,
-    cache: &mut std::collections::HashMap<
-        (String, Vec<(String, String)>),
-        std::collections::HashMap<Vec<u32>, i64>,
-    >,
+    cache: &mut CumulativeProfileCache,
 ) {
     let key = (tenant.to_string(), record.labels.clone());
     let current = record

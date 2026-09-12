@@ -125,6 +125,48 @@ mod tests {
     }
 
     #[test]
+    fn partial_mapping_symbolization_leaves_unresolved_locations_pending() {
+        struct PartialResolver;
+        impl NativeResolver for PartialResolver {
+            fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>> {
+                (request.address == 0x40).then(|| {
+                    vec![NativeSymbol {
+                        function: "resolved".into(),
+                        file: "main.c".into(),
+                        line: 1,
+                    }]
+                })
+            }
+        }
+
+        let mut db = SymbolDb::new();
+        let filename = db.intern_string("/bin/app");
+        let build_id = db.intern_string("build-a");
+        let mapping = db.intern_mapping(MappingRec {
+            memory_start: 0x1000,
+            memory_limit: 0x2000,
+            file_offset: 0x30,
+            filename,
+            build_id,
+            symbolization: MappingSymbolization::default(),
+        });
+        for address in [0x1010, 0x1020] {
+            db.intern_location(LocationRec {
+                address,
+                mapping_id: mapping,
+                lines: Vec::new(),
+            });
+        }
+
+        assert!(db.symbolize_native(&PartialResolver) == 1);
+        assert!(
+            db.pending_native_symbols()
+                .iter()
+                .any(|request| request.address == 0x50)
+        );
+    }
+
+    #[test]
     fn lazy_symbolizer_keeps_presymbolized_frames() {
         let mut db = SymbolDb::new();
         let name = db.intern_string("known");

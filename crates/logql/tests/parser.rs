@@ -11,7 +11,7 @@ use krabka_logql::{
     LogfmtParserConfig, MatchOp, MetricQuery, OffsetNanos, ParserStage, PatternParser,
     PipelineStage, Quantile, QuantileDenominator, QuantileNumerator, RangeAggregation,
     RegexpParser, SourceLabel, StreamQuery, UnwrapExpression, VectorAggregation,
-    VectorAggregationOp, VectorGrouping, parse_metric_binary_arithmetic_query,
+    VectorAggregationOp, VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
     parse_metric_binary_comparison_query, parse_metric_binary_set_query,
     parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
     parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
@@ -2282,7 +2282,7 @@ fn parses_and_formats_recursive_logql_expressions() {
 
     check!(
         expression.to_string()
-            == r#"label_replace((count_over_time({app="api"}[30s]) + on(app) group_left(env) count_over_time({app="worker"}[30s])) * 2, "service", "$1", "app", "(.*)")"#
+            == r#"label_replace((count_over_time({app="api"}[30s]) + on(app) group_left(env) count_over_time({app="worker"}[30s])) * 2,"service","$1","app","(.*)")"#
     );
 }
 

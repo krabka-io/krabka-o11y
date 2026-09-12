@@ -7,6 +7,7 @@ pub(crate) fn parse_labels_part(raw: &[u8]) -> Result<JfrLabels, ProfilesError> 
         return Ok(JfrLabels::default());
     }
     if !matches!(raw.first(), Some(0x0a | 0x12)) {
+        let raw = raw.trim_ascii_start();
         let json: serde_json::Value = serde_json::from_slice(raw)
             .map_err(|err| ProfilesError::Decode(format!("jfr labels part is not JSON: {err}")))?;
         let object = json.as_object().ok_or_else(|| {

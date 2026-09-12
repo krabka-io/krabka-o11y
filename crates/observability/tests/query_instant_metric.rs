@@ -164,7 +164,7 @@ async fn query_endpoint_filters_metric_query_with_scalar_comparison() {
                 "data": {
                     "resultType": "vector",
                     "result": [],
-                    "stats": expected_loki_stats_with(1819, 0, 1)
+                    "stats": expected_loki_stats_with(1819, 1, 1)
                 }
             })
     );

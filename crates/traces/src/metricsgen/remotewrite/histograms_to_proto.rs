@@ -1,5 +1,6 @@
-use super::{Histogram, WireTimeSeries, bucket_spans_to_proto};
 use krabka_metrics::wire::pb::v1::histogram::{Count, ResetHint, ZeroCount};
+
+use super::{Histogram, WireTimeSeries, bucket_spans_to_proto};
 
 pub(crate) fn histograms_to_proto(row: &WireTimeSeries) -> Vec<Histogram> {
     row.native_histogram

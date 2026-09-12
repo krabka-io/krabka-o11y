@@ -13,6 +13,7 @@ mod logql_expression_contains_label_join;
 mod parse_format_query_param;
 mod post_query_params;
 mod post_query_params_body_first;
+#[cfg(test)]
 mod split_leading_vector_group_modifier;
 
 pub(crate) use execute_format_query::execute_format_query;
@@ -23,4 +24,5 @@ use logql_expression_contains_label_join::logql_expression_contains_label_join;
 pub(crate) use parse_format_query_param::parse_format_query_param;
 pub(crate) use post_query_params::post_query_params;
 pub(crate) use post_query_params_body_first::post_query_params_body_first;
+#[cfg(test)]
 pub(crate) use split_leading_vector_group_modifier::split_leading_vector_group_modifier;

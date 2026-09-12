@@ -23,6 +23,7 @@ pub(crate) fn counting_stream_lines_stops_before_its_bound_but_keeps_odd_entries
                         .map(|ts| LokiStreamEntry {
                             timestamp_ns: (*ts).to_string(),
                             line: "line".to_string(),
+                            source_labels: Labels::default(),
                             structured_metadata: Labels::default(),
                             parsed: Labels::default(),
                         })

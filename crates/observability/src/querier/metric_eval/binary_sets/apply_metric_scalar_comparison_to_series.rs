@@ -1,5 +1,8 @@
-use super::{MetricScalarComparison, MetricValue, Value, apply_scalar_comparison_to_sample};
+#[cfg(test)]
+use super::MetricScalarComparison;
+use super::{MetricValue, Value, apply_scalar_comparison_to_sample};
 
+#[cfg(test)]
 pub(crate) fn apply_metric_scalar_comparison_to_series(
     series: &mut Value,
     comparison: &MetricScalarComparison,

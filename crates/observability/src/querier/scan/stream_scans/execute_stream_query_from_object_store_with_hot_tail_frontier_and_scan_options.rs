@@ -37,6 +37,11 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
     let mut streams: BTreeMap<Labels, Vec<LokiStreamEntry>> = BTreeMap::new();
     let mut warnings = Vec::new();
     let mut scanned_blocks = Vec::new();
+    let can_short_circuit = !plan
+        .query
+        .pipeline
+        .iter()
+        .any(|stage| matches!(stage, krabka_logql::PipelineStage::Distinct(_)));
 
     if matches!(options.direction, LokiDirection::Backward) {
         for record in hot_tail.records {
@@ -50,11 +55,11 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
         }
     }
 
-    if !options.reached_limit(&streams) {
+    if !can_short_circuit || !options.reached_limit(&streams) {
         let ordered_blocks =
             object_store_stream_blocks_in_scan_order(&plan.blocks, options.direction);
         for block_batch in ordered_blocks.chunks(options.block_fetch_concurrency()) {
-            if options.reached_limit(&streams) {
+            if can_short_circuit && options.reached_limit(&streams) {
                 break;
             }
             let results = futures_util::future::join_all(block_batch.iter().map(|block| {
@@ -85,7 +90,9 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
         }
     }
 
-    if matches!(options.direction, LokiDirection::Forward) && !options.reached_limit(&streams) {
+    if matches!(options.direction, LokiDirection::Forward)
+        && (!can_short_circuit || !options.reached_limit(&streams))
+    {
         for record in hot_tail.records {
             append_matching_hot_log_record(
                 &mut streams,

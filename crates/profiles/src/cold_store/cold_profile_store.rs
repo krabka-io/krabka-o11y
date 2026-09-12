@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use super::{
     AddressFallbackResolver, Arc, AsArray, BTreeMap, BTreeSet, ChainedResolver, CompositeSymbols,
     DebuginfodConfig, DebuginfodResolver, ExternalPartition, FileSystemResolver, HashMap,
@@ -9,6 +11,9 @@ use super::{
     local_native_resolver, profile_samples_schema,
 };
 
+const SYMBOL_DB_CACHE_TTL: Duration = Duration::from_secs(30);
+type SymbolDbCache = (HashMap<String, (Arc<SymbolDb>, Instant)>, VecDeque<String>);
+
 #[derive(Clone)]
 pub struct ColdProfileStore {
     pub(crate) store: Arc<dyn ObjectStore>,
@@ -19,7 +24,41 @@ pub struct ColdProfileStore {
     // inner `Arc` out and never hold the guard across an await.
     pub(crate) index: Arc<RwLock<Arc<ProfileIndex>>>,
     pub(crate) resolver: Arc<ChainedResolver>,
-    pub(crate) symdb_cache: Arc<Mutex<(HashMap<String, Arc<SymbolDb>>, VecDeque<String>)>>,
+    pub(crate) symdb_cache: Arc<Mutex<SymbolDbCache>>,
+}
+
+fn cached_symbol_db(cache: &mut SymbolDbCache, block_key: &str, now: Instant) -> Option<SymbolDb> {
+    if let Some((symbols, cached_at)) = cache.0.get(block_key)
+        && now.saturating_duration_since(*cached_at) < SYMBOL_DB_CACHE_TTL
+    {
+        return Some((**symbols).clone());
+    }
+    cache.0.remove(block_key);
+    cache.1.retain(|key| key != block_key);
+    None
+}
+
+#[cfg(test)]
+mod symdb_cache_tests {
+    use super::*;
+
+    #[test]
+    fn expired_symbol_database_is_reloaded() {
+        let now = Instant::now();
+        let mut cache = SymbolDbCache::default();
+        cache.0.insert(
+            "block".into(),
+            (
+                Arc::new(SymbolDb::new()),
+                now.checked_sub(SYMBOL_DB_CACHE_TTL).unwrap(),
+            ),
+        );
+        cache.1.push_back("block".into());
+
+        assert!(cached_symbol_db(&mut cache, "block", now).is_none());
+        assert!(cache.0.is_empty());
+        assert!(cache.1.is_empty());
+    }
 }
 
 impl ColdProfileStore {
@@ -350,15 +389,11 @@ impl ColdProfileStore {
     }
 
     pub(crate) async fn load_symdb(&self, block_key: &str) -> Result<SymbolDb, ProfileError> {
-        if let Some(symbols) = self
-            .symdb_cache
-            .lock()
-            .expect("symbol cache lock poisoned")
-            .0
-            .get(block_key)
-            .cloned()
         {
-            return Ok((*symbols).clone());
+            let mut cache = self.symdb_cache.lock().expect("symbol cache lock poisoned");
+            if let Some(symbols) = cached_symbol_db(&mut cache, block_key, Instant::now()) {
+                return Ok(symbols);
+            }
         }
         let key = format!("{block_key}.symdb");
         let bytes = self
@@ -377,9 +412,10 @@ impl ColdProfileStore {
                     cache.0.remove(&oldest);
                 }
             }
-            cache
-                .0
-                .insert(block_key.to_string(), Arc::new(symbols.clone()));
+            cache.0.insert(
+                block_key.to_string(),
+                (Arc::new(symbols.clone()), Instant::now()),
+            );
             cache.1.push_back(block_key.to_string());
         }
         Ok(symbols)

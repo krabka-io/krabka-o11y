@@ -367,7 +367,12 @@ impl SymbolDb {
             updated += 1;
         }
         for mapping_id in resolved_mappings {
-            if let Some(mapping) = self.mappings.get_mut(mapping_id as usize) {
+            let complete = self
+                .locations
+                .iter()
+                .filter(|location| location.mapping_id == mapping_id)
+                .all(|location| !location.lines.is_empty());
+            if complete && let Some(mapping) = self.mappings.get_mut(mapping_id as usize) {
                 mapping.symbolization = MappingSymbolization::from_parts((true, true, true, true));
             }
         }

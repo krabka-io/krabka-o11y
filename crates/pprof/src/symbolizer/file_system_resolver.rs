@@ -1,10 +1,11 @@
-use super::{
-    ArtifactCache, Mutex, NativeResolver, NativeSymbol, ObjectSymbolResolver, SymbolizeRequest,
-    lock_recover,
-};
 use krabka_units::{
     convert::{ByteSizeExt as _, TimeExt as _},
     mebibytes, secs,
+};
+
+use super::{
+    ArtifactCache, Mutex, NativeResolver, NativeSymbol, ObjectSymbolResolver, SymbolizeRequest,
+    lock_recover,
 };
 
 pub struct FileSystemResolver {

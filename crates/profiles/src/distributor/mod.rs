@@ -1054,6 +1054,26 @@ overrides:
     }
 
     #[tokio::test]
+    async fn cumulative_baselines_consume_the_series_budget() {
+        let state = state_with_max_series(1);
+        let mut first = crate::wire::test_fixtures::raw_profile_cpu();
+        first.delta = true;
+        process_raw(&state, &tenant("tenant-a"), vec![first])
+            .await
+            .unwrap();
+
+        let mut second = crate::wire::test_fixtures::raw_profile_cpu();
+        second.delta = true;
+        second.labels.insert("service_name", "checkout");
+        let error = process_raw(&state, &tenant("tenant-a"), vec![second])
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("max series exceeded"));
+        assert_eq!(state.cumulative_profiles.lock().await.len(), 1);
+    }
+
+    #[tokio::test]
     async fn pyroscope_overrides_enforce_ingestion_burst_without_partial_writes() {
         let sink = Arc::new(RecordingSink::default());
         let state = Arc::new(DistributorState {
@@ -1679,6 +1699,7 @@ mod wal_sink;
 
 use client_facing_message::client_facing_message;
 use connect_error::connect_error;
+pub(crate) use distributor_state::CumulativeProfileCache;
 pub use distributor_state::DistributorState;
 use enforce_and_reserve_max_series::enforce_and_reserve_max_series;
 use enforce_ingestion_rate::enforce_ingestion_rate;

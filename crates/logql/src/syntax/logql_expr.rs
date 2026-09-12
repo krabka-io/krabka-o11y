@@ -153,7 +153,7 @@ impl LogqlExpr {
                 } else {
                     "bottomk"
                 };
-                write!(f, "{name}({limit},")?;
+                write!(f, "{name}({limit}, ")?;
                 expr.format_at(f, 0, false)?;
                 write!(f, ")")?;
             }

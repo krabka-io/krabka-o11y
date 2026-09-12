@@ -1,8 +1,11 @@
+#[cfg(test)]
+use super::MetricScalarArithmetic;
 use super::{
-    HttpQueryError, MetricScalarArithmetic, ParseError, Value,
-    apply_metric_scalar_arithmetic_to_series, parse_metric_sample_value,
+    HttpQueryError, ParseError, Value, apply_metric_scalar_arithmetic_to_series,
+    parse_metric_sample_value,
 };
 
+#[cfg(test)]
 pub(crate) fn apply_metric_scalar_arithmetic_to_loki_result(
     value: &mut Value,
     arithmetic: &MetricScalarArithmetic,

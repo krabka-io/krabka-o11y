@@ -24,6 +24,12 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
         ("approx_topk", true, true),
     ] {
         if let Some(args) = function_args(input, name)? {
+            if let Ok(query) = parse_metric_query(input) {
+                return Ok(LogqlExpr::Metric {
+                    query,
+                    source: input.to_string(),
+                });
+            }
             if args.len() != 2 {
                 return Err(syntax_error("expected selection limit and expression"));
             }

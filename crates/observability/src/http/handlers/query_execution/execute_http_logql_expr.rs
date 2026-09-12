@@ -5,10 +5,12 @@ use super::{
     apply_metric_binary_comparison_to_loki_result, apply_metric_binary_set_to_loki_result,
     apply_metric_selection, apply_scalar_arithmetic_to_loki_result,
     apply_scalar_comparison_to_loki_result, execute_http_metric_query, execute_http_stream_query,
-    loki_instant_scalar_or_vector_response, loki_range_vector_response, resolved_range_step,
-    scalar_vector_expression_result, sort_loki_vector_result,
+    loki_instant_scalar_or_vector_response, loki_range_vector_response, merge_loki_query_stats,
+    normalize_loki_vector_sample_timestamps_to_seconds, resolved_range_step,
+    retain_metric_binary_on_labels, scalar_vector_expression_result, sort_loki_vector_result,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_http_logql_expr(
     state: &QuerierState,
     tenant: &str,
@@ -180,6 +182,8 @@ pub(crate) async fn execute_http_logql_expr(
                 )?;
                 return Ok(value);
             }
+            let left_is_vector = is_scalar_vector_only(left);
+            let right_is_vector = is_scalar_vector_only(right);
             let mut left = Box::pin(execute_http_logql_expr(
                 state,
                 tenant,
@@ -210,6 +214,12 @@ pub(crate) async fn execute_http_logql_expr(
                 *op,
                 matching.as_ref(),
             );
+            if left_is_vector || right_is_vector {
+                retain_metric_binary_on_labels(&mut left, matching.as_ref());
+                if left_is_vector && !right_is_vector {
+                    merge_loki_query_stats(&mut left["data"]["stats"], &right["data"]["stats"]);
+                }
+            }
             Ok(left)
         }
         LogqlExpr::Comparison {
@@ -245,6 +255,8 @@ pub(crate) async fn execute_http_logql_expr(
                 )?;
                 return Ok(value);
             }
+            let left_is_vector = is_scalar_vector_only(left);
+            let right_is_vector = is_scalar_vector_only(right);
             let mut left = Box::pin(execute_http_logql_expr(
                 state,
                 tenant,
@@ -276,6 +288,12 @@ pub(crate) async fn execute_http_logql_expr(
                 *bool_modifier,
                 matching.as_ref(),
             );
+            if left_is_vector || right_is_vector {
+                retain_metric_binary_on_labels(&mut left, matching.as_ref());
+                if left_is_vector && !right_is_vector {
+                    merge_loki_query_stats(&mut left["data"]["stats"], &right["data"]["stats"]);
+                }
+            }
             Ok(left)
         }
         LogqlExpr::Set {
@@ -284,6 +302,8 @@ pub(crate) async fn execute_http_logql_expr(
             matching,
             right,
         } => {
+            let left_is_vector = is_scalar_vector_only(left);
+            let right_is_vector = is_scalar_vector_only(right);
             let mut left = Box::pin(execute_http_logql_expr(
                 state,
                 tenant,
@@ -296,6 +316,9 @@ pub(crate) async fn execute_http_logql_expr(
                 full_query,
             ))
             .await?;
+            if left_is_vector && !right_is_vector && matches!(kind, QueryKind::Instant) {
+                normalize_loki_vector_sample_timestamps_to_seconds(&mut left);
+            }
             let right = Box::pin(execute_http_logql_expr(
                 state,
                 tenant,
@@ -309,8 +332,27 @@ pub(crate) async fn execute_http_logql_expr(
             ))
             .await?;
             apply_metric_binary_set_to_loki_result(&mut left, &right, *op, matching.as_ref());
+            if left_is_vector && !right_is_vector {
+                merge_loki_query_stats(&mut left["data"]["stats"], &right["data"]["stats"]);
+            }
             Ok(left)
         }
+    }
+}
+
+fn is_scalar_vector_only(expression: &LogqlExpr) -> bool {
+    match expression {
+        LogqlExpr::Scalar(_) | LogqlExpr::Vector(_) => true,
+        LogqlExpr::Sort { expr, .. }
+        | LogqlExpr::Selection { expr, .. }
+        | LogqlExpr::LabelReplace { expr, .. }
+        | LogqlExpr::LabelJoin { expr, .. } => is_scalar_vector_only(expr),
+        LogqlExpr::Arithmetic { left, right, .. }
+        | LogqlExpr::Comparison { left, right, .. }
+        | LogqlExpr::Set { left, right, .. } => {
+            is_scalar_vector_only(left) && is_scalar_vector_only(right)
+        }
+        LogqlExpr::Stream { .. } | LogqlExpr::Metric { .. } => false,
     }
 }
 

@@ -2,8 +2,9 @@ use super::{
     HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, TenantId, Value,
     clamp_query_lookback, current_unix_time_ns, execute_http_logql_expr, loki_direction,
     parse_logql_expr, populate_loki_query_execution_stats, reject_signed_vector_function_literal,
-    time_range, validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
-    validate_query_entries_limit, validate_query_range_limit, validate_query_string_bytes_limit,
+    strip_outer_parenthesized_expression, time_range, validate_loki_query_range_resolution,
+    validate_loki_range_query_range_limit, validate_query_entries_limit,
+    validate_query_range_limit, validate_query_string_bytes_limit,
 };
 use crate::execute_logs_query_frontend;
 
@@ -54,11 +55,26 @@ pub(crate) async fn execute_http_query_for_tenant_inner(
     let direction = loki_direction(params.direction.as_deref())?;
     let interval = params.interval;
     reject_signed_vector_function_literal(&params.query)?;
-    let expression =
-        parse_logql_expr(&params.query).map_err(|source| HttpQueryError::LokiParse {
-            query: params.query.clone(),
-            source,
-        })?;
+    if strip_outer_parenthesized_expression(&params.query)
+        .is_some_and(|inner| inner.trim_start().starts_with("label_join"))
+    {
+        return Err(HttpQueryError::LokiPlainParse(
+            "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER, expecting range aggregation"
+                .to_string(),
+        ));
+    }
+    let expression = parse_logql_expr(&params.query).map_err(|source| {
+        if source.to_string().contains("range aggregation") {
+            HttpQueryError::LokiPlainParse(
+                "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER".to_string(),
+            )
+        } else {
+            HttpQueryError::LokiParse {
+                query: params.query.clone(),
+                source,
+            }
+        }
+    })?;
     execute_http_logql_expr(
         state,
         tenant,

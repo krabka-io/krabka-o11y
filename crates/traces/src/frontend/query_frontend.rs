@@ -1,3 +1,6 @@
+use futures::StreamExt as _;
+use tokio::sync::mpsc;
+
 use super::{
     Arc, AssignedJob, BackendError, BlockCatalog, FrontendConfig, JobShard, Membership,
     MembershipView, Metrics, MetricsJobRequest, MetricsResponseJson, QuerierBackend,
@@ -5,8 +8,6 @@ use super::{
     TagValuesJobRequest, TagValuesPartial, TenantId, TraceByIdJobRequest, TraceByIdResponseJson,
     TraceStatus, assign_jobs, catalog_error, job, merge, metrics_merge, pick_querier, queue,
 };
-use futures::StreamExt as _;
-use tokio::sync::mpsc;
 
 /// The query-frontend pipeline.
 ///

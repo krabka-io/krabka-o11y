@@ -1,4 +1,6 @@
-use super::{SpanMetricsConfig, SpanRecord, sorted_labels, span_kind_dim, status_dim};
+use std::collections::BTreeMap;
+
+use super::{SpanMetricsConfig, SpanRecord, span_kind_dim, status_dim};
 use crate::metricsgen::config::{FilterPolicy, MatchType};
 
 pub(crate) type DimKey = Vec<(String, String)>;
@@ -8,7 +10,7 @@ pub(crate) fn dim_key(
     include_status_message: bool,
     config: &SpanMetricsConfig,
 ) -> DimKey {
-    let mut labels = vec![
+    let mut labels = BTreeMap::from([
         ("service".to_string(), span.service_name.clone()),
         ("span_name".to_string(), span.name.clone()),
         (
@@ -19,22 +21,32 @@ pub(crate) fn dim_key(
             "status_code".to_string(),
             status_dim(span.status).to_string(),
         ),
-    ];
+    ]);
     if include_status_message {
-        labels.push(("status_message".to_string(), span.status_message.clone()));
+        labels.insert("status_message".to_string(), span.status_message.clone());
     }
-    labels.extend(config.dimensions.iter().filter_map(|name| {
-        span_attr(span, name).map(|value| (prometheus_label_name(name), value.to_string()))
-    }));
-    labels.extend(config.dimension_mappings.iter().filter_map(|mapping| {
+    for name in &config.dimensions {
+        let label = prometheus_label_name(name);
+        if !label.is_empty()
+            && let Some(value) = span_attr(span, name)
+        {
+            labels.entry(label).or_insert_with(|| value.to_string());
+        }
+    }
+    for mapping in &config.dimension_mappings {
         let values = mapping
             .source_labels
             .iter()
             .filter_map(|name| span_attr(span, name))
             .collect::<Vec<_>>();
-        (!values.is_empty()).then(|| (mapping.name.clone(), values.join(&mapping.join)))
-    }));
-    sorted_labels(labels)
+        let name = prometheus_label_name(&mapping.name);
+        if !name.is_empty() && !values.is_empty() {
+            labels
+                .entry(name)
+                .or_insert_with(|| values.join(&mapping.join));
+        }
+    }
+    labels.into_iter().collect()
 }
 
 pub(crate) fn span_allowed(span: &SpanRecord, config: &SpanMetricsConfig) -> bool {

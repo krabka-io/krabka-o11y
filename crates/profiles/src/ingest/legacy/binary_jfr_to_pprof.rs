@@ -1,9 +1,9 @@
+use jfrs::reader::types::builtin::{StackTrace, ThreadState};
+
 use super::{
     BTreeMap, Cursor, Deserialize, IngestQuery, JfrLabels, PprofProfile, ProfilesError,
     intern_string, jfr_method_name,
 };
-
-use jfrs::reader::types::builtin::{StackTrace, ThreadState};
 
 const TYPES: &[(&str, &str, &str, &str, &str)] = &[
     ("cpu", "nanoseconds", "process_cpu", "cpu", "nanoseconds"),

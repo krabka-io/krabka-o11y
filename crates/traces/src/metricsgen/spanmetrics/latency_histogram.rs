@@ -18,10 +18,6 @@ impl LatencyHistogram {
         }
     }
 
-    pub(crate) fn observe(&mut self, value_ns: f64) {
-        self.observe_weighted(value_ns, 1.0);
-    }
-
     pub(crate) fn observe_weighted(&mut self, value_ns: f64, weight: f64) {
         let idx = self
             .bucket_edges_ns

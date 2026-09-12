@@ -1,8 +1,9 @@
-use super::{HashMap, ObjectSymbolResolver};
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
 };
+
+use super::{HashMap, ObjectSymbolResolver};
 
 pub(crate) struct ArtifactCache {
     entries: HashMap<String, (Option<ObjectSymbolResolver>, Instant)>,

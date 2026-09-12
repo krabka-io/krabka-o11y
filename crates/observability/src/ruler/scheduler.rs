@@ -3,13 +3,13 @@ use std::collections::{BTreeMap, HashMap};
 use prost::Message as _;
 use tokio::task::JoinHandle;
 
-use crate::ruler::api::prometheus_rules::{
-    loki_yaml_mapping, prometheus_alerts_for_rule, prometheus_rule_group_interval_seconds,
-    serde_yaml_key, yaml_string_field,
-};
 use crate::{
     CancellationToken, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, TenantId,
     current_unix_time_ns, execute_http_query_for_tenant,
+    ruler::api::prometheus_rules::{
+        loki_yaml_mapping, prometheus_alerts_for_rule, prometheus_rule_group_interval_seconds,
+        serde_yaml_key, yaml_string_field,
+    },
 };
 
 pub(crate) fn spawn_logs_ruler(state: QuerierState, shutdown: CancellationToken) -> JoinHandle<()> {
@@ -79,6 +79,7 @@ pub(crate) fn spawn_logs_ruler(state: QuerierState, shutdown: CancellationToken)
                                             .json(&firing)
                                             .send()
                                             .await
+                                            .and_then(reqwest::Response::error_for_status)
                                     {
                                         tracing::warn!(%error, "logs ruler Alertmanager dispatch failed");
                                     }

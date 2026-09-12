@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
-use super::{Arc, NativeResolver, NativeSymbol, ObjectStore, Path, ProfileIndex, SymbolizeRequest};
 use object_store::ObjectStoreExt as _;
+
+use super::{Arc, NativeResolver, NativeSymbol, ObjectStore, Path, ProfileIndex, SymbolizeRequest};
 
 struct UploadedResolver<'a> {
     uploaded: HashMap<String, krabka_pprof::ObjectSymbolResolver>,

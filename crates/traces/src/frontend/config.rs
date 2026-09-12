@@ -5,8 +5,10 @@ use std::net::SocketAddr;
 use krabka_blockstore::TenantPolicy;
 use krabka_units::{ByteSize, Time, bytes, mebibytes, secs};
 
-use crate::frontend::QuerierScheme;
-use crate::limits::{Limits, OverridesProvider};
+use crate::{
+    frontend::QuerierScheme,
+    limits::{Limits, OverridesProvider},
+};
 
 /// Static configuration for the `query-frontend` role.
 ///

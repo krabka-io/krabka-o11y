@@ -66,8 +66,7 @@ pub(crate) fn matching_loki_stream_entry(
         }
     }
 
-    Some((
-        stream_labels,
-        LokiStreamEntry::new(timestamp_ns, evaluation.line, entry_metadata, parsed),
-    ))
+    let mut entry = LokiStreamEntry::new(timestamp_ns, evaluation.line, entry_metadata, parsed);
+    entry.source_labels = labels.clone();
+    Some((stream_labels, entry))
 }

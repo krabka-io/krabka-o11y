@@ -68,6 +68,49 @@ mod tests {
         check!(other[2].1 == "POST /x");
     }
 
+    #[test]
+    fn custom_dimension_names_are_normalized_and_deduplicated() {
+        let mut record = ok_span("api", "GET /x");
+        record.attributes = vec![
+            ("http.route".into(), "/orders".into()),
+            ("http-route".into(), "/ignored".into()),
+            ("env".into(), "prod".into()),
+        ];
+        let config = SpanMetricsConfig {
+            dimensions: vec!["service".into(), "http.route".into(), "http-route".into()],
+            dimension_mappings: vec![
+                crate::metricsgen::config::DimensionMapping {
+                    name: "span.name".into(),
+                    source_labels: vec!["env".into()],
+                    join: String::new(),
+                },
+                crate::metricsgen::config::DimensionMapping {
+                    name: "deployment.env".into(),
+                    source_labels: vec!["env".into()],
+                    join: String::new(),
+                },
+            ],
+            ..SpanMetricsConfig::default()
+        };
+
+        let labels = dim_key(&record, false, &config);
+
+        check!(labels.iter().filter(|(name, _)| name == "service").count() == 1);
+        check!(labels.iter().find(|(name, _)| name == "service").unwrap().1 == "api");
+        check!(
+            labels
+                .iter()
+                .filter(|(name, _)| name == "http_route")
+                .count()
+                == 1
+        );
+        check!(
+            labels
+                .iter()
+                .any(|(name, value)| name == "deployment_env" && value == "prod")
+        );
+    }
+
     fn span(
         service: &str,
         name: &str,

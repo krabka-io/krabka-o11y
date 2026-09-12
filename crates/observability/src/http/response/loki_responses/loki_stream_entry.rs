@@ -23,6 +23,7 @@ use super::{Labels, Value, json};
 pub(crate) struct LokiStreamEntry {
     pub(crate) timestamp_ns: String,
     pub(crate) line: String,
+    pub(crate) source_labels: Labels,
     pub(crate) structured_metadata: Labels,
     pub(crate) parsed: Labels,
 }
@@ -38,6 +39,7 @@ impl LokiStreamEntry {
         Self {
             timestamp_ns: timestamp_ns.to_string(),
             line,
+            source_labels: Labels::new(),
             structured_metadata,
             parsed,
         }

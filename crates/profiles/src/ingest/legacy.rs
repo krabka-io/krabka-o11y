@@ -629,6 +629,11 @@ mod tests {
             parse("{}").unwrap().global == vec![],
             "an empty object is no labels"
         );
+        check!(
+            parse(" \n\t{\"env\":\"prod\"}").unwrap().global
+                == vec![("env".to_string(), "prod".to_string())],
+            "leading JSON whitespace is accepted"
+        );
 
         let labels =
             parse(r#"{"text":"a","int":7,"float":1.5,"yes":true,"no":false,"nothing":null}"#)

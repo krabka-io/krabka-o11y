@@ -10,6 +10,7 @@ pub(crate) fn loki_stream_values_sort_numerically_not_lexicographically() {
     let entry = |timestamp: &str| LokiStreamEntry {
         timestamp_ns: timestamp.to_string(),
         line: "line".to_string(),
+        source_labels: Labels::default(),
         structured_metadata: Labels::default(),
         parsed: Labels::default(),
     };

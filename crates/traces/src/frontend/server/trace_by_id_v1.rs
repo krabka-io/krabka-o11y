@@ -1,11 +1,13 @@
+use axum::http::header;
+use base64::Engine as _;
+use prost::Message as _;
+
 use super::{
     Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Path, Principal, QuerierBackend,
     QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, optional_time_bounds,
     parse_hex16, request_tenant,
 };
-use axum::http::header;
-use base64::Engine as _;
-use prost::Message as _;
+use crate::querier::http::wants_json;
 
 pub(crate) async fn trace_by_id_v1<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,
@@ -47,17 +49,6 @@ where
         Ok((None, _, _, _)) => (StatusCode::NOT_FOUND, "trace not found").into_response(),
         Err(err) => backend_error_response(&err),
     }
-}
-
-fn wants_json(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|accept| {
-            accept
-                .split(',')
-                .any(|part| part.trim() == "application/json")
-        })
 }
 
 fn trace_protobuf(trace: crate::frontend::wire::TraceEnvelopeJson) -> Result<Vec<u8>, String> {

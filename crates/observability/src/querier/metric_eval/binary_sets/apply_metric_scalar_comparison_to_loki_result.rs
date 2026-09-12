@@ -1,8 +1,10 @@
+#[cfg(test)]
+use super::MetricScalarComparison;
 use super::{
-    HttpQueryError, MetricScalarComparison, ParseError, Value, apply_scalar_comparison_to_series,
-    parse_metric_sample_value,
+    HttpQueryError, ParseError, Value, apply_scalar_comparison_to_series, parse_metric_sample_value,
 };
 
+#[cfg(test)]
 pub(crate) fn apply_metric_scalar_comparison_to_loki_result(
     value: &mut Value,
     comparison: &MetricScalarComparison,

@@ -412,7 +412,14 @@ pub fn proto_logs_request_at_ns(time_unix_nano: u64) -> ExportLogsServiceRequest
 
 pub async fn json_body(response: axum::response::Response) -> Value {
     let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
-    serde_json::from_slice(&body).unwrap()
+    let mut value: Value = serde_json::from_slice(&body).unwrap();
+    if let Some(summary) = value.pointer_mut("/data/stats/summary") {
+        summary["bytesProcessedPerSecond"] = json!(0);
+        summary["execTime"] = json!(0.0);
+        summary["linesProcessedPerSecond"] = json!(0);
+        summary["queueTime"] = json!(0.0);
+    }
+    value
 }
 
 pub async fn text_body(response: axum::response::Response) -> String {

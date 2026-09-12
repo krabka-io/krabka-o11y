@@ -2220,13 +2220,13 @@ overrides:
     }
 
     #[tokio::test]
-    async fn trace_by_id_v1_honors_json_accept() {
+    async fn trace_by_id_v1_honors_json_accept_with_parameters() {
         let resp = app()
             .oneshot(
                 Request::builder()
                     .uri("/api/traces/09090909090909090909090909090909")
                     .header(TENANT_HEADER, "tenant-a")
-                    .header("accept", "application/json")
+                    .header("accept", "Application/JSON; charset=utf-8")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -4370,5 +4370,5 @@ use traceql_query_error_response::traceql_query_error_response;
 use traceql_tag_field::traceql_tag_field;
 use typed_traceql_value::typed_traceql_value;
 use typed_value_parts::typed_value_parts;
-use wants_json::wants_json;
+pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;

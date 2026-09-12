@@ -434,6 +434,7 @@ fn write_shape(out: &mut String, expr: &LogqlExpr) {
         LogqlExpr::LabelReplace { expr, .. } => nest(out, "label_replace", [expr.as_ref()]),
         LogqlExpr::LabelJoin { expr, .. } => nest(out, "label_join", [expr.as_ref()]),
         LogqlExpr::Sort { expr, .. } => nest(out, "sort", [expr.as_ref()]),
+        LogqlExpr::Selection { expr, .. } => nest(out, "selection", [expr.as_ref()]),
         LogqlExpr::Arithmetic { left, right, .. } => {
             nest(out, "arith", [left.as_ref(), right.as_ref()]);
         }

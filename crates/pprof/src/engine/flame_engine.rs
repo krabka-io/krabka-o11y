@@ -1,3 +1,9 @@
+use async_trait::async_trait;
+use krabka_query_frontend::{
+    CacheKey, ExecutionOptions, InMemoryCache, PlannedQuery, QueryFrontend, QueryFrontendAdapter,
+    QueryFrontendError,
+};
+
 use super::{
     Arc, BTreeMap, Duration, EngineOpts, FRONTEND_RESULT_CACHE_ENTRIES, FRONTEND_RESULT_CACHE_TTL,
     FlameGraph, FlameGraphDiff, Frame, Heatmap, LabelMatcher, LabeledHeatmap, MatchOp,
@@ -7,11 +13,6 @@ use super::{
     merge_scan_to_tree, merge_sql_to_tree, series_buckets_from_stacktrace_selector,
     series_buckets_from_totals, tree_to_pprof, tree_to_pprof_with_max_nodes, validate_range,
     validated_step,
-};
-use async_trait::async_trait;
-use krabka_query_frontend::{
-    CacheKey, ExecutionOptions, InMemoryCache, PlannedQuery, QueryFrontend, QueryFrontendAdapter,
-    QueryFrontendError,
 };
 
 /// Profiles flamegraph engine.
