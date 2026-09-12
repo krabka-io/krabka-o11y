@@ -51,6 +51,14 @@ crate_tests(
     # only way the request-shaped costs of an object store are exercised at
     # all -- an `InMemory` store answers every call from a map.
     docker = {
+        # Grafana reads Krabka through a provisioned Loki datasource, and
+        # `grafana_e2e` compares what it reads there against what it reads
+        # from a real Loki beside it.
+        "grafana_e2e": [
+            "grafana",
+            "loki",
+        ],
+        "grafana_integration": ["grafana"],
         "loki_differential": ["loki"],
         "scale_object_store": ["minio"],
         "soak_ingest_query": ["minio"],

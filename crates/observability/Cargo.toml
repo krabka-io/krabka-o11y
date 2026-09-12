@@ -86,6 +86,10 @@ tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling",
 
 [dev-dependencies]
 assert2 = { workspace = true }
+# `wal_live_broker` builds a native Kafka record by hand -- the key, the value
+# and the `krabka-log-*` headers -- to show that the WAL topic is an interface
+# any Kafka client can write. Test-only, hence dev-dependencies.
+bytes = { workspace = true }
 flate2 = { workspace = true }
 # `ingest_roundtrip` boots a real Krabka broker in-process and drives
 # push -> WAL -> compactor -> query through it, the way krabka-metrics and
