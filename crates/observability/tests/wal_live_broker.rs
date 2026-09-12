@@ -338,6 +338,7 @@ async fn a_websocket_tail_on_a_served_listener_streams_the_live_wal() {
                     },
                     "values": [[timestamp, "api live websocket tail error"]],
                 }],
+                "dropped_entries": [],
             })
     );
 
@@ -988,7 +989,14 @@ async fn json_body(response: axum::response::Response) -> Value {
     let body = to_bytes(response.into_body(), 256 * 1024)
         .await
         .expect("read the response body");
-    serde_json::from_slice(&body).expect("the response is json")
+    let mut value: Value = serde_json::from_slice(&body).expect("the response is json");
+    if let Some(summary) = value.pointer_mut("/data/stats/summary") {
+        summary["bytesProcessedPerSecond"] = json!(0);
+        summary["execTime"] = json!(0.0);
+        summary["linesProcessedPerSecond"] = json!(0);
+        summary["queueTime"] = json!(0.0);
+    }
+    value
 }
 
 fn current_unix_second_ns() -> i64 {

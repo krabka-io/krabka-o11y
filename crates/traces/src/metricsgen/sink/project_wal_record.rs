@@ -7,7 +7,12 @@ pub fn project_wal_record(record: wal::SpanRecord, size: ByteSize) -> SpanRecord
         .span
         .span_attrs
         .iter()
-        .chain(record.span.resource_attrs.iter())
+        .map(|kv| (kv.key.clone(), attr_value_to_string(&kv.value)))
+        .collect();
+    let resource_attributes = record
+        .span
+        .resource_attrs
+        .iter()
         .filter(|kv| kv.key != "service.name")
         .map(|kv| (kv.key.clone(), attr_value_to_string(&kv.value)))
         .collect();
@@ -25,6 +30,7 @@ pub fn project_wal_record(record: wal::SpanRecord, size: ByteSize) -> SpanRecord
         status_message: record.span.status_message,
         service_name,
         attributes,
+        resource_attributes,
         size,
     }
 }

@@ -57,6 +57,7 @@ mod tests {
             status_message: String::new(),
             service_name: "api".into(),
             attributes: vec![],
+            resource_attributes: vec![],
             size: ByteSize::from_bytes(0),
         }
     }
@@ -72,20 +73,20 @@ mod tests {
             duration_ns: 5_000_000,
             status: StatusCode::Ok,
             status_message: String::new(),
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("checkout".into()),
-            }],
-            span_attrs: vec![
+            resource_attrs: vec![
+                KeyValue {
+                    key: "service.name".into(),
+                    value: AttrValue::Str("checkout".into()),
+                },
                 KeyValue {
                     key: "db.system".into(),
                     value: AttrValue::Str("postgresql".into()),
                 },
-                KeyValue {
-                    key: "http.status_code".into(),
-                    value: AttrValue::Int(200),
-                },
             ],
+            span_attrs: vec![KeyValue {
+                key: "http.status_code".into(),
+                value: AttrValue::Int(200),
+            }],
             events: Vec::new(),
             links: Vec::new(),
             instrumentation_scope: "tracer".into(),
@@ -136,10 +137,8 @@ mod tests {
                     status: StatusCode::Ok,
                     status_message: String::new(),
                     service_name: "checkout".into(),
-                    attributes: vec![
-                        ("db.system".into(), "postgresql".into()),
-                        ("http.status_code".into(), "200".into()),
-                    ],
+                    attributes: vec![("http.status_code".into(), "200".into()),],
+                    resource_attributes: vec![("db.system".into(), "postgresql".into())],
                     size: ByteSize::from_bytes(123),
                 }
         );

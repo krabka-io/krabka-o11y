@@ -38,6 +38,7 @@ pub mod contract {
         pub status_message: String,
         pub service_name: String,
         pub attributes: Vec<(String, String)>,
+        pub resource_attributes: Vec<(String, String)>,
         /// The encoded size of the WAL record that this span was projected from.
         pub size: ByteSize,
     }

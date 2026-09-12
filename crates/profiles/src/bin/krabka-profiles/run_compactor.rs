@@ -33,7 +33,7 @@ pub(crate) async fn run_compactor(
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
         .map_err(|e| format!("object store: {e}"))?;
     object_store_gate.mark_ready();
-    let index_key = configured.object_key(&cli.index_object_key);
+    let index_key = cli.index_object_key.clone();
     // The same file the ingest and query roles read. Retention is a per-tenant
     // limit, so a compactor that read no overrides would keep every block of
     // every tenant forever.

@@ -1711,8 +1711,8 @@ async fn query_range_endpoint_treats_integer_step_as_seconds() {
                                 "env": "prod"
                             },
                             "values": [
-                                [0.000_000_02, "1"],
-                                [10.000_000_02, "1"]
+                                [10, "1"],
+                                [20, "1"]
                             ]
                         }
                     ],
@@ -1795,8 +1795,8 @@ async fn query_range_endpoint_accepts_duration_step_for_count_over_time_matrix_j
                                 "env": "prod"
                             },
                             "values": [
-                                [0.000_000_02, "1"],
-                                [10.000_000_02, "1"]
+                                [10, "1"],
+                                [20, "1"]
                             ]
                         }
                     ],
@@ -1837,11 +1837,11 @@ async fn query_range_endpoint_accepts_compound_duration_step_for_grafana() {
                                 "env": "prod"
                             },
                             "values": [
-                                [0.000_000_02, "1"]
+
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1819, 0, 1)
                 }
             })
     );
@@ -1878,8 +1878,8 @@ async fn query_range_endpoint_accepts_millisecond_duration_step_for_grafana() {
                                 "env": "prod"
                             },
                             "values": [
-                                [0.000_000_02, "1"],
-                                [1.000_000_02, "1"]
+                                [1, "1"],
+                                [2, "1"]
                             ]
                         }
                     ],

@@ -1,5 +1,5 @@
 use super::{
-    AsArray, BTreeMap, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_STACKTRACE_ID,
+    Arc, AsArray, BTreeMap, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_STACKTRACE_ID,
     PCOL_STACKTRACE_PARTITION, PCOL_VALUE, ProfileError, Time, UInt64Type,
     stack_matches_call_sites, step_bucket_ms,
 };
@@ -36,16 +36,40 @@ pub(crate) async fn series_buckets_from_stacktrace_selector(
         let partitions = batch.column(2).as_primitive::<UInt64Type>();
         let stacktrace_ids = batch.column(3).as_primitive::<UInt64Type>();
         let values = batch.column(4).as_primitive::<Int64Type>();
+        let mut rows = Vec::with_capacity(batch.num_rows());
         for row in 0..batch.num_rows() {
             let partition = partitions.value(row);
             let stacktrace_id = u32::try_from(stacktrace_ids.value(row)).map_err(|err| {
                 ProfileError::Symbolize(format!("stacktrace id does not fit u32: {err}"))
             })?;
-            let frames = scan.symbols.resolve(partition, stacktrace_id);
+            rows.push((
+                timestamps.value(row),
+                fingerprints.value(row),
+                partition,
+                stacktrace_id,
+                values.value(row),
+            ));
+        }
+        let symbols = Arc::clone(&scan.symbols);
+        let resolved = tokio::task::spawn_blocking(move || {
+            rows.into_iter()
+                .map(
+                    |(timestamp, fingerprint, partition, stacktrace_id, value)| {
+                        (
+                            timestamp,
+                            fingerprint,
+                            symbols.resolve(partition, stacktrace_id),
+                            value,
+                        )
+                    },
+                )
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|err| ProfileError::Symbolize(format!("symbolization worker failed: {err}")))?;
+        for (timestamp, fingerprint, frames, value) in resolved {
             if stack_matches_call_sites(&frames, call_sites) {
-                *per_profile
-                    .entry((timestamps.value(row), fingerprints.value(row)))
-                    .or_default() += values.value(row);
+                *per_profile.entry((timestamp, fingerprint)).or_default() += value;
             }
         }
     }

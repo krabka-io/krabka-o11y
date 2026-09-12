@@ -5,11 +5,15 @@ pub(crate) fn fill_virtual_node(
     span: &SpanRecord,
     is_client: bool,
     connection_type: ConnectionType,
+    peer_attributes: &[String],
 ) {
     if connection_type != ConnectionType::VirtualNode {
         return;
     }
-    let Some(peer) = attr_value(span, "peer.service") else {
+    let Some(peer) = peer_attributes
+        .iter()
+        .find_map(|attribute| attr_value(span, attribute))
+    else {
         return;
     };
     if is_client {

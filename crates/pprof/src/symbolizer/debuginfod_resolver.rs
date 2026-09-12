@@ -3,7 +3,7 @@ use super::*;
 pub struct DebuginfodResolver {
     pub(crate) base_urls: Vec<reqwest::Url>,
     pub(crate) client: reqwest::blocking::Client,
-    pub(crate) cache: Mutex<HashMap<String, Option<ObjectSymbolResolver>>>,
+    pub(crate) cache: Mutex<ArtifactCache>,
     pub(crate) max_debuginfo: ByteSize,
 }
 
@@ -41,7 +41,10 @@ impl DebuginfodResolver {
         Ok(Self {
             base_urls,
             client,
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(ArtifactCache::new(
+                mebibytes(1024).bytes_usize(),
+                secs(60).to_std(),
+            )),
             max_debuginfo: config.max_artifact_size(),
         })
     }
@@ -64,12 +67,11 @@ impl DebuginfodResolver {
     }
 
     pub(crate) fn resolver_for_build_id(&self, build_id: &str) -> Option<ObjectSymbolResolver> {
-        let mut cache = lock_recover(&self.cache);
-        if let Some(cached) = cache.get(build_id) {
-            return cached.clone();
+        if let Some(cached) = lock_recover(&self.cache).get(build_id) {
+            return cached;
         }
         let resolver = self.fetch_build_id(build_id);
-        cache.insert(build_id.to_string(), resolver.clone());
+        lock_recover(&self.cache).insert(build_id.to_string(), resolver.clone());
         resolver
     }
 
@@ -100,7 +102,7 @@ impl DebuginfodResolver {
             let Some(bytes) = read_capped(response, cap) else {
                 continue;
             };
-            if let Ok(resolver) = ObjectSymbolResolver::from_bytes(bytes) {
+            if let Ok(resolver) = ObjectSymbolResolver::from_bytes(&bytes) {
                 return Some(resolver);
             }
         }

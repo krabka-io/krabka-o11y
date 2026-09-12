@@ -1,5 +1,7 @@
 //! Metrics-generator configuration.
 
+use std::collections::HashMap;
+
 use krabka_units::{Time, secs};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +29,8 @@ mod tests {
                 enable_status_message: false,
                 enable_messaging_system_latency: false,
                 remote_write_url: "http://localhost:9009/api/v1/push".to_string(),
+                processor: ProcessorConfig::default(),
+                overrides: HashMap::new(),
             }
         );
     }
@@ -67,13 +71,55 @@ mod tests {
                 enable_status_message: false,
                 enable_messaging_system_latency: false,
                 remote_write_url: "http://localhost:9009/api/v1/push".to_string(),
+                processor: ProcessorConfig::default(),
+                overrides: HashMap::new(),
             }
+        );
+    }
+
+    #[test]
+    fn processor_overrides_share_the_trace_limits_document() {
+        let mut config = MetricsGenConfig::default();
+        config
+            .apply_runtime_overrides(
+                r"
+overrides:
+  tenant-a:
+    max_spans_per_trace: 10
+    metrics_generator:
+      processor:
+        span_metrics:
+          dimensions: [http.method]
+",
+            )
+            .unwrap();
+
+        assert2::assert!(
+            config
+                .for_tenant("tenant-a")
+                .processor
+                .span_metrics
+                .dimensions
+                == ["http.method"]
+        );
+        assert2::assert!(
+            config
+                .for_tenant("tenant-b")
+                .processor
+                .span_metrics
+                .dimensions
+                .is_empty()
         );
     }
 }
 
 mod default_latency_buckets_ns;
 mod metrics_gen_config;
+mod processor_config;
 
 pub use default_latency_buckets_ns::DEFAULT_LATENCY_BUCKETS_NS;
 pub use metrics_gen_config::MetricsGenConfig;
+pub use processor_config::{
+    AttributeMatch, DimensionMapping, FilterPolicy, MatchType, ProcessorConfig,
+    ServiceGraphsConfig, SpanMetricsConfig,
+};

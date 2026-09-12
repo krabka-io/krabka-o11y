@@ -521,6 +521,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn negated_sibling_returns_rhs_spans_without_sibling_match() {
+        let store = structural_store();
+        let out = planned("{ .svc = \"c\" } !~ { .svc = \"b\" }", &store)
+            .await
+            .unwrap();
+        assert!(span_ids(&out) == vec![[2; 8], [3; 8]]);
+    }
+
+    #[tokio::test]
     async fn structural_ancestor_returns_rhs_ancestor_spans() {
         let store = structural_store();
         let out = planned("{ .svc = \"c\" } << { .svc = \"a\" }", &store)

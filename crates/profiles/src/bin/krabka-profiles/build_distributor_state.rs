@@ -56,6 +56,7 @@ pub(crate) async fn build_distributor_state(
         // tenant goes to `anonymous`.
         tenant_policy: TenantPolicy::anonymous(),
         active_series: Mutex::default(),
+        cumulative_profiles: tokio::sync::Mutex::default(),
         ingestion_buckets: Mutex::default(),
         relabel: Vec::<RelabelConfig>::new(),
         max_decompressed: cli.distributor_request_max,

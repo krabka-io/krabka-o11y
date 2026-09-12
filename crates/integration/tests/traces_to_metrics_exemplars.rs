@@ -106,6 +106,7 @@ fn span() -> SpanRecord {
         status_message: String::new(),
         service_name: "orders".to_string(),
         attributes: Vec::new(),
+        resource_attributes: Vec::new(),
         size: ByteSize::from_bytes(512),
     }
 }

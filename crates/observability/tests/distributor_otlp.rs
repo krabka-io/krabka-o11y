@@ -127,10 +127,10 @@ async fn otlp_logs_endpoint_preserves_severity_fields_as_structured_metadata() {
                                                 "timeUnixNano": "19",
                                                 "severityText": "ERROR",
                                                 "severityNumber": 17,
+                                                "traceId": "0102030405060708090a0b0c0d0e0f10",
+                                                "spanId": "1112131415161718",
                                                 "body": {"stringValue": "api error"},
-                                                "attributes": [
-                                                    {"key": "trace_id", "value": {"stringValue": "abc"}}
-                                                ]
+                                                "attributes": []
                                             }
                                         ]
                                     }
@@ -153,7 +153,11 @@ async fn otlp_logs_endpoint_preserves_severity_fields_as_structured_metadata() {
             == BTreeMap::from([
                 ("severity_number".to_string(), "17".to_string()),
                 ("severity_text".to_string(), "ERROR".to_string()),
-                ("trace_id".to_string(), "abc".to_string()),
+                (
+                    "trace_id".to_string(),
+                    "0102030405060708090a0b0c0d0e0f10".to_string(),
+                ),
+                ("span_id".to_string(), "1112131415161718".to_string()),
             ])
     );
 }

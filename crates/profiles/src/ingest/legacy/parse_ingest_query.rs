@@ -15,6 +15,7 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
     let mut from_ms = None;
     let mut until_ms = None;
     let mut spy_name = DEFAULT_SPY_NAME.to_string();
+    let mut jfr_event = "wall".to_string();
 
     for pair in query.split('&').filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -58,6 +59,7 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
             "spyName" if !value.is_empty() => {
                 spy_name = value;
             }
+            "event" if !value.is_empty() => jfr_event = value,
             _ => {}
         }
     }
@@ -66,8 +68,22 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
         return Err(ProfilesError::Invalid("missing ?name".to_string()));
     }
 
+    let profile_type_suffix = name
+        .rsplit_once('.')
+        .filter(|(_, suffix)| {
+            matches!(
+                *suffix,
+                "alloc_objects" | "alloc_space" | "inuse_objects" | "inuse_space"
+            )
+        })
+        .map(|(application, suffix)| (application.to_string(), suffix.to_string()));
+    if let Some((application, _)) = &profile_type_suffix {
+        name.clone_from(application);
+    }
+
     Ok(IngestQuery {
         name,
+        profile_type_suffix: profile_type_suffix.map(|(_, suffix)| suffix),
         labels,
         format,
         sample_rate,
@@ -75,5 +91,6 @@ pub fn parse_ingest_query(query: &str) -> Result<IngestQuery, ProfilesError> {
         from_ms,
         until_ms,
         spy_name,
+        jfr_event,
     })
 }

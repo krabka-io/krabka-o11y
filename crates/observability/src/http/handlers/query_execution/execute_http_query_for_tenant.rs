@@ -1,15 +1,10 @@
 use super::{
     HttpQueryError, LokiStreamEncoding, QuerierState, QueryKind, QueryParams, TenantId, Value,
-    add_loki_query_stats, apply_label_join_to_loki_result, apply_label_replace_to_loki_result,
-    clamp_query_lookback, current_unix_time_ns,
-    execute_http_label_replace_metric_binary_expression, execute_http_metric_expression_query,
-    execute_http_metric_query, execute_http_remaining_query, execute_http_sort_vector_expression,
-    loki_direction, loki_instant_scalar_or_vector_response, loki_range_vector_response,
-    parse_label_replace_expression, parse_label_replace_metric_binary_expression,
-    parse_metric_label_join_query, parse_metric_label_replace_query, parse_sort_vector_expression,
-    reject_signed_vector_function_literal, resolved_range_step, scalar_vector_expression_result,
-    time_range, validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
-    validate_query_entries_limit, validate_query_range_limit, validate_query_string_bytes_limit,
+    clamp_query_lookback, current_unix_time_ns, execute_http_logql_expr, loki_direction,
+    parse_logql_expr, populate_loki_query_execution_stats, reject_signed_vector_function_literal,
+    strip_outer_parenthesized_expression, time_range, validate_loki_query_range_resolution,
+    validate_loki_range_query_range_limit, validate_query_entries_limit,
+    validate_query_range_limit, validate_query_string_bytes_limit,
 };
 use crate::execute_logs_query_frontend;
 
@@ -20,10 +15,21 @@ pub(crate) async fn execute_http_query_for_tenant(
     kind: QueryKind,
     encoding: LokiStreamEncoding,
 ) -> Result<Value, HttpQueryError> {
-    if matches!(kind, QueryKind::Range) {
-        return execute_logs_query_frontend(state, tenant, params, encoding).await;
+    let started = std::time::Instant::now();
+    let mut result = if matches!(kind, QueryKind::Range) {
+        execute_logs_query_frontend(state, tenant, params, encoding).await
+    } else {
+        execute_http_query_for_tenant_inner(state, tenant, params, kind, encoding).await
+    };
+    if let Ok(response) = &mut result {
+        let queue_time = response
+            .pointer("/data/stats/summary/queueTime")
+            .and_then(Value::as_f64)
+            .map(std::time::Duration::from_secs_f64)
+            .unwrap_or_default();
+        populate_loki_query_execution_stats(response, started.elapsed(), queue_time);
     }
-    execute_http_query_for_tenant_inner(state, tenant, params, kind, encoding).await
+    result
 }
 
 pub(crate) async fn execute_http_query_for_tenant_inner(
@@ -49,103 +55,36 @@ pub(crate) async fn execute_http_query_for_tenant_inner(
     let direction = loki_direction(params.direction.as_deref())?;
     let interval = params.interval;
     reject_signed_vector_function_literal(&params.query)?;
-    if let Some(result) = scalar_vector_expression_result(&params.query) {
-        let value = match kind {
-            QueryKind::Instant => loki_instant_scalar_or_vector_response(time_range.end_ns, result),
-            QueryKind::Range => loki_range_vector_response(
-                time_range,
-                resolved_range_step(params.step, time_range)?,
-                result,
-            ),
-        };
-        return Ok(add_loki_query_stats(value));
+    if strip_outer_parenthesized_expression(&params.query)
+        .is_some_and(|inner| inner.trim_start().starts_with("label_join"))
+    {
+        return Err(HttpQueryError::LokiPlainParse(
+            "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER, expecting range aggregation"
+                .to_string(),
+        ));
     }
-    if let Some(sort) = parse_sort_vector_expression(&params.query) {
-        return execute_http_sort_vector_expression(
-            state,
-            tenant,
-            time_range,
-            params.step,
-            kind,
-            sort,
-            &params.query,
-        )
-        .await;
-    }
-    if let Ok(label_replace) = parse_metric_label_replace_query(&params.query) {
-        let mut value = execute_http_metric_query(
-            state,
-            tenant,
-            time_range,
-            params.step,
-            kind,
-            label_replace.query.clone(),
-        )
-        .await?;
-        apply_label_replace_to_loki_result(
-            &mut value,
-            &label_replace.destination_label,
-            &label_replace.replacement,
-            &label_replace.source_label,
-            &label_replace.pattern,
-            &params.query,
-        )?;
-        return Ok(value);
-    }
-    if let Some(binary) = parse_label_replace_metric_binary_expression(&params.query) {
-        return execute_http_label_replace_metric_binary_expression(
-            state,
-            tenant,
-            time_range,
-            params.step,
-            kind,
-            binary,
-            &params.query,
-        )
-        .await;
-    }
-    if let Some(label_replace) = parse_label_replace_expression(&params.query) {
-        let mut value = execute_http_metric_expression_query(
-            state,
-            tenant,
-            time_range,
-            params.step,
-            kind,
-            &label_replace.query,
-            &params.query,
-        )
-        .await?;
-        apply_label_replace_to_loki_result(
-            &mut value,
-            &label_replace.destination_label,
-            &label_replace.replacement,
-            &label_replace.source_label,
-            &label_replace.pattern,
-            &params.query,
-        )?;
-        return Ok(value);
-    }
-    if let Ok(label_join) = parse_metric_label_join_query(&params.query) {
-        let mut value = execute_http_metric_query(
-            state,
-            tenant,
-            time_range,
-            params.step,
-            kind,
-            label_join.query.clone(),
-        )
-        .await?;
-        apply_label_join_to_loki_result(&mut value, &label_join);
-        return Ok(value);
-    }
-    execute_http_remaining_query(
+    let expression = parse_logql_expr(&params.query).map_err(|source| {
+        if source.to_string().contains("range aggregation") {
+            HttpQueryError::LokiPlainParse(
+                "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER".to_string(),
+            )
+        } else {
+            HttpQueryError::LokiParse {
+                query: params.query.clone(),
+                source,
+            }
+        }
+    })?;
+    execute_http_logql_expr(
         state,
         tenant,
-        params,
-        kind,
         time_range,
+        params.step,
+        kind,
+        &expression,
         (direction, limit, interval),
         encoding,
+        &params.query,
     )
     .await
 }

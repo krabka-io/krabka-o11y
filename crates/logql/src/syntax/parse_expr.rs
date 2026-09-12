@@ -8,16 +8,21 @@ pub(crate) fn parse_expr(input: &str) -> Result<LogqlExpr, ParseError> {
     if input.is_empty() {
         return Err(syntax_error("expected expression"));
     }
-    if input.starts_with('{')
-        && let Ok(query) = parse_query(input)
-    {
-        return Ok(LogqlExpr::Stream {
-            query,
-            source: input.to_string(),
-        });
-    }
+    let stream_error = if input.starts_with('{') {
+        match parse_query(input) {
+            Ok(query) => {
+                return Ok(LogqlExpr::Stream {
+                    query,
+                    source: input.to_string(),
+                });
+            }
+            Err(error) => Some(error),
+        }
+    } else {
+        None
+    };
     let mut candidate = None;
-    scan_top_level(input, |at| {
+    if let Err(error) = scan_top_level(input, |at| {
         if let Some((len, kind, precedence)) = operator_at(input, at)
             && candidate.as_ref().is_none_or(|(_, _, _, old)| {
                 precedence < *old || (precedence == *old && precedence != 6)
@@ -25,7 +30,9 @@ pub(crate) fn parse_expr(input: &str) -> Result<LogqlExpr, ParseError> {
         {
             candidate = Some((at, len, kind, precedence));
         }
-    })?;
+    }) {
+        return Err(stream_error.unwrap_or(error));
+    }
     if let Some((at, len, kind, _precedence)) = candidate {
         let left = parse_expr(&input[..at])?;
         let mut parser = Parser::new(&input[at + len..]);
@@ -57,5 +64,8 @@ pub(crate) fn parse_expr(input: &str) -> Result<LogqlExpr, ParseError> {
             },
         });
     }
-    parse_expr_primary(input)
+    match parse_expr_primary(input) {
+        Ok(expression) => Ok(expression),
+        Err(error) => Err(stream_error.unwrap_or(error)),
+    }
 }

@@ -1,7 +1,8 @@
 use super::{
-    DistributorState, ProfileRecord, ProfilesError, TenantId, WalSample, apply_relabel,
-    cap_session_id, enforce_and_reserve_max_series, enforce_ingestion_rate, enforce_limits,
-    extract_symbols, require_service_name, rollback_reserved_series, split_sample_types,
+    CumulativeProfileCache, DistributorState, ProfileRecord, ProfilesError, TenantId, WalSample,
+    apply_relabel, cap_session_id, enforce_and_reserve_max_series, enforce_ingestion_rate,
+    enforce_limits, extract_symbols, require_service_name, rollback_reserved_series,
+    split_sample_types,
 };
 
 ///
@@ -16,7 +17,7 @@ pub async fn process_raw(
     // below reads the same values, and an unlisted tenant gets the overrides
     // file's defaults.
     let limits = state.overrides.for_tenant(tenant);
-    let mut pending = Vec::new();
+    let mut decoded = Vec::new();
     for mut raw in raws {
         if !apply_relabel(&mut raw.labels, &state.relabel) {
             continue;
@@ -48,16 +49,31 @@ pub async fn process_raw(
                     .collect(),
                 symbols: symbols.clone(),
             };
-            pending.push(rec);
+            decoded.push((rec, raw.delta));
         }
     }
 
-    // Atomically check the max-series limit AND reserve the new fingerprints
-    // under a single lock hold (see `enforce_and_reserve_max_series`). The
-    // returned set lists fingerprints that were newly inserted by this call and
-    // must be rolled back if the subsequent WAL append fails, so a rejected or
-    // failed write never permanently inflates the tenant's series count.
-    let reserved = enforce_and_reserve_max_series(state, tenant, &pending)?;
+    let mut cumulative_profiles = state.cumulative_profiles.lock().await;
+    let mut next_cumulative_profiles = cumulative_profiles.clone();
+    let reservation_records = decoded
+        .iter()
+        .map(|(record, _)| record.clone())
+        .collect::<Vec<_>>();
+    let reserved = enforce_and_reserve_max_series(state, tenant, &reservation_records)?;
+    let mut pending = Vec::with_capacity(decoded.len());
+    for (mut record, cumulative) in decoded {
+        if cumulative {
+            apply_cumulative_delta(&mut record, tenant.as_str(), &mut next_cumulative_profiles);
+        }
+        if !record.samples.is_empty() {
+            pending.push(record);
+        }
+    }
+    if pending.is_empty() {
+        *cumulative_profiles = next_cumulative_profiles;
+        return Ok(());
+    }
+
     if let Err(err) = enforce_ingestion_rate(state, tenant, pending.len()) {
         rollback_reserved_series(state, tenant.as_str(), &reserved);
         return Err(err);
@@ -82,5 +98,82 @@ pub async fn process_raw(
         return Err(ProfilesError::from(error));
     }
 
+    *cumulative_profiles = next_cumulative_profiles;
+
     Ok(())
+}
+
+fn apply_cumulative_delta(
+    record: &mut ProfileRecord,
+    tenant: &str,
+    cache: &mut CumulativeProfileCache,
+) {
+    let key = (tenant.to_string(), record.labels.clone());
+    let current = record
+        .samples
+        .iter()
+        .map(|sample| (sample.stacktrace_location_refs.clone(), sample.value))
+        .collect::<std::collections::HashMap<_, _>>();
+    let previous = cache.insert(key, current);
+    let Some(previous) = previous else {
+        record.samples.clear();
+        return;
+    };
+    for sample in &mut record.samples {
+        let prior = previous
+            .get(&sample.stacktrace_location_refs)
+            .copied()
+            .unwrap_or(0);
+        sample.value = if sample.value >= prior {
+            sample.value - prior
+        } else {
+            sample.value
+        };
+    }
+    record.samples.retain(|sample| sample.value != 0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(value: i64) -> ProfileRecord {
+        ProfileRecord {
+            tenant: "tenant-a".into(),
+            labels: vec![(
+                "__profile_type__".into(),
+                "memory:alloc_space:bytes::".into(),
+            )],
+            profile_type: "memory:alloc_space:bytes::".into(),
+            samples: vec![WalSample {
+                stacktrace_location_refs: vec![1, 2],
+                value,
+                timestamp_ns: 1,
+                span_id: None,
+                trace_id: None,
+            }],
+            symbols: crate::WalSymbolSet {
+                strings: Vec::new(),
+                functions: Vec::new(),
+                locations: Vec::new(),
+                mappings: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn cumulative_profiles_are_seeded_then_subtracted_and_reset() {
+        let mut cache = std::collections::HashMap::new();
+        let mut first = record(10);
+        apply_cumulative_delta(&mut first, "tenant-a", &mut cache);
+        assert!(first.samples.is_empty());
+
+        let mut second = record(16);
+        apply_cumulative_delta(&mut second, "tenant-a", &mut cache);
+        assert_eq!(second.samples[0].value, 6);
+
+        let mut reset = record(3);
+        apply_cumulative_delta(&mut reset, "tenant-a", &mut cache);
+        assert_eq!(reset.samples[0].value, 3);
+    }
 }

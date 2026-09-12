@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use assert2::{assert, check};
 use axum::http::StatusCode;
-use futures_util::StreamExt as _;
+use futures_util::{SinkExt as _, StreamExt as _};
 use krabka_blockstore::labels;
 use krabka_observability::{InMemoryWalSink, LogWalSink, WalLogRecord, loki_router};
 use serde_json::{Value, json};
@@ -32,7 +32,8 @@ async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
             "streams": [{
                 "stream": {"app": "api", "detected_level": "unknown", "env": "prod"},
                 "values": [[timestamp, line]]
-            }]
+            }],
+            "dropped_entries": []
         })
     };
 
@@ -136,8 +137,24 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
                             ["20", "api hot error"]
                         ]
                     }
-                ]
+                ],
+                "dropped_entries": []
             })
+    );
+
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Ping(
+            b"alive".to_vec().into(),
+        ))
+        .await
+        .unwrap();
+    let pong = timeout(Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(pong, tokio_tungstenite::tungstenite::Message::Pong(payload) if payload == b"alive"[..])
     );
 
     hot_tail
@@ -173,7 +190,8 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
                                 ["21", "api later error"]
                             ]
                         }
-                    ]
+                    ],
+                    "dropped_entries": []
             })
     );
 }
@@ -230,7 +248,8 @@ async fn tail_endpoint_applies_limit_to_hot_wal_tail_frame() {
                             ["20", "api first error"]
                         ]
                     }
-                ]
+                ],
+                "dropped_entries": []
             })
     );
 }

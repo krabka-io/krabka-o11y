@@ -1,4 +1,5 @@
 use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics};
+use object_store::prefix::PrefixStore;
 
 use super::ConfiguredObjectStore;
 
@@ -15,7 +16,9 @@ pub(crate) fn build_object_store(
     let parsed = url::Url::parse(url)?;
     let (store, prefix) = object_store::parse_url_opts(&parsed, std::env::vars())?;
     Ok(ConfiguredObjectStore {
-        store: MeteredObjectStore::wrap(std::sync::Arc::from(store), metrics),
-        prefix,
+        store: MeteredObjectStore::wrap(
+            std::sync::Arc::new(PrefixStore::new(store, prefix)),
+            metrics,
+        ),
     })
 }

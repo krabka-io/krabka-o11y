@@ -1,6 +1,9 @@
 //! Legacy `POST /ingest` door.
 
-use std::{collections::BTreeMap, io::Cursor};
+use std::{
+    collections::{BTreeMap, HashMap},
+    io::Cursor,
+};
 
 use krabka_blockstore::Labels;
 use krabka_pprof::PprofProfile;
@@ -618,15 +621,24 @@ mod tests {
     fn jfr_labels_stringify_scalars_and_reject_structure() {
         let parse = |raw: &str| super::parse_labels_part(raw.as_bytes());
 
-        check!(parse("").unwrap() == vec![], "an absent part is no labels");
         check!(
-            parse("{}").unwrap() == vec![],
+            parse("").unwrap().global == vec![],
+            "an absent part is no labels"
+        );
+        check!(
+            parse("{}").unwrap().global == vec![],
             "an empty object is no labels"
+        );
+        check!(
+            parse(" \n\t{\"env\":\"prod\"}").unwrap().global
+                == vec![("env".to_string(), "prod".to_string())],
+            "leading JSON whitespace is accepted"
         );
 
         let labels =
             parse(r#"{"text":"a","int":7,"float":1.5,"yes":true,"no":false,"nothing":null}"#)
-                .unwrap();
+                .unwrap()
+                .global;
         // Document order is kept rather than sorted, so a caller reading the
         // first label gets the first one written.
         check!(
@@ -645,6 +657,18 @@ mod tests {
         check!(err.contains("`list` must be a scalar"), "got: {err}");
         let err = parse(r#"{"nested":{"a":1}}"#).unwrap_err().to_string();
         check!(err.contains("`nested` must be a scalar"), "got: {err}");
+
+        let snapshot = super::LabelsSnapshot {
+            contexts: super::HashMap::from([(
+                7,
+                super::jfr_labels::LabelContext {
+                    labels: super::HashMap::from([(1, 2)]),
+                },
+            )]),
+            strings: super::HashMap::from([(1, "region".into()), (2, "us-east".into())]),
+        };
+        let decoded = super::parse_labels_part(&prost::Message::encode_to_vec(&snapshot)).unwrap();
+        check!(decoded.contexts[&7] == vec![("region".into(), "us-east".into())]);
         let err = parse("[1,2]").unwrap_err().to_string();
         check!(err.contains("must be a JSON object"), "got: {err}");
         let err = parse("not json").unwrap_err().to_string();
@@ -661,6 +685,26 @@ mod tests {
         check!(q.labels.contains(&("env".to_string(), "prod".to_string())));
         assert!(matches!(q.format, IngestFormat::Pprof));
         check!(q.sample_rate == 97);
+    }
+
+    #[test]
+    fn application_suffix_selects_the_memory_sample_type() {
+        let query = parse_ingest_query("name=myapp.alloc_space&format=groups").unwrap();
+        check!(query.name == "myapp");
+        check!(query.profile_type_suffix.as_deref() == Some("alloc_space"));
+
+        let (profile, metric) = legacy_cpu_profile(
+            stacks_to_pprof(
+                "myapp",
+                "samples",
+                "count",
+                BTreeMap::from([(vec![("main".to_string(), 0)], 7)]),
+            ),
+            &query,
+        );
+        check!(metric == "memory");
+        check!(profile.sample_types() == vec![("alloc_space".into(), "bytes".into())]);
+        check!(profile.period_type_strings() == (String::new(), String::new()));
     }
 
     #[test]
@@ -722,7 +766,7 @@ mod tests {
         let query = parse_ingest_query("name=myapp&format=pprof").unwrap();
         let boundary = "test-boundary";
         let pprof = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
-        let config = r#"{"units":"nanoseconds","display-name":"wall","aggregation":"sum","cumulative":false,"sampled":true}"#;
+        let config = r#"{"units":"nanoseconds","display-name":"wall","aggregation":"sum","cumulative":true,"sampled":true}"#;
         let mut body = Vec::new();
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(b"Content-Disposition: form-data; name=\"sample_type_config\"\r\n");
@@ -987,7 +1031,7 @@ mod tests {
 
     #[tokio::test]
     async fn decode_multipart_jfr_part_with_labels_as_folded_stacks() {
-        let query = parse_ingest_query("name=myapp&format=jfr").unwrap();
+        let query = parse_ingest_query("name=myapp&format=jfr&event=wall").unwrap();
         let boundary = "test-boundary";
         let folded =
             "java.lang.Thread.run;app.Worker.loop 11\njava.lang.Thread.run;app.Worker.idle 2\n";
@@ -1051,7 +1095,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(raw.profile.sample_types()[0] == ("wall".to_string(), "nanoseconds".to_string()));
+        let sample_types = raw.profile.sample_types();
+        assert!(sample_types.contains(&("cpu".to_string(), "nanoseconds".to_string())));
+        assert!(sample_types.contains(&("wall".to_string(), "nanoseconds".to_string())));
         assert!(!raw.profile.samples().is_empty());
         let functions = raw
             .profile
@@ -1063,7 +1109,8 @@ mod tests {
         assert!(
             functions
                 .iter()
-                .any(|function| function.contains("CompileBroker::compiler_thread_loop"))
+                .any(|function| function.contains("CompileBroker::compiler_thread_loop")),
+            "decoded functions: {functions:?}"
         );
     }
 
@@ -1179,6 +1226,8 @@ mod tests {
     }
 }
 
+mod apply_legacy_profile_suffix;
+#[cfg(test)]
 mod apply_query_sample_rate;
 mod apply_query_time;
 mod apply_sample_type_config;
@@ -1193,6 +1242,7 @@ mod ingest_format;
 mod ingest_query;
 mod intern_profile_string;
 mod intern_string;
+mod jfr_labels;
 mod jfr_method_name;
 mod jfr_to_pprof;
 mod legacy_cpu_mapping;
@@ -1216,6 +1266,8 @@ mod trie_frame;
 mod trie_to_pprof;
 mod urldecode;
 
+use apply_legacy_profile_suffix::apply_legacy_profile_suffix;
+#[cfg(test)]
 use apply_query_sample_rate::apply_query_sample_rate;
 use apply_query_time::apply_query_time;
 use apply_sample_type_config::apply_sample_type_config;
@@ -1230,6 +1282,7 @@ pub use ingest_format::IngestFormat;
 pub use ingest_query::IngestQuery;
 use intern_profile_string::intern_profile_string;
 use intern_string::intern_string;
+use jfr_labels::{JfrLabels, LabelsSnapshot};
 use jfr_method_name::jfr_method_name;
 use jfr_to_pprof::jfr_to_pprof;
 use legacy_cpu_mapping::{LEGACY_CPU_METRIC_NAME, apply_legacy_cpu_mapping};

@@ -7,5 +7,6 @@ pub(crate) fn structural_is_negated(op: StructuralOp) -> bool {
             | StructuralOp::NegAncestor
             | StructuralOp::NegChild
             | StructuralOp::NegParent
+            | StructuralOp::NegSibling
     )
 }

@@ -30,6 +30,8 @@ mod tests {
             failed,
             connection_type: super::ConnectionType::Unset,
             first_seen_ns: 0,
+            labels: Vec::new(),
+            multiplier: 1.0,
         };
         // Every figure here is a whole number of requests, or a sum of whole
         // seconds, so each is exactly representable. The comparison carries a
@@ -41,19 +43,20 @@ mod tests {
                 client.to_string(),
                 server.to_string(),
                 super::ConnectionType::Unset,
+                Vec::new(),
             )
         };
 
         let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
-        store.complete(edge(
+        store.complete(&edge(
             "a",
             "b",
             false,
             Some(1_000_000_000),
             Some(2_000_000_000),
         ));
-        store.complete(edge("a", "b", true, Some(3_000_000_000), None));
-        store.complete(edge("c", "d", false, None, None));
+        store.complete(&edge("a", "b", true, Some(3_000_000_000), None));
+        store.complete(&edge("c", "d", false, None, None));
 
         let agg = &store.aggregates[&key("a", "b")];
         check!(is(agg.requests, 2.0), "one per completed edge");
@@ -85,11 +88,12 @@ mod tests {
         let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
         let mut messaging = edge("a", "b", false, Some(1_000_000_000), Some(2_000_000_000));
         messaging.connection_type = super::ConnectionType::MessagingSystem;
-        store.complete(messaging.clone());
+        store.complete(&messaging);
         let agg = &store.aggregates[&(
             "a".to_string(),
             "b".to_string(),
             super::ConnectionType::MessagingSystem,
+            Vec::new(),
         )];
         check!(is(agg.messaging_seconds_count, 0.0), "disabled by default");
 
@@ -99,11 +103,12 @@ mod tests {
             ..super::MetricsGenConfig::default()
         };
         let mut store = super::EdgeStore::new(&cfg);
-        store.complete(messaging);
+        store.complete(&messaging);
         let agg = &store.aggregates[&(
             "a".to_string(),
             "b".to_string(),
             super::ConnectionType::MessagingSystem,
+            Vec::new(),
         )];
         check!(is(agg.messaging_seconds_count, 1.0));
         check!(
@@ -128,6 +133,8 @@ mod tests {
             failed: true,
             connection_type: super::ConnectionType::Database,
             first_seen_ns: 1_234_567,
+            labels: vec![("cluster".into(), "prod".into())],
+            multiplier: 2.0,
         };
         let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&edge))
             .expect("round trip");
@@ -142,6 +149,8 @@ mod tests {
             failed: false,
             connection_type: super::ConnectionType::Unset,
             first_seen_ns: 0,
+            labels: Vec::new(),
+            multiplier: 1.0,
         };
         let decoded = super::decode_checkpoint_value(&super::encode_checkpoint_value(&sparse))
             .expect("round trip");
@@ -344,6 +353,7 @@ mod tests {
             status_message: String::new(),
             service_name: service.into(),
             attributes: vec![],
+            resource_attributes: vec![],
             size: ByteSize::from_bytes(0),
         }
     }
@@ -487,6 +497,50 @@ mod tests {
         check!(
             (histogram_sum(&out, "traces_service_graph_request_server_seconds") - 0.008).abs()
                 < 1e-9
+        );
+    }
+
+    #[test]
+    fn tenant_processor_config_controls_service_graph_labels_and_weight() {
+        let mut cfg = MetricsGenConfig::default();
+        cfg.processor.service_graphs.dimensions = vec!["http.method".into()];
+        cfg.processor.service_graphs.enable_client_server_prefix = true;
+        cfg.processor.service_graphs.span_multiplier_key = Some("sample.weight".into());
+        let mut store = EdgeStore::new(&cfg);
+        let mut client = span(
+            "frontend",
+            [0xA; 8],
+            [0; 8],
+            SpanKind::Client,
+            StatusCode::Ok,
+            10_000_000,
+        );
+        client.attributes = vec![
+            ("http.method".into(), "GET".into()),
+            ("sample.weight".into(), "3".into()),
+        ];
+        let mut server = span(
+            "backend",
+            [0xB; 8],
+            [0xA; 8],
+            SpanKind::Server,
+            StatusCode::Ok,
+            8_000_000,
+        );
+        server
+            .attributes
+            .push(("http.method".into(), "POST".into()));
+
+        check!(store.record_span(&client, 0) == RecordOutcome::Recorded);
+        check!(store.record_span(&server, 1) == RecordOutcome::Completed);
+        let out = store.drain(1_000);
+        check!((counter(&out, "traces_service_graph_request_total") - 3.0).abs() < f64::EPSILON);
+        let labels = labels_for(&out, "traces_service_graph_request_total");
+        check!(labels.contains(&("client_http_method".into(), "GET".into())));
+        check!(labels.contains(&("server_http_method".into(), "POST".into())));
+        check!(
+            (histogram_count(&out, "traces_service_graph_request_client_seconds") - 3.0).abs()
+                < f64::EPSILON
         );
     }
 

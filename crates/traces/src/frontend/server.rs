@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
+    body::{Body, Bytes},
     extract::{Extension, Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
@@ -322,12 +323,14 @@ mod tests {
 
 mod backend_error_response;
 mod bounded_count;
+mod buildinfo;
 mod echo;
 mod exemplar_limit;
 mod key_is_safe_attribute;
 mod metrics_query_param;
 mod optional_seconds;
 mod optional_time_bounds;
+mod overrides;
 mod parse_duration_component_ns;
 mod parse_go_duration_ns;
 mod parse_logfmt_tags;
@@ -347,19 +350,25 @@ mod scope_name;
 mod scope_param;
 mod search;
 mod search_query;
+mod search_stream;
+mod search_tag_values;
 mod search_tag_values_v2;
+mod search_tags;
 mod search_tags_v2;
 mod tags_to_traceql;
 mod trace_by_id;
+mod trace_by_id_v1;
 
 use backend_error_response::backend_error_response;
 use bounded_count::bounded_count;
+use buildinfo::buildinfo;
 use echo::echo;
 use exemplar_limit::exemplar_limit;
 use key_is_safe_attribute::key_is_safe_attribute;
 use metrics_query_param::metrics_query_param;
 use optional_seconds::optional_seconds;
 use optional_time_bounds::optional_time_bounds;
+use overrides::overrides;
 use parse_duration_component_ns::parse_duration_component_ns;
 use parse_go_duration_ns::parse_go_duration_ns;
 use parse_logfmt_tags::parse_logfmt_tags;
@@ -379,7 +388,11 @@ use scope_name::scope_name;
 use scope_param::scope_param;
 use search::search;
 use search_query::search_query;
+use search_stream::search_stream;
+use search_tag_values::search_tag_values;
 use search_tag_values_v2::search_tag_values_v2;
+use search_tags::search_tags;
 use search_tags_v2::search_tags_v2;
 use tags_to_traceql::tags_to_traceql;
 use trace_by_id::trace_by_id;
+use trace_by_id_v1::trace_by_id_v1;

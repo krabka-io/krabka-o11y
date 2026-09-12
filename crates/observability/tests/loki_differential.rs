@@ -91,42 +91,6 @@ const LOKI_KNOWN_DIVERGENCE: &[Divergence] = &[
         case: "instant_selector_worker_stream",
         reason: "Loki refuses a log selector on `/query`, as `instant_selector_api_stream`.",
     },
-    Divergence {
-        case: "topk_over_vector_aggregation",
-        reason: "Krabka's LogQL parser rejects a vector aggregation nested inside `topk` -- \
-                 `topk(1, sum by (app) (...))` is a parse error, while `topk` over a bare range \
-                 aggregation parses. Loki accepts both.",
-    },
-    Divergence {
-        case: "instant_topk_count_over_time",
-        reason: "the nested-`topk` parse gap, as `topk_over_vector_aggregation`.",
-    },
-    Divergence {
-        case: "unwrap_label_named_after_a_conversion",
-        reason: "Krabka's parser reads `unwrap duration` as the start of the `duration(...)` \
-                 conversion and rejects the query when no `(` follows. Loki reads a bare \
-                 identifier as the label of that name, so `unwrap duration` unwraps the label \
-                 called `duration`.",
-    },
-    Divergence {
-        case: "format_query_unwrap",
-        reason: "the `unwrap duration` parse gap, as \
-                 `unwrap_label_named_after_a_conversion`; `/format_query` reaches the same \
-                 parser.",
-    },
-    Divergence {
-        case: "format_query_selector",
-        reason: "matcher separator. Loki's formatter writes `{app=\"api\", env=\"prod\"}` with a \
-                 space after the comma; Krabka writes it without one. Both re-parse; only the \
-                 text differs.",
-    },
-    Divergence {
-        case: "count_over_time_unaligned_window",
-        reason: "step alignment. Given a window whose bounds are not multiples of the step, Loki \
-                 rounds both bounds up to the next multiple and evaluates on that grid; Krabka \
-                 steps from the raw `start`. Every point of the answer is therefore at a \
-                 different timestamp.",
-    },
 ];
 
 /// The request header that asks for the `categorize-labels` encoding.
@@ -551,7 +515,7 @@ fn metric_cases(timeline: &Timeline) -> Vec<Case> {
         ),
         (
             "topk_over_vector_aggregation",
-            r#"topk(1, sum by (app) (count_over_time({app=~".+"}[1m])))"#,
+            r#"topk(1, sum by (app) (bytes_over_time({app=~".+"}[1m])))"#,
         ),
         (
             "scalar_multiply",

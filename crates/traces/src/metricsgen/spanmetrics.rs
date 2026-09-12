@@ -6,7 +6,7 @@ use krabka_units::convert::ByteSizeExt as _;
 use num_traits::ToPrimitive as _;
 
 use crate::metricsgen::{
-    config::MetricsGenConfig,
+    config::{MetricsGenConfig, SpanMetricsConfig},
     contract::{SpanKind, SpanRecord, StatusCode},
     series::{Exemplar, Series, SeriesSample, sorted_labels},
     servicegraph::RecordOutcome,
@@ -68,6 +68,49 @@ mod tests {
         check!(other[2].1 == "POST /x");
     }
 
+    #[test]
+    fn custom_dimension_names_are_normalized_and_deduplicated() {
+        let mut record = ok_span("api", "GET /x");
+        record.attributes = vec![
+            ("http.route".into(), "/orders".into()),
+            ("http-route".into(), "/ignored".into()),
+            ("env".into(), "prod".into()),
+        ];
+        let config = SpanMetricsConfig {
+            dimensions: vec!["service".into(), "http.route".into(), "http-route".into()],
+            dimension_mappings: vec![
+                crate::metricsgen::config::DimensionMapping {
+                    name: "span.name".into(),
+                    source_labels: vec!["env".into()],
+                    join: String::new(),
+                },
+                crate::metricsgen::config::DimensionMapping {
+                    name: "deployment.env".into(),
+                    source_labels: vec!["env".into()],
+                    join: String::new(),
+                },
+            ],
+            ..SpanMetricsConfig::default()
+        };
+
+        let labels = dim_key(&record, false, &config);
+
+        check!(labels.iter().filter(|(name, _)| name == "service").count() == 1);
+        check!(labels.iter().find(|(name, _)| name == "service").unwrap().1 == "api");
+        check!(
+            labels
+                .iter()
+                .filter(|(name, _)| name == "http_route")
+                .count()
+                == 1
+        );
+        check!(
+            labels
+                .iter()
+                .any(|(name, value)| name == "deployment_env" && value == "prod")
+        );
+    }
+
     fn span(
         service: &str,
         name: &str,
@@ -89,6 +132,7 @@ mod tests {
             status_message: String::new(),
             service_name: service.into(),
             attributes: vec![],
+            resource_attributes: vec![],
             size: ByteSize::from_bytes(size),
         }
     }
@@ -258,6 +302,35 @@ mod tests {
             .unwrap();
         check!(counter.labels.is_empty());
         check!((discarded(&out) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn target_info_carries_the_resource_identity() {
+        let cfg = MetricsGenConfig {
+            enable_target_info: true,
+            ..MetricsGenConfig::default()
+        };
+        let mut reg = SpanMetricsRegistry::new(&cfg);
+        let mut span = ok_span("api", "GET /x");
+        span.resource_attributes = vec![
+            ("deployment.environment".into(), "prod".into()),
+            ("service.instance.id".into(), "api-1".into()),
+        ];
+        reg.record_span(&span);
+
+        let out = reg.drain(1_000);
+        let target = out
+            .iter()
+            .find(|series| series.name == "traces_target_info")
+            .unwrap();
+        check!(
+            target.labels
+                == vec![
+                    ("deployment_environment".into(), "prod".into()),
+                    ("service".into(), "api".into()),
+                    ("service_instance_id".into(), "api-1".into()),
+                ]
+        );
     }
 
     /// Zero is Tempo's spelling of "no cap", and it must not read as "admit
@@ -542,7 +615,7 @@ mod tests {
 }
 
 mod dim_entry;
-mod dim_key;
+pub(crate) mod dim_key;
 mod dimension_labels;
 mod duration_as_f64;
 mod latency_histogram;
@@ -552,7 +625,7 @@ mod span_metrics_registry;
 mod status_dim;
 
 use dim_entry::DimEntry;
-use dim_key::{DimKey, dim_key};
+use dim_key::{DimKey, dim_key, prometheus_label_name, span_allowed, span_multiplier};
 pub use dimension_labels::dimension_labels;
 use duration_as_f64::duration_as_f64;
 use latency_histogram::LatencyHistogram;

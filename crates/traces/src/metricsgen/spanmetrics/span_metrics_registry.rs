@@ -8,8 +8,9 @@ pub struct SpanMetricsRegistry {
     pub(crate) max_active_series: usize,
     pub(crate) enable_target_info: bool,
     pub(crate) enable_status_message: bool,
+    pub(crate) config: SpanMetricsConfig,
     pub(crate) entries: HashMap<DimKey, DimEntry>,
-    pub(crate) services: HashSet<String>,
+    pub(crate) targets: HashSet<Vec<(String, String)>>,
     pub(crate) discarded_series: f64,
 }
 
@@ -22,8 +23,9 @@ impl SpanMetricsRegistry {
             max_active_series: cfg.max_active_series,
             enable_target_info: cfg.enable_target_info,
             enable_status_message: cfg.enable_status_message,
+            config: cfg.processor.span_metrics.clone(),
             entries: HashMap::new(),
-            services: HashSet::new(),
+            targets: HashSet::new(),
             discarded_series: 0.0,
         }
     }
@@ -39,7 +41,11 @@ impl SpanMetricsRegistry {
     /// every kind, so a second enum would repeat this one's two live variants
     /// under a new name.
     pub fn record_span(&mut self, span: &SpanRecord) -> RecordOutcome {
-        let key = dim_key(span, self.enable_status_message);
+        if !span_allowed(span, &self.config) {
+            return RecordOutcome::Ignored;
+        }
+        let key = dim_key(span, self.enable_status_message, &self.config);
+        let multiplier = span_multiplier(span, self.config.span_multiplier_key.as_deref());
         // Read the length before the entry borrow, because `entry` holds the
         // map for as long as the match below runs.
         let at_capacity =
@@ -54,7 +60,7 @@ impl SpanMetricsRegistry {
                 // The service set is filled only after the key is admitted.
                 // Every tracked service belongs to at least one entry, so the
                 // entry cap bounds this set too and it needs no cap of its own.
-                self.services.insert(span.service_name.clone());
+                self.targets.insert(target_info_labels(span, &self.config));
                 vacant.insert(DimEntry {
                     calls: 0.0,
                     size_total: 0.0,
@@ -64,10 +70,10 @@ impl SpanMetricsRegistry {
             }
         };
 
-        entry.calls += 1.0;
-        entry.size_total += span.size.bytes_f64();
+        entry.calls += multiplier;
+        entry.size_total += span.size.bytes_f64() * multiplier;
         let duration_ns = duration_as_f64(span.duration_ns);
-        entry.latency.observe(duration_ns);
+        entry.latency.observe_weighted(duration_ns, multiplier);
 
         if entry.exemplars.len() < self.max_exemplars {
             entry.exemplars.push(Exemplar {
@@ -101,7 +107,7 @@ impl SpanMetricsRegistry {
     /// offsets, and `PromQL` treats that as a normal counter reset.
     #[must_use]
     pub fn drain(&mut self, timestamp_ms: i64) -> Vec<Series> {
-        let mut series = Vec::with_capacity(self.entries.len() * 3 + self.services.len() + 1);
+        let mut series = Vec::with_capacity(self.entries.len() * 3 + self.targets.len() + 1);
         // Emitted on every interval, and cumulative like the RED counters
         // below it. The series therefore exists from the first interval, before
         // any refusal, and `PromQL` reads no counter reset. It carries no
@@ -115,19 +121,8 @@ impl SpanMetricsRegistry {
             timestamp_ms,
         });
 
-        for ((service, span_name, span_kind, status_code, status_message), entry) in
-            &mut self.entries
-        {
-            let mut labels = vec![
-                ("service".to_string(), service.clone()),
-                ("span_name".to_string(), span_name.clone()),
-                ("span_kind".to_string(), span_kind.clone()),
-                ("status_code".to_string(), status_code.clone()),
-            ];
-            if let Some(status_message) = status_message {
-                labels.push(("status_message".to_string(), status_message.clone()));
-            }
-            let labels = sorted_labels(labels);
+        for (labels, entry) in &mut self.entries {
+            let labels = labels.clone();
             series.push(Series {
                 name: "traces_spanmetrics_calls_total".to_string(),
                 labels: labels.clone(),
@@ -158,9 +153,9 @@ impl SpanMetricsRegistry {
         }
 
         if self.enable_target_info {
-            series.extend(self.services.iter().map(|service| Series {
+            series.extend(self.targets.iter().map(|labels| Series {
                 name: "traces_target_info".to_string(),
-                labels: sorted_labels(vec![("service".to_string(), service.clone())]),
+                labels: labels.clone(),
                 sample: SeriesSample::Gauge(1.0),
                 exemplars: Vec::new(),
                 timestamp_ms,
@@ -169,4 +164,14 @@ impl SpanMetricsRegistry {
 
         series
     }
+}
+
+fn target_info_labels(span: &SpanRecord, config: &SpanMetricsConfig) -> Vec<(String, String)> {
+    let labels = std::iter::once(("service".to_string(), span.service_name.clone())).chain(
+        span.resource_attributes
+            .iter()
+            .filter(|(name, _)| !config.target_info_excluded_dimensions.contains(name))
+            .map(|(name, value)| (prometheus_label_name(name), value.clone())),
+    );
+    sorted_labels(labels.collect())
 }

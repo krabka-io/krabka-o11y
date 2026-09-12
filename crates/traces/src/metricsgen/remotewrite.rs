@@ -2,6 +2,10 @@
 
 use async_trait::async_trait;
 use krabka_blockstore::TENANT_HEADER;
+use krabka_metrics::wire::pb::v1::{
+    BucketSpan as RemoteWriteBucketSpan, Exemplar as RemoteWriteExemplar, Histogram, Label, Sample,
+    TimeSeries, WriteRequest,
+};
 use krabka_observability::server_security::InternalClient;
 use prost::Message as _;
 
@@ -326,41 +330,25 @@ mod tests {
 mod bucket_exemplars;
 mod bucket_spans_to_proto;
 mod encode_write_request;
-mod histogram;
 mod histograms_to_proto;
-mod label;
 mod labels_to_proto;
 mod le_label;
 mod prometheus_remote_write_sink;
 mod push_classic_histogram;
-mod remote_write_bucket_span;
-mod remote_write_exemplar;
-mod reset_hint;
-mod sample;
 mod samples_to_proto;
-mod time_series;
 mod to_timeseries;
 mod wire_time_series;
 mod with_name;
-mod write_request;
 
 use bucket_exemplars::bucket_exemplars;
 use bucket_spans_to_proto::bucket_spans_to_proto;
 use encode_write_request::encode_write_request;
-use histogram::Histogram;
 use histograms_to_proto::histograms_to_proto;
-use label::Label;
 use labels_to_proto::labels_to_proto;
 pub use le_label::le_label;
 pub use prometheus_remote_write_sink::PrometheusRemoteWriteSink;
 use push_classic_histogram::push_classic_histogram;
-use remote_write_bucket_span::RemoteWriteBucketSpan;
-use remote_write_exemplar::RemoteWriteExemplar;
-use reset_hint::ResetHint;
-use sample::Sample;
 use samples_to_proto::samples_to_proto;
-use time_series::TimeSeries;
 pub use to_timeseries::to_timeseries;
 pub use wire_time_series::WireTimeSeries;
 use with_name::with_name;
-use write_request::WriteRequest;

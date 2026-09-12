@@ -1181,6 +1181,15 @@ impl<'a> Parser<'a> {
         if self.consume_keyword("keep") {
             return Ok(PipelineStage::KeepLabels(self.parse_label_selection_set()?));
         }
+        if self.consume_keyword("distinct") {
+            self.skip_ws();
+            let mut labels = vec![self.parse_ident()?];
+            while self.consume(",") {
+                self.skip_ws();
+                labels.push(self.parse_ident()?);
+            }
+            return Ok(PipelineStage::Distinct(labels));
+        }
         if self.consume_keyword("unwrap") {
             self.skip_ws();
             return Ok(PipelineStage::Unwrap(self.parse_unwrap_expression()?));
@@ -1238,19 +1247,27 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn parse_unwrap_expression(&mut self) -> Result<UnwrapExpression, ParseError> {
-        if self.consume_keyword("bytes") {
+        let start = self.pos;
+        if self.consume_keyword("bytes") && {
+            self.skip_ws();
+            self.peek() == Some('(')
+        } {
             self.expect('(')?;
             let label = self.parse_ident()?;
             self.expect(')')?;
             return UnwrapExpression::bytes(label);
         }
-        if self.consume_keyword("duration") || self.consume_keyword("duration_seconds") {
+        self.pos = start;
+        if (self.consume_keyword("duration_seconds") || self.consume_keyword("duration")) && {
+            self.skip_ws();
+            self.peek() == Some('(')
+        } {
             self.expect('(')?;
             let label = self.parse_ident()?;
             self.expect(')')?;
             return UnwrapExpression::duration(label);
         }
-
+        self.pos = start;
         UnwrapExpression::new(self.parse_ident()?)
     }
 

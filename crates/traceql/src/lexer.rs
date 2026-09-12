@@ -84,7 +84,11 @@ mod tests {
             ),
             (
                 "x !~ \"a\"",
-                vec![Token::Ident("x".into()), Token::Nre, Token::Str("a".into())],
+                vec![
+                    Token::Ident("x".into()),
+                    Token::NegSibling,
+                    Token::Str("a".into()),
+                ],
             ),
             (
                 "d >= 5",

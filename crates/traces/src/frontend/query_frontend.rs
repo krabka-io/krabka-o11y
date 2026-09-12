@@ -1,3 +1,6 @@
+use futures::StreamExt as _;
+use tokio::sync::mpsc;
+
 use super::{
     Arc, AssignedJob, BackendError, BlockCatalog, FrontendConfig, JobShard, Membership,
     MembershipView, Metrics, MetricsJobRequest, MetricsResponseJson, QuerierBackend,
@@ -202,6 +205,70 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         resp.warnings
             .extend(self.generation_warning(&snapshot, planned_live));
         Ok(resp)
+    }
+
+    /// Stream one cumulative search response whenever a shard completes.
+    ///
+    /// # Errors
+    /// Returns an error when the query cannot be planned or no querier is ready.
+    pub async fn search_stream(
+        &self,
+        tenant: &TenantId,
+        query: &str,
+        start_ns: i64,
+        end_ns: i64,
+        limit: usize,
+        spss: usize,
+    ) -> Result<mpsc::Receiver<Result<SearchResponseJson, BackendError>>, BackendError> {
+        let snapshot = self.ready_pool()?;
+        let (assigned, total_blocks, planned_live) = self
+            .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
+            .await?;
+        let total_jobs = assigned.len() as u64;
+        let backend = Arc::clone(&self.backend);
+        let tenant = tenant.clone();
+        let query = query.to_string();
+        let concurrency = self.cfg.max_concurrency.max(1);
+        let warnings = Self::exclusion_warnings(&snapshot, planned_live);
+        let generation_warning = self.generation_warning(&snapshot, planned_live);
+        let (tx, rx) = mpsc::channel(concurrency);
+        tokio::spawn(async move {
+            let mut jobs = futures::stream::iter(assigned)
+                .map(|job| {
+                    let backend = Arc::clone(&backend);
+                    let request = SearchJobRequest {
+                        tenant: tenant.clone(),
+                        query: query.clone(),
+                        start_ns,
+                        end_ns,
+                        limit,
+                        spss,
+                        shard: job.shard,
+                        querier: job.querier,
+                    };
+                    async move { backend.search_job(&request).await }
+                })
+                .buffer_unordered(concurrency);
+            let mut partials = Vec::new();
+            while let Some(result) = jobs.next().await {
+                match result {
+                    Ok(partial) => partials.push(partial),
+                    Err(error) => {
+                        let _ = tx.send(Err(error)).await;
+                        return;
+                    }
+                }
+                let mut response = merge::merge_search(partials.clone(), limit, spss);
+                response.metrics.total_jobs = total_jobs;
+                response.metrics.total_blocks = total_blocks;
+                response.warnings = warnings.clone();
+                response.warnings.extend(generation_warning.clone());
+                if tx.send(Ok(response)).await.is_err() {
+                    return;
+                }
+            }
+        });
+        Ok(rx)
     }
 
     /// Run a `/api/v2/traces/{id}` by-id lookup, with one job per ready

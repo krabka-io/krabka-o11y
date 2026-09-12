@@ -1325,6 +1325,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-hex"
+version = "1.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33e2a781ebdf4467d1428dc4593067825fb646f6871475098d8577421af73558"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "proptest",
+ "serde_core",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4327,7 +4339,9 @@ dependencies = [
  "assert2",
  "async-trait",
  "datafusion",
+ "futures-util",
  "krabka-blockstore",
+ "krabka-query-frontend",
  "krabka-units",
  "mutants",
  "object 0.40.0",
@@ -4731,6 +4745,7 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-metrics",
  "krabka-observability",
  "krabka-protocol",
  "krabka-telemetry",
@@ -5668,9 +5683,12 @@ version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
 dependencies = [
+ "base64 0.22.1",
+ "const-hex",
  "opentelemetry",
  "opentelemetry_sdk",
  "prost 0.14.4",
+ "serde",
  "tonic",
  "tonic-prost",
 ]

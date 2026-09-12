@@ -1,23 +1,57 @@
+use async_trait::async_trait;
+use krabka_query_frontend::{
+    CacheKey, ExecutionOptions, InMemoryCache, PlannedQuery, QueryFrontend, QueryFrontendAdapter,
+    QueryFrontendError,
+};
+
 use super::{
-    Arc, BTreeMap, EngineOpts, FlameGraph, FlameGraphDiff, Frame, Heatmap, LabelMatcher,
-    LabeledHeatmap, MatchOp, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION,
-    PCOL_VALUE, ProfileError, ProfileStore, ProfileType, Series, SeriesAgg, Time, Tree,
-    bin_heatmap, covering_range, diff_trees, fold_bucket, group_frame_name,
-    heatmap_points_from_totals, merge_scan_to_tree, merge_sql_to_tree,
-    series_buckets_from_stacktrace_selector, series_buckets_from_totals, tree_to_pprof,
-    tree_to_pprof_with_max_nodes, validate_range, validated_step,
+    Arc, BTreeMap, Duration, EngineOpts, FRONTEND_RESULT_CACHE_ENTRIES, FRONTEND_RESULT_CACHE_TTL,
+    FlameGraph, FlameGraphDiff, Frame, Heatmap, LabelMatcher, LabeledHeatmap, MatchOp,
+    NonZeroUsize, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_VALUE,
+    ProfileError, ProfileStore, ProfileType, Series, SeriesAgg, Time, Tree, bin_heatmap,
+    covering_range, diff_trees, fold_bucket, group_frame_name, heatmap_points_from_totals,
+    merge_scan_to_tree, merge_sql_to_tree, series_buckets_from_stacktrace_selector,
+    series_buckets_from_totals, tree_to_pprof, tree_to_pprof_with_max_nodes, validate_range,
+    validated_step,
 };
 
 /// Profiles flamegraph engine.
 pub struct FlameEngine<S: ProfileStore> {
     pub(crate) store: Arc<S>,
     pub(crate) opts: EngineOpts,
+    tree_frontend: QueryFrontend<InMemoryCache<Tree>>,
+    series_frontend: QueryFrontend<InMemoryCache<Vec<Series>>>,
+}
+
+fn frontend_options() -> ExecutionOptions {
+    ExecutionOptions {
+        max_parallelism: NonZeroUsize::new(32).unwrap_or(NonZeroUsize::MIN),
+        max_retries: 0,
+        max_cache_freshness: Duration::ZERO,
+    }
 }
 
 impl<S: ProfileStore> FlameEngine<S> {
     #[must_use]
     pub fn new(store: Arc<S>, opts: EngineOpts) -> Self {
-        Self { store, opts }
+        Self {
+            store,
+            opts,
+            tree_frontend: QueryFrontend::new(
+                InMemoryCache::new_bounded(
+                    FRONTEND_RESULT_CACHE_TTL,
+                    NonZeroUsize::new(FRONTEND_RESULT_CACHE_ENTRIES).unwrap_or(NonZeroUsize::MIN),
+                ),
+                frontend_options(),
+            ),
+            series_frontend: QueryFrontend::new(
+                InMemoryCache::new_bounded(
+                    FRONTEND_RESULT_CACHE_TTL,
+                    NonZeroUsize::new(FRONTEND_RESULT_CACHE_ENTRIES).unwrap_or(NonZeroUsize::MIN),
+                ),
+                frontend_options(),
+            ),
+        }
     }
 
     /// # Errors
@@ -177,21 +211,9 @@ impl<S: ProfileStore> FlameEngine<S> {
                 "sharded stacktrace query requires at least one time range".to_string(),
             ));
         }
-        let mut merged = Tree::new();
-        for (start_ms, end_ms) in ranges {
-            validate_range(*start_ms, *end_ms)?;
-            let tree = self
-                .merge_to_tree(
-                    tenant,
-                    profile_type,
-                    label_selector,
-                    (*start_ms, *end_ms),
-                    None,
-                    &[],
-                )
-                .await?;
-            merged.merge(&tree);
-        }
+        let merged = self
+            .execute_tree_shards(tenant, profile_type, label_selector, ranges, None, &[])
+            .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
         } else {
@@ -216,21 +238,16 @@ impl<S: ProfileStore> FlameEngine<S> {
                 "sharded stacktrace query requires at least one time range".to_string(),
             ));
         }
-        let mut merged = Tree::new();
-        for (start_ms, end_ms) in ranges {
-            validate_range(*start_ms, *end_ms)?;
-            let tree = self
-                .merge_to_tree(
-                    tenant,
-                    profile_type,
-                    label_selector,
-                    (*start_ms, *end_ms),
-                    None,
-                    call_sites,
-                )
-                .await?;
-            merged.merge(&tree);
-        }
+        let merged = self
+            .execute_tree_shards(
+                tenant,
+                profile_type,
+                label_selector,
+                ranges,
+                None,
+                call_sites,
+            )
+            .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
         } else {
@@ -255,27 +272,46 @@ impl<S: ProfileStore> FlameEngine<S> {
                 "sharded stacktrace query requires at least one time range".to_string(),
             ));
         }
-        let mut merged = Tree::new();
-        for (start_ms, end_ms) in ranges {
-            validate_range(*start_ms, *end_ms)?;
-            let tree = self
-                .merge_to_tree(
-                    tenant,
-                    profile_type,
-                    label_selector,
-                    (*start_ms, *end_ms),
-                    None,
-                    call_sites,
-                )
-                .await?;
-            merged.merge(&tree);
-        }
+        let merged = self
+            .execute_tree_shards(
+                tenant,
+                profile_type,
+                label_selector,
+                ranges,
+                None,
+                call_sites,
+            )
+            .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
         } else {
             self.opts.default_max_nodes
         };
         Ok(merged.to_pyroscope_tree_bytes(max_nodes))
+    }
+
+    async fn execute_tree_shards(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        label_selector: &str,
+        ranges: &[(i64, i64)],
+        span_ids: Option<&[u64]>,
+        call_sites: &[String],
+    ) -> Result<Tree, ProfileError> {
+        let adapter = TreeShardAdapter {
+            engine: self,
+            tenant,
+            profile_type,
+            label_selector,
+            ranges,
+            span_ids,
+            call_sites,
+        };
+        self.tree_frontend
+            .execute(&adapter, &())
+            .await
+            .map_err(frontend_error)
     }
 
     pub(crate) async fn merge_to_tree(
@@ -438,33 +474,19 @@ impl<S: ProfileStore> FlameEngine<S> {
                 .await;
         }
 
-        let mut merged: BTreeMap<Vec<(String, String)>, BTreeMap<i64, f64>> = BTreeMap::new();
-        for (start_ms, end_ms) in ranges {
-            let series = self
-                .select_series_with_stack_trace_selector(
-                    query,
-                    group_by,
-                    step,
-                    agg,
-                    (*start_ms, *end_ms),
-                    call_sites,
-                )
-                .await?;
-            for item in series {
-                let points = merged.entry(item.labels).or_default();
-                for (timestamp, value) in item.points {
-                    *points.entry(timestamp).or_default() += value;
-                }
-            }
-        }
-
-        Ok(merged
-            .into_iter()
-            .map(|(labels, points)| Series {
-                labels,
-                points: points.into_iter().collect(),
-            })
-            .collect())
+        let adapter = SeriesShardAdapter {
+            engine: self,
+            query,
+            group_by,
+            step,
+            agg,
+            ranges,
+            call_sites,
+        };
+        self.series_frontend
+            .execute(&adapter, &())
+            .await
+            .map_err(frontend_error)
     }
 
     /// # Errors
@@ -674,21 +696,16 @@ impl<S: ProfileStore> FlameEngine<S> {
                 "sharded span profile query requires at least one time range".to_string(),
             ));
         }
-        let mut merged = Tree::new();
-        for (start_ms, end_ms) in ranges {
-            validate_range(*start_ms, *end_ms)?;
-            let tree = self
-                .merge_to_tree(
-                    tenant,
-                    profile_type,
-                    label_selector,
-                    (*start_ms, *end_ms),
-                    Some(span_selector),
-                    &[],
-                )
-                .await?;
-            merged.merge(&tree);
-        }
+        let merged = self
+            .execute_tree_shards(
+                tenant,
+                profile_type,
+                label_selector,
+                ranges,
+                Some(span_selector),
+                &[],
+            )
+            .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
         } else {
@@ -718,21 +735,16 @@ impl<S: ProfileStore> FlameEngine<S> {
                 "sharded span profile query requires at least one time range".to_string(),
             ));
         }
-        let mut merged = Tree::new();
-        for (start_ms, end_ms) in ranges {
-            validate_range(*start_ms, *end_ms)?;
-            let tree = self
-                .merge_to_tree(
-                    tenant,
-                    profile_type,
-                    label_selector,
-                    (*start_ms, *end_ms),
-                    Some(span_selector),
-                    &[],
-                )
-                .await?;
-            merged.merge(&tree);
-        }
+        let merged = self
+            .execute_tree_shards(
+                tenant,
+                profile_type,
+                label_selector,
+                ranges,
+                Some(span_selector),
+                &[],
+            )
+            .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
         } else {
@@ -805,5 +817,163 @@ impl<S: ProfileStore> FlameEngine<S> {
             });
         }
         Ok(out)
+    }
+}
+
+struct TreeShardAdapter<'a, S: ProfileStore> {
+    engine: &'a FlameEngine<S>,
+    tenant: &'a str,
+    profile_type: &'a str,
+    label_selector: &'a str,
+    ranges: &'a [(i64, i64)],
+    span_ids: Option<&'a [u64]>,
+    call_sites: &'a [String],
+}
+
+#[async_trait]
+impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
+    type Request = ();
+    type Query = (i64, i64);
+    type Output = Tree;
+    type Response = Tree;
+    type Error = ProfileError;
+
+    fn plan(&self, (): &()) -> Result<Vec<PlannedQuery<Self::Query>>, Self::Error> {
+        self.ranges
+            .iter()
+            .copied()
+            .map(|range| {
+                validate_range(range.0, range.1)?;
+                Ok(PlannedQuery {
+                    query: range,
+                    cache_key: CacheKey::new(format!(
+                        "profiles-tree\0{}\0{}\0{}\0{}\0{}\0{:?}\0{:?}",
+                        self.tenant,
+                        self.profile_type,
+                        self.label_selector,
+                        range.0,
+                        range.1,
+                        self.span_ids,
+                        self.call_sites,
+                    )),
+                    end_epoch_millis: range.1,
+                })
+            })
+            .collect()
+    }
+
+    async fn execute(&self, range: &Self::Query) -> Result<Self::Output, Self::Error> {
+        self.engine
+            .merge_to_tree(
+                self.tenant,
+                self.profile_type,
+                self.label_selector,
+                *range,
+                self.span_ids,
+                self.call_sites,
+            )
+            .await
+    }
+
+    fn is_retryable(&self, _error: &Self::Error) -> bool {
+        false
+    }
+
+    fn merge(&self, (): &(), results: Vec<Self::Output>) -> Result<Self::Response, Self::Error> {
+        let mut merged = Tree::new();
+        for tree in results {
+            merged.merge(&tree);
+        }
+        Ok(merged)
+    }
+}
+
+struct SeriesShardAdapter<'a, S: ProfileStore> {
+    engine: &'a FlameEngine<S>,
+    query: (&'a str, &'a str, &'a str),
+    group_by: &'a [String],
+    step: Time,
+    agg: SeriesAgg,
+    ranges: &'a [(i64, i64)],
+    call_sites: &'a [String],
+}
+
+#[async_trait]
+impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
+    type Request = ();
+    type Query = (i64, i64);
+    type Output = Vec<Series>;
+    type Response = Vec<Series>;
+    type Error = ProfileError;
+
+    fn plan(&self, (): &()) -> Result<Vec<PlannedQuery<Self::Query>>, Self::Error> {
+        self.ranges
+            .iter()
+            .copied()
+            .map(|range| {
+                validate_range(range.0, range.1)?;
+                Ok(PlannedQuery {
+                    query: range,
+                    cache_key: CacheKey::new(format!(
+                        "profiles-series\0{}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}",
+                        self.query.0,
+                        self.query.1,
+                        self.query.2,
+                        self.group_by,
+                        self.step,
+                        self.agg,
+                        range.0,
+                        range.1,
+                        self.call_sites,
+                    )),
+                    end_epoch_millis: range.1,
+                })
+            })
+            .collect()
+    }
+
+    async fn execute(&self, range: &Self::Query) -> Result<Self::Output, Self::Error> {
+        self.engine
+            .select_series_with_stack_trace_selector(
+                self.query,
+                self.group_by,
+                self.step,
+                self.agg,
+                *range,
+                self.call_sites,
+            )
+            .await
+    }
+
+    fn is_retryable(&self, _error: &Self::Error) -> bool {
+        false
+    }
+
+    fn merge(&self, (): &(), results: Vec<Self::Output>) -> Result<Self::Response, Self::Error> {
+        let mut merged: BTreeMap<Vec<(String, String)>, BTreeMap<i64, f64>> = BTreeMap::new();
+        for series in results {
+            for item in series {
+                let points = merged.entry(item.labels).or_default();
+                for (timestamp, value) in item.points {
+                    *points.entry(timestamp).or_default() += value;
+                }
+            }
+        }
+        Ok(merged
+            .into_iter()
+            .map(|(labels, points)| Series {
+                labels,
+                points: points.into_iter().collect(),
+            })
+            .collect())
+    }
+}
+
+fn frontend_error(
+    error: QueryFrontendError<ProfileError, std::convert::Infallible>,
+) -> ProfileError {
+    match error {
+        QueryFrontendError::Adapter(error) => error,
+        QueryFrontendError::Cache(never) => match never {},
     }
 }

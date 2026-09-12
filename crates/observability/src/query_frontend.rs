@@ -4,7 +4,7 @@ use crate::{
     QueryFrontendAdapter, QueryFrontendError, QueryKind, QueryParams, SeriesFingerprint, TenantId,
     TimeRange, Value, apply_loki_stream_options, execute_http_query_for_tenant_inner, json,
     loki_direction, merge_loki_query_stats, parse_query, plan_stream_query,
-    transient_object_store_error, validate_loki_interval,
+    populate_loki_query_execution_stats, transient_object_store_error, validate_loki_interval,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +17,7 @@ pub(crate) struct FingerprintBounds {
 struct LogsPlannedQuery {
     params: QueryParams,
     bounds: FingerprintBounds,
+    planned_at: std::time::Instant,
 }
 
 struct LogsQueryFrontendAdapter<'a> {
@@ -93,6 +94,7 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
                     query: LogsPlannedQuery {
                         params,
                         bounds: *bounds,
+                        planned_at: std::time::Instant::now(),
                     },
                     cache_key,
                     end_epoch_millis: range.end_ns.div_euclid(1_000_000),
@@ -103,15 +105,19 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
     }
 
     async fn execute(&self, query: &Self::Query) -> Result<Self::Output, Self::Error> {
+        let started = std::time::Instant::now();
+        let queue_time = started.saturating_duration_since(query.planned_at);
         let state = state_for_bounds(&self.state, self.tenant.as_str(), query.bounds);
-        execute_http_query_for_tenant_inner(
+        let mut result = execute_http_query_for_tenant_inner(
             &state,
             self.tenant,
             &query.params,
             QueryKind::Range,
             self.encoding,
         )
-        .await
+        .await?;
+        populate_loki_query_execution_stats(&mut result, started.elapsed(), queue_time);
+        Ok(result)
     }
 
     fn is_retryable(&self, error: &Self::Error) -> bool {

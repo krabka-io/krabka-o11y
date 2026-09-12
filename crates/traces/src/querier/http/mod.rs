@@ -2220,13 +2220,13 @@ overrides:
     }
 
     #[tokio::test]
-    async fn trace_by_id_v1_honors_json_accept() {
+    async fn trace_by_id_v1_honors_json_accept_with_parameters() {
         let resp = app()
             .oneshot(
                 Request::builder()
                     .uri("/api/traces/09090909090909090909090909090909")
                     .header(TENANT_HEADER, "tenant-a")
-                    .header("accept", "application/json")
+                    .header("accept", "Application/JSON; charset=utf-8")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -4162,6 +4162,7 @@ mod otlp_status;
 mod otlp_traces_data;
 mod otlp_value;
 mod otlp_values;
+mod overrides;
 mod parse_duration_component_ns;
 mod parse_go_duration_ns;
 mod parse_logfmt_tags;
@@ -4194,6 +4195,7 @@ mod search_inner;
 mod search_json;
 mod search_query;
 mod search_span_json;
+mod search_stream;
 mod search_tag_values;
 mod search_tag_values_inner;
 mod search_tag_values_json;
@@ -4295,6 +4297,7 @@ use otlp_status::otlp_status;
 use otlp_traces_data::OtlpTracesData;
 use otlp_value::otlp_value;
 use otlp_values::otlp_values;
+use overrides::overrides;
 use parse_duration_component_ns::parse_duration_component_ns;
 use parse_go_duration_ns::parse_go_duration_ns;
 use parse_logfmt_tags::parse_logfmt_tags;
@@ -4327,6 +4330,7 @@ use search_inner::search_inner;
 use search_json::search_json;
 use search_query::search_query;
 use search_span_json::search_span_json;
+use search_stream::search_stream;
 use search_tag_values::search_tag_values;
 use search_tag_values_inner::search_tag_values_inner;
 use search_tag_values_json::search_tag_values_json;
@@ -4366,5 +4370,5 @@ use traceql_query_error_response::traceql_query_error_response;
 use traceql_tag_field::traceql_tag_field;
 use typed_traceql_value::typed_traceql_value;
 use typed_value_parts::typed_value_parts;
-use wants_json::wants_json;
+pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;

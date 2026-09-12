@@ -53,9 +53,10 @@ impl MetricsGenerator {
                     }
                     return RecordOutcome::Dropped;
                 }
+                let tenant_cfg = cfg.for_tenant(&span.tenant);
                 vacant.insert(TenantState {
-                    span_metrics: SpanMetricsRegistry::new(cfg),
-                    edges: EdgeStore::new(cfg),
+                    span_metrics: SpanMetricsRegistry::new(&tenant_cfg),
+                    edges: EdgeStore::new(&tenant_cfg),
                 })
             }
         };
@@ -91,9 +92,10 @@ impl MetricsGenerator {
                 if at_capacity {
                     return Ok(());
                 }
+                let tenant_cfg = cfg.for_tenant(tenant);
                 vacant.insert(TenantState {
-                    span_metrics: SpanMetricsRegistry::new(cfg),
-                    edges: EdgeStore::new(cfg),
+                    span_metrics: SpanMetricsRegistry::new(&tenant_cfg),
+                    edges: EdgeStore::new(&tenant_cfg),
                 })
             }
         };

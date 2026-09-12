@@ -3,6 +3,7 @@ use super::{
     LokiStreamEntry, StreamPlan, Value, WalLogRecord, append_matching_hot_log_record, json,
     loki_stream_results, sort_loki_stream_values,
 };
+use crate::apply_distinct_to_streams;
 
 /// Builds one tail frame, in the encoding the tail request asked for.
 ///
@@ -24,6 +25,7 @@ pub(crate) fn execute_tail_query_with_frontier_and_deletes(
         append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters);
     }
     sort_loki_stream_values(&mut streams);
+    apply_distinct_to_streams(&mut streams, &plan.query);
 
     json!({ "streams": loki_stream_results(streams, encoding) })
 }

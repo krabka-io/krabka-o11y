@@ -1,7 +1,7 @@
 use super::ConnectionType;
 
 /// A half-edge until both client and server sides arrive.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Edge {
     pub client_service: Option<String>,
     pub server_service: Option<String>,
@@ -10,4 +10,6 @@ pub struct Edge {
     pub failed: bool,
     pub connection_type: ConnectionType,
     pub first_seen_ns: i64,
+    pub labels: Vec<(String, String)>,
+    pub multiplier: f64,
 }

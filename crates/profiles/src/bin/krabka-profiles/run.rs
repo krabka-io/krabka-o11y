@@ -84,7 +84,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 run_query_frontend(cli, metrics, readiness, shutdown, security).await?;
             }
             Target::Compactor => run_compactor(cli, metrics, readiness, shutdown).await?,
-            Target::Symbolizer => run_symbolizer(cli).await?,
+            Target::Symbolizer => run_symbolizer(cli, metrics, shutdown).await?,
             Target::All => run_all(cli, metrics, readiness, shutdown, security).await?,
         }
         Ok::<(), Box<dyn std::error::Error>>(())

@@ -30,6 +30,7 @@ fn span(
         status_message: String::new(),
         service_name: service.into(),
         attributes: Vec::new(),
+        resource_attributes: Vec::new(),
         size: ByteSize::from_bytes(200),
     }
 }

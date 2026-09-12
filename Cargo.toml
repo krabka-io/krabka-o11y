@@ -110,7 +110,7 @@ opentelemetry = { version = "0.32", default-features = false, features = ["trace
 # (opentelemetry 0.32 stack). `gen-tonic` exposes the OTLP gRPC service traits the
 # metrics distributor implements; `gen-tonic-messages` + `trace` serve the traces
 # signal; `tonic-prost` carries the prost codec for tonic 0.14.
-opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "gen-tonic-messages", "metrics", "trace"] }
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "gen-tonic-messages", "metrics", "trace", "with-serde"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "logs"] }
 # `zstd` is the codec `BlockWriter` writes every block with, and it has to be
 # named here. Cargo unions features across the graph, so datafusion's own

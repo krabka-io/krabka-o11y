@@ -1,7 +1,8 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fmt::Write as _,
     marker::PhantomData,
+    num::NonZeroUsize,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -48,7 +49,9 @@ pub trait QueryCache<V>: Send + Sync {
 /// Process-local TTL cache, primarily useful for tests and single-process deployments.
 pub struct InMemoryCache<V> {
     entries: Mutex<BTreeMap<CacheKey, (i64, V)>>,
+    order: Mutex<VecDeque<CacheKey>>,
     ttl: Option<Duration>,
+    max_entries: Option<NonZeroUsize>,
     clock: Arc<dyn Clock>,
 }
 
@@ -56,7 +59,9 @@ impl<V> Default for InMemoryCache<V> {
     fn default() -> Self {
         Self {
             entries: Mutex::new(BTreeMap::new()),
+            order: Mutex::new(VecDeque::new()),
             ttl: None,
+            max_entries: None,
             clock: Arc::new(SystemClock),
         }
     }
@@ -68,6 +73,14 @@ impl<V> InMemoryCache<V> {
         Self {
             ttl: Some(ttl),
             ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn new_bounded(ttl: Duration, max_entries: NonZeroUsize) -> Self {
+        Self {
+            max_entries: Some(max_entries),
+            ..Self::new(ttl)
         }
     }
 
@@ -98,16 +111,36 @@ where
             .is_some_and(|ttl| is_expired(*stored_at_ms, self.clock.now_epoch_millis(), ttl))
         {
             entries.remove(key);
+            self.order
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|candidate| candidate != key);
             return Ok(None);
         }
         Ok(Some(value.clone()))
     }
 
     async fn insert(&self, key: &CacheKey, value: &V) -> Result<(), Self::Error> {
-        self.entries
+        let mut entries = self
+            .entries
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(key.clone(), (self.clock.now_epoch_millis(), value.clone()));
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut order = self
+            .order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !entries.contains_key(key) {
+            while self
+                .max_entries
+                .is_some_and(|limit| entries.len() >= limit.get())
+            {
+                if let Some(oldest) = order.pop_front() {
+                    entries.remove(&oldest);
+                }
+            }
+            order.push_back(key.clone());
+        }
+        entries.insert(key.clone(), (self.clock.now_epoch_millis(), value.clone()));
         Ok(())
     }
 }

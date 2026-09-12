@@ -319,6 +319,7 @@ mod tests {
             status_message: String::new(),
             service_name: "svc".into(),
             attributes: vec![],
+            resource_attributes: vec![],
             size: ByteSize::from_bytes(10),
         }
     }

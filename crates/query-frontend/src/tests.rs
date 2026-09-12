@@ -181,6 +181,20 @@ async fn in_memory_cache_expires_entries_after_ttl() {
 }
 
 #[tokio::test]
+async fn bounded_in_memory_cache_evicts_the_oldest_entry() {
+    let cache = InMemoryCache::new_bounded(Duration::from_mins(1), NonZeroUsize::new(2).unwrap());
+    for id in 0_u8..3 {
+        QueryCache::insert(&cache, &CacheKey::new([id]), &id)
+            .await
+            .unwrap();
+    }
+
+    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new([0])).await == Ok(None));
+    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new([1])).await == Ok(Some(1)));
+    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new([2])).await == Ok(Some(2)));
+}
+
+#[tokio::test]
 async fn fresh_results_are_not_inserted() {
     let clock = Arc::new(ManualClock::default());
     clock.set(1_000);

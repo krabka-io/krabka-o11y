@@ -1,6 +1,6 @@
 //! Flamegraph merge engine.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use arrow::{
     array::AsArray,
@@ -19,6 +19,9 @@ use crate::{
     series::{fold_bucket, step_bucket_ms, validated_step},
     tree_to_pprof, tree_to_pprof_with_max_nodes,
 };
+
+const FRONTEND_RESULT_CACHE_ENTRIES: usize = 256;
+const FRONTEND_RESULT_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[cfg(test)]
 mod tests {

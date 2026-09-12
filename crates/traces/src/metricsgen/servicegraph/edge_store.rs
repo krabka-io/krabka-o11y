@@ -1,4 +1,10 @@
 use super::*;
+use crate::metricsgen::{
+    config::ServiceGraphsConfig,
+    spanmetrics::dim_key::{
+        prometheus_label_name, span_allowed_by_policies, span_attr, span_multiplier,
+    },
+};
 
 /// Bounded, TTL'd service-graph edge store.
 #[derive(Debug)]
@@ -6,6 +12,8 @@ pub struct EdgeStore {
     pub(crate) max_items: usize,
     pub(crate) ttl: Time,
     pub(crate) enable_messaging_latency: bool,
+    pub(crate) peer_attributes: Vec<String>,
+    pub(crate) processor: ServiceGraphsConfig,
     pub(crate) bucket_edges_ns: Vec<f64>,
     pub(crate) edges: HashMap<EdgeKey, Edge>,
     pub(crate) aggregates: HashMap<LabelKey, EdgeAgg>,
@@ -20,6 +28,8 @@ impl EdgeStore {
             max_items: cfg.edge_store_max_items,
             ttl: cfg.edge_ttl,
             enable_messaging_latency: cfg.enable_messaging_system_latency,
+            peer_attributes: cfg.processor.service_graphs.peer_attributes.clone(),
+            processor: cfg.processor.service_graphs.clone(),
             bucket_edges_ns: cfg.histogram_buckets_ns.clone(),
             edges: HashMap::new(),
             aggregates: HashMap::new(),
@@ -32,6 +42,14 @@ impl EdgeStore {
     /// # Panics
     /// Panics if an internal synchronization primitive is poisoned.
     pub fn record_span(&mut self, span: &SpanRecord, now_ns: i64) -> RecordOutcome {
+        if !span_allowed_by_policies(
+            span,
+            &self.processor.include,
+            &self.processor.include_any,
+            &self.processor.exclude,
+        ) {
+            return RecordOutcome::Ignored;
+        }
         let Some(is_client) = edge_side(span.kind) else {
             return RecordOutcome::Ignored;
         };
@@ -47,6 +65,11 @@ impl EdgeStore {
 
         if let Some(edge) = self.edges.get_mut(&key) {
             fill_edge(edge, span, is_client, latency_ns);
+            merge_dimensions(edge, span, is_client, &self.processor);
+            if is_client {
+                edge.multiplier =
+                    span_multiplier(span, self.processor.span_multiplier_key.as_deref());
+            }
             edge.failed |= failed;
             if connection_type != ConnectionType::Unset {
                 edge.connection_type = connection_type;
@@ -56,10 +79,16 @@ impl EdgeStore {
             // is) VirtualNode gets its peer label set regardless of which span
             // carried the signal first.
             let edge_connection_type = edge.connection_type;
-            fill_virtual_node(edge, span, is_client, edge_connection_type);
+            fill_virtual_node(
+                edge,
+                span,
+                is_client,
+                edge_connection_type,
+                &self.peer_attributes,
+            );
             if edge.client_service.is_some() && edge.server_service.is_some() {
                 let edge = self.edges.remove(&key).expect("edge exists after get_mut");
-                self.complete(edge);
+                self.complete(&edge);
                 return RecordOutcome::Completed;
             }
             return RecordOutcome::Recorded;
@@ -68,7 +97,12 @@ impl EdgeStore {
         if self.edges.len() >= self.max_items {
             *self
                 .dropped
-                .entry(label_key_for_span(span, is_client, connection_type))
+                .entry(label_key_for_span(
+                    span,
+                    is_client,
+                    connection_type,
+                    dimensions(span, is_client, &self.processor),
+                ))
                 .or_insert(0.0) += 1.0;
             return RecordOutcome::Dropped;
         }
@@ -81,9 +115,17 @@ impl EdgeStore {
             failed,
             connection_type,
             first_seen_ns: now_ns,
+            labels: dimensions(span, is_client, &self.processor),
+            multiplier: span_multiplier(span, self.processor.span_multiplier_key.as_deref()),
         };
         fill_edge(&mut edge, span, is_client, latency_ns);
-        fill_virtual_node(&mut edge, span, is_client, connection_type);
+        fill_virtual_node(
+            &mut edge,
+            span,
+            is_client,
+            connection_type,
+            &self.peer_attributes,
+        );
         self.edges.insert(key, edge);
         RecordOutcome::Recorded
     }
@@ -153,15 +195,8 @@ impl EdgeStore {
     pub fn drain(&mut self, timestamp_ms: i64) -> Vec<Series> {
         let mut out = Vec::new();
 
-        for ((client, server, connection_type), agg) in self.aggregates.drain() {
-            let labels = sorted_labels(vec![
-                ("client".to_string(), client),
-                ("server".to_string(), server),
-                (
-                    "connection_type".to_string(),
-                    connection_type.as_label().to_string(),
-                ),
-            ]);
+        for (label_key, agg) in self.aggregates.drain() {
+            let labels = service_graph_labels(label_key);
             out.push(counter(
                 "traces_service_graph_request_total",
                 &labels,
@@ -237,35 +272,85 @@ impl EdgeStore {
         out
     }
 
-    pub(crate) fn complete(&mut self, edge: Edge) {
-        let client = edge.client_service.unwrap_or_default();
-        let server = edge.server_service.unwrap_or_default();
+    pub(crate) fn complete(&mut self, edge: &Edge) {
         let bucket_count = self.bucket_edges_ns.len() + 1;
         let agg = self
             .aggregates
-            .entry((client, server, edge.connection_type))
+            .entry(label_key_for_edge(edge))
             .or_insert_with(|| EdgeAgg::new(bucket_count));
-        agg.requests += 1.0;
+        agg.requests += edge.multiplier;
         if edge.failed {
-            agg.failed += 1.0;
+            agg.failed += edge.multiplier;
         }
         if let Some(ns) = edge.client_latency_ns {
-            agg.client_seconds_sum += ns_to_seconds(ns);
-            agg.client_seconds_count += 1.0;
-            observe_latency(&self.bucket_edges_ns, &mut agg.client_bucket_counts, ns);
+            agg.client_seconds_sum += ns_to_seconds(ns) * edge.multiplier;
+            agg.client_seconds_count += edge.multiplier;
+            observe_latency(
+                &self.bucket_edges_ns,
+                &mut agg.client_bucket_counts,
+                ns,
+                edge.multiplier,
+            );
         }
         if let Some(ns) = edge.server_latency_ns {
-            agg.server_seconds_sum += ns_to_seconds(ns);
-            agg.server_seconds_count += 1.0;
-            observe_latency(&self.bucket_edges_ns, &mut agg.server_bucket_counts, ns);
+            agg.server_seconds_sum += ns_to_seconds(ns) * edge.multiplier;
+            agg.server_seconds_count += edge.multiplier;
+            observe_latency(
+                &self.bucket_edges_ns,
+                &mut agg.server_bucket_counts,
+                ns,
+                edge.multiplier,
+            );
         }
         if self.enable_messaging_latency
             && edge.connection_type == ConnectionType::MessagingSystem
             && let Some(ns) = edge.server_latency_ns.or(edge.client_latency_ns)
         {
-            agg.messaging_seconds_sum += ns_to_seconds(ns);
-            agg.messaging_seconds_count += 1.0;
-            observe_latency(&self.bucket_edges_ns, &mut agg.messaging_bucket_counts, ns);
+            agg.messaging_seconds_sum += ns_to_seconds(ns) * edge.multiplier;
+            agg.messaging_seconds_count += edge.multiplier;
+            observe_latency(
+                &self.bucket_edges_ns,
+                &mut agg.messaging_bucket_counts,
+                ns,
+                edge.multiplier,
+            );
         }
     }
+}
+
+fn dimensions(
+    span: &SpanRecord,
+    is_client: bool,
+    config: &ServiceGraphsConfig,
+) -> Vec<(String, String)> {
+    config
+        .dimensions
+        .iter()
+        .filter_map(|name| {
+            let value = span_attr(span, name)?;
+            let name = prometheus_label_name(name);
+            let name = if config.enable_client_server_prefix {
+                format!("{}_{}", if is_client { "client" } else { "server" }, name)
+            } else {
+                name
+            };
+            Some((name, value.to_string()))
+        })
+        .collect()
+}
+
+fn merge_dimensions(
+    edge: &mut Edge,
+    span: &SpanRecord,
+    is_client: bool,
+    config: &ServiceGraphsConfig,
+) {
+    for (name, value) in dimensions(span, is_client, config) {
+        if let Some(existing) = edge.labels.iter_mut().find(|(key, _)| key == &name) {
+            existing.1 = value;
+        } else {
+            edge.labels.push((name, value));
+        }
+    }
+    edge.labels.sort();
 }

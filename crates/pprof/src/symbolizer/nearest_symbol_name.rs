@@ -1,4 +1,4 @@
-use super::{Object, ObjectSymbol};
+use object::{Object as _, ObjectSymbol as _};
 
 pub(crate) fn nearest_symbol_name(object: &object::File<'_>, address: u64) -> Option<String> {
     object

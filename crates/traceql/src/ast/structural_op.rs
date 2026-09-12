@@ -9,6 +9,7 @@ pub enum StructuralOp {
     NegAncestor,
     NegChild,
     NegParent,
+    NegSibling,
     UnionDescendant,
     UnionAncestor,
     UnionChild,

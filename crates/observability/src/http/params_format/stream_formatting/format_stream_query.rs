@@ -8,7 +8,7 @@ pub(crate) fn format_stream_query(query: &StreamQuery) -> String {
             .iter()
             .map(format_label_matcher)
             .collect::<Vec<_>>()
-            .join(",")
+            .join(", ")
     );
     for stage in &query.pipeline {
         if matches!(stage, PipelineStage::LineFilter(_)) {

@@ -31,6 +31,7 @@ pub enum Token {
     NegAnc,
     NegChild,
     NegParent,
+    NegSibling,
     UnionDesc,
     UnionAnc,
     UnionChild,

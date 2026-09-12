@@ -67,19 +67,7 @@ pub(crate) fn format_logql_query(query: &str) -> Result<String, HttpQueryError> 
                             .to_string(),
                     ));
                 }
-                // The legacy formatters above preserve Loki's established
-                // canonical spelling for the expression shapes they support.
-                // The central recursive AST is the typed fallback for nested
-                // expressions those shallow parsers cannot represent.
                 Ok(expression.to_string())
-            // The label_replace and binary arms below are shadowed: for every
-            // query that could be constructed, the dedicated `format_*` branch
-            // above accepts exactly what the corresponding `parse_*` here
-            // does, and returns a reprint rather than falling through. Those
-            // arms therefore stay as permanent mutation survivors. They are
-            // kept because the formatters can decline on their own -- each
-            // gives up if a sub-expression will not format -- and this is the
-            // arm that catches a query when they do.
             } else if parse_metric_label_join_query(query).is_ok()
                 || parse_metric_label_replace_query(query).is_ok()
                 || parse_metric_binary_arithmetic_query(query).is_ok()

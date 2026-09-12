@@ -43,7 +43,7 @@ pub(crate) async fn build_all_stages(
     // probes, ingest happily and answer every query with nothing.
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
         .map_err(|e| format!("object store: {e}"))?;
-    let index_key = configured.object_key(&cli.index_object_key);
+    let index_key = cli.index_object_key.clone();
     let store = configured.store;
     // The gate each of those roles registers for itself when it runs alone,
     // met here by the one store they now share. `/ready` still names all four,
@@ -136,12 +136,10 @@ pub(crate) async fn build_all_stages(
         bind_all_stage_server(cli.listen, door, "profiles all-in-one", &security.server).await?;
     tracing::info!(%bound, "profiles all-in-one ingest and query listening");
 
-    // The plain querier, on a loopback port the kernel picks. Nothing fans out
-    // to it: this crate's query-frontend is a querier with a shard width, not
-    // an HTTP dispatcher, so there is no set of querier addresses to wire and
-    // no upstream behaviour that expects one. It binds anyway because
-    // `--target all` promises to run the role, and a role that answers only
-    // when it is the whole process is a role this composition never tests.
+    // The plain querier binds a loopback port so `--target all` still exercises
+    // the standalone role. The frontend fans range shards through the shared
+    // execution pipeline over the common read store, so it needs no duplicate
+    // HTTP hop in this single-process composition.
     let querier_app = krabka_profiles::query::router(querier_state)
         .merge(krabka_observability::readiness_router(readiness.clone()));
     let (loopback, loopback_stage) = bind_all_stage_server(
@@ -166,7 +164,14 @@ pub(crate) async fn build_all_stages(
     );
     stages.insert(
         RoleKind::Symbolizer,
-        symbolizer_stage(cli.debuginfod_urls.clone(), debuginfod),
+        symbolizer_stage(
+            cli.debuginfod_urls.clone(),
+            debuginfod,
+            Arc::clone(&store),
+            index_key.clone(),
+            cli.index_snapshot_max,
+            cli.index_refresh_interval,
+        ),
     );
     stages.insert(
         RoleKind::Compactor,

@@ -3,6 +3,9 @@ use super::{
     ServiceMetrics, TenantPolicy, TokenBucket, WalSink,
 };
 
+pub(crate) type CumulativeProfileCache =
+    HashMap<(String, Vec<(String, String)>), HashMap<Vec<u32>, i64>>;
+
 pub struct DistributorState {
     pub sink: Arc<dyn WalSink>,
     /// The one place a per-tenant limit is resolved. Every ingest gate reads it
@@ -17,6 +20,7 @@ pub struct DistributorState {
     /// `anonymous` tenant.
     pub tenant_policy: TenantPolicy,
     pub active_series: Mutex<HashMap<String, BTreeSet<u64>>>,
+    pub cumulative_profiles: tokio::sync::Mutex<CumulativeProfileCache>,
     pub ingestion_buckets: Mutex<HashMap<String, Arc<TokenBucket>>>,
     pub relabel: Vec<RelabelConfig>,
     /// Shared raw, Connect, and decompressed request-body limit.
