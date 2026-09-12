@@ -51,7 +51,7 @@ fn stream_merge_groups_labels_deduplicates_and_applies_one_global_limit() {
             "result": [
                 {"stream":{"app":"a"},"values":[["10","a10"],["30","a30"]]},
             ],
-            "stats": {"summary":{"totalBytesProcessed":2}}
+            "stats": {"summary":{"totalBytesProcessed":2,"queueTime":0.1}}
         },
         "warnings": ["one"]
     });
@@ -63,7 +63,7 @@ fn stream_merge_groups_labels_deduplicates_and_applies_one_global_limit() {
                 {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
                 {"stream":{"app":"b"},"values":[["25","b25"]]},
             ],
-            "stats": {"summary":{"totalBytesProcessed":3}}
+            "stats": {"summary":{"totalBytesProcessed":3,"queueTime":0.3}}
         },
         "warnings": ["one", "two"]
     });
@@ -80,6 +80,7 @@ fn stream_merge_groups_labels_deduplicates_and_applies_one_global_limit() {
     check!(merged["data"]["result"][0]["values"] == json!([["30", "a30"], ["20", "a20"]]));
     check!(merged["data"]["result"][1]["values"] == json!([["25", "b25"]]));
     check!(merged["data"]["stats"]["summary"]["totalBytesProcessed"] == json!(5));
+    check!(merged["data"]["stats"]["summary"]["queueTime"] == json!(0.3));
     assert!(merged["warnings"] == json!(["one", "two"]));
 }
 

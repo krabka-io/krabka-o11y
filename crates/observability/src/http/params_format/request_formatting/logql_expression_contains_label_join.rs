@@ -9,6 +9,9 @@ pub(crate) fn logql_expression_contains_label_join(expression: &LogqlExpr) -> bo
         }
         | LogqlExpr::Sort {
             expr: expression, ..
+        }
+        | LogqlExpr::Selection {
+            expr: expression, ..
         } => logql_expression_contains_label_join(expression),
         LogqlExpr::Arithmetic { left, right, .. }
         | LogqlExpr::Comparison { left, right, .. }

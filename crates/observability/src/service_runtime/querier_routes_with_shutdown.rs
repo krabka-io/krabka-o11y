@@ -7,7 +7,7 @@ use super::{
     spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller,
     spawn_wal_hot_tail_connect_and_poll,
 };
-use crate::RoleReadiness;
+use crate::{RoleReadiness, spawn_logs_ruler};
 
 /// The querier's read routes, and the tasks that keep them able to answer.
 ///
@@ -152,5 +152,6 @@ pub(crate) async fn querier_routes_with_shutdown(
         }
     }
     state = state.with_metrics(metrics);
+    background_tasks.push(("logs ruler", spawn_logs_ruler(state.clone(), token)));
     Ok((loki_query_routes(state), background_tasks))
 }

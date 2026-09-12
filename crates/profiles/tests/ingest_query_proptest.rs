@@ -180,6 +180,7 @@ fn arb_ingest_query() -> impl Strategy<Value = IngestQuery> {
         .prop_map(
             |(name, labels, format, sample_rate, units, from_ms, until_ms, spy_name)| IngestQuery {
                 name: name.to_owned(),
+                profile_type_suffix: None,
                 labels: labels
                     .into_iter()
                     .map(|(key, value)| (key.to_owned(), value.to_owned()))
@@ -190,6 +191,7 @@ fn arb_ingest_query() -> impl Strategy<Value = IngestQuery> {
                 from_ms,
                 until_ms,
                 spy_name: spy_name.to_owned(),
+                jfr_event: String::new(),
             },
         )
 }

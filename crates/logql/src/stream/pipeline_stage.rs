@@ -12,6 +12,7 @@ pub enum PipelineStage {
     LabelFormat(LabelFormat),
     DropLabels(LabelSelectionSet),
     KeepLabels(LabelSelectionSet),
+    Distinct(Vec<String>),
     Unwrap(UnwrapExpression),
     FieldFilter(FieldFilter),
     FieldFilterChain(FieldFilterChain),
@@ -61,6 +62,7 @@ impl PipelineStage {
                 labels.apply_keep(fields);
                 true
             }
+            Self::Distinct(_) => true,
             Self::Unwrap(unwrap) => {
                 unwrap.apply(fields);
                 true

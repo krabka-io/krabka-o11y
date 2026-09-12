@@ -1,8 +1,8 @@
 //! Object-store backed cold-block `ProfileStore`.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    sync::{Arc, RwLock},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use arrow::{

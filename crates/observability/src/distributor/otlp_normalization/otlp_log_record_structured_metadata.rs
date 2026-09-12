@@ -25,5 +25,23 @@ pub(crate) fn otlp_log_record_structured_metadata(
             .filter(|severity_text| !severity_text.is_empty())
             .cloned(),
     )?;
+    insert_metadata_if_absent(
+        &mut metadata,
+        "trace_id",
+        log_record
+            .trace_id
+            .as_ref()
+            .filter(|id| !id.is_empty())
+            .cloned(),
+    )?;
+    insert_metadata_if_absent(
+        &mut metadata,
+        "span_id",
+        log_record
+            .span_id
+            .as_ref()
+            .filter(|id| !id.is_empty())
+            .cloned(),
+    )?;
     Ok(metadata)
 }

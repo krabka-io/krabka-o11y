@@ -1,6 +1,9 @@
 //! Deduplicated on-block symbol DB artifact.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_wincode::SerdeCompat;
@@ -9,6 +12,7 @@ use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
 use crate::{
     error::ProfileError,
     frame::{Frame, SymbolSource},
+    symbolizer::{NativeResolver, SymbolizeRequest},
 };
 
 #[cfg(test)]

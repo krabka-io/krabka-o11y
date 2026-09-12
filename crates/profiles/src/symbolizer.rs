@@ -2,10 +2,12 @@
 
 use std::sync::Arc;
 
+use krabka_blockstore::ProfileIndex;
 use krabka_pprof::{
     ChainedResolver, DebuginfodConfig, DebuginfodResolver, FileSystemResolver, NativeResolver,
     NativeSymbol, SymbolizeRequest,
 };
+use object_store::{ObjectStore, path::Path};
 
 #[cfg(test)]
 mod tests {
@@ -62,12 +64,16 @@ mod address_fallback_resolver;
 mod build_label;
 mod native_resolver_from_debuginfod_config;
 mod native_resolver_from_debuginfod_urls;
+mod offline_resolver_from_debuginfod_config;
 mod run;
 mod run_with_config;
+mod symbolize_blocks_once;
 
 pub use address_fallback_resolver::AddressFallbackResolver;
 use build_label::build_label;
 pub use native_resolver_from_debuginfod_config::native_resolver_from_debuginfod_config;
 pub use native_resolver_from_debuginfod_urls::native_resolver_from_debuginfod_urls;
+pub use offline_resolver_from_debuginfod_config::offline_resolver_from_debuginfod_config;
 pub use run::run;
 pub use run_with_config::run_with_config;
+pub use symbolize_blocks_once::symbolize_blocks_once;

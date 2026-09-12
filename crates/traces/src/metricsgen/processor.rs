@@ -49,6 +49,7 @@ mod tests {
             status_message: String::new(),
             service_name: service.into(),
             attributes: vec![],
+            resource_attributes: vec![],
             size: ByteSize::from_bytes(10),
         }
     }

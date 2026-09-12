@@ -237,6 +237,7 @@ mod tests {
             ("{ .a = 1 } !<< { .b = 2 }", StructuralOp::NegAncestor),
             ("{ .a = 1 } !> { .b = 2 }", StructuralOp::NegChild),
             ("{ .a = 1 } !< { .b = 2 }", StructuralOp::NegParent),
+            ("{ .a = 1 } !~ { .b = 2 }", StructuralOp::NegSibling),
             ("{ .a = 1 } &>> { .b = 2 }", StructuralOp::UnionDescendant),
             ("{ .a = 1 } &<< { .b = 2 }", StructuralOp::UnionAncestor),
             ("{ .a = 1 } &> { .b = 2 }", StructuralOp::UnionChild),

@@ -31,7 +31,7 @@ pub(crate) async fn run_querier(
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
         .map_err(|e| format!("object store: {e}"))?;
     object_store_gate.mark_ready();
-    let index_key = configured.object_key(&cli.index_object_key);
+    let index_key = cli.index_object_key.clone();
     let read = build_profile_read_path(
         &cli,
         configured.store,

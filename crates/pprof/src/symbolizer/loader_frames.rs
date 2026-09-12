@@ -1,7 +1,6 @@
 use super::NativeSymbol;
 
-pub(crate) fn loader_frames(path: &std::path::Path, address: u64) -> Option<Vec<NativeSymbol>> {
-    let loader = addr2line::Loader::new(path).ok()?;
+pub(crate) fn loader_frames(loader: &addr2line::Loader, address: u64) -> Option<Vec<NativeSymbol>> {
     let mut frames = loader.find_frames(address).ok()?;
     let mut out = Vec::new();
     while let Some(frame) = frames.next().ok()? {

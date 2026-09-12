@@ -1,60 +1,23 @@
 use crate::{
-    ComparisonOp, MetricQuery, MetricScalarArithmeticOp, RangeAggregation, format_loki_duration_ns,
-    format_loki_offset_duration_ns, format_metric_vector_arithmetic_expression,
-    format_metric_vector_binary_expression, format_quantile, format_range_aggregation_name,
-    format_scalar_vector_expression, format_stream_query, format_vector_aggregation_query,
-    format_vector_function_text, format_vector_grouping, format_vector_label_replace_function,
-    parse_logql_string_argument, parse_metric_label_replace_query, parse_metric_query,
-    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
-    parse_scalar_sample, split_leading_vector_binary_modifiers, split_logql_function_arguments,
+    MetricQuery, RangeAggregation, format_loki_duration_ns, format_loki_offset_duration_ns,
+    format_quantile, format_range_aggregation_name, format_stream_query,
+    format_vector_aggregation_query, format_vector_grouping,
 };
 
-mod format_label_replace_metric_scalar_expression;
-mod format_label_replace_metric_vector_expression;
 mod format_logql_quoted_string;
-mod format_loki_vector_expression;
-mod format_metric_label_replace_query;
 mod format_metric_query;
 mod format_metric_range_aggregation_query;
 mod format_metric_range_selector;
-mod format_metric_scalar_arithmetic_expression;
-mod format_metric_scalar_arithmetic_operator;
-mod format_metric_scalar_comparison_expression;
-mod format_metric_scalar_comparison_operator;
-mod format_metric_scalar_vector_expression;
-mod format_metric_vector_comparison_expression;
-mod format_metric_vector_set_expression;
-mod format_mixed_metric_vector_expression;
-mod format_scalar_text;
-mod format_simple_metric_query;
-mod format_sort_vector_expression;
 mod has_word_boundary;
-mod indent_logql_lines;
 mod split_top_level_arithmetic_query;
 mod split_top_level_comparison_query;
 mod split_top_level_set_query;
 
-pub(crate) use format_label_replace_metric_scalar_expression::format_label_replace_metric_scalar_expression;
-pub(crate) use format_label_replace_metric_vector_expression::format_label_replace_metric_vector_expression;
 pub(crate) use format_logql_quoted_string::format_logql_quoted_string;
-pub(crate) use format_loki_vector_expression::format_loki_vector_expression;
-pub(crate) use format_metric_label_replace_query::format_metric_label_replace_query;
 pub(crate) use format_metric_query::format_metric_query;
 pub(crate) use format_metric_range_aggregation_query::format_metric_range_aggregation_query;
 pub(crate) use format_metric_range_selector::format_metric_range_selector;
-pub(crate) use format_metric_scalar_arithmetic_expression::format_metric_scalar_arithmetic_expression;
-pub(crate) use format_metric_scalar_arithmetic_operator::format_metric_scalar_arithmetic_operator;
-pub(crate) use format_metric_scalar_comparison_expression::format_metric_scalar_comparison_expression;
-pub(crate) use format_metric_scalar_comparison_operator::format_metric_scalar_comparison_operator;
-pub(crate) use format_metric_scalar_vector_expression::format_metric_scalar_vector_expression;
-pub(crate) use format_metric_vector_comparison_expression::format_metric_vector_comparison_expression;
-pub(crate) use format_metric_vector_set_expression::format_metric_vector_set_expression;
-pub(crate) use format_mixed_metric_vector_expression::format_mixed_metric_vector_expression;
-pub(crate) use format_scalar_text::format_scalar_text;
-pub(crate) use format_simple_metric_query::format_simple_metric_query;
-pub(crate) use format_sort_vector_expression::format_sort_vector_expression;
 pub(crate) use has_word_boundary::has_word_boundary;
-pub(crate) use indent_logql_lines::indent_logql_lines;
 pub(crate) use split_top_level_arithmetic_query::split_top_level_arithmetic_query;
 pub(crate) use split_top_level_comparison_query::split_top_level_comparison_query;
 pub(crate) use split_top_level_set_query::split_top_level_set_query;

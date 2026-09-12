@@ -6,7 +6,7 @@ use krabka_units::convert::ByteSizeExt as _;
 use num_traits::ToPrimitive as _;
 
 use crate::metricsgen::{
-    config::MetricsGenConfig,
+    config::{MetricsGenConfig, SpanMetricsConfig},
     contract::{SpanKind, SpanRecord, StatusCode},
     series::{Exemplar, Series, SeriesSample, sorted_labels},
     servicegraph::RecordOutcome,
@@ -89,6 +89,7 @@ mod tests {
             status_message: String::new(),
             service_name: service.into(),
             attributes: vec![],
+            resource_attributes: vec![],
             size: ByteSize::from_bytes(size),
         }
     }
@@ -258,6 +259,35 @@ mod tests {
             .unwrap();
         check!(counter.labels.is_empty());
         check!((discarded(&out) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn target_info_carries_the_resource_identity() {
+        let cfg = MetricsGenConfig {
+            enable_target_info: true,
+            ..MetricsGenConfig::default()
+        };
+        let mut reg = SpanMetricsRegistry::new(&cfg);
+        let mut span = ok_span("api", "GET /x");
+        span.resource_attributes = vec![
+            ("deployment.environment".into(), "prod".into()),
+            ("service.instance.id".into(), "api-1".into()),
+        ];
+        reg.record_span(&span);
+
+        let out = reg.drain(1_000);
+        let target = out
+            .iter()
+            .find(|series| series.name == "traces_target_info")
+            .unwrap();
+        check!(
+            target.labels
+                == vec![
+                    ("deployment_environment".into(), "prod".into()),
+                    ("service".into(), "api".into()),
+                    ("service_instance_id".into(), "api-1".into()),
+                ]
+        );
     }
 
     /// Zero is Tempo's spelling of "no cap", and it must not read as "admit
@@ -542,7 +572,7 @@ mod tests {
 }
 
 mod dim_entry;
-mod dim_key;
+pub(crate) mod dim_key;
 mod dimension_labels;
 mod duration_as_f64;
 mod latency_histogram;
@@ -552,7 +582,7 @@ mod span_metrics_registry;
 mod status_dim;
 
 use dim_entry::DimEntry;
-use dim_key::{DimKey, dim_key};
+use dim_key::{DimKey, dim_key, prometheus_label_name, span_allowed, span_multiplier};
 pub use dimension_labels::dimension_labels;
 use duration_as_f64::duration_as_f64;
 use latency_histogram::LatencyHistogram;

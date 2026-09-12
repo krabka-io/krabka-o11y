@@ -21,6 +21,9 @@ pub(crate) async fn run_metrics_generator(
     } else {
         MetricsGenConfig::default()
     };
+    if let Some(path) = &cli.traces_limits_overrides_config {
+        cfg.apply_runtime_overrides(&std::fs::read_to_string(path)?)?;
+    }
     apply_metrics_generator_cli_overrides(&mut cfg, &cli);
 
     let consumer = wal_consumer(

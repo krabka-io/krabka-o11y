@@ -1,79 +1,26 @@
 use krabka_logql::{LogqlExpr, parse_logql_expr};
 
 use crate::{
-    Bytes, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
-    MetricVectorGroupModifier, MetricVectorMatching, decode_form_component,
-    format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
-    format_metric_label_replace_query, format_metric_query,
-    format_metric_scalar_arithmetic_expression, format_metric_scalar_arithmetic_operator,
-    format_metric_scalar_comparison_expression, format_metric_scalar_comparison_operator,
-    format_metric_vector_comparison_expression, format_metric_vector_set_expression,
-    format_scalar_vector_expression, format_simple_metric_query, format_sort_vector_expression,
-    format_stream_query, format_vector_function_text, indent_logql_lines,
-    parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
-    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
-    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
-    parse_query, scalar_vector_expression_result, scalar_vector_plain_parse_error,
-    split_query_param_pairs, split_top_level_arithmetic_query, split_top_level_comparison_query,
-    split_top_level_set_query,
+    Bytes, HttpQueryError, decode_form_component, format_metric_query, format_stream_query,
+    scalar_vector_plain_parse_error, split_query_param_pairs,
 };
 
 mod execute_format_query;
 mod form_body_query;
-mod format_binary_operator_line;
-mod format_label_replace_metric_binary_arithmetic;
-mod format_label_replace_metric_binary_comparison;
-mod format_label_replace_metric_binary_expression;
-mod format_label_replace_metric_binary_operand;
-mod format_label_replace_metric_binary_set;
 mod format_logql_query;
-mod format_metric_binary_arithmetic_query;
-mod format_metric_binary_comparison_query;
-mod format_metric_binary_expression;
-mod format_metric_binary_set_operator;
-mod format_metric_binary_set_query;
-mod format_metric_vector_arithmetic_expression;
-mod format_metric_vector_binary_expression;
-mod format_metric_vector_group_modifier;
-mod format_metric_vector_group_modifier_text;
-mod format_metric_vector_matching;
-mod format_metric_vector_matching_text;
-mod formatted_metric_vector_matching;
 mod label_join_format_query_error;
 mod logql_expression_contains_label_join;
 mod parse_format_query_param;
 mod post_query_params;
 mod post_query_params_body_first;
-mod split_leading_vector_binary_modifiers;
 mod split_leading_vector_group_modifier;
-mod split_leading_vector_matching_modifier;
 
 pub(crate) use execute_format_query::execute_format_query;
 pub(crate) use form_body_query::form_body_query;
-pub(crate) use format_binary_operator_line::format_binary_operator_line;
-pub(crate) use format_label_replace_metric_binary_arithmetic::format_label_replace_metric_binary_arithmetic;
-pub(crate) use format_label_replace_metric_binary_comparison::format_label_replace_metric_binary_comparison;
-pub(crate) use format_label_replace_metric_binary_expression::format_label_replace_metric_binary_expression;
-pub(crate) use format_label_replace_metric_binary_operand::format_label_replace_metric_binary_operand;
-pub(crate) use format_label_replace_metric_binary_set::format_label_replace_metric_binary_set;
 pub(crate) use format_logql_query::format_logql_query;
-pub(crate) use format_metric_binary_arithmetic_query::format_metric_binary_arithmetic_query;
-pub(crate) use format_metric_binary_comparison_query::format_metric_binary_comparison_query;
-pub(crate) use format_metric_binary_expression::format_metric_binary_expression;
-pub(crate) use format_metric_binary_set_operator::format_metric_binary_set_operator;
-pub(crate) use format_metric_binary_set_query::format_metric_binary_set_query;
-pub(crate) use format_metric_vector_arithmetic_expression::format_metric_vector_arithmetic_expression;
-pub(crate) use format_metric_vector_binary_expression::format_metric_vector_binary_expression;
-pub(crate) use format_metric_vector_group_modifier::format_metric_vector_group_modifier;
-pub(crate) use format_metric_vector_group_modifier_text::format_metric_vector_group_modifier_text;
-pub(crate) use format_metric_vector_matching::format_metric_vector_matching;
-pub(crate) use format_metric_vector_matching_text::format_metric_vector_matching_text;
-pub(crate) use formatted_metric_vector_matching::FormattedMetricVectorMatching;
 pub(crate) use label_join_format_query_error::label_join_format_query_error;
 use logql_expression_contains_label_join::logql_expression_contains_label_join;
 pub(crate) use parse_format_query_param::parse_format_query_param;
 pub(crate) use post_query_params::post_query_params;
 pub(crate) use post_query_params_body_first::post_query_params_body_first;
-pub(crate) use split_leading_vector_binary_modifiers::split_leading_vector_binary_modifiers;
 pub(crate) use split_leading_vector_group_modifier::split_leading_vector_group_modifier;
-pub(crate) use split_leading_vector_matching_modifier::split_leading_vector_matching_modifier;

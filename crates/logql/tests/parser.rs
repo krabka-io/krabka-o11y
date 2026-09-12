@@ -2857,6 +2857,33 @@ fn parses_sum_over_time_unwrap_duration_metric_query() {
 }
 
 #[test]
+fn a_conversion_name_without_parentheses_is_an_unwrap_label() {
+    let query =
+        parse_metric_query(r#"sum_over_time({app="api"} | logfmt | unwrap duration [30s])"#)
+            .unwrap();
+
+    assert2::assert!(
+        query.stream.pipeline
+            == vec![
+                PipelineStage::Parser(ParserStage::Logfmt),
+                PipelineStage::Unwrap(UnwrapExpression::new("duration").unwrap()),
+            ]
+    );
+}
+
+#[test]
+fn parses_distinct_labels() {
+    let query = parse_query(r#"{app="api"} | logfmt | distinct method, status"#).unwrap();
+    assert2::assert!(
+        query.pipeline
+            == vec![
+                PipelineStage::Parser(ParserStage::Logfmt),
+                PipelineStage::Distinct(vec!["method".into(), "status".into()]),
+            ]
+    );
+}
+
+#[test]
 fn parses_sum_over_time_unwrap_duration_seconds_metric_query() {
     let query = parse_metric_query(
         r#"sum_over_time({app="api"} | logfmt | unwrap duration_seconds(latency) | __error__ = "" [30s])"#,
@@ -3402,6 +3429,14 @@ fn parses_sort_desc_vector_aggregation_metric_query() {
                 offset_ns: OffsetNanos(0),
             }
     );
+}
+
+#[test]
+fn parses_selection_over_nested_vector_aggregation() {
+    let query = r#"topk(1, sum by (app) (count_over_time({app=~".+"}[1m])))"#;
+    let expression = parse_logql_expr(query).unwrap();
+
+    check!(expression.to_string() == query);
 }
 
 #[test]

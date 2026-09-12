@@ -88,14 +88,14 @@ use krabka_client_producer::{
 use krabka_logql::{
     ComparisonOp, FieldFilter, FieldFilterExpression, FieldFilterLogicOp, FieldValue,
     LabelFormatAssignment, LabelFormatValue, LabelSelectionMatcher, LabelSelectionSet, LineFilter,
-    LineFilterOp, LogfmtParserConfig, MatchOp, MetricBinaryArithmetic, MetricBinaryComparison,
-    MetricBinarySet, MetricBinarySetOp, MetricLabelJoin, MetricQuery, MetricScalarArithmetic,
-    MetricScalarArithmeticOp, MetricScalarComparison, MetricVectorGroupModifier,
-    MetricVectorMatching, ParseError, ParserStage, PipelineStage, PlanError, Quantile,
-    RangeAggregation, StreamPlan, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion,
-    VectorAggregation, VectorAggregationOp, VectorGrouping, parse_metric_binary_arithmetic_query,
-    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
-    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
+    LineFilterOp, LogfmtParserConfig, LogqlExpr, MatchOp, MetricBinaryArithmetic,
+    MetricBinaryComparison, MetricBinarySet, MetricBinarySetOp, MetricLabelJoin, MetricQuery,
+    MetricScalarArithmetic, MetricScalarArithmeticOp, MetricScalarComparison,
+    MetricVectorGroupModifier, MetricVectorMatching, ParseError, ParserStage, PipelineStage,
+    PlanError, Quantile, RangeAggregation, StreamPlan, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL,
+    UnwrapConversion, VectorAggregation, VectorAggregationOp, VectorGrouping, parse_logql_expr,
+    parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
+    parse_metric_binary_set_query, parse_metric_label_replace_query, parse_metric_query,
     parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
     plan_stream_query,
 };
@@ -136,6 +136,7 @@ use tokio::{
 pub use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use crate::http::response::query_stats::populate_loki_query_execution_stats;
 use crate::metrics::ServiceMetrics;
 
 mod compactor;
@@ -209,6 +210,7 @@ pub use querier::{
 pub(crate) use query_frontend::{execute_index_shards_query, execute_logs_query_frontend};
 pub use readiness::{DRAINING_GATE, ReadinessGate, RoleReadiness, readiness_router, ready};
 pub use role::RoleKind;
+pub(crate) use ruler::spawn_logs_ruler;
 pub use service::{
     ActiveLogDeleteFilterError, ClientResourcePolicy, LogDeleteRequestStoreError,
     LokiRuleStoreError, ServiceDependencies, ServiceStatus, SharedLogDeleteRequests, run,
@@ -342,22 +344,12 @@ pub(crate) use self::{
                 split_logql_function_arguments,
             },
             metric_formatting::{
-                format_label_replace_metric_scalar_expression,
-                format_label_replace_metric_vector_expression, format_logql_quoted_string,
-                format_metric_label_replace_query, format_metric_query,
-                format_metric_scalar_arithmetic_expression,
-                format_metric_scalar_arithmetic_operator,
-                format_metric_scalar_comparison_expression,
-                format_metric_scalar_comparison_operator,
-                format_metric_vector_comparison_expression, format_metric_vector_set_expression,
-                format_simple_metric_query, format_sort_vector_expression, indent_logql_lines,
-                split_top_level_arithmetic_query, split_top_level_comparison_query,
-                split_top_level_set_query,
+                format_logql_quoted_string, format_metric_query, split_top_level_arithmetic_query,
+                split_top_level_comparison_query, split_top_level_set_query,
             },
             request_formatting::{
-                execute_format_query, form_body_query, format_metric_vector_arithmetic_expression,
-                format_metric_vector_binary_expression, post_query_params,
-                post_query_params_body_first, split_leading_vector_binary_modifiers,
+                execute_format_query, form_body_query, post_query_params,
+                post_query_params_body_first, split_leading_vector_group_modifier,
             },
             stream_formatting::{
                 format_stream_query, parse_formatted_vector_function,
@@ -403,10 +395,10 @@ pub(crate) use self::{
             },
             record_matching::{
                 QueryRow, append_matching_hot_log_record, append_matching_hot_metric_record,
-                append_matching_metric_row, is_deleted_log_entry, matching_loki_stream_entry,
-                parse_decimal_sample_literal, parse_metric_sample_value,
-                should_insert_unknown_detected_level, sort_loki_stream_values,
-                structured_metadata_value,
+                append_matching_metric_row, apply_distinct_to_streams, is_deleted_log_entry,
+                matching_loki_stream_entry, parse_decimal_sample_literal,
+                parse_metric_sample_value, should_insert_unknown_detected_level,
+                sort_loki_stream_values, structured_metadata_value,
             },
             sample_windows::{
                 FormattedMetricSeries, METRIC_DECIMAL_SCALE, MetricSamples, MetricValue,
@@ -439,18 +431,14 @@ pub(crate) use self::{
             binary_sets::{
                 apply_metric_binary_set_to_loki_result,
                 apply_metric_scalar_arithmetic_to_loki_result,
-                apply_metric_scalar_comparison_to_loki_result, default_metric_range_step,
-                execute_http_metric_range_query, include_metric_group_labels,
-                metric_scalar_arithmetic_value, metric_scalar_comparison_matches,
-                metric_series_labels, metric_vector_group_modifier, metric_vector_matching_key,
+                apply_metric_scalar_comparison_to_loki_result, apply_metric_selection,
+                apply_scalar_arithmetic_to_loki_result, apply_scalar_comparison_to_loki_result,
+                default_metric_range_step, execute_http_metric_range_query,
+                include_metric_group_labels, metric_scalar_arithmetic_value,
+                metric_scalar_comparison_matches, metric_series_labels,
+                metric_vector_group_modifier, metric_vector_matching_key,
             },
-            execution::{
-                execute_http_label_replace_metric_binary_expression,
-                execute_http_metric_expression_query,
-                execute_http_metric_vector_arithmetic_expression,
-                execute_http_metric_vector_comparison_expression,
-                execute_http_metric_vector_set_expression, execute_http_sort_vector_expression,
-            },
+            execution::normalize_loki_vector_sample_timestamps_to_seconds,
             expression_parser::ScalarComparisonOp,
             expressions::{
                 LabelReplaceMetricBinaryExpression, MetricVectorArithmeticExpression,
@@ -485,9 +473,10 @@ pub(crate) use self::{
                 validate_query_string_bytes_limit,
             },
             validation::{
-                VectorScalarExpressionParser, apply_label_join_to_loki_result,
-                apply_label_replace_to_loki_result, reject_signed_vector_function_literal,
-                scalar_vector_plain_parse_error, scalar_vector_query_is_vector,
+                VectorScalarExpressionParser, apply_label_join_fields,
+                apply_label_join_to_loki_result, apply_label_replace_to_loki_result,
+                reject_signed_vector_function_literal, scalar_vector_plain_parse_error,
+                scalar_vector_query_is_vector,
             },
         },
         scan::{

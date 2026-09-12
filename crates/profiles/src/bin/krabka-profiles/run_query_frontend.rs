@@ -8,14 +8,8 @@ use super::{
 };
 
 /// Answers a query by splitting its range into `--query-frontend-shard-width`
-/// shards and merging what each returns.
-///
-/// This role is a querier with a sharded execution strategy, not an HTTP fan-
-/// out: it reads the same blocks and tails the same WAL as a querier does, and
-/// there is no set of querier addresses for it to dispatch to. That is why it
-/// registers the same two gates a querier does and why `--target all` has
-/// nothing to wire between the two read roles. So it also has no outbound
-/// call that needs the `--internal-client-*` credential.
+/// shards, executing them through the shared bounded fan-out and result-cache
+/// pipeline, and merging what each returns.
 ///
 /// `security` sets the TLS and authentication of `--listen`, and the TLS and
 /// SASL of the WAL tail.
@@ -39,7 +33,7 @@ pub(crate) async fn run_query_frontend(
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
         .map_err(|e| format!("object store: {e}"))?;
     object_store_gate.mark_ready();
-    let index_key = configured.object_key(&cli.index_object_key);
+    let index_key = cli.index_object_key.clone();
     let read = build_profile_read_path(
         &cli,
         configured.store,

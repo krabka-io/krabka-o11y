@@ -19,6 +19,7 @@ pub(crate) fn encode_write_request(rows: &[WireTimeSeries]) -> Result<Vec<u8>, S
                 histograms: histograms_to_proto(row),
             })
             .collect(),
+        ..Default::default()
     };
 
     let mut protobuf = Vec::with_capacity(request.encoded_len());

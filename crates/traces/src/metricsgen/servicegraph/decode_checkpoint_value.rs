@@ -19,6 +19,22 @@ pub(crate) fn decode_checkpoint_value(mut buf: &[u8]) -> Result<Edge, Checkpoint
     let server_service = get_optional_string(&mut buf)?;
     let client_latency_ns = get_optional_i64(&mut buf)?;
     let server_latency_ns = get_optional_i64(&mut buf)?;
+    let (multiplier, labels) = if buf.is_empty() {
+        (1.0, Vec::new())
+    } else {
+        if buf.len() < 12 {
+            return Err(CheckpointCodecError::Truncated);
+        }
+        let multiplier = buf.get_f64();
+        let count = buf.get_u32();
+        let mut labels = Vec::new();
+        for _ in 0..count {
+            let name = get_optional_string(&mut buf)?.ok_or(CheckpointCodecError::Truncated)?;
+            let value = get_optional_string(&mut buf)?.ok_or(CheckpointCodecError::Truncated)?;
+            labels.push((name, value));
+        }
+        (multiplier, labels)
+    };
     Ok(Edge {
         client_service,
         server_service,
@@ -27,5 +43,7 @@ pub(crate) fn decode_checkpoint_value(mut buf: &[u8]) -> Result<Edge, Checkpoint
         failed,
         connection_type,
         first_seen_ns,
+        labels,
+        multiplier,
     })
 }

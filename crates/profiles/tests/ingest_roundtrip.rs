@@ -215,6 +215,7 @@ fn distributor_state(sink: Arc<KafkaSink>) -> Arc<DistributorState> {
         overrides: OverridesProvider::new(Limits::default()),
         tenant_policy: TenantPolicy::anonymous(),
         active_series: std::sync::Mutex::default(),
+        cumulative_profiles: tokio::sync::Mutex::default(),
         ingestion_buckets: std::sync::Mutex::default(),
         relabel: Vec::new(),
         max_decompressed: krabka_units::mebibytes(16),

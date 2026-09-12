@@ -25,6 +25,7 @@ pub(crate) fn structural_predicate_sql(op: StructuralOp) -> String {
         | StructuralOp::NegAncestor
         | StructuralOp::NegChild
         | StructuralOp::NegParent
+        | StructuralOp::NegSibling
         | StructuralOp::UnionDescendant
         | StructuralOp::UnionAncestor
         | StructuralOp::UnionChild

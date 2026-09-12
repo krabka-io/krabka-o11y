@@ -1,4 +1,22 @@
-use super::{DEFAULT_LATENCY_BUCKETS_NS, Deserialize, Serialize, Time, secs};
+use super::{
+    DEFAULT_LATENCY_BUCKETS_NS, Deserialize, HashMap, ProcessorConfig, Serialize, Time, secs,
+};
+
+#[derive(Deserialize)]
+struct RuntimeOverrides {
+    #[serde(default)]
+    overrides: HashMap<String, TenantOverride>,
+}
+
+#[derive(Deserialize)]
+struct TenantOverride {
+    metrics_generator: Option<TenantMetricsGenerator>,
+}
+
+#[derive(Deserialize)]
+struct TenantMetricsGenerator {
+    processor: ProcessorConfig,
+}
 
 /// Metrics-generator runtime configuration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -43,6 +61,9 @@ pub struct MetricsGenConfig {
     pub enable_status_message: bool,
     pub enable_messaging_system_latency: bool,
     pub remote_write_url: String,
+    pub processor: ProcessorConfig,
+    /// Per-tenant processor settings, over the process defaults above.
+    pub overrides: HashMap<String, ProcessorConfig>,
 }
 
 impl Default for MetricsGenConfig {
@@ -59,6 +80,35 @@ impl Default for MetricsGenConfig {
             enable_status_message: false,
             enable_messaging_system_latency: false,
             remote_write_url: "http://localhost:9009/api/v1/push".to_string(),
+            processor: ProcessorConfig::default(),
+            overrides: HashMap::new(),
         }
+    }
+}
+
+impl MetricsGenConfig {
+    #[must_use]
+    pub fn for_tenant(&self, tenant: &str) -> Self {
+        let mut config = self.clone();
+        if let Some(processor) = self.overrides.get(tenant) {
+            config.processor = processor.clone();
+        }
+        config.overrides.clear();
+        config
+    }
+
+    /// Read processor overrides from the same runtime file as trace limits.
+    pub fn apply_runtime_overrides(&mut self, yaml: &str) -> Result<(), serde_yaml::Error> {
+        let file = serde_yaml::from_str::<RuntimeOverrides>(yaml)?;
+        self.overrides = file
+            .overrides
+            .into_iter()
+            .filter_map(|(tenant, value)| {
+                value
+                    .metrics_generator
+                    .map(|config| (tenant, config.processor))
+            })
+            .collect();
+        Ok(())
     }
 }

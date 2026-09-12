@@ -1,101 +1,98 @@
 use super::{
-    HttpQueryError, format_label_replace_metric_binary_arithmetic,
-    format_label_replace_metric_binary_comparison, format_label_replace_metric_binary_set,
-    format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
-    format_metric_binary_arithmetic_query, format_metric_binary_comparison_query,
-    format_metric_binary_set_query, format_metric_label_replace_query, format_metric_query,
-    format_metric_scalar_arithmetic_expression, format_metric_scalar_comparison_expression,
-    format_metric_vector_arithmetic_expression, format_metric_vector_comparison_expression,
-    format_metric_vector_set_expression, format_scalar_vector_expression,
-    format_sort_vector_expression, format_stream_query, label_join_format_query_error,
-    logql_expression_contains_label_join, parse_logql_expr, parse_metric_binary_arithmetic_query,
-    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
-    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
-    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
-    scalar_vector_expression_result, scalar_vector_plain_parse_error,
+    HttpQueryError, LogqlExpr, format_metric_query, format_stream_query,
+    label_join_format_query_error, logql_expression_contains_label_join, parse_logql_expr,
+    scalar_vector_plain_parse_error,
 };
 
 pub(crate) fn format_logql_query(query: &str) -> Result<String, HttpQueryError> {
+    if query.trim() == "{" {
+        return Err(HttpQueryError::LokiFormatPlainParse(
+            "parse error at line 1: expected label name".to_string(),
+        ));
+    }
     if let Some(error) = scalar_vector_plain_parse_error(query) {
         return Err(HttpQueryError::LokiFormatPlainParse(error));
     }
     if let Some(error) = label_join_format_query_error(query) {
         return Err(HttpQueryError::LokiFormatPlainParse(error));
     }
-
-    match parse_query(query) {
-        Ok(query) => Ok(format_stream_query(&query)),
-        Err(stream_error) => {
-            if let Some(formatted) = format_scalar_vector_expression(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_label_replace_metric_binary_arithmetic(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_label_replace_metric_binary_comparison(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_label_replace_metric_binary_set(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_binary_arithmetic_query(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_binary_comparison_query(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_binary_set_query(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_vector_arithmetic_expression(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_vector_comparison_expression(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_vector_set_expression(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_scalar_arithmetic_expression(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_scalar_comparison_expression(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_metric_label_replace_query(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_label_replace_metric_scalar_expression(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_label_replace_metric_vector_expression(query) {
-                Ok(formatted)
-            } else if let Some(formatted) = format_sort_vector_expression(query) {
-                Ok(formatted)
-            } else if let Ok(metric_query) = parse_metric_query(query) {
-                Ok(format_metric_query(&metric_query).unwrap_or_else(|| query.trim().to_string()))
-            } else if let Ok(expression) = parse_logql_expr(query) {
-                if logql_expression_contains_label_join(&expression) {
-                    return Err(HttpQueryError::LokiFormatPlainParse(
-                        "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER"
-                            .to_string(),
-                    ));
-                }
-                // The legacy formatters above preserve Loki's established
-                // canonical spelling for the expression shapes they support.
-                // The central recursive AST is the typed fallback for nested
-                // expressions those shallow parsers cannot represent.
-                Ok(expression.to_string())
-            // The label_replace and binary arms below are shadowed: for every
-            // query that could be constructed, the dedicated `format_*` branch
-            // above accepts exactly what the corresponding `parse_*` here
-            // does, and returns a reprint rather than falling through. Those
-            // arms therefore stay as permanent mutation survivors. They are
-            // kept because the formatters can decline on their own -- each
-            // gives up if a sub-expression will not format -- and this is the
-            // arm that catches a query when they do.
-            } else if parse_metric_label_join_query(query).is_ok()
-                || parse_metric_label_replace_query(query).is_ok()
-                || parse_metric_binary_arithmetic_query(query).is_ok()
-                || parse_metric_binary_comparison_query(query).is_ok()
-                || parse_metric_binary_set_query(query).is_ok()
-                || parse_metric_scalar_arithmetic_query(query).is_ok()
-                || parse_metric_scalar_comparison_query(query).is_ok()
-                || scalar_vector_expression_result(query).is_some()
-            {
-                Ok(query.trim().to_string())
-            } else {
-                Err(HttpQueryError::LokiFormatParse {
-                    query: query.to_string(),
-                    source: stream_error,
-                })
-            }
+    let expression = parse_logql_expr(query).map_err(|source| HttpQueryError::LokiFormatParse {
+        query: query.to_string(),
+        source,
+    })?;
+    if logql_expression_contains_label_join(&expression) {
+        return Err(HttpQueryError::LokiFormatPlainParse(
+            "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER".to_string(),
+        ));
+    }
+    Ok(match &expression {
+        LogqlExpr::Stream { query, .. } => format_stream_query(query),
+        LogqlExpr::Metric { query, .. } => {
+            format_metric_query(query).unwrap_or_else(|| expression.to_string())
         }
+        LogqlExpr::Vector(inner) => eval_scalar(inner)
+            .map(|value| format!("vector({value:.6})"))
+            .unwrap_or_else(|| expression.to_string()),
+        LogqlExpr::Comparison { left, right, .. }
+            if direct_range_metric(left) && eval_scalar(right).is_some() =>
+        {
+            format!("({expression})")
+        }
+        _ if eval_scalar(&expression).is_some() => eval_scalar(&expression)
+            .expect("guard established a scalar")
+            .to_string(),
+        LogqlExpr::Arithmetic { left, right, .. }
+        | LogqlExpr::Comparison { left, right, .. }
+        | LogqlExpr::Set { left, right, .. }
+            if metric_expression(left) && metric_expression(right) =>
+        {
+            format!("({expression})")
+        }
+        _ => expression.to_string(),
+    })
+}
+
+fn direct_range_metric(expression: &LogqlExpr) -> bool {
+    matches!(expression, LogqlExpr::Metric { query, .. } if query.vector_aggregation.is_none())
+}
+
+fn metric_expression(expression: &LogqlExpr) -> bool {
+    match expression {
+        LogqlExpr::Metric { .. } => true,
+        LogqlExpr::Vector(inner)
+        | LogqlExpr::Sort { expr: inner, .. }
+        | LogqlExpr::Selection { expr: inner, .. }
+        | LogqlExpr::LabelReplace { expr: inner, .. }
+        | LogqlExpr::LabelJoin { expr: inner, .. } => metric_expression(inner),
+        LogqlExpr::Arithmetic { left, right, .. }
+        | LogqlExpr::Comparison { left, right, .. }
+        | LogqlExpr::Set { left, right, .. } => metric_expression(left) || metric_expression(right),
+        LogqlExpr::Stream { .. } | LogqlExpr::Scalar(_) => false,
+    }
+}
+
+fn eval_scalar(expression: &LogqlExpr) -> Option<f64> {
+    use krabka_logql::MetricScalarArithmeticOp;
+    match expression {
+        LogqlExpr::Scalar(value) => value.parse().ok(),
+        LogqlExpr::Arithmetic {
+            left,
+            op,
+            matching: None,
+            right,
+        } => {
+            let left = eval_scalar(left)?;
+            let right = eval_scalar(right)?;
+            Some(match op {
+                MetricScalarArithmeticOp::Add => left + right,
+                MetricScalarArithmeticOp::Subtract => left - right,
+                MetricScalarArithmeticOp::Multiply => left * right,
+                MetricScalarArithmeticOp::Divide => left / right,
+                MetricScalarArithmeticOp::Modulo => left % right,
+                MetricScalarArithmeticOp::Power => left.powf(right),
+            })
+            .filter(|value| value.is_finite())
+        }
+        _ => None,
     }
 }

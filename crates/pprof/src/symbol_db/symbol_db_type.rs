@@ -1,7 +1,8 @@
 use super::{
-    Cow, Deserialize, EMPTY_STACKTRACE_ID, Frame, FunctionRec, HashMap, LineRec, LocationRec,
-    MappingRec, Partition, ProfileError, RawLocation, SerdeCompat, Serialize, SymbolSource,
-    TreeNode, WincodeDeserialize, WincodeSerialize, drop_go_type_parameters, remap_index,
+    Cow, Deserialize, EMPTY_STACKTRACE_ID, Frame, FunctionRec, HashMap, HashSet, LineRec,
+    LocationRec, MappingRec, MappingSymbolization, NativeResolver, Partition, ProfileError,
+    RawLocation, SerdeCompat, Serialize, SymbolSource, SymbolizeRequest, TreeNode,
+    WincodeDeserialize, WincodeSerialize, drop_go_type_parameters, remap_index,
 };
 
 /// Deduplicated symbol database for a profile block.
@@ -309,6 +310,95 @@ impl SymbolDb {
             current = node.parent;
         }
         locations
+    }
+
+    /// Resolve every location that does not already carry function metadata.
+    /// Returns the number of locations updated.
+    pub fn symbolize_native(&mut self, resolver: &dyn NativeResolver) -> usize {
+        let pending = self
+            .locations
+            .iter()
+            .enumerate()
+            .filter(|(_, location)| location.lines.is_empty())
+            .filter_map(|(location_index, location)| {
+                let mapping = self.mappings.get(location.mapping_id as usize)?;
+                (!mapping.symbolization.has_functions()).then(|| {
+                    (
+                        location_index,
+                        location.mapping_id,
+                        SymbolizeRequest {
+                            build_id: self.string(mapping.build_id).to_string(),
+                            filename: self.string(mapping.filename).to_string(),
+                            address: location.address.saturating_sub(mapping.memory_start)
+                                + mapping.file_offset,
+                        },
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut resolved_mappings = HashSet::new();
+        let mut updated = 0;
+        for (location_index, mapping_id, request) in pending {
+            let Some(symbols) = resolver.symbolize(&request) else {
+                continue;
+            };
+            let lines = symbols
+                .into_iter()
+                .map(|symbol| {
+                    let name = self.intern_string(&symbol.function);
+                    let filename = self.intern_string(&symbol.file);
+                    let function_id = self.intern_function(FunctionRec {
+                        name,
+                        system_name: name,
+                        filename,
+                        start_line: 0,
+                    });
+                    LineRec {
+                        function_id,
+                        line: symbol.line,
+                    }
+                })
+                .collect::<Vec<_>>();
+            if lines.is_empty() {
+                continue;
+            }
+            self.locations[location_index].lines = lines;
+            resolved_mappings.insert(mapping_id);
+            updated += 1;
+        }
+        for mapping_id in resolved_mappings {
+            if let Some(mapping) = self.mappings.get_mut(mapping_id as usize) {
+                mapping.symbolization = MappingSymbolization::from_parts((true, true, true, true));
+            }
+        }
+        if updated != 0 {
+            self.rebuild_indexes();
+        }
+        updated
+    }
+
+    /// Object identities needed by locations that still have no functions.
+    #[must_use]
+    pub fn pending_native_symbols(&self) -> Vec<SymbolizeRequest> {
+        let mut requests = self
+            .locations
+            .iter()
+            .filter(|location| location.lines.is_empty())
+            .filter_map(|location| {
+                let mapping = self.mappings.get(location.mapping_id as usize)?;
+                (!mapping.symbolization.has_functions()).then(|| SymbolizeRequest {
+                    build_id: self.string(mapping.build_id).to_string(),
+                    filename: self.string(mapping.filename).to_string(),
+                    address: location.address.saturating_sub(mapping.memory_start)
+                        + mapping.file_offset,
+                })
+            })
+            .collect::<Vec<_>>();
+        requests.sort_by(|a, b| {
+            (&a.build_id, &a.filename, a.address).cmp(&(&b.build_id, &b.filename, b.address))
+        });
+        requests.dedup();
+        requests
     }
 
     #[must_use]

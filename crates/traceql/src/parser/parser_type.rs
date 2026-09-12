@@ -528,7 +528,7 @@ impl Parser {
             Token::Child => ComparisonOp::Gt,
             Token::Gte => ComparisonOp::Gte,
             Token::Re => ComparisonOp::Re,
-            Token::Nre => ComparisonOp::Nre,
+            Token::Nre | Token::NegSibling => ComparisonOp::Nre,
             _ => return None,
         };
         self.pos += 1;
@@ -546,6 +546,7 @@ impl Parser {
             Token::NegAnc => StructuralOp::NegAncestor,
             Token::NegChild => StructuralOp::NegChild,
             Token::NegParent => StructuralOp::NegParent,
+            Token::NegSibling => StructuralOp::NegSibling,
             Token::UnionDesc => StructuralOp::UnionDescendant,
             Token::UnionAnc => StructuralOp::UnionAncestor,
             Token::UnionChild => StructuralOp::UnionChild,

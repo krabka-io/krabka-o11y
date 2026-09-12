@@ -3,7 +3,8 @@ use krabka_units::{ByteSize, convert::ByteSizeExt as _};
 
 use super::{
     BlockStoreGates, CancellationToken, Cli, ProcessSecurity, ServiceMetrics, SharedObjectStore,
-    SocketAddr, build_trace_index_catalog, frontend, frontend_config_from_cli,
+    SocketAddr, build_trace_index_catalog, frontend, frontend_config_from_cli, limits_from_cli,
+    load_traces_limits_overrides_config,
 };
 
 pub(crate) async fn run_query_frontend(
@@ -15,7 +16,11 @@ pub(crate) async fn run_query_frontend(
     security: &ProcessSecurity,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr: SocketAddr = cli.listen.parse()?;
-    let cfg = frontend_config_from_cli(&cli, addr)?;
+    let mut cfg = frontend_config_from_cli(&cli, addr)?;
+    cfg.overrides = load_traces_limits_overrides_config(
+        cli.traces_limits_overrides_config.as_deref(),
+        limits_from_cli(&cli),
+    )?;
     // The catalog is built before the listener binds; `querier-membership` is
     // the gate that keeps moving after it, and `frontend::run_query_frontend`
     // registers that one.

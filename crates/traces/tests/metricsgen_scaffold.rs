@@ -19,6 +19,7 @@ fn metricsgen_contract_exposes_wal_projection() {
         status_message: String::new(),
         service_name: "checkout".into(),
         attributes: vec![("http.method".into(), "GET".into())],
+        resource_attributes: vec![("deployment.environment".into(), "prod".into())],
         size: ByteSize::from_bytes(128),
     };
 

@@ -8,19 +8,13 @@ use super::{
 /// # Errors
 /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
 pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, ProfilesError> {
-    let name = raw
+    let default_name = raw
         .labels
         .get("__name__")
         .filter(|name| !name.is_empty())
         .ok_or_else(|| ProfilesError::Invalid("missing __name__".to_string()))?
         .to_string();
     let (period_type, period_unit) = raw.profile.period_type_strings();
-    if period_type.is_empty() || period_unit.is_empty() {
-        return Err(ProfilesError::Decode(
-            "profile period_type is missing or invalid".to_string(),
-        ));
-    }
-
     let sample_types = raw.profile.sample_types();
     let timestamp_ns = raw.profile.inner().time_nanos;
     let location_refs = raw
@@ -44,27 +38,8 @@ pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, Profi
             )));
         }
 
-        let profile_type = ProfileType {
-            name: name.clone(),
-            sample_type: sample_type.clone(),
-            sample_unit: sample_unit.clone(),
-            period_type: period_type.clone(),
-            period_unit: period_unit.clone(),
-            delta: raw.delta,
-        }
-        .to_string();
-
-        let mut labels = raw.labels.clone();
-        labels.insert("__profile_type__", profile_type.clone());
-        labels.insert("__period_type__", period_type.clone());
-        labels.insert("__period_unit__", period_unit.clone());
-        labels.insert("__type__", sample_type.clone());
-        labels.insert("__unit__", sample_unit.clone());
-        if let Some(service_name) = raw.labels.get("service_name") {
-            labels.insert("__service_name__", service_name.to_string());
-        }
-
-        let mut groups = BTreeMap::<Vec<(String, String)>, (Labels, Vec<DecodedSample>)>::new();
+        let mut groups =
+            BTreeMap::<Vec<(String, String)>, (Labels, String, Vec<DecodedSample>)>::new();
         for (sample_idx, sample) in raw.profile.samples().iter().enumerate() {
             let value = sample
                 .value
@@ -97,12 +72,41 @@ pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, Profi
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let sample_label = |wanted: &str| {
+                sample.label.iter().find_map(|label| {
+                    (raw.profile.string(label.key) == Some(wanted))
+                        .then(|| raw.profile.string(label.str))
+                        .flatten()
+                })
+            };
+            let name = sample_label("__name__").unwrap_or(&default_name);
+            let sample_period_type = sample_label("__period_type__").unwrap_or(&period_type);
+            let sample_period_unit = sample_label("__period_unit__").unwrap_or(&period_unit);
+            let profile_type = ProfileType {
+                name: name.to_string(),
+                sample_type: sample_type.clone(),
+                sample_unit: sample_unit.clone(),
+                period_type: sample_period_type.to_string(),
+                period_unit: sample_period_unit.to_string(),
+                delta: raw.delta,
+            }
+            .to_string();
+            let mut labels = raw.labels.clone();
+            labels.insert("__name__", name.to_string());
+            labels.insert("__profile_type__", profile_type.clone());
+            labels.insert("__period_type__", sample_period_type.to_string());
+            labels.insert("__period_unit__", sample_period_unit.to_string());
+            labels.insert("__type__", sample_type.clone());
+            labels.insert("__unit__", sample_unit.clone());
+            if let Some(service_name) = raw.labels.get("service_name") {
+                labels.insert("__service_name__", service_name.to_string());
+            }
             let sample_labels = labels_with_sample_labels(&labels, &raw.profile, sample);
             let key = labels_key(&sample_labels);
             groups
                 .entry(key)
-                .or_insert((sample_labels, Vec::new()))
-                .1
+                .or_insert((sample_labels, profile_type, Vec::new()))
+                .2
                 .push(DecodedSample {
                     stacktrace_location_refs,
                     value,
@@ -115,9 +119,9 @@ pub fn split_sample_types(raw: &RawProfile) -> Result<Vec<DecodedProfile>, Profi
         out.extend(
             groups
                 .into_values()
-                .map(|(labels, samples)| DecodedProfile {
+                .map(|(labels, profile_type, samples)| DecodedProfile {
                     labels,
-                    profile_type: profile_type.clone(),
+                    profile_type,
                     samples,
                 }),
         );

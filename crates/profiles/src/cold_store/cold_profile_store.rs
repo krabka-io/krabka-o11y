@@ -1,11 +1,12 @@
 use super::{
     AddressFallbackResolver, Arc, AsArray, BTreeMap, BTreeSet, ChainedResolver, CompositeSymbols,
-    DebuginfodConfig, DebuginfodResolver, ExternalPartition, FileSystemResolver, Int64Type,
-    LabelMatcher, LazySymbolizer, LocalPartition, MemTable, NativeResolver, ObjectStore,
-    ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfileError, ProfileIndex, ProfileScan,
-    ProfileStats, ProfileStore, RecordBatch, RwLock, SeriesFingerprint, SessionContext, SymbolDb,
-    UInt64Type, batch_fingerprints_overlap, block_partition_map, filter_and_remap_batch,
-    is_unbounded_metadata_range, local_native_resolver, profile_samples_schema,
+    DebuginfodConfig, DebuginfodResolver, ExternalPartition, FileSystemResolver, HashMap,
+    Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, MemTable, Mutex, NativeResolver,
+    ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfileError, ProfileIndex,
+    ProfileScan, ProfileStats, ProfileStore, RecordBatch, RwLock, SeriesFingerprint,
+    SessionContext, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
+    block_partition_map, filter_and_remap_batch, is_unbounded_metadata_range,
+    local_native_resolver, profile_samples_schema,
 };
 
 #[derive(Clone)]
@@ -18,6 +19,7 @@ pub struct ColdProfileStore {
     // inner `Arc` out and never hold the guard across an await.
     pub(crate) index: Arc<RwLock<Arc<ProfileIndex>>>,
     pub(crate) resolver: Arc<ChainedResolver>,
+    pub(crate) symdb_cache: Arc<Mutex<(HashMap<String, Arc<SymbolDb>>, VecDeque<String>)>>,
 }
 
 impl ColdProfileStore {
@@ -27,6 +29,7 @@ impl ColdProfileStore {
             store,
             index: Arc::new(RwLock::new(index)),
             resolver: local_native_resolver(),
+            symdb_cache: Arc::default(),
         }
     }
 
@@ -65,6 +68,7 @@ impl ColdProfileStore {
             store,
             index: Arc::new(RwLock::new(index)),
             resolver: Arc::new(ChainedResolver::new(resolvers)),
+            symdb_cache: Arc::default(),
         })
     }
 
@@ -346,6 +350,16 @@ impl ColdProfileStore {
     }
 
     pub(crate) async fn load_symdb(&self, block_key: &str) -> Result<SymbolDb, ProfileError> {
+        if let Some(symbols) = self
+            .symdb_cache
+            .lock()
+            .expect("symbol cache lock poisoned")
+            .0
+            .get(block_key)
+            .cloned()
+        {
+            return Ok((*symbols).clone());
+        }
         let key = format!("{block_key}.symdb");
         let bytes = self
             .store
@@ -355,7 +369,20 @@ impl ColdProfileStore {
             .bytes()
             .await
             .map_err(|err| ProfileError::Store(err.to_string()))?;
-        SymbolDb::decode(&bytes)
+        let symbols = SymbolDb::decode(&bytes)?;
+        let mut cache = self.symdb_cache.lock().expect("symbol cache lock poisoned");
+        if !cache.0.contains_key(block_key) {
+            while cache.0.len() >= 128 {
+                if let Some(oldest) = cache.1.pop_front() {
+                    cache.0.remove(&oldest);
+                }
+            }
+            cache
+                .0
+                .insert(block_key.to_string(), Arc::new(symbols.clone()));
+            cache.1.push_back(block_key.to_string());
+        }
+        Ok(symbols)
     }
 
     pub(crate) async fn load_block_batches(

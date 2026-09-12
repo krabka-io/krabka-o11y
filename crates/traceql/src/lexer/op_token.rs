@@ -18,7 +18,7 @@ pub(crate) fn op_token(s: &str) -> Option<(Token, usize)> {
         (">=", Token::Gte),
         ("<=", Token::Lte),
         ("=~", Token::Re),
-        ("!~", Token::Nre),
+        ("!~", Token::NegSibling),
         ("!=", Token::Neq),
     ] {
         if s.starts_with(raw) {

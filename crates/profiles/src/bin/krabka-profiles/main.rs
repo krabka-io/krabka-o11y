@@ -45,7 +45,7 @@ use krabka_units::{
 };
 #[cfg(test)]
 use krabka_units::{mebibytes, secs};
-use object_store::{ObjectStore, path::Path as ObjectPath};
+use object_store::ObjectStore;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]

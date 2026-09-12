@@ -33,6 +33,12 @@ pub enum LogqlExpr {
         expr: Box<LogqlExpr>,
         descending: bool,
     },
+    Selection {
+        expr: Box<LogqlExpr>,
+        limit: u64,
+        largest: bool,
+        approximate: bool,
+    },
     Arithmetic {
         left: Box<LogqlExpr>,
         op: MetricScalarArithmeticOp,
@@ -134,6 +140,23 @@ impl LogqlExpr {
                 expr.format_at(f, 0, false)?;
                 write!(f, ")")?;
             }
+            Self::Selection {
+                expr,
+                limit,
+                largest,
+                approximate,
+            } => {
+                let name = if *approximate {
+                    "approx_topk"
+                } else if *largest {
+                    "topk"
+                } else {
+                    "bottomk"
+                };
+                write!(f, "{name}({limit},")?;
+                expr.format_at(f, 0, false)?;
+                write!(f, ")")?;
+            }
             Self::LabelReplace {
                 expr,
                 destination_label,
@@ -145,7 +168,7 @@ impl LogqlExpr {
                 expr.format_at(f, 0, false)?;
                 write!(
                     f,
-                    ", {}, {}, {}, {})",
+                    ",{},{},{},{})",
                     Quoted(destination_label),
                     Quoted(replacement),
                     Quoted(source_label),
@@ -160,9 +183,9 @@ impl LogqlExpr {
             } => {
                 write!(f, "label_join(")?;
                 expr.format_at(f, 0, false)?;
-                write!(f, ", {}, {}", Quoted(destination_label), Quoted(separator))?;
+                write!(f, ",{},{}", Quoted(destination_label), Quoted(separator))?;
                 for label in source_labels {
-                    write!(f, ", {}", Quoted(label))?;
+                    write!(f, ",{}", Quoted(label))?;
                 }
                 write!(f, ")")?;
             }

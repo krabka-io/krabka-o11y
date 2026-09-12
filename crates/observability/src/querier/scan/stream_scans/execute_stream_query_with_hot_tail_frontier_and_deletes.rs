@@ -2,7 +2,8 @@ use super::{
     ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, FsPath, LabelIndex, Labels,
     LokiStreamEncoding, LokiStreamEntry, QueryError, SessionContext, StreamPlan, Value,
     WalLogRecord, append_matching_hot_log_record, append_matching_log_batches,
-    loki_streams_response, register_log_blocks, sort_loki_stream_values, stream_plan_scan_sql,
+    apply_distinct_to_streams, loki_streams_response, register_log_blocks, sort_loki_stream_values,
+    stream_plan_scan_sql,
 };
 
 pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes(
@@ -28,6 +29,7 @@ pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes(
         append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters);
     }
     sort_loki_stream_values(&mut streams);
+    apply_distinct_to_streams(&mut streams, &plan.query);
 
     Ok(loki_streams_response(streams, encoding))
 }

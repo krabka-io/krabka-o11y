@@ -16,6 +16,7 @@ pub mod metricsgen;
 pub mod querier;
 mod readiness;
 pub mod span;
+mod tempo_query_routes;
 pub mod wal;
 pub mod wire;
 

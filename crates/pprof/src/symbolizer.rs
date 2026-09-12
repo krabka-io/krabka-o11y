@@ -12,7 +12,6 @@ use krabka_units::{
     convert::{ByteSizeExt as _, TimeExt as _},
     mebibytes, secs,
 };
-use object::{Object, ObjectSymbol};
 use refined_type::{Refined, rule::GreaterU64};
 
 use crate::{Frame, RawLocation, SymbolDb, SymbolSource};
@@ -54,6 +53,19 @@ mod tests {
         ] {
             assert!(result.is_err());
         }
+    }
+
+    #[test]
+    fn artifact_cache_evicts_by_bytes_and_expires_negative_entries() {
+        let mut cache = ArtifactCache::new(3, std::time::Duration::from_secs(60));
+        cache.insert("aa".into(), None);
+        cache.insert("bb".into(), None);
+        assert!(cache.get("aa").is_none());
+        assert!(matches!(cache.get("bb"), Some(None)));
+
+        let mut cache = ArtifactCache::new(10, std::time::Duration::ZERO);
+        cache.insert("missing".into(), None);
+        assert!(cache.get("missing").is_none());
     }
 
     struct FixedResolver {
@@ -234,7 +246,8 @@ mod tests {
                 .any(|frame| frame.function.contains("object_symbol_anchor"))
         );
         let exe_path = std::env::current_exe().unwrap();
-        let exe_has_file_line_dwarf = loader_frames(&exe_path, address)
+        let loader = addr2line::Loader::new(&exe_path).unwrap();
+        let exe_has_file_line_dwarf = loader_frames(&loader, address)
             .is_some_and(|frames| frames.iter().any(is_object_symbol_anchor_location));
         if !exe_has_file_line_dwarf {
             return;
@@ -614,6 +627,7 @@ mod tests {
     }
 }
 
+mod artifact_cache;
 mod chained_resolver;
 mod content_length_within_cap;
 mod debuginfod_config;
@@ -625,18 +639,20 @@ mod file_system_resolver;
 mod is_valid_build_id;
 mod lazy_symbolizer;
 mod loader_frames;
-mod loader_frames_from_bytes;
 mod lock_recover;
 mod native_resolver;
 mod native_symbol;
+#[cfg(test)]
 mod nearest_symbol_name;
 mod object_symbol_resolver;
+#[cfg(test)]
 mod parse_object_guarded;
 mod read_capped;
 mod read_capped_reader;
 mod symbolize_request;
 mod validate_positive_timeout;
 
+use artifact_cache::ArtifactCache;
 pub use chained_resolver::ChainedResolver;
 use content_length_within_cap::content_length_within_cap;
 pub use debuginfod_config::DebuginfodConfig;
@@ -648,12 +664,13 @@ pub use file_system_resolver::FileSystemResolver;
 use is_valid_build_id::is_valid_build_id;
 pub use lazy_symbolizer::LazySymbolizer;
 use loader_frames::loader_frames;
-use loader_frames_from_bytes::loader_frames_from_bytes;
 use lock_recover::lock_recover;
 pub use native_resolver::NativeResolver;
 pub use native_symbol::NativeSymbol;
+#[cfg(test)]
 use nearest_symbol_name::nearest_symbol_name;
 pub use object_symbol_resolver::ObjectSymbolResolver;
+#[cfg(test)]
 use parse_object_guarded::parse_object_guarded;
 use read_capped::read_capped;
 use read_capped_reader::read_capped_reader;

@@ -10,6 +10,7 @@ use crate::{
 mod append_matching_hot_log_record;
 mod append_matching_hot_metric_record;
 mod append_matching_metric_row;
+mod apply_distinct_to_streams;
 mod is_deleted_log_entry;
 mod label_format_destinations;
 mod matching_loki_metric_sample;
@@ -26,6 +27,7 @@ mod structured_metadata_value;
 pub(crate) use append_matching_hot_log_record::append_matching_hot_log_record;
 pub(crate) use append_matching_hot_metric_record::append_matching_hot_metric_record;
 pub(crate) use append_matching_metric_row::append_matching_metric_row;
+pub(crate) use apply_distinct_to_streams::apply_distinct_to_streams;
 pub(crate) use is_deleted_log_entry::is_deleted_log_entry;
 pub(crate) use label_format_destinations::label_format_destinations;
 pub(crate) use matching_loki_metric_sample::matching_loki_metric_sample;

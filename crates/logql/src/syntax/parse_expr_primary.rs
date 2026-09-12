@@ -18,6 +18,27 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
             });
         }
     }
+    for (name, largest, approximate) in [
+        ("topk", true, false),
+        ("bottomk", false, false),
+        ("approx_topk", true, true),
+    ] {
+        if let Some(args) = function_args(input, name)? {
+            if args.len() != 2 {
+                return Err(syntax_error("expected selection limit and expression"));
+            }
+            let limit = args[0]
+                .trim()
+                .parse()
+                .map_err(|_| syntax_error("expected integer selection limit"))?;
+            return Ok(LogqlExpr::Selection {
+                expr: Box::new(parse_expr(args[1])?),
+                limit,
+                largest,
+                approximate,
+            });
+        }
+    }
     if let Some(args) = function_args(input, "vector")? {
         if args.len() != 1 {
             return Err(syntax_error("expected one function argument"));

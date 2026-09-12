@@ -17,6 +17,8 @@ pub struct DistributorState {
     /// `anonymous` tenant.
     pub tenant_policy: TenantPolicy,
     pub active_series: Mutex<HashMap<String, BTreeSet<u64>>>,
+    pub cumulative_profiles:
+        tokio::sync::Mutex<HashMap<(String, Vec<(String, String)>), HashMap<Vec<u32>, i64>>>,
     pub ingestion_buckets: Mutex<HashMap<String, Arc<TokenBucket>>>,
     pub relabel: Vec<RelabelConfig>,
     /// Shared raw, Connect, and decompressed request-body limit.
