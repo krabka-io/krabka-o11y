@@ -277,9 +277,16 @@ async fn backend_query(
         .post(format!("{base}/api/ds/query"))
         .json(&body)
         .send()
-        .await?
-        .error_for_status()?;
-    Ok(response.json().await?)
+        .await?;
+    let status = response.status();
+    let text = response.text().await?;
+    // Grafana answers a datasource error with the datasource's own status and
+    // a body that names it. `error_for_status` would drop that body and leave
+    // only the number, which does not say which of the two sides refused.
+    if !status.is_success() {
+        return Err(format!("Grafana answered {status} for /api/ds/query: {text}").into());
+    }
+    Ok(serde_json::from_str(&text)?)
 }
 
 async fn start_grafana(datasource_yaml: &str) -> TestResult<ContainerAsync<GenericImage>> {

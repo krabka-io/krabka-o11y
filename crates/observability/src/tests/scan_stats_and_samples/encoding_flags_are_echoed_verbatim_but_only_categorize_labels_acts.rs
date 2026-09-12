@@ -71,6 +71,17 @@ pub(crate) fn encoding_flags_are_echoed_verbatim_but_only_categorize_labels_acts
                 }
             })
     );
+    // Where the flags sit, not only that they are there. A `Value` comparison
+    // cannot see this: `serde_json`'s map compares without regard to order,
+    // while the bytes it writes keep it. Grafana's Loki datasource reads the
+    // body in one pass and needs `encodingFlags` before `result`, because that
+    // flag is what tells it an entry is three elements long. Written after
+    // `result`, the flag arrives too late and the datasource fails the query.
+    let body = streams.to_string();
+    check!(
+        body.find("encodingFlags") < body.find("\"result\""),
+        "the flags belong in front of the result: {body}"
+    );
 
     let mut matrix = json!({"status": "success", "data": {"resultType": "matrix", "result": []}});
     add_loki_encoding_flags(&mut matrix, &flags);
