@@ -176,22 +176,25 @@ fn arb_ingest_query() -> impl Strategy<Value = IngestQuery> {
         prop::option::of(10_000_000_000_i64..2_000_000_000_000),
         prop::option::of(10_000_000_000_i64..2_000_000_000_000),
         prop::sample::select(&["unknown", "gospy", "pyspy", "rbspy"]),
+        prop::sample::select(&["wall", "cpu", "alloc"]),
     )
         .prop_map(
-            |(name, labels, format, sample_rate, units, from_ms, until_ms, spy_name)| IngestQuery {
-                name: name.to_owned(),
-                profile_type_suffix: None,
-                labels: labels
-                    .into_iter()
-                    .map(|(key, value)| (key.to_owned(), value.to_owned()))
-                    .collect(),
-                format,
-                sample_rate,
-                units: units.to_owned(),
-                from_ms,
-                until_ms,
-                spy_name: spy_name.to_owned(),
-                jfr_event: String::new(),
+            |(name, labels, format, sample_rate, units, from_ms, until_ms, spy_name, jfr_event)| {
+                IngestQuery {
+                    name: name.to_owned(),
+                    profile_type_suffix: None,
+                    labels: labels
+                        .into_iter()
+                        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+                        .collect(),
+                    format,
+                    sample_rate,
+                    units: units.to_owned(),
+                    from_ms,
+                    until_ms,
+                    spy_name: spy_name.to_owned(),
+                    jfr_event: jfr_event.to_owned(),
+                }
             },
         )
 }
@@ -252,6 +255,7 @@ fn render_ingest_query(query: &IngestQuery) -> String {
         parts.push(format!("until={until_ms}"));
     }
     parts.push(format!("spyName={}", urlencode(&query.spy_name)));
+    parts.push(format!("event={}", urlencode(&query.jfr_event)));
     parts.join("&")
 }
 
