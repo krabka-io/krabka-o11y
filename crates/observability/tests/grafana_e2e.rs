@@ -26,7 +26,7 @@
 //! `cargo test -p krabka-observability --test grafana_e2e -- --ignored --nocapture`
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -407,8 +407,8 @@ fn range_cases(timeline: &Timeline, queries: &[(&'static str, &'static str)]) ->
             path: "query_range".to_string(),
             params: vec![
                 ("query", logql.to_string()),
-                ("start", timeline.start_ns.to_string()),
-                ("end", timeline.end_ns.to_string()),
+                ("start", timeline.start.to_string()),
+                ("end", timeline.end.to_string()),
                 ("step", STEP_SECS.to_string()),
                 ("direction", "forward".to_string()),
                 ("limit", "5000".to_string()),
@@ -421,8 +421,8 @@ fn range_cases(timeline: &Timeline, queries: &[(&'static str, &'static str)]) ->
 fn metadata_cases(timeline: &Timeline) -> Vec<Case> {
     let window = || {
         vec![
-            ("start", timeline.start_ns.to_string()),
-            ("end", timeline.end_ns.to_string()),
+            ("start", timeline.start.to_string()),
+            ("end", timeline.end.to_string()),
         ]
     };
     let mut cases = vec![
@@ -548,9 +548,15 @@ fn form_encode(value: &str) -> String {
 /// Strips the members of an answer that are not a property of the query.
 ///
 /// `stats` goes: every member of it is a byte count, a duration or a chunk
-/// count measured on one side's own storage layout. Result order goes, because
-/// neither side promises one. Float text goes to six decimal places, because
-/// the two sides format the same value with different precision.
+/// count measured on one side's own storage layout. The order of the outer
+/// result list goes, because neither side promises one. Float text goes to six
+/// decimal places, because the two sides format the same value with different
+/// precision.
+///
+/// The entries inside a stream keep their order. Every range case asks for
+/// `direction=forward`, and entry order is what a reader sees, so sorting them
+/// here would make a forward answer and a reverse answer compare equal. A side
+/// that ignored `direction` would then read as agreement.
 fn normalize(body: &Value) -> Value {
     let data = &body["data"];
     let result_type = data["resultType"].as_str().unwrap_or_default();
@@ -571,15 +577,16 @@ fn normalize(body: &Value) -> Value {
             let is_stream = result_type == "streams";
             let label_key = if is_stream { "stream" } else { "metric" };
             let labels = canonical_labels(&item[label_key]);
-            let mut values: Vec<Value> = item["values"]
+            let values: Vec<Value> = item["values"]
                 .as_array()
                 .cloned()
                 .or_else(|| item.get("value").map(|value| vec![value.clone()]))
                 .unwrap_or_default();
-            values.sort_by_key(ToString::to_string);
-            if !is_stream {
-                values = values.iter().map(round_sample).collect();
-            }
+            let values: Vec<Value> = if is_stream {
+                values
+            } else {
+                values.iter().map(round_sample).collect()
+            };
             let mut entry = serde_json::Map::new();
             entry.insert(label_key.to_string(), item[label_key].clone());
             entry.insert("values".to_string(), Value::Array(values));
@@ -823,6 +830,27 @@ async fn wait_for_datasource(client: &reqwest::Client, base: &str, uid: &str) ->
     Err(format!("datasource {uid} was not provisioned on {base}").into())
 }
 
+/// The `app` label values a seed probe answer holds.
+fn answered_apps(answer: &Value) -> BTreeSet<String> {
+    answer["result"]
+        .as_array()
+        .map_or_else(BTreeSet::new, |streams| {
+            streams
+                .iter()
+                .filter_map(|stream| stream["stream"]["app"].as_str())
+                .map(str::to_string)
+                .collect()
+        })
+}
+
+/// The `app` label values [`dataset`] pushes.
+fn pushed_apps() -> BTreeSet<String> {
+    ["api", "db", "web"]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
 /// Waits until both datasources answer the whole corpus window with data.
 async fn wait_for_seeded(client: &reqwest::Client, base: &str, timeline: &Timeline) -> TestResult {
     let case = Case {
@@ -830,8 +858,8 @@ async fn wait_for_seeded(client: &reqwest::Client, base: &str, timeline: &Timeli
         path: "query_range".to_string(),
         params: vec![
             ("query", r#"{app=~".+"}"#.to_string()),
-            ("start", timeline.start_ns.to_string()),
-            ("end", timeline.end_ns.to_string()),
+            ("start", timeline.start.to_string()),
+            ("end", timeline.end.to_string()),
             ("step", STEP_SECS.to_string()),
             ("direction", "forward".to_string()),
         ],
@@ -841,13 +869,14 @@ async fn wait_for_seeded(client: &reqwest::Client, base: &str, timeline: &Timeli
         let mut seeded = true;
         for uid in [KRABKA_UID, LOKI_UID] {
             let answer = probe(client, base, uid, &case).await?;
-            // Three pushed streams, and no fewer than three in the answer.
-            // Not exactly three: the default encoding folds `detected_level`
-            // into the stream labels, so a pushed stream whose lines carry
-            // two levels comes back as two streams.
-            seeded &= answer["result"]
-                .as_array()
-                .is_some_and(|result| result.len() >= 3);
+            // Counted by `app`, not by stream. The default encoding folds
+            // `detected_level` into the stream labels, so each pushed stream
+            // comes back as one stream per distinct level in it: eight streams
+            // for these three pushes, and a different eight if the fixture
+            // changes. The question the probe asks is whether every pushed
+            // stream is queryable, and its `app` value answers that whatever
+            // the level split does.
+            seeded &= answered_apps(&answer) == pushed_apps();
         }
         if seeded {
             return Ok(());
@@ -869,9 +898,12 @@ async fn wait_for_seeded(client: &reqwest::Client, base: &str, timeline: &Timeli
 /// coincide, so the suite compares absolute timestamps and still catches a
 /// genuine bucketing fault.
 struct Timeline {
-    base_ns: i64,
-    start_ns: i64,
-    end_ns: i64,
+    /// The epoch nanosecond the first seeded entry sits at.
+    base: i64,
+    /// The epoch nanosecond every range case starts at.
+    start: i64,
+    /// The epoch nanosecond every range case ends at.
+    end: i64,
 }
 
 impl Timeline {
@@ -883,15 +915,15 @@ impl Timeline {
         let start_secs = base_secs - 60;
         let end_secs = base_secs + 180;
         Ok(Self {
-            base_ns: base_secs * 1_000_000_000,
-            start_ns: (start_secs - start_secs.rem_euclid(STEP_SECS)) * 1_000_000_000,
-            end_ns: (end_secs + (STEP_SECS - end_secs.rem_euclid(STEP_SECS)) % STEP_SECS)
+            base: base_secs * 1_000_000_000,
+            start: (start_secs - start_secs.rem_euclid(STEP_SECS)) * 1_000_000_000,
+            end: (end_secs + (STEP_SECS - end_secs.rem_euclid(STEP_SECS)) % STEP_SECS)
                 * 1_000_000_000,
         })
     }
 
     /// The epoch nanosecond `offset_secs` after the base time.
     fn at(&self, offset_secs: i64) -> i64 {
-        self.base_ns + offset_secs * 1_000_000_000
+        self.base + offset_secs * 1_000_000_000
     }
 }

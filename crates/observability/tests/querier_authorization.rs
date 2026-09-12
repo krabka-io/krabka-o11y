@@ -57,7 +57,7 @@ const WAL_TOPIC: &str = "__krabka_observability_logs_wal_authorization";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long to keep retrying while the background authorizer connect lands.
-const CONNECT_DEADLINE: Duration = Duration::from_secs(60);
+const CONNECT_DEADLINE: Duration = Duration::from_mins(1);
 
 /// The two queries that take the authorizer read path.
 ///
@@ -246,15 +246,7 @@ fn push_body(start_ns: i64) -> Value {
 /// A `LogQL` selector carries `{`, `"`, `=` and spaces, and an unencoded one
 /// reaches the router as a different query than the one asked.
 fn percent_encode(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 fn current_unix_second_ns() -> i64 {

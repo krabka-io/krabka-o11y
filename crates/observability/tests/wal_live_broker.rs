@@ -145,6 +145,28 @@ async fn a_broker_producer_byte_rate_quota_refuses_a_push_before_the_wal_append(
         .expect("set the tenant quota");
     assert!(outcome.is_none());
 
+    // The consumer is connected and reading before the push, not after it. A
+    // fresh consumer group is not assigned its partition at once, so one poll
+    // of a group that has never read anything answers zero whether the topic
+    // is empty or not. Reading a sentinel first proves the assignment, and
+    // that is what makes the poll after the refused push mean anything.
+    let mut consumer = live.wal_consumer("quota").await;
+    let hot_tail = BufferedLogHotTail::default();
+    KafkaLogWalSink::connect(live.bootstrap.clone(), live.topic.clone())
+        .await
+        .expect("wal sink")
+        .append(WalLogRecord {
+            tenant: TENANT.to_string(),
+            labels: labels([("app", "api"), ("env", "prod")]),
+            timestamp_ns: 10_000_000,
+            line: "api quota sentinel".to_string(),
+            structured_metadata: BTreeMap::new(),
+            position: None,
+        })
+        .await
+        .expect("append the sentinel record");
+    assert!(poll_until_decoded(&mut consumer, &hot_tail).await == 1);
+
     let data_root = TempDir::new().expect("data root");
     let distributor = live
         .router(live.config(Role::Distributor, &data_root))
@@ -167,13 +189,13 @@ async fn a_broker_producer_byte_rate_quota_refuses_a_push_before_the_wal_append(
             .is_some_and(|error| error.contains("producer_byte_rate"))
     );
 
-    let mut consumer = live.wal_consumer("quota").await;
-    let hot_tail = BufferedLogHotTail::default();
+    // The assigned consumer reads nothing more. The refused push stopped in
+    // front of the WAL append, and the sentinel is still the only record.
     let decoded = poll_log_hot_tail_once(&mut consumer, &hot_tail, millis(250))
         .await
         .expect("poll the live wal");
     check!(decoded == 0);
-    check!(hot_tail.records().is_empty());
+    check!(hot_tail.records().len() == 1);
 
     live.shutdown().await;
 }
@@ -212,10 +234,11 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
         .expect("append the wal record");
 
     let querier = live.router(live.config(Role::Querier, &data_root)).await;
-    let body = query_until_answered(
+    let body = query_until_values(
         &querier,
         TENANT,
         "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=20000000",
+        1,
     )
     .await;
 
@@ -363,13 +386,14 @@ async fn an_otlp_log_reaches_a_query_answer_through_the_live_wal_and_a_block() {
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "otlp-loop"))
         .await;
-    let body = query_until_answered(
+    let (start, end) = fixture_window(&timestamp, &timestamp);
+    let body = query_until_values(
         &querier,
         TENANT,
         &format!(
-            "/loki/api/v1/query_range?query=%7Bservice_name%3D%22checkout%22%7D&start=0&end={}&direction=forward",
-            timestamp.parse::<i64>().expect("timestamp") + 10_000_000
+            "/loki/api/v1/query_range?query=%7Bservice_name%3D%22checkout%22%7D&start={start}&end={end}&direction=forward"
         ),
+        1,
     )
     .await;
 
@@ -429,14 +453,15 @@ async fn two_tenants_sharing_one_wal_topic_never_read_each_other_lines() {
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "tenant-loop"))
         .await;
-    let end = seeded[1].1.parse::<i64>().expect("timestamp") + 10_000_000;
+    let (start, end) = fixture_window(&seeded[0].1, &seeded[1].1);
     for (tenant, timestamp, line) in &seeded {
-        let body = query_until_answered(
+        let body = query_until_values(
             &querier,
             tenant,
             &format!(
-                "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end={end}&direction=forward"
+                "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={start}&end={end}&direction=forward"
             ),
+            1,
         )
         .await;
         check!(
@@ -484,13 +509,18 @@ async fn the_querier_merges_a_compacted_block_with_the_uncompacted_live_tail() {
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "hot-cold"))
         .await;
-    let body = query_until_answered(
+    // Two entries, not one. The cold block answers at once while the fresh
+    // querier's WAL consumer is still connecting, so a retry that stopped at
+    // the first non-empty answer would return the compacted line alone and
+    // fail the assertion below before the live record ever arrived.
+    let (start, end) = fixture_window(&compacted, &live_line);
+    let body = query_until_values(
         &querier,
         TENANT,
         &format!(
-            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end={}&direction=forward",
-            live_line.parse::<i64>().expect("timestamp") + 10_000_000
+            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={start}&end={end}&direction=forward"
         ),
+        2,
     )
     .await;
 
@@ -540,13 +570,14 @@ async fn a_restarted_block_builder_resumes_from_the_committed_wal_offset() {
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "restart"))
         .await;
-    let body = query_until_answered(
+    let (start, end) = fixture_window(&first, &second);
+    let body = query_until_values(
         &querier,
         TENANT,
         &format!(
-            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end={}&direction=forward",
-            second.parse::<i64>().expect("timestamp") + 10_000_000
+            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start={start}&end={end}&direction=forward"
         ),
+        2,
     )
     .await;
 
@@ -582,10 +613,11 @@ async fn a_log_produced_by_a_native_kafka_client_reaches_a_query_answer() {
     let querier = live
         .router(live.querier_config(&data_root, &object_root, "native-loop"))
         .await;
-    let body = query_until_answered(
+    let body = query_until_values(
         &querier,
         TENANT,
         "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=20000000",
+        1,
     )
     .await;
 
@@ -752,9 +784,9 @@ async fn run_compactor_for(config: &ServiceConfig, duration: Duration) -> Vec<Bl
     .expect("block builder run")
 }
 
-async fn produce_native_kafka_log(live: &LiveBroker, timestamp_ns: &str, line: &str) {
+async fn produce_native_kafka_log(broker: &LiveBroker, timestamp_ns: &str, line: &str) {
     let producer = Producer::builder()
-        .bootstrap(live.bootstrap.clone())
+        .bootstrap(broker.bootstrap.clone())
         .client_id("krabka-observability-wal-native-producer")
         .acks(Acks::All)
         .build()
@@ -762,7 +794,7 @@ async fn produce_native_kafka_log(live: &LiveBroker, timestamp_ns: &str, line: &
         .expect("native Kafka producer");
     producer
         .send(ProducerRecord {
-            topic: live.topic.clone(),
+            topic: broker.topic.clone(),
             partition: Some(0),
             key: Some(Bytes::from(format!("{TENANT}:api"))),
             value: Some(Bytes::from(line.to_string())),
@@ -857,9 +889,10 @@ fn otlp_body(timestamp_ns: &str) -> Value {
 /// consumer group takes a moment to be assigned its partition, so an empty
 /// result means "not read yet". A querier that never answers still fails, with
 /// its last status named.
-async fn query_until_answered(querier: &Router, tenant: &str, uri: &str) -> Value {
+async fn query_until_values(querier: &Router, tenant: &str, uri: &str, want: usize) -> Value {
     let deadline = Instant::now() + BROKER_DEADLINE;
     let mut last = StatusCode::OK;
+    let mut seen = 0;
     while Instant::now() < deadline {
         let response = querier
             .clone()
@@ -875,17 +908,43 @@ async fn query_until_answered(querier: &Router, tenant: &str, uri: &str) -> Valu
         last = response.status();
         if last == StatusCode::OK {
             let body = json_body(response).await;
-            if body
-                .pointer("/data/result")
-                .and_then(Value::as_array)
-                .is_some_and(|result| !result.is_empty())
-            {
+            seen = entry_count(&body);
+            if seen >= want {
                 return body;
             }
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    panic!("the querier never answered {uri} with a result; last status {last}");
+    panic!(
+        "the querier never answered {uri} with {want} entries; last status {last}, last count \
+         {seen}"
+    );
+}
+
+/// The number of entries an answer holds, over every stream in it.
+fn entry_count(body: &Value) -> usize {
+    body.pointer("/data/result")
+        .and_then(Value::as_array)
+        .map_or(0, |streams| {
+            streams
+                .iter()
+                .filter_map(|stream| stream["values"].as_array())
+                .map(Vec::len)
+                .sum()
+        })
+}
+
+/// The window a range case asks for.
+///
+/// `start` is one minute before the first fixture entry, not the Unix epoch.
+/// An epoch-to-now window is about 56 years wide, and the querier refuses a
+/// window wider than `Limits::default().max_query_length`, which is `Loki`'s
+/// 721 hours. That refusal is a 400, so a case written that way never reaches
+/// its data at all.
+fn fixture_window(first_ns: &str, last_ns: &str) -> (i64, i64) {
+    let first = first_ns.parse::<i64>().expect("fixture timestamp");
+    let last = last_ns.parse::<i64>().expect("fixture timestamp");
+    (first - 60_000_000_000, last + 10_000_000)
 }
 
 /// Polls `/ready` over TCP until the service reports ready.
