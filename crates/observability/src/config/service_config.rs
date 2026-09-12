@@ -107,6 +107,20 @@ pub struct ServiceConfig {
     )]
     pub max_query_string_bytes: Option<ByteSize>,
 
+    /// How long a tenant's log blocks are kept, as `30d`. Default: unset, so
+    /// `Loki`'s `0s`, which keeps every block forever.
+    ///
+    /// Zero keeps everything. It does not delete everything. The per-tenant
+    /// window is the `retention_period` key in the file
+    /// `--logs-limits-overrides-config` names, and this flag sets the default
+    /// that file merges over.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_RETENTION_PERIOD",
+        value_parser = krabka_units::parse::non_negative_time
+    )]
+    pub retention_period: Option<Time>,
+
     /// Runtime per-tenant limits overrides, as a path to a YAML file.
     ///
     /// The file holds a `defaults` block and an `overrides` map keyed by
@@ -209,6 +223,15 @@ pub struct ServiceConfig {
     #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", default_value = "10ms", value_parser = krabka_units::parse::positive_time)]
     pub compactor_idle_interval: Time,
 
+    /// How often the compactor sweeps object-store blocks for retention.
+    /// Default: `1m`.
+    ///
+    /// The window itself is per tenant, and it is the `retention_period`
+    /// limit. With no window set anywhere, the compactor runs no sweep at all
+    /// and this interval costs nothing.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_COMPACTOR_RETENTION_SWEEP_INTERVAL", default_value = "1m", value_parser = krabka_units::parse::positive_time)]
+    pub compactor_retention_sweep_interval: Time,
+
     /// How long one stage of a `--target all` stop may take before the next
     /// stage is asked to stop anyway.
     ///
@@ -299,6 +322,7 @@ impl Default for ServiceConfig {
             max_query_series: None,
             max_query_read: None,
             max_query_string_bytes: None,
+            retention_period: None,
             logs_limits_overrides_config: None,
             max_ingest_body: None,
             wal_append_timeout: None,
@@ -319,6 +343,7 @@ impl Default for ServiceConfig {
             compactor_max_records_per_batch: NonZeroUsize::new(4096)
                 .expect("default compactor batch size is nonzero"),
             compactor_idle_interval: millis(10),
+            compactor_retention_sweep_interval: minutes(1),
             all_drain_stage_timeout: secs(30),
             compactor_object_store_initial_backoff: millis(10),
             compactor_object_store_max_backoff: millis(500),

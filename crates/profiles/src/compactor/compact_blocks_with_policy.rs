@@ -4,7 +4,7 @@ use super::{
     ObjectStoreExt, Path, ProfileIndex, ProfilesError, PutPayload, RecordBatch, SampleGroupBuffer,
     SchemaRef, SortedMerge, StreamExt, SummaryColumns, SymbolDb, destination_partitions,
     downsample_batches, load_symdb, open_block_stream, profile_samples_decl, remap_partitions,
-    source_partitions, versioned_compaction_key,
+    source_partitions, symdb_key, versioned_compaction_key,
 };
 
 /// Merges profile blocks into one, optionally summing their samples into
@@ -129,7 +129,7 @@ pub async fn compact_blocks_with_policy(
         .map_err(|err| ProfilesError::Block(err.to_string()))?;
     store
         .put(
-            &Path::from(format!("{output_key}.symdb")),
+            &Path::from(symdb_key(&output_key)),
             PutPayload::from(out_symbols.encode()),
         )
         .await

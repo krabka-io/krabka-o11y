@@ -16,6 +16,7 @@ mod error;
 mod index;
 mod index_snapshot;
 mod labels;
+mod lifecycle;
 mod log_blockstore;
 mod matcher;
 mod merge;
@@ -41,7 +42,7 @@ pub use block::{
 pub use block_index::{BlockIndex, BlockSchema, RequiredColumn, series_block_schema};
 pub use bloom::{ShardedTraceBloom, fnv1_32};
 pub use compaction::{
-    BlockLevel, CompactionCandidate, CompactionJob, CompactionPolicy, DEFAULT_LEVEL_WINDOW_NS,
+    BlockLevel, CompactionCandidate, CompactionJob, CompactionPolicy, DEFAULT_LEVEL_WINDOW,
     DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
     input_key_fingerprint, level_above, plan_compactions,
 };
@@ -56,13 +57,19 @@ pub use index_snapshot::{
     index_snapshot_prefix_for_key,
 };
 pub use labels::{Labels, SeriesFingerprint};
+pub use lifecycle::{
+    BlockDeletion, BlockDeletionFailure, BlockDeletionReport, BlockTimestampUnit,
+    DEFAULT_BLOCK_SWEEP_GRACE, ExpiredBlock, LifecycleError, OrphanSweepStats, RetentionWindows,
+    delete_blocks, plan_expired_blocks, reconcile_orphans,
+};
 // Logs-path block store. Types that share a name with the canonical
 // (traces/shared) abstractions above are re-exported under `Log*` names.
 pub use log_blockstore::{
     BlockDescriptor, BlockIndex as LogBlockIndex, BlockKey, BlockStoreError as LogBlockStoreError,
     LabelIndex, LabelPredicate, Labels as LogLabels, LogBlockTableProvider, LogRow,
     MatchOp as LogMatchOp, SeriesFingerprint as LogSeriesFingerprint, StructuredMetadata,
-    TimeRange, block_path, labels, list_tenant_log_index_shard_ranges_from_object_store,
+    TimeRange, block_path, delete_tenant_log_index_shard_from_object_store, labels,
+    list_tenant_log_index_shard_ranges_from_object_store,
     list_tenant_log_index_shard_ranges_overlapping_query_from_object_store, log_block_object_path,
     log_index_manifest_object_path, log_index_manifest_path, log_tenant_index_manifest_object_path,
     log_tenant_index_shard_catalog_object_path, log_tenant_index_shard_list_offset_object_path,

@@ -21,7 +21,11 @@ pub(crate) async fn exemplars_merges_cold_and_hot_records() {
     );
 
     let store = MergedMetricStore::new(cold, hot);
-    let exemplars = store.exemplars("tenant-a", &[], 0, 30_000).await.unwrap();
+    let exemplars = store
+        .exemplars("tenant-a", &[], 0, 30_000)
+        .await
+        .unwrap()
+        .exemplars;
 
     assert2::assert!(
         exemplars

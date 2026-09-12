@@ -63,6 +63,16 @@ pub struct Limits {
     /// off.
     #[serde(with = "serde_units::human::time")]
     pub out_of_order_time_window: Time,
+    /// How long a tenant's compacted blocks are kept. A zero extent keeps them
+    /// forever.
+    ///
+    /// This is Mimir's `compactor_blocks_retention_period`, with Mimir's
+    /// default of zero. Zero means "no retention", and it does **not** mean
+    /// "delete everything": a tenant that configures nothing keeps every block
+    /// it ever wrote. The retention sweep reads this window through
+    /// [`krabka_blockstore::RetentionWindows`].
+    #[serde(with = "non_negative_time")]
+    pub compactor_blocks_retention_period: Time,
 }
 
 impl Default for Limits {
@@ -87,6 +97,7 @@ impl Default for Limits {
             max_query_lookback: Time::ZERO,
             max_query_length: Time::ZERO,
             out_of_order_time_window: Time::ZERO,
+            compactor_blocks_retention_period: Time::ZERO,
         }
     }
 }

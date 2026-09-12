@@ -502,6 +502,19 @@ jobs:
                 mapfile -t files < <(grep -E '^crates/' <<<"${changed}" | while read -r f; do
                   [ -e "${f}" ] && printf '%s\n' "${f}"
                 done)
+                # A changed file Bazel has no target for is not a query input.
+                # `set()` fails the whole query with "no such target" on the
+                # first one, which took this job down when a crate README
+                # changed -- README.md is a source file that no rule lists in
+                # `srcs` or `data`, so no package exports it. Ask Bazel which
+                # of the paths it knows and keep only those: `--keep_going`
+                # reports the unknown ones on stderr and still prints the rest,
+                # so one pass filters the list. Dropping a file Bazel does not
+                # know loses nothing, because a file no target depends on
+                # cannot change what a container suite does.
+                if [ "${#files[@]}" -ne 0 ]; then
+                  mapfile -t files < <(bazel query --keep_going "set(${files[*]})" 2>/dev/null || true)
+                fi
                 if [ "${#files[@]}" -eq 0 ]; then
                   targets=""
                 else

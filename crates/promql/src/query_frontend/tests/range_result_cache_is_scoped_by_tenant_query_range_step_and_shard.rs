@@ -10,10 +10,10 @@ pub(crate) fn range_result_cache_is_scoped_by_tenant_query_range_step_and_shard(
         step: millis(60_000),
         shard: Some(QueryShard { index: 1, total: 2 }),
     };
-    let result = QueryResult::RangeMatrix(vec![RangeSeries {
+    let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
         labels: labels(&[("__name__", "up"), ("job", "api")]),
         samples: vec![(0, SampleValue::Float(1.0))],
-    }]);
+    }]));
 
     cache.insert("tenant-a", &query, result.clone());
 

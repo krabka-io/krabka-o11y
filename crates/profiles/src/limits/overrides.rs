@@ -12,6 +12,7 @@ use super::Limits;
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
+    use krabka_blockstore::RetentionWindows as _;
     use krabka_units::{bytes, per_sec, secs};
 
     use super::*;
@@ -43,6 +44,7 @@ overrides:
                     max_flamegraph_nodes_max: 0,
                     max_query_length: secs(2_595_600),
                     max_session_id_cardinality: 0,
+                    compactor_blocks_retention_period: secs(0),
                 }
         );
     }
@@ -132,6 +134,39 @@ overrides:
                 );
             }
         }
+    }
+
+    /// Retention is per tenant, and the provider is what the compactor asks.
+    /// A tenant the file does not name falls to the `defaults` block, and a
+    /// deployment that configures neither keeps every block forever.
+    #[test]
+    fn each_tenant_gets_its_own_block_retention_window() {
+        let provider = OverridesProvider::from_yaml(
+            r"
+defaults:
+  compactor_blocks_retention_period_secs: 3600
+overrides:
+  tenant-a:
+    compactor_blocks_retention_period_secs: 60
+  tenant-b:
+    compactor_blocks_retention_period_secs: 0
+",
+        )
+        .unwrap();
+
+        check!(provider.block_retention("tenant-a") == secs(60));
+        check!(
+            provider.block_retention("tenant-b") == secs(0),
+            "an explicit zero keeps the tenant's blocks forever"
+        );
+        check!(
+            provider.block_retention("unlisted") == secs(3600),
+            "an unlisted tenant takes the defaults block"
+        );
+        check!(
+            OverridesProvider::new(Limits::default()).block_retention("tenant-a") == secs(0),
+            "an unconfigured deployment keeps every block forever"
+        );
     }
 
     #[test]
@@ -251,6 +286,7 @@ overrides:
                     max_flamegraph_nodes_max: 4096,
                     max_query_length: secs(2_595_600),
                     max_session_id_cardinality: 0,
+                    compactor_blocks_retention_period: secs(0),
                 }
         );
     }

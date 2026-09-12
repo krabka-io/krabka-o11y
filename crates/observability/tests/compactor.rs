@@ -3,7 +3,7 @@ use std::{
     fmt,
     ops::Range,
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use assert2::{assert, check};
@@ -16,17 +16,21 @@ use futures_util::stream::BoxStream;
 use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogBlockStoreError, LogRow, TimeRange,
     labels, list_tenant_log_index_shard_ranges_from_object_store, log_block_object_path,
-    read_log_block, read_log_block_from_object_store, read_log_index_manifest,
-    read_tenant_log_index_manifest_from_object_store,
-    read_tenant_log_index_shard_from_object_store, read_tenant_log_index_shards_from_object_store,
-    series_fingerprint, write_log_block, write_log_block_to_object_store, write_log_index_manifest,
-    write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shards_to_object_store,
+    log_tenant_index_manifest_object_path, read_log_block, read_log_block_from_object_store,
+    read_log_index_manifest, read_tenant_log_index_manifest_from_object_store,
+    read_tenant_log_index_shard_from_object_store,
+    read_tenant_log_index_shard_ranges_from_object_store,
+    read_tenant_log_index_shards_from_object_store, series_fingerprint, write_log_block,
+    write_log_block_to_object_store, write_log_index_manifest,
+    write_tenant_log_index_manifest_to_object_store,
+    write_tenant_log_index_shard_catalog_to_object_store,
+    write_tenant_log_index_shards_to_object_store,
 };
 use krabka_client_consumer::ConsumerError;
 use krabka_observability::{
     CompactionFrontier, CompactionOffsetCommitter, CriticalTaskError, KafkaWalHeader,
-    KafkaWalRecord, LogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role,
-    ServiceConfig, ServiceDependencies, ServiceRuntimeError, SharedCompactionFrontier,
+    KafkaWalRecord, LogWalConsumer, Offset, OverridesProvider, PartitionIndex, QuerierIndexSource,
+    Role, ServiceConfig, ServiceDependencies, ServiceRuntimeError, SharedCompactionFrontier,
     WalConsumerError, WalLogRecord, WalPosition, build_kafka_wal_record, build_service_router,
     compact_kafka_wal_records_to_object_store, compact_log_block_to_object_store,
     compact_next_kafka_wal_batch_to_object_store, compact_wal_records_to_object_store,
@@ -34,7 +38,7 @@ use krabka_observability::{
     run_compactor_until_shutdown, serve_service, serve_service_listener,
     write_compaction_frontier_to_object_store,
 };
-use krabka_units::{Time, bytes, millis};
+use krabka_units::{Time, bytes, hours, millis, minutes};
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, local::LocalFileSystem,
@@ -52,6 +56,17 @@ struct RecordingObjectStore {
     inner: Arc<object_store::memory::InMemory>,
     get_paths: Arc<std::sync::Mutex<Vec<String>>>,
     put_paths: Arc<std::sync::Mutex<Vec<(String, usize)>>>,
+    /// Every put and every delete in the order the store saw them. The two
+    /// path lists above cannot say which came first, and the retention sweep's
+    /// contract is exactly an order: the index before the object.
+    writes: Arc<std::sync::Mutex<Vec<ObjectStoreWrite>>>,
+}
+
+/// One mutating call a [`RecordingObjectStore`] served.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ObjectStoreWrite {
+    Put(String),
+    Delete(String),
 }
 
 impl RecordingObjectStore {
@@ -60,6 +75,7 @@ impl RecordingObjectStore {
             inner: Arc::new(object_store::memory::InMemory::new()),
             get_paths: Arc::new(std::sync::Mutex::new(Vec::new())),
             put_paths: Arc::new(std::sync::Mutex::new(Vec::new())),
+            writes: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -69,6 +85,10 @@ impl RecordingObjectStore {
 
     fn put_paths(&self) -> Vec<(String, usize)> {
         self.put_paths.lock().unwrap().clone()
+    }
+
+    fn writes(&self) -> Vec<ObjectStoreWrite> {
+        self.writes.lock().unwrap().clone()
     }
 }
 
@@ -110,6 +130,10 @@ impl ObjectStore for RecordingObjectStore {
             .lock()
             .unwrap()
             .push((location.to_string(), payload.content_length()));
+        self.writes
+            .lock()
+            .unwrap()
+            .push(ObjectStoreWrite::Put(location.to_string()));
         self.inner.put_opts(location, payload, opts).await
     }
 
@@ -134,7 +158,20 @@ impl ObjectStore for RecordingObjectStore {
         &self,
         locations: BoxStream<'static, object_store::Result<ObjectPath>>,
     ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-        self.inner.delete_stream(locations)
+        use futures_util::StreamExt as _;
+
+        let writes = Arc::clone(&self.writes);
+        self.inner
+            .delete_stream(locations)
+            .inspect(move |result| {
+                if let Ok(location) = result {
+                    writes
+                        .lock()
+                        .unwrap()
+                        .push(ObjectStoreWrite::Delete(location.to_string()));
+                }
+            })
+            .boxed()
     }
 
     fn list(
@@ -2259,6 +2296,20 @@ async fn list_log_block_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> V
     paths
 }
 
+/// Every object under `prefix`, whatever its suffix. `list_log_block_paths`
+/// answers for the blocks only, and an index object left behind is not one.
+async fn list_object_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> Vec<String> {
+    use futures_util::StreamExt as _;
+
+    let mut listing = store.list(Some(prefix));
+    let mut paths = Vec::new();
+    while let Some(meta) = listing.next().await {
+        paths.push(meta.unwrap().location.to_string());
+    }
+    paths.sort();
+    paths
+}
+
 fn wal_record(timestamp_ns: i64, offset: i64, line: &str) -> WalLogRecord {
     WalLogRecord {
         tenant: "tenant-a".to_string(),
@@ -2354,4 +2405,662 @@ fn compactor_config(index_prefix: &str) -> ServiceConfig {
         wal_append_timeout: None,
         ..ServiceConfig::default()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Retention.
+// ---------------------------------------------------------------------------
+
+const HOUR_NS: i64 = 3_600 * 1_000_000_000;
+const MINUTE_NS: i64 = 60 * 1_000_000_000;
+
+/// A window is measured back from the wall clock the sweep reads, so the block
+/// timestamps have to be real epoch nanoseconds rather than the small integers
+/// the other tests here use.
+fn now_unix_nanos() -> i64 {
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("the test clock is after the epoch")
+            .as_nanos(),
+    )
+    .expect("the test clock is inside the i64 nanosecond range")
+}
+
+/// Writes one block per timestamp, each in a shard of its own, with the tenant
+/// manifest and the shard catalog that the compactor writes beside them.
+async fn seed_tenant_log_blocks(
+    store: &dyn ObjectStore,
+    prefix: &ObjectPath,
+    tenant: &str,
+    timestamps_ns: &[i64],
+) -> Vec<BlockKey> {
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series(tenant, labels([("app", "api")]));
+    let mut block_index = BlockIndex::default();
+    let mut keys = Vec::new();
+    for (offset, timestamp_ns) in timestamps_ns.iter().enumerate() {
+        let offset = i64::try_from(offset).unwrap();
+        let key = BlockKey::new(
+            tenant,
+            0,
+            offset,
+            offset,
+            TimeRange::new(*timestamp_ns, *timestamp_ns).unwrap(),
+        );
+        compact_log_block_to_object_store(
+            store,
+            prefix,
+            &key,
+            &label_index,
+            &mut block_index,
+            vec![LogRow::new(
+                api,
+                *timestamp_ns,
+                format!("api ok {offset}"),
+                BTreeMap::new(),
+            )],
+        )
+        .await
+        .unwrap();
+        keys.push(key);
+    }
+    keys
+}
+
+/// Runs the compactor loop over an empty WAL until `gone` has no object left.
+///
+/// The sweep is the only thing this loop has to do, so the shutdown future is
+/// the condition the sweep produces. A run that never deletes the object stops
+/// on the poll budget instead, and the assertions after it then fail on what is
+/// still there rather than on a timeout.
+async fn run_compactor_with_retention_overrides(
+    config: &ServiceConfig,
+    store: &dyn ObjectStore,
+    prefix: &ObjectPath,
+    overrides_yaml: &str,
+    gone: &BlockKey,
+) {
+    let dependencies = ServiceDependencies::default()
+        .with_wal_consumer(RecordingWalConsumer::new(Vec::new()))
+        .with_limits(Arc::new(
+            OverridesProvider::from_yaml(overrides_yaml).expect("the overrides file parses"),
+        ));
+
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        run_compactor_until_shutdown(config, dependencies, Some(store), async {
+            for _ in 0..200 {
+                if read_log_block_from_object_store(store, prefix, gone)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                // real-time wait (not a progress poll): iteration-count-bounded
+                // retry (`for _ in 0..200`); the sleep is the fixed budget
+                // between reads.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }),
+    )
+    .await
+    .expect("the compactor loop stops")
+    .expect("the compactor loop does not fail");
+}
+
+#[tokio::test]
+async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes_its_object() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let config = compactor_config("observability/logs");
+    let prefix = ObjectPath::from("observability/logs");
+    let now_ns = now_unix_nanos();
+    let keys = seed_tenant_log_blocks(
+        &store,
+        &prefix,
+        "tenant-a",
+        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
+    )
+    .await;
+    let (expired, kept) = (keys[0].clone(), keys[1].clone());
+
+    run_compactor_with_retention_overrides(
+        &config,
+        &store,
+        &prefix,
+        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        &expired,
+    )
+    .await;
+
+    // The tenant manifest, the shard manifest and the object, in that order of
+    // increasing consequence. A block that left one and stayed in another is
+    // exactly the state this sweep exists to avoid.
+    let (_, manifest_blocks) =
+        read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
+            .await
+            .unwrap();
+    check!(
+        manifest_blocks
+            .blocks()
+            .iter()
+            .map(|block| block.key.clone())
+            .collect::<Vec<_>>()
+            == vec![kept.clone()]
+    );
+    // The emptied shard's manifest is deleted, not rewritten empty. An inert
+    // object per shard that retention ever empties is a leak.
+    let expired_shard = read_tenant_log_index_shard_from_object_store(
+        &store,
+        &prefix,
+        "tenant-a",
+        expired.time_range,
+    )
+    .await;
+    check!(
+        let Err(LogBlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) =
+            expired_shard
+    );
+    let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+        .await
+        .unwrap();
+    check!(
+        shard_blocks
+            .blocks()
+            .iter()
+            .map(|block| block.key.clone())
+            .collect::<Vec<_>>()
+            == vec![kept.clone()]
+    );
+    check!(
+        list_log_block_paths(&store, &prefix).await
+            == vec![log_block_object_path(&prefix, &kept).to_string()]
+    );
+
+    // The block inside the window is still readable, not merely still listed.
+    let rows = read_log_block_from_object_store(&store, &prefix, &kept)
+        .await
+        .unwrap();
+    check!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec!["api ok 1"]);
+}
+
+#[tokio::test]
+async fn the_retention_sweep_removes_an_emptied_shard_from_the_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let config = compactor_config("observability/logs");
+    let prefix = ObjectPath::from("observability/logs");
+    let now_ns = now_unix_nanos();
+    let keys = seed_tenant_log_blocks(
+        &store,
+        &prefix,
+        "tenant-a",
+        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
+    )
+    .await;
+    let (expired, kept) = (keys[0].clone(), keys[1].clone());
+    check!(
+        read_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
+            .await
+            .unwrap()
+            == vec![expired.time_range, kept.time_range],
+        "the catalog names both shards before the sweep"
+    );
+
+    run_compactor_with_retention_overrides(
+        &config,
+        &store,
+        &prefix,
+        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        &expired,
+    )
+    .await;
+
+    // A catalog entry for a shard that holds nothing sends every reader that
+    // falls back to the catalog on a read for no blocks.
+    check!(
+        read_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
+            .await
+            .unwrap()
+            == vec![kept.time_range]
+    );
+    let manifest_path = krabka_blockstore::log_tenant_index_shard_manifest_object_path(
+        &prefix,
+        "tenant-a",
+        expired.time_range,
+    );
+    check!(
+        !list_object_paths(&store, &prefix)
+            .await
+            .contains(&manifest_path.to_string()),
+        "the emptied shard's manifest object is deleted"
+    );
+
+    // A query that reads the tenant after the sweep still answers, and it
+    // answers with the block the window keeps.
+    let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+        .await
+        .unwrap();
+    check!(
+        shard_blocks
+            .blocks()
+            .iter()
+            .map(|block| block.key.clone())
+            .collect::<Vec<_>>()
+            == vec![kept.clone()]
+    );
+}
+
+/// A query that read the shard catalog before the sweep rewrote it still
+/// answers for the tenant.
+///
+/// The sweep rewrites the catalog and then deletes the manifest of the shard it
+/// emptied, so a reader in between holds a catalog that names a shard whose
+/// manifest is gone. The catalog is put back here after the sweep, because that
+/// is the state such a reader is in and a read that fetches the catalog itself
+/// cannot otherwise be shown it.
+#[tokio::test]
+async fn a_query_that_read_the_catalog_before_the_sweep_still_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let config = compactor_config("observability/logs");
+    let prefix = ObjectPath::from("observability/logs");
+    let now_ns = now_unix_nanos();
+    let expired = seed_tenant_log_blocks(&store, &prefix, "tenant-a", &[now_ns - 2 * HOUR_NS])
+        .await[0]
+        .clone();
+    let stale_catalog =
+        read_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
+            .await
+            .unwrap();
+    check!(stale_catalog == vec![expired.time_range]);
+
+    run_compactor_with_retention_overrides(
+        &config,
+        &store,
+        &prefix,
+        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        &expired,
+    )
+    .await;
+    write_tenant_log_index_shard_catalog_to_object_store(
+        &store,
+        &prefix,
+        "tenant-a",
+        &stale_catalog,
+    )
+    .await
+    .unwrap();
+
+    let (labels_index, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
+        .await
+        .unwrap();
+    check!(shard_blocks.blocks().is_empty());
+    check!(labels_index.label_values("tenant-a", "app") == BTreeSet::new());
+}
+
+#[tokio::test]
+async fn each_tenant_is_swept_by_its_own_retention_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let config = compactor_config("observability/logs");
+    let prefix = ObjectPath::from("observability/logs");
+    // One age, three windows. A block 75 minutes old is outside an hour, inside
+    // 90 minutes, and inside "keep forever".
+    let written_ns = now_unix_nanos() - 75 * MINUTE_NS;
+    let mut keys = BTreeMap::new();
+    for tenant in ["tenant-default", "tenant-forever", "tenant-short"] {
+        keys.insert(
+            tenant,
+            seed_tenant_log_blocks(&store, &prefix, tenant, &[written_ns]).await[0].clone(),
+        );
+    }
+
+    run_compactor_with_retention_overrides(
+        &config,
+        &store,
+        &prefix,
+        "defaults:\n  retention_period: \"90m\"\noverrides:\n  tenant-short:\n    \
+         retention_period: \"1h\"\n  tenant-forever:\n    retention_period: \"0s\"\n",
+        &keys["tenant-short"],
+    )
+    .await;
+
+    let mut expected = vec![
+        log_block_object_path(&prefix, &keys["tenant-default"]).to_string(),
+        log_block_object_path(&prefix, &keys["tenant-forever"]).to_string(),
+    ];
+    expected.sort();
+    check!(list_log_block_paths(&store, &prefix).await == expected);
+}
+
+#[tokio::test]
+async fn the_retention_sweep_finds_a_tenant_whose_name_needs_escaping() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let config = compactor_config("observability/logs");
+    let prefix = ObjectPath::from("observability/logs");
+    // A separator and a space. Both reach the object key as an escape, so the
+    // sweep has to read the tenant back through the same escape the write path
+    // used rather than take the path segment as the name.
+    let tenant = "team a/b";
+    let expired =
+        seed_tenant_log_blocks(&store, &prefix, tenant, &[now_unix_nanos() - 2 * HOUR_NS]).await[0]
+            .clone();
+
+    run_compactor_with_retention_overrides(
+        &config,
+        &store,
+        &prefix,
+        "overrides:\n  \"team a/b\":\n    retention_period: \"1h\"\n",
+        &expired,
+    )
+    .await;
+
+    check!(list_log_block_paths(&store, &prefix).await == Vec::<String>::new());
+    let (_, manifest_blocks) =
+        read_tenant_log_index_manifest_from_object_store(&store, &prefix, tenant)
+            .await
+            .unwrap();
+    check!(manifest_blocks.blocks().is_empty());
+}
+
+#[tokio::test]
+async fn the_retention_sweep_rewrites_the_index_before_it_deletes_the_object() {
+    let store = RecordingObjectStore::new();
+    let config = compactor_config("observability/logs");
+    let prefix = ObjectPath::from("observability/logs");
+    let expired = seed_tenant_log_blocks(
+        &store,
+        &prefix,
+        "tenant-a",
+        &[now_unix_nanos() - 2 * HOUR_NS],
+    )
+    .await[0]
+        .clone();
+
+    run_compactor_with_retention_overrides(
+        &config,
+        &store,
+        &prefix,
+        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        &expired,
+    )
+    .await;
+
+    // The order is the contract. A reader that lists after the manifest put
+    // never learns of the block, so it never asks for the object; the reverse
+    // order leaves the manifest naming an object that is already gone.
+    let writes = store.writes();
+    let manifest = ObjectStoreWrite::Put(
+        log_tenant_index_manifest_object_path(&prefix, "tenant-a").to_string(),
+    );
+    let deletion = ObjectStoreWrite::Delete(log_block_object_path(&prefix, &expired).to_string());
+    let manifest_rewrite = writes
+        .iter()
+        .rposition(|write| *write == manifest)
+        .expect("the sweep rewrites the tenant manifest");
+    let block_delete = writes
+        .iter()
+        .position(|write| *write == deletion)
+        .expect("the sweep deletes the expired block object");
+    check!(manifest_rewrite < block_delete);
+}
+
+#[tokio::test]
+async fn a_block_a_delete_request_empties_has_its_object_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let mut config = compactor_config("observability/logs");
+    config.data_root = dir.path().to_path_buf();
+    let prefix = ObjectPath::from("observability/logs");
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
+    let mut block_index = BlockIndex::default();
+    let emptied = BlockKey::new(
+        "tenant-a",
+        0,
+        42,
+        43,
+        TimeRange::new(14_000_000_000, 15_000_000_000).unwrap(),
+    );
+    let kept = BlockKey::new(
+        "tenant-a",
+        1,
+        52,
+        52,
+        TimeRange::new(24_000_000_000, 24_000_000_000).unwrap(),
+    );
+    compact_log_block_to_object_store(
+        &store,
+        &prefix,
+        &emptied,
+        &label_index,
+        &mut block_index,
+        vec![
+            LogRow::new(api, 14_000_000_000, "api secret", BTreeMap::new()),
+            LogRow::new(api, 15_000_000_000, "api secret again", BTreeMap::new()),
+        ],
+    )
+    .await
+    .unwrap();
+    compact_log_block_to_object_store(
+        &store,
+        &prefix,
+        &kept,
+        &label_index,
+        &mut block_index,
+        vec![LogRow::new(api, 24_000_000_000, "api ok", BTreeMap::new())],
+    )
+    .await
+    .unwrap();
+
+    let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
+        .await
+        .unwrap();
+    // A window that covers every row of the first block and none of the second.
+    let delete_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=14&end=15")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(delete_response.status() == StatusCode::NO_CONTENT);
+
+    let descriptor = run_compactor_once(
+        &config,
+        ServiceDependencies::default()
+            .with_wal_consumer(RecordingWalConsumer::new(vec![Vec::new()])),
+        Some(&store),
+    )
+    .await
+    .unwrap();
+    assert!(descriptor.is_none());
+
+    // The descriptor left the index, so nothing names the object any more. An
+    // object no index names is unreachable, and leaving it would grow the
+    // bucket for as long as it lives.
+    let (_, manifest_blocks) =
+        read_tenant_log_index_manifest_from_object_store(&store, &prefix, "tenant-a")
+            .await
+            .unwrap();
+    check!(
+        manifest_blocks
+            .blocks()
+            .iter()
+            .map(|block| block.key.clone())
+            .collect::<Vec<_>>()
+            == vec![kept.clone()]
+    );
+    check!(
+        list_log_block_paths(&store, &prefix).await
+            == vec![log_block_object_path(&prefix, &kept).to_string()]
+    );
+}
+
+#[tokio::test]
+async fn a_query_planned_before_the_sweep_still_answers_without_the_deleted_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let prefix = ObjectPath::from("observability/logs");
+    let now_ns = now_unix_nanos();
+    let keys = seed_tenant_log_blocks(
+        &store,
+        &prefix,
+        "tenant-a",
+        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
+    )
+    .await;
+    let (expired, kept) = (keys[0].clone(), keys[1].clone());
+
+    // A querier that resolves the tenant index per request and caches it. The
+    // cache is what makes a query outlive the index it planned against, which
+    // is the race the sweep creates: the index this querier holds still names
+    // the block after the sweep has deleted the object.
+    let querier_config = ServiceConfig {
+        target: Role::Querier,
+        listen_addr: "127.0.0.1:0".parse().unwrap(),
+        object_store_url: Some(format!("file://{}", dir.path().display())),
+        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
+        tenant: None,
+        index_prefix: Some(prefix.to_string()),
+        querier_dynamic_index_cache_ttl: minutes(10),
+        ..ServiceConfig::default()
+    };
+    let app = build_service_router(&querier_config, ServiceDependencies::default(), None)
+        .await
+        .unwrap();
+    // `end` is exclusive, as `Loki`'s `query_range` defines it, so the window
+    // reaches one nanosecond past the newest row.
+    let uri = format!(
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start={}&end={}&limit=10",
+        expired.time_range.start_ns,
+        kept.time_range.end_ns + 1
+    );
+
+    let before = app.clone().oneshot(loki_query(&uri)).await.unwrap();
+    assert!(before.status() == StatusCode::OK);
+    check!(loki_stream_lines(before).await == vec!["api ok 1".to_string(), "api ok 0".to_string()]);
+
+    run_compactor_with_retention_overrides(
+        &compactor_config("observability/logs"),
+        &store,
+        &prefix,
+        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        &expired,
+    )
+    .await;
+
+    // The cached index still names the deleted block. The rest of the answer is
+    // still correct, so the query answers without its rows rather than failing.
+    let after = app.oneshot(loki_query(&uri)).await.unwrap();
+    assert!(after.status() == StatusCode::OK);
+    let answer = loki_answer(after).await;
+    check!(
+        answer["data"]["result"][0]["values"]
+            .as_array()
+            .map(Vec::len)
+            == Some(1)
+    );
+    check!(answer["data"]["result"][0]["values"][0][1] == "api ok 1");
+    // The skipped block is reported rather than passed over in silence. A
+    // shorter answer that says nothing reads as a complete one.
+    check!(
+        answer["warnings"].as_array().map(Vec::len) == Some(1),
+        "{answer}"
+    );
+}
+
+fn loki_query(uri: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .header("X-Scope-OrgID", "tenant-a")
+        .body(Body::empty())
+        .unwrap()
+}
+
+async fn loki_answer(response: axum::response::Response) -> serde_json::Value {
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+/// The log lines of a `Loki` streams response, newest first as the API returns
+/// them.
+async fn loki_stream_lines(response: axum::response::Response) -> Vec<String> {
+    loki_answer(response).await["data"]["result"]
+        .as_array()
+        .expect("a streams response carries a result array")
+        .iter()
+        .flat_map(|stream| {
+            stream["values"]
+                .as_array()
+                .expect("a stream carries a values array")
+                .iter()
+                .map(|value| value[1].as_str().expect("a value is a line").to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_retention_period_flag_sweeps_without_an_overrides_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    // No overrides file and no provider handed in: the window comes from the
+    // scalar flag, and the compactor loads its own provider to read it. A
+    // compactor that read no provider at all would delete nothing and say
+    // nothing about it.
+    let config = ServiceConfig {
+        retention_period: Some(hours(1)),
+        ..compactor_config("observability/logs")
+    };
+    let prefix = ObjectPath::from("observability/logs");
+    let now_ns = now_unix_nanos();
+    let keys = seed_tenant_log_blocks(
+        &store,
+        &prefix,
+        "tenant-a",
+        &[now_ns - 2 * HOUR_NS, now_ns - MINUTE_NS],
+    )
+    .await;
+    let (expired, kept) = (keys[0].clone(), keys[1].clone());
+
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        run_compactor_until_shutdown(
+            &config,
+            ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(Vec::new())),
+            Some(&store),
+            async {
+                for _ in 0..200 {
+                    if read_log_block_from_object_store(&store, &prefix, &expired)
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    // real-time wait (not a progress poll): iteration-count-bounded
+                    // retry (`for _ in 0..200`); the sleep is the fixed budget
+                    // between reads.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            },
+        ),
+    )
+    .await
+    .expect("the compactor loop stops")
+    .expect("the compactor loop does not fail");
+
+    check!(
+        list_log_block_paths(&store, &prefix).await
+            == vec![log_block_object_path(&prefix, &kept).to_string()]
+    );
 }

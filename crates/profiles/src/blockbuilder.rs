@@ -339,6 +339,7 @@ mod tests {
 }
 
 mod block_builder_config;
+mod block_object_prefix;
 mod build_block;
 mod built_sample;
 mod consumer_record_accumulator;
@@ -362,6 +363,7 @@ mod stacktrace_partition;
 mod symbol_refs;
 
 pub use block_builder_config::BlockBuilderConfig;
+pub use block_object_prefix::BLOCK_OBJECT_PREFIX;
 pub use build_block::build_block;
 pub use built_sample::BuiltSample;
 use consumer_record_accumulator::ConsumerRecordAccumulator;

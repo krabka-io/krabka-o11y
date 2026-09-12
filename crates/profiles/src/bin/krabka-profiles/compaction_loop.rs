@@ -1,8 +1,8 @@
 use krabka_units::{convert::TimeExt as _, fmt::Human as _};
 
 use super::{
-    Arc, CancellationToken, Cli, DownsamplePolicy, ObjectStore, ServiceMetrics, Time,
-    compaction_policy_from_cli, run_compaction_pass,
+    Arc, CancellationToken, Cli, DownsamplePolicy, ObjectStore, OverridesProvider, ServiceMetrics,
+    Time, compaction_policy_from_cli, run_compaction_pass,
 };
 
 /// Runs compaction passes on `--compactor-interval` until `shutdown` fires.
@@ -10,11 +10,20 @@ use super::{
 /// `store` and `index_key` are parameters rather than read from `cli` because
 /// `--target all` builds one object store for the whole process: a compactor
 /// that parsed `--object-store-url` again would rearrange blocks in a store
-/// nothing else uses.
+/// nothing else uses. `overrides` is a parameter for the same reason: the
+/// ingest and query roles resolve a tenant's limits through the one provider
+/// the process loaded, and the retention window a pass deletes by is one of
+/// those limits.
+///
+/// Everything a pass needs is owned rather than borrowed, because the role
+/// supervises this loop rather than awaiting it inline. See
+/// [`run_compactor`](super::run_compactor::run_compactor) for what supervision
+/// buys.
 pub(crate) async fn compaction_loop(
     cli: Arc<Cli>,
     store: Arc<dyn ObjectStore>,
     index_key: String,
+    overrides: OverridesProvider,
     metrics: ServiceMetrics,
     shutdown: CancellationToken,
 ) {
@@ -44,8 +53,10 @@ pub(crate) async fn compaction_loop(
             _ = tick.tick() => {}
         }
         let started = std::time::Instant::now();
-        let outcome =
-            run_compaction_pass(&store, &index_key, &cli, policy, downsample, &metrics).await;
+        let outcome = run_compaction_pass(
+            &store, &index_key, &cli, policy, downsample, &overrides, &metrics,
+        )
+        .await;
         metrics
             .compaction
             .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));

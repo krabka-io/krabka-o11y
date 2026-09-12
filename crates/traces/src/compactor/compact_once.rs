@@ -1,6 +1,6 @@
 use super::{
-    Arc, BlockMeta, BlockWriter, CompactionPolicy, DEFAULT_BLOCK_READ_MAX, ObjectStore, TraceIndex,
-    TracesError, compact_once_with_policy,
+    Arc, BlockWriter, CompactionPassOutcome, CompactionPolicy, DEFAULT_BLOCK_READ_MAX, ObjectStore,
+    TraceIndex, TracesError, compact_once_with_policy,
 };
 
 /// Runs one compaction pass with the default on-disk block-read limit.
@@ -14,7 +14,7 @@ pub async fn compact_once(
     index: &mut TraceIndex,
     object_key_prefix: &str,
     policy: CompactionPolicy,
-) -> Result<Vec<BlockMeta>, TracesError> {
+) -> Result<CompactionPassOutcome, TracesError> {
     compact_once_with_policy(
         store,
         writer,

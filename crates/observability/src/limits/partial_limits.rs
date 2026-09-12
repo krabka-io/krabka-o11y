@@ -69,4 +69,9 @@ pub(crate) struct PartialLimits {
         deserialize_with = "super::option_non_negative_time::deserialize"
     )]
     pub(crate) max_query_range: Option<Time>,
+    #[serde(
+        default,
+        deserialize_with = "super::option_non_negative_time::deserialize"
+    )]
+    pub(crate) retention_period: Option<Time>,
 }

@@ -1,8 +1,8 @@
 use super::{
     Arc, BTreeMap, BlockStore, CachedMetricBlockStore, CompactionIndexManifest,
-    DEFAULT_COLD_CACHE_TTL, DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, ExemplarRecord, Instant,
+    DEFAULT_COLD_CACHE_TTL, DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, ExemplarScan, Instant,
     LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels, MergedMetricStore,
-    MetadataRecord, MetricBlockStore, MetricStore, MetricsServiceError, ObjectStore, ScanResult,
+    MetadataScan, MetricBlockStore, MetricStore, MetricsServiceError, ObjectStore, ScanResult,
     Time, TsdbBlock, Url, WalHead, load_compaction_manifests_for_range_with_cache,
     normalize_refresh_range, unix_time_ms,
 };
@@ -217,7 +217,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<ExemplarRecord>, krabka_promql::PromqlError> {
+    ) -> Result<ExemplarScan, krabka_promql::PromqlError> {
         self.current_store(start_ms, end_ms)
             .await?
             .exemplars(tenant, matchers, start_ms, end_ms)
@@ -235,7 +235,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         &self,
         tenant: &str,
         metric: Option<&str>,
-    ) -> Result<Vec<MetadataRecord>, krabka_promql::PromqlError> {
+    ) -> Result<MetadataScan, krabka_promql::PromqlError> {
         self.current_store(i64::MIN, i64::MAX)
             .await?
             .metadata(tenant, metric)

@@ -37,7 +37,7 @@ pub fn plan_compactions(
         }
         let bucket = candidate
             .min_ts
-            .div_euclid(policy.window_ns_for(candidate.level));
+            .div_euclid(policy.window_ticks_for(candidate.level));
         groups
             .entry((candidate.tenant.as_str(), candidate.level.get(), bucket))
             .or_default()

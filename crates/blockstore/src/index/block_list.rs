@@ -128,14 +128,20 @@ impl BlockList {
         self.compact_if_mostly_dead();
     }
 
-    /// Drops every block whose object key is in `keys`.
-    pub(crate) fn remove(&mut self, keys: &BTreeSet<&String>) {
+    /// Drops every block whose object key is in `keys`, and returns how many
+    /// live blocks it dropped.
+    pub(crate) fn remove(&mut self, keys: &BTreeSet<&String>) -> usize {
+        let mut removed = 0;
         for key in keys {
-            if let Some(ordinal) = self.by_key.get(*key).copied() {
-                self.retire(ordinal);
+            let ordinal = self.by_key.get(*key).copied();
+            if let Some(ordinal) = ordinal
+                && self.retire(ordinal)
+            {
+                removed += 1;
             }
         }
         self.compact_if_mostly_dead();
+        removed
     }
 
     /// Object keys of the blocks that overlap `[min_ts, max_ts]` and carry at
@@ -369,9 +375,10 @@ impl BlockList {
         }
     }
 
-    fn retire(&mut self, ordinal: u32) {
+    /// Takes `ordinal` out of the live set, and says whether it was live.
+    fn retire(&mut self, ordinal: u32) -> bool {
         if !self.live[ordinal as usize] {
-            return;
+            return false;
         }
         self.live[ordinal as usize] = false;
         self.dead += 1;
@@ -380,6 +387,7 @@ impl BlockList {
         if self.by_key.get(&key) == Some(&ordinal) {
             self.by_key.remove(&key);
         }
+        true
     }
 
     fn compact_if_mostly_dead(&mut self) {

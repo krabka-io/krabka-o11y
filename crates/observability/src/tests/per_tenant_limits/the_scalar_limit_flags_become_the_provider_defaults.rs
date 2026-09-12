@@ -15,6 +15,7 @@ pub(crate) fn the_scalar_limit_flags_become_the_provider_defaults() {
         max_query_read: Some(bytes(4096)),
         max_query_string_bytes: Some(bytes(64)),
         max_ingest_body: Some(bytes(2048)),
+        retention_period: Some(days(30)),
         reject_old_samples_max_age: days(3),
         creation_grace_period: minutes(4),
         ..ServiceConfig::default()
@@ -29,6 +30,7 @@ pub(crate) fn the_scalar_limit_flags_become_the_provider_defaults() {
                 max_query_read: bytes(4096),
                 max_query_string_bytes: bytes(64),
                 max_ingest_body: bytes(2048),
+                retention_period: days(30),
                 reject_old_samples_max_age: days(3),
                 creation_grace_period: minutes(4),
                 ..Limits::default()

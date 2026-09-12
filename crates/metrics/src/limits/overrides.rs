@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use krabka_blockstore::RetentionWindows;
 use krabka_units::{prelude::*, serde_units};
 use serde::Deserialize;
 use thiserror::Error;
@@ -29,6 +30,8 @@ overrides:
     active_series_idle_timeout: "2m"
     otlp_delta_max_stale: "90s"
     otlp_delta_max_streams: 7
+  tenant-e:
+    compactor_blocks_retention_period: "72h"
 "#;
 
     /// The request-shape limits reach the same per-tenant override path as
@@ -105,6 +108,102 @@ overrides:
         check!(c.max_query_length == hours(1));
         check!(c.max_query_lookback == days(7));
         check!(p.for_tenant("tenant-a").max_query_length == Time::ZERO);
+    }
+
+    /// The retention window is per tenant, and it is the window the sweep
+    /// reads through `RetentionWindows`. A tenant with no entry of its own
+    /// answers from the defaults, and the built-in default is zero, which
+    /// keeps every block forever. A sweep that read zero as "delete
+    /// everything" would empty the bucket of every unconfigured tenant, so
+    /// the zero case is pinned through the trait the sweep calls.
+    #[test]
+    fn block_retention_is_per_tenant_and_zero_by_default() {
+        let p = OverridesProvider::from_yaml(YAML).unwrap();
+
+        check!(p.for_tenant("tenant-e").compactor_blocks_retention_period == hours(72));
+        check!(p.block_retention("tenant-e") == hours(72));
+        check!(
+            p.block_retention("tenant-a") == Time::ZERO,
+            "a listed tenant without the key keeps the default"
+        );
+        check!(
+            p.block_retention("tenant-z") == Time::ZERO,
+            "an unlisted tenant keeps the default"
+        );
+        check!(Limits::default().compactor_blocks_retention_period == Time::ZERO);
+    }
+
+    /// The defaults block moves the window of every tenant that does not set
+    /// one, including the tenants the file never names. The sweep lists the
+    /// whole bucket for exactly this reason.
+    #[test]
+    fn a_default_block_retention_window_reaches_unlisted_tenants() {
+        let p = OverridesProvider::from_yaml(
+            "defaults:\n  compactor_blocks_retention_period: \"24h\"\noverrides:\n  tenant-a:\n    compactor_blocks_retention_period: \"1h\"\n",
+        )
+        .unwrap();
+
+        check!(p.block_retention("tenant-a") == hours(1));
+        check!(p.block_retention("tenant-z") == hours(24));
+    }
+
+    /// A sweep costs a pass over the whole bucket, so a deployment where no
+    /// tenant can ever expire a block does not run one. The question is asked
+    /// of the defaults as well as of every named tenant: a default window
+    /// with no tenant entry at all still expires blocks.
+    #[test]
+    fn a_deployment_with_no_window_anywhere_expires_nothing() {
+        let cases: &[(&str, bool)] = &[
+            (
+                "overrides:\n  tenant-a:\n    max_series_per_request: 3\n",
+                false,
+            ),
+            (
+                "overrides:\n  tenant-a:\n    compactor_blocks_retention_period: \"0s\"\n",
+                false,
+            ),
+            (
+                "overrides:\n  tenant-a:\n    compactor_blocks_retention_period: \"1ms\"\n",
+                true,
+            ),
+            (
+                "defaults:\n  compactor_blocks_retention_period: \"1h\"\n",
+                true,
+            ),
+        ];
+
+        for (yaml, expected) in cases {
+            let p = OverridesProvider::from_yaml(yaml).unwrap();
+            check!(p.expires_any_blocks() == *expected, "{yaml}");
+        }
+    }
+
+    /// A misspelled key is refused, not ignored. A dropped
+    /// `compactor_blocks_retention_period` would leave the operator believing
+    /// a window was set while the bucket grew without bound, and nothing
+    /// would report it. Mimir 2.16.1 refuses the same key the same way.
+    #[test]
+    fn a_misspelled_override_key_is_refused() {
+        for yaml in [
+            "overrides:\n  tenant-a:\n    compactor_block_retention_period: \"24h\"\n",
+            "overrides:\n  tenant-a:\n    max_series_per_requests: 3\n",
+            "defaults:\n  compactor_block_retention_period: \"24h\"\n",
+        ] {
+            let error = OverridesProvider::from_yaml(yaml).unwrap_err();
+            let OverridesError::Yaml(message) = &error;
+            check!(
+                message.contains("unknown field"),
+                "{yaml} was accepted with: {message}"
+            );
+        }
+
+        check!(
+            OverridesProvider::from_yaml(
+                "overrides:\n  tenant-a:\n    compactor_blocks_retention_period: \"24h\"\n"
+            )
+            .is_ok(),
+            "the spelling Mimir uses is accepted"
+        );
     }
 
     #[test]

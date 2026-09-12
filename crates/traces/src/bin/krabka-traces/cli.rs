@@ -388,6 +388,20 @@ pub(crate) struct Cli {
         value_parser = parse_non_negative_time_or_secs
     )]
     pub(crate) max_search_duration: Time,
+    /// How long a tenant's blocks are kept. Zero keeps them forever.
+    ///
+    /// This is Tempo's `block_retention`, with Tempo's default of `336h`. It is
+    /// the default window every tenant the runtime overrides file does not name
+    /// reads, and the compactor's retention sweep is what applies it. Zero is
+    /// "no retention", and it does not delete anything.
+    #[arg(
+        long = "block-retention",
+        visible_alias = "block-retention-secs",
+        env = "KRABKA_TRACES_BLOCK_RETENTION",
+        default_value = "336h",
+        value_parser = parse_non_negative_time_or_secs
+    )]
+    pub(crate) block_retention: Time,
     /// Per-tenant limit overrides, as a runtime YAML file.
     ///
     /// The file names only the tenants and the keys that differ from the flags

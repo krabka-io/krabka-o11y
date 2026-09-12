@@ -2,12 +2,13 @@ use std::{
     net::SocketAddr,
     path::Path,
     sync::{Arc, Mutex},
+    time::SystemTime,
 };
 
 use clap::{Parser, ValueEnum};
 use krabka_blockstore::{
-    BlockLevel, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL,
-    DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, ProfileIndex,
+    BlockLevel, BlockTimestampUnit, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB,
+    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, ProfileIndex,
 };
 use krabka_client_consumer::ConsumerFetchMaxBytes;
 use krabka_client_core::{
@@ -27,7 +28,7 @@ use krabka_pprof::{DebuginfodConfig, UnionProfileStore};
 use krabka_profiles::{
     blockbuilder::BlockBuilderConfig,
     cold_store::ColdProfileStore,
-    compactor::{DownsamplePolicy, compact_once_with_policy},
+    compactor::DownsamplePolicy,
     distributor::{DistributorState, KafkaSink, serve_supervised},
     hot_store::{RetentionConfig, WalTailProfileStore},
     ingest::RelabelConfig,
@@ -845,6 +846,7 @@ overrides:
                     max_flamegraph_nodes_max: 512,
                     max_query_length: secs(30),
                     max_session_id_cardinality: 32,
+                    compactor_blocks_retention_period: secs(0),
                 }
         );
         // An unlisted tenant takes the file's defaults, and the process default
@@ -862,6 +864,7 @@ overrides:
                     max_flamegraph_nodes_max: 0,
                     max_query_length: krabka_profiles::limits::DEFAULT_MAX_QUERY_LENGTH,
                     max_session_id_cardinality: 32,
+                    compactor_blocks_retention_period: secs(0),
                 }
         );
     }
@@ -1069,6 +1072,12 @@ mod sigterm_exits_the_querier;
 /// be checked against the shared role vocabulary is here.
 #[cfg(test)]
 mod target_names_match_the_role_vocabulary;
+
+/// The compactor role, and the loop it supervises. Both are private to this
+/// binary, so this is the only place they can be started the way `run` starts
+/// them.
+#[cfg(test)]
+mod the_compactor_runs_under_supervision;
 
 mod all_stage;
 mod alloc;

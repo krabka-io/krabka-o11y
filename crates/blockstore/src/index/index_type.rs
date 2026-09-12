@@ -373,6 +373,32 @@ impl Index {
         }
     }
 
+    /// Drops the `keys` blocks of `tenant`, and returns how many it dropped.
+    ///
+    /// This is retention's swap, where [`Self::replace_blocks`] is
+    /// compaction's: the blocks leave the index and nothing takes their place.
+    /// A key the index does not hold is skipped, so a repeated sweep returns
+    /// zero rather than failing.
+    ///
+    /// Unlike the traces and profiles indexes, this one records no pending
+    /// removal to replay. [`Index::save`] republishes every shard the index
+    /// names and deletes the shard objects the new layout does not, so the
+    /// drop is durable at the next save. The other two publish by merging into
+    /// a base generation, where a plain union would resurrect anything the
+    /// writer removed, and their seams pin each removal to the record it
+    /// dropped. See
+    /// [`TraceIndex::remove_trace_blocks`](crate::TraceIndex::remove_trace_blocks).
+    pub fn remove_blocks(&mut self, tenant: &str, keys: &[String]) -> usize {
+        // `get_mut` rather than `entry`: removing from a tenant the index does
+        // not hold must not create an empty one.
+        let Some(tenant_index) = self.tenants.get_mut(tenant) else {
+            return 0;
+        };
+        tenant_index
+            .blocks
+            .remove(&keys.iter().collect::<BTreeSet<_>>())
+    }
+
     /// How many rounds of compaction produced `object_key`, whichever tenant
     /// holds it. Object keys are unique across tenants.
     #[must_use]

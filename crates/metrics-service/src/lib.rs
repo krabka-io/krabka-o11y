@@ -27,8 +27,8 @@ use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Producer, ProducerRecord};
 use krabka_metrics::{CompactionIndexManifest, WalRecord, partition_key};
 use krabka_promql::{
-    AlertmanagerSink, EngineOpts, ExemplarRecord, InMemoryMetricStore, LabelNameCardinality,
-    LabelValueCardinality, MergedMetricStore, MetadataRecord, MetricBlockStore, MetricStore,
+    AlertmanagerSink, EngineOpts, ExemplarScan, InMemoryMetricStore, LabelNameCardinality,
+    LabelValueCardinality, MergedMetricStore, MetadataScan, MetricBlockStore, MetricStore,
     PrometheusApiState, QueryFrontendOptions, RecordingRuleWalSink, RulerAlertState,
     RulerAlertStateRecord, RulerGroupEvaluation, RulerGroupState, RulerGroupStateRecord,
     RulerShard, RulerStateSink, RulerWalError, ScanResult, TsdbBlock, WalHead,
@@ -66,6 +66,7 @@ mod tests {
     /// cache rather than be served from it forever.
     #[tokio::test]
     async fn manifest_listing_covers_its_boundaries() {
+        use krabka_blockstore::BlockLevel;
         use krabka_metrics::{CompactionIndexManifest, MetricBlockKind};
         use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 
@@ -75,6 +76,7 @@ mod tests {
                 kind: MetricBlockKind::Float,
                 block_key: format!("{index_key}.parquet"),
                 index_key: index_key.to_string(),
+                level: BlockLevel::INGESTED,
                 first_offset: 0,
                 last_offset: 0,
                 row_count: 1,

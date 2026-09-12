@@ -28,6 +28,8 @@ pub(crate) struct PartialLimits {
     pub(crate) max_query_length_secs: Option<u64>,
     #[serde(default)]
     pub(crate) max_session_id_cardinality: Option<u64>,
+    #[serde(default)]
+    pub(crate) compactor_blocks_retention_period_secs: Option<u64>,
 }
 
 impl PartialLimits {
@@ -94,6 +96,11 @@ impl PartialLimits {
             max_session_id_cardinality: self
                 .max_session_id_cardinality
                 .unwrap_or(defaults.max_session_id_cardinality),
+            compactor_blocks_retention_period: self
+                .compactor_blocks_retention_period_secs
+                .map_or(defaults.compactor_blocks_retention_period, |secs| {
+                    Time::from_secs(i64::try_from(secs).unwrap_or(i64::MAX))
+                }),
         }
     }
 }

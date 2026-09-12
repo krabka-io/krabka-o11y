@@ -57,7 +57,9 @@ pub use query_frontend::{
     execute_range_query_frontend, merge_range_query_results, plan_range_query,
 };
 pub use range_array::RangeArray;
-pub use result::{Annotations, InstantSample, QueryResult, RangeSeries, SampleValue};
+pub use result::{
+    AnnotatedQueryResult, Annotations, InstantSample, QueryResult, RangeSeries, SampleValue,
+};
 pub use ruler::{
     AlertmanagerAlert, AlertmanagerSink, RecordingRuleWalSink, RulerAlertState,
     RulerAlertStateRecord, RulerGroupEvaluation, RulerGroupState, RulerGroupStateRecord,
@@ -71,6 +73,6 @@ pub use ruler::{
     filter_ruler_rule_set_for_shard, filter_ruler_rule_set_for_shard_due_for_eval,
 };
 pub use store::{
-    ExemplarRecord, LabelNameCardinality, LabelValueCardinality, MetadataRecord, MetricStore,
-    NamedTsdbStat, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+    ExemplarRecord, ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataRecord,
+    MetadataScan, MetricStore, NamedTsdbStat, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
 };

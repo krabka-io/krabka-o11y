@@ -19,3 +19,4 @@ pub use frontier::{
     write_compaction_frontier_to_object_store,
 };
 pub(crate) mod object_store_support;
+pub(crate) mod retention;

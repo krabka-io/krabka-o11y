@@ -60,6 +60,9 @@ pub async fn serve_all_service_listener(
     // share it, so an ingest gate and a read gate answer the same tenant with
     // the same numbers.
     let overrides = limits_provider_for_config(&config)?;
+    // The block builder below reads the retention window out of the same
+    // provider, so one process enforces one set of numbers.
+    let dependencies = dependencies.with_limits(Arc::clone(&overrides));
     let distributor_state = distributor_state_for_config(
         &config,
         &dependencies,

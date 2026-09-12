@@ -7,10 +7,12 @@ use krabka_units::prelude::*;
 
 use super::*;
 use crate::{
-    EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult, RangeSeries, SampleValue,
-    test_support::tenant_id,
+    AnnotatedQueryResult, Annotations, EngineOpts, InMemoryMetricStore, PromqlEngine, QueryResult,
+    RangeSeries, SampleValue, test_support::tenant_id,
 };
 
+mod a_cached_range_query_reports_the_annotations_of_the_miss;
+mod an_object_store_cached_range_query_reports_the_annotations_of_the_miss;
 mod avg_partial_recording_executor;
 mod concurrency_probe_executor;
 mod frontend_range_execution_dispatches_subqueries_concurrently;
@@ -51,6 +53,8 @@ mod rank_recording_executor;
 mod rank_reduction_ranks_nan_last_for_top_and_bottom;
 mod recording_executor;
 mod shard_query_injection_adds_mimir_selector_to_vector_and_matrix_selectors;
+mod unannotated;
+mod warning_executor;
 
 use avg_partial_recording_executor::AvgPartialRecordingExecutor;
 use concurrency_probe_executor::ConcurrencyProbeExecutor;
@@ -60,3 +64,5 @@ use moment_partial_recording_executor::MomentPartialRecordingExecutor;
 use native_histogram_with_positive_buckets::native_histogram_with_positive_buckets;
 use rank_recording_executor::RankRecordingExecutor;
 use recording_executor::RecordingExecutor;
+use unannotated::unannotated;
+use warning_executor::WarningExecutor;

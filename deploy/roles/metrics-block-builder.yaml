@@ -6,8 +6,14 @@
 #
 # Metrics has no `compactor` role. Nothing yet merges metric blocks that are
 # already in object storage, so the retention sweep that a Mimir compactor
-# would run rides inside this role instead -- hence the `block-builder-retention`
-# keys below.
+# would run rides inside this role instead -- hence the
+# `block-builder-retention-sweep-interval` key below.
+#
+# The window the sweep applies is per tenant. It is the
+# `compactor_blocks_retention_period` limit in the file `runtime-overrides`
+# names, which is the same file the distributor and the querier read. With no
+# such file, and with no window in it, this role keeps every block forever and
+# runs no sweep at all.
 #
 # `object-store-url` carries no path. //crates/metrics' object-store builder
 # drops the prefix a URL names, so blocks go at the bucket root; the querier's
@@ -16,5 +22,4 @@ target: block-builder
 admin-listen-addr: 0.0.0.0:9404
 bootstrap: broker:9092
 object-store-url: s3://krabka-metrics
-block-builder-retention: 24h
 block-builder-retention-sweep-interval: 5m

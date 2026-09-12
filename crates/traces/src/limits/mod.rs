@@ -1,4 +1,4 @@
-use krabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, per_sec};
+use krabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, hours, per_sec};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -10,6 +10,8 @@ pub use overrides::{OverridesError, OverridesProvider};
 
 #[cfg(test)]
 mod tests {
+    use assert2::check;
+    use krabka_blockstore::RetentionWindows as _;
 
     use super::*;
 
@@ -25,8 +27,23 @@ mod tests {
                     max_spans_per_trace: 200_000,
                     max_attribute: bytes(2048),
                     max_search_duration: <Time as TimeExt>::ZERO,
+                    block_retention: hours(336),
                 }
         );
+    }
+
+    /// Tempo keeps blocks for `336h` unless an operator says otherwise, and a
+    /// window of zero keeps them forever. Reading the sentinel the other way
+    /// round would delete every block of a tenant that configured nothing.
+    #[test]
+    fn the_default_block_retention_is_tempos_and_zero_keeps_blocks_forever() {
+        check!(Limits::default().block_retention == hours(336));
+
+        let forever = OverridesProvider::new(Limits {
+            block_retention: <Time as TimeExt>::ZERO,
+            ..Limits::default()
+        });
+        check!(forever.block_retention("tenant-a") == <Time as TimeExt>::ZERO);
     }
 
     #[test]

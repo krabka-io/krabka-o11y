@@ -1,4 +1,4 @@
-use super::{AllStage, Arc, Cli, ObjectStore, ServiceMetrics, compaction_loop};
+use super::{AllStage, Arc, Cli, ObjectStore, OverridesProvider, ServiceMetrics, compaction_loop};
 
 /// The compactor, as `--target all` runs it.
 ///
@@ -11,9 +11,14 @@ pub(crate) fn compactor_stage(
     cli: &Arc<Cli>,
     store: Arc<dyn ObjectStore>,
     index_key: String,
+    overrides: OverridesProvider,
     metrics: &ServiceMetrics,
 ) -> AllStage {
     let cli = Arc::clone(cli);
     let metrics = metrics.clone();
-    Box::new(move |token| Box::pin(compaction_loop(cli, store, index_key, metrics, token)))
+    Box::new(move |token| {
+        Box::pin(compaction_loop(
+            cli, store, index_key, overrides, metrics, token,
+        ))
+    })
 }

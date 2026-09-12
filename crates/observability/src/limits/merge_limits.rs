@@ -39,5 +39,6 @@ pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
             .max_query_string_bytes
             .unwrap_or(base.max_query_string_bytes),
         max_query_range: partial.max_query_range.unwrap_or(base.max_query_range),
+        retention_period: partial.retention_period.unwrap_or(base.retention_period),
     }
 }

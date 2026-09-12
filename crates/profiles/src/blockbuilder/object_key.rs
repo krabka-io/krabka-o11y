@@ -1,4 +1,4 @@
-use super::escape_object_path_segment;
+use super::{BLOCK_OBJECT_PREFIX, escape_object_path_segment};
 
 /// Object key of one block that the block-builder writes.
 ///
@@ -17,6 +17,6 @@ pub fn object_key(
 ) -> String {
     let tenant = escape_object_path_segment(tenant);
     format!(
-        "blocks/{tenant}/{partition:05}/{min_offset:020}-{max_offset:020}-{min_ts}-{max_ts}.parquet"
+        "{BLOCK_OBJECT_PREFIX}/{tenant}/{partition:05}/{min_offset:020}-{max_offset:020}-{min_ts}-{max_ts}.parquet"
     )
 }

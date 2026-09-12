@@ -25,5 +25,6 @@ pub(crate) fn merge_limits(defaults: &Limits, partial: &PartialLimits) -> Limits
             .map_or(defaults.max_search_duration, |secs| {
                 Time::from_secs(i64::try_from(secs).unwrap_or(i64::MAX))
             }),
+        block_retention: partial.block_retention.unwrap_or(defaults.block_retention),
     }
 }

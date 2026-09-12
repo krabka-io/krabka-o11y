@@ -12,7 +12,7 @@ use krabka_metrics::{BucketSpan, NativeHistogram};
 use serde_json::{Map, Value, json};
 
 use super::apply_limit;
-use crate::{QueryResult, RangeSeries, SampleValue, store::ExemplarRecord};
+use crate::{Annotations, QueryResult, RangeSeries, SampleValue, store::ExemplarRecord};
 
 mod active_series_response;
 mod append_custom_histogram_buckets;

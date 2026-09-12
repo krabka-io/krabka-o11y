@@ -1,3 +1,6 @@
+use krabka_blockstore::RetentionWindows;
+use krabka_units::Time;
+
 use super::{HashMap, Limits, OverridesError, RuntimeFile, TenantId};
 
 /// Pyroscope-style runtime overrides resolved into full per-tenant limits.
@@ -56,5 +59,18 @@ impl OverridesProvider {
         self.per_tenant
             .get(tenant.as_str())
             .unwrap_or(&self.defaults)
+    }
+}
+
+impl RetentionWindows for OverridesProvider {
+    // Keyed by the raw string rather than by a parsed `TenantId`: the compactor
+    // reads the tenant out of a block record the ingest path already validated,
+    // and a tenant that failed to parse here would silently keep its blocks
+    // forever.
+    fn block_retention(&self, tenant: &str) -> Time {
+        self.per_tenant
+            .get(tenant)
+            .unwrap_or(&self.defaults)
+            .compactor_blocks_retention_period
     }
 }

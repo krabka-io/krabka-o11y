@@ -1,5 +1,5 @@
 use super::{
-    FrontendRangeRequest, MomentReduction, PromqlError, QueryResult, QueryShardReducer,
+    AnnotatedQueryResult, FrontendRangeRequest, MomentReduction, PromqlError, QueryShardReducer,
     RangeQueryCache, RangeQueryExecutor, execute_planned_range_queries,
     merge_range_query_results_with_reducer, plan_range_query, reduce_moment_range_query_results,
 };
@@ -12,7 +12,7 @@ pub(crate) async fn execute_moment_range_query_frontend<E, C>(
     count_query: &str,
     sum_squares_query: &str,
     kind: MomentReduction,
-) -> Result<QueryResult, PromqlError>
+) -> Result<AnnotatedQueryResult, PromqlError>
 where
     E: RangeQueryExecutor,
     C: RangeQueryCache + ?Sized,
@@ -38,15 +38,20 @@ where
         request.step,
         request.opts,
     )?;
-    let sum_results =
+    let (sum_results, mut annotations) =
         execute_planned_range_queries(executor, cache, &request.tenant, sum_plan).await?;
-    let count_results =
+    let (count_results, count_annotations) =
         execute_planned_range_queries(executor, cache, &request.tenant, count_plan).await?;
-    let sum_squares_results =
+    let (sum_squares_results, sum_squares_annotations) =
         execute_planned_range_queries(executor, cache, &request.tenant, sum_squares_plan).await?;
+    annotations.extend(&count_annotations);
+    annotations.extend(&sum_squares_annotations);
     let sums = merge_range_query_results_with_reducer(sum_results, QueryShardReducer::Sum)?;
     let counts = merge_range_query_results_with_reducer(count_results, QueryShardReducer::Sum)?;
     let sum_squares =
         merge_range_query_results_with_reducer(sum_squares_results, QueryShardReducer::Sum)?;
-    reduce_moment_range_query_results(sums, counts, sum_squares, kind)
+    Ok(AnnotatedQueryResult {
+        result: reduce_moment_range_query_results(sums, counts, sum_squares, kind)?,
+        annotations,
+    })
 }

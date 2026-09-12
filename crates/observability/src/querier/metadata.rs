@@ -1,13 +1,12 @@
 use krabka_units::convert::TimeExt;
 
 use crate::{
-    BTreeSet, BlockStoreError, ErrorKind, HeaderMap, HttpQueryError,
-    LOKI_METADATA_DEFAULT_INDEX_RANGE, Labels, QuerierState, RequestSecurity, Response,
-    SeriesFingerprint, SeriesParams, StatusCode, TenantErrorSurface, TimeRange, authorized_tenant,
-    clamp_query_lookback, current_unix_time_ns, decode_form_component, json, json_response,
-    loki_sparse_success, loki_success, optional_start_end_range, parse_loki_duration_query_param,
-    parse_loki_timestamp_query_param, parse_query, read_log_block,
-    read_log_block_from_object_store, split_query_param_pairs,
+    BTreeSet, HeaderMap, HttpQueryError, LOKI_METADATA_DEFAULT_INDEX_RANGE, Labels, QuerierState,
+    RequestSecurity, Response, SeriesFingerprint, SeriesParams, StatusCode, TenantErrorSurface,
+    TimeRange, authorized_tenant, clamp_query_lookback, current_unix_time_ns,
+    decode_form_component, json, json_response, loki_sparse_success, loki_success,
+    optional_start_end_range, parse_loki_duration_query_param, parse_loki_timestamp_query_param,
+    parse_query, read_planned_log_block, split_query_param_pairs,
     validate_loki_volume_query_range_limit,
 };
 

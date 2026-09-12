@@ -11,16 +11,16 @@ use axum::{
 };
 use krabka_blockstore::{
     BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels,
-    write_log_block, write_log_block_to_object_store, write_log_index_manifest,
-    write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shard_to_object_store,
-    write_tenant_log_index_shards_to_object_store,
+    log_block_object_path, write_log_block, write_log_block_to_object_store,
+    write_log_index_manifest, write_tenant_log_index_manifest_to_object_store,
+    write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store,
 };
 use krabka_observability::{
     InMemoryWalSink, LogWalSink, QuerierIndexSource, QuerierState, Role, ServiceConfig,
     ServiceDependencies, WalLogRecord, build_service_router, loki_router,
 };
 use krabka_units::convert::ByteSizeExt as _;
-use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
+use object_store::{ObjectStoreExt as _, local::LocalFileSystem, path::Path as ObjectPath};
 use serde_json::json;
 use support::{
     expected_api_error, expected_loki_mixed_stats_with, expected_loki_stats_with, json_body,
@@ -1514,4 +1514,267 @@ async fn tenant_object_store_shard_catalog_fixture() -> QuerierState {
     )
     .await
     .unwrap()
+}
+
+/// A querier over an index that still names a block whose object a retention
+/// sweep deleted.
+///
+/// Two blocks are written and the manifest records both. The second block's
+/// object is then deleted, which is what a sweep does to a live querier: the
+/// index is unchanged, and the bytes are gone. Both blocks hold the `api`
+/// series, so every query for `api` plans both and meets the gap.
+async fn retention_swept_fixture() -> (axum::Router, u64, u64) {
+    let object_dir = tempfile::tempdir().unwrap().keep();
+    let data_root = tempfile::tempdir().unwrap().keep();
+    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
+    let prefix = ObjectPath::from("indexes");
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let web = label_index.insert_series("tenant-a", labels([("app", "web"), ("env", "prod")]));
+
+    let surviving_block = write_log_block_to_object_store(
+        &store,
+        &prefix,
+        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        vec![LogRow::new(api, 10, r#"{"status":200}"#, BTreeMap::new())],
+    )
+    .await
+    .unwrap();
+
+    let swept_key = BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap());
+    let swept_block = write_log_block_to_object_store(
+        &store,
+        &prefix,
+        &swept_key,
+        vec![
+            LogRow::new(api, 20, r#"{"status":500}"#, BTreeMap::new()),
+            LogRow::new(web, 29, r#"{"status":503}"#, BTreeMap::new()),
+        ],
+    )
+    .await
+    .unwrap();
+
+    let surviving_bytes = surviving_block.size.bytes_u64();
+    let swept_bytes = swept_block.size.bytes_u64();
+    let mut block_index = BlockIndex::default();
+    block_index.insert(surviving_block);
+    block_index.insert(swept_block);
+    write_tenant_log_index_manifest_to_object_store(
+        &store,
+        &prefix,
+        "tenant-a",
+        &label_index,
+        &block_index,
+    )
+    .await
+    .unwrap();
+
+    // The sweep itself. The manifest still names the block.
+    store
+        .delete(&log_block_object_path(&prefix, &swept_key))
+        .await
+        .unwrap();
+
+    let app = build_service_router(
+        &retention_config(&object_dir.display().to_string(), data_root, &prefix),
+        ServiceDependencies::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    (app, surviving_bytes, swept_bytes)
+}
+
+fn retention_config(
+    object_dir: &str,
+    data_root: std::path::PathBuf,
+    prefix: &ObjectPath,
+) -> ServiceConfig {
+    ServiceConfig {
+        target: Role::Querier,
+        listen_addr: "127.0.0.1:0".parse().unwrap(),
+        object_store_url: Some(format!("file://{object_dir}")),
+        wal_bootstrap_server: None,
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
+        data_root,
+        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
+        tenant: Some("tenant-a".to_string()),
+        index_prefix: Some(prefix.to_string()),
+        query_start_ns: None,
+        query_end_ns: None,
+        max_query_range: None,
+        max_query_series: None,
+        max_query_read: None,
+        max_query_string_bytes: None,
+        max_ingest_body: None,
+        wal_append_timeout: None,
+        ..ServiceConfig::default()
+    }
+}
+
+/// A retention sweep deletes block objects while queriers run, so every read
+/// surface that plans a block can meet one that is gone. None of them may
+/// fail the whole request for it: a valid query answers with the blocks that
+/// remain.
+///
+/// The metadata surfaces degrade differently from the analytics ones, and
+/// both shapes are pinned here. `/labels`, `/label/{name}/values` and
+/// `/series` fall back to the fingerprints the index still records for the
+/// swept block, so `web` survives in the answer even though its rows are
+/// gone. `/index/stats`, `/patterns` and `/detected_fields` have no such
+/// index-level fallback, so they answer from the surviving block alone.
+#[tokio::test]
+async fn a_retention_swept_block_degrades_every_read_surface_instead_of_failing() {
+    let (app, surviving_bytes, swept_bytes) = retention_swept_fixture().await;
+
+    let cases = vec![
+        (
+            "/loki/api/v1/labels?start=10&end=29",
+            json!({"status": "success", "data": ["app", "env"]}),
+        ),
+        (
+            "/loki/api/v1/label/app/values?start=10&end=29",
+            json!({"status": "success", "data": ["api", "web"]}),
+        ),
+        (
+            "/loki/api/v1/series?match%5B%5D=%7Benv%3D%22prod%22%7D&start=10&end=29",
+            json!({
+                "status": "success",
+                "data": [
+                    {"app": "api", "env": "prod"},
+                    {"app": "web", "env": "prod"},
+                ],
+            }),
+        ),
+        (
+            "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=10&end=29",
+            json!({
+                "streams": 1,
+                "chunks": 2,
+                "entries": 1,
+                "bytes": surviving_bytes + swept_bytes,
+            }),
+        ),
+        (
+            "/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=10&end=29&step=1000000000",
+            json!({
+                "status": "success",
+                "data": [
+                    {"pattern": r#"{"status":"<_>"}"#, "samples": [[0, 1]]},
+                ],
+            }),
+        ),
+        (
+            "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=10&end=29&limit=10",
+            json!({
+                "fields": [
+                    {
+                        "label": "detected_level",
+                        "type": "string",
+                        "cardinality": 1,
+                        "parsers": null,
+                    },
+                    {
+                        "label": "status",
+                        "type": "int",
+                        "cardinality": 1,
+                        "parsers": ["json"],
+                    },
+                ],
+                "limit": 10,
+            }),
+        ),
+    ];
+
+    for (uri, expected) in cases {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            response.status() == StatusCode::OK,
+            "{uri} answers 200 despite the swept block"
+        );
+        assert!(json_body(response).await == expected, "{uri}");
+    }
+}
+
+/// The tolerance covers an absent block object and nothing else.
+///
+/// Here the block object is PRESENT and holds bytes that are not a Parquet
+/// block, which is a real fault in the stored data rather than a sweep. The
+/// request fails, and it must keep failing: a decode error that degraded to a
+/// skip would shorten every result with nothing to say so.
+///
+/// The status pins today's mapping, where `HttpQueryError::BlockStore` lands
+/// in the `BAD_REQUEST` arm. The mapping itself is a separate question, since
+/// a malformed stored block is a server-side fault and not a client error.
+#[tokio::test]
+async fn a_present_but_malformed_block_still_fails_the_request() {
+    let object_dir = tempfile::tempdir().unwrap().keep();
+    let data_root = tempfile::tempdir().unwrap().keep();
+    let store = LocalFileSystem::new_with_prefix(&object_dir).unwrap();
+    let prefix = ObjectPath::from("indexes");
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+
+    let key = BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap());
+    let block = write_log_block_to_object_store(
+        &store,
+        &prefix,
+        &key,
+        vec![LogRow::new(api, 10, r#"{"status":200}"#, BTreeMap::new())],
+    )
+    .await
+    .unwrap();
+    let mut block_index = BlockIndex::default();
+    block_index.insert(block);
+    write_tenant_log_index_manifest_to_object_store(
+        &store,
+        &prefix,
+        "tenant-a",
+        &label_index,
+        &block_index,
+    )
+    .await
+    .unwrap();
+
+    // The object stays, and its bytes stop being a block.
+    store
+        .put(
+            &log_block_object_path(&prefix, &key),
+            b"not a parquet block".to_vec().into(),
+        )
+        .await
+        .unwrap();
+
+    let app = build_service_router(
+        &retention_config(&object_dir.display().to_string(), data_root, &prefix),
+        ServiceDependencies::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=10&end=19")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(response.status() == StatusCode::BAD_REQUEST);
 }

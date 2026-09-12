@@ -5,7 +5,7 @@ Prometheus/Grafana-Mimir-equivalent metrics backend for Krabka.
 This crate starts with the metrics data layer: Arrow block schemas, native
 histogram encoding, float samples, exemplars, and the remote_write v2 symbol
 table. It also owns the distributor ingest path, WAL append wiring, and
-compactor block/index writes. Query execution lives in `krabka-promql`.
+the block and index writes of both the block builder and the compactor. Query execution lives in `krabka-promql`.
 
 ## The two binaries
 
@@ -14,8 +14,14 @@ roles. They are not interchangeable, and neither has a role the other also has.
 
 | Binary | `--target` | What it does |
 | --- | --- | --- |
-| `krabka-metrics` | `distributor`, `compactor` | Remote-write and OTLP ingest into the WAL, and the compaction of that WAL into blocks |
+| `krabka-metrics` | `distributor`, `block-builder`, `compactor` | Remote-write and OTLP ingest into the WAL, the building of blocks out of that WAL, and the merging of those blocks into larger ones |
 | `krabka-metrics-service` | `querier`, `query-frontend`, `ruler` | The PromQL query API over those blocks, its splitting front end, and rule evaluation |
+
+The `block-builder` reads the WAL and writes one block per tenant, kind and
+offset window. The `compactor` reaches no broker: it reads the `.index`
+manifests, merges the float and native-histogram blocks a level policy chooses,
+and retires the inputs. The `block-builder` also runs the retention and orphan
+sweep.
 
 The split follows the crate graph: `krabka-metrics-service` depends on
 `krabka-metrics` and on `krabka-promql`, so the read path can reach the write

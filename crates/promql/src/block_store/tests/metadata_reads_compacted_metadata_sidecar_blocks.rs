@@ -46,7 +46,8 @@ pub(crate) async fn metadata_reads_compacted_metadata_sidecar_blocks() {
     let metadata = store
         .metadata("tenant-a", Some("http_requests_total"))
         .await
-        .unwrap();
+        .unwrap()
+        .metadata;
 
     assert2::assert!(
         metadata

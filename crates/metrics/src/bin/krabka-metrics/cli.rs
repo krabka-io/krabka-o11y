@@ -1,8 +1,10 @@
 use super::{
     AuditArgs, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
-    DEFAULT_MAX_RATE_BUCKETS, HA_TRACKER_TOPIC, Parser, PathBuf, ServerSecurityArgs, SocketAddr,
-    Target, TargetValueParser, Time, WalClientSecurityArgs, parse,
+    DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_MAX_RATE_BUCKETS,
+    DEFAULT_TARGET_ROWS_PER_BLOCK, HA_TRACKER_TOPIC, Parser, PathBuf, ServerSecurityArgs,
+    SocketAddr, Target, TargetValueParser, Time, WalClientSecurityArgs, parse,
     parse_client_dispatch_queue_capacity, parse_client_frame_max,
+    parse_compactor_max_blocks_per_job, parse_compactor_max_level, parse_compactor_target_rows,
     parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap,
 };
 
@@ -12,7 +14,8 @@ pub(crate) struct Cli {
     pub(crate) config_file: ConfigFileArgs,
     #[command(flatten)]
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
-    /// The role this process runs: `distributor` or `block-builder`.
+    /// The role this process runs: `distributor`, `block-builder` or
+    /// `compactor`.
     ///
     /// The read-path roles are `krabka-metrics-service`'s, not this binary's,
     /// and naming one here is rejected with a message that says so.
@@ -101,21 +104,17 @@ pub(crate) struct Cli {
         value_parser = parse::positive_time
     )]
     pub(crate) block_builder_flush_max_age: Time,
-    /// Delete metric blocks older than this window. Zero turns retention off.
-    ///
-    /// Metrics has no `compactor` role, so the sweep that upstream's compactor
-    /// would run rides inside the block builder here. That is a gap rather
-    /// than a naming difference: nothing yet merges metrics blocks that are
-    /// already in object storage.
-    #[arg(
-        long,
-        env = "KRABKA_METRICS_BLOCK_BUILDER_RETENTION",
-        default_value = "0s",
-        value_parser = parse::non_negative_time
-    )]
-    pub(crate) block_builder_retention: Time,
     /// How often the block builder sweeps object-store blocks and indexes for
     /// retention.
+    ///
+    /// The window itself is per tenant, and it is the
+    /// `compactor_blocks_retention_period` limit in the file
+    /// `--runtime-overrides` names. With no window set anywhere the sweep still
+    /// runs and expires nothing.
+    ///
+    /// The same pass also deletes the objects that no index manifest names. A
+    /// write that put its block and never published the manifest leaves one,
+    /// and so does a merge whose inputs the `compactor` role retired.
     #[arg(
         long,
         env = "KRABKA_METRICS_BLOCK_BUILDER_RETENTION_SWEEP_INTERVAL",
@@ -123,6 +122,59 @@ pub(crate) struct Cli {
         value_parser = parse::positive_time
     )]
     pub(crate) block_builder_retention_sweep_interval: Time,
+    /// Blocks one compaction job merges at most.
+    ///
+    /// A job needs at least two, and a larger cap means fewer, larger output
+    /// blocks per pass at the cost of holding more inputs open at once.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_COMPACTOR_MAX_BLOCKS_PER_JOB",
+        default_value_t = DEFAULT_MAX_BLOCKS_PER_JOB,
+        value_parser = parse_compactor_max_blocks_per_job
+    )]
+    pub(crate) compactor_max_blocks_per_job: usize,
+    /// Rows at which a block is large enough to be left alone.
+    ///
+    /// A block this large is never a compaction input again, whatever its
+    /// level, so the bytes that cost the most to move are moved once.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_COMPACTOR_TARGET_ROWS",
+        default_value_t = DEFAULT_TARGET_ROWS_PER_BLOCK,
+        value_parser = parse_compactor_target_rows
+    )]
+    pub(crate) compactor_target_rows: usize,
+    /// How many times the same rows may be rewritten.
+    ///
+    /// A block at this level is never a compaction input again, which is what
+    /// makes the ladder terminate.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_COMPACTOR_MAX_LEVEL",
+        default_value_t = DEFAULT_MAX_LEVEL.get(),
+        value_parser = parse_compactor_max_level
+    )]
+    pub(crate) compactor_max_level: u32,
+    /// The level-zero grouping window. Blocks meet only inside one window.
+    ///
+    /// The window doubles with each level, so the ladder widens as it climbs.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_COMPACTOR_LEVEL_WINDOW",
+        default_value = "2h",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) compactor_level_window: Time,
+    /// How often the compactor plans and applies one pass.
+    ///
+    /// A pass that plans nothing costs one listing of the manifests.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_COMPACTOR_INTERVAL",
+        default_value = "5m",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) compactor_interval: Time,
     #[arg(
         long,
         env = "KRABKA_METRICS_HA_TRACKER_TOPIC",
@@ -177,9 +229,11 @@ pub(crate) struct Cli {
     pub(crate) distributor_max_decompressed: ByteSize,
     /// Mimir-style runtime overrides file, which sets the per-tenant limits.
     ///
-    /// Without one, every tenant gets the built-in defaults. The file names
-    /// the same keys `krabka-metrics-service` reads, so one file serves both
-    /// the write path and the read path.
+    /// Without one, every tenant gets the built-in defaults, and the built-in
+    /// block retention window is zero: the block builder then keeps every
+    /// block forever. The file names the same keys `krabka-metrics-service`
+    /// reads, so one file serves the write path, the read path and the
+    /// retention sweep.
     #[arg(long, env = "KRABKA_METRICS_RUNTIME_OVERRIDES")]
     pub(crate) runtime_overrides: Option<PathBuf>,
     // The shared security flags come after this binary's own flags, so

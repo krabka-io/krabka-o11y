@@ -2,8 +2,8 @@ use super::{
     BTreeMap, HeaderMap, HttpQueryError, QuerierState, QueryError, RequestSecurity,
     TenantErrorSurface, TimeRange, Value, active_log_delete_filters, authorized_tenant,
     clamp_query_lookback, current_unix_time_ns, is_deleted_log_entry, json, log_line_pattern,
-    loki_success_value, parse_patterns_params, parse_query, plan_stream_query, read_log_block,
-    read_log_block_from_object_store, sample_time_bucket, validate_query_bytes_limit,
+    loki_success_value, parse_patterns_params, parse_query, plan_stream_query,
+    read_planned_log_block, sample_time_bucket, validate_query_bytes_limit,
     validate_query_range_limit, validate_query_series_limit, validate_query_string_bytes_limit,
 };
 
@@ -48,15 +48,8 @@ pub(crate) async fn execute_patterns_query(
 
     let mut patterns = BTreeMap::<String, BTreeMap<i64, u64>>::new();
     for block in &plan.blocks {
-        let rows = if let Some(cold_store) = &state.cold_store {
-            read_log_block_from_object_store(
-                cold_store.store.as_ref(),
-                &cold_store.prefix,
-                &block.key,
-            )
-            .await?
-        } else {
-            read_log_block(&state.root, &block.key)?
+        let Some(rows) = read_planned_log_block(&state, &block.key).await? else {
+            continue;
         };
         for row in rows {
             if !plan.fingerprints.contains(&row.series_fingerprint)

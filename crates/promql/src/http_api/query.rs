@@ -18,7 +18,7 @@ use super::{
     success_data_response, success_response, timestamp_ms, validate_timestamp_range,
 };
 use crate::{
-    MetricStore,
+    AnnotatedQueryResult, MetricStore,
     query_frontend::{FrontendRangeRequest, execute_range_query_frontend},
 };
 

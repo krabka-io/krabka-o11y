@@ -45,7 +45,7 @@ impl ObjectStoreQueryFrontendCache {
         &self,
         tenant: &str,
         query: &FrontendRangeQuery,
-    ) -> Result<Option<QueryResult>, PromqlError> {
+    ) -> Result<Option<AnnotatedQueryResult>, PromqlError> {
         <Self as RangeQueryCache>::get(self, tenant, query).await
     }
 
@@ -55,7 +55,7 @@ impl ObjectStoreQueryFrontendCache {
         &self,
         tenant: &str,
         query: &FrontendRangeQuery,
-        result: QueryResult,
+        result: AnnotatedQueryResult,
     ) -> Result<(), PromqlError> {
         <Self as RangeQueryCache>::insert(self, tenant, query, result).await
     }
@@ -75,7 +75,7 @@ impl RangeQueryCache for ObjectStoreQueryFrontendCache {
         &self,
         tenant: &str,
         query: &FrontendRangeQuery,
-    ) -> Result<Option<QueryResult>, PromqlError> {
+    ) -> Result<Option<AnnotatedQueryResult>, PromqlError> {
         let path = self.path(tenant, query);
         let bytes = match self.store.get(&path).await {
             Ok(result) => result
@@ -100,7 +100,7 @@ impl RangeQueryCache for ObjectStoreQueryFrontendCache {
         &self,
         tenant: &str,
         query: &FrontendRangeQuery,
-        result: QueryResult,
+        result: AnnotatedQueryResult,
     ) -> Result<(), PromqlError> {
         let path = self.path(tenant, query);
         let stored = StoredRangeResult {

@@ -3,9 +3,9 @@ use std::{net::SocketAddr, process::ExitCode, sync::Arc};
 use arc_swap::ArcSwap;
 use clap::{ArgAction, Args, Parser, ValueEnum};
 use krabka_blockstore::{
-    BlockLevel, BlockStore, BlockWriter, CompactionPolicy, DEFAULT_MAX_BLOCKS_PER_JOB,
-    DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK, IndexSnapshotRetain, PromotedSpanAttr,
-    TENANT_HEADER, TenantId, TenantPolicy, TraceIndex,
+    BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy,
+    DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
+    IndexSnapshotRetain, PromotedSpanAttr, TENANT_HEADER, TenantId, TenantPolicy, TraceIndex,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerFetchMaxBytes};
 use krabka_client_core::{
@@ -26,7 +26,10 @@ use krabka_telemetry::OtlpConfig;
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
     Limits, LiveStore, TRACES_WAL_TOPIC, blockbuilder,
-    compactor::compact_once_with_policy,
+    compactor::{
+        compact_once_with_policy, delete_trace_blocks, expire_trace_blocks,
+        sweep_orphaned_trace_blocks,
+    },
     distributor::{self, DistributorState, KafkaSink},
     frontend::{self, FrontendConfig, TraceIndexCatalog},
     ids::UnixNano,
@@ -70,7 +73,7 @@ mod tests {
         RoleReadiness,
         topic_contract::{TRACES_TOPICS, TopicSettings, provision_topics},
     };
-    use krabka_units::{minutes, secs};
+    use krabka_units::{hours, minutes, secs};
     use tower::ServiceExt;
 
     use super::*;
@@ -1696,6 +1699,8 @@ mod tests {
             "66",
             "--max-search-duration",
             "77s",
+            "--block-retention",
+            "88h",
         ])
         .unwrap();
 
@@ -1709,6 +1714,7 @@ mod tests {
                     max_spans_per_trace: 55,
                     max_attribute: krabka_units::bytes(66),
                     max_search_duration: secs(77),
+                    block_retention: hours(88),
                 }
         );
     }
@@ -1765,6 +1771,7 @@ overrides:
     max_traces_per_search: 3
     max_search_duration_secs: 30
     max_spans_per_request: 4
+    block_retention: 12h
 ",
         )
         .unwrap();
@@ -1795,6 +1802,7 @@ overrides:
                     max_spans_per_trace: 500,
                     max_attribute: krabka_units::kibibytes(64),
                     max_search_duration: secs(30),
+                    block_retention: hours(12),
                 }
         );
         // A tenant the file does not name keeps the flags, not the compiled
@@ -2199,8 +2207,8 @@ overrides:
         check!(policy.max_blocks_per_job() == 4);
         check!(policy.target_rows_per_block() == 250_000);
         check!(policy.max_level() == BlockLevel(3));
-        check!(policy.window_ns_for(BlockLevel(0)) == 1_800_000_000_000);
-        check!(policy.window_ns_for(BlockLevel(1)) == 3_600_000_000_000);
+        check!(policy.window_ticks_for(BlockLevel(0)) == 1_800_000_000_000);
+        check!(policy.window_ticks_for(BlockLevel(1)) == 3_600_000_000_000);
         check!(cli.compaction_interval == secs(90));
     }
 
@@ -2213,7 +2221,7 @@ overrides:
         check!(policy.max_blocks_per_job() == DEFAULT_MAX_BLOCKS_PER_JOB);
         check!(policy.target_rows_per_block() == DEFAULT_TARGET_ROWS_PER_BLOCK);
         check!(policy.max_level() == DEFAULT_MAX_LEVEL);
-        check!(policy.window_ns_for(BlockLevel(0)) == 7_200_000_000_000);
+        check!(policy.window_ticks_for(BlockLevel(0)) == 7_200_000_000_000);
     }
 
     #[test]
@@ -2389,12 +2397,24 @@ overrides:
     }
 }
 
+/// One compaction pass, in the order the role runs its parts. The module is in
+/// the binary crate because `run_compactor_once` is the role's own step and no
+/// integration test can reach it.
+#[cfg(test)]
+mod a_compaction_pass_deletes_what_it_retires;
+
 /// `--target all` in one child process, driven only through its ports. The
 /// module is in the binary crate so the child can call `run` on a real `Cli`,
 /// and so it builds under Bazel as well as Cargo -- an integration test would
 /// have needed `CARGO_BIN_EXE_krabka-traces`, which only Cargo defines.
 #[cfg(test)]
 mod all_in_one_serves_ingest_and_query;
+
+/// The compactor role, started and stopped as `--target compactor` and as the
+/// `--target all` stage. The module is in the binary crate because both of
+/// those call `run_compactor` itself, which no integration test can reach.
+#[cfg(test)]
+mod the_compactor_runs_under_supervision;
 
 mod all_role_context;
 mod all_role_stage;
@@ -2409,6 +2429,7 @@ mod build_querier_router_with_live;
 mod build_query_frontend_router;
 mod build_trace_index_catalog;
 mod cli;
+mod compaction_loop;
 mod compaction_policy_from_cli;
 mod configured_object_store;
 mod engine_opts_from_cli;
@@ -2423,6 +2444,7 @@ mod load_traces_limits_overrides_config;
 mod log_role_outcome;
 mod max_trace_size;
 mod metrics_flags;
+mod now_unix_nanos;
 mod parse_client_dispatch_queue_capacity;
 mod parse_client_frame_max;
 mod parse_consumer_fetch_size;
@@ -2479,6 +2501,7 @@ use build_querier_router_with_live::build_querier_router_with_live;
 use build_query_frontend_router::build_query_frontend_router;
 use build_trace_index_catalog::build_trace_index_catalog;
 use cli::Cli;
+use compaction_loop::compaction_loop;
 use compaction_policy_from_cli::compaction_policy_from_cli;
 use configured_object_store::ConfiguredObjectStore;
 use engine_opts_from_cli::engine_opts_from_cli;
@@ -2493,6 +2516,7 @@ use load_traces_limits_overrides_config::load_traces_limits_overrides_config;
 use log_role_outcome::log_role_outcome;
 use max_trace_size::max_trace_size;
 use metrics_flags::MetricsFlags;
+use now_unix_nanos::now_unix_nanos;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
 use parse_consumer_fetch_size::parse_consumer_fetch_size;

@@ -2,20 +2,21 @@ use tracing::Instrument;
 
 use crate::{
     Arc, BTreeMap, BlockDescriptor, BlockIndex, BlockStoreError, BufferedLogHotTail,
-    CancellationToken, CompactionError, CompactionFrontierStoreError, CompactorRunError,
+    CancellationToken, CompactionError, CompactionFrontierStoreError, CompactorRunError, Instant,
     JoinHandle, KafkaWalCompactionError, KafkaWalRecord, LabelIndex, LastCompactedPosition,
-    LogCompactionIndexOutput, LogWalConsumer, ObjectPath, ObjectStore, Offset, PartitionIndex,
-    ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceRuntimeError,
-    SharedCompactionFrontier, SharedLogDeleteRequests, TenantCompactionIndexCache, Time, TimeExt,
-    WalPosition, active_log_delete_filters_from_requests, active_log_delete_tenants,
-    build_compactor_configured_object_store,
+    LogCompactionIndexOutput, LogWalConsumer, ObjectPath, ObjectStore, Offset, OverridesProvider,
+    PartitionIndex, ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceRuntimeError,
+    SharedCompactionFrontier, SharedLogDeleteRequests, SystemTime, TenantCompactionIndexCache,
+    Time, TimeExt, UNIX_EPOCH, WalPosition, active_log_delete_filters_from_requests,
+    active_log_delete_tenants, build_compactor_configured_object_store,
     compact_wal_records_to_object_store_with_delete_filters_and_index_output,
     compactor_delete_requests_for_config, compactor_object_store, decode_kafka_wal_record_envelope,
-    effective_object_store_prefix, materialize_delete_requests_in_existing_local_manifest_blocks,
+    effective_object_store_prefix, limits_provider_for_config,
+    materialize_delete_requests_in_existing_local_manifest_blocks,
     materialize_delete_requests_in_existing_object_store_blocks,
     poll_accumulated_log_compaction_records, read_compaction_frontier_from_object_store, sleep,
-    validate_compactor_policy, wal_compaction_chunks, wal_record_time_range,
-    write_compaction_frontier_to_object_store,
+    sweep_expired_log_blocks, validate_compactor_policy, wal_compaction_chunks,
+    wal_record_time_range, write_compaction_frontier_to_object_store,
 };
 
 mod advance_and_persist_compaction_frontier;
@@ -34,6 +35,7 @@ mod run_compactor_until_shutdown;
 mod set_remote_parent_from_wal_records;
 mod shared_compaction_frontier_from_object_store;
 mod spawn_compaction_frontier_refresher;
+mod sweep_log_retention_before_compaction;
 
 pub(crate) use advance_and_persist_compaction_frontier::advance_and_persist_compaction_frontier;
 pub(crate) use block_store_error_is_object_store::block_store_error_is_object_store;
@@ -53,3 +55,4 @@ pub(crate) use set_remote_parent_from_wal_records::set_remote_parent_from_wal_re
 pub(crate) use shared_compaction_frontier_from_object_store::shared_compaction_frontier_from_object_store;
 #[cfg_attr(test, mutants::skip)]
 pub(crate) use spawn_compaction_frontier_refresher::spawn_compaction_frontier_refresher;
+pub(crate) use sweep_log_retention_before_compaction::sweep_log_retention_before_compaction;

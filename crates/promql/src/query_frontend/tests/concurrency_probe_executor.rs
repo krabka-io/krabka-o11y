@@ -26,7 +26,7 @@ impl RangeQueryExecutor for ConcurrencyProbeExecutor {
         &self,
         _tenant: &TenantId,
         query: &FrontendRangeQuery,
-    ) -> Result<QueryResult, PromqlError> {
+    ) -> Result<AnnotatedQueryResult, PromqlError> {
         self.calls
             .lock()
             .expect("probe executor calls poisoned")
@@ -36,9 +36,9 @@ impl RangeQueryExecutor for ConcurrencyProbeExecutor {
         self.barrier.wait().await;
         // Each sub-query contributes a sample at a distinct timestamp
         // (its split start), so the stitched matrix is order-independent.
-        Ok(QueryResult::RangeMatrix(vec![RangeSeries {
+        Ok(unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
             labels: labels(&[("__name__", "up"), ("job", "api")]),
             samples: vec![(query.start_ms, SampleValue::Float(1.0))],
-        }]))
+        }])))
     }
 }

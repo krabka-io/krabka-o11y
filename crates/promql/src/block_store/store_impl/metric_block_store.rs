@@ -1,10 +1,11 @@
 use super::{
-    BTreeMap, BTreeSet, EXEMPLAR_TABLE, ExemplarRecord, FLOAT_TABLE, HISTOGRAM_TABLE, LabelMatcher,
+    BTreeMap, BTreeSet, EXEMPLAR_TABLE, ExemplarScan, FLOAT_TABLE, HISTOGRAM_TABLE, LabelMatcher,
     LabelNameCardinality, LabelValueCardinality, Labels, METADATA_TABLE, MetadataRecord,
-    MetricBlockStore, MetricStore, Result, ScanResult, ScanTableRequest, SeriesFingerprint,
-    SessionContext, TsdbBlock, TsdbHeadStats, TsdbStats, blockstore_error, datafusion_error,
-    exemplar_schema, exemplars_from_batch, float_sample_schema, metadata_from_batch,
-    metadata_schema, named_stats, native_histogram_schema,
+    MetadataScan, MetricBlockStore, MetricStore, Result, ScanResult, ScanTableRequest,
+    SeriesFingerprint, SessionContext, TsdbBlock, TsdbHeadStats, TsdbStats, blockstore_error,
+    datafusion_error, exemplar_schema, exemplars_from_batch, float_sample_schema,
+    metadata_from_batch, metadata_schema, missing_block_warnings, named_stats,
+    native_histogram_schema,
 };
 
 impl MetricBlockStore {
@@ -47,7 +48,8 @@ impl MetricStore for MetricBlockStore {
             start_ms = start_ms,
             end_ms = end_ms,
             has_float = tracing::field::Empty,
-            has_histograms = tracing::field::Empty
+            has_histograms = tracing::field::Empty,
+            skipped_blocks = tracing::field::Empty
         ),
         err
     )]
@@ -59,9 +61,12 @@ impl MetricStore for MetricBlockStore {
         end_ms: i64,
     ) -> Result<ScanResult> {
         let ctx = SessionContext::new();
-        let has_float = self
+        // The index names blocks that deletion can remove between the snapshot
+        // and the read, so a query answers around an absent object and reports
+        // it. `missing_block_warnings` keeps every other fault an error.
+        let float_report = self
             .floats
-            .register_scan_table(
+            .register_scan_table_skipping_unreadable(
                 &ctx,
                 ScanTableRequest {
                     table_name: FLOAT_TABLE,
@@ -74,9 +79,11 @@ impl MetricStore for MetricBlockStore {
             )
             .await
             .map_err(blockstore_error)?;
+        let mut warnings = missing_block_warnings(&float_report)?;
+        let has_float = float_report.registered;
         let has_histograms = if let Some(histograms) = &self.histograms {
-            histograms
-                .register_scan_table(
+            let histogram_report = histograms
+                .register_scan_table_skipping_unreadable(
                     &ctx,
                     ScanTableRequest {
                         table_name: HISTOGRAM_TABLE,
@@ -88,7 +95,9 @@ impl MetricStore for MetricBlockStore {
                     },
                 )
                 .await
-                .map_err(blockstore_error)?
+                .map_err(blockstore_error)?;
+            warnings.extend(missing_block_warnings(&histogram_report)?);
+            histogram_report.registered
         } else {
             false
         };
@@ -96,11 +105,13 @@ impl MetricStore for MetricBlockStore {
         let span = tracing::Span::current();
         span.record("has_float", has_float);
         span.record("has_histograms", has_histograms);
+        span.record("skipped_blocks", warnings.len());
 
         Ok(ScanResult {
             ctx,
             float_table: has_float.then(|| FLOAT_TABLE.to_string()),
             histogram_table: has_histograms.then(|| HISTOGRAM_TABLE.to_string()),
+            warnings,
         })
     }
 
@@ -151,9 +162,9 @@ impl MetricStore for MetricBlockStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<ExemplarRecord>> {
+    ) -> Result<ExemplarScan> {
         let Some(exemplars) = &self.exemplars else {
-            return Ok(Vec::new());
+            return Ok(ExemplarScan::default());
         };
         let series_by_fp = exemplars
             .index()
@@ -163,12 +174,12 @@ impl MetricStore for MetricBlockStore {
             .map(|labels| (labels.fingerprint(), labels))
             .collect::<BTreeMap<_, _>>();
         if series_by_fp.is_empty() {
-            return Ok(Vec::new());
+            return Ok(ExemplarScan::default());
         }
 
         let ctx = SessionContext::new();
-        exemplars
-            .register_scan_table(
+        let report = exemplars
+            .register_scan_table_skipping_unreadable(
                 &ctx,
                 ScanTableRequest {
                     table_name: EXEMPLAR_TABLE,
@@ -181,6 +192,7 @@ impl MetricStore for MetricBlockStore {
             )
             .await
             .map_err(blockstore_error)?;
+        let warnings = missing_block_warnings(&report)?;
         let batches = ctx
             .table(EXEMPLAR_TABLE)
             .await
@@ -198,12 +210,15 @@ impl MetricStore for MetricBlockStore {
             )?);
         }
         exemplars.sort_by_key(|row| (row.series_labels.fingerprint(), row.ts_ms));
-        Ok(exemplars)
+        Ok(ExemplarScan {
+            exemplars,
+            warnings,
+        })
     }
 
-    async fn metadata(&self, tenant: &str, metric: Option<&str>) -> Result<Vec<MetadataRecord>> {
+    async fn metadata(&self, tenant: &str, metric: Option<&str>) -> Result<MetadataScan> {
         let Some(metadata) = &self.metadata else {
-            return Ok(Vec::new());
+            return Ok(MetadataScan::default());
         };
         let matchers = metric.map_or_else(Vec::new, |metric| {
             vec![LabelMatcher {
@@ -218,12 +233,12 @@ impl MetricStore for MetricBlockStore {
             .map_err(blockstore_error)?
             .is_empty()
         {
-            return Ok(Vec::new());
+            return Ok(MetadataScan::default());
         }
 
         let ctx = SessionContext::new();
-        metadata
-            .register_scan_table(
+        let report = metadata
+            .register_scan_table_skipping_unreadable(
                 &ctx,
                 ScanTableRequest {
                     table_name: METADATA_TABLE,
@@ -236,6 +251,7 @@ impl MetricStore for MetricBlockStore {
             )
             .await
             .map_err(blockstore_error)?;
+        let warnings = missing_block_warnings(&report)?;
         let batches = ctx
             .table(METADATA_TABLE)
             .await
@@ -254,17 +270,20 @@ impl MetricStore for MetricBlockStore {
                 ));
             }
         }
-        Ok(records
-            .into_iter()
-            .map(
-                |(metric_family_name, metric_type, help, unit)| MetadataRecord {
-                    metric_family_name,
-                    metric_type,
-                    help,
-                    unit,
-                },
-            )
-            .collect())
+        Ok(MetadataScan {
+            metadata: records
+                .into_iter()
+                .map(
+                    |(metric_family_name, metric_type, help, unit)| MetadataRecord {
+                        metric_family_name,
+                        metric_type,
+                        help,
+                        unit,
+                    },
+                )
+                .collect(),
+            warnings,
+        })
     }
 
     async fn cardinality_label_names(&self, tenant: &str) -> Result<Vec<LabelNameCardinality>> {

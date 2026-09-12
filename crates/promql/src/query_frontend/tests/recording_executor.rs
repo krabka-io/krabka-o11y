@@ -11,14 +11,14 @@ impl RangeQueryExecutor for RecordingExecutor {
         &self,
         _tenant: &TenantId,
         query: &FrontendRangeQuery,
-    ) -> Result<QueryResult, PromqlError> {
+    ) -> Result<AnnotatedQueryResult, PromqlError> {
         self.calls
             .lock()
             .expect("recording executor calls poisoned")
             .push(query.clone());
-        Ok(QueryResult::RangeMatrix(vec![RangeSeries {
+        Ok(unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
             labels: labels(&[("__name__", "up"), ("job", "api")]),
             samples: vec![(query.start_ms, SampleValue::Float(120_000.0))],
-        }]))
+        }])))
     }
 }

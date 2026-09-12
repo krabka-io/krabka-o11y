@@ -38,7 +38,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_topk_from_rank_cand
                 ("topk(2, up)", Some(QueryShard { index: 2, total: 2 })),
             ]
     );
-    let QueryResult::RangeMatrix(series) = result else {
+    let QueryResult::RangeMatrix(series) = result.result else {
         panic!("topk range matrix");
     };
     let selected = series

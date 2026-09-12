@@ -31,7 +31,19 @@ crate_tests(
     # it, having reached none of the assertions that would show a real fault.
     # `cpu:4` stops Bazel scheduling work alongside it, and the retry reports
     # FLAKY rather than passing a timing hiccup off as a clean run.
-    cpu_heavy = ["compactor"],
+    #
+    # `tail` asserts a negative over a 150ms window: with `delay_for=1` a fresh
+    # record must not have arrived yet. A loaded runner does not fail that by
+    # being slow to deliver, because slow delivery is what the case expects. It
+    # fails when more than the delay itself passes between the fixture reading
+    # the clock and the socket connecting, since the record is due by then and
+    # arrives at once. `tail_endpoint_delays_fresh_records_when_delay_for_is_set`
+    # failed that way on a runner holding 174 tests and five thousand build
+    # actions, and passes 30 runs out of 30 on an idle machine.
+    cpu_heavy = [
+        "compactor",
+        "tail",
+    ],
     # The suites that drive a real container, with the image each one starts.
     # //bazel/images pins those by digest and //bazel/defs.bzl loads them
     # before the suite runs. `loki_differential` compares against a real

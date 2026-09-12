@@ -1,6 +1,4 @@
-use super::{
-    HttpQueryError, QuerierState, StreamPlan, read_log_block, read_log_block_from_object_store,
-};
+use super::{HttpQueryError, QuerierState, StreamPlan, read_planned_log_block};
 
 pub(crate) async fn count_index_stats_entries(
     state: &QuerierState,
@@ -8,15 +6,10 @@ pub(crate) async fn count_index_stats_entries(
 ) -> Result<u64, HttpQueryError> {
     let mut entries = 0_u64;
     for block in &plan.blocks {
-        let rows = if let Some(cold_store) = &state.cold_store {
-            read_log_block_from_object_store(
-                cold_store.store.as_ref(),
-                &cold_store.prefix,
-                &block.key,
-            )
-            .await?
-        } else {
-            read_log_block(&state.root, &block.key)?
+        // A block that is gone contributes no rows to the count. The count
+        // is then short by that block, which is what the log line reports.
+        let Some(rows) = read_planned_log_block(state, &block.key).await? else {
+            continue;
         };
         let matching_entries = rows
             .into_iter()

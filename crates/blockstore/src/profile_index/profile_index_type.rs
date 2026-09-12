@@ -358,33 +358,8 @@ impl ProfileIndex {
         remove_keys: &[String],
         add: &[(BlockMeta, Vec<u64>)],
     ) -> BlockLevel {
-        // Pinned to the records being dropped, and so read before they are.
-        // A removal that named only the key would also drop a block another
-        // writer has since written under that key.
         let dropped: BTreeSet<&str> = remove_keys.iter().map(String::as_str).collect();
-        let retired: Vec<(String, PendingRemoval)> = self
-            .all_blocks()
-            .into_iter()
-            .filter(|meta| meta.tenant == tenant && dropped.contains(meta.object_key.as_str()))
-            .map(|meta| {
-                let partitions = self.stacktrace_partitions(&meta.object_key);
-                let removal = PendingRemoval {
-                    fingerprint: profile_block_fingerprint(&meta, &partitions),
-                    min_ts: meta.min_ts,
-                    max_ts: meta.max_ts,
-                };
-                (meta.object_key, removal)
-            })
-            .collect();
-        self.pending_removals.record(
-            tenant,
-            retired
-                .iter()
-                .map(|(key, removal)| (key.as_str(), *removal)),
-        );
-        for key in &dropped {
-            self.pending_additions.forget(key);
-        }
+        self.retire_profile_blocks(tenant, &dropped);
         // A compaction may reuse the key of a block it replaces. That block is
         // live again, so it must not be replayed as a removal.
         for (meta, _) in add {
@@ -413,6 +388,62 @@ impl ProfileIndex {
             self.add_profile_block(tenant, &meta.object_key, partitions.clone());
         }
         level
+    }
+
+    /// Drops the `keys` blocks of `tenant`, and returns how many it dropped.
+    ///
+    /// This is retention's swap, where [`Self::replace_profile_blocks`] is
+    /// compaction's: the blocks leave the index and nothing takes their place,
+    /// so no level is derived and nothing is promoted. The stacktrace
+    /// partitions of each dropped block go with it, because nothing names them
+    /// once the block record is gone.
+    ///
+    /// Each dropped block is pinned to the record it dropped, so the removal
+    /// survives the merge that publishes the next generation. Without the pin
+    /// the merge would union the block straight back in, and every expired
+    /// block would come back on the next save. See
+    /// [`Self::save_latest_snapshot`].
+    pub fn remove_profile_blocks(&mut self, tenant: &str, keys: &[String]) -> usize {
+        let dropped: BTreeSet<&str> = keys.iter().map(String::as_str).collect();
+        // Pinned before anything is dropped: the records, and the partitions
+        // that are part of them, are the pins.
+        self.retire_profile_blocks(tenant, &dropped);
+        for key in keys {
+            self.block_partitions.remove(key);
+        }
+        self.series.remove_blocks(tenant, keys)
+    }
+
+    /// Records a pending removal for every `dropped` block this index holds
+    /// for `tenant`, and forgets the additions those blocks were waiting on.
+    ///
+    /// The removals are pinned to the records being dropped, and so are read
+    /// before they are. A removal that named only the object key would also
+    /// drop a block another writer has since written under that key.
+    fn retire_profile_blocks(&self, tenant: &str, dropped: &BTreeSet<&str>) {
+        let retired: Vec<(String, PendingRemoval)> = self
+            .all_blocks()
+            .into_iter()
+            .filter(|meta| meta.tenant == tenant && dropped.contains(meta.object_key.as_str()))
+            .map(|meta| {
+                let partitions = self.stacktrace_partitions(&meta.object_key);
+                let removal = PendingRemoval {
+                    fingerprint: profile_block_fingerprint(&meta, &partitions),
+                    min_ts: meta.min_ts,
+                    max_ts: meta.max_ts,
+                };
+                (meta.object_key, removal)
+            })
+            .collect();
+        self.pending_removals.record(
+            tenant,
+            retired
+                .iter()
+                .map(|(key, removal)| (key.as_str(), *removal)),
+        );
+        for key in dropped {
+            self.pending_additions.forget(key);
+        }
     }
 
     #[must_use]

@@ -42,7 +42,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_stdvar_from_moment_
                 ("sum((up) * (up))", Some(QueryShard { index: 2, total: 2 }),),
             ]
     );
-    let QueryResult::RangeMatrix(series) = result else {
+    let QueryResult::RangeMatrix(series) = result.result else {
         panic!("stdvar range matrix");
     };
     let SampleValue::Float(value) = series[0].samples[0].1 else {
