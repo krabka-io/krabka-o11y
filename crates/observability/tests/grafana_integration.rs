@@ -220,21 +220,36 @@ async fn proxy_get(
     params: &[(&str, &str)],
     krabka: &KrabkaServer,
 ) -> TestResult<Value> {
-    let url = format!("{base}/api/datasources/proxy/uid/{DATASOURCE_UID}/loki/api/v1/{path}");
-    let mut query: Vec<(String, String)> = vec![
-        ("start".to_string(), krabka.base_ns.to_string()),
-        ("end".to_string(), krabka.end_ns().to_string()),
+    let mut pairs: Vec<(&str, String)> = vec![
+        ("start", krabka.base_ns.to_string()),
+        ("end", krabka.end_ns().to_string()),
     ];
     for (name, value) in params {
-        query.push(((*name).to_string(), (*value).to_string()));
+        pairs.push((*name, (*value).to_string()));
     }
-    let response = client
-        .get(url)
-        .query(&query)
-        .send()
-        .await?
-        .error_for_status()?;
+    let url = format!(
+        "{base}/api/datasources/proxy/uid/{DATASOURCE_UID}/loki/api/v1/{path}?{}",
+        query_string(&pairs)
+    );
+    let response = client.get(url).send().await?.error_for_status()?;
     Ok(response.json().await?)
+}
+
+/// Encodes one query string from its pairs.
+///
+/// `reqwest` is built here without its `query` feature, which is what
+/// `RequestBuilder::query` needs, so the pairs are encoded the way
+/// `krabka-metrics-service`'s Grafana suite encodes its own.
+fn query_string(pairs: &[(&str, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(name, value)| format!("{}={}", form_encode(name), form_encode(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn form_encode(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// Runs one query through the backend datasource path a dashboard panel uses.

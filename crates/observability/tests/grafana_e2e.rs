@@ -512,10 +512,11 @@ fn dataset(timeline: &Timeline) -> Value {
 /// suite compares a Krabka error against a Loki error as one more case.
 async fn probe(client: &reqwest::Client, base: &str, uid: &str, case: &Case) -> TestResult<Value> {
     let url = format!(
-        "{base}/api/datasources/proxy/uid/{uid}/loki/api/v1/{}",
-        case.path
+        "{base}/api/datasources/proxy/uid/{uid}/loki/api/v1/{}?{}",
+        case.path,
+        query_string(&case.params)
     );
-    let response = client.get(url).query(&case.params).send().await?;
+    let response = client.get(url).send().await?;
     let status = response.status();
     let text = response.text().await?;
     if !status.is_success() {
@@ -525,6 +526,23 @@ async fn probe(client: &reqwest::Client, base: &str, uid: &str, case: &Case) -> 
         Ok(body) => normalize(&body),
         Err(_) => json!({ "non_json": text }),
     })
+}
+
+/// Encodes one query string from its pairs.
+///
+/// `reqwest` is built here without its `query` feature, which is what
+/// `RequestBuilder::query` needs, so the pairs are encoded the way
+/// `krabka-metrics-service`'s Grafana suite encodes its own.
+fn query_string(pairs: &[(&str, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(name, value)| format!("{}={}", form_encode(name), form_encode(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn form_encode(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
 /// Strips the members of an answer that are not a property of the query.

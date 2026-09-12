@@ -631,8 +631,8 @@ impl LiveBroker {
             topic: topic.to_string(),
             _dir: dir,
         };
-        live.admin()
-            .await
+        let mut admin = live.admin().await;
+        admin
             .create_topics(
                 &[CreateTopicSpec {
                     name: live.topic.clone(),
