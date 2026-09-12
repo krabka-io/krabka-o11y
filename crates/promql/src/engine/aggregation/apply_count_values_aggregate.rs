@@ -23,10 +23,11 @@ pub(crate) fn apply_count_values_aggregate(
     for sample in samples {
         let mut labels = aggregate_labels(&sample.labels, modifier);
         labels.insert(label_name, count_values_label_value(&sample.value)?);
-        groups
+        let state = groups
             .entry(labels_key(&labels))
-            .or_insert_with(|| AggregateState::new(labels))
-            .push_float(1.0);
+            .or_insert_with(|| AggregateState::new(labels));
+        state.drop_name |= sample.drop_name;
+        state.push_float(1.0);
     }
 
     Ok(groups
@@ -35,6 +36,7 @@ pub(crate) fn apply_count_values_aggregate(
             labels: state.labels,
             ts_ms: time_ms,
             value: SampleValue::Float(state.count_f64),
+            drop_name: state.drop_name,
         })
         .collect())
 }

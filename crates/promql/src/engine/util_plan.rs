@@ -102,6 +102,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 labels: labels_without_metric_name(&sample.labels),
                 ts_ms: time_ms,
                 value: SampleValue::Float(timestamp_seconds(sample.ts_ms)),
+                drop_name: true,
             })
             .collect();
         Ok(Some(PlannedInstant::Precomputed(out)))
@@ -113,9 +114,8 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// [`CalendarFn::apply`] to each float row. It drops non-float rows and
     /// `__name__`, and attaches the eval timestamp again. The result mirrors
     /// `Self::eval_calendar_call`. With zero arguments, the method works on
-    /// `time()`, the eval timestamp in seconds, and returns a
-    /// `PrecomputedScalar`. A wrong arity or a non-plannable inner falls back to
-    /// the interpreter.
+    /// `time()`, the eval timestamp in seconds, and returns a one-sample vector.
+    /// A wrong arity or a non-plannable inner falls back to the interpreter.
     async fn plan_calendar_call(
         &self,
         tenant: &str,
@@ -126,10 +126,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         let [arg] = call.args.args.as_slice() else {
             // The argless calendar form operates on `time()`.
             if call.args.args.is_empty() {
-                return Ok(Some(PlannedInstant::PrecomputedScalar {
+                return Ok(Some(PlannedInstant::Precomputed(vec![InstantSample {
+                    labels: Labels::new(),
                     ts_ms: time_ms,
-                    value: kind.apply(timestamp_seconds(time_ms)),
-                }));
+                    value: SampleValue::Float(kind.apply(timestamp_seconds(time_ms))),
+                    drop_name: false,
+                }])));
             }
             return Ok(None);
         };
@@ -146,6 +148,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     labels: labels_without_metric_name(&sample.labels),
                     ts_ms: time_ms,
                     value: SampleValue::Float(kind.apply(value)),
+                    drop_name: true,
                 })
             })
             .collect();
@@ -216,6 +219,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels: Labels::new(),
             ts_ms: time_ms,
             value: SampleValue::Float(value),
+            drop_name: false,
         }])))
     }
 
@@ -251,6 +255,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels: absent_labels(arg)?,
             ts_ms: time_ms,
             value: SampleValue::Float(1.0),
+            drop_name: false,
         }])))
     }
 
@@ -315,6 +320,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels: absent_labels(arg)?,
             ts_ms: time_ms,
             value: SampleValue::Float(1.0),
+            drop_name: false,
         }])))
     }
 
@@ -355,6 +361,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels: absent_labels(arg)?,
             ts_ms: time_ms,
             value: SampleValue::Float(1.0),
+            drop_name: false,
         }])
     }
 }

@@ -87,12 +87,42 @@ pub(crate) struct Cli {
         default_value_t = 1
     )]
     pub(crate) query_frontend_shards: usize,
+    /// Maximum subqueries that the query frontend runs at one time. Default: `14`.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_QUERY_FRONTEND_MAX_PARALLELISM",
+        default_value_t = 14,
+        value_parser = parse_positive_usize
+    )]
+    pub(crate) query_frontend_max_parallelism: usize,
+    /// Number of retries for each transient subquery failure. Default: `5`.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_QUERY_FRONTEND_MAX_RETRIES",
+        default_value_t = 5
+    )]
+    pub(crate) query_frontend_max_retries: usize,
+    /// Results newer than this duration are not cached. Default: `10m`.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_QUERY_FRONTEND_MAX_CACHE_FRESHNESS",
+        default_value = "10m",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) query_frontend_max_cache_freshness: Time,
     #[arg(
         long,
         env = "KRABKA_METRICS_MAX_CONCURRENT_QUERIES",
         default_value_t = 2
     )]
     pub(crate) max_concurrent_queries: usize,
+    #[arg(
+        long = "query-timeout",
+        env = "KRABKA_METRICS_QUERY_TIMEOUT",
+        default_value = "2m",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) query_timeout: Time,
     #[arg(
         long = "query-lookback-delta",
         env = "KRABKA_METRICS_QUERY_LOOKBACK_DELTA",
@@ -127,6 +157,14 @@ pub(crate) struct Cli {
         default_value = "metrics-query-cache"
     )]
     pub(crate) query_frontend_cache_prefix: String,
+    /// Maximum age of a cached query result. Default: `7d`.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_QUERY_FRONTEND_CACHE_TTL",
+        default_value = "7d",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) query_frontend_cache_ttl: Time,
     #[arg(long, env = "KRABKA_METRICS_RULER_TENANT", default_value = "anonymous")]
     pub(crate) ruler_tenant: TenantId,
     #[arg(

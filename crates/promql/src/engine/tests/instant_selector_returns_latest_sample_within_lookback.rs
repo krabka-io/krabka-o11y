@@ -47,7 +47,7 @@ pub(crate) async fn instant_selector_returns_latest_sample_within_lookback() {
         ) == (
             1,
             &labels(&[("__name__", "up"), ("job", "api")]),
-            20_000,
+            30_000,
             true,
         )
     );

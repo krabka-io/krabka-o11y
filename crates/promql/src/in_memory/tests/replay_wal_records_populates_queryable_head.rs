@@ -13,7 +13,7 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         payload: SamplePayload::Float {
             timestamp_ms: 10_000,
             value: 1.0,
-            start_timestamp_ms: None,
+            start_timestamp_ms: Some(5_000),
         },
         exemplars: Vec::new(),
     });
@@ -63,6 +63,18 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         panic!("expected vector");
     };
     check!(vector[0].value == SampleValue::Float(1.0));
+    let scan = store.scan("tenant-a", &[], 0, 10_000).await.unwrap();
+    let float_table = scan.float_table.as_deref().expect("float table");
+    let batches = scan
+        .ctx
+        .sql(&format!("SELECT start_timestamp_ms FROM {float_table}"))
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+    let starts = batches[0].column(0).as_primitive::<Int64Type>();
+    check!(starts.value(0) == 5_000);
     check!(
         store
             .metadata("tenant-a", Some("up"))

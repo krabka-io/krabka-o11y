@@ -1,1 +1,0 @@
-histogram_quantile(0.5, var_res_histogram)

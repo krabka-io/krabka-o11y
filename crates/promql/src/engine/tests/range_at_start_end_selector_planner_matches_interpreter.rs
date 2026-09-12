@@ -72,11 +72,16 @@ pub(crate) async fn range_at_start_end_selector_planner_matches_interpreter() {
         }
     }
 
-    // A bare `@ start()` selector in an INSTANT query has no range bounds, so it
-    // must raise the SAME hard error on the planner path as the interpreter —
-    // never silently produce a result or fall back.
-    let instant_err = engine
-        .query_instant(&tenant_id("t"), "m @ start()", 120_000)
-        .await;
-    assert2::assert!(matches!(instant_err, Err(PromqlError::Unsupported(_))));
+    // Instant-query start/end both mean the query evaluation timestamp.
+    for query in ["m @ start()", "m @ end()"] {
+        let QueryResult::InstantVector(samples) = engine
+            .query_instant(&tenant_id("t"), query, 120_000)
+            .await
+            .unwrap_or_else(|error| panic!("instant `{query}`: {error}"))
+        else {
+            panic!("expected instant vector for `{query}`");
+        };
+        assert2::assert!(samples.len() == 2);
+        assert2::assert!(samples.iter().all(|sample| sample.ts_ms == 120_000));
+    }
 }

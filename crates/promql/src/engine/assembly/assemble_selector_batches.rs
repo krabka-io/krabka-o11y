@@ -50,6 +50,7 @@ pub(crate) fn assemble_selector_batches(
                 labels,
                 ts_ms,
                 value: SampleValue::Float(value),
+                drop_name: false,
             })
         })
         .collect();

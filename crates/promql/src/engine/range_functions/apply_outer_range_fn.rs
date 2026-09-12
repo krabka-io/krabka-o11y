@@ -27,6 +27,7 @@ pub(crate) fn apply_outer_range_fn(
                 labels,
                 ts_ms: time_ms,
                 value,
+                drop_name: !matches!(outer, OuterRangeFn::OverTime(kind) if kind.preserves_metric_name()),
             })
         })
         .collect()

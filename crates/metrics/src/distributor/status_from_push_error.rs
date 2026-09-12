@@ -26,6 +26,8 @@ pub(crate) fn status_from_push_error(error: &PushError) -> Status {
             status_from_http_status(tenant.http_status().as_u16(), message)
         }
         PushError::Denied(_) => Status::permission_denied(message),
-        PushError::Clock(_) | PushError::TooOldSample { .. } => Status::invalid_argument(message),
+        PushError::Clock(_) | PushError::TooOldSample { .. } | PushError::TooFarInFuture { .. } => {
+            Status::invalid_argument(message)
+        }
     }
 }

@@ -1,8 +1,8 @@
 use super::{
     AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine, PromqlError, RecordingRuleWalSink,
-    RulerAlertState, RulerGroupEvaluation, RulerGroupState, RulerGroupStateRecord, RulerShard,
-    RulerStateSink, TenantId, evaluate_and_persist_ruler_rule_set,
-    filter_ruler_rule_set_for_shard_due_for_eval,
+    RulerAlertState, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupState,
+    RulerGroupStateRecord, RulerShard, RulerStateSink, TenantId,
+    evaluate_and_persist_ruler_rule_set_with_report, filter_ruler_rule_set_for_shard_due_for_eval,
 };
 
 /// Evaluates this shard's due ruler rule groups for one tenant and persists state.
@@ -23,6 +23,38 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
+    Ok(
+        evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
+            engine,
+            sinks,
+            alert_state,
+            tenant,
+            rules,
+            schedule,
+        )
+        .await?
+        .evaluation,
+    )
+}
+
+/// Scheduled variant that retains per-rule and per-group status.
+///
+/// # Errors
+/// Returns an error when metric input is malformed or a limit is exceeded.
+pub async fn evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report<S, W, A, R>(
+    engine: &PromqlEngine<S>,
+    sinks: (&W, &A, &R),
+    alert_state: &mut RulerAlertState,
+    tenant: &TenantId,
+    rules: &BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
+    schedule: (&mut RulerGroupState, RulerShard, i64),
+) -> Result<RulerEvaluationReport, PromqlError>
+where
+    S: MetricStore,
+    W: RecordingRuleWalSink,
+    A: AlertmanagerSink,
+    R: RulerStateSink,
+{
     let (wal_sink, alert_sink, state_sink) = sinks;
     let (group_state, shard, eval_time_ms) = schedule;
     let scheduled = filter_ruler_rule_set_for_shard_due_for_eval(
@@ -32,7 +64,7 @@ where
         shard,
         eval_time_ms,
     );
-    let evaluation = evaluate_and_persist_ruler_rule_set(
+    let evaluation = evaluate_and_persist_ruler_rule_set_with_report(
         engine,
         (wal_sink, alert_sink, state_sink),
         alert_state,

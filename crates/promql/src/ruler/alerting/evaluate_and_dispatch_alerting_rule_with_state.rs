@@ -1,6 +1,6 @@
 use super::{
-    AlertmanagerSink, MetricStore, NoopRulerStateSink, PromqlEngine, PromqlError, RulerAlertState,
-    TenantId, evaluate_alerting_rule_with_state_and_sink,
+    AlertmanagerSink, MetricStore, NoopRecordingRuleWalSink, NoopRulerStateSink, PromqlEngine,
+    PromqlError, RulerAlertState, TenantId, evaluate_alerting_rule_with_state_and_sink,
 };
 
 /// Evaluates one alerting rule, tracks the pending state, and dispatches only the firing alerts.
@@ -23,8 +23,7 @@ where
 {
     evaluate_alerting_rule_with_state_and_sink(
         engine,
-        sink,
-        &NoopRulerStateSink,
+        (&NoopRecordingRuleWalSink, sink, &NoopRulerStateSink),
         state,
         tenant,
         rule,

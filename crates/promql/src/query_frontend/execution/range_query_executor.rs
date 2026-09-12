@@ -13,4 +13,9 @@ pub trait RangeQueryExecutor: Send + Sync {
         tenant: &TenantId,
         query: &FrontendRangeQuery,
     ) -> Result<AnnotatedQueryResult, PromqlError>;
+
+    /// Reports whether a structured execution error can succeed on a retry.
+    fn is_transient_error(&self, _error: &PromqlError) -> bool {
+        false
+    }
 }

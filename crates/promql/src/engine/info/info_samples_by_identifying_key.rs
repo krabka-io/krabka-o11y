@@ -12,7 +12,7 @@ pub(crate) fn info_samples_by_identifying_key(
     let mut info_by_key = BTreeMap::<String, InstantSample>::new();
     for sample in info_samples {
         if matches!(sample.value, SampleValue::Histogram(_)) {
-            return Err(PromqlError::Plan(
+            return Err(PromqlError::Exec(
                 "info series selector must match float samples".to_string(),
             ));
         }

@@ -1330,6 +1330,7 @@ eval instant at 2m down{job="api"}
                 labels: metric_to_labels(metric),
                 ts_ms: 0,
                 value: SampleValue::Float(value),
+                drop_name: false,
             };
             let expected_line = |metric: &str, value: f64| ExpectLine {
                 metric: metric.to_owned(),

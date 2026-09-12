@@ -1,7 +1,7 @@
 use super::*;
 
-#[test]
-pub(crate) fn range_result_cache_returns_owned_results() {
+#[tokio::test]
+pub(crate) async fn range_result_cache_returns_owned_results() {
     let cache = QueryFrontendCache::default();
     let query = FrontendRangeQuery {
         query: "up".into(),
@@ -15,11 +15,11 @@ pub(crate) fn range_result_cache_returns_owned_results() {
         samples: vec![(0, SampleValue::Float(1.0))],
     }]));
 
-    cache.insert("tenant-a", &query, result);
+    cache.insert("tenant-a", &query, result).await.unwrap();
     let Some(AnnotatedQueryResult {
         result: QueryResult::RangeMatrix(mut first_hit),
         ..
-    }) = cache.get("tenant-a", &query)
+    }) = cache.get("tenant-a", &query).await.unwrap()
     else {
         panic!("cached range matrix");
     };
@@ -28,7 +28,7 @@ pub(crate) fn range_result_cache_returns_owned_results() {
     let Some(AnnotatedQueryResult {
         result: QueryResult::RangeMatrix(second_hit),
         ..
-    }) = cache.get("tenant-a", &query)
+    }) = cache.get("tenant-a", &query).await.unwrap()
     else {
         panic!("cached range matrix");
     };

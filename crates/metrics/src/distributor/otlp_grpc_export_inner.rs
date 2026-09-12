@@ -1,7 +1,7 @@
 use super::{
     DecodedSeries, DistributorState, ExportMetricsServiceRequest, MetricsData, Principal,
     PushError, TenantId, TonicRequest, TranslationStrategy, append_decoded_series,
-    authorize_tenant, decode_otlp_stateful, tenant_from_metadata,
+    authorize_tenant, decode_otlp_stateful_with_promoted_resource_attributes, tenant_from_metadata,
 };
 
 /// Decodes and appends an OTLP gRPC export. Returns the decoded series count on
@@ -46,7 +46,12 @@ fn decode_tenant_otlp(
     let accumulator = state.otlp_delta_accumulators.for_tenant(tenant);
     let mut guard = accumulator.lock().expect("otlp delta accumulator poisoned");
     guard.seen_at(now);
-    let decoded = decode_otlp_stateful(data, TranslationStrategy::default(), &mut guard);
+    let decoded = decode_otlp_stateful_with_promoted_resource_attributes(
+        data,
+        TranslationStrategy::default(),
+        &mut guard,
+        &state.otlp_promote_resource_attributes,
+    );
     // Bound before the error is propagated, so a rejected body cannot leave the
     // streams it created behind.
     guard.bound(limits);

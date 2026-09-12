@@ -32,7 +32,7 @@ use krabka_promql::{
     PrometheusApiState, QueryFrontendOptions, RecordingRuleWalSink, RulerAlertState,
     RulerAlertStateRecord, RulerGroupEvaluation, RulerGroupState, RulerGroupStateRecord,
     RulerShard, RulerStateSink, RulerWalError, ScanResult, TsdbBlock, WalHead,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval, prometheus_router,
+    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report, prometheus_router,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
@@ -87,10 +87,14 @@ mod tests {
             }
         }
 
+        let mut metadata = manifest("m/metadata.index", 0, 0);
+        metadata.kind = MetricBlockKind::Metadata;
+
         let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
         for entry in [
             manifest("m/a.index", 0, 100),
             manifest("m/b.INDEX", 300, 400),
+            metadata,
         ] {
             store
                 .put(
@@ -110,7 +114,7 @@ mod tests {
         let all = super::load_compaction_manifests(store.clone(), "m")
             .await
             .unwrap();
-        assert2::assert!(all.len() == 2, "an uppercase .INDEX is still an index");
+        assert2::assert!(all.len() == 3, "an uppercase .INDEX is still an index");
 
         // Overlap, not containment: `a` ends exactly when the range starts.
         let touching = super::load_compaction_manifests_for_range(store.clone(), "m", 100, 200)
@@ -121,8 +125,8 @@ mod tests {
                 .iter()
                 .map(|m| m.index_key.as_str())
                 .collect::<Vec<_>>()
-                == vec!["m/a.index"],
-            "a manifest ending at the range start overlaps it"
+                == vec!["m/a.index", "m/metadata.index"],
+            "metadata is timeless and a manifest ending at the range start overlaps it"
         );
 
         // The other end of the same overlap test: `b` begins exactly when the
@@ -134,7 +138,7 @@ mod tests {
             both.iter()
                 .map(|m| m.index_key.as_str())
                 .collect::<Vec<_>>()
-                == vec!["m/a.index", "m/b.INDEX"],
+                == vec!["m/a.index", "m/b.INDEX", "m/metadata.index"],
             "a manifest starting at the range end overlaps it"
         );
 
@@ -148,7 +152,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert2::assert!(cache.read().await.len() == 2);
+        assert2::assert!(cache.read().await.len() == 3);
 
         store.delete(&Path::from("m/a.index")).await.unwrap();
         super::load_compaction_manifests_filtered_with_cache(
@@ -160,7 +164,8 @@ mod tests {
         .await
         .unwrap();
         assert2::assert!(
-            cache.read().await.keys().cloned().collect::<Vec<_>>() == vec!["m/b.INDEX".to_string()],
+            cache.read().await.keys().cloned().collect::<Vec<_>>()
+                == vec!["m/b.INDEX".to_string(), "m/metadata.index".to_string()],
             "the deleted manifest is evicted"
         );
     }
@@ -962,7 +967,7 @@ rules:
         let state_sink = super::PrometheusRulerStateSink::new(std::sync::Arc::clone(&state));
         let mut alert_state = krabka_promql::RulerAlertState::default();
         let mut group_state = krabka_promql::RulerGroupState::default();
-        let error = super::evaluate_ruler_once(
+        let evaluation = super::evaluate_ruler_once(
             &state,
             (&wal_sink, &alert_sink, &state_sink),
             &mut alert_state,
@@ -972,10 +977,34 @@ rules:
             10_000,
         )
         .await
-        .unwrap_err();
+        .unwrap();
 
-        assert2::assert!(format!("{error}").contains("samples per query exceeded"));
+        assert2::assert!(evaluation.recording_records == 0);
         assert2::assert!(wal_sink.records().is_empty());
+        let response = authenticated(krabka_promql::prometheus_router(std::sync::Arc::clone(
+            &state,
+        )))
+        .oneshot(
+            Request::builder()
+                .uri("/prometheus/api/v1/rules")
+                .header("x-scope-orgid", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let rule = &body["data"]["groups"][0]["rules"][0];
+        assert2::assert!(rule["health"] == "err");
+        assert2::assert!(
+            rule["lastError"]
+                .as_str()
+                .is_some_and(|error| error.contains("samples per query exceeded"))
+        );
+        assert2::assert!(rule["lastEvaluation"].as_str() != Some("0001-01-01T00:00:00Z"));
     }
 
     #[tokio::test]
@@ -1913,7 +1942,7 @@ rules:
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
@@ -1984,7 +2013,7 @@ rules:
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
@@ -2048,7 +2077,7 @@ rules:
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
@@ -2115,7 +2144,8 @@ rules:
         old_labels.insert("__name__", "up");
         old_labels.insert("job", "old");
         let old_fp = old_labels.fingerprint();
-        let old_batch = krabka_metrics::encode_float_samples(&[(old_fp, 10_000, 1.0)]).unwrap();
+        let old_batch =
+            krabka_metrics::encode_float_samples(&[(old_fp, 10_000, 1.0, None)]).unwrap();
         let old_block = writer_store
             .writer()
             .write_block(
@@ -2150,7 +2180,8 @@ rules:
         new_labels.insert("__name__", "up");
         new_labels.insert("job", "new");
         let new_fp = new_labels.fingerprint();
-        let new_batch = krabka_metrics::encode_float_samples(&[(new_fp, 1_000_000, 1.0)]).unwrap();
+        let new_batch =
+            krabka_metrics::encode_float_samples(&[(new_fp, 1_000_000, 1.0, None)]).unwrap();
         let new_block = writer_store
             .writer()
             .write_block(
@@ -2341,7 +2372,7 @@ rules:
         labels.insert("__name__", "up");
         labels.insert("job", "api");
         let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(
@@ -2428,7 +2459,7 @@ rules:
         labels.insert("__name__", "up");
         labels.insert("job", job);
         let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, ts_ms, 1.0)]).unwrap();
+        let batch = krabka_metrics::encode_float_samples(&[(fp, ts_ms, 1.0, None)]).unwrap();
         let block_meta = writer_store
             .writer()
             .write_block(

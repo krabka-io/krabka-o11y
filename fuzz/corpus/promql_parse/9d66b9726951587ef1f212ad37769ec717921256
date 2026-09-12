@@ -1,0 +1,1 @@
+info(data_metric, {__name__="info_metric"})

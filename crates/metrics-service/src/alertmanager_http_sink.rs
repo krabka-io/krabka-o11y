@@ -19,7 +19,7 @@ impl std::fmt::Display for AlertmanagerDeliveryError {
     }
 }
 
-fn encode_url_component(value: &str) -> String {
+pub(crate) fn encode_url_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
@@ -151,6 +151,18 @@ impl AlertmanagerHttpSink {
 
 #[async_trait::async_trait]
 impl AlertmanagerSink for AlertmanagerHttpSink {
+    fn template_external_labels(&self) -> krabka_blockstore::Labels {
+        krabka_blockstore::Labels::from_pairs(self.external_labels.clone())
+    }
+
+    fn template_external_url(&self, alert_name: &str) -> String {
+        self.generator_url_template
+            .as_ref()
+            .map_or_else(String::new, |template| {
+                template.replace("{alertname}", &encode_url_component(alert_name))
+            })
+    }
+
     async fn dispatch_alerts(
         &self,
         alerts: Vec<krabka_promql::AlertmanagerAlert>,

@@ -13,7 +13,7 @@ use arrow::{
 use crate::{
     arrow_codec::{require_non_null, typed_column},
     histogram::HistogramCodecError,
-    schema::{COL_FINGERPRINT, COL_TIMESTAMP, float_sample_schema},
+    schema::{COL_FINGERPRINT, COL_NH_START_TS, COL_TIMESTAMP, float_sample_schema},
 };
 
 #[cfg(test)]
@@ -24,7 +24,11 @@ mod tests {
 
     #[test]
     fn float_samples_round_trip() {
-        let rows = [(1_u64, 100_i64, 1.5_f64), (2, 200, -3.0), (1, 300, 0.0)];
+        let rows = [
+            (1_u64, 100_i64, 1.5_f64, Some(50)),
+            (2, 200, -3.0, None),
+            (1, 300, 0.0, Some(250)),
+        ];
 
         let batch = encode_float_samples(&rows).unwrap();
         let decoded = decode_float_samples(&batch).unwrap();
@@ -40,3 +44,6 @@ mod encode_float_samples;
 use col_value::COL_VALUE;
 pub use decode_float_samples::decode_float_samples;
 pub use encode_float_samples::encode_float_samples;
+
+/// One encoded float sample: fingerprint, timestamp, value, and optional creation timestamp.
+pub type FloatSampleRow = (u64, i64, f64, Option<i64>);

@@ -1,0 +1,1 @@
+rate(some_metric[1m30s])

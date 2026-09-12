@@ -33,7 +33,7 @@ pub(crate) async fn instant_selector_at_and_offset_combine_order_independently()
             panic!("expected vector");
         };
         check!(samples.len() == 1);
-        check!(samples[0].ts_ms == 60_000);
+        check!(samples[0].ts_ms == 999_000);
         check!(approx_eq(float_value(&samples[0].value), 1.0));
     }
 }

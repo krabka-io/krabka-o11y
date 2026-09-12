@@ -7,6 +7,44 @@ pub(crate) fn evaluate_template_value_function(
     name: &str,
     args: &[TemplateRuntimeValue],
 ) -> Option<TemplateRuntimeValue> {
+    if name == "first" {
+        let value = args.first()?;
+        let first = match value {
+            TemplateRuntimeValue::Json(serde_json::Value::Array(values)) => {
+                values.first().cloned().unwrap_or(serde_json::Value::Null)
+            }
+            _ => serde_json::Value::Null,
+        };
+        return Some(TemplateRuntimeValue::Json(first));
+    }
+    if name == "label" {
+        let [name, sample, ..] = args else {
+            return Some(TemplateRuntimeValue::String(String::new()));
+        };
+        let name = name.as_rendered_string();
+        let value = match sample {
+            TemplateRuntimeValue::Json(serde_json::Value::Object(sample)) => sample
+                .get("Labels")
+                .or_else(|| sample.get("labels"))
+                .and_then(serde_json::Value::as_object)
+                .and_then(|labels| labels.get(&name))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            _ => serde_json::Value::Null,
+        };
+        return Some(TemplateRuntimeValue::Json(value));
+    }
+    if name == "value" {
+        let value = match args.first() {
+            Some(TemplateRuntimeValue::Json(serde_json::Value::Object(sample))) => sample
+                .get("Value")
+                .or_else(|| sample.get("value"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+            _ => serde_json::Value::Null,
+        };
+        return Some(TemplateRuntimeValue::Json(value));
+    }
     if name == "fromJson" {
         let Some(value) = args.first() else {
             return Some(TemplateRuntimeValue::String(String::new()));

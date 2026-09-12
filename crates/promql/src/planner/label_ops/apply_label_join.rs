@@ -24,6 +24,9 @@ pub fn apply_label_join(
                 .collect::<Vec<_>>()
                 .join(separator);
             sample.labels = set_label_value(&sample.labels, dst_label, &value);
+            if dst_label == "__name__" {
+                sample.drop_name = false;
+            }
             sample
         })
         .collect()

@@ -14,6 +14,7 @@ pub(crate) fn apply_binary_fill_value(
         labels: Labels::new(),
         ts_ms: present.ts_ms,
         value: SampleValue::Float(fill_value),
+        drop_name: false,
     };
     match missing_side {
         MissingSide::Left => apply_binary_sample_value(&filled, present, op, modifier),

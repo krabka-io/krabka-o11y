@@ -8,7 +8,7 @@ pub(crate) async fn tsdb_blocks_reports_compaction_manifest_blocks() {
 
     let series_labels = labels(&[("__name__", "up"), ("job", "api")]);
     let fp = series_labels.fingerprint();
-    let batch = encode_float_samples(&[(fp, 1_000, 1.0), (fp, 2_000, 0.0)]).unwrap();
+    let batch = encode_float_samples(&[(fp, 1_000, 1.0, None), (fp, 2_000, 0.0, None)]).unwrap();
     let block_meta = writer_store
         .writer()
         .write_block(

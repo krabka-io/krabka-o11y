@@ -4,12 +4,12 @@ use super::{
     api_prom_query_range_post, api_prom_series, api_prom_series_post, create_loki_rule_group,
     delete_loki_rule_group, delete_loki_rule_namespace, detected_field_values,
     detected_field_values_post, detected_fields, detected_fields_post, detected_labels,
-    detected_labels_post, format_query, format_query_post, get, index_stats, index_stats_post,
-    index_volume, index_volume_post, index_volume_range, index_volume_range_post, label_names,
-    label_names_post, label_values, label_values_post, loki_page_not_found, loki_rule_group,
-    loki_rule_namespace, loki_rules, patterns, patterns_post, prometheus_alerts, prometheus_rules,
-    query, query_post, query_range, query_range_post, require_org_id, ruler_ring, scheduler_ring,
-    series, series_post, tail,
+    detected_labels_post, format_query, format_query_post, get, index_shards, index_stats,
+    index_stats_post, index_volume, index_volume_post, index_volume_range, index_volume_range_post,
+    label_names, label_names_post, label_values, label_values_post, loki_page_not_found,
+    loki_rule_group, loki_rule_namespace, loki_rules, patterns, patterns_post, prometheus_alerts,
+    prometheus_rules, query, query_post, query_range, query_range_post, require_org_id, ruler_ring,
+    scheduler_ring, series, series_post, tail,
 };
 
 /// Every `Loki` read route, with no ops routes on it.
@@ -103,6 +103,7 @@ pub(crate) fn loki_query_routes(state: QuerierState) -> Router {
             "/loki/api/v1/index/stats",
             get(index_stats).post(index_stats_post),
         )
+        .route("/loki/api/v1/index/shards", get(index_shards))
         .route(
             "/loki/api/v1/index/volume",
             get(index_volume).post(index_volume_post),

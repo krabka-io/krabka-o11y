@@ -1,7 +1,7 @@
 use super::{
     AlertmanagerSink, Arc, MetricStore, PrometheusApiState, RecordingRuleWalSink, RulerAlertState,
     RulerGroupEvaluation, RulerGroupState, RulerShard, RulerStateSink, TenantId,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval,
+    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
 };
 
 #[tracing::instrument(
@@ -33,7 +33,7 @@ where
     state.set_ruler_evaluation_time_ms(eval_time_ms);
     let rules = state.ruler_rule_set(tenant);
     let engine = state.engine_for_tenant(tenant);
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
+    let report = evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
         &engine,
         (wal_sink, alert_sink, state_sink),
         alert_state,
@@ -41,5 +41,7 @@ where
         &rules,
         (group_state, shard, eval_time_ms),
     )
-    .await
+    .await?;
+    state.apply_ruler_evaluation_report(&report);
+    Ok(report.evaluation)
 }

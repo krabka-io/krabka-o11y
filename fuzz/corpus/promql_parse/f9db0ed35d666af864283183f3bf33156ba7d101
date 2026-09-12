@@ -1,1 +1,0 @@
-irate(http_requests_histogram{path="/f"}[20m])

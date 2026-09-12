@@ -630,6 +630,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     return None;
                 };
                 sample.labels = labels_without_metric_name(&sample.labels);
+                sample.drop_name = true;
                 sample.value = SampleValue::Float(clamp_float(value, min, max));
                 Some(sample)
             })
@@ -669,6 +670,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                             labels: labels_without_metric_name(&sample.labels),
                             ts_ms: sample.ts_ms,
                             value: SampleValue::Float(kind.apply(value)),
+                            drop_name: true,
                         })
                     })
                     .collect(),
@@ -718,6 +720,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                             labels: labels_without_metric_name(&sample.labels),
                             ts_ms: sample.ts_ms,
                             value: SampleValue::Float(round_to_nearest(value, to_nearest)),
+                            drop_name: true,
                         })
                     })
                     .collect(),
@@ -803,10 +806,12 @@ impl<S: MetricStore> PromqlEngine<S> {
     ) -> Result<QueryResult> {
         let [arg] = call.args.args.as_slice() else {
             if call.args.args.is_empty() {
-                return Ok(QueryResult::Scalar {
+                return Ok(QueryResult::InstantVector(vec![InstantSample {
+                    labels: Labels::new(),
                     ts_ms: time_ms,
-                    value: kind.apply(timestamp_seconds(time_ms)),
-                });
+                    value: SampleValue::Float(kind.apply(timestamp_seconds(time_ms))),
+                    drop_name: false,
+                }]));
             }
             return Err(PromqlError::Plan(format!(
                 "{} expects zero or one arguments, got {}",
@@ -835,6 +840,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                         labels: labels_without_metric_name(&sample.labels),
                         ts_ms: time_ms,
                         value: SampleValue::Float(kind.apply(value)),
+                        drop_name: true,
                     })
                 })
                 .collect(),
@@ -901,6 +907,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels: Labels::new(),
             ts_ms: time_ms,
             value: SampleValue::Float(value),
+            drop_name: false,
         }]))
     }
     #[cfg(test)]
@@ -1271,6 +1278,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels: absent_labels(arg)?,
             ts_ms: time_ms,
             value: SampleValue::Float(1.0),
+            drop_name: false,
         }]))
     }
 
@@ -1304,6 +1312,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels: absent_labels(arg)?,
             ts_ms: time_ms,
             value: SampleValue::Float(1.0),
+            drop_name: false,
         }]))
     }
 
@@ -1365,6 +1374,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     labels: labels_without_metric_name(&sample.labels),
                     ts_ms: time_ms,
                     value: SampleValue::Float(timestamp_seconds(sample.ts_ms)),
+                    drop_name: true,
                 })
                 .collect(),
         ))

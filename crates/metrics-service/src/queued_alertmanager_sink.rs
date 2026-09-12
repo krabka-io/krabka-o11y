@@ -1,4 +1,7 @@
-use super::{AlertmanagerHttpSink, AlertmanagerSink, RulerWalError};
+use super::{
+    AlertmanagerHttpSink, AlertmanagerSink, RulerWalError,
+    alertmanager_http_sink::encode_url_component,
+};
 
 /// A bounded FIFO in front of Alertmanager delivery.
 ///
@@ -13,6 +16,8 @@ pub struct QueuedAlertmanagerSink {
         >,
     >,
     worker: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    external_labels: std::collections::BTreeMap<String, String>,
+    generator_url_template: Option<String>,
 }
 
 impl QueuedAlertmanagerSink {
@@ -22,6 +27,8 @@ impl QueuedAlertmanagerSink {
         capacity: usize,
         resend_delay: std::time::Duration,
     ) -> Self {
+        let external_labels = sink.external_labels.clone();
+        let generator_url_template = sink.generator_url_template.clone();
         let (sender, mut receiver) =
             tokio::sync::mpsc::channel::<Vec<krabka_promql::AlertmanagerAlert>>(capacity.max(1));
         let worker = tokio::spawn(async move {
@@ -44,6 +51,8 @@ impl QueuedAlertmanagerSink {
         Self {
             sender: std::sync::Arc::new(tokio::sync::Mutex::new(Some(sender))),
             worker: std::sync::Arc::new(tokio::sync::Mutex::new(Some(worker))),
+            external_labels,
+            generator_url_template,
         }
     }
 
@@ -72,6 +81,18 @@ impl QueuedAlertmanagerSink {
 
 #[async_trait::async_trait]
 impl AlertmanagerSink for QueuedAlertmanagerSink {
+    fn template_external_labels(&self) -> krabka_blockstore::Labels {
+        krabka_blockstore::Labels::from_pairs(self.external_labels.clone())
+    }
+
+    fn template_external_url(&self, alert_name: &str) -> String {
+        self.generator_url_template
+            .as_ref()
+            .map_or_else(String::new, |template| {
+                template.replace("{alertname}", &encode_url_component(alert_name))
+            })
+    }
+
     async fn dispatch_alerts(
         &self,
         alerts: Vec<krabka_promql::AlertmanagerAlert>,

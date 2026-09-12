@@ -75,6 +75,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             plan,
             labels_by_fp,
             InstantShape::Selector,
+            false,
         ))
     }
 
@@ -186,6 +187,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             plan,
             labels_by_fp,
             InstantShape::RateProjection,
+            true,
         ))
     }
 
@@ -249,6 +251,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 // family drops it (`OverTimeFn::preserves_metric_name`).
                 preserve_metric_name: matches!(family, OverTimeFamily::Last),
             },
+            !matches!(family, OverTimeFamily::Last),
         ))
     }
 

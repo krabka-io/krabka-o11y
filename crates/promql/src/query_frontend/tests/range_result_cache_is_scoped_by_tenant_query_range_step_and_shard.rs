@@ -1,7 +1,7 @@
 use super::*;
 
-#[test]
-pub(crate) fn range_result_cache_is_scoped_by_tenant_query_range_step_and_shard() {
+#[tokio::test]
+pub(crate) async fn range_result_cache_is_scoped_by_tenant_query_range_step_and_shard() {
     let cache = QueryFrontendCache::default();
     let query = FrontendRangeQuery {
         query: "up".into(),
@@ -15,14 +15,17 @@ pub(crate) fn range_result_cache_is_scoped_by_tenant_query_range_step_and_shard(
         samples: vec![(0, SampleValue::Float(1.0))],
     }]));
 
-    cache.insert("tenant-a", &query, result.clone());
+    cache
+        .insert("tenant-a", &query, result.clone())
+        .await
+        .unwrap();
 
-    assert2::assert!(cache.get("tenant-a", &query) == Some(result));
-    assert2::assert!(cache.get("tenant-b", &query) == None);
+    assert2::assert!(cache.get("tenant-a", &query).await.unwrap() == Some(result));
+    assert2::assert!(cache.get("tenant-b", &query).await.unwrap() == None);
 
     let other_shard = FrontendRangeQuery {
         shard: Some(QueryShard { index: 2, total: 2 }),
         ..query
     };
-    assert2::assert!(cache.get("tenant-a", &other_shard) == None);
+    assert2::assert!(cache.get("tenant-a", &other_shard).await.unwrap() == None);
 }

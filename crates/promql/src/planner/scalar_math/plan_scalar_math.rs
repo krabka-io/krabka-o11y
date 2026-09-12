@@ -21,8 +21,8 @@ pub async fn plan_scalar_math(
     bounds: &[f64],
 ) -> Result<ScalarMathPlan> {
     // Collect the distinct non-metadata label names; these become the leaf's
-    // label columns. The series fingerprint is recomputed over the metadata-free
-    // label set so it matches the projected output exactly.
+    // label columns. The series fingerprint is recomputed over the projected
+    // label set so it matches the output exactly.
     let mut label_names: BTreeSet<String> = BTreeSet::new();
     let mut rows: Vec<(Labels, i64, f64)> = Vec::with_capacity(samples.len());
     for sample in samples {

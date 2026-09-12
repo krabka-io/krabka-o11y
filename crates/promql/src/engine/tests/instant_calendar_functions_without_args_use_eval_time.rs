@@ -8,11 +8,11 @@ pub(crate) async fn instant_calendar_functions_without_args_use_eval_time() {
         .await
         .unwrap();
 
-    assert2::assert!(
-        result
-            == QueryResult::Scalar {
-                ts_ms: 3_660_000,
-                value: 1.0,
-            }
-    );
+    let QueryResult::InstantVector(samples) = result else {
+        panic!("expected instant vector");
+    };
+    assert2::assert!(samples.len() == 1);
+    assert2::assert!(samples[0].labels.is_empty());
+    assert2::assert!(samples[0].ts_ms == 3_660_000);
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 1.0));
 }

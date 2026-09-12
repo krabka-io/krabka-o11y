@@ -22,11 +22,11 @@ impl MetricStore for InMemoryMetricStore {
         if let Some(rows) = self.floats.get(tenant) {
             for row in rows.iter() {
                 if row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms) {
-                    float_rows.push((row.fp, row.ts_ms, row.value));
+                    float_rows.push((row.fp, row.ts_ms, row.value, row.start_timestamp_ms));
                 }
             }
         }
-        float_rows.sort_by_key(|(fp, ts, _)| (*fp, *ts));
+        float_rows.sort_by_key(|(fp, ts, _, _)| (*fp, *ts));
         let float_table = if float_rows.is_empty() {
             None
         } else {

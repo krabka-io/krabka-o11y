@@ -45,6 +45,7 @@ pub(crate) async fn a_query_answers_around_a_deleted_block_and_warns() {
                 labels: kept_series,
                 ts_ms: 1_000,
                 value: SampleValue::Float(2.0),
+                drop_name: false,
             }]
     );
     check!(annotations.warnings.len() == 1);

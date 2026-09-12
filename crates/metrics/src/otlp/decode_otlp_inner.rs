@@ -1,12 +1,14 @@
 use super::{
     DecodedMetadata, DecodedSample, DecodedSeries, DeltaAccumulator, MetricsData, OtlpError,
-    TranslationStrategy, labels, metric_attributes, metric_series, resource_metrics_timestamp_ms,
+    TranslationStrategy, labels, metric_attributes, metric_series, promoted_resource_attributes,
+    resource_metrics_timestamp_ms,
 };
 
 pub(crate) fn decode_otlp_inner(
     data: &MetricsData,
     strategy: TranslationStrategy,
     mut accumulator: Option<&mut DeltaAccumulator>,
+    additional_resource_attributes: &[String],
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
     let mut out = Vec::new();
     for resource_metrics in &data.resource_metrics {
@@ -32,8 +34,10 @@ pub(crate) fn decode_otlp_inner(
             });
         }
 
+        let promoted_resource_attributes =
+            promoted_resource_attributes(resource_attributes, additional_resource_attributes);
         for scope_metrics in &resource_metrics.scope_metrics {
-            let metric_attributes = metric_attributes(resource_attributes, scope_metrics);
+            let metric_attributes = metric_attributes(&promoted_resource_attributes, scope_metrics);
             for metric in &scope_metrics.metrics {
                 out.extend(metric_series(
                     metric,

@@ -12,22 +12,31 @@ pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
 ) -> Result<Vec<Value>, PromqlError> {
     let mut groups = Vec::new();
     for (namespace, namespace_groups) in rules {
-        for group in namespace_groups.into_values() {
-            let rules = prometheus_rules_json(state, tenant, &group, options).await?;
+        for (stored_group_name, group) in namespace_groups {
+            let rules = prometheus_rules_json(
+                state,
+                tenant,
+                &namespace,
+                &stored_group_name,
+                &group,
+                options,
+            )
+            .await?;
             if rules.is_empty() {
                 continue;
             }
             let group_name = yaml_string(&group, "name");
+            let status = state.ruler_group_status(tenant, &namespace, &stored_group_name);
             let last_evaluation = state
-                .ruler_group_last_eval_ms(tenant.as_str(), &namespace, &group_name)
+                .ruler_group_last_eval_ms(tenant.as_str(), &namespace, &stored_group_name)
                 .map_or_else(|| zero_evaluation_time().to_string(), rfc3339_time_string);
             groups.push(json!({
                 "name": group_name,
                 "file": namespace,
                 "interval": yaml_duration(&group, "interval").secs_i64(),
                 "lastEvaluation": last_evaluation,
-                "evaluationTime": 0.0,
-                "lastError": "",
+                "evaluationTime": status.as_ref().map_or(0.0, |status| status.evaluation_time_seconds),
+                "lastError": status.map_or_else(String::new, |status| status.last_error),
                 "limit": 0,
                 "rules": rules,
             }));

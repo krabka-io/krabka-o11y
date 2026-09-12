@@ -1,1 +1,0 @@
-histogram_quantile(0.5, rate(request_duration_seconds[10m]))

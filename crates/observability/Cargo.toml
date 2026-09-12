@@ -39,6 +39,7 @@ krabka-ids = { version = "0.4.0" }
 # `krabka-telemetry` would have installed, so the JSON lines are unchanged.
 krabka-logfmt = { version = "0.4.0" }
 krabka-logql = { version = "0.4.0", path = "../logql" }
+krabka-query-frontend = { version = "0.4.0", path = "../query-frontend" }
 # `ListenerProtocol` and `SaslMechanism`, the two types a `ClientSecurity` names
 # that `krabka-client-core` does not re-export.
 krabka-security = { version = "0.4.0" }

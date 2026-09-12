@@ -51,6 +51,7 @@ fn rows(tenant: &str, samples: &[(u64, i64, f64)]) -> TenantCompactionRows {
                 fingerprint: *fingerprint,
                 timestamp_ms: *timestamp_ms,
                 value: *value,
+                start_timestamp_ms: None,
             })
             .collect(),
         histogram_rows: Vec::new(),
@@ -109,6 +110,7 @@ async fn samples_in(store: &Arc<dyn ObjectStore>, key: &str) -> Vec<(u64, i64, f
         .expect("read the block")
         .iter()
         .flat_map(|batch| decode_float_samples(batch).expect("decode float samples"))
+        .map(|(fingerprint, timestamp_ms, value, _)| (fingerprint, timestamp_ms, value))
         .collect()
 }
 

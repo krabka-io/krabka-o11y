@@ -15,7 +15,14 @@ pub fn encode_tenant_batches(
         let tuples = rows
             .float_rows
             .iter()
-            .map(|row| (row.fingerprint, row.timestamp_ms, row.value))
+            .map(|row| {
+                (
+                    row.fingerprint,
+                    row.timestamp_ms,
+                    row.value,
+                    row.start_timestamp_ms,
+                )
+            })
             .collect::<Vec<_>>();
         Some(encode_float_samples(&tuples)?)
     };

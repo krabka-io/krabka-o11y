@@ -1,1 +1,0 @@
-histogram_sum(sum(last_over_time(incr_sum_histogram[5m])))

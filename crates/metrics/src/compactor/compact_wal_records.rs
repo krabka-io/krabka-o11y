@@ -28,11 +28,12 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
             SamplePayload::Float {
                 timestamp_ms,
                 value,
-                ..
+                start_timestamp_ms,
             } => rows.float_rows.push(FloatRow {
                 fingerprint,
                 timestamp_ms: *timestamp_ms,
                 value: *value,
+                start_timestamp_ms: *start_timestamp_ms,
             }),
             SamplePayload::Hist { timestamp_ms, hist } => {
                 rows.histogram_rows.push(NativeHistogramRow {

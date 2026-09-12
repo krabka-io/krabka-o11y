@@ -35,6 +35,7 @@ pub(crate) fn apply_histogram_accessor(
                 labels: labels_without_metric_name(&sample.labels),
                 ts_ms: sample.ts_ms,
                 value: SampleValue::Float(accessor.value(&hist)),
+                drop_name: true,
             })
         })
         .collect()

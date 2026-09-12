@@ -1,0 +1,1 @@
+sum_over_time(metric[1m])/count_over_time(metric[1m])

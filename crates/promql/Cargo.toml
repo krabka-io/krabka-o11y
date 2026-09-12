@@ -25,8 +25,10 @@ experimental-functions = []
 assert2 = { workspace = true }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
 krabka-ids = { version = "0.4.0" }
+krabka-logql = { path = "../logql", version = "0.4.0" }
 krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
+krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
 krabka-units = { workspace = true }
 arrow = { workspace = true }
 datafusion = { workspace = true }

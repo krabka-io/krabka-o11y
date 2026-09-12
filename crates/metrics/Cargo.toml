@@ -28,6 +28,7 @@ async-trait = { workspace = true }
 arrow = { workspace = true }
 axum = { workspace = true, features = ["json"] }
 bytes = { workspace = true }
+crc32c = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
 krabka-client-consumer = { version = "0.4.0" }
@@ -40,6 +41,7 @@ krabka-throttle = { version = "0.4.0" }
 krabka-units = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
+flate2 = { workspace = true }
 object_store = { workspace = true }
 opentelemetry-proto = { workspace = true }
 prometheus-client = { workspace = true }
@@ -52,7 +54,7 @@ serde_yaml = { workspace = true }
 snap = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
-tonic = { workspace = true }
+tonic = { workspace = true, features = ["gzip"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 url = { workspace = true }

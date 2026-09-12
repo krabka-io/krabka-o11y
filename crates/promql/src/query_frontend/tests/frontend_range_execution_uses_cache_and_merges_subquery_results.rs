@@ -11,14 +11,17 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
         step: millis(60_000),
         shard: None,
     };
-    cache.insert(
-        "tenant-a",
-        &cached_query,
-        unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
-            labels: labels(&[("__name__", "up"), ("job", "api")]),
-            samples: vec![(0, SampleValue::Float(1.0))],
-        }])),
-    );
+    cache
+        .insert(
+            "tenant-a",
+            &cached_query,
+            unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+                labels: labels(&[("__name__", "up"), ("job", "api")]),
+                samples: vec![(0, SampleValue::Float(1.0))],
+            }])),
+        )
+        .await
+        .unwrap();
 
     let result = execute_range_query_frontend(
         &executor,
@@ -55,6 +58,8 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
     assert2::assert!(
         cache
             .get("tenant-a", &calls[0])
+            .await
+            .unwrap()
             .expect("fresh subquery cached")
             == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
                 labels: labels(&[("__name__", "up"), ("job", "api")]),

@@ -37,7 +37,12 @@ pub(crate) async fn run_ruler(
     .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
     let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
+        .with_query_timeout(cli.query_timeout)
         .with_remote_read_max_body(cli.remote_read_max_body)
+        .with_runtime_status(
+            krabka_observability::LogLevelControl::process().level(),
+            None,
+        )
         .with_metrics(metrics)
         .with_audit(audit);
     let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
@@ -135,7 +140,6 @@ pub(crate) async fn run_ruler(
         PrometheusRulerStateSink::new(Arc::clone(&state)),
         KafkaRulerStateSink::new(producer, cli.ruler_state_topic.clone()),
     );
-    let tenant = cli.ruler_tenant.clone();
     let interval = cli.ruler_eval_interval;
     let alertmanager_urls = cli.ruler_alertmanager_url.clone();
     let alertmanager_queue_capacity = cli.ruler_alertmanager_queue_capacity;
@@ -187,7 +191,6 @@ pub(crate) async fn run_ruler(
         let result = run_ruler_evaluation_loop(
             state,
             (wal_sink, eval_alert_sink, state_sink),
-            tenant,
             shard,
             interval,
             eval_shutdown.signalled(),

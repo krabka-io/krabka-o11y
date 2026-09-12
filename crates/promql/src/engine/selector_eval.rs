@@ -14,7 +14,9 @@ use crate::{
     PromqlError,
     error::Result,
     extension::is_stale_nan,
-    planner::{ExtendedSelectorExpr, ExtendedSelectorModifier},
+    planner::{
+        ExtendedSelectorExpr, ExtendedSelectorModifier, TimedValue, inject_created_timestamp_zeros,
+    },
     result::{InstantSample, QueryResult, RangeSeries, SampleValue},
     store::MetricStore,
 };
@@ -82,6 +84,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     labels: (**labels).clone(),
                     ts_ms,
                     value,
+                    drop_name: false,
                 })
             })
             .collect();
@@ -132,6 +135,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     labels: (**labels).clone(),
                     ts_ms: time_ms,
                     value: SampleValue::Float(value),
+                    drop_name: false,
                 })
             })
             .collect();
@@ -145,6 +149,19 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
         modifier: Option<ExtendedSelectorModifier>,
+    ) -> Result<Vec<RangeSeries>> {
+        self.eval_matrix_selector_inner(tenant, selector, start_ms, end_ms, modifier, false)
+            .await
+    }
+
+    async fn eval_matrix_selector_inner(
+        &self,
+        tenant: &str,
+        selector: &MatrixSelector,
+        start_ms: i64,
+        end_ms: i64,
+        modifier: Option<ExtendedSelectorModifier>,
+        inject_zeros: bool,
     ) -> Result<Vec<RangeSeries>> {
         let range = selector_duration(selector.range)?;
         let bounds = AtModifierBounds { start_ms, end_ms };
@@ -184,19 +201,33 @@ impl<S: MetricStore> PromqlEngine<S> {
             .scan_histogram_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
 
-        let mut samples_by_fp: BTreeMap<SeriesFingerprint, BTreeMap<i64, SampleValue>> =
-            BTreeMap::new();
+        let mut float_samples_by_fp: BTreeMap<SeriesFingerprint, Vec<TimedValue>> = BTreeMap::new();
         for row in rows {
-            if row.ts_ms <= scan_start_ms || row.ts_ms > scan_end_ms {
+            if row.ts_ms <= scan_start_ms || row.ts_ms > scan_end_ms || is_stale_nan(row.value) {
                 continue;
             }
-            if is_stale_nan(row.value) {
-                continue;
-            }
-            samples_by_fp
+            float_samples_by_fp
                 .entry(row.fp)
                 .or_default()
-                .insert(row.ts_ms, SampleValue::Float(row.value));
+                .push(TimedValue {
+                    ts_ms: row.ts_ms,
+                    value: row.value,
+                    start_timestamp_ms: row.start_timestamp_ms,
+                });
+        }
+
+        let mut samples_by_fp: BTreeMap<SeriesFingerprint, BTreeMap<i64, SampleValue>> =
+            BTreeMap::new();
+        for (fp, mut samples) in float_samples_by_fp {
+            samples.sort_unstable_by_key(|sample| sample.ts_ms);
+            if inject_zeros {
+                inject_created_timestamp_zeros(&mut samples, range_start_ms);
+            }
+            samples_by_fp.entry(fp).or_default().extend(
+                samples
+                    .into_iter()
+                    .map(|sample| (sample.ts_ms, SampleValue::Float(sample.value))),
+            );
         }
         for row in hist_rows {
             if row.ts_ms <= scan_start_ms || row.ts_ms > scan_end_ms {
@@ -300,7 +331,15 @@ impl<S: MetricStore> PromqlEngine<S> {
                     None,
                 )?;
                 let series = self
-                    .eval_matrix_selector(tenant, selector, time_ms, time_ms, modifier)
+                    .eval_matrix_selector_inner(
+                        tenant,
+                        selector,
+                        time_ms,
+                        time_ms,
+                        modifier,
+                        modifier.is_none()
+                            && matches!(function_name, "rate" | "increase" | "resets"),
+                    )
                     .await?;
                 Ok(RangeEval {
                     series,

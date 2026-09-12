@@ -8,7 +8,7 @@ use std::{
     future::Future,
     net::SocketAddr,
     sync::{Arc, Mutex, MutexGuard},
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -51,8 +51,9 @@ use crate::{
     IngestEnforcer, LimitError, Limits, OverridesProvider,
     metrics::ServiceMetrics,
     otlp::{
-        OtlpError, TenantDeltaAccumulators, TranslationStrategy, decode_otlp_stateful,
-        decode_otlp_stateful_bytes,
+        OtlpError, TenantDeltaAccumulators, TranslationStrategy,
+        decode_otlp_stateful_bytes_with_promoted_resource_attributes,
+        decode_otlp_stateful_with_promoted_resource_attributes,
     },
     request_tenant::{
         RequestTenantError, TenantAccessError, authorized_tenant_from_headers, tenant_from_metadata,
@@ -72,25 +73,36 @@ mod tests {
     /// without a real wait.
     #[derive(Debug)]
     struct FixedClock {
-        now: Mutex<std::time::Instant>,
+        now: Mutex<(std::time::Instant, i64)>,
     }
 
     impl FixedClock {
         fn new() -> Arc<Self> {
             Arc::new(Self {
-                now: Mutex::new(std::time::Instant::now()),
+                now: Mutex::new((std::time::Instant::now(), 0)),
             })
         }
 
         fn advance(&self, delta: std::time::Duration) {
             let mut guard = self.now.lock().expect("clock lock");
-            *guard += delta;
+            guard.0 += delta;
+            guard.1 = guard
+                .1
+                .saturating_add(i64::try_from(delta.as_millis()).unwrap_or(i64::MAX));
+        }
+
+        fn set_unix_ms(&self, now_ms: i64) {
+            self.now.lock().expect("clock lock").1 = now_ms;
         }
     }
 
     impl super::IngestClock for FixedClock {
         fn now(&self) -> std::time::Instant {
-            *self.now.lock().expect("clock lock")
+            self.now.lock().expect("clock lock").0
+        }
+
+        fn now_unix_ms(&self) -> i64 {
+            self.now.lock().expect("clock lock").1
         }
     }
 
@@ -452,6 +464,12 @@ overrides:
                 oldest_allowed_ms: 2,
             }) == tonic::Code::InvalidArgument
         );
+        check!(
+            code(&super::PushError::TooFarInFuture {
+                timestamp_ms: 2,
+                newest_allowed_ms: 1,
+            }) == tonic::Code::InvalidArgument
+        );
         check!(code(&super::PushError::Limit(rate_limited())) == tonic::Code::ResourceExhausted);
         check!(code(&super::PushError::Limit(bad_request())) == tonic::Code::InvalidArgument);
         check!(code(&super::PushError::Limit(unprocessable())) == tonic::Code::InvalidArgument);
@@ -472,6 +490,12 @@ overrides:
             http(super::PushError::TooOldSample {
                 timestamp_ms: 1,
                 oldest_allowed_ms: 2,
+            }) == axum::http::StatusCode::BAD_REQUEST
+        );
+        check!(
+            http(super::PushError::TooFarInFuture {
+                timestamp_ms: 2,
+                newest_allowed_ms: 1,
             }) == axum::http::StatusCode::BAD_REQUEST
         );
         check!(
@@ -834,14 +858,14 @@ overrides:
         let limits = Limits {
             max_series_per_request: 2,
             max_samples_per_series: 3,
-            max_label_name_length: krabka_units::bytes(4),
+            max_label_name_length: krabka_units::bytes(8),
             max_label_value_length: krabka_units::bytes(5),
             ..Limits::default()
         };
 
         let two = [
-            decoded_series(&[("ok", "v")], 1),
-            decoded_series(&[("ok", "v")], 1),
+            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
+            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
         ];
         assert!(
             super::validate(&two, &limits).is_ok(),
@@ -849,9 +873,9 @@ overrides:
         );
 
         let three = [
-            decoded_series(&[("ok", "v")], 1),
-            decoded_series(&[("ok", "v")], 1),
-            decoded_series(&[("ok", "v")], 1),
+            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
+            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
+            decoded_series(&[("__name__", "m"), ("ok", "v")], 1),
         ];
         let err = super::validate(&three, &limits).unwrap_err().to_string();
         assert!(
@@ -859,12 +883,12 @@ overrides:
             "got: {err}"
         );
 
-        let at_edge = [decoded_series(&[("ok", "v")], 3)];
+        let at_edge = [decoded_series(&[("__name__", "m"), ("ok", "v")], 3)];
         assert!(
             super::validate(&at_edge, &limits).is_ok(),
             "three samples fit a limit of three"
         );
-        let over = [decoded_series(&[("ok", "v")], 4)];
+        let over = [decoded_series(&[("__name__", "m"), ("ok", "v")], 4)];
         let err = super::validate(&over, &limits).unwrap_err().to_string();
         assert!(
             err.contains("samples per series 4 exceeds limit 3"),
@@ -873,30 +897,30 @@ overrides:
 
         // Label lengths are the label gate's business, from these same
         // limits, so the boundary is checked where the verdict is given.
-        let at_edge = [decoded_series(&[("abcd", "v")], 1)];
+        let at_edge = [decoded_series(&[("__name__", "m"), ("abcdefgh", "v")], 1)];
         assert!(
             super::enforce_label_limits(&limits, &at_edge).is_ok(),
-            "a four-byte name fits"
+            "an eight-byte name fits"
         );
-        let over = [decoded_series(&[("abcde", "v")], 1)];
+        let over = [decoded_series(&[("__name__", "m"), ("abcdefghi", "v")], 1)];
         let err = super::enforce_label_limits(&limits, &over).unwrap_err();
         assert!(
             matches!(
                 err,
                 LimitError::LabelNameTooLong {
-                    limit: 4,
-                    observed: 5
+                    limit: 8,
+                    observed: 9
                 }
             ),
             "got: {err:?}"
         );
 
-        let at_edge = [decoded_series(&[("ok", "vwxyz")], 1)];
+        let at_edge = [decoded_series(&[("__name__", "m"), ("ok", "vwxyz")], 1)];
         assert!(
             super::enforce_label_limits(&limits, &at_edge).is_ok(),
             "a five-byte value fits"
         );
-        let over = [decoded_series(&[("ok", "vwxyz!")], 1)];
+        let over = [decoded_series(&[("__name__", "m"), ("ok", "vwxyz!")], 1)];
         let err = super::enforce_label_limits(&limits, &over).unwrap_err();
         assert!(
             matches!(
@@ -909,7 +933,7 @@ overrides:
             "got: {err:?}"
         );
 
-        let bad = [decoded_series(&[("has space", "v")], 1)];
+        let bad = [decoded_series(&[("__name__", "m"), ("", "v")], 1)];
         let err = super::validate(&bad, &limits).unwrap_err().to_string();
         assert!(err.contains("invalid label name"), "got: {err}");
     }
@@ -923,7 +947,7 @@ overrides:
             ..Limits::default()
         };
 
-        let mut series = decoded_series(&[("ok", "v")], 2);
+        let mut series = decoded_series(&[("__name__", "m"), ("ok", "v")], 2);
         series.exemplars = vec![crate::wire::DecodedExemplar {
             labels: krabka_blockstore::Labels::new(),
             value: 1.0,
@@ -1494,6 +1518,12 @@ overrides:
 
     fn snappy(body: &[u8]) -> Vec<u8> {
         snap::raw::Encoder::new().compress_vec(body).unwrap()
+    }
+
+    fn gzip(body: &[u8]) -> Vec<u8> {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, body).expect("gzip body");
+        encoder.finish().expect("finish gzip body")
     }
 
     fn v1_body(labels: Vec<crate::wire::pb::v1::Label>) -> Vec<u8> {
@@ -2206,11 +2236,12 @@ overrides:
     }
 
     #[test]
-    fn validation_rejects_invalid_label_names() {
-        for label_name in ["", "9bad", "bad-label"] {
+    fn validation_requires_a_nonempty_metric_name() {
+        for metric_name in [None, Some("")] {
             let mut labels = Labels::new();
-            labels.insert("__name__", "up");
-            labels.insert(label_name, "value");
+            if let Some(metric_name) = metric_name {
+                labels.insert("__name__", metric_name);
+            }
             let series = [DecodedSeries {
                 labels,
                 samples: vec![DecodedSample::new(1000, 1.0)],
@@ -2222,34 +2253,54 @@ overrides:
             let err = validate(&series, &Limits::default()).unwrap_err();
 
             assert!(matches!(err, WireError::Invalid(_)));
-            assert!(format!("{err}").contains("invalid label name"));
+            assert!(format!("{err}").contains("missing metric name"));
         }
     }
 
     #[test]
-    fn validation_rejects_invalid_exemplar_label_names() {
-        for label_name in ["", "9bad", "bad-label"] {
-            let mut labels = Labels::new();
-            labels.insert("__name__", "up");
-            let mut exemplar_labels = Labels::new();
-            exemplar_labels.insert(label_name, "value");
-            let series = [DecodedSeries {
-                labels,
-                samples: vec![DecodedSample::new(1000, 1.0)],
-                histograms: Vec::new(),
-                exemplars: vec![DecodedExemplar {
-                    labels: exemplar_labels,
-                    timestamp_ms: 1000,
-                    value: 1.0,
-                }],
-                metadata: None,
-            }];
+    fn validation_accepts_nonempty_utf8_names() {
+        let mut labels = Labels::new();
+        labels.insert("__name__", "温度.摄氏");
+        labels.insert("9 bad-label 🌡", "value");
+        let mut exemplar_labels = Labels::new();
+        exemplar_labels.insert("追踪 id", "abc");
+        let series = [DecodedSeries {
+            labels,
+            samples: vec![DecodedSample::new(1000, 1.0)],
+            histograms: Vec::new(),
+            exemplars: vec![DecodedExemplar {
+                labels: exemplar_labels,
+                timestamp_ms: 1000,
+                value: 1.0,
+            }],
+            metadata: None,
+        }];
 
-            let err = validate(&series, &Limits::default()).unwrap_err();
+        assert!(validate(&series, &Limits::default()).is_ok());
+    }
 
-            assert!(matches!(err, WireError::Invalid(_)));
-            assert!(format!("{err}").contains("invalid exemplar label name"));
-        }
+    #[test]
+    fn validation_rejects_an_empty_exemplar_label_name() {
+        let mut labels = Labels::new();
+        labels.insert("__name__", "up");
+        let mut exemplar_labels = Labels::new();
+        exemplar_labels.insert("", "value");
+        let series = [DecodedSeries {
+            labels,
+            samples: vec![DecodedSample::new(1000, 1.0)],
+            histograms: Vec::new(),
+            exemplars: vec![DecodedExemplar {
+                labels: exemplar_labels,
+                timestamp_ms: 1000,
+                value: 1.0,
+            }],
+            metadata: None,
+        }];
+
+        let err = validate(&series, &Limits::default()).unwrap_err();
+
+        assert!(matches!(err, WireError::Invalid(_)));
+        assert!(format!("{err}").contains("invalid exemplar label name"));
     }
 
     #[tokio::test]
@@ -2533,6 +2584,29 @@ overrides:
 
         check!(newest_response.status() == StatusCode::NO_CONTENT);
         check!(too_old_response.status() == StatusCode::BAD_REQUEST);
+        check!(sink.records().len() == 1);
+    }
+
+    #[tokio::test]
+    async fn a_future_sample_is_rejected_without_poisoning_the_out_of_order_tracker() {
+        let sink = Arc::new(RecordingSink::default());
+        let clock = FixedClock::new();
+        clock.set_unix_ms(1_000);
+        let state = Arc::new(
+            DistributorState::new(sink.clone())
+                .with_limits(Limits {
+                    creation_grace_period: millis(100),
+                    ..Limits::default()
+                })
+                .with_clock(clock),
+        );
+        let app = router(state);
+
+        let future = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(1_101)).await;
+        let current = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(1_000)).await;
+
+        check!(future == StatusCode::BAD_REQUEST);
+        check!(current == StatusCode::NO_CONTENT);
         check!(sink.records().len() == 1);
     }
 
@@ -2843,6 +2917,66 @@ overrides:
     }
 
     #[tokio::test]
+    async fn otlp_http_accepts_gzip_and_both_standard_aliases() {
+        let (state, sink) = test_state();
+        let app = router(state);
+        for path in ["/v1/metrics", "/api/v1/otlp/v1/metrics"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .header("Content-Type", "application/x-protobuf")
+                        .header("Content-Encoding", "gzip")
+                        .header("X-Scope-OrgID", "tenant-a")
+                        .body(Body::from(gzip(&otlp_body())))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            check!(response.status() == StatusCode::OK, "{path}");
+        }
+        check!(sink.records().len() == 4);
+    }
+
+    #[test]
+    fn otlp_http_decompression_enforces_the_decoded_limit() {
+        let exact = vec![7; 64];
+        let over = vec![7; 65];
+        let headers = HeaderMap::from_iter([(
+            axum::http::header::CONTENT_ENCODING,
+            HeaderValue::from_static("gzip"),
+        )]);
+
+        check!(decode_otlp_http_body(&headers, &gzip(&exact), bytes(64)).unwrap() == exact);
+        check!(matches!(
+            decode_otlp_http_body(&headers, &gzip(&over), bytes(64)),
+            Err(WireError::DecodedBodyTooLarge(64))
+        ));
+    }
+
+    #[test]
+    fn otlp_http_rejects_unknown_and_malformed_compression() {
+        let headers = |encoding| {
+            HeaderMap::from_iter([(
+                axum::http::header::CONTENT_ENCODING,
+                HeaderValue::from_static(encoding),
+            )])
+        };
+
+        check!(matches!(
+            decode_otlp_http_body(&headers("br"), b"body", bytes(64)),
+            Err(WireError::UnsupportedContentEncoding(encoding)) if encoding == "br"
+        ));
+        check!(matches!(
+            decode_otlp_http_body(&headers("gzip"), b"not gzip", bytes(64)),
+            Err(WireError::GzipDecode(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn otlp_grpc_metrics_export_appends() {
         let (state, sink) = test_state();
         let data = MetricsData::decode(otlp_body().as_slice()).expect("otlp metrics data");
@@ -2892,6 +3026,7 @@ overrides:
         let mut client = MetricsServiceClient::connect(format!("http://{bound}"))
             .await
             .expect("connect otlp grpc client");
+        client = client.send_compressed(tonic::codec::CompressionEncoding::Gzip);
         let mut request = tonic::Request::new(ExportMetricsServiceRequest {
             resource_metrics: data.resource_metrics,
         });
@@ -3043,6 +3178,22 @@ overrides:
                 ..
             }
         ));
+        let metric = records
+            .iter()
+            .find(|record| {
+                matches!(record.payload, SamplePayload::Float { .. })
+                    && record.labels.iter().any(|(name, value)| {
+                        name == "__name__" && value == "system_cpu_utilization"
+                    })
+            })
+            .expect("metric wal record");
+        check!(
+            metric
+                .labels
+                .iter()
+                .any(|(name, value)| name == "job" && value == "checkout")
+        );
+        check!(!metric.labels.iter().any(|(name, _)| name == "service_name"));
     }
 
     #[tokio::test]
@@ -3604,12 +3755,14 @@ mod clock_wal_records;
 mod clocks_push;
 mod clocks_push_inner;
 mod consumer;
+mod decode_otlp_http_body;
 mod decoded_sample_count;
 mod decoded_series;
 mod default_distributor_max_decompressed;
 mod default_max_tracked_tenants;
 mod distributor_state;
 mod enforce_and_record_active_series;
+mod enforce_creation_grace_period;
 mod enforce_ingest_limits;
 mod enforce_ingestion_rate;
 mod enforce_label_limits;
@@ -3683,12 +3836,14 @@ use clock_state_series::clock_state_series;
 pub use clock_wal_records::clock_wal_records;
 use clocks_push::clocks_push;
 use clocks_push_inner::clocks_push_inner;
+use decode_otlp_http_body::decode_otlp_http_body;
 use decoded_sample_count::decoded_sample_count;
 use decoded_series::decoded_series;
 pub use default_distributor_max_decompressed::DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED;
 pub use default_max_tracked_tenants::DEFAULT_MAX_TRACKED_TENANTS;
 pub use distributor_state::DistributorState;
 use enforce_and_record_active_series::enforce_and_record_active_series;
+use enforce_creation_grace_period::enforce_creation_grace_period;
 use enforce_ingest_limits::enforce_ingest_limits;
 use enforce_ingestion_rate::enforce_ingestion_rate;
 use enforce_label_limits::enforce_label_limits;

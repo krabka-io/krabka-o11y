@@ -1,7 +1,8 @@
 use super::{
-    Arc, BlockIndex, ColdObjectStoreState, DynamicIndexCache, DynamicIndexSource, HotTailState,
-    LabelIndex, Limits, LogQueryAuthorizer, NonZeroUsize, OverridesProvider, PathBuf,
-    ServiceMetrics, SharedLogDeleteRequests, SharedLokiRules, SharedPrometheusAlertStates,
+    Arc, BlockIndex, ColdObjectStoreState, DynamicIndexCache, DynamicIndexSource, ExecutionOptions,
+    HotTailState, InMemoryCache, LabelIndex, Limits, LogQueryAuthorizer, NonZeroUsize,
+    OverridesProvider, PathBuf, ServiceMetrics, SharedLogDeleteRequests, SharedLokiRules,
+    SharedPrometheusAlertStates, Value,
 };
 
 #[derive(Clone)]
@@ -33,4 +34,8 @@ pub struct QuerierState {
     /// wire metrics. The binary threads a shared bundle in with
     /// [`QuerierState::with_metrics`].
     pub(crate) metrics: Option<ServiceMetrics>,
+    pub(crate) query_frontend_cache: Arc<InMemoryCache<Value>>,
+    pub(crate) query_frontend_options: ExecutionOptions,
+    pub(crate) query_frontend_split_ns: i64,
+    pub(crate) query_frontend_target_bytes: u64,
 }

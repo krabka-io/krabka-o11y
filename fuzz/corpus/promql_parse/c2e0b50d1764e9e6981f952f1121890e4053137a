@@ -1,1 +1,0 @@
-SUM BY (group) (((http_requests{job="api-server"})))

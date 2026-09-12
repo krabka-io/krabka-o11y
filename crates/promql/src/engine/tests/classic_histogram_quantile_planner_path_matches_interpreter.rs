@@ -62,27 +62,28 @@ pub(crate) async fn classic_histogram_quantile_planner_path_matches_interpreter(
     let queries = [
         // Normal linear interpolation, multi-group (job=api / job=db), with the
         // `__name__` and `le` labels dropped from the output.
-        ("histogram_quantile(0.5, lat_bucket)", 300_000_i64),
-        ("histogram_quantile(0.9, lat_bucket)", 300_000),
+        ("histogram_quantile(0.5, lat_bucket)", 300_000_i64, true),
+        ("histogram_quantile(0.9, lat_bucket)", 300_000, true),
         // phi at the boundaries 0 and 1.
-        ("histogram_quantile(0, lat_bucket)", 300_000),
-        ("histogram_quantile(1, lat_bucket)", 300_000),
+        ("histogram_quantile(0, lat_bucket)", 300_000, true),
+        ("histogram_quantile(1, lat_bucket)", 300_000, true),
         // phi out of [0, 1]: -Inf below, +Inf above.
-        ("histogram_quantile(-0.5, lat_bucket)", 300_000),
-        ("histogram_quantile(1.5, lat_bucket)", 300_000),
+        ("histogram_quantile(-0.5, lat_bucket)", 300_000, true),
+        ("histogram_quantile(1.5, lat_bucket)", 300_000, true),
         // A non-monotonic cumulative bucket set is forced monotonic first.
-        ("histogram_quantile(0.5, nonmono_bucket)", 300_000),
+        ("histogram_quantile(0.5, nonmono_bucket)", 300_000, true),
         // A single `+Inf` bucket (<2 buckets) yields NaN.
-        ("histogram_quantile(0.5, inf_only_bucket)", 300_000),
+        ("histogram_quantile(0.5, inf_only_bucket)", 300_000, true),
         // NESTED: a fully-float inner that plans through the rate + aggregate
         // operators, then the classic fold over the assembled bucket vector.
         (
             "histogram_quantile(0.9, sum by (le) (rate(reqs_bucket[5m])))",
             300_000,
+            false,
         ),
     ];
 
-    for (query, time_ms) in queries {
+    for (query, time_ms, retains_name_until_boundary) in queries {
         let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
             .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
 
@@ -115,9 +116,12 @@ pub(crate) async fn classic_histogram_quantile_planner_path_matches_interpreter(
         let via_operators = normalize(via_operators);
         assert2::assert!(instant_samples_match(&via_interpreter, &via_operators));
 
-        // Pin the `__name__` + `le` drop on the operator-path output.
+        // `le` is gone immediately; `__name__` remains pending until the public
+        // query boundary.
         assert2::assert!(via_operators.iter().all(|sample| {
-            sample.labels.get("__name__").is_none() && sample.labels.get("le").is_none()
+            sample.labels.get("__name__").is_some() == retains_name_until_boundary
+                && sample.labels.get("le").is_none()
+                && sample.drop_name
         }));
     }
     // The native-histogram flavor of these folds (bare selector, native

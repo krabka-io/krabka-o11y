@@ -2,7 +2,7 @@ use super::*;
 
 /// Differential parity for a top-level scalar-typed range query.
 ///
-/// A scalar expression such as `time()`, `1 + 2`, or an argless calendar form
+/// A scalar expression such as `time()` or `1 + 2`
 /// routes through the per-step planner driver. The driver folds an identical
 /// no-label scalar series per step. The result must be byte-exact with the
 /// interpreter's `eval_instant_expr_over_steps` scalar stitching.

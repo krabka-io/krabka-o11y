@@ -64,6 +64,47 @@ async fn index_stats_endpoint_returns_stream_chunk_entry_and_byte_counts() {
 }
 
 #[tokio::test]
+async fn index_shards_endpoint_returns_loki_compatible_bounds_and_stats() {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
+    let block = write_log_block(
+        &dir,
+        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        vec![LogRow::new(api, 10, "api ok", BTreeMap::new())],
+    )
+    .unwrap();
+    let bytes = block.size.bytes_u64();
+    let mut block_index = BlockIndex::default();
+    block_index.insert(block);
+    let app = loki_router(QuerierState::new(dir, label_index, block_index));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/loki/api/v1/index/shards?query=%7Bapp%3D%22api%22%7D&start=10&end=19&targetBytesPerShard=1")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(response.status() == StatusCode::OK);
+    assert!(
+        json_body(response).await
+            == json!({
+                "shards": [{
+                    "bounds": {"min": 0, "max": u64::MAX},
+                    "stats": {"streams": 1, "chunks": 1, "entries": 0, "bytes": bytes}
+                }],
+                "statistics": expected_loki_stats(),
+                "chunkGroups": null
+            })
+    );
+}
+
+#[tokio::test]
 async fn index_stats_endpoint_accepts_form_encoded_post_body() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();

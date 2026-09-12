@@ -62,6 +62,7 @@ async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.23"
 bytes = "1"
+crc32c = "0.6"
 clap = { version = "4", features = ["derive"] }
 connectrpc-axum = "0.2"
 connectrpc-axum-build = "0.2"

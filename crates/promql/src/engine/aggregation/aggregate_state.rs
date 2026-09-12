@@ -3,8 +3,10 @@ use super::{
     kahan_sum_inc,
 };
 
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct AggregateState {
     pub(crate) labels: Labels,
+    pub(crate) drop_name: bool,
     pub(crate) count: usize,
     pub(crate) count_f64: f64,
     /// Kahan-compensated running sum for `sum`, which is `sum + sum_comp`.
@@ -51,6 +53,7 @@ impl AggregateState {
     pub(crate) fn new(labels: Labels) -> Self {
         Self {
             labels,
+            drop_name: false,
             count: 0,
             count_f64: 0.0,
             sum: 0.0,

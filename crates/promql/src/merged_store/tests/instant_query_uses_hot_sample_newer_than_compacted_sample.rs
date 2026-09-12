@@ -24,6 +24,7 @@ pub(crate) async fn instant_query_uses_hot_sample_newer_than_compacted_sample() 
                 labels,
                 ts_ms: 20_000,
                 value: SampleValue::Float(2.0),
+                drop_name: false,
             }]
     );
 }

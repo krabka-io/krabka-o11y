@@ -21,6 +21,7 @@ use super::{
     PromqlEngine,
     assembly::{assemble_range_fold_grid, assemble_selector_grid},
     labels::labels_without_metric_name,
+    query_stats_enabled,
     selector::{apply_selector_time_modifier, label_matcher_sets, selector_duration},
     step_vectors::{GridVectors, LeafLookup, LeafMemo, RANGE_STEP_VECTORS, StepVectorCache},
 };
@@ -56,6 +57,11 @@ impl<S: MetricStore> PromqlEngine<S> {
         selector: &VectorSelector,
         time_ms: i64,
     ) -> Result<Option<Vec<InstantSample>>> {
+        // Prometheus sample stats intentionally describe each evaluation step,
+        // independent of whole-grid execution optimizations.
+        if query_stats_enabled() {
+            return Ok(None);
+        }
         // An `@` modifier pins the evaluation instant, so the leaf is not a
         // function of the grid at all and the driver's per-step path — which
         // resolves the modifier itself — stays in charge.
@@ -92,6 +98,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         kind: RateUdfKind,
     ) -> Result<Option<Vec<InstantSample>>> {
+        if query_stats_enabled() {
+            return Ok(None);
+        }
         if selector.vs.at.is_some() {
             return Ok(None);
         }
@@ -130,6 +139,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         family: OverTimeFamily,
         phi: f64,
     ) -> Result<Option<Vec<InstantSample>>> {
+        if query_stats_enabled() {
+            return Ok(None);
+        }
         if selector.vs.at.is_some() {
             return Ok(None);
         }
@@ -201,7 +213,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         } = plan_instant_vector_selector(series, plan_grid, self.opts.lookback_delta).await?;
         let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
         let steps = assemble_selector_grid(&batches, plan_grid)?;
-        Ok(Some(GridVectors::new(grid, labels_by_fp, steps)))
+        Ok(Some(GridVectors::new(grid, labels_by_fp, steps, false)))
     }
 
     /// Plans and executes a rate-family fold over the whole grid.
@@ -243,7 +255,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             .iter()
             .map(|(fp, labels)| (*fp, labels_without_metric_name(labels)))
             .collect();
-        Ok(Some(GridVectors::new(grid, labels_by_fp, steps)))
+        Ok(Some(GridVectors::new(grid, labels_by_fp, steps, true)))
     }
 
     /// Plans and executes an `*_over_time` fold over the whole grid.
@@ -294,7 +306,12 @@ impl<S: MetricStore> PromqlEngine<S> {
                 (*fp, labels)
             })
             .collect();
-        Ok(Some(GridVectors::new(grid, labels_by_fp, steps)))
+        Ok(Some(GridVectors::new(
+            grid,
+            labels_by_fp,
+            steps,
+            !preserve_metric_name,
+        )))
     }
 }
 

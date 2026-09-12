@@ -7,11 +7,17 @@ use axum::{
     http::{Request, StatusCode},
 };
 use krabka_blockstore::Labels;
-use krabka_metrics::{BucketSpan, Limits, NativeHistogram, OverridesProvider, ResetHint, wire::pb};
-use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
+use krabka_metrics::{
+    BucketSpan, Limits, NativeHistogram, OverridesProvider, ResetHint, SamplePayload, WalRecord,
+    wire::pb,
+};
+use krabka_observability::{
+    RoleReadiness,
+    server_security::{ServerSecurity, authenticate_requests},
+};
 use krabka_promql::{
-    EngineOpts, InMemoryMetricStore, MetricStore, PrometheusApiState, QueryFrontendOptions,
-    RulerAlertStateRecord, RulerGroupStateRecord,
+    EngineOpts, InMemoryMetricStore, MetricStore, Offset, PartitionIndex, PrometheusApiState,
+    QueryFrontendOptions, RulerAlertStateRecord, RulerGroupStateRecord, WalHead,
 };
 use krabka_units::prelude::*;
 use prost::Message;
@@ -50,6 +56,20 @@ fn labels(pairs: &[(&str, &str)]) -> Labels {
         labels.insert(*name, *value);
     }
     labels
+}
+
+fn first_streamed_payload(body: &[u8]) -> &[u8] {
+    let mut length = 0_usize;
+    let mut header = 0_usize;
+    for (index, byte) in body.iter().copied().enumerate() {
+        length |= usize::from(byte & 0x7f) << (index * 7);
+        header = index + 1;
+        if byte & 0x80 == 0 {
+            break;
+        }
+    }
+    let payload_start = header + 4;
+    &body[payload_start..payload_start + length]
 }
 
 async fn response_json(response: axum::response::Response) -> Value {
@@ -151,7 +171,7 @@ async fn query_endpoint_returns_native_histogram_envelope() {
             is_float: true,
             reset_hint: ResetHint::No,
             zero_threshold: 0.0,
-            zero_count: 0.0,
+            zero_count: -1.0,
             count: 4.0,
             sum: 10.0,
             positive_spans: Vec::new(),
@@ -192,7 +212,9 @@ async fn query_endpoint_returns_native_histogram_envelope() {
     assert2::assert!(body["data"]["result"][0]["histogram"][1]["count"].as_str() == Some("4"));
     assert2::assert!(body["data"]["result"][0]["histogram"][1]["sum"].as_str() == Some("10"));
     assert2::assert!(
-        body["data"]["result"][0]["histogram"][1]["buckets"].clone() == serde_json::json!([])
+        body["data"]["result"][0]["histogram"][1]
+            .get("buckets")
+            .is_none()
     );
 }
 
@@ -213,9 +235,9 @@ async fn query_endpoint_returns_native_histogram_buckets() {
             sum: 7.0,
             positive_spans: vec![BucketSpan {
                 offset: 0,
-                length: 2,
+                length: 4,
             }],
-            positive_counts: vec![2.0, 4.0],
+            positive_counts: vec![2.0, 0.0, -1.0, 4.0],
             negative_spans: vec![BucketSpan {
                 offset: 0,
                 length: 1,
@@ -250,7 +272,7 @@ async fn query_endpoint_returns_native_histogram_buckets() {
                 [1, "-1", "-0.5", "1"],
                 [3, "-0.25", "0.25", "3"],
                 [0, "0.5", "1", "2"],
-                [0, "1", "2", "4"],
+                [0, "4", "8", "4"],
             ])
     );
 }
@@ -303,7 +325,7 @@ async fn query_endpoint_returns_native_histogram_custom_buckets() {
     assert2::assert!(
         body["data"]["result"][0]["histogram"][1]["buckets"]
             == serde_json::json!([
-                [0, "-Inf", "0.1", "1"],
+                [3, "-Inf", "0.1", "1"],
                 [0, "0.1", "0.5", "2"],
                 [0, "0.5", "+Inf", "3"],
             ])
@@ -2316,12 +2338,10 @@ rules:
     let alerts = body["data"]["groups"][0]["rules"][0]["alerts"]
         .as_array()
         .unwrap();
-    // $labels and $value expanded; unknown actions pass through verbatim.
+    // Variables and Prometheus helper functions use the shared Go-template runtime.
     assert2::assert!(alerts.len() == 1);
     assert2::assert!(alerts[0]["annotations"]["summary"].as_str() == Some("api is 2"));
-    assert2::assert!(
-        alerts[0]["annotations"]["passthrough"].as_str() == Some("{{ humanize $value }}")
-    );
+    assert2::assert!(alerts[0]["annotations"]["passthrough"].as_str() == Some("2"));
     assert2::assert!(alerts[0]["labels"]["detail"].as_str() == Some("v=2"));
 }
 
@@ -2345,7 +2365,7 @@ async fn rules_endpoint_reports_alert_evaluation_errors_per_rule() {
 name: unsupported
 rules:
   - alert: UnsupportedAlert
-    expr: up @ start()
+    expr: label_replace(up, \"dst\", \"$1\", \"src\", \"(\")
 ",
                 ))
                 .unwrap(),
@@ -2374,7 +2394,7 @@ rules:
     assert2::assert!(
         rule["lastError"]
             .as_str()
-            .is_some_and(|error| error.contains("start"))
+            .is_some_and(|error| !error.is_empty())
     );
     assert2::assert!(rule["alerts"].clone() == serde_json::json!([]));
 }
@@ -3807,7 +3827,7 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
         Arc::new(store),
         EngineOpts::default(),
     ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(Arc::clone(&state));
     let request = pb::v1::ReadRequest {
         queries: vec![pb::v1::Query {
             start_timestamp_ms: 10_000,
@@ -3819,7 +3839,10 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
             }],
             hints: None,
         }],
-        accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
+        accepted_response_types: vec![
+            pb::v1::ResponseType::StreamedXorChunks as i32,
+            pb::v1::ResponseType::Samples as i32,
+        ],
     };
     let compressed = SnappyEncoder::new()
         .compress_vec(&request.encode_to_vec())
@@ -3840,6 +3863,7 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
         .unwrap();
 
     assert2::assert!(response.status() == StatusCode::OK);
+    assert2::assert!(response.headers()["Content-Encoding"] == "snappy");
     let bytes = to_bytes(response.into_body(), 1024 * 1024)
         .await
         .expect("response body");
@@ -3858,18 +3882,75 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
     assert2::assert!(
         &series.histograms[0].count == &Some(pb::v1::histogram::Count::CountFloat(4.0))
     );
+
+    let request = pb::v1::ReadRequest {
+        queries: vec![pb::v1::Query {
+            start_timestamp_ms: 10_000,
+            end_timestamp_ms: 10_000,
+            matchers: vec![pb::v1::LabelMatcher {
+                r#type: pb::v1::label_matcher::Type::Eq as i32,
+                name: "__name__".into(),
+                value: "request_duration_seconds".into(),
+            }],
+            hints: None,
+        }],
+        accepted_response_types: vec![pb::v1::ResponseType::StreamedXorChunks as i32],
+    };
+    let compressed = SnappyEncoder::new()
+        .compress_vec(&request.encode_to_vec())
+        .expect("snappy request");
+    let response = prometheus_router(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/read")
+                .header("X-Scope-OrgID", "tenant-a")
+                .header("Content-Type", "application/x-protobuf")
+                .header("Content-Encoding", "snappy")
+                .body(Body::from(compressed))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert2::assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response_json(response).await;
+    assert2::assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("native-histogram encoding is not implemented"))
+    );
 }
 
 #[tokio::test]
-async fn remote_read_endpoint_rejects_unsupported_streamed_xor_response_type() {
+async fn remote_read_endpoint_streams_prometheus_xor_frames() {
+    let mut store = InMemoryMetricStore::new();
+    store.push_float(
+        "tenant-a",
+        labels(&[("__name__", "up"), ("job", "api")]),
+        7_200_000,
+        12_000.0,
+    );
     let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
+        Arc::new(store),
         EngineOpts::default(),
     ));
     let app = prometheus_router(state);
     let request = pb::v1::ReadRequest {
-        queries: Vec::new(),
-        accepted_response_types: vec![pb::v1::ResponseType::StreamedXorChunks as i32],
+        queries: vec![pb::v1::Query {
+            start_timestamp_ms: 7_200_000,
+            end_timestamp_ms: 7_200_000,
+            matchers: vec![pb::v1::LabelMatcher {
+                r#type: pb::v1::label_matcher::Type::Eq as i32,
+                name: "__name__".into(),
+                value: "up".into(),
+            }],
+            hints: None,
+        }],
+        accepted_response_types: vec![
+            pb::v1::ResponseType::StreamedXorChunks as i32,
+            pb::v1::ResponseType::Samples as i32,
+        ],
     };
     let compressed = SnappyEncoder::new()
         .compress_vec(&request.encode_to_vec())
@@ -3889,10 +3970,24 @@ async fn remote_read_endpoint_rejects_unsupported_streamed_xor_response_type() {
         .await
         .unwrap();
 
-    assert2::assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("execution"));
+    assert2::assert!(response.status() == StatusCode::OK);
+    assert2::assert!(
+        response.headers()["Content-Type"].to_str().unwrap()
+            == "application/x-streamed-protobuf; proto=prometheus.ChunkedReadResponse"
+    );
+    assert2::assert!(response.headers().get("Content-Encoding").is_none());
+    let body = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("streamed response");
+    let payload = first_streamed_payload(&body);
+    let response = pb::v1::ChunkedReadResponse::decode(payload).expect("chunked read response");
+    assert2::assert!(response.query_index == 0);
+    assert2::assert!(response.chunked_series.len() == 1);
+    let series = &response.chunked_series[0];
+    assert2::assert!(series.chunks.len() == 1);
+    assert2::assert!(series.chunks[0].r#type == pb::v1::chunk::Encoding::Xor as i32);
+    assert2::assert!(series.chunks[0].min_time_ms == 7_200_000);
+    assert2::assert!(series.chunks[0].max_time_ms == 7_200_000);
 }
 
 #[tokio::test]
@@ -4781,8 +4876,27 @@ async fn status_buildinfo_endpoint_returns_prometheus_envelope() {
     let body = response_json(response).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["version"].as_str() == Some(env!("CARGO_PKG_VERSION")));
-    assert2::assert!(body["data"]["branch"].as_str() == Some(""));
-    assert2::assert!(body["data"]["goVersion"].as_str() == Some(""));
+    assert2::assert!(
+        body["data"]["revision"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert2::assert!(
+        body["data"]["branch"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert2::assert!(
+        body["data"]["buildUser"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert2::assert!(
+        body["data"]["buildDate"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert2::assert!(body["data"]["goVersion"].as_str() == Some("not applicable (Rust)"));
 }
 
 #[tokio::test]
@@ -4793,7 +4907,8 @@ async fn status_flags_endpoint_returns_prometheus_flag_strings() {
     };
     let state = Arc::new(
         PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), opts)
-            .with_max_concurrent_queries(11),
+            .with_max_concurrent_queries(11)
+            .with_runtime_status("debug", Some(hours(2))),
     );
     let app = prometheus_router(state);
 
@@ -4812,15 +4927,17 @@ async fn status_flags_endpoint_returns_prometheus_flag_strings() {
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["query.lookback-delta"].as_str() == Some("7m"));
     assert2::assert!(body["data"]["query.max-concurrency"].as_str() == Some("11"));
-    assert2::assert!(body["data"]["log.level"].as_str().is_some());
+    assert2::assert!(body["data"]["log.level"].as_str() == Some("debug"));
+    assert2::assert!(body["data"]["storage.tsdb.retention.time"].as_str() == Some("2h"));
 }
 
 #[tokio::test]
 async fn status_config_endpoint_is_available_under_mimir_prefix() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
+    let state = Arc::new(
+        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
+            .with_max_concurrent_queries(9)
+            .with_runtime_status("info", Some(hours(3))),
+    );
     let app = prometheus_router(state);
 
     let response = app
@@ -4836,11 +4953,12 @@ async fn status_config_endpoint_is_available_under_mimir_prefix() {
     assert2::assert!(response.status() == StatusCode::OK);
     let body = response_json(response).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(
-        body["data"]["yaml"]
-            .as_str()
-            .is_some_and(|yaml| yaml.contains("global:"))
-    );
+    assert2::assert!(body["data"]["yaml"].as_str().is_some_and(|yaml| {
+        yaml.contains("scrape_config: not applicable")
+            && yaml.contains("query_max_concurrency: 9")
+            && yaml.contains("storage_retention: 3h")
+            && !yaml.contains("scrape_interval")
+    }));
 }
 
 #[tokio::test]
@@ -5008,7 +5126,80 @@ async fn status_tsdb_blocks_endpoint_returns_compacted_blocks() {
 }
 
 #[tokio::test]
-async fn status_walreplay_endpoint_reports_done() {
+async fn status_walreplay_endpoint_reports_live_materialized_offsets_without_claiming_done() {
+    let head = WalHead::with_retention(minutes(12));
+    head.apply_wal_record_at(
+        &WalRecord {
+            tenant: "tenant-a".to_string(),
+            labels: vec![("__name__".to_string(), "up".to_string())],
+            payload: SamplePayload::Float {
+                timestamp_ms: 10_000,
+                value: 1.0,
+                start_timestamp_ms: None,
+            },
+            exemplars: Vec::new(),
+        },
+        PartitionIndex(2),
+        Offset(41),
+    );
+    let wal_tail = RoleReadiness::new().gate("wal-head");
+    wal_tail.mark_ready();
+    let state = Arc::new(
+        PrometheusApiState::new(Arc::new(head.clone()), EngineOpts::default())
+            .with_wal_head_status(head, wal_tail),
+    );
+    let app = prometheus_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/status/walreplay")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert2::assert!(response.status() == StatusCode::OK);
+    let body = response_json(response).await;
+    assert2::assert!(body["status"].as_str() == Some("success"));
+    assert2::assert!(body["data"]["min"].as_i64() == Some(41));
+    assert2::assert!(body["data"]["max"].is_null());
+    assert2::assert!(body["data"]["current"].as_i64() == Some(41));
+    assert2::assert!(
+        body["data"]["state"].as_str()
+            == Some("unknown (WAL tail attached; broker high watermark unavailable)")
+    );
+}
+
+#[tokio::test]
+async fn status_walreplay_reports_a_configured_tail_that_has_not_attached() {
+    let head = WalHead::with_retention(minutes(12));
+    let wal_tail = RoleReadiness::new().gate("wal-head");
+    let state = Arc::new(
+        PrometheusApiState::new(Arc::new(head.clone()), EngineOpts::default())
+            .with_wal_head_status(head, wal_tail),
+    );
+    let app = prometheus_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/status/walreplay")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert2::assert!(response.status() == StatusCode::OK);
+    let body = response_json(response).await;
+    assert2::assert!(body["data"]["current"].is_null());
+    assert2::assert!(body["data"]["state"].as_str() == Some("waiting (WAL tail is not attached)"));
+}
+
+#[tokio::test]
+async fn status_walreplay_without_a_tail_is_explicitly_not_applicable() {
     let state = Arc::new(PrometheusApiState::new(
         Arc::new(InMemoryMetricStore::new()),
         EngineOpts::default(),
@@ -5027,11 +5218,12 @@ async fn status_walreplay_endpoint_reports_done() {
 
     assert2::assert!(response.status() == StatusCode::OK);
     let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["min"].as_i64() == Some(0));
-    assert2::assert!(body["data"]["max"].as_i64() == Some(0));
-    assert2::assert!(body["data"]["current"].as_i64() == Some(0));
-    assert2::assert!(body["data"]["state"].as_str() == Some("done"));
+    assert2::assert!(body["data"]["min"].is_null());
+    assert2::assert!(body["data"]["max"].is_null());
+    assert2::assert!(body["data"]["current"].is_null());
+    assert2::assert!(
+        body["data"]["state"].as_str() == Some("not applicable (no WAL head configured)")
+    );
 }
 
 #[tokio::test]
@@ -5055,10 +5247,10 @@ async fn status_runtimeinfo_endpoint_is_available_under_mimir_prefix() {
         10_000,
         1.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
+    let state = Arc::new(
+        PrometheusApiState::new(Arc::new(store), EngineOpts::default())
+            .with_runtime_status("warn", Some(minutes(12))),
+    );
     let app = prometheus_router(state);
 
     let response = app
@@ -5079,4 +5271,17 @@ async fn status_runtimeinfo_endpoint_is_available_under_mimir_prefix() {
     assert2::assert!(body["data"]["serverTime"].as_str().is_some());
     assert2::assert!(body["data"]["reloadConfigSuccess"].as_bool() == Some(true));
     assert2::assert!(body["data"]["timeSeriesCount"].as_i64() == Some(2));
+    assert2::assert!(
+        body["data"]["hostname"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert2::assert!(
+        body["data"]["GOMAXPROCS"]
+            .as_u64()
+            .is_some_and(|value| value > 0)
+    );
+    assert2::assert!(body["data"]["storageRetention"].as_str() == Some("12m"));
+    assert2::assert!(body["data"]["corruptionCount"].is_null());
+    assert2::assert!(body["data"]["corruptionCountStatus"].as_str().is_some());
 }

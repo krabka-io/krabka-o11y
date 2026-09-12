@@ -21,7 +21,7 @@ pub(crate) fn validate_extended_selector_modifier(
         ExtendedSelectorModifier::Anchored => "changes, delta, increase, rate, resets",
         ExtendedSelectorModifier::Smoothed => "delta, increase, rate",
     };
-    Err(PromqlError::Plan(format!(
+    Err(PromqlError::Exec(format!(
         "{} modifier can only be used with: {allowed_functions} - not with {function_name}",
         modifier.keyword()
     )))

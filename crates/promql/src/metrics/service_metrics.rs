@@ -27,6 +27,10 @@ pub struct ServiceMetrics {
     pub query_errors: Family<QueryTypeLabel, Counter>,
     /// In-flight `PromQL` queries currently executing in the engine.
     pub active_queries: Gauge,
+    /// Cumulative failed ruler rule evaluations.
+    pub rule_evaluation_failures: Counter,
+    /// Wall time of the most recently completed ruler group.
+    pub rule_group_last_duration_seconds: Gauge<f64, std::sync::atomic::AtomicU64>,
 }
 
 impl ServiceMetrics {
@@ -53,6 +57,8 @@ impl ServiceMetrics {
             });
         let query_errors: Family<QueryTypeLabel, Counter> = Family::default();
         let active_queries = Gauge::default();
+        let rule_evaluation_failures = Counter::default();
+        let rule_group_last_duration_seconds = Gauge::default();
 
         registry.register(
             "ingest_requests",
@@ -104,6 +110,16 @@ impl ServiceMetrics {
             "PromQL queries currently executing in the engine.",
             active_queries.clone(),
         );
+        registry.register(
+            "rule_evaluation_failures",
+            "Cumulative failed ruler rule evaluations.",
+            rule_evaluation_failures.clone(),
+        );
+        registry.register(
+            "rule_group_last_duration_seconds",
+            "Wall time in seconds of the most recently completed ruler group.",
+            rule_group_last_duration_seconds.clone(),
+        );
 
         Self {
             registry: Arc::new(Mutex::new(registry)),
@@ -117,6 +133,8 @@ impl ServiceMetrics {
             query_eval_duration,
             query_errors,
             active_queries,
+            rule_evaluation_failures,
+            rule_group_last_duration_seconds,
         }
     }
 
@@ -186,6 +204,18 @@ impl ServiceMetrics {
     /// [`Self::query_started`].
     pub fn query_finished(&self) {
         self.active_queries.dec();
+    }
+
+    /// Records one rule outcome and its containing group's duration.
+    pub fn record_ruler_rule(&self, ok: bool) {
+        if !ok {
+            self.rule_evaluation_failures.inc();
+        }
+    }
+
+    pub fn record_ruler_group(&self, duration_seconds: f64) {
+        self.rule_group_last_duration_seconds
+            .set(duration_seconds.max(0.0));
     }
 }
 

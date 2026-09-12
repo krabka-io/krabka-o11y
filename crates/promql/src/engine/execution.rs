@@ -33,7 +33,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             PlannedInstant::Precomputed(samples) => {
                 return Ok(QueryResult::InstantVector(samples));
             }
-            // A scalar-returning utility (`time`/`pi`/`scalar`/argless calendar) or
+            // A scalar-returning utility (`time`/`pi`/`scalar`) or
             // a scalar∘scalar fold already computed its value; return it verbatim.
             PlannedInstant::PrecomputedScalar { ts_ms, value } => {
                 return Ok(QueryResult::Scalar { ts_ms, value });
@@ -55,6 +55,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             plan,
             labels_by_fp,
             shape,
+            drop_name,
         } = *operator;
         let shape_name = match &shape {
             InstantShape::Selector => "selector",
@@ -65,22 +66,25 @@ impl<S: MetricStore> PromqlEngine<S> {
         };
         tracing::Span::current().record("shape", shape_name);
         let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
-        match shape {
-            InstantShape::Selector => Ok(assemble_selector_batches(&batches, &labels_by_fp)?),
+        let mut result = match shape {
+            InstantShape::Selector => assemble_selector_batches(&batches, &labels_by_fp)?,
             InstantShape::RateProjection => {
-                Ok(assemble_rate_batches(&batches, &labels_by_fp, time_ms)?)
+                assemble_rate_batches(&batches, &labels_by_fp, time_ms)?
             }
             InstantShape::OverTimeProjection {
                 preserve_metric_name,
-            } => Ok(assemble_over_time_batches(
-                &batches,
-                &labels_by_fp,
-                time_ms,
-                preserve_metric_name,
-            )?),
-            InstantShape::Aggregate => Ok(assemble_aggregate_batches(&batches, time_ms)?),
-            InstantShape::ScalarMath => Ok(assemble_scalar_math_batches(&batches, time_ms)?),
+            } => {
+                assemble_over_time_batches(&batches, &labels_by_fp, time_ms, preserve_metric_name)?
+            }
+            InstantShape::Aggregate => assemble_aggregate_batches(&batches, time_ms)?,
+            InstantShape::ScalarMath => assemble_scalar_math_batches(&batches, time_ms)?,
+        };
+        if let QueryResult::InstantVector(samples) = &mut result {
+            for sample in samples {
+                sample.drop_name |= drop_name;
+            }
         }
+        Ok(result)
     }
 
     /// Plans a sub-expression through the recursive operator planner and

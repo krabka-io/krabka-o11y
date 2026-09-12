@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct QueryParams {
     pub(crate) query: String,
     pub(crate) time: Option<i64>,

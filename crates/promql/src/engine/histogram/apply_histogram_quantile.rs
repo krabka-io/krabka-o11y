@@ -2,8 +2,8 @@ use super::{
     BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
     classic_bucket_bound, classic_histogram_quantile, emit_info, emit_warning, float_sample_value,
     histogram_quantile_forced_monotonicity_info, invalid_quantile_warning, is_valid_quantile,
-    labels_key, labels_without_label, labels_without_metric_and_label, labels_without_metric_name,
-    native_histogram_quantile, record_metric_name, warn_mixed_histograms,
+    labels_key, labels_without_label, labels_without_metric_name, native_histogram_quantile,
+    record_metric_name, warn_mixed_histograms,
 };
 
 /// Prometheus. Both the `__name__` and `le` labels are dropped from every output
@@ -36,7 +36,7 @@ pub(crate) fn apply_histogram_quantile(
             // differ only in name therefore stay two groups, and their two
             // output samples -- which have both lost `__name__` -- collide as
             // Prometheus intends.
-            let key = labels_key(&sample.labels);
+            let key = labels_key(&labels);
             record_metric_name(&mut metric_names, &key, &sample.labels);
             native_samples.insert(
                 key,
@@ -48,6 +48,7 @@ pub(crate) fn apply_histogram_quantile(
                         histogram,
                         sample.labels.get("__name__").unwrap_or(""),
                     )),
+                    drop_name: true,
                 },
             );
             continue;
@@ -56,8 +57,8 @@ pub(crate) fn apply_histogram_quantile(
             continue;
         };
         let count = float_sample_value(&sample)?;
-        let labels = labels_without_metric_and_label(&sample.labels, "le");
-        let key = labels_key(&labels_without_label(&sample.labels, "le"));
+        let labels = labels_without_label(&labels_without_metric_name(&sample.labels), "le");
+        let key = labels_key(&labels);
         record_metric_name(&mut metric_names, &key, &sample.labels);
         groups
             .entry(key)
@@ -93,6 +94,7 @@ pub(crate) fn apply_histogram_quantile(
                     labels,
                     ts_ms: time_ms,
                     value: SampleValue::Float(value),
+                    drop_name: true,
                 })
             }),
     );

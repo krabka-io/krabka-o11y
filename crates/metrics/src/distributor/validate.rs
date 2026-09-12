@@ -17,6 +17,9 @@ pub fn validate(series: &[DecodedSeries], limits: &Limits) -> Result<(), WireErr
     }
 
     for series in series {
+        if series.labels.get("__name__").is_none_or(str::is_empty) {
+            return Err(WireError::Invalid("missing metric name".into()));
+        }
         let sample_count = series.samples.len() + series.histograms.len() + series.exemplars.len();
         let sample_count = u64::try_from(sample_count).unwrap_or(u64::MAX);
         if sample_count > limits.max_samples_per_series {

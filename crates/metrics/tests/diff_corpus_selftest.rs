@@ -33,6 +33,18 @@ fn real_value_difference_is_detected() {
 }
 
 #[test]
+fn annotations_are_not_normalized_away() {
+    let annotated = json!({
+        "status":"success",
+        "warnings":["partial result"],
+        "infos":["histogram samples were ignored"]
+    });
+    let clean = json!({"status":"success"});
+
+    check!(normalize(&annotated) != normalize(&clean));
+}
+
+#[test]
 fn the_hand_written_seed_dataset_is_nonempty() {
     // This dataset is no longer the differential corpus -- that is now read
     // from the vendored `.test` files, in

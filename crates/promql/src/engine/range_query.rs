@@ -9,6 +9,8 @@ use super::{
     annotations::ANNOTATIONS,
     check_resolution_points,
     planner_support::range_expr_routes_through_planner,
+    query_stats_step,
+    result_utils::{finalize_metric_names, validate_unique_instant_labelsets},
     row_cache::{RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner},
     step_vectors::{RANGE_STEP_VECTORS, StepVectorCache, StepVectorCacheInner},
 };
@@ -277,14 +279,24 @@ impl<S: MetricStore> PromqlEngine<S> {
             let mut by_fp: BTreeMap<SeriesFingerprint, RangeSeries> = BTreeMap::new();
             let mut step_time_ms = start_ms;
             while step_time_ms <= end_ms {
-                let Some(planned) = self.plan_instant_expr(tenant, expr, step_time_ms).await?
-                else {
+                let result = query_stats_step(step_time_ms, async {
+                    let Some(planned) = self.plan_instant_expr(tenant, expr, step_time_ms).await?
+                    else {
+                        return Ok::<Option<QueryResult>, PromqlError>(None);
+                    };
+                    let mut result = self.assemble_planned_instant(planned, step_time_ms).await?;
+                    finalize_metric_names(&mut result);
+                    validate_unique_instant_labelsets(&result)?;
+                    Ok(Some(result))
+                })
+                .await?;
+                let Some(result) = result else {
                     // This step's shape is not planner-supported (e.g. a histogram
                     // series appeared in-window). Abandon the operator path for the
                     // whole query so the interpreter produces a consistent result.
                     return Ok(None);
                 };
-                match self.assemble_planned_instant(planned, step_time_ms).await? {
+                match result {
                     QueryResult::InstantVector(samples) => {
                         for sample in samples {
                             let fp = sample.labels.fingerprint();

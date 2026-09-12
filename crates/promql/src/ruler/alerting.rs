@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
 use krabka_blockstore::{Labels, TenantId};
+use krabka_metrics::SamplePayload;
 use krabka_units::prelude::*;
 
 use super::{
-    AlertStateKey, AlertmanagerAlert, AlertmanagerSink, NoopRulerStateSink, RulerAlertState,
-    RulerAlertStateRecord, RulerStateSink,
+    AlertStateKey, AlertmanagerAlert, AlertmanagerSink, NoopRecordingRuleWalSink,
+    NoopRulerStateSink, RecordingRuleWalSink, RulerAlertState, RulerAlertStateRecord,
+    RulerStateSink, WalRecord,
     config::{yaml_duration, yaml_optional_string, yaml_required_string, yaml_string_map},
 };
 use crate::{MetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue};
@@ -20,6 +22,7 @@ mod expand_alert_label_map;
 mod labels_to_map;
 
 use evaluate_alerting_rule_with_state_and_sink::evaluate_alerting_rule_with_state_and_sink;
+pub(crate) use evaluate_alerting_rule_with_state_and_sink::evaluate_and_persist_alerting_rule_with_state_and_wal;
 pub use evaluate_and_dispatch_alerting_rule::evaluate_and_dispatch_alerting_rule;
 pub use evaluate_and_dispatch_alerting_rule_group::evaluate_and_dispatch_alerting_rule_group;
 pub use evaluate_and_dispatch_alerting_rule_with_state::evaluate_and_dispatch_alerting_rule_with_state;

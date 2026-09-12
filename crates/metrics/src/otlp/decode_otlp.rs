@@ -10,5 +10,5 @@ pub fn decode_otlp(
     strategy: TranslationStrategy,
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
     let mut accumulator = DeltaAccumulator::default();
-    decode_otlp_inner(data, strategy, Some(&mut accumulator))
+    decode_otlp_inner(data, strategy, Some(&mut accumulator), &[])
 }

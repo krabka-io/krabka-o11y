@@ -8,7 +8,7 @@ pub(crate) async fn prometheus_query_reads_float_samples_from_blockstore() {
 
     let series_labels = labels(&[("__name__", "up"), ("job", "api")]);
     let fp = series_labels.fingerprint();
-    let batch = encode_float_samples(&[(fp, 1_000, 1.0)]).unwrap();
+    let batch = encode_float_samples(&[(fp, 1_000, 1.0, None)]).unwrap();
     let block_meta = block_store
         .writer()
         .write_block(
@@ -40,6 +40,7 @@ pub(crate) async fn prometheus_query_reads_float_samples_from_blockstore() {
                 labels: series_labels,
                 ts_ms: 1_000,
                 value: SampleValue::Float(1.0),
+                drop_name: false,
             }]
     );
 }

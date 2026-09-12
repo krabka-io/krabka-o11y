@@ -1,1 +1,0 @@
-label_replace(testmetric, "dst", "value-$1", "nonexistent-src", "(.*)")

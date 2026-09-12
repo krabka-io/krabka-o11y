@@ -11,8 +11,22 @@ use super::{
     time_range, validate_loki_query_range_resolution, validate_loki_range_query_range_limit,
     validate_query_entries_limit, validate_query_range_limit, validate_query_string_bytes_limit,
 };
+use crate::execute_logs_query_frontend;
 
 pub(crate) async fn execute_http_query_for_tenant(
+    state: &QuerierState,
+    tenant: &TenantId,
+    params: &QueryParams,
+    kind: QueryKind,
+    encoding: LokiStreamEncoding,
+) -> Result<Value, HttpQueryError> {
+    if matches!(kind, QueryKind::Range) {
+        return execute_logs_query_frontend(state, tenant, params, encoding).await;
+    }
+    execute_http_query_for_tenant_inner(state, tenant, params, kind, encoding).await
+}
+
+pub(crate) async fn execute_http_query_for_tenant_inner(
     state: &QuerierState,
     tenant: &TenantId,
     params: &QueryParams,

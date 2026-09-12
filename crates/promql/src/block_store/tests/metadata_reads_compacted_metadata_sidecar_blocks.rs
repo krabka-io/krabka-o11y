@@ -43,14 +43,15 @@ pub(crate) async fn metadata_reads_compacted_metadata_sidecar_blocks() {
 
     let fresh_store = BlockStore::new(object_store, base);
     let store = MetricBlockStore::from_compaction_manifests(fresh_store, None, &[manifest]);
-    let metadata = store
+    let filtered = store
         .metadata("tenant-a", Some("http_requests_total"))
         .await
         .unwrap()
         .metadata;
+    let all = store.metadata("tenant-a", None).await.unwrap().metadata;
 
     assert2::assert!(
-        metadata
+        filtered
             == vec![MetadataRecord {
                 metric_family_name: "http_requests_total".to_string(),
                 metric_type: "counter".to_string(),
@@ -58,4 +59,5 @@ pub(crate) async fn metadata_reads_compacted_metadata_sidecar_blocks() {
                 unit: "requests".to_string(),
             }]
     );
+    assert2::assert!(all == filtered);
 }

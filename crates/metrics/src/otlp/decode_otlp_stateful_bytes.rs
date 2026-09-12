@@ -10,3 +10,17 @@ pub fn decode_otlp_stateful_bytes(
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
     decode_otlp_stateful(&MetricsData::decode(body)?, strategy, accumulator)
 }
+
+pub(crate) fn decode_otlp_stateful_bytes_with_promoted_resource_attributes(
+    body: &[u8],
+    strategy: TranslationStrategy,
+    accumulator: &mut DeltaAccumulator,
+    additional_resource_attributes: &[String],
+) -> Result<Vec<DecodedSeries>, OtlpError> {
+    decode_otlp_stateful_with_promoted_resource_attributes(
+        &MetricsData::decode(body)?,
+        strategy,
+        accumulator,
+        additional_resource_attributes,
+    )
+}

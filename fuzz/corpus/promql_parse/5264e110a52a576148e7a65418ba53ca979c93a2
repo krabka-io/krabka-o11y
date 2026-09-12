@@ -1,0 +1,1 @@
+count(limitk(2, http_requests{instance=~"histogram_[0-9]"}))

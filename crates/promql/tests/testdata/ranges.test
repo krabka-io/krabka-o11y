@@ -8,3 +8,21 @@ eval range from 0m to 4m step 1m up
 
 eval range from 1m to 3m step 1m up{job="api"}
   up{job="api"} 1 2 3
+
+# For an instant query, start() and end() both resolve to the evaluation time.
+eval instant at 2m up @ start()
+  up{job="api"} 2
+  up{job="worker"} 30
+
+eval instant at 2m up @ end()
+  up{job="api"} 2
+  up{job="worker"} 30
+
+# For a range query they resolve to the fixed query bounds.
+eval range from 1m to 3m step 1m up @ start()
+  up{job="api"} 1 1 1
+  up{job="worker"} 20 20 20
+
+eval range from 1m to 3m step 1m up @ end()
+  up{job="api"} 3 3 3
+  up{job="worker"} 40 40 40

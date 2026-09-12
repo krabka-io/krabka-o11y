@@ -18,7 +18,6 @@ mod float_sample_value;
 mod is_result_metadata_label;
 mod labels_key;
 mod labels_without_label;
-mod labels_without_metric_and_label;
 mod labels_without_metric_name;
 mod record_metric_name;
 
@@ -30,6 +29,5 @@ pub(super) use float_sample_value::float_sample_value;
 pub(super) use is_result_metadata_label::is_result_metadata_label;
 pub(super) use labels_key::labels_key;
 pub(super) use labels_without_label::labels_without_label;
-pub(super) use labels_without_metric_and_label::labels_without_metric_and_label;
 pub(super) use labels_without_metric_name::labels_without_metric_name;
 pub(super) use record_metric_name::record_metric_name;

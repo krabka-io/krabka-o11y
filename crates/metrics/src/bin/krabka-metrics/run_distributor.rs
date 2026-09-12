@@ -41,6 +41,7 @@ pub(crate) async fn run_distributor(
         .with_ha_failover_timeout(cli.ha_failover_timeout)
         .with_max_rate_buckets(cli.ingest_rate_bucket_cap)
         .with_max_decompressed(cli.distributor_max_decompressed)
+        .with_otlp_promote_resource_attributes(cli.distributor_otel_promote_resource_attributes)
         .with_ha_election_sink(Arc::new(KafkaHaElectionSink::new(
             Arc::clone(&producer),
             cli.ha_tracker_topic.clone(),

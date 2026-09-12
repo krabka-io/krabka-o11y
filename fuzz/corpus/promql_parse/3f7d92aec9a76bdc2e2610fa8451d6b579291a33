@@ -1,1 +1,0 @@
-count_values by (job, group)("job", version)

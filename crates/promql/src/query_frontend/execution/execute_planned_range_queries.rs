@@ -1,22 +1,71 @@
-use super::{
-    Annotations, FrontendRangeQuery, PromqlError, QueryResult, RangeQueryCache, RangeQueryExecutor,
-    TenantId, execute_single_range_query,
+use async_trait::async_trait;
+use krabka_query_frontend::{
+    PlannedQuery, QueryFrontend, QueryFrontendAdapter, QueryFrontendError,
 };
 
-/// Executes the planned sub-queries concurrently, one per sub-range and shard.
-///
-/// The planned sub-queries are independent, so this function dispatches them all
-/// at once with [`futures::future::join_all`] and does not await them one by
-/// one. It collects the results by planned position, so the order does not
-/// depend on which sub-query completes first. The matrix-stitching merge needs
-/// that deterministic order. The [`RangeQueryExecutor`] and [`RangeQueryCache`]
-/// bounds are `Send + Sync`, so the per-sub-query futures are `Send` and safe to
-/// drive together.
-///
-/// The returned [`Annotations`] are the annotations of every sub-query, merged in
-/// planned order and free of duplicates. The order therefore does not depend on
-/// which sub-query completes first, and it does not depend on which sub-queries
-/// the cache answered.
+use super::{
+    AnnotatedQueryResult, Annotations, FrontendRangeQuery, PromqlError, QueryResult,
+    RangeQueryCache, RangeQueryExecutor, TenantId, range_cache_key,
+};
+
+struct PromqlRangeAdapter<'a, E> {
+    executor: &'a E,
+    tenant: &'a TenantId,
+}
+
+#[async_trait]
+impl<E> QueryFrontendAdapter for PromqlRangeAdapter<'_, E>
+where
+    E: RangeQueryExecutor,
+{
+    type Request = [FrontendRangeQuery];
+    type Query = FrontendRangeQuery;
+    type Output = AnnotatedQueryResult;
+    type Response = (Vec<QueryResult>, Annotations);
+    type Error = PromqlError;
+
+    fn plan(
+        &self,
+        queries: &[FrontendRangeQuery],
+    ) -> Result<Vec<PlannedQuery<FrontendRangeQuery>>, PromqlError> {
+        Ok(queries
+            .iter()
+            .cloned()
+            .map(|query| PlannedQuery {
+                cache_key: range_cache_key(self.tenant.as_str(), &query),
+                end_epoch_millis: query.end_ms,
+                query,
+            })
+            .collect())
+    }
+
+    async fn execute(
+        &self,
+        query: &FrontendRangeQuery,
+    ) -> Result<AnnotatedQueryResult, PromqlError> {
+        self.executor.execute_range_query(self.tenant, query).await
+    }
+
+    fn is_retryable(&self, error: &PromqlError) -> bool {
+        self.executor.is_transient_error(error)
+    }
+
+    fn merge(
+        &self,
+        _queries: &[FrontendRangeQuery],
+        results: Vec<AnnotatedQueryResult>,
+    ) -> Result<(Vec<QueryResult>, Annotations), PromqlError> {
+        let mut annotations = Annotations::new();
+        let mut query_results = Vec::with_capacity(results.len());
+        for result in results {
+            annotations.extend(&result.annotations);
+            query_results.push(result.result);
+        }
+        Ok((query_results, annotations))
+    }
+}
+
+/// Executes planned subqueries concurrently and merges annotations in plan order.
 pub(crate) async fn execute_planned_range_queries<E, C>(
     executor: &E,
     cache: &C,
@@ -27,18 +76,11 @@ where
     E: RangeQueryExecutor,
     C: RangeQueryCache + ?Sized,
 {
-    let futures = planned
-        .iter()
-        .map(|subquery| execute_single_range_query(executor, cache, tenant, subquery));
-    let annotated: Vec<_> = futures::future::join_all(futures)
+    let adapter = PromqlRangeAdapter { executor, tenant };
+    QueryFrontend::new(cache, cache.execution_options())
+        .execute(&adapter, planned.as_slice())
         .await
-        .into_iter()
-        .collect::<Result<_, PromqlError>>()?;
-    let mut annotations = Annotations::new();
-    let mut results = Vec::with_capacity(annotated.len());
-    for one in annotated {
-        annotations.extend(&one.annotations);
-        results.push(one.result);
-    }
-    Ok((results, annotations))
+        .map_err(|error| match error {
+            QueryFrontendError::Adapter(error) | QueryFrontendError::Cache(error) => error,
+        })
 }

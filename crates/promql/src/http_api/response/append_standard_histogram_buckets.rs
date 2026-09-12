@@ -18,7 +18,7 @@ pub(crate) fn append_standard_histogram_buckets(
             count: 0.0,
         },
     );
-    if hist.zero_count != 0.0 {
+    if hist.zero_count > 0.0 {
         buckets.push(HistogramBucketJson {
             boundary_rule: BOUNDARY_CLOSED_BOTH,
             lower: -hist.zero_threshold,
