@@ -87,3 +87,74 @@ fn sample_value(sample: Option<&Value>) -> f64 {
         .and_then(|value| value.parse().ok())
         .unwrap_or(f64::NEG_INFINITY)
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::apply_metric_selection;
+
+    #[test]
+    fn selection_ranks_vectors_and_matrices() {
+        let vector = json!({
+            "data": {
+                "resultType": "vector",
+                "result": [
+                    {"metric": {"name": "low"}, "value": [1, "1"]},
+                    {"metric": {"name": "missing"}, "value": []},
+                    {"metric": {"name": "high"}, "value": [1, "3"]}
+                ]
+            }
+        });
+        let mut largest = vector.clone();
+        apply_metric_selection(&mut largest, 2, true);
+        assert_eq!(largest["data"]["result"][0]["metric"]["name"], "high");
+        assert_eq!(largest["data"]["result"][1]["metric"]["name"], "low");
+
+        let mut smallest = vector;
+        apply_metric_selection(&mut smallest, 1, false);
+        assert_eq!(smallest["data"]["result"][0]["metric"]["name"], "missing");
+
+        let matrix = json!({
+            "data": {
+                "resultType": "matrix",
+                "result": [
+                    {"metric": {"name": "a"}, "values": [[1, "10"], [2, "1"], []]},
+                    {"metric": {"name": "b"}, "values": [[1, "5"], [2, "8"]]},
+                    {"metric": {"name": "invalid"}, "values": [[1]]}
+                ]
+            }
+        });
+        let mut largest = matrix.clone();
+        apply_metric_selection(&mut largest, 1, true);
+        assert_eq!(
+            largest["data"]["result"],
+            json!([
+                {"metric": {"name": "a"}, "values": [[1, "10"]]},
+                {"metric": {"name": "b"}, "values": [[2, "8"]]}
+            ])
+        );
+
+        let mut smallest = matrix;
+        apply_metric_selection(&mut smallest, 1, false);
+        assert_eq!(
+            smallest["data"]["result"],
+            json!([
+                {"metric": {"name": "a"}, "values": [[2, "1"]]},
+                {"metric": {"name": "invalid"}, "values": [[1]]}
+            ])
+        );
+    }
+
+    #[test]
+    fn selection_ignores_non_metric_responses() {
+        let mut scalar = json!({"data": {"resultType": "scalar", "result": [1, "2"]}});
+        let original = scalar.clone();
+        apply_metric_selection(&mut scalar, 1, true);
+        assert_eq!(scalar, original);
+
+        let mut missing = json!({"data": {"resultType": "vector"}});
+        apply_metric_selection(&mut missing, 1, true);
+        assert_eq!(missing, json!({"data": {"resultType": "vector"}}));
+    }
+}
