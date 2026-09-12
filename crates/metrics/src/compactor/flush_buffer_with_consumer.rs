@@ -42,7 +42,6 @@ where
         .compaction
         .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
     let batch = outcome?;
-    metrics.compaction.record_output(batch.writes.len() as u64);
     // The per-signal counter is moved here rather than once at shutdown, so it
     // reports what the compactor has written rather than what it wrote before
     // it stopped.

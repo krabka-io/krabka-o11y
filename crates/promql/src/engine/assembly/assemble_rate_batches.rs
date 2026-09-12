@@ -46,6 +46,7 @@ pub(crate) fn assemble_rate_batches(
                 labels: labels_without_metric_name(labels),
                 ts_ms: time_ms,
                 value: SampleValue::Float(value),
+                drop_name: true,
             })
         })
         .collect();

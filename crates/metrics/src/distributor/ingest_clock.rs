@@ -6,4 +6,7 @@ use super::Instant;
 /// and does not need a real wall-clock wait.
 pub trait IngestClock: Send + Sync + std::fmt::Debug {
     fn now(&self) -> Instant;
+
+    /// Current wall-clock time in Unix epoch milliseconds.
+    fn now_unix_ms(&self) -> i64;
 }

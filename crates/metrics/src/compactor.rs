@@ -216,6 +216,7 @@ mod tests {
                 fingerprint: 1,
                 timestamp_ms: 0,
                 value: 0.0,
+                start_timestamp_ms: None,
             }],
             histogram_rows: vec![super::NativeHistogramRow {
                 fingerprint: 2,
@@ -260,7 +261,14 @@ mod tests {
     #[test]
     fn compact_wal_records_groups_by_tenant_and_sorts_rows() {
         let a_late = float_record("tenant-a", "up", "api", 30);
-        let a_early = float_record("tenant-a", "up", "api", 10);
+        let mut a_early = float_record("tenant-a", "up", "api", 10);
+        let SamplePayload::Float {
+            start_timestamp_ms, ..
+        } = &mut a_early.payload
+        else {
+            panic!("expected float payload");
+        };
+        *start_timestamp_ms = Some(5);
         let b_row = float_record("tenant-b", "up", "api", 20);
 
         let compacted = compact_wal_records(&[a_late.clone(), b_row.clone(), a_early.clone()]);
@@ -272,6 +280,7 @@ mod tests {
         check!(compacted[0].float_rows[0].timestamp_ms == 10);
         check!(compacted[0].float_rows[1].timestamp_ms == 30);
         check!(compacted[0].float_rows[0].fingerprint == a_early.series_fingerprint());
+        check!(compacted[0].float_rows[0].start_timestamp_ms == Some(5));
         check!(compacted[1].float_rows[0].fingerprint == b_row.series_fingerprint());
     }
 
@@ -671,6 +680,7 @@ mod tests {
                 fingerprint: 7,
                 timestamp_ms,
                 value: 1.0,
+                start_timestamp_ms: None,
             }],
             histogram_rows: Vec::new(),
             exemplar_rows: Vec::new(),
@@ -1276,11 +1286,13 @@ overrides:
                     fingerprint: 7,
                     timestamp_ms: 100,
                     value: 1.0,
+                    start_timestamp_ms: Some(50),
                 },
                 FloatRow {
                     fingerprint: 7,
                     timestamp_ms: 200,
                     value: 2.0,
+                    start_timestamp_ms: None,
                 },
             ],
             histogram_rows: Vec::new(),
@@ -1301,6 +1313,10 @@ overrides:
             .expect("read persisted block");
         assert!(persisted.len() == 1);
         assert!(persisted[0].num_rows() == 2);
+        assert!(
+            crate::decode_float_samples(&persisted[0]).expect("decode persisted floats")
+                == vec![(7, 100, 1.0, Some(50)), (7, 200, 2.0, None)]
+        );
 
         let manifests = sink.manifests.lock().expect("manifest lock");
         check!(manifests.as_slice() == [writes[0].manifest.clone()]);

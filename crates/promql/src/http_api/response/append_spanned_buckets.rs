@@ -20,7 +20,9 @@ pub(crate) fn append_spanned_buckets(
             };
             let mut bucket = bucket_for_index(index);
             bucket.count = count;
-            buckets.push(bucket);
+            if count > 0.0 || count.is_nan() {
+                buckets.push(bucket);
+            }
             index += 1;
             count_index += 1;
         }

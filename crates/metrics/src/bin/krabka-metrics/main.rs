@@ -232,6 +232,11 @@ mod tests {
             defaults.distributor_max_decompressed
                 == krabka_metrics::distributor::DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED
         );
+        check!(
+            defaults
+                .distributor_otel_promote_resource_attributes
+                .is_empty()
+        );
 
         let configured = Cli::try_parse_from([
             "krabka-metrics",
@@ -243,11 +248,17 @@ mod tests {
             "7",
             "--distributor-max-decompressed",
             "64KiB",
+            "--distributor.otel-promote-resource-attributes",
+            "k8s.cluster.name,cloud.region",
         ])
         .unwrap();
         check!(configured.ha_failover_timeout == Time::from_millis(-1_000));
         check!(configured.ingest_rate_bucket_cap == 7);
         check!(configured.distributor_max_decompressed == kibibytes(64));
+        check!(
+            configured.distributor_otel_promote_resource_attributes
+                == ["k8s.cluster.name", "cloud.region"]
+        );
 
         for args in [
             ["--ingest-rate-bucket-cap", "0"],

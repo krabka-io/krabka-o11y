@@ -128,7 +128,13 @@ impl BinaryOp {
         } else {
             self.apply_scalar(left, right, modifier)?
         };
-        let labels = if self.is_comparison() && !binary_returns_bool(modifier) {
+        let preserves_name = self.is_comparison() && !binary_returns_bool(modifier);
+        let drop_name = if preserves_name {
+            sample.drop_name
+        } else {
+            true
+        };
+        let labels = if preserves_name {
             sample.labels
         } else {
             labels_without_metric_name(&sample.labels)
@@ -137,6 +143,7 @@ impl BinaryOp {
             labels,
             ts_ms: sample.ts_ms,
             value: SampleValue::Float(value),
+            drop_name,
         })
     }
 
@@ -179,6 +186,7 @@ impl BinaryOp {
             labels: labels_without_metric_name(labels),
             ts_ms,
             value: SampleValue::Histogram(out),
+            drop_name: true,
         })
     }
 

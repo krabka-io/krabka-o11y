@@ -20,12 +20,14 @@ mod tests {
             (COL_FINGERPRINT, DataType::UInt64),
             (COL_TIMESTAMP, DataType::Int64),
             ("value", DataType::Float64),
+            (COL_NH_START_TS, DataType::Int64),
         ] {
             check!(
                 s.column_with_name(column).unwrap().1.data_type() == &data_type,
                 "column {column}",
             );
         }
+        assert!(s.column_with_name(COL_NH_START_TS).unwrap().1.is_nullable());
     }
 
     #[test]

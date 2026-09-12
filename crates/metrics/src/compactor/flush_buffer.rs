@@ -41,7 +41,6 @@ where
         .compaction
         .record_run(outcome.is_ok(), Time::from_std(started.elapsed()));
     let batch = outcome?;
-    metrics.compaction.record_output(batch.writes.len() as u64);
     metrics.record_blocks_compacted(batch.writes.len() as u64);
     summary.writes += batch.writes.len();
     summary

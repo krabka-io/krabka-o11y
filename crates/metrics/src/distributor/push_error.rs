@@ -29,6 +29,13 @@ pub(crate) enum PushError {
         timestamp_ms: i64,
         oldest_allowed_ms: i64,
     },
+    #[error(
+        "too-far-in-future: timestamp {timestamp_ms} is newer than newest allowed {newest_allowed_ms}"
+    )]
+    TooFarInFuture {
+        timestamp_ms: i64,
+        newest_allowed_ms: i64,
+    },
     #[error(transparent)]
     Limit(#[from] LimitError),
     #[error(transparent)]
@@ -66,7 +73,7 @@ impl IntoResponse for PushError {
             Self::Limit(error) => {
                 StatusCode::from_u16(error.http_status()).unwrap_or(StatusCode::BAD_REQUEST)
             }
-            Self::TooOldSample { .. } => StatusCode::BAD_REQUEST,
+            Self::TooOldSample { .. } | Self::TooFarInFuture { .. } => StatusCode::BAD_REQUEST,
             Self::Wire(error) => StatusCode::from_u16(error.status_code())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Self::Clock(error) => {

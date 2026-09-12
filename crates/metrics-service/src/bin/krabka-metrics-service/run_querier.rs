@@ -26,6 +26,10 @@ pub(crate) async fn run_querier(
     let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> = Arc::from(store);
     let head = WalHead::with_retention(cli.wal_head_retention);
+    let status_wal = cli
+        .wal_bootstrap
+        .as_ref()
+        .map(|_| (head.clone(), readiness.gate("wal-head")));
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
     // The WAL head consumer is the querier's recent window. If it stops, the
@@ -37,7 +41,11 @@ pub(crate) async fn run_querier(
         // Configured to read the WAL, so the querier is not ready until it
         // does: until then its answers stop at the last compacted block and
         // silently omit everything since.
-        let wal_head_gate = readiness.gate("wal-head");
+        let wal_head_gate = status_wal
+            .as_ref()
+            .expect("configured WAL bootstrap registers a readiness gate")
+            .1
+            .clone();
         let wal_head = head.clone();
         let wal_topic = cli.wal_topic.clone();
         let poll_timeout = cli.wal_poll_timeout;
@@ -79,9 +87,19 @@ pub(crate) async fn run_querier(
     .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
     let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
+        .with_query_timeout(cli.query_timeout)
         .with_remote_read_max_body(cli.remote_read_max_body)
+        .with_runtime_status(
+            krabka_observability::LogLevelControl::process().level(),
+            None,
+        )
         .with_metrics(metrics)
         .with_audit(audit);
+    let state = if let Some((head, readiness)) = status_wal {
+        state.with_wal_head_status(head, readiness)
+    } else {
+        state
+    };
     let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
     let router = prometheus_router(Arc::new(state)).merge(readiness_router(readiness));
     let (bound, server) =

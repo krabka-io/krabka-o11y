@@ -110,7 +110,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(0);
         }
         if value.is_nan() {
-            return Err(PromqlError::Plan("Parameter value is NaN".to_string()));
+            return Err(PromqlError::Exec("Parameter value is NaN".to_string()));
         }
         value
             .trunc()

@@ -19,6 +19,11 @@ message ReadResponse {
   repeated QueryResult results = 1;
 }
 
+message ChunkedReadResponse {
+  repeated ChunkedSeries chunked_series = 1;
+  int64 query_index = 2;
+}
+
 enum ResponseType {
   SAMPLES = 0;
   STREAMED_XOR_CHUNKS = 1;
@@ -33,6 +38,26 @@ message Query {
 
 message QueryResult {
   repeated TimeSeries timeseries = 1;
+}
+
+message Chunk {
+  int64 min_time_ms = 1;
+  int64 max_time_ms = 2;
+
+  enum Encoding {
+    UNKNOWN = 0;
+    XOR = 1;
+    HISTOGRAM = 2;
+    FLOAT_HISTOGRAM = 3;
+  }
+
+  Encoding type = 3;
+  bytes data = 4;
+}
+
+message ChunkedSeries {
+  repeated Label labels = 1;
+  repeated Chunk chunks = 2;
 }
 
 message LabelMatcher {

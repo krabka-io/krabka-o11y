@@ -19,6 +19,7 @@ pub struct DistributorState {
     pub(crate) clock: Arc<dyn IngestClock>,
     pub(crate) ha_failover_timeout: Time,
     pub(crate) max_decompressed: ByteSize,
+    pub(crate) otlp_promote_resource_attributes: Vec<String>,
     pub(crate) metrics: Option<ServiceMetrics>,
 }
 
@@ -36,6 +37,7 @@ impl DistributorState {
             clock: Arc::new(SystemIngestClock),
             ha_failover_timeout: DEFAULT_HA_FAILOVER_TIMEOUT,
             max_decompressed: DEFAULT_DISTRIBUTOR_MAX_DECOMPRESSED,
+            otlp_promote_resource_attributes: Vec::new(),
             metrics: None,
         }
     }
@@ -63,6 +65,12 @@ impl DistributorState {
     #[must_use]
     pub fn with_max_decompressed(mut self, max_decompressed: ByteSize) -> Self {
         self.max_decompressed = max_decompressed;
+        self
+    }
+
+    #[must_use]
+    pub fn with_otlp_promote_resource_attributes(mut self, attributes: Vec<String>) -> Self {
+        self.otlp_promote_resource_attributes = attributes;
         self
     }
 

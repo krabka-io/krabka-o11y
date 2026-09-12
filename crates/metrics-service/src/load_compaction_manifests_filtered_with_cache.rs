@@ -47,9 +47,13 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
             fetched.push((key.to_string(), manifest.clone()));
             manifest
         };
-        if time_range.is_none_or(|(start_ms, end_ms)| {
-            manifest.max_ts >= start_ms && manifest.min_ts <= end_ms
-        }) {
+        // Metadata has no event timestamp. Its zero bounds must not hide it
+        // from the compatibility lookback used for unbounded API requests.
+        if manifest.kind == krabka_metrics::MetricBlockKind::Metadata
+            || time_range.is_none_or(|(start_ms, end_ms)| {
+                manifest.max_ts >= start_ms && manifest.min_ts <= end_ms
+            })
+        {
             manifests.push(manifest);
         }
     }

@@ -184,8 +184,8 @@ async fn check_instruments_moved(metrics: &ServiceMetrics) {
         // One flush ran, it succeeded, and it wrote one block.
         "krabka_metrics_compaction_runs_total{status=\"ok\"} 1",
         "krabka_metrics_compaction_duration_seconds_count 1",
-        "krabka_metrics_compaction_blocks_total 1",
         "krabka_metrics_blocks_compacted_total 1",
+        "krabka_metrics_compaction_blocks_total 0",
         // The block and its index sidecar reached the object store through the
         // decorator, so the requests are counted and their bytes are counted.
         "krabka_metrics_objstore_operations_total{operation=\"put\"}",

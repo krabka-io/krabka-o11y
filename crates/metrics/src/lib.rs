@@ -64,7 +64,7 @@ pub use request_tenant::{
     MAX_REQUEST_TENANTS, RequestTenantError, TenantAccessError, authorized_tenant_from_headers,
     resolve_request_tenant, tenant_from_headers, tenant_from_metadata,
 };
-pub use sample::{decode_float_samples, encode_float_samples};
+pub use sample::{FloatSampleRow, decode_float_samples, encode_float_samples};
 pub use schema::{
     COL_FINGERPRINT, COL_NH_COUNT, COL_NH_CUSTOM_VALUES, COL_NH_IS_FLOAT, COL_NH_NEG_COUNTS,
     COL_NH_NEG_SPANS, COL_NH_POS_COUNTS, COL_NH_POS_SPANS, COL_NH_RESET_HINT, COL_NH_SCHEMA,

@@ -1167,7 +1167,9 @@ mod tests {
         assert2::check!(super::prometheus_base_unit_suffix("") == None);
     }
 
-    use super::{DeltaAccumulator, TranslationStrategy, decode_otlp, decode_otlp_stateful};
+    use super::{
+        DeltaAccumulator, TranslationStrategy, decode_otlp, decode_otlp_inner, decode_otlp_stateful,
+    };
     use crate::{
         BucketSpan,
         wire::{DecodedMetadata, DecodedSample, DecodedSeries},
@@ -1829,6 +1831,8 @@ mod tests {
             },
             vec![
                 kv("service.name", "checkout"),
+                kv("service.namespace", "shop"),
+                kv("service.instance.id", "checkout-7"),
                 kv("telemetry.sdk.language", "rust"),
             ],
         );
@@ -1843,11 +1847,57 @@ mod tests {
             target.labels
                 == labels(&[
                     ("__name__", "target_info"),
+                    ("service_instance_id", "checkout-7"),
                     ("service_name", "checkout"),
+                    ("service_namespace", "shop"),
                     ("telemetry_sdk_language", "rust")
                 ])
         );
         assert!(target.samples == vec![(1, 1.0)]);
+
+        let metric = series
+            .iter()
+            .find(|series| series.labels.get("__name__") == Some("system_cpu_utilization"))
+            .expect("metric series");
+        check!(metric.labels.get("job") == Some("shop/checkout"));
+        check!(metric.labels.get("instance") == Some("checkout-7"));
+        check!(metric.labels.get("host_name") == Some("api-1"));
+        check!(metric.labels.get("service_name").is_none());
+        check!(metric.labels.get("telemetry_sdk_language").is_none());
+    }
+
+    #[test]
+    fn configured_resource_attributes_are_promoted_to_metric_series() {
+        let data = metrics_data_with_resource(
+            Metric {
+                name: "system.cpu.utilization".into(),
+                data: Some(metric::Data::Gauge(Gauge {
+                    data_points: vec![number_point(0.42, 1_000_000, Vec::new())],
+                })),
+                ..Default::default()
+            },
+            vec![
+                kv("service.name", "checkout"),
+                kv("k8s.cluster.name", "prod"),
+                kv("telemetry.sdk.language", "rust"),
+            ],
+        );
+
+        let series = decode_otlp_inner(
+            &data,
+            TranslationStrategy::default(),
+            None,
+            &["k8s.cluster.name".into()],
+        )
+        .unwrap();
+        let metric = series
+            .iter()
+            .find(|series| series.labels.get("__name__") == Some("system_cpu_utilization"))
+            .expect("metric series");
+
+        check!(metric.labels.get("job") == Some("checkout"));
+        check!(metric.labels.get("k8s_cluster_name") == Some("prod"));
+        check!(metric.labels.get("telemetry_sdk_language").is_none());
     }
 
     #[test]
@@ -1896,7 +1946,7 @@ mod tests {
                         "https://opentelemetry.io/schemas/1.24.0"
                     ),
                     ("otel_scope_version", "1.2.3"),
-                    ("service_name", "checkout"),
+                    ("job", "checkout"),
                 ])
         );
 
@@ -2427,6 +2477,7 @@ mod number_value;
 mod otlp_error;
 mod prometheus_base_unit_suffix;
 mod prometheus_unit_suffix;
+mod promoted_resource_attributes;
 mod reject_far_future_points;
 mod resource_metrics_timestamp_ms;
 mod scalar_series;
@@ -2454,7 +2505,9 @@ pub use decode_otlp::decode_otlp;
 pub use decode_otlp_bytes::decode_otlp_bytes;
 use decode_otlp_inner::decode_otlp_inner;
 pub use decode_otlp_stateful::decode_otlp_stateful;
+pub(crate) use decode_otlp_stateful::decode_otlp_stateful_with_promoted_resource_attributes;
 pub use decode_otlp_stateful_bytes::decode_otlp_stateful_bytes;
+pub(crate) use decode_otlp_stateful_bytes::decode_otlp_stateful_bytes_with_promoted_resource_attributes;
 pub use delta_accumulator::DeltaAccumulator;
 use delta_histogram_state::DeltaHistogramState;
 use delta_key::{DeltaKey, delta_key};
@@ -2489,6 +2542,7 @@ use number_value::number_value;
 pub use otlp_error::OtlpError;
 use prometheus_base_unit_suffix::prometheus_base_unit_suffix;
 use prometheus_unit_suffix::prometheus_unit_suffix;
+use promoted_resource_attributes::promoted_resource_attributes;
 use reject_far_future_points::reject_far_future_points;
 use resource_metrics_timestamp_ms::resource_metrics_timestamp_ms;
 use scalar_series::scalar_series;

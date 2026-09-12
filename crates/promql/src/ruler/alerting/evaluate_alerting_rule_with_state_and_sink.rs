@@ -1,14 +1,14 @@
 use super::{
     AlertStateKey, AlertmanagerAlert, AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine,
-    PromqlError, QueryResult, RulerAlertState, RulerAlertStateRecord, RulerStateSink, SampleValue,
-    TenantId, TimeExt, expand_alert_label_map, labels_to_map, yaml_duration, yaml_optional_string,
+    PromqlError, QueryResult, RecordingRuleWalSink, RulerAlertState, RulerAlertStateRecord,
+    RulerStateSink, SamplePayload, SampleValue, TenantId, TimeExt, WalRecord,
+    expand_alert_label_map, labels_to_map, yaml_duration, yaml_optional_string,
     yaml_required_string, yaml_string_map,
 };
 
-pub(crate) async fn evaluate_alerting_rule_with_state_and_sink<S, A, R>(
+pub(crate) async fn evaluate_alerting_rule_with_state_and_sink<S, W, A, R>(
     engine: &PromqlEngine<S>,
-    sink: &A,
-    state_sink: &R,
+    sinks: (&W, &A, &R),
     state: &mut RulerAlertState,
     tenant: &TenantId,
     rule: &serde_yaml::Value,
@@ -16,9 +16,11 @@ pub(crate) async fn evaluate_alerting_rule_with_state_and_sink<S, A, R>(
 ) -> Result<usize, PromqlError>
 where
     S: MetricStore,
+    W: RecordingRuleWalSink,
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
+    let (wal_sink, sink, state_sink) = sinks;
     let Some(alert_name) = yaml_optional_string(rule, "alert") else {
         return Ok(0);
     };
@@ -36,6 +38,7 @@ where
     let mut active_keys = Vec::new();
     let mut active_records = Vec::new();
     let mut alerts = Vec::new();
+    let mut synthetic_records = Vec::new();
     for sample in samples {
         let SampleValue::Float(value) = sample.value else {
             continue;
@@ -51,6 +54,8 @@ where
             rule_id: rule_id.clone(),
             labels: labels.clone(),
         };
+        let was_active = state.active_since_ms.contains_key(&key);
+        let was_firing = state.keep_firing_until_ms.contains_key(&key);
         active_keys.push(key.clone());
         let starts_at_ms = *state
             .active_since_ms
@@ -66,6 +71,13 @@ where
                 active_since_ms: Some(starts_at_ms),
                 keep_firing_until_ms: None,
             });
+            synthetic_records.extend(active_alert_records(
+                tenant,
+                &labels,
+                "pending",
+                starts_at_ms,
+                eval_time_ms,
+            ));
             continue;
         }
         // Firing: (re)arm the keep-firing deadline so that if the series stops
@@ -79,6 +91,22 @@ where
             active_since_ms: Some(starts_at_ms),
             keep_firing_until_ms: Some(keep_firing_until_ms),
         });
+        if was_active && !was_firing {
+            synthetic_records.push(alerts_record(
+                tenant,
+                &labels,
+                "pending",
+                stale_nan(),
+                eval_time_ms,
+            ));
+        }
+        synthetic_records.extend(active_alert_records(
+            tenant,
+            &labels,
+            "firing",
+            starts_at_ms,
+            eval_time_ms,
+        ));
         let annotations = expand_alert_label_map(&annotations, value, &sample.labels);
         alerts.push(AlertmanagerAlert {
             labels,
@@ -123,6 +151,13 @@ where
                     active_since_ms: Some(starts_at_ms),
                     keep_firing_until_ms: Some(until_ms),
                 });
+                synthetic_records.extend(active_alert_records(
+                    tenant,
+                    &key.labels,
+                    "firing",
+                    starts_at_ms,
+                    eval_time_ms,
+                ));
                 alerts.push(AlertmanagerAlert {
                     labels: key.labels.clone(),
                     annotations: BTreeMap::new(),
@@ -147,6 +182,12 @@ where
                     active_since_ms: None,
                     keep_firing_until_ms: None,
                 });
+                synthetic_records.extend(stale_alert_records(
+                    tenant,
+                    &key.labels,
+                    "firing",
+                    eval_time_ms,
+                ));
                 alerts.push(AlertmanagerAlert {
                     labels: key.labels.clone(),
                     annotations: BTreeMap::new(),
@@ -164,11 +205,20 @@ where
                     active_since_ms: None,
                     keep_firing_until_ms: None,
                 });
+                synthetic_records.extend(stale_alert_records(
+                    tenant,
+                    &key.labels,
+                    "pending",
+                    eval_time_ms,
+                ));
             }
         }
     }
     for record in active_records.into_iter().chain(cleared_records) {
         state_sink.persist_ruler_alert_state(record).await?;
+    }
+    for record in synthetic_records {
+        wal_sink.append_recording_rule_record(record).await?;
     }
     // Retain the active instances plus any instance still inside its keep-firing
     // window; tombstone everything else for this rule.
@@ -183,4 +233,95 @@ where
         sink.dispatch_alerts(alerts).await?;
     }
     Ok(count)
+}
+
+pub(crate) async fn evaluate_and_persist_alerting_rule_with_state_and_wal<S, W, A, R>(
+    engine: &PromqlEngine<S>,
+    sinks: (&W, &A, &R),
+    state: &mut RulerAlertState,
+    tenant: &TenantId,
+    rule: &serde_yaml::Value,
+    eval_time_ms: i64,
+) -> Result<usize, PromqlError>
+where
+    S: MetricStore,
+    W: RecordingRuleWalSink,
+    A: AlertmanagerSink,
+    R: RulerStateSink,
+{
+    evaluate_alerting_rule_with_state_and_sink(engine, sinks, state, tenant, rule, eval_time_ms)
+        .await
+}
+
+fn active_alert_records(
+    tenant: &TenantId,
+    labels: &BTreeMap<String, String>,
+    alert_state: &str,
+    starts_at_ms: i64,
+    eval_time_ms: i64,
+) -> [WalRecord; 2] {
+    [
+        alerts_record(tenant, labels, alert_state, 1.0, eval_time_ms),
+        alert_for_state_record(tenant, labels, starts_at_ms as f64 / 1000.0, eval_time_ms),
+    ]
+}
+
+fn stale_alert_records(
+    tenant: &TenantId,
+    labels: &BTreeMap<String, String>,
+    alert_state: &str,
+    eval_time_ms: i64,
+) -> [WalRecord; 2] {
+    let stale = stale_nan();
+    [
+        alerts_record(tenant, labels, alert_state, stale, eval_time_ms),
+        alert_for_state_record(tenant, labels, stale, eval_time_ms),
+    ]
+}
+
+fn alerts_record(
+    tenant: &TenantId,
+    labels: &BTreeMap<String, String>,
+    alert_state: &str,
+    value: f64,
+    eval_time_ms: i64,
+) -> WalRecord {
+    let mut labels = labels.clone();
+    labels.insert("__name__".into(), "ALERTS".into());
+    labels.insert("alertstate".into(), alert_state.into());
+    wal_record(tenant, labels, value, eval_time_ms)
+}
+
+fn alert_for_state_record(
+    tenant: &TenantId,
+    labels: &BTreeMap<String, String>,
+    value: f64,
+    eval_time_ms: i64,
+) -> WalRecord {
+    let mut labels = labels.clone();
+    labels.insert("__name__".into(), "ALERTS_FOR_STATE".into());
+    labels.remove("alertstate");
+    wal_record(tenant, labels, value, eval_time_ms)
+}
+
+fn wal_record(
+    tenant: &TenantId,
+    labels: BTreeMap<String, String>,
+    value: f64,
+    eval_time_ms: i64,
+) -> WalRecord {
+    WalRecord {
+        tenant: tenant.to_string(),
+        labels: labels.into_iter().collect(),
+        payload: SamplePayload::Float {
+            timestamp_ms: eval_time_ms,
+            value,
+            start_timestamp_ms: None,
+        },
+        exemplars: Vec::new(),
+    }
+}
+
+fn stale_nan() -> f64 {
+    f64::from_bits(0x7ff0_0000_0000_0002)
 }

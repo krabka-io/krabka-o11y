@@ -220,13 +220,22 @@ impl MetricStore for MetricBlockStore {
         let Some(metadata) = &self.metadata else {
             return Ok(MetadataScan::default());
         };
-        let matchers = metric.map_or_else(Vec::new, |metric| {
-            vec![LabelMatcher {
-                name: "__name__".to_string(),
-                op: krabka_blockstore::MatchOp::Eq,
-                value: metric.to_string(),
-            }]
-        });
+        let matchers = metric.map_or_else(
+            || {
+                vec![LabelMatcher {
+                    name: "__name__".to_string(),
+                    op: krabka_blockstore::MatchOp::Re,
+                    value: ".+".to_string(),
+                }]
+            },
+            |metric| {
+                vec![LabelMatcher {
+                    name: "__name__".to_string(),
+                    op: krabka_blockstore::MatchOp::Eq,
+                    value: metric.to_string(),
+                }]
+            },
+        );
         if metadata
             .index()
             .series(tenant, &matchers)

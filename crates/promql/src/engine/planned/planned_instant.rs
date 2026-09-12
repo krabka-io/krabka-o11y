@@ -24,7 +24,7 @@ pub(crate) enum PlannedInstant {
     /// it to the caller verbatim. There is no operator plan to execute.
     Precomputed(Vec<InstantSample>),
     /// A fully-computed scalar result. The scalar-returning utility functions
-    /// `time`/`pi`/`scalar` and the argless calendar forms carry this variant, as
+    /// `time`/`pi`/`scalar` carry this variant, as
     /// does any scalar∘scalar binary fold that the planner resolves in pure Rust.
     /// The assembler turns it into a `QueryResult::Scalar` verbatim, and there is
     /// no operator plan to execute. The `ts_ms`/`value` mirror exactly what the
@@ -51,12 +51,14 @@ impl PlannedInstant {
         plan: LogicalPlan,
         labels_by_fp: BTreeMap<SeriesFingerprint, Labels>,
         shape: InstantShape,
+        drop_name: bool,
     ) -> Self {
         Self::Operator(Box::new(OperatorInstant {
             ctx,
             plan,
             labels_by_fp,
             shape,
+            drop_name,
         }))
     }
 }

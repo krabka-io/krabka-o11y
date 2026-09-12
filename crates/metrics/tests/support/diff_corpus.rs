@@ -134,7 +134,7 @@ fn rounded_float_string(value: f64) -> Value {
 }
 
 fn is_volatile_field(key: &str) -> bool {
-    matches!(key, "warnings" | "infos" | "stats")
+    key == "stats"
 }
 
 fn compare_series_result(left: &Value, right: &Value) -> Ordering {

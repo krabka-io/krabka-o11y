@@ -25,5 +25,7 @@ use crate::{
 mod execute_http_query_for_tenant;
 mod execute_http_remaining_query;
 
-pub(crate) use execute_http_query_for_tenant::execute_http_query_for_tenant;
+pub(crate) use execute_http_query_for_tenant::{
+    execute_http_query_for_tenant, execute_http_query_for_tenant_inner,
+};
 pub(crate) use execute_http_remaining_query::execute_http_remaining_query;

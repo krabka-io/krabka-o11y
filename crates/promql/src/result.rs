@@ -42,6 +42,7 @@ mod tests {
             labels,
             ts_ms: 1000,
             value: SampleValue::Float(1.0),
+            drop_name: false,
         };
         assert2::assert!(sample.value == SampleValue::Float(1.0));
     }

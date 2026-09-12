@@ -6,6 +6,7 @@ use super::{
     PromqlEngine,
     annotations::emit_warning,
     merge_by_fingerprint::merge_by_fingerprint,
+    record_queryable_samples,
     row_cache::{
         FloatRow, FloatWindow, HistogramRow, RANGE_SCAN_CACHE, collect_float_rows,
         collect_histogram_rows, matchers_cache_key,
@@ -224,6 +225,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 return Err(samples_per_query_exceeded(self.opts.max_samples, out.len()));
             }
         }
+        record_queryable_samples(out.len());
         Ok(out)
     }
 
@@ -275,6 +277,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     .map(|row| TimedValue {
                         ts_ms: row.ts_ms,
                         value: row.value,
+                        start_timestamp_ms: row.start_timestamp_ms,
                     })
                     .collect::<Vec<_>>();
                 if samples.is_empty() {
@@ -293,6 +296,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         if matcher_sets.len() > 1 {
             out = merge_by_fingerprint(out);
         }
+        record_queryable_samples(total);
         Ok(out)
     }
 
@@ -413,6 +417,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 return Err(samples_per_query_exceeded(self.opts.max_samples, out.len()));
             }
         }
+        record_queryable_samples(out.len());
         Ok(out)
     }
 }

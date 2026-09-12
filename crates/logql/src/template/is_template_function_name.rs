@@ -1,7 +1,15 @@
 pub(crate) fn is_template_function_name(name: &str) -> bool {
     matches!(
         name,
-        "alignLeft"
+        "humanize"
+            | "humanizeDuration"
+            | "humanizePercentage"
+            | "humanize1024"
+            | "reReplaceAll"
+            | "first"
+            | "label"
+            | "value"
+            | "alignLeft"
             | "alignRight"
             | "add"
             | "addf"

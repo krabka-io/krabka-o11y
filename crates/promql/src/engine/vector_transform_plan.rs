@@ -111,6 +111,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 plan,
                 BTreeMap::new(),
                 InstantShape::ScalarMath,
+                true,
             )));
         }
 
@@ -131,6 +132,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             plan,
             BTreeMap::new(),
             InstantShape::ScalarMath,
+            true,
         )))
     }
 
@@ -305,6 +307,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                         labels: sample.labels,
                         ts_ms: sample.ts_ms,
                         value: SampleValue::Float(sample.value),
+                        drop_name: false,
                     })
                     .collect();
                 return Ok(Some(samples));

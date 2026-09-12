@@ -2,7 +2,7 @@
 use super::{
     BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
     classic_bucket_bound, classic_histogram_quantile, float_sample_value, labels_key,
-    labels_without_metric_and_label, labels_without_metric_name, native_histogram_quantile,
+    labels_without_label, labels_without_metric_name, native_histogram_quantile,
 };
 
 /// Applies the experimental `histogram_quantiles(label, v, phi...)` fold.
@@ -48,7 +48,7 @@ pub(crate) fn apply_histogram_quantiles(
             continue;
         };
         let count = float_sample_value(&sample)?;
-        let labels = labels_without_metric_and_label(&sample.labels, "le");
+        let labels = labels_without_label(&labels_without_metric_name(&sample.labels), "le");
         groups
             .entry(labels_key(&labels))
             .or_insert_with(|| (labels, Vec::new()))
@@ -76,6 +76,7 @@ pub(crate) fn apply_histogram_quantiles(
                 value: SampleValue::Float(native_histogram_quantile(
                     *quantile, &histogram, &metric,
                 )),
+                drop_name: true,
             }
         }));
     }
@@ -91,6 +92,7 @@ pub(crate) fn apply_histogram_quantiles(
                 labels,
                 ts_ms: time_ms,
                 value: SampleValue::Float(classic_histogram_quantile(*quantile, &mut buckets).0),
+                drop_name: true,
             }
         }));
     }

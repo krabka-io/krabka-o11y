@@ -72,7 +72,11 @@ mod tests {
             labels: Arc::new(labels),
             samples: samples
                 .iter()
-                .map(|&(ts_ms, value)| TimedValue { ts_ms, value })
+                .map(|&(ts_ms, value)| TimedValue {
+                    ts_ms,
+                    value,
+                    start_timestamp_ms: None,
+                })
                 .collect(),
         }
     }

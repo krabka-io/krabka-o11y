@@ -51,10 +51,6 @@ The divergences, by file:
   `FloatHistogram.String()` bucket notation; `count_values("a\xc5z", …)`, an
   invalid UTF-8 label name; and the `limitk(NaN, …)` and `limit_ratio(NaN, …)`
   refusals, which need `experimental-functions`.
-- `name_label_dropping.test` (7 of 21): the delayed `__name__` removal. Krabka
-  drops `__name__` where the function drops it rather than at the end of the
-  query, so a later label rewrite or an aggregation `by (__name__)` no longer
-  sees the name Prometheus keeps in scope.
 - `native_histograms.test` (44 of 374): mostly one gap, the reconciliation of
   native histograms whose bucket layouts differ (19 cases). The rest are
   `histogram_count`'s counter-reset-recomputing read path (11), the zero-point

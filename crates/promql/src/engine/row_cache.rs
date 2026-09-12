@@ -4,7 +4,7 @@ use std::{
 };
 
 use arrow::{
-    array::AsArray,
+    array::{Array, AsArray},
     datatypes::{Float64Type, Int64Type, UInt64Type},
 };
 use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};

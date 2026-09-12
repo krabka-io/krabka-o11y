@@ -17,7 +17,7 @@ use super::{InstantSample, PromqlError, Regex, Result, set_label_value};
 ///
 /// # Errors
 ///
-/// Returns [`PromqlError::Plan`] when `regex` is not a valid regular expression.
+/// Returns [`PromqlError::Exec`] when `regex` is not a valid regular expression.
 /// The error text matches the interpreter's error text.
 pub fn apply_label_replace(
     samples: Vec<InstantSample>,
@@ -32,7 +32,7 @@ pub fn apply_label_replace(
     // `anchored_regex` applies to label matchers. A raw unanchored `Regex` would
     // wrongly match a substring (e.g. `foo` inside `xfooy`).
     let regex = Regex::new(&format!("^(?:{regex})$"))
-        .map_err(|err| PromqlError::Plan(format!("invalid label_replace regex: {err}")))?;
+        .map_err(|err| PromqlError::Exec(format!("invalid label_replace regex: {err}")))?;
     Ok(samples
         .into_iter()
         .map(|mut sample| {
@@ -40,6 +40,9 @@ pub fn apply_label_replace(
                 let mut value = String::new();
                 captures.expand(replacement, &mut value);
                 sample.labels = set_label_value(&sample.labels, dst_label, &value);
+                if dst_label == "__name__" {
+                    sample.drop_name = false;
+                }
             }
             sample
         })

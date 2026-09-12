@@ -26,6 +26,9 @@ pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
         max_samples_per_series: partial
             .max_samples_per_series
             .unwrap_or(base.max_samples_per_series),
+        creation_grace_period: partial
+            .creation_grace_period
+            .unwrap_or(base.creation_grace_period),
         max_label_name_length: partial
             .max_label_name_length
             .unwrap_or(base.max_label_name_length),

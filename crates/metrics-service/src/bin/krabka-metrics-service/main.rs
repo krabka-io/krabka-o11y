@@ -107,6 +107,14 @@ mod tests {
             "4",
             "--query-frontend-cache-prefix",
             "tenant-a-query-cache",
+            "--query-frontend-max-parallelism",
+            "3",
+            "--query-frontend-max-retries",
+            "2",
+            "--query-frontend-cache-ttl",
+            "2h",
+            "--query-frontend-max-cache-freshness",
+            "3m",
         ])
         .unwrap();
 
@@ -114,6 +122,21 @@ mod tests {
         assert2::assert!(cli.query_frontend_split == secs(30));
         assert2::assert!(cli.query_frontend_shards == 4);
         assert2::assert!(cli.query_frontend_cache_prefix.as_str() == "tenant-a-query-cache");
+        assert2::assert!(cli.query_frontend_max_parallelism == 3);
+        assert2::assert!(cli.query_frontend_max_retries == 2);
+        assert2::assert!(cli.query_frontend_cache_ttl == hours(2));
+        assert2::assert!(cli.query_frontend_max_cache_freshness == minutes(3));
+    }
+
+    #[test]
+    fn query_frontend_policy_uses_mimir_defaults() {
+        let cli =
+            Cli::try_parse_from(["krabka-metrics-service", "--target", "query-frontend"]).unwrap();
+
+        assert2::assert!(cli.query_frontend_max_parallelism == 14);
+        assert2::assert!(cli.query_frontend_max_retries == 5);
+        assert2::assert!(cli.query_frontend_cache_ttl == days(7));
+        assert2::assert!(cli.query_frontend_max_cache_freshness == minutes(10));
     }
 
     #[test]
@@ -375,6 +398,7 @@ mod tests {
         assert2::assert!(defaults.query_lookback_delta == minutes(5));
         assert2::assert!(defaults.query_eval_interval == minutes(1));
         assert2::assert!(defaults.query_max_samples == 50_000_000);
+        assert2::assert!(defaults.query_timeout == minutes(2));
         assert2::assert!(defaults.remote_read_max_body == mebibytes(64));
 
         let configured = Cli::try_parse_from([
@@ -384,18 +408,21 @@ mod tests {
             "--query-lookback-delta=7m",
             "--query-eval-interval=11s",
             "--query-max-samples=13",
+            "--query-timeout=17s",
             "--remote-read-max-body=17MiB",
         ])
         .unwrap();
         assert2::assert!(query_engine_opts(&configured).lookback_delta == minutes(7));
         assert2::assert!(query_engine_opts(&configured).eval_interval == secs(11));
         assert2::assert!(query_engine_opts(&configured).max_samples == 13);
+        assert2::assert!(configured.query_timeout == secs(17));
         assert2::assert!(configured.remote_read_max_body == mebibytes(17));
 
         for flag in [
             "--query-lookback-delta=0s",
             "--query-eval-interval=0s",
             "--query-max-samples=0",
+            "--query-timeout=0s",
             "--remote-read-max-body=0B",
             "--remote-read-max-body=1.5B",
         ] {
@@ -421,6 +448,7 @@ mod tests {
                     .env("KRABKA_METRICS_QUERY_LOOKBACK_DELTA", "7m")
                     .env("KRABKA_METRICS_QUERY_EVAL_INTERVAL", "11s")
                     .env("KRABKA_METRICS_QUERY_MAX_SAMPLES", "13")
+                    .env("KRABKA_METRICS_QUERY_TIMEOUT", "17s")
                     .env("KRABKA_METRICS_REMOTE_READ_MAX_BODY", "17MiB")
                     .status()
                     .expect("child test");
@@ -433,6 +461,7 @@ mod tests {
         assert2::assert!(query_engine_opts(&from_env).lookback_delta == minutes(7));
         assert2::assert!(query_engine_opts(&from_env).eval_interval == secs(11));
         assert2::assert!(query_engine_opts(&from_env).max_samples == 13);
+        assert2::assert!(from_env.query_timeout == secs(17));
         assert2::assert!(from_env.remote_read_max_body == mebibytes(17));
 
         let from_cli = Cli::try_parse_from([
@@ -442,12 +471,14 @@ mod tests {
             "--query-lookback-delta=19m",
             "--query-eval-interval=23s",
             "--query-max-samples=29",
+            "--query-timeout=31s",
             "--remote-read-max-body=31MiB",
         ])
         .unwrap();
         assert2::assert!(query_engine_opts(&from_cli).lookback_delta == minutes(19));
         assert2::assert!(query_engine_opts(&from_cli).eval_interval == secs(23));
         assert2::assert!(query_engine_opts(&from_cli).max_samples == 29);
+        assert2::assert!(from_cli.query_timeout == secs(31));
         assert2::assert!(from_cli.remote_read_max_body == mebibytes(31));
     }
 

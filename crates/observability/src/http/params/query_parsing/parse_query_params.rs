@@ -32,6 +32,7 @@ pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams,
             "limit",
             "direction",
             "delay_for",
+            "targetBytesPerShard",
         ],
     ) {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));

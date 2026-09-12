@@ -28,6 +28,14 @@ pub fn router(state: Arc<DistributorState>) -> Router {
             "/otlp/v1/metrics",
             post(otlp_push).layer(DefaultBodyLimit::max(max_body)),
         )
+        .route(
+            "/v1/metrics",
+            post(otlp_push).layer(DefaultBodyLimit::max(max_body)),
+        )
+        .route(
+            "/api/v1/otlp/v1/metrics",
+            post(otlp_push).layer(DefaultBodyLimit::max(max_body)),
+        )
         .route_service(
             "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
             grpc_service,

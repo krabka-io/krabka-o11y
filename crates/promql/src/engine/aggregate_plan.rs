@@ -121,6 +121,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         let OperatorInstant {
             ctx,
             plan: inner_plan,
+            drop_name,
             ..
         } = *inner;
         let plan = plan_simple_aggregate(inner_plan, op, &grouping)?;
@@ -129,6 +130,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             plan,
             BTreeMap::new(),
             InstantShape::Aggregate,
+            drop_name,
         )))
     }
 

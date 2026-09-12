@@ -11,15 +11,14 @@
 //! leaf table with one row per series. The table carries the label columns of the
 //! series plus a `value` column. The module then projects
 //!
-//! `Projection(labels-without-__name__..., prom_<fn>([bounds...,] value) AS value)`
+//! `Projection(labels..., prom_<fn>([bounds...,] value) AS value)`
 //!
 //! over that table.
 //!
-//! The projection drops the metric name `__name__` and the result-metadata labels
-//! `__type__` and `__unit__`. Every scalar-math function drops them, as the
-//! interpreter function `labels_without_metric_name` does. The module keeps every
-//! result row and suppresses no NaN. `f(NaN)` and `sqrt(-1)` render as `NaN`,
-//! exactly as the interpreter keeps every float sample.
+//! The projection keeps `__name__` for delayed removal at the query boundary,
+//! while dropping `__type__` and `__unit__`. The module keeps every result row
+//! and suppresses no NaN. `f(NaN)` and `sqrt(-1)` render as `NaN`, exactly as
+//! the interpreter keeps every float sample.
 
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -74,8 +73,7 @@ mod tests {
             .unwrap();
         let mut got = Vec::new();
         for batch in &batches {
-            // `__name__` must be gone; the projection carries only `l` + `value`.
-            assert2::assert!(batch.column_by_name("__name__").is_none());
+            assert2::assert!(batch.column_by_name("__name__").is_some());
             let l = batch
                 .column_by_name("l")
                 .unwrap()
@@ -97,7 +95,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn abs_drops_name_and_keeps_label() {
+    async fn abs_defers_name_drop_and_keeps_label() {
         let got = run(
             vec![labeled("m", "x", -3.0), labeled("m", "y", 4.0)],
             ScalarMathOp::Abs,

@@ -91,7 +91,7 @@ pub(crate) mod prelude {
     pub(crate) use krabka_units::{
         ByteRate, ByteSize, Time, bytes, bytes_per_sec,
         convert::{ByteRateExt as _, ByteSizeExt, StdDurationExt as _, TimeExt},
-        days, hours, millis, minutes, secs,
+        days, hours, mebibytes, millis, minutes, secs,
     };
     pub(crate) use num_traits::{FromPrimitive as _, ToPrimitive as _};
     pub(crate) use object_store::{

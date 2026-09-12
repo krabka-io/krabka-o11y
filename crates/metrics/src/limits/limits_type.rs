@@ -25,6 +25,11 @@ pub struct Limits {
     /// Samples, native histograms and exemplars one series may carry in one
     /// push request, counted together.
     pub max_samples_per_series: u64,
+    /// How far ahead of the distributor wall clock a sample may be created.
+    ///
+    /// This is Mimir's `-validation.create-grace-period`, with its default.
+    #[serde(with = "non_negative_time")]
+    pub creation_grace_period: Time,
     #[serde(with = "serde_units::human::byte_size")]
     pub max_label_name_length: ByteSize,
     #[serde(with = "serde_units::human::byte_size")]
@@ -87,6 +92,7 @@ impl Default for Limits {
             max_global_series_per_user: 150_000,
             max_series_per_request: 100_000,
             max_samples_per_series: 10_000,
+            creation_grace_period: minutes(10),
             max_label_name_length: kibibytes(1),
             max_label_value_length: kibibytes(2),
             active_series_idle_timeout: minutes(20),

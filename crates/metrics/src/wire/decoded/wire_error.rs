@@ -9,6 +9,10 @@ pub enum WireError {
     SnappyOutputTooLarge(usize),
     #[error("snappy decode failed: {0}")]
     SnappyDecode(String),
+    #[error("decoded body exceeds max_output={0}")]
+    DecodedBodyTooLarge(usize),
+    #[error("gzip decode failed: {0}")]
+    GzipDecode(String),
     #[error("protobuf decode failed: {0}")]
     ProtobufDecode(String),
     #[error("invalid remote_write request: {0}")]
@@ -22,7 +26,9 @@ impl WireError {
         match self {
             Self::UnsupportedContentType(_) | Self::UnsupportedContentEncoding(_) => 415,
             Self::SnappyOutputTooLarge(_)
+            | Self::DecodedBodyTooLarge(_)
             | Self::SnappyDecode(_)
+            | Self::GzipDecode(_)
             | Self::ProtobufDecode(_)
             | Self::Invalid(_) => 400,
         }

@@ -28,6 +28,7 @@ pub(crate) fn negate_query_result(operand: QueryResult) -> Result<QueryResult> {
                         }
                     };
                     sample.labels = labels_without_metric_name(&sample.labels);
+                    sample.drop_name = true;
                     sample
                 })
                 .collect(),

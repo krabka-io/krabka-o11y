@@ -7,9 +7,10 @@ pub(crate) struct GridVectors {
     /// instant the driver is at.
     grid: StepGrid,
     /// The result label set of each series, already carrying whatever the leaf's
-    /// shape does to it — a rate drops `__name__`, and so does every
-    /// `*_over_time` member but `last_over_time`.
+    /// shape does to it. Pending `__name__` removal is tracked separately so
+    /// outer label-aware expressions can still observe the metric name.
     labels_by_fp: BTreeMap<SeriesFingerprint, Labels>,
+    drop_name: bool,
     /// The points of each grid instant, indexed by the instant's grid position
     /// and ordered by fingerprint within it.
     ///
@@ -25,11 +26,13 @@ impl GridVectors {
         grid: StepGrid,
         labels_by_fp: BTreeMap<SeriesFingerprint, Labels>,
         steps: Vec<Vec<GridPoint>>,
+        drop_name: bool,
     ) -> Self {
         Self {
             grid,
             labels_by_fp,
             steps,
+            drop_name,
         }
     }
 
@@ -56,6 +59,7 @@ impl GridVectors {
                             labels: labels.clone(),
                             ts_ms: point.ts_ms,
                             value: SampleValue::Float(point.value),
+                            drop_name: self.drop_name,
                         })
                 })
                 .collect(),

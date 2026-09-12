@@ -151,5 +151,5 @@ pub(crate) async fn info_planner_path_matches_interpreter() {
     let operator_result = hist_engine
         .plan_instant_expr("t", &hist_expr, 600_000)
         .await;
-    assert2::assert!(matches!(operator_result, Err(PromqlError::Plan(_))));
+    assert2::assert!(matches!(operator_result, Err(PromqlError::Exec(_))));
 }

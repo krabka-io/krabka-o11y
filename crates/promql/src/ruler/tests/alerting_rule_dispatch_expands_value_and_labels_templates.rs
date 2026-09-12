@@ -31,9 +31,8 @@ annotations:
     .expect("alert dispatch");
 
     assert2::assert!(dispatched == 1);
-    // `$value` is formatted via format_sample_value and `$labels.job` resolved
-    // (in alert label values too); unknown actions like `humanize` are left
-    // untouched.
+    // The shared Go-template runtime expands variables and Prometheus helpers
+    // in alert label values and annotations.
     assert2::assert!(
         sink.alerts()
             == vec![super::super::AlertmanagerAlert {
@@ -44,10 +43,7 @@ annotations:
                     ("job".to_string(), "api".to_string()),
                 ]),
                 annotations: BTreeMap::from([
-                    (
-                        "passthrough".to_string(),
-                        "{{ humanize $value }}".to_string()
-                    ),
+                    ("passthrough".to_string(), "1".to_string()),
                     ("summary".to_string(), "api value 1".to_string()),
                 ]),
                 starts_at_ms: 60_000,

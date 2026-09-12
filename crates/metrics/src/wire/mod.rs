@@ -19,8 +19,9 @@ pub use decoded::{
 };
 pub use histogram::{v1_histogram_to_native, v2_histogram_to_native};
 pub use remote_read::{
-    DEFAULT_MAX_READ_DECOMPRESSED, RemoteReadError, decode_read_request, encode_read_response,
-    matchers_to_selectors, series_to_timeseries,
+    DEFAULT_MAX_READ_DECOMPRESSED, RemoteReadError, decode_read_request,
+    encode_chunked_read_frames, encode_read_response, matchers_to_selectors,
+    negotiate_read_response_type, series_to_timeseries,
 };
 pub use v1::decode_v1;
 pub use v2::{WrittenCounts, decode_v2};

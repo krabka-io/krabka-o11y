@@ -27,6 +27,7 @@ overrides:
   tenant-d:
     max_series_per_request: 3
     max_samples_per_series: 5
+    creation_grace_period: "45s"
     active_series_idle_timeout: "2m"
     otlp_delta_max_stale: "90s"
     otlp_delta_max_streams: 7
@@ -45,6 +46,7 @@ overrides:
 
         check!(d.max_series_per_request == 3);
         check!(d.max_samples_per_series == 5, "not the series cap");
+        check!(d.creation_grace_period == secs(45));
         check!(
             p.for_tenant("tenant-a").max_series_per_request
                 == Limits::default().max_series_per_request,

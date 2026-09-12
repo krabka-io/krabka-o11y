@@ -52,6 +52,8 @@ mod tests {
         m.query_started();
         m.query_started();
         m.query_finished();
+        m.record_ruler_rule(false);
+        m.record_ruler_group(0.25);
 
         let mut buf = String::new();
         let r = m.registry.lock().await;
@@ -67,6 +69,8 @@ mod tests {
             "krabka_metrics_query_eval_duration_seconds",
             "krabka_metrics_query_errors_total",
             "krabka_metrics_active_queries",
+            "krabka_metrics_rule_evaluation_failures_total",
+            "krabka_metrics_rule_group_last_duration_seconds 0.25",
             "route=\"query\"",
             "route=\"query_range\"",
             "status=\"error\"",

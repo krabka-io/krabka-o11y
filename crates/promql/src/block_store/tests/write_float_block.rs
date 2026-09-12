@@ -8,7 +8,7 @@ pub(crate) async fn write_float_block(
     value: f64,
 ) {
     let fp = series_labels.fingerprint();
-    let batch = encode_float_samples(&[(fp, ts_ms, value)]).unwrap();
+    let batch = encode_float_samples(&[(fp, ts_ms, value, None)]).unwrap();
     let block_meta = block_store
         .writer()
         .write_block("tenant-a", object_key, float_sample_schema(), &[batch])

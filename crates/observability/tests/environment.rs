@@ -6,7 +6,7 @@ use krabka_observability::{
     QuerierIndexSource, Role, ServiceConfig, audit::AuditArgs, server_security::ServerSecurityArgs,
     wal_client_security::WalClientSecurityArgs,
 };
-use krabka_units::{bytes, days, kibibytes, millis, minutes, nanos, secs};
+use krabka_units::{bytes, days, hours, kibibytes, mebibytes, millis, minutes, nanos, secs};
 
 #[test]
 fn service_config_reads_environment() {
@@ -187,6 +187,12 @@ fn service_config_reads_environment() {
                         querier_shard_index_cache_ttl: minutes(6),
                         querier_shard_fetch_concurrency: NonZeroUsize::new(33).unwrap(),
                         querier_cold_block_fetch_concurrency: NonZeroUsize::new(9).unwrap(),
+                        querier_query_frontend_split_interval: hours(1),
+                        querier_query_frontend_max_parallelism: NonZeroUsize::new(14).unwrap(),
+                        querier_query_frontend_max_retries: 5,
+                        querier_query_frontend_cache_ttl: days(7),
+                        querier_query_frontend_max_cache_freshness: minutes(10),
+                        querier_query_frontend_target_bytes_per_shard: mebibytes(600),
                         querier_hot_tail_bucket_width: minutes(2),
                         querier_hot_tail_interval: millis(60),
                         querier_dependency_reconnect_interval: millis(600),

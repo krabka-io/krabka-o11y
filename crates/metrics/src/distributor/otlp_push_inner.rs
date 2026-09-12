@@ -1,6 +1,7 @@
 use super::{
     DecodedSeries, DistributorState, HeaderMap, PushError, PushSuccess, TenantId,
-    TranslationStrategy, append_decoded_series, decode_otlp_stateful_bytes,
+    TranslationStrategy, append_decoded_series, decode_otlp_http_body,
+    decode_otlp_stateful_bytes_with_promoted_resource_attributes,
     require_otlp_protobuf_content_type,
 };
 
@@ -11,7 +12,8 @@ pub(crate) async fn otlp_push_inner(
     body: &[u8],
 ) -> Result<(PushSuccess, u64), PushError> {
     require_otlp_protobuf_content_type(headers)?;
-    let mut series = decode_tenant_otlp(state, tenant, body)?;
+    let body = decode_otlp_http_body(headers, body, state.max_decompressed)?;
+    let mut series = decode_tenant_otlp(state, tenant, &body)?;
     let items = series.len() as u64;
     // Backfill the decoded series count onto the enclosing `metrics_ingest` span.
     tracing::Span::current().record("krabka.ingest.series", items);
@@ -36,7 +38,12 @@ fn decode_tenant_otlp(
     let accumulator = state.otlp_delta_accumulators.for_tenant(tenant);
     let mut guard = accumulator.lock().expect("otlp delta accumulator poisoned");
     guard.seen_at(now);
-    let decoded = decode_otlp_stateful_bytes(body, TranslationStrategy::default(), &mut guard);
+    let decoded = decode_otlp_stateful_bytes_with_promoted_resource_attributes(
+        body,
+        TranslationStrategy::default(),
+        &mut guard,
+        &state.otlp_promote_resource_attributes,
+    );
     // Bound before the error is propagated, so a rejected body cannot leave the
     // streams it created behind.
     guard.bound(limits);

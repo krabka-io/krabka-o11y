@@ -71,8 +71,8 @@ use krabka_blockstore::{
     read_tenant_log_index_shard_from_object_store,
     read_tenant_log_index_shard_ranges_from_object_store,
     read_tenant_log_index_shards_from_object_store, register_log_blocks,
-    register_log_blocks_from_object_store, series_fingerprint, write_log_block,
-    write_log_block_to_object_store, write_log_index_manifest,
+    register_log_blocks_from_object_store, series_fingerprint, transient_object_store_error,
+    write_log_block, write_log_block_to_object_store, write_log_index_manifest,
     write_tenant_log_index_manifest_to_object_store,
     write_tenant_log_index_shard_catalog_to_object_store,
     write_tenant_log_index_shard_to_object_store,
@@ -98,6 +98,10 @@ use krabka_logql::{
     parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
     parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
     plan_stream_query,
+};
+use krabka_query_frontend::{
+    CacheKey, ExecutionOptions, InMemoryCache, PlannedQuery, QueryFrontend, QueryFrontendAdapter,
+    QueryFrontendError,
 };
 use krabka_units::{
     ByteRate, ByteSize, Time,
@@ -146,6 +150,7 @@ mod limits;
 mod log_level;
 mod panic_containment;
 mod querier;
+mod query_frontend;
 mod readiness;
 mod request_tenant;
 mod role;
@@ -201,6 +206,7 @@ pub use querier::{
     execute_stream_query_with_hot_tail_frontier, execute_tail_query,
     execute_tail_query_with_frontier, metric_plan_scan_sql, stream_plan_scan_sql,
 };
+pub(crate) use query_frontend::{execute_index_shards_query, execute_logs_query_frontend};
 pub use readiness::{DRAINING_GATE, ReadinessGate, RoleReadiness, readiness_router, ready};
 pub use role::RoleKind;
 pub use service::{
@@ -293,12 +299,12 @@ pub(crate) use self::{
             metadata_handlers::{
                 api_prom_label_names, api_prom_label_names_post, api_prom_label_values,
                 api_prom_label_values_post, api_prom_series, api_prom_series_post,
-                handle_api_prom_query, handle_api_prom_query_range, handle_query, index_stats,
-                index_stats_post, index_volume, index_volume_post, index_volume_range,
+                handle_api_prom_query, handle_api_prom_query_range, handle_query, index_shards,
+                index_stats, index_stats_post, index_volume, index_volume_post, index_volume_range,
                 index_volume_range_post, label_values, label_values_post, series, series_post,
                 tail,
             },
-            query_execution::execute_http_query_for_tenant,
+            query_execution::{execute_http_query_for_tenant, execute_http_query_for_tenant_inner},
             request_types::{
                 DetectedFieldStats, DetectedFieldType, DetectedFieldsParams, DetectedLabelsParams,
                 PatternsParams, QueryParams, SeriesParams, VolumeAggregateBy, VolumeKind,
@@ -457,7 +463,10 @@ pub(crate) use self::{
                 parse_sort_vector_expression, scalar_vector_expression_result,
                 strip_outer_parenthesized_expression,
             },
-            http_queries::{execute_http_metric_instant_query, execute_http_stream_query},
+            http_queries::{
+                execute_http_metric_instant_query, execute_http_stream_query,
+                validate_loki_interval,
+            },
             result_transforms::{
                 apply_metric_binary_arithmetic_to_loki_result,
                 execute_http_metric_binary_arithmetic_query,

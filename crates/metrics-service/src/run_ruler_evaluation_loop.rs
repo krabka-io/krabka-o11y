@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerSink, Arc, MetricStore, PrometheusApiState, RecordingRuleWalSink, RulerAlertState,
-    RulerGroupState, RulerShard, RulerStateSink, TenantId, Time, TimeExt, current_time_ms,
+    RulerGroupState, RulerShard, RulerStateSink, Time, TimeExt, current_time_ms,
     evaluate_ruler_once,
 };
 
@@ -10,7 +10,6 @@ use super::{
 pub async fn run_ruler_evaluation_loop<S, W, A, R, Stop>(
     state: Arc<PrometheusApiState<S>>,
     sinks: (W, A, R),
-    tenant: TenantId,
     shard: RulerShard,
     interval: Time,
     stop: Stop,
@@ -28,16 +27,21 @@ where
     tokio::pin!(stop);
     loop {
         let eval_time_ms = current_time_ms();
-        evaluate_ruler_once(
-            &state,
-            (&wal_sink, &alert_sink, &state_sink),
-            &mut alert_state,
-            &mut group_state,
-            &tenant,
-            shard,
-            eval_time_ms,
-        )
-        .await?;
+        for tenant in state.ruler_tenants() {
+            if let Err(error) = evaluate_ruler_once(
+                &state,
+                (&wal_sink, &alert_sink, &state_sink),
+                &mut alert_state,
+                &mut group_state,
+                &tenant,
+                shard,
+                eval_time_ms,
+            )
+            .await
+            {
+                tracing::error!(tenant = %tenant, %error, "ruler tenant evaluation failed");
+            }
+        }
 
         tokio::select! {
             () = &mut stop => break,

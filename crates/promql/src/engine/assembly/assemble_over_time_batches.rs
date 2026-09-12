@@ -57,6 +57,7 @@ pub(crate) fn assemble_over_time_batches(
                     labels,
                     ts_ms: time_ms,
                     value: SampleValue::Float(value),
+                    drop_name: !preserve_metric_name,
                 }
             })
         })

@@ -1,13 +1,14 @@
 use clap::Parser as _;
+use krabka_units::convert::{ByteSizeExt as _, TimeExt as _};
 
 use super::prelude::{
     Arc, BlockIndex, BufferedLogHotTail, ClientResourcePolicy, CompactionFrontierSource,
     DeferredWalConsumerConnect, InMemoryWalSink, IngestLimitError, LabelIndex, LogIngestLimiter,
     LogQueryAuthorizer, Principal, QuerierState, QueryAuthorizationError, ServiceConfig,
     ServiceDependencies, ServiceMetrics, SharedCompactionFrontier, StreamScanOptions, TenantId,
-    WalLogRecord, admin_connection_options, async_trait, build_service_dependencies, check, millis,
-    minutes, next_compactor_object_store_backoff, secs, validate_compactor_policy,
-    validate_distributor_policy, with_querier_dependencies,
+    WalLogRecord, admin_connection_options, async_trait, build_service_dependencies, check, days,
+    hours, mebibytes, millis, minutes, next_compactor_object_store_backoff, secs,
+    validate_compactor_policy, validate_distributor_policy, with_querier_dependencies,
 };
 
 mod compactor_policy_rejects_zero_and_invalid_bounds;

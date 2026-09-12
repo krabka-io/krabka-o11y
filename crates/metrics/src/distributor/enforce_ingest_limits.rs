@@ -1,7 +1,7 @@
 use super::{
     DecodedSeries, DistributorState, HaElection, PushError, TenantId,
-    enforce_and_record_active_series, enforce_ingestion_rate, enforce_label_limits,
-    enforce_out_of_order_window, strip_replica_label, validate,
+    enforce_and_record_active_series, enforce_creation_grace_period, enforce_ingestion_rate,
+    enforce_label_limits, enforce_out_of_order_window, strip_replica_label, validate,
 };
 
 /// Applies every per-tenant ingest gate to `series`, in the order the push path
@@ -21,6 +21,7 @@ pub(crate) async fn enforce_ingest_limits(
     let now = state.clock.now();
     validate(series, limits)?;
     enforce_label_limits(limits, series)?;
+    enforce_creation_grace_period(limits, series, state.clock.now_unix_ms())?;
     // Decide-and-commit the in-memory HA winner atomically so a racing replica
     // cannot also win the same (tenant, cluster); only the durable Kafka persist
     // is left async, after the in-memory winner is already fixed.

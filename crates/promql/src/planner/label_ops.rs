@@ -45,6 +45,7 @@ mod tests {
             labels,
             ts_ms: 1_000,
             value: SampleValue::Float(value),
+            drop_name: false,
         }
     }
 
@@ -131,7 +132,7 @@ mod tests {
     fn label_replace_invalid_regex_errors() {
         let err = apply_label_replace(vec![sample(&[("src", "x")], 1.0)], "dst", "$1", "src", "(")
             .unwrap_err();
-        assert2::assert!(matches!(err, PromqlError::Plan(_)));
+        assert2::assert!(matches!(err, PromqlError::Exec(_)));
     }
 
     #[test]

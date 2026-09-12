@@ -5,6 +5,7 @@ use super::{
     TimeExt, VALUE_COLUMN, build_leaf_batch, col, leaf_scan, leaf_schema, lit,
     prom_session_context,
 };
+use crate::planner::inject_created_timestamp_zeros;
 
 /// Builds the leaf table and operator chain that evaluates `f(selector[range])`
 /// at every instant of `grid` with the given `range` width.
@@ -29,11 +30,18 @@ use super::{
 /// Returns an error if this function cannot build the Arrow batch, the table, or
 /// the projection plan.
 pub async fn plan_rate_range_selector(
-    series: Vec<LabeledSeries>,
+    mut series: Vec<LabeledSeries>,
     grid: StepGrid,
     range: Time,
     kind: RateUdfKind,
 ) -> Result<RateRangePlan> {
+    if matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
+        let range_start_ms = grid.start.saturating_sub(range.millis_i64());
+        for one in &mut series {
+            inject_created_timestamp_zeros(&mut one.samples, range_start_ms);
+        }
+    }
+
     // Collect the distinct label names across all matched series; these become
     // the label columns carried through the operator chain and projected out.
     let mut label_names: BTreeSet<String> = BTreeSet::new();

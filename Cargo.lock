@@ -4147,7 +4147,9 @@ dependencies = [
  "axum",
  "bytes",
  "clap",
+ "crc32c",
  "dashmap",
+ "flate2",
  "futures",
  "krabka-blockstore",
  "krabka-broker",
@@ -4207,6 +4209,7 @@ dependencies = [
  "krabka-metrics",
  "krabka-observability",
  "krabka-promql",
+ "krabka-query-frontend",
  "krabka-telemetry",
  "krabka-units",
  "object_store",
@@ -4269,6 +4272,7 @@ dependencies = [
  "krabka-ids",
  "krabka-logfmt",
  "krabka-logql",
+ "krabka-query-frontend",
  "krabka-security",
  "krabka-telemetry",
  "krabka-units",
@@ -4418,8 +4422,10 @@ dependencies = [
  "krabka-audit",
  "krabka-blockstore",
  "krabka-ids",
+ "krabka-logql",
  "krabka-metrics",
  "krabka-observability",
+ "krabka-query-frontend",
  "krabka-units",
  "num-traits",
  "object_store",
@@ -4458,6 +4464,20 @@ dependencies = [
  "strum 0.28.0",
  "thiserror 2.0.20",
  "zerocopy",
+]
+
+[[package]]
+name = "krabka-query-frontend"
+version = "0.4.0"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "futures",
+ "object_store",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -8376,6 +8396,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "flate2",
  "h2",
  "http",
  "http-body",

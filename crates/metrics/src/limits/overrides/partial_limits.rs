@@ -21,6 +21,11 @@ pub(crate) struct PartialLimits {
     pub(crate) max_series_per_request: Option<u64>,
     #[serde(default)]
     pub(crate) max_samples_per_series: Option<u64>,
+    #[serde(
+        default,
+        deserialize_with = "super::super::option_non_negative_time::deserialize"
+    )]
+    pub(crate) creation_grace_period: Option<Time>,
     #[serde(default, with = "serde_units::human::option_byte_size")]
     pub(crate) max_label_name_length: Option<ByteSize>,
     #[serde(default, with = "serde_units::human::option_byte_size")]

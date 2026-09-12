@@ -271,6 +271,38 @@ pub struct ServiceConfig {
     )]
     pub querier_cold_block_fetch_concurrency: NonZeroUsize,
 
+    /// Width of each range-query frontend partition. Default: `1h`.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_QUERY_FRONTEND_SPLIT_INTERVAL", default_value = "1h", value_parser = krabka_units::parse::positive_time)]
+    pub querier_query_frontend_split_interval: Time,
+
+    /// Maximum query frontend fan-out. Default: `14`.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_QUERIER_QUERY_FRONTEND_MAX_PARALLELISM",
+        default_value = "14"
+    )]
+    pub querier_query_frontend_max_parallelism: NonZeroUsize,
+
+    /// Retries after the first attempt for transient storage failures.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_QUERIER_QUERY_FRONTEND_MAX_RETRIES",
+        default_value = "5"
+    )]
+    pub querier_query_frontend_max_retries: usize,
+
+    /// Process-local result-cache lifetime. Default: `7d`.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_QUERY_FRONTEND_CACHE_TTL", default_value = "7d", value_parser = krabka_units::parse::positive_time)]
+    pub querier_query_frontend_cache_ttl: Time,
+
+    /// Results newer than this are not inserted into the cache. Default: `10m`.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_QUERY_FRONTEND_MAX_CACHE_FRESHNESS", default_value = "10m", value_parser = krabka_units::parse::positive_time)]
+    pub querier_query_frontend_max_cache_freshness: Time,
+
+    /// Approximate bytes assigned to one fingerprint shard. Default: `600MiB`.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_QUERY_FRONTEND_TARGET_BYTES_PER_SHARD", default_value = "600MiB", value_parser = krabka_units::parse::positive_byte_size)]
+    pub querier_query_frontend_target_bytes_per_shard: ByteSize,
+
     #[arg(long, env = "KRABKA_OBSERVABILITY_QUERIER_HOT_TAIL_BUCKET_WIDTH", default_value = "1m", value_parser = krabka_units::parse::positive_time)]
     pub querier_hot_tail_bucket_width: Time,
 
@@ -354,6 +386,13 @@ impl Default for ServiceConfig {
                 .expect("default querier shard fetch concurrency is nonzero"),
             querier_cold_block_fetch_concurrency: NonZeroUsize::new(8)
                 .expect("default querier cold-block fetch concurrency is nonzero"),
+            querier_query_frontend_split_interval: crate::hours(1),
+            querier_query_frontend_max_parallelism: NonZeroUsize::new(14)
+                .expect("default query frontend parallelism is nonzero"),
+            querier_query_frontend_max_retries: 5,
+            querier_query_frontend_cache_ttl: days(7),
+            querier_query_frontend_max_cache_freshness: minutes(10),
+            querier_query_frontend_target_bytes_per_shard: krabka_units::mebibytes(600),
             querier_hot_tail_bucket_width: minutes(1),
             querier_hot_tail_interval: millis(50),
             querier_dependency_reconnect_interval: millis(500),

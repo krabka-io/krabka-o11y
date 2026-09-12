@@ -32,6 +32,18 @@ impl<'a> TemplateRenderContext<'a> {
         }
     }
 
+    pub(crate) fn with_json_variables(
+        mut self,
+        variables: &BTreeMap<String, serde_json::Value>,
+    ) -> Self {
+        self.variables.extend(
+            variables
+                .iter()
+                .map(|(name, value)| (name.clone(), TemplateRuntimeValue::Json(value.clone()))),
+        );
+        self
+    }
+
     pub(crate) fn with_current_dot(&self, value: TemplateRuntimeValue) -> Self {
         Self {
             line: self.line,

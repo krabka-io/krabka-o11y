@@ -227,6 +227,16 @@ pub(crate) struct Cli {
         value_parser = parse_distributor_max_decompressed
     )]
     pub(crate) distributor_max_decompressed: ByteSize,
+    /// Additional OTLP resource attributes to copy onto every translated
+    /// metric series. Service identity is promoted to job and instance
+    /// without being listed here; all resource attributes remain on
+    /// `target_info`.
+    #[arg(
+        long = "distributor.otel-promote-resource-attributes",
+        env = "KRABKA_METRICS_DISTRIBUTOR_OTEL_PROMOTE_RESOURCE_ATTRIBUTES",
+        value_delimiter = ','
+    )]
+    pub(crate) distributor_otel_promote_resource_attributes: Vec<String>,
     /// Mimir-style runtime overrides file, which sets the per-tenant limits.
     ///
     /// Without one, every tenant gets the built-in defaults, and the built-in

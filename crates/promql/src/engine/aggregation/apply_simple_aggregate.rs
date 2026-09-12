@@ -48,6 +48,7 @@ pub(crate) fn apply_simple_aggregate(
         let state = groups
             .entry(labels_key(&labels))
             .or_insert_with(|| AggregateState::new(labels));
+        state.drop_name |= sample.drop_name;
         match sample.value {
             SampleValue::Float(value) => {
                 if op.aggregates_histograms() && state.has_histogram() {
@@ -86,6 +87,7 @@ pub(crate) fn apply_simple_aggregate(
                 labels: state.labels,
                 ts_ms: time_ms,
                 value,
+                drop_name: state.drop_name,
             })
         })
         .collect())

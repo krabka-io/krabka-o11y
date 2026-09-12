@@ -124,8 +124,8 @@ pub(crate) async fn histogram_range_planner_path_matches_interpreter() {
     // Pin the absolute rules the parity above relies on (not just
     // operator==interpreter).
 
-    // `rate(h[10m])` yields ONE histogram sample (name dropped), built by the
-    // shared counter-reset + extrapolation rules.
+    // `rate(h[10m])` yields one histogram sample whose name is pending removal
+    // at the public query boundary.
     let rate_expr =
         parse_promql_with_duration_context("rate(h[10m])", DurationExprContext::instant(time_ms))
             .expect("parse rate");
@@ -142,7 +142,8 @@ pub(crate) async fn histogram_range_planner_path_matches_interpreter() {
         panic!("expected vector for rate");
     };
     assert2::assert!(rate_samples.len() == 1);
-    assert2::assert!(rate_samples[0].labels.get("__name__") == None);
+    assert2::assert!(rate_samples[0].labels.get("__name__") == Some("h"));
+    assert2::assert!(rate_samples[0].drop_name);
     assert2::assert!(matches!(rate_samples[0].value, SampleValue::Histogram(_)));
 
     // `min_over_time(h[10m])` over an all-histogram window yields NO row

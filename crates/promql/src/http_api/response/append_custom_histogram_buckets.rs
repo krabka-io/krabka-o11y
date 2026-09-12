@@ -1,6 +1,6 @@
 use super::{
-    BOUNDARY_OPEN_LEFT, HistogramBucketJson, NativeHistogram, append_spanned_buckets,
-    custom_histogram_bound,
+    BOUNDARY_CLOSED_BOTH, BOUNDARY_OPEN_LEFT, HistogramBucketJson, NativeHistogram,
+    append_spanned_buckets, custom_histogram_bound,
 };
 
 pub(crate) fn append_custom_histogram_buckets(
@@ -13,7 +13,11 @@ pub(crate) fn append_custom_histogram_buckets(
         &hist.positive_spans,
         &hist.positive_counts,
         |index| HistogramBucketJson {
-            boundary_rule: BOUNDARY_OPEN_LEFT,
+            boundary_rule: if index == 0 {
+                BOUNDARY_CLOSED_BOTH
+            } else {
+                BOUNDARY_OPEN_LEFT
+            },
             lower: custom_histogram_bound(index - 1, custom_values),
             upper: custom_histogram_bound(index, custom_values),
             count: 0.0,

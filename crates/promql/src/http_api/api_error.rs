@@ -31,6 +31,42 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    pub(crate) fn timeout(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            error_type: "timeout",
+            message: message.into(),
+        }
+    }
+
+    /// Axum cancels an in-flight handler by dropping its future, so a client
+    /// disconnect normally has no response channel on which to send this. This
+    /// mapping is retained for cancellation sources that remain representable.
+    #[allow(dead_code)]
+    pub(crate) fn canceled(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::from_u16(499).expect("499 is a valid HTTP status"),
+            error_type: "canceled",
+            message: message.into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_termination_errors_match_prometheus_statuses() {
+        let timeout = ApiError::timeout("deadline");
+        assert2::assert!(timeout.status == StatusCode::SERVICE_UNAVAILABLE);
+        assert2::assert!(timeout.error_type == "timeout");
+
+        let canceled = ApiError::canceled("gone");
+        assert2::assert!(canceled.status.as_u16() == 499);
+        assert2::assert!(canceled.error_type == "canceled");
+    }
 }
 
 impl From<WireError> for ApiError {
@@ -61,9 +97,8 @@ impl From<PromqlError> for ApiError {
             PromqlError::Parse(_) | PromqlError::Plan(_) => (StatusCode::BAD_REQUEST, "bad_data"),
             PromqlError::Unsupported(_) => (StatusCode::UNPROCESSABLE_ENTITY, "execution"),
             PromqlError::Limit(limit_error) => return Self::from(limit_error.clone()),
-            PromqlError::Exec(_) | PromqlError::Store(_) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "execution")
-            }
+            PromqlError::Exec(_) => (StatusCode::UNPROCESSABLE_ENTITY, "execution"),
+            PromqlError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "execution"),
         };
         Self {
             status,

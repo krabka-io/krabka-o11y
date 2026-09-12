@@ -43,6 +43,7 @@ pub(crate) fn assemble_scalar_math_batches(
                 // unchanged (the interpreter keeps `sample.ts_ms`).
                 ts_ms: sample_timestamps.value(row),
                 value: SampleValue::Float(values.value(row)),
+                drop_name: true,
             });
         }
     }

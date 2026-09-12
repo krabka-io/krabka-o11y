@@ -62,12 +62,12 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
             get(parse_query).post(parse_query_post),
         )
         .route("/api/v1/status/buildinfo", get(build_info))
-        .route("/api/v1/status/config", get(status_config))
+        .route("/api/v1/status/config", get(status_config::<S>))
         .route("/api/v1/status/flags", get(status_flags::<S>))
         .route("/api/v1/status/runtimeinfo", get(runtime_info::<S>))
         .route("/api/v1/status/tsdb", get(tsdb_status::<S>))
         .route("/api/v1/status/tsdb/blocks", get(tsdb_blocks::<S>))
-        .route("/api/v1/status/walreplay", get(wal_replay_status))
+        .route("/api/v1/status/walreplay", get(wal_replay_status::<S>))
         .route(
             "/prometheus/api/v1/query",
             get(query::<S>).post(query_post::<S>),
@@ -138,7 +138,7 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
             get(parse_query).post(parse_query_post),
         )
         .route("/prometheus/api/v1/status/buildinfo", get(build_info))
-        .route("/prometheus/api/v1/status/config", get(status_config))
+        .route("/prometheus/api/v1/status/config", get(status_config::<S>))
         .route("/prometheus/api/v1/status/flags", get(status_flags::<S>))
         .route(
             "/prometheus/api/v1/status/runtimeinfo",
@@ -151,7 +151,7 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
         )
         .route(
             "/prometheus/api/v1/status/walreplay",
-            get(wal_replay_status),
+            get(wal_replay_status::<S>),
         )
         .with_state(state)
 }

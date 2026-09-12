@@ -1,4 +1,6 @@
-use super::{Arc, DataType, Field, Schema, SchemaRef, fingerprint_field, timestamp_field};
+use super::{
+    Arc, COL_NH_START_TS, DataType, Field, Schema, SchemaRef, fingerprint_field, timestamp_field,
+};
 
 /// Float samples, which are counters, gauges, and classic histogram bucket
 /// series.
@@ -8,5 +10,6 @@ pub fn float_sample_schema() -> SchemaRef {
         fingerprint_field(),
         timestamp_field(),
         Field::new("value", DataType::Float64, false),
+        Field::new(COL_NH_START_TS, DataType::Int64, true),
     ]))
 }

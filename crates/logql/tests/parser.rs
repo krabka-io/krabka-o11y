@@ -1309,6 +1309,35 @@ fn query_evaluator_line_format_applies_regex_template_helpers() {
 }
 
 #[test]
+fn public_template_renderer_supports_prometheus_alert_variables_and_functions() {
+    let template = LineFormat::new(
+        r#"{{ if $labels.job }}{{ title $labels.job }} {{ printf "%.1f" $value }} {{ humanize 1500 }} {{ humanizeDuration 90 }} {{ humanizePercentage $value }} {{ humanize1024 2048 }} {{ reReplaceAll "a.+" "service" $externalLabels.cluster }} {{ $externalURL }} {{ label "job" (first $samples) }}={{ value (first $samples) }}{{ end }}"#,
+    )
+    .unwrap();
+    let variables = BTreeMap::from([
+        ("value".to_string(), serde_json::json!(0.125)),
+        ("labels".to_string(), serde_json::json!({"job": "api"})),
+        (
+            "externalLabels".to_string(),
+            serde_json::json!({"cluster": "alpha"}),
+        ),
+        (
+            "externalURL".to_string(),
+            serde_json::json!("https://prom.example"),
+        ),
+        (
+            "samples".to_string(),
+            serde_json::json!([{"Labels": {"job": "worker"}, "Value": 7}]),
+        ),
+    ]);
+
+    assert2::assert!(
+        template.render_with_variables("", &BTreeMap::new(), &variables)
+            == "Api 0.1 1.5k 1m 30s 12.5% 2ki service https://prom.example worker=7"
+    );
+}
+
+#[test]
 fn parses_label_format_stage_with_rename_and_template_assignments() {
     let query = parse_query(
         r#"{app="api"} | logfmt | label_format route=path, summary="{{.method}} {{.status}}""#,

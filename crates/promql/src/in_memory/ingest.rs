@@ -27,6 +27,18 @@ impl InMemoryMetricStore {
         ts_ms: i64,
         value: f64,
     ) {
+        self.push_float_with_start_timestamp(tenant, labels, ts_ms, value, None);
+    }
+
+    /// Appends a float sample and its optional counter start timestamp.
+    pub fn push_float_with_start_timestamp(
+        &mut self,
+        tenant: &str,
+        labels: impl Into<Arc<Labels>>,
+        ts_ms: i64,
+        value: f64,
+        start_timestamp_ms: Option<i64>,
+    ) {
         let labels = labels.into();
         let fp = labels.fingerprint();
         self.floats
@@ -37,6 +49,7 @@ impl InMemoryMetricStore {
                 labels,
                 ts_ms,
                 value,
+                start_timestamp_ms,
             });
     }
 
@@ -133,12 +146,13 @@ impl InMemoryMetricStore {
             SamplePayload::Float {
                 timestamp_ms,
                 value,
-                ..
-            } => self.push_float(
+                start_timestamp_ms,
+            } => self.push_float_with_start_timestamp(
                 &record.tenant,
                 Arc::clone(&series_labels),
                 *timestamp_ms,
                 *value,
+                *start_timestamp_ms,
             ),
             SamplePayload::Hist { timestamp_ms, hist } => {
                 self.push_histogram(

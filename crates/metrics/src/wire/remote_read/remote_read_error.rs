@@ -14,4 +14,10 @@ pub enum RemoteReadError {
     Encode(String),
     #[error("unsupported remote_read matcher type {0}")]
     UnsupportedMatcher(i32),
+    #[error("server does not support any requested remote_read response type: {0:?}")]
+    UnsupportedResponseTypes(Vec<i32>),
+    #[error("remote_read samples are out of timestamp order: {previous} then {current}")]
+    UnorderedSamples { previous: i64, current: i64 },
+    #[error("remote_read query count exceeds i64 at index {0}")]
+    TooManyQueries(usize),
 }

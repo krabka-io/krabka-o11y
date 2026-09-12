@@ -26,27 +26,28 @@ pub(crate) fn apply_quantile_aggregate(
     if !is_valid_quantile(quantile) {
         emit_warning(invalid_quantile_warning(quantile));
     }
-    let mut groups: BTreeMap<String, (Labels, Vec<f64>)> = BTreeMap::new();
+    let mut groups: BTreeMap<String, (Labels, Vec<f64>, bool)> = BTreeMap::new();
     for sample in samples {
         let SampleValue::Float(value) = sample.value else {
             emit_info(histogram_ignored_in_aggregation_info("quantile"));
             continue;
         };
         let labels = aggregate_labels(&sample.labels, modifier);
-        groups
+        let group = groups
             .entry(labels_key(&labels))
-            .or_insert_with(|| (labels, Vec::new()))
-            .1
-            .push(value);
+            .or_insert_with(|| (labels, Vec::new(), false));
+        group.1.push(value);
+        group.2 |= sample.drop_name;
     }
 
     groups
         .into_values()
-        .filter_map(|(labels, mut values)| {
+        .filter_map(|(labels, mut values, drop_name)| {
             quantile_value(quantile, &mut values).map(|value| InstantSample {
                 labels,
                 ts_ms: time_ms,
                 value: SampleValue::Float(value),
+                drop_name,
             })
         })
         .collect()

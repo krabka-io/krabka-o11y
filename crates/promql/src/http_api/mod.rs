@@ -17,14 +17,14 @@ use krabka_blockstore::TenantId;
 use krabka_metrics::{
     LimitError, Limits, OverridesProvider, authorized_tenant_from_headers, wire::WireError,
 };
-use krabka_observability::{audit::AuditHandle, server_security::Principal};
+use krabka_observability::{ReadinessGate, audit::AuditHandle, server_security::Principal};
 use krabka_units::prelude::*;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    EngineOpts, MetricStore, PromqlEngine, PromqlError,
+    EngineOpts, MetricStore, PromqlEngine, PromqlError, WalHead,
     metrics::ServiceMetrics,
     query_frontend::{QueryFrontendCache, QueryFrontendOptions, RangeQueryCache},
     ruler::{RulerAlertStateRecord, RulerGroupState, RulerGroupStateRecord},
@@ -43,6 +43,8 @@ mod rules;
 mod status;
 
 pub(crate) use alert_templates::expand_alert_template;
+#[cfg(test)]
+pub(crate) use alert_templates::expand_alert_template_with_external;
 use cardinality::{
     cardinality_active_series, cardinality_active_series_post, cardinality_label_names,
     cardinality_label_names_post, cardinality_label_values, cardinality_label_values_post,
@@ -59,14 +61,14 @@ use request::{
     discovery_matchers, discovery_window, duration_param, enforce_query_range_limit,
     enforce_sample_count, enforce_selected_series_limit, optional_timestamp_ms,
     parse_cardinality_form, parse_cardinality_params, parse_discovery_form, parse_discovery_params,
-    parse_limit_parameter, required_form_param, selector_matchers, timestamp_ms,
+    parse_limit_parameter, query_timeout, required_form_param, selector_matchers, timestamp_ms,
     validate_timestamp_range,
 };
 pub(crate) use response::format_sample_value;
 use response::{
-    active_series_response, cardinality_label_names_response, cardinality_label_values_response,
-    exemplar_key, exemplars_json, labels_json, labels_key, sample_string, success_data_response,
-    success_response,
+    QueryResponseStats, active_series_response, cardinality_label_names_response,
+    cardinality_label_values_response, exemplar_key, exemplars_json, labels_json, labels_key,
+    sample_string, success_data_response, success_response, success_response_with_stats,
 };
 use rules::{
     alerts, delete_ruler_config_group, delete_ruler_config_namespace, ruler_config_group,

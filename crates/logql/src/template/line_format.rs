@@ -28,6 +28,18 @@ impl LineFormat {
         self.render_with_timestamp(line, fields, None)
     }
 
+    /// Renders with caller-provided Go-template variables such as `$labels`.
+    #[must_use]
+    pub fn render_with_variables(
+        &self,
+        line: &str,
+        fields: &Labels,
+        variables: &std::collections::BTreeMap<String, serde_json::Value>,
+    ) -> String {
+        let context = TemplateRenderContext::new(line, fields, None).with_json_variables(variables);
+        render_template_parts(&self.parts, &context)
+    }
+
     pub(crate) fn render_with_timestamp(
         &self,
         line: &str,

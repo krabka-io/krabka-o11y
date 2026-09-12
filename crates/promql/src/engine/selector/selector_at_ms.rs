@@ -1,4 +1,4 @@
-use super::{AtModifier, AtModifierBounds, PromqlError, Result, system_time_ms};
+use super::{AtModifier, AtModifierBounds, Result, system_time_ms};
 
 pub(crate) fn selector_at_ms(
     time_ms: i64,
@@ -10,15 +10,7 @@ pub(crate) fn selector_at_ms(
     };
     match at {
         AtModifier::At(time) => system_time_ms(*time),
-        AtModifier::Start => bounds.map(|bounds| bounds.start_ms).ok_or_else(|| {
-            PromqlError::Unsupported(
-                "@ start()/end() modifiers require range-query bounds".to_string(),
-            )
-        }),
-        AtModifier::End => bounds.map(|bounds| bounds.end_ms).ok_or_else(|| {
-            PromqlError::Unsupported(
-                "@ start()/end() modifiers require range-query bounds".to_string(),
-            )
-        }),
+        AtModifier::Start => Ok(bounds.map_or(time_ms, |bounds| bounds.start_ms)),
+        AtModifier::End => Ok(bounds.map_or(time_ms, |bounds| bounds.end_ms)),
     }
 }

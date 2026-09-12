@@ -13,4 +13,6 @@ pub(crate) struct OperatorInstant {
     pub(crate) labels_by_fp: BTreeMap<SeriesFingerprint, Labels>,
     /// How to read the output batches into an instant vector.
     pub(crate) shape: InstantShape,
+    /// Whether the operator's output metric names are pending removal.
+    pub(crate) drop_name: bool,
 }

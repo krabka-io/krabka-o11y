@@ -33,7 +33,13 @@ pub(crate) fn eval_many_to_one_vector_binary(
             else {
                 continue;
             };
-            let labels = if op.is_comparison() && !binary_returns_bool(modifier) {
+            let preserves_name = op.is_comparison() && !binary_returns_bool(modifier);
+            let drop_name = if preserves_name {
+                left_sample.drop_name
+            } else {
+                true
+            };
+            let labels = if preserves_name {
                 left_sample.labels
             } else {
                 labels_without_metric_name(&left_sample.labels)
@@ -42,6 +48,7 @@ pub(crate) fn eval_many_to_one_vector_binary(
                 labels,
                 ts_ms: left_sample.ts_ms,
                 value,
+                drop_name,
             });
             continue;
         };
@@ -49,7 +56,13 @@ pub(crate) fn eval_many_to_one_vector_binary(
         else {
             continue;
         };
-        let mut labels = if op.is_comparison() && !binary_returns_bool(modifier) {
+        let preserves_name = op.is_comparison() && !binary_returns_bool(modifier);
+        let drop_name = if preserves_name {
+            left_sample.drop_name
+        } else {
+            true
+        };
+        let mut labels = if preserves_name {
             left_sample.labels.clone()
         } else {
             labels_without_metric_name(&left_sample.labels)
@@ -59,6 +72,7 @@ pub(crate) fn eval_many_to_one_vector_binary(
             labels,
             ts_ms: left_sample.ts_ms,
             value,
+            drop_name,
         });
     }
     Ok(out)

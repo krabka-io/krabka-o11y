@@ -22,6 +22,7 @@ mod merge_by_fingerprint;
 mod planned;
 mod planner_dispatch;
 mod planner_support;
+mod query_stats;
 mod range_fold_plan;
 mod range_functions;
 mod range_query;
@@ -72,6 +73,8 @@ use planned::{InstantShape, PlannedInstant};
 use planner_support::{LabelOpsKind, string_literal_value};
 #[cfg(test)]
 use planner_support::{match_rate_range_call, range_expr_routes_through_planner};
+pub(crate) use query_stats::{QuerySampleStats, collect_query_sample_stats, query_stats_step};
+use query_stats::{query_stats_enabled, record_queryable_samples};
 #[cfg(all(test, feature = "experimental-functions"))]
 use range_functions::validate_smoothing_factor;
 #[cfg(test)]
@@ -99,14 +102,9 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
-    /// The `[start, end]` bounds of the active range query. The per-step planner
-    /// range driver ([`PromqlEngine::eval_range_via_planner_scoped`]) scopes
-    /// them. A bare top-level selector with an `@ start()` or `@ end()` modifier
-    /// then resolves those bounds to the range bounds of the query, as
-    /// Prometheus does, and the planner still evaluates the selector at each grid
-    /// step. This task-local is absent for an instant query. There, `@ start()`
-    /// and `@ end()` are invalid, and the selector planner raises the same hard
-    /// error as the interpreter.
+    /// The `[start, end]` bounds of the active query. A range query scopes its
+    /// grid bounds; an instant query scopes `[time, time]`. Selectors with an
+    /// `@ start()` or `@ end()` modifier resolve against these bounds.
     static AT_MODIFIER_BOUNDS: AtModifierBounds;
 }
 

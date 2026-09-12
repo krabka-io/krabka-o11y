@@ -62,13 +62,16 @@ pub use result::{
 };
 pub use ruler::{
     AlertmanagerAlert, AlertmanagerSink, RecordingRuleWalSink, RulerAlertState,
-    RulerAlertStateRecord, RulerGroupEvaluation, RulerGroupState, RulerGroupStateRecord,
-    RulerShard, RulerStateSink, RulerWalError, evaluate_and_append_recording_rule,
-    evaluate_and_append_recording_rule_group, evaluate_and_dispatch_alerting_rule,
-    evaluate_and_dispatch_alerting_rule_group, evaluate_and_dispatch_alerting_rule_with_state,
-    evaluate_and_persist_alerting_rule_group, evaluate_and_persist_alerting_rule_with_state,
-    evaluate_and_persist_ruler_rule_group, evaluate_and_persist_ruler_rule_set,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval, evaluate_recording_rule,
+    RulerAlertStateRecord, RulerEvaluationReport, RulerGroupEvaluation, RulerGroupEvaluationStatus,
+    RulerGroupState, RulerGroupStateRecord, RulerRuleEvaluationStatus, RulerShard, RulerStateSink,
+    RulerWalError, evaluate_and_append_recording_rule, evaluate_and_append_recording_rule_group,
+    evaluate_and_dispatch_alerting_rule, evaluate_and_dispatch_alerting_rule_group,
+    evaluate_and_dispatch_alerting_rule_with_state, evaluate_and_persist_alerting_rule_group,
+    evaluate_and_persist_alerting_rule_with_state, evaluate_and_persist_ruler_rule_group,
+    evaluate_and_persist_ruler_rule_set,
+    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval,
+    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
+    evaluate_and_persist_ruler_rule_set_with_report, evaluate_recording_rule,
     evaluate_ruler_rule_group, evaluate_ruler_rule_set, filter_ruler_rule_set_due_for_eval,
     filter_ruler_rule_set_for_shard, filter_ruler_rule_set_for_shard_due_for_eval,
 };

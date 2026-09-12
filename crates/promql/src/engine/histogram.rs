@@ -11,8 +11,8 @@ use super::{
         native_histogram_quantile_nan_skew_info, warn_mixed_histograms,
     },
     labels::{
-        float_sample_value, labels_key, labels_without_label, labels_without_metric_and_label,
-        labels_without_metric_name, record_metric_name,
+        float_sample_value, labels_key, labels_without_label, labels_without_metric_name,
+        record_metric_name,
     },
 };
 use crate::{

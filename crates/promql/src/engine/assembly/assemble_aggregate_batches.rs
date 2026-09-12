@@ -43,6 +43,7 @@ pub(crate) fn assemble_aggregate_batches(
                 labels,
                 ts_ms: time_ms,
                 value: SampleValue::Float(values.value(row)),
+                drop_name: false,
             });
         }
     }

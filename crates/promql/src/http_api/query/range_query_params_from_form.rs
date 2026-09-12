@@ -8,6 +8,8 @@ pub(crate) fn range_query_params_from_form(body: &[u8]) -> Result<RangeQueryPara
     let mut end = None;
     let mut step = None;
     let mut limit = None;
+    let mut timeout = None;
+    let mut stats = None;
     for (name, value) in form_urlencoded::parse(body) {
         match name.as_ref() {
             "query" => query = Some(value.into_owned()),
@@ -15,6 +17,8 @@ pub(crate) fn range_query_params_from_form(body: &[u8]) -> Result<RangeQueryPara
             "end" => end = Some(value.into_owned()),
             "step" => step = Some(value.into_owned()),
             "limit" => limit = Some(parse_limit_parameter(&value)?),
+            "timeout" => timeout = Some(value.into_owned()),
+            "stats" => stats = Some(value.into_owned()),
             _ => {}
         }
     }
@@ -24,5 +28,21 @@ pub(crate) fn range_query_params_from_form(body: &[u8]) -> Result<RangeQueryPara
         end: required_form_param(end, "end")?,
         step: required_form_param(step, "step")?,
         limit,
+        timeout,
+        stats,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_timeout_and_stats() {
+        let params =
+            range_query_params_from_form(b"query=up&start=0&end=1&step=1&timeout=250ms&stats=all")
+                .unwrap();
+        assert2::assert!(params.timeout.as_deref() == Some("250ms"));
+        assert2::assert!(params.stats.as_deref() == Some("all"));
+    }
 }

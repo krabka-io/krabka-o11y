@@ -1,10 +1,11 @@
 use super::{
     ActiveQueryGuard, AlertStateKey, Arc, AuditHandle, BTreeMap, ByteSize, EngineOpts, Limits,
     MetricStore, OverridesProvider, PromqlEngine, QueryFrontendCache, QueryFrontendOptions,
-    QueryFrontendState, RangeQueryCache, RulerAlertStateRecord, RulerAlertStateStore,
-    RulerGroupState, RulerGroupStateRecord, RulerRuleStore, RwLock, Semaphore, ServiceMetrics,
-    SystemTime, TenantId, Time, mebibytes,
+    QueryFrontendState, RangeQueryCache, ReadinessGate, RulerAlertStateRecord,
+    RulerAlertStateStore, RulerGroupState, RulerGroupStateRecord, RulerRuleStore, RwLock,
+    Semaphore, ServiceMetrics, SystemTime, TenantId, Time, WalHead, mebibytes, minutes,
 };
+use crate::{RulerEvaluationReport, RulerGroupEvaluationStatus, RulerRuleEvaluationStatus};
 
 /// Shared state for the Prometheus HTTP query API.
 pub struct PrometheusApiState<S: MetricStore> {
@@ -15,6 +16,10 @@ pub struct PrometheusApiState<S: MetricStore> {
     pub(crate) ruler_alerts: RwLock<RulerAlertStateStore>,
     pub(crate) ruler_group_state: RwLock<RulerGroupState>,
     pub(crate) ruler_evaluation_time_ms: RwLock<i64>,
+    pub(crate) ruler_rule_status:
+        RwLock<BTreeMap<(String, String, String, usize), RulerRuleEvaluationStatus>>,
+    pub(crate) ruler_group_status:
+        RwLock<BTreeMap<(String, String, String), RulerGroupEvaluationStatus>>,
     pub(crate) query_frontend: Option<QueryFrontendState>,
     /// The per-tenant query limits. A state built without
     /// [`PrometheusApiState::with_query_limits`] applies `Limits::default()` to
@@ -22,10 +27,15 @@ pub struct PrometheusApiState<S: MetricStore> {
     pub(crate) query_limits: OverridesProvider,
     pub(crate) query_gate: Option<Arc<Semaphore>>,
     pub(crate) max_concurrent_queries: usize,
+    pub(crate) query_timeout: Time,
     pub(crate) remote_read_max_body: ByteSize,
     pub(crate) metrics: Option<ServiceMetrics>,
     pub(crate) audit: AuditHandle,
     pub(crate) start_time: SystemTime,
+    pub(crate) status_log_level: String,
+    pub(crate) storage_retention: Option<Time>,
+    pub(crate) wal_head: Option<WalHead>,
+    pub(crate) wal_head_readiness: Option<ReadinessGate>,
 }
 
 impl<S: MetricStore> PrometheusApiState<S> {
@@ -39,14 +49,21 @@ impl<S: MetricStore> PrometheusApiState<S> {
             ruler_alerts: RwLock::new(BTreeMap::new()),
             ruler_group_state: RwLock::new(RulerGroupState::default()),
             ruler_evaluation_time_ms: RwLock::new(0),
+            ruler_rule_status: RwLock::new(BTreeMap::new()),
+            ruler_group_status: RwLock::new(BTreeMap::new()),
             query_frontend: None,
             query_limits: OverridesProvider::new(Limits::default()),
             query_gate: None,
             max_concurrent_queries: 0,
+            query_timeout: minutes(2),
             remote_read_max_body: mebibytes(64),
             metrics: None,
             audit: AuditHandle::disabled(),
             start_time: SystemTime::now(),
+            status_log_level: "unknown (not configured)".to_string(),
+            storage_retention: None,
+            wal_head: None,
+            wal_head_readiness: None,
         }
     }
 
@@ -76,6 +93,13 @@ impl<S: MetricStore> PrometheusApiState<S> {
         self
     }
 
+    /// Sets the process-wide default and upper bound for HTTP query deadlines.
+    #[must_use]
+    pub fn with_query_timeout(mut self, query_timeout: Time) -> Self {
+        self.query_timeout = query_timeout;
+        self
+    }
+
     /// Sets the compressed and decompressed body cap for remote reads.
     #[must_use]
     pub fn with_remote_read_max_body(mut self, max_body: ByteSize) -> Self {
@@ -86,6 +110,27 @@ impl<S: MetricStore> PrometheusApiState<S> {
     #[must_use]
     pub fn with_metrics(mut self, metrics: ServiceMetrics) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    /// Supplies process values rendered by the Prometheus status endpoints.
+    #[must_use]
+    pub fn with_runtime_status(
+        mut self,
+        log_level: impl Into<String>,
+        storage_retention: Option<Time>,
+    ) -> Self {
+        self.status_log_level = log_level.into();
+        self.storage_retention = storage_retention;
+        self
+    }
+
+    /// Exposes the live WAL-head retention and materialized offsets.
+    #[must_use]
+    pub fn with_wal_head_status(mut self, head: WalHead, readiness: ReadinessGate) -> Self {
+        self.storage_retention = Some(head.retention());
+        self.wal_head = Some(head);
+        self.wal_head_readiness = Some(readiness);
         self
     }
 
@@ -187,6 +232,14 @@ impl<S: MetricStore> PrometheusApiState<S> {
             .unwrap_or_default()
     }
 
+    /// Returns the tenants that currently have ruler configuration.
+    #[must_use]
+    pub fn ruler_tenants(&self) -> Vec<TenantId> {
+        self.ruler_rules
+            .read()
+            .map_or_else(|_| Vec::new(), |rules| rules.keys().cloned().collect())
+    }
+
     /// Applies replayed ruler group state for HTTP rule rendering.
     pub fn apply_ruler_group_state(&self, record: RulerGroupStateRecord) {
         if let Ok(mut group_state) = self.ruler_group_state.write() {
@@ -239,5 +292,72 @@ impl<S: MetricStore> PrometheusApiState<S> {
             .read()
             .ok()
             .and_then(|group_state| group_state.last_eval_ms(tenant, namespace, group))
+    }
+
+    /// Publishes one completed ruler pass to the HTTP status view and metrics.
+    pub fn apply_ruler_evaluation_report(&self, report: &RulerEvaluationReport) {
+        if let Ok(mut statuses) = self.ruler_rule_status.write() {
+            for status in &report.rules {
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_ruler_rule(status.last_error.is_empty());
+                }
+                statuses.insert(
+                    (
+                        status.tenant.clone(),
+                        status.namespace.clone(),
+                        status.group.clone(),
+                        status.rule_index,
+                    ),
+                    status.clone(),
+                );
+            }
+        }
+        if let Ok(mut statuses) = self.ruler_group_status.write() {
+            for status in &report.groups {
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_ruler_group(status.evaluation_time_seconds);
+                }
+                statuses.insert(
+                    (
+                        status.tenant.clone(),
+                        status.namespace.clone(),
+                        status.group.clone(),
+                    ),
+                    status.clone(),
+                );
+            }
+        }
+    }
+
+    pub(crate) fn ruler_rule_status(
+        &self,
+        tenant: &TenantId,
+        namespace: &str,
+        group: &str,
+        rule_index: usize,
+    ) -> Option<RulerRuleEvaluationStatus> {
+        self.ruler_rule_status.read().ok().and_then(|statuses| {
+            statuses
+                .get(&(
+                    tenant.to_string(),
+                    namespace.into(),
+                    group.into(),
+                    rule_index,
+                ))
+                .cloned()
+        })
+    }
+
+    pub(crate) fn ruler_group_status(
+        &self,
+        tenant: &TenantId,
+        namespace: &str,
+        group: &str,
+    ) -> Option<RulerGroupEvaluationStatus> {
+        self.ruler_group_status.read().ok().and_then(|statuses| {
+            statuses
+                .get(&(tenant.to_string(), namespace.into(), group.into()))
+                .cloned()
+        })
     }
 }

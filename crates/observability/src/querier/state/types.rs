@@ -1,10 +1,10 @@
 use krabka_units::convert::StdDurationExt;
 
 use crate::{
-    Arc, BTreeMap, BlockIndex, CompactionFrontierSource, Instant, LabelIndex, Labels, Limits,
-    LogHotTail, LogQueryAuthorizer, Mutex, NonZeroUsize, ObjectPath, ObjectStore,
-    OverridesProvider, PathBuf, ServiceMetrics, SharedLogDeleteRequests, Time, TimeRange, minutes,
-    secs,
+    Arc, BTreeMap, BlockIndex, CompactionFrontierSource, ExecutionOptions, InMemoryCache, Instant,
+    LabelIndex, Labels, Limits, LogHotTail, LogQueryAuthorizer, Mutex, NonZeroUsize, ObjectPath,
+    ObjectStore, OverridesProvider, PathBuf, ServiceMetrics, SharedLogDeleteRequests, Time,
+    TimeRange, Value, minutes, secs,
 };
 
 mod cached_dynamic_index;

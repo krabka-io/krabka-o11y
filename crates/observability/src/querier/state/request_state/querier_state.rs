@@ -19,6 +19,10 @@ impl QuerierState {
             overrides: Arc::new(OverridesProvider::new(Limits::default())),
             limits: Limits::default(),
             metrics: None,
+            query_frontend_cache: Arc::new(InMemoryCache::<Value>::new(days(7).to_std())),
+            query_frontend_options: ExecutionOptions::default(),
+            query_frontend_split_ns: hours(1).nanos_i64(),
+            query_frontend_target_bytes: krabka_units::mebibytes(600).bytes_u64(),
         }
     }
 
@@ -145,6 +149,18 @@ impl QuerierState {
         self.dynamic_index_cache.shard_cache_ttl = config.querier_shard_index_cache_ttl;
         self.dynamic_index_cache.shard_fetch_concurrency = config.querier_shard_fetch_concurrency;
         self.cold_block_fetch_concurrency = config.querier_cold_block_fetch_concurrency;
+        self.query_frontend_cache = Arc::new(InMemoryCache::new(
+            config.querier_query_frontend_cache_ttl.to_std(),
+        ));
+        self.query_frontend_options = ExecutionOptions {
+            max_parallelism: config.querier_query_frontend_max_parallelism,
+            max_retries: config.querier_query_frontend_max_retries,
+            max_cache_freshness: config.querier_query_frontend_max_cache_freshness.to_std(),
+        };
+        self.query_frontend_split_ns = config.querier_query_frontend_split_interval.nanos_i64();
+        self.query_frontend_target_bytes = config
+            .querier_query_frontend_target_bytes_per_shard
+            .bytes_u64();
         self
     }
 

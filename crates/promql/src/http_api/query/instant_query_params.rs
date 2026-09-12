@@ -5,4 +5,6 @@ pub(crate) struct InstantQueryParams {
     pub(crate) query: String,
     pub(crate) time: Option<String>,
     pub(crate) limit: Option<usize>,
+    pub(crate) timeout: Option<String>,
+    pub(crate) stats: Option<String>,
 }

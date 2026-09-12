@@ -10,5 +10,19 @@ pub fn decode_otlp_stateful(
     strategy: TranslationStrategy,
     accumulator: &mut DeltaAccumulator,
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
-    decode_otlp_inner(data, strategy, Some(accumulator))
+    decode_otlp_inner(data, strategy, Some(accumulator), &[])
+}
+
+pub(crate) fn decode_otlp_stateful_with_promoted_resource_attributes(
+    data: &MetricsData,
+    strategy: TranslationStrategy,
+    accumulator: &mut DeltaAccumulator,
+    additional_resource_attributes: &[String],
+) -> Result<Vec<DecodedSeries>, OtlpError> {
+    decode_otlp_inner(
+        data,
+        strategy,
+        Some(accumulator),
+        additional_resource_attributes,
+    )
 }

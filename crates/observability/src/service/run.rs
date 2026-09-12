@@ -49,6 +49,13 @@ pub fn run(config: ServiceConfig) -> Result<ServiceStatus, Infallible> {
         querier_shard_index_cache_ttl: _querier_shard_index_cache_ttl,
         querier_shard_fetch_concurrency: _querier_shard_fetch_concurrency,
         querier_cold_block_fetch_concurrency: _querier_cold_block_fetch_concurrency,
+        querier_query_frontend_split_interval: _querier_query_frontend_split_interval,
+        querier_query_frontend_max_parallelism: _querier_query_frontend_max_parallelism,
+        querier_query_frontend_max_retries: _querier_query_frontend_max_retries,
+        querier_query_frontend_cache_ttl: _querier_query_frontend_cache_ttl,
+        querier_query_frontend_max_cache_freshness: _querier_query_frontend_max_cache_freshness,
+        querier_query_frontend_target_bytes_per_shard:
+            _querier_query_frontend_target_bytes_per_shard,
         querier_hot_tail_bucket_width: _querier_hot_tail_bucket_width,
         querier_hot_tail_interval: _querier_hot_tail_interval,
         querier_dependency_reconnect_interval: _querier_dependency_reconnect_interval,

@@ -36,7 +36,21 @@ pub(crate) fn format_template_printf(args: &[String]) -> String {
         let Some(verb) = chars.next() else {
             break;
         };
-        if verb != 's' {
+        let value = values.next().map(String::as_str).unwrap_or_default();
+
+        if matches!(verb, 'f' | 'F') {
+            let Ok(value) = value.parse::<f64>() else {
+                formatted.push_str("%!f(string)");
+                continue;
+            };
+            let precision = precision.unwrap_or(6);
+            let value = format!("{value:.precision$}");
+            formatted.push_str(&format_template_printf_string(
+                &value, width, None, left_align,
+            ));
+            continue;
+        }
+        if !matches!(verb, 's' | 'v') {
             formatted.push('%');
             if left_align {
                 formatted.push('-');
@@ -52,7 +66,6 @@ pub(crate) fn format_template_printf(args: &[String]) -> String {
             continue;
         }
 
-        let value = values.next().map(String::as_str).unwrap_or_default();
         formatted.push_str(&format_template_printf_string(
             value, width, precision, left_align,
         ));

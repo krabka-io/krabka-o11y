@@ -12,7 +12,7 @@ use super::{Expr, instant_expr_is_plannable};
 ///   (`promql/engine.go::vectorSelectorSingle` rejects `t <= eval - lookback`),
 ///   so it excludes a sample exactly on the lookback boundary.
 ///
-/// - Scalar-typed expression (`time()`, `1 + 2`, the argless calendar forms).
+/// - Scalar-typed expression (`time()`, `1 + 2`).
 ///   The driver folds a no-label scalar series per step (empty label set,
 ///   `SampleValue::Float`).
 ///

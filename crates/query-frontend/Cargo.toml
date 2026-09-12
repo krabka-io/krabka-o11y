@@ -1,0 +1,26 @@
+[package]
+name = "krabka-query-frontend"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Signal-agnostic query frontend orchestration for Krabka"
+repository = "https://github.com/krabka-io/krabka-o11y"
+homepage = "https://github.com/krabka-io/krabka-o11y"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+futures = { workspace = true }
+object_store = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+assert2 = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
