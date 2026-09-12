@@ -139,3 +139,23 @@ async fn empty_stats_parameter_does_not_add_stats() {
     let body = json(response).await;
     assert2::assert!(body["data"].get("stats").is_none());
 }
+
+#[tokio::test]
+async fn stats_response_keeps_query_annotations() {
+    let state = Arc::new(PrometheusApiState::new(
+        Arc::new(annotation_store()),
+        EngineOpts::default(),
+    ));
+    let (status, body) = annotated_query_body(
+        state,
+        &format!(
+            "{}&stats=1",
+            annotation_query_uri("/api/v1/query", "histogram_quantile(0.5, up)")
+        ),
+    )
+    .await;
+
+    assert2::assert!(status == StatusCode::OK);
+    assert2::assert!(body["data"]["stats"].is_object());
+    assert2::assert!(body["warnings"].as_array().map(Vec::len) == Some(1));
+}

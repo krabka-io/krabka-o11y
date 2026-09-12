@@ -387,8 +387,13 @@ fn four_significant_digits(value: f64) -> String {
     } else {
         7
     };
-    format!("{value:.decimals$}")
-        .trim_end_matches('0')
-        .trim_end_matches('.')
-        .to_string()
+    let rendered = format!("{value:.decimals$}");
+    if decimals == 0 {
+        rendered
+    } else {
+        rendered
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
 }

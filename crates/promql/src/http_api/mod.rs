@@ -42,8 +42,8 @@ mod response;
 mod rules;
 mod status;
 
-pub(crate) use alert_templates::expand_alert_template;
 #[cfg(test)]
+pub(crate) use alert_templates::expand_alert_template;
 pub(crate) use alert_templates::expand_alert_template_with_external;
 use cardinality::{
     cardinality_active_series, cardinality_active_series_post, cardinality_label_names,

@@ -32,6 +32,8 @@ where
 
     let rule_labels = yaml_string_map(rule, "labels");
     let annotations = yaml_string_map(rule, "annotations");
+    let external_labels = sink.template_external_labels();
+    let external_url = sink.template_external_url(&alert_name);
     let hold_for = yaml_duration(rule, "for")?;
     let keep_firing_for = yaml_duration(rule, "keep_firing_for")?;
     let rule_id = format!("{alert_name}\n{expr}");
@@ -48,7 +50,13 @@ where
         labels.extend(rule_labels.clone());
         // Expand `$value`/`$labels` in alert label values against the sample's
         // series labels, matching Prometheus alert templating.
-        let labels = expand_alert_label_map(&labels, value, &sample.labels);
+        let labels = expand_alert_label_map(
+            &labels,
+            value,
+            &sample.labels,
+            &external_labels,
+            &external_url,
+        );
         let key = AlertStateKey {
             tenant: tenant.to_string(),
             rule_id: rule_id.clone(),
@@ -107,13 +115,19 @@ where
             starts_at_ms,
             eval_time_ms,
         ));
-        let annotations = expand_alert_label_map(&annotations, value, &sample.labels);
+        let annotations = expand_alert_label_map(
+            &annotations,
+            value,
+            &sample.labels,
+            &external_labels,
+            &external_url,
+        );
         alerts.push(AlertmanagerAlert {
             labels,
             annotations,
             starts_at_ms,
             ends_at_ms: None,
-            generator_url: String::new(),
+            generator_url: external_url.clone(),
         });
     }
 
@@ -163,7 +177,7 @@ where
                     annotations: BTreeMap::new(),
                     starts_at_ms,
                     ends_at_ms: None,
-                    generator_url: String::new(),
+                    generator_url: external_url.clone(),
                 });
             }
             // Had fired and the keep-firing window has elapsed (or was zero):
@@ -193,7 +207,7 @@ where
                     annotations: BTreeMap::new(),
                     starts_at_ms,
                     ends_at_ms: Some(eval_time_ms),
-                    generator_url: String::new(),
+                    generator_url: external_url.clone(),
                 });
             }
             // Only ever pending: drop silently, no notification.

@@ -60,6 +60,20 @@ impl RulerAlertmanagerSink {
 
 #[async_trait::async_trait]
 impl AlertmanagerSink for RulerAlertmanagerSink {
+    fn template_external_labels(&self) -> krabka_blockstore::Labels {
+        match self {
+            Self::Http(sink) => sink.template_external_labels(),
+            Self::Noop(sink) => sink.template_external_labels(),
+        }
+    }
+
+    fn template_external_url(&self, alert_name: &str) -> String {
+        match self {
+            Self::Http(sink) => sink.template_external_url(alert_name),
+            Self::Noop(sink) => sink.template_external_url(alert_name),
+        }
+    }
+
     async fn dispatch_alerts(
         &self,
         alerts: Vec<krabka_promql::AlertmanagerAlert>,

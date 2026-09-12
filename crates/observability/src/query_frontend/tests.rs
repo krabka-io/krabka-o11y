@@ -111,3 +111,67 @@ fn matrix_merge_groups_labels_orders_samples_and_deduplicates_boundaries() {
             == json!([{"metric":{"app":"a"},"values":[[1.0,"1"],[2.0,"2"],[3.0,"3"]]}])
     );
 }
+
+fn query_params(direction: &str) -> QueryParams {
+    QueryParams {
+        query: "{app=\"api\"}".to_string(),
+        time: None,
+        start: Some(0),
+        end: Some(10),
+        since: None,
+        step: None,
+        interval: Some(2),
+        limit: Some(1),
+        direction: Some(direction.to_string()),
+        delay_for: None,
+    }
+}
+
+#[test]
+fn partitioned_queries_keep_direction_and_limit() {
+    let params = planned_query_params(
+        &query_params("backward"),
+        TimeRange {
+            start_ns: 0,
+            end_ns: 5,
+        },
+        true,
+    );
+
+    assert!(params.direction.as_deref() == Some("backward"));
+    assert!(params.limit == Some(1));
+    assert!(params.interval.is_none());
+}
+
+#[test]
+fn log_cache_keys_include_direction() {
+    let range = TimeRange {
+        start_ns: 0,
+        end_ns: 10,
+    };
+    let bounds = full_fingerprint_bounds();
+    let forward = logs_cache_key(
+        "tenant-a",
+        &query_params("forward"),
+        range,
+        bounds,
+        LokiStreamEncoding::default(),
+    );
+    let backward = logs_cache_key(
+        "tenant-a",
+        &query_params("backward"),
+        range,
+        bounds,
+        LokiStreamEncoding::default(),
+    );
+
+    assert!(forward != backward);
+}
+
+#[test]
+fn configured_delete_requests_disable_log_result_caching() {
+    let result = json!({"data":{"result":[{"stream":{"app":"api"},"values":[]}]}});
+
+    assert!(logs_result_is_cacheable(&result, false));
+    assert!(!logs_result_is_cacheable(&result, true));
+}

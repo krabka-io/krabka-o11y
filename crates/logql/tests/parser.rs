@@ -1338,6 +1338,13 @@ fn public_template_renderer_supports_prometheus_alert_variables_and_functions() 
 }
 
 #[test]
+fn prometheus_humanizers_preserve_integer_trailing_zeros() {
+    let template = LineFormat::new("{{ humanize1024 1000 }} {{ humanizePercentage 12 }}").unwrap();
+
+    assert2::assert!(template.render("", &BTreeMap::new()) == "1000 1200%");
+}
+
+#[test]
 fn parses_label_format_stage_with_rename_and_template_assignments() {
     let query = parse_query(
         r#"{app="api"} | logfmt | label_format route=path, summary="{{.method}} {{.status}}""#,

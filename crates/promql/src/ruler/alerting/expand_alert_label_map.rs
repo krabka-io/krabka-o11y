@@ -9,10 +9,18 @@ pub(crate) fn expand_alert_label_map(
     map: &BTreeMap<String, String>,
     value: f64,
     series_labels: &Labels,
+    external_labels: &Labels,
+    external_url: &str,
 ) -> BTreeMap<String, String> {
     map.iter()
         .map(|(name, text)| {
-            let expanded = crate::http_api::expand_alert_template(text, value, series_labels);
+            let expanded = crate::http_api::expand_alert_template_with_external(
+                text,
+                value,
+                series_labels,
+                external_labels,
+                external_url,
+            );
             (name.clone(), expanded)
         })
         .collect()

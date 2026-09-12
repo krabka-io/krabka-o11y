@@ -86,29 +86,9 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
         let mut planned = Vec::with_capacity(ranges.len().saturating_mul(self.shards.len()));
         for range in ranges {
             for bounds in &self.shards {
-                let mut params = request.clone();
-                params.time = None;
-                params.since = None;
-                params.start = Some(range.start_ns);
-                params.end = Some(range.end_ns);
-                if partitioned {
-                    params.direction = Some("forward".to_string());
-                    params.interval = None;
-                    params.limit = None;
-                }
-                let cache_key = CacheKey::new(format!(
-                    "logs\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
-                    self.tenant,
-                    params.query,
-                    range.start_ns,
-                    range.end_ns,
-                    params.step.unwrap_or_default(),
-                    request.interval.unwrap_or_default(),
-                    request.limit.unwrap_or_default(),
-                    bounds.min,
-                    bounds.max,
-                    self.encoding as u8,
-                ));
+                let params = planned_query_params(request, range, partitioned);
+                let cache_key =
+                    logs_cache_key(self.tenant.as_str(), request, range, *bounds, self.encoding);
                 planned.push(PlannedQuery {
                     query: LogsPlannedQuery {
                         params,
@@ -139,11 +119,7 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
     }
 
     fn should_cache(&self, result: &Self::Output) -> bool {
-        result
-            .pointer("/data/result")
-            .and_then(Value::as_array)
-            .is_some_and(|results| !results.is_empty())
-            && result.get("warnings").is_none()
+        logs_result_is_cacheable(result, self.state.delete_requests.is_some())
     }
 
     fn merge(
@@ -159,6 +135,50 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
             self.time_range.end_ns,
         ))
     }
+}
+
+fn planned_query_params(request: &QueryParams, range: TimeRange, partitioned: bool) -> QueryParams {
+    let mut params = request.clone();
+    params.time = None;
+    params.since = None;
+    params.start = Some(range.start_ns);
+    params.end = Some(range.end_ns);
+    if partitioned {
+        params.interval = None;
+    }
+    params
+}
+
+fn logs_cache_key(
+    tenant: &str,
+    request: &QueryParams,
+    range: TimeRange,
+    bounds: FingerprintBounds,
+    encoding: LokiStreamEncoding,
+) -> CacheKey {
+    CacheKey::new(format!(
+        "logs\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+        tenant,
+        request.query,
+        range.start_ns,
+        range.end_ns,
+        request.step.unwrap_or_default(),
+        request.interval.unwrap_or_default(),
+        request.limit.unwrap_or_default(),
+        request.direction.as_deref().unwrap_or_default(),
+        bounds.min,
+        bounds.max,
+        encoding as u8,
+    ))
+}
+
+fn logs_result_is_cacheable(result: &Value, delete_requests_configured: bool) -> bool {
+    !delete_requests_configured
+        && result
+            .pointer("/data/result")
+            .and_then(Value::as_array)
+            .is_some_and(|results| !results.is_empty())
+        && result.get("warnings").is_none()
 }
 
 pub(crate) fn split_ranges(range: TimeRange, split_ns: i64) -> Vec<TimeRange> {

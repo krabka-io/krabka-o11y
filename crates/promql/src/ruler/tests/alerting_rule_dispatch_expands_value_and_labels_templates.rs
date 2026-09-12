@@ -9,7 +9,7 @@ expr: up > 0
 labels:
   detail: "v={{ $value }}"
 annotations:
-  summary: "{{ $labels.job }} value {{ $value }}"
+  summary: "{{ $labels.job }} {{ $externalLabels.cluster }} {{ $externalURL }} value {{ $value }}"
   passthrough: "{{ humanize $value }}"
 "#,
     )
@@ -18,7 +18,12 @@ annotations:
     store.push_float("tenant-a", labels("up", "api"), 60_000, 1.0);
     let store = Arc::new(store);
     let engine = PromqlEngine::new(store, EngineOpts::default());
-    let sink = RecordingAlertmanagerSink::default();
+    let mut external_labels = Labels::new();
+    external_labels.insert("cluster", "prod");
+    let sink = RecordingAlertmanagerSink::with_template_context(
+        external_labels,
+        "https://prom.example/graph?alert=InstanceUp",
+    );
 
     let dispatched = super::super::evaluate_and_dispatch_alerting_rule(
         &engine,
@@ -44,11 +49,14 @@ annotations:
                 ]),
                 annotations: BTreeMap::from([
                     ("passthrough".to_string(), "1".to_string()),
-                    ("summary".to_string(), "api value 1".to_string()),
+                    (
+                        "summary".to_string(),
+                        "api prod https://prom.example/graph?alert=InstanceUp value 1".to_string(),
+                    ),
                 ]),
                 starts_at_ms: 60_000,
                 ends_at_ms: None,
-                generator_url: String::new(),
+                generator_url: "https://prom.example/graph?alert=InstanceUp".to_string(),
             }]
     );
 }

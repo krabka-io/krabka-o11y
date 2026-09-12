@@ -172,6 +172,15 @@ const MIMIR_DIVERGENCES: &[KnownDivergence] = &[
         ],
     },
     KnownDivergence {
+        reason: "Mimir 2.16.1 omits the NaN-observation info annotations emitted by Prometheus \
+             v3.8 and Krabka; the query values are identical.",
+        cases: &[
+            "native_histograms.test:1506",
+            "native_histograms.test:1515",
+            "native_histograms.test:1519",
+        ],
+    },
+    KnownDivergence {
         reason: "The function does not exist in Mimir 2.16.1 at all: the query comes back as `parse \
              error: unknown function`. `ts_of_first_over_time`, `ts_of_last_over_time` and \
              `first_over_time` all arrived upstream after it.",
@@ -283,9 +292,6 @@ const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[KnownDivergence {
         "histograms.test:992",
         "name_label_dropping.test:39",
         "name_label_dropping.test:92",
-        "native_histograms.test:1506",
-        "native_histograms.test:1515",
-        "native_histograms.test:1519",
         "operators.test:117",
         "operators.test:121",
         "operators.test:131",
