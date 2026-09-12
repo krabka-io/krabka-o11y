@@ -31,6 +31,7 @@ fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>
 }
 
 mod a_read_that_repeats_its_tenant_reads_that_tenant;
+mod admin_erasure;
 mod an_unconfigured_state_enforces_the_default_query_limits;
 mod annotated_query_body;
 mod annotation_query_uri;

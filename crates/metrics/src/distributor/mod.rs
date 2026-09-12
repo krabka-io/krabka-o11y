@@ -548,17 +548,38 @@ overrides:
         // refused.
         let zero = window(0);
         check!(
-            super::enforce_out_of_order_window(&state, &zero, &tenant, &[series(1_000)], now)
-                .is_ok()
+            super::enforce_out_of_order_window(
+                &state,
+                &zero,
+                &tenant,
+                &[series(1_000)],
+                Time::ZERO,
+                now,
+            )
+            .is_ok()
         );
         check!(
-            super::enforce_out_of_order_window(&state, &zero, &tenant, &[series(999)], now)
-                .is_err(),
+            super::enforce_out_of_order_window(
+                &state,
+                &zero,
+                &tenant,
+                &[series(999)],
+                Time::ZERO,
+                now,
+            )
+            .is_err(),
             "one millisecond earlier is out of order"
         );
         check!(
-            super::enforce_out_of_order_window(&state, &zero, &tenant, &[series(1_000)], now)
-                .is_ok(),
+            super::enforce_out_of_order_window(
+                &state,
+                &zero,
+                &tenant,
+                &[series(1_000)],
+                Time::ZERO,
+                now,
+            )
+            .is_ok(),
             "the same timestamp is not older"
         );
 
@@ -566,30 +587,104 @@ overrides:
         let (state, _sink) = test_state();
         let ten = window(10_000);
         check!(
-            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(100_000)], now)
-                .is_ok()
+            super::enforce_out_of_order_window(
+                &state,
+                &ten,
+                &tenant,
+                &[series(100_000)],
+                Time::ZERO,
+                now,
+            )
+            .is_ok()
         );
         check!(
-            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(90_000)], now)
-                .is_ok(),
+            super::enforce_out_of_order_window(
+                &state,
+                &ten,
+                &tenant,
+                &[series(90_000)],
+                Time::ZERO,
+                now,
+            )
+            .is_ok(),
             "exactly the window back is still allowed"
         );
         check!(
-            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(89_999)], now)
-                .is_err(),
+            super::enforce_out_of_order_window(
+                &state,
+                &ten,
+                &tenant,
+                &[series(89_999)],
+                Time::ZERO,
+                now,
+            )
+            .is_err(),
             "one millisecond beyond it is not"
+        );
+
+        // A reported clock-confidence bound widens the configured window for
+        // the tenant, so jitter the clock agent has measured is not rejected
+        // as an out-of-order sample.
+        let (state, _sink) = test_state();
+        check!(
+            super::enforce_out_of_order_window(
+                &state,
+                &ten,
+                &tenant,
+                &[series(100_000)],
+                Time::from_millis(25_000),
+                now,
+            )
+            .is_ok()
+        );
+        check!(
+            super::enforce_out_of_order_window(
+                &state,
+                &ten,
+                &tenant,
+                &[series(75_000)],
+                Time::from_millis(25_000),
+                now,
+            )
+            .is_ok(),
+            "the clock-confidence bound is the effective window"
+        );
+        check!(
+            super::enforce_out_of_order_window(
+                &state,
+                &ten,
+                &tenant,
+                &[series(74_999)],
+                Time::from_millis(25_000),
+                now,
+            )
+            .is_err()
         );
 
         // A negative window disables the check entirely.
         let (state, _sink) = test_state();
         let disabled = window(-1);
         check!(
-            super::enforce_out_of_order_window(&state, &disabled, &tenant, &[series(1_000)], now)
-                .is_ok()
+            super::enforce_out_of_order_window(
+                &state,
+                &disabled,
+                &tenant,
+                &[series(1_000)],
+                Time::ZERO,
+                now,
+            )
+            .is_ok()
         );
         check!(
-            super::enforce_out_of_order_window(&state, &disabled, &tenant, &[series(1)], now)
-                .is_ok(),
+            super::enforce_out_of_order_window(
+                &state,
+                &disabled,
+                &tenant,
+                &[series(1)],
+                Time::ZERO,
+                now,
+            )
+            .is_ok(),
             "anything goes when the window is negative"
         );
     }

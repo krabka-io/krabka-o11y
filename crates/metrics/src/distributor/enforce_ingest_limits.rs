@@ -1,5 +1,5 @@
 use super::{
-    DecodedSeries, DistributorState, HaElection, PushError, TenantId,
+    DecodedSeries, DistributorState, HaElection, PushError, TenantId, Time,
     enforce_and_record_active_series, enforce_creation_grace_period, enforce_ingestion_rate,
     enforce_label_limits, enforce_out_of_order_window, strip_replica_label, validate,
 };
@@ -16,6 +16,7 @@ pub(crate) async fn enforce_ingest_limits(
     state: &DistributorState,
     tenant: &TenantId,
     series: &mut [DecodedSeries],
+    clock_uncertainty: Time,
 ) -> Result<bool, PushError> {
     let limits = state.limits_for_tenant(tenant);
     let now = state.clock.now();
@@ -43,6 +44,6 @@ pub(crate) async fn enforce_ingest_limits(
     strip_replica_label(series);
     enforce_and_record_active_series(state, limits, tenant, series, now)?;
     enforce_ingestion_rate(state, limits, tenant, series)?;
-    enforce_out_of_order_window(state, limits, tenant, series, now)?;
+    enforce_out_of_order_window(state, limits, tenant, series, clock_uncertainty, now)?;
     Ok(true)
 }

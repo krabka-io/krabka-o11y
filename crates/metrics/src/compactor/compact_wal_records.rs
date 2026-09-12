@@ -82,15 +82,15 @@ pub fn compact_wal_records(records: &[WalRecord]) -> Vec<TenantCompactionRows> {
             .sort_by_key(|row| (row.fingerprint, row.timestamp_ms));
         rows.metadata_rows.sort_by(|left, right| {
             (
-                left.metric_family_name.as_str(),
                 left.fingerprint,
+                left.metric_family_name.as_str(),
                 left.metric_type.as_str(),
                 left.help.as_str(),
                 left.unit.as_str(),
             )
                 .cmp(&(
-                    right.metric_family_name.as_str(),
                     right.fingerprint,
+                    right.metric_family_name.as_str(),
                     right.metric_type.as_str(),
                     right.help.as_str(),
                     right.unit.as_str(),

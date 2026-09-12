@@ -36,6 +36,7 @@ pub struct PrometheusApiState<S: MetricStore> {
     pub(crate) storage_retention: Option<Time>,
     pub(crate) wal_head: Option<WalHead>,
     pub(crate) wal_head_readiness: Option<ReadinessGate>,
+    pub(crate) erasure_store: Option<Arc<dyn object_store::ObjectStore>>,
 }
 
 impl<S: MetricStore> PrometheusApiState<S> {
@@ -64,6 +65,7 @@ impl<S: MetricStore> PrometheusApiState<S> {
             storage_retention: None,
             wal_head: None,
             wal_head_readiness: None,
+            erasure_store: None,
         }
     }
 
@@ -131,6 +133,13 @@ impl<S: MetricStore> PrometheusApiState<S> {
         self.storage_retention = Some(head.retention());
         self.wal_head = Some(head);
         self.wal_head_readiness = Some(readiness);
+        self
+    }
+
+    /// Enables the Prometheus TSDB erasure endpoints on this API state.
+    #[must_use]
+    pub fn with_erasure_store(mut self, store: Arc<dyn object_store::ObjectStore>) -> Self {
+        self.erasure_store = Some(store);
         self
     }
 

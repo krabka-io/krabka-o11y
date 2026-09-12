@@ -1,7 +1,8 @@
 pub(crate) fn is_template_function_name(name: &str) -> bool {
     matches!(
         name,
-        "humanize"
+        "query"
+            | "humanize"
             | "humanizeDuration"
             | "humanizePercentage"
             | "humanize1024"

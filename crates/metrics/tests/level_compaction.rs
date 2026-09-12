@@ -3,18 +3,25 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
+use arrow::{
+    array::{Array as _, ArrayAccessor as _, AsArray as _},
+    datatypes::Int32Type,
+};
 use assert2::{assert, check};
 use krabka_blockstore::{
-    BlockLevel, BlockTimestampUnit, BlockWriter, CompactionPolicy, DEFAULT_BLOCK_READ_MAX, Labels,
-    read_block,
+    BlockLevel, BlockTimestampUnit, BlockWriter, CompactionPolicy, DEFAULT_BLOCK_READ_MAX,
+    ERASURE_REQUEST_PREFIX, ErasureRequest, LabelMatcher, Labels, MatchOp, list_erasure_requests,
+    put_erasure_request, read_block,
 };
 use krabka_metrics::{
-    BucketSpan, CompactionIndexManifest, CompactionObjectPlan, CompactionSeriesLabels,
-    DeferredBlockDeletions, ExemplarRow, FloatRow, MetricBlockKind, MetricCompactionPass,
-    NativeHistogram, NativeHistogramRow, ObjectStoreCompactionIndexSink, ResetHint,
-    TenantCompactionRows, compact_metric_blocks_once, decode_float_samples,
-    decode_native_histograms, enforce_compaction_retention, list_compaction_manifests,
-    plan_metric_compactions, write_compacted_tenant_blocks,
+    BucketSpan, ClockReadingPayload, ClockReadingRow, CompactionIndexManifest,
+    CompactionObjectPlan, CompactionSeriesLabels, DeferredBlockDeletions, ExemplarRow, FloatRow,
+    MetadataRow, MetricBlockKind, MetricCompactionPass, NativeHistogram, NativeHistogramRow,
+    ObjectStoreCompactionIndexSink, ResetHint, TenantCompactionRows, compact_metric_blocks_once,
+    decode_float_samples, decode_native_histograms, enforce_compaction_retention,
+    list_compaction_manifests, plan_metric_compactions,
+    wire::{ClockSourceKind, ClockSyncState, DecodedClockReading, UnixNanos},
+    write_compacted_tenant_blocks,
 };
 use krabka_units::{Time, hours, secs};
 use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory, path::Path};
@@ -344,19 +351,16 @@ fn blocks_in_different_windows_are_not_merged_into_one_job() {
     );
 }
 
-/// Only the two kinds whose rows are keyed by `(fingerprint, timestamp)` are
-/// ever offered to the planner. See `MetricBlockKind::is_mergeable` for why each
-/// of the other three is left out: exemplars share a key legitimately, metadata
-/// rows have no real timestamp, and nothing reads a clock block on any query
-/// path.
+/// Every payload kind is compacted, while each kind keeps its own row-identity
+/// policy during the merge.
 #[test]
-fn only_float_and_native_histogram_blocks_are_ever_compaction_inputs() {
-    for (kind, mergeable) in [
-        (MetricBlockKind::Float, true),
-        (MetricBlockKind::NativeHistograms, true),
-        (MetricBlockKind::Exemplars, false),
-        (MetricBlockKind::Metadata, false),
-        (MetricBlockKind::ClockReadings, false),
+fn every_metric_block_kind_is_a_compaction_input() {
+    for kind in [
+        MetricBlockKind::Float,
+        MetricBlockKind::NativeHistograms,
+        MetricBlockKind::Exemplars,
+        MetricBlockKind::Metadata,
+        MetricBlockKind::ClockReadings,
     ] {
         let manifests = vec![
             manifest("tenant-a", kind, "first", BlockLevel(0), (0, 1_000), 1),
@@ -365,15 +369,14 @@ fn only_float_and_native_histogram_blocks_are_ever_compaction_inputs() {
 
         let jobs = plan_metric_compactions(&manifests, policy(8, 1_000_000, 4));
 
-        check!(!jobs.is_empty() == mergeable, "{kind:?}");
+        check!(!jobs.is_empty(), "{kind:?}");
     }
 }
 
-/// The exclusion has to hold over a real bucket too, and not only over the
-/// planner: an exemplar block beside a float block must come out of a pass
-/// exactly as it went in.
+/// Exemplars compact without treating `(fingerprint, timestamp)` as a unique
+/// key, because two distinct exemplars may legitimately share both.
 #[tokio::test]
-async fn a_pass_leaves_exemplar_blocks_alone_while_it_merges_float_blocks() {
+async fn a_pass_merges_exemplars_without_dropping_shared_timestamp_rows() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let sink = ObjectStoreCompactionIndexSink::new(store.clone());
     let block_writer = BlockWriter::new(store.clone());
@@ -420,20 +423,143 @@ async fn a_pass_leaves_exemplar_blocks_alone_while_it_merges_float_blocks() {
             .iter()
             .map(|output| output.kind)
             .collect::<Vec<_>>()
-            == vec![MetricBlockKind::Float]
+            == vec![MetricBlockKind::Float, MetricBlockKind::Exemplars]
     );
     for exemplar in &exemplars {
         check!(exists(&store, &exemplar.block_key).await, "{exemplar:?}");
-        check!(exists(&store, &exemplar.index_key).await);
+        check!(!exists(&store, &exemplar.index_key).await);
     }
-    check!(
-        list_compaction_manifests(&store)
+    let exemplar_output = pass
+        .outputs
+        .iter()
+        .find(|output| output.kind == MetricBlockKind::Exemplars)
+        .expect("merged exemplar block");
+    check!(exemplar_output.row_count == 4);
+}
+
+#[tokio::test]
+async fn metadata_and_disjoint_clock_dictionaries_merge() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let sink = ObjectStoreCompactionIndexSink::new(store.clone());
+    let writer = BlockWriter::new(store.clone());
+    for (offset, node) in [(1, "host-a"), (3, "host-b")] {
+        let clock = DecodedClockReading {
+            node: node.to_string(),
+            clock: "CLOCK_REALTIME".to_string(),
+            source_kind: ClockSourceKind::Ntp,
+            reading_unix_nanos: UnixNanos::new(NOW_MS * 1_000_000 + offset),
+            uncertainty_nanos: 1,
+            offset_nanos: 0,
+            sync_state: ClockSyncState::Synchronized,
+            reference_id: Some(format!("ref-{node}")),
+            last_sync_unix_nanos: None,
+            frequency_ppb: None,
+            last_step_nanos: None,
+            ntp: None,
+            ptp: None,
+            timex: None,
+            gnss: None,
+        };
+        let rows = TenantCompactionRows {
+            tenant: "tenant-a".to_string(),
+            series_labels: BTreeMap::from([(7, labels("metric"))]),
+            float_rows: Vec::new(),
+            histogram_rows: Vec::new(),
+            exemplar_rows: Vec::new(),
+            metadata_rows: vec![MetadataRow {
+                fingerprint: 7,
+                metric_family_name: format!("metric_{offset}"),
+                metric_type: "gauge".to_string(),
+                help: String::new(),
+                unit: String::new(),
+            }],
+            clock_rows: vec![ClockReadingRow {
+                fingerprint: 7,
+                timestamp_ms: NOW_MS + offset,
+                reading: ClockReadingPayload {
+                    reading: clock,
+                    ingest_unix_nanos: UnixNanos::new(NOW_MS * 1_000_000 + offset),
+                },
+            }],
+        };
+        write_compacted_tenant_blocks(&writer, &sink, &rows, offset, offset + 1)
             .await
-            .expect("list manifests")
+            .expect("write metadata and clock blocks");
+    }
+    let mut deferred = DeferredBlockDeletions::new();
+
+    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+
+    for kind in [MetricBlockKind::Metadata, MetricBlockKind::ClockReadings] {
+        let output = pass
+            .outputs
             .iter()
-            .filter(|manifest| manifest.kind == MetricBlockKind::Exemplars)
-            .count()
-            == 2
+            .find(|output| output.kind == kind)
+            .expect("merged block kind");
+        check!(output.row_count == 2);
+    }
+    let clock = pass
+        .outputs
+        .iter()
+        .find(|output| output.kind == MetricBlockKind::ClockReadings)
+        .expect("merged clock block");
+    let nodes = read_block(store, &clock.block_key)
+        .await
+        .expect("read merged clock block")
+        .iter()
+        .flat_map(|batch| {
+            let nodes = batch
+                .column_by_name("node")
+                .expect("node column")
+                .as_dictionary::<Int32Type>()
+                .downcast_dict::<arrow::array::StringArray>()
+                .expect("utf8 dictionary");
+            (0..nodes.len())
+                .map(|row| nodes.value(row).to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    check!(nodes == vec!["host-a".to_string(), "host-b".to_string()]);
+}
+
+#[tokio::test]
+async fn an_erasure_request_rewrites_only_its_series_and_time_range() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    write_float_block(
+        &store,
+        "tenant-a",
+        1,
+        &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0), (9, NOW_MS, 3.0)],
+    )
+    .await;
+    let request = ErasureRequest::new(
+        "tenant-a",
+        "{__name__=\"series_7\"}",
+        vec![vec![LabelMatcher::new("__name__", MatchOp::Eq, "series_7")]],
+        (NOW_MS + 1_000) * 1_000_000,
+        (NOW_MS + 1_000) * 1_000_000,
+        NOW_MS * 1_000_000,
+    );
+    put_erasure_request(&store, ERASURE_REQUEST_PREFIX, &request)
+        .await
+        .expect("persist erasure request");
+    let mut deferred = DeferredBlockDeletions::new();
+
+    let pass = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+
+    assert!(pass.outputs.len() == 1);
+    check!(
+        samples_in(&store, &pass.outputs[0].block_key).await
+            == vec![(7, NOW_MS, 1.0), (9, NOW_MS, 3.0)]
+    );
+    check!(deferred.keys().len() == 1, "the retired source is queued");
+    check!(
+        list_erasure_requests(&store, ERASURE_REQUEST_PREFIX)
+            .await
+            .expect("list erasure requests")
+            .len()
+            == 1,
+        "a rewriting pass keeps the request"
     );
 }
 

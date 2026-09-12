@@ -32,7 +32,7 @@ pub use compactor::{
     CompactionRetentionPhase, CompactionRetentionStats, CompactionSeriesLabels,
     CompactionWalRecord, CompactionWindowError, CompactionWindowResult, CompactionWriteError,
     DEFAULT_FLUSH_MAX_AGE, DEFAULT_FLUSH_MAX_ROWS, DeferredBlockDeletions, ExemplarRow, FloatRow,
-    MetricBlockKind, MetricCompactionError, MetricCompactionJob, MetricCompactionPass,
+    MetadataRow, MetricBlockKind, MetricCompactionError, MetricCompactionJob, MetricCompactionPass,
     MetricsCompactorBuildError, MetricsCompactorConfig, MetricsCompactorConfigError,
     MetricsCompactorRuntime, NativeHistogramRow, ObjectStoreCompactionIndexSink,
     SystemCompactionClock, TenantBatches, TenantCompactionRows, compact_metric_blocks_once,

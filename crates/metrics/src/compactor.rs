@@ -18,15 +18,16 @@ use arrow::{
     record_batch::RecordBatch,
 };
 use async_trait::async_trait;
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use krabka_blockstore::{
     BlockDeletion, BlockDeletionFailure, BlockDeletionReport, BlockLevel, BlockMeta,
     BlockStoreError, BlockTimestampUnit, BlockWriter, CompactionCandidate, CompactionJob,
-    CompactionPolicy, DEFAULT_BLOCK_SWEEP_GRACE, Labels, LifecycleError, MERGE_BATCH_ROWS,
-    MERGE_READ_BATCH_ROWS, ObjectStoreMetrics, ObjectStoreRetryPolicy, OrphanSweepStats,
-    RetentionWindows, RetryingObjectStore, SortedMerge, SummaryColumns, delete_blocks,
-    escape_object_path_segment, input_key_fingerprint, open_block_stream, plan_compactions,
-    plan_expired_blocks, reconcile_orphans, series_block_schema, versioned_compaction_key,
+    CompactionPolicy, DEFAULT_BLOCK_SWEEP_GRACE, ERASURE_REQUEST_PREFIX, ErasureRequest, Index,
+    Labels, LifecycleError, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, ObjectStoreMetrics,
+    ObjectStoreRetryPolicy, OrphanSweepStats, RetentionWindows, RetryingObjectStore, SortedMerge,
+    SummaryColumns, delete_blocks, escape_object_path_segment, input_key_fingerprint,
+    list_erasure_requests, open_block_stream, plan_compactions, plan_expired_blocks,
+    reconcile_orphans, series_block_schema, versioned_compaction_key,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
 use krabka_ids::{Offset, PartitionIndex};
@@ -2841,6 +2842,7 @@ mod float_row;
 mod flush_buffer;
 mod flush_buffer_with_consumer;
 mod list_compaction_manifests;
+mod materialize_metric_erasure_requests;
 mod merge_metric_blocks;
 mod metadata_row;
 mod metric_block_kind;
@@ -2942,6 +2944,7 @@ pub use float_row::FloatRow;
 use flush_buffer::flush_buffer;
 use flush_buffer_with_consumer::flush_buffer_with_consumer;
 pub use list_compaction_manifests::list_compaction_manifests;
+use materialize_metric_erasure_requests::materialize_metric_erasure_requests;
 use merge_metric_blocks::merge_metric_blocks;
 pub use metadata_row::MetadataRow;
 pub use metric_block_kind::MetricBlockKind;

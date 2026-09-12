@@ -5,6 +5,8 @@ use super::{BTreeMap, Instant, SeriesActivity, SeriesFingerprint, Time, TimeExt}
 #[derive(Clone, Debug)]
 pub(crate) struct TenantSeries {
     pub(crate) series: BTreeMap<SeriesFingerprint, SeriesActivity>,
+    /// Latest clock-confidence bound reported for this tenant.
+    pub(crate) clock_uncertainty: Time,
     /// Monotonic instant of this tenant's most recent write. The tracker
     /// evicts the least-recently-written tenant when it is over its cap.
     pub(crate) last_seen: Instant,
@@ -17,6 +19,7 @@ impl TenantSeries {
     pub(crate) fn new(now: Instant, idle_timeout: Time) -> Self {
         Self {
             series: BTreeMap::new(),
+            clock_uncertainty: Time::ZERO,
             last_seen: now,
             idle_timeout,
         }
