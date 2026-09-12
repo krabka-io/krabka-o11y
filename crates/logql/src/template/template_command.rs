@@ -49,6 +49,20 @@ impl TemplateCommand {
                 if let Some(input) = input {
                     values.push(input);
                 }
+                if name == "query" {
+                    return values.first().map_or_else(
+                        || TemplateRuntimeValue::Json(serde_json::Value::Array(Vec::new())),
+                        |query| {
+                            TemplateRuntimeValue::Json(
+                                context
+                                    .queries
+                                    .get(&query.as_rendered_string())
+                                    .cloned()
+                                    .unwrap_or_else(|| serde_json::Value::Array(Vec::new())),
+                            )
+                        },
+                    );
+                }
                 evaluate_template_function(name, &values)
             }
         }

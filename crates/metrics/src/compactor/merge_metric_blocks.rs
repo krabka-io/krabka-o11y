@@ -6,6 +6,7 @@ use super::{
     deduplicate_series_timestamp_runs, open_block_stream, series_block_schema,
     versioned_compaction_key,
 };
+use crate::clock_reading_decl;
 
 /// Merges the blocks one job names into a single block, and publishes its
 /// manifest.
@@ -84,7 +85,10 @@ where
         &compacted_metric_object_key(&planned.job, planned.kind),
         &versions,
     );
-    let decl = series_block_schema();
+    let decl = match planned.kind {
+        super::MetricBlockKind::ClockReadings => clock_reading_decl(),
+        _ => series_block_schema(),
+    };
     let mut merge = SortedMerge::new(schema.clone(), &decl.sort_key, runs, MERGE_BATCH_ROWS)?;
     let mut block = block_writer.open_block(
         &planned.job.tenant,
@@ -97,8 +101,12 @@ where
     let mut carried = None;
     let drained: Result<(), MetricCompactionError> = async {
         while let Some(merged) = merge.next_batch().await? {
-            let deduplicated = deduplicate_series_timestamp_runs(&merged, &mut carried)?;
-            block.write_batch(&deduplicated).await?;
+            if planned.kind.deduplicates_series_timestamp() {
+                let deduplicated = deduplicate_series_timestamp_runs(&merged, &mut carried)?;
+                block.write_batch(&deduplicated).await?;
+            } else {
+                block.write_batch(&merged).await?;
+            }
         }
         Ok(())
     }

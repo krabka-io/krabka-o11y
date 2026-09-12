@@ -1,6 +1,7 @@
 use super::{
-    DecodedClockReading, DistributorState, PushError, TenantId, UnixNanos, append_wal_records,
-    clock_series, clock_wal_records, enforce_ingest_limits, wal_records_from_series,
+    DecodedClockReading, DistributorState, PushError, TenantId, Time, TimeExt, UnixNanos,
+    append_wal_records, clock_series, clock_wal_records, enforce_ingest_limits,
+    wal_records_from_series,
 };
 
 /// Gates a clock batch and appends both the clock block records and the
@@ -19,5 +20,16 @@ pub(crate) async fn append_clock_readings(
     let mut records = clock_wal_records(tenant.as_str(), readings, ingest_unix_nanos);
     records.extend(wal_records_from_series(tenant.as_str(), &series));
     append_wal_records(state, tenant, records).await?;
+    let uncertainty_ms = readings
+        .iter()
+        .map(|reading| reading.uncertainty_nanos.saturating_add(999_999) / 1_000_000)
+        .max()
+        .unwrap_or_default();
+    state.series_tracker.record_clock_uncertainty(
+        tenant,
+        Time::from_millis(uncertainty_ms),
+        state.limits_for_tenant(tenant).active_series_idle_timeout,
+        state.clock.now(),
+    );
     Ok(true)
 }

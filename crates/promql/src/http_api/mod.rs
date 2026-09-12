@@ -8,12 +8,15 @@ use std::{
 
 use axum::{
     Extension, Json, Router,
-    extract::DefaultBodyLimit,
-    http::StatusCode,
+    extract::{DefaultBodyLimit, State},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use krabka_blockstore::TenantId;
+use krabka_blockstore::{
+    ERASURE_REQUEST_PREFIX, ErasureRequest, Index, TenantId, list_erasure_requests,
+    put_erasure_request,
+};
 use krabka_metrics::{
     LimitError, Limits, OverridesProvider, authorized_tenant_from_headers, wire::WireError,
 };
@@ -30,6 +33,7 @@ use crate::{
     ruler::{RulerAlertStateRecord, RulerGroupState, RulerGroupStateRecord},
 };
 
+mod admin;
 mod alert_templates;
 mod cardinality;
 mod discovery;
@@ -44,7 +48,9 @@ mod status;
 
 #[cfg(test)]
 pub(crate) use alert_templates::expand_alert_template;
+#[cfg(test)]
 pub(crate) use alert_templates::expand_alert_template_with_external;
+pub(crate) use alert_templates::expand_alert_template_with_queries;
 use cardinality::{
     cardinality_active_series, cardinality_active_series_post, cardinality_label_names,
     cardinality_label_names_post, cardinality_label_values, cardinality_label_values_post,
@@ -96,6 +102,7 @@ mod rules_params;
 
 use acquire_query_permit::acquire_query_permit;
 use active_query_guard::ActiveQueryGuard;
+use admin::{clean_tombstones, delete_series};
 use alert_state_key::AlertStateKey;
 use api_error::ApiError;
 pub use prometheus_api_state::PrometheusApiState;

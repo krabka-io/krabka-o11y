@@ -6,6 +6,7 @@ pub(crate) struct TemplateRenderContext<'a> {
     pub(crate) fields: &'a Labels,
     pub(crate) timestamp_ns: Option<i64>,
     pub(crate) variables: BTreeMap<String, TemplateRuntimeValue>,
+    pub(crate) queries: BTreeMap<String, serde_json::Value>,
     pub(crate) current_dot: Option<TemplateRuntimeValue>,
 }
 
@@ -16,6 +17,7 @@ impl<'a> TemplateRenderContext<'a> {
             fields,
             timestamp_ns,
             variables: BTreeMap::new(),
+            queries: BTreeMap::new(),
             current_dot: None,
         }
     }
@@ -28,6 +30,7 @@ impl<'a> TemplateRenderContext<'a> {
             fields: self.fields,
             timestamp_ns: self.timestamp_ns,
             variables,
+            queries: self.queries.clone(),
             current_dot: self.current_dot.clone(),
         }
     }
@@ -44,12 +47,21 @@ impl<'a> TemplateRenderContext<'a> {
         self
     }
 
+    pub(crate) fn with_json_queries(
+        mut self,
+        queries: &BTreeMap<String, serde_json::Value>,
+    ) -> Self {
+        self.queries.clone_from(queries);
+        self
+    }
+
     pub(crate) fn with_current_dot(&self, value: TemplateRuntimeValue) -> Self {
         Self {
             line: self.line,
             fields: self.fields,
             timestamp_ns: self.timestamp_ns,
             variables: self.variables.clone(),
+            queries: self.queries.clone(),
             current_dot: Some(value),
         }
     }

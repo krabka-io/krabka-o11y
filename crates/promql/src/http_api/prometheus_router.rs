@@ -2,13 +2,13 @@ use super::{
     Arc, ByteSizeExt, DefaultBodyLimit, MetricStore, PrometheusApiState, Router, alertmanagers,
     alerts, build_info, cardinality_active_series, cardinality_active_series_post,
     cardinality_label_names, cardinality_label_names_post, cardinality_label_values,
-    cardinality_label_values_post, delete_ruler_config_group, delete_ruler_config_namespace,
-    format_query, format_query_post, get, label_values, label_values_post, labels, labels_post,
-    metadata, parse_query, parse_query_post, post, query, query_exemplars, query_exemplars_post,
-    query_post, query_range, query_range_post, remote_read, ruler_config_group,
-    ruler_config_namespace, ruler_config_rules, rules, runtime_info, scrape_pools, series,
-    series_post, set_ruler_config_group, status_config, status_flags, target_metadata, targets,
-    tsdb_blocks, tsdb_status, wal_replay_status,
+    cardinality_label_values_post, clean_tombstones, delete_ruler_config_group,
+    delete_ruler_config_namespace, delete_series, format_query, format_query_post, get,
+    label_values, label_values_post, labels, labels_post, metadata, parse_query, parse_query_post,
+    post, query, query_exemplars, query_exemplars_post, query_post, query_range, query_range_post,
+    remote_read, ruler_config_group, ruler_config_namespace, ruler_config_rules, rules,
+    runtime_info, scrape_pools, series, series_post, set_ruler_config_group, status_config,
+    status_flags, target_metadata, targets, tsdb_blocks, tsdb_status, wal_replay_status,
 };
 
 /// Builds the routes for the Prometheus API and the `/prometheus` prefix of Mimir.
@@ -68,6 +68,11 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
         .route("/api/v1/status/tsdb", get(tsdb_status::<S>))
         .route("/api/v1/status/tsdb/blocks", get(tsdb_blocks::<S>))
         .route("/api/v1/status/walreplay", get(wal_replay_status::<S>))
+        .route("/api/v1/admin/tsdb/delete_series", post(delete_series::<S>))
+        .route(
+            "/api/v1/admin/tsdb/clean_tombstones",
+            post(clean_tombstones::<S>),
+        )
         .route(
             "/prometheus/api/v1/query",
             get(query::<S>).post(query_post::<S>),
@@ -152,6 +157,14 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
         .route(
             "/prometheus/api/v1/status/walreplay",
             get(wal_replay_status::<S>),
+        )
+        .route(
+            "/prometheus/api/v1/admin/tsdb/delete_series",
+            post(delete_series::<S>),
+        )
+        .route(
+            "/prometheus/api/v1/admin/tsdb/clean_tombstones",
+            post(clean_tombstones::<S>),
         )
         .with_state(state)
 }

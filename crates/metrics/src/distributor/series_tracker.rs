@@ -44,6 +44,18 @@ impl SeriesTracker {
         self.state.lock().expect("series tracker poisoned")
     }
 
+    pub(crate) fn record_clock_uncertainty(
+        &self,
+        tenant: &TenantId,
+        uncertainty: Time,
+        idle_timeout: Time,
+        now: Instant,
+    ) {
+        let mut state = self.lock();
+        self.enter(&mut state, tenant, idle_timeout, now)
+            .clock_uncertainty = uncertainty;
+    }
+
     /// Returns `tenant`'s state, stamped as written to at `now`.
     ///
     /// This is the tracker's only cold-path work. It runs the idle sweep when

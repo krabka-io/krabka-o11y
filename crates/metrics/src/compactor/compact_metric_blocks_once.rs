@@ -2,7 +2,7 @@ use super::{
     Arc, BTreeMap, BTreeSet, BlockDeletion, BlockWriter, ByteSize, CompactionIndexManifest,
     CompactionIndexSink, CompactionPolicy, DeferredBlockDeletions, MetricCompactionError,
     MetricCompactionPass, ObjectStore, delete_blocks, list_compaction_manifests,
-    merge_metric_blocks, plan_metric_compactions,
+    materialize_metric_erasure_requests, merge_metric_blocks, plan_metric_compactions,
 };
 
 /// Runs one level-compaction pass over every metric block in object storage.
@@ -26,8 +26,9 @@ use super::{
 ///
 /// Output before inputs. The other way round leaves a window in which a
 /// listing finds neither the inputs nor the output, and the samples are simply
-/// absent. This way leaves a window of overlapping duplicate blocks, which the
-/// query-time `(fingerprint, timestamp)` deduplication already absorbs.
+/// absent. This way leaves a window of overlapping blocks. Float and histogram
+/// queries deduplicate that overlap; the other kinds preserve every input row
+/// until the source manifests retire.
 ///
 /// Manifests before blocks, for the reason
 /// [`enforce_compaction_retention`](super::enforce_compaction_retention) gives:
@@ -56,6 +57,14 @@ pub async fn compact_metric_blocks_once<S>(
 where
     S: CompactionIndexSink + ?Sized,
 {
+    let (erasure, retired) =
+        materialize_metric_erasure_requests(store, block_writer, index_sink, block_read_max)
+            .await?;
+    if !erasure.is_empty() {
+        deferred.extend(retired);
+        return Ok(erasure);
+    }
+
     let manifests = list_compaction_manifests(store).await?;
     let by_key: BTreeMap<&str, &CompactionIndexManifest> = manifests
         .iter()
@@ -67,8 +76,8 @@ where
     // A job that fails ends the pass and leaves the jobs before it applied. The
     // output key is a function of the input keys and their object versions, so
     // the next pass replans the same job and writes the same key: the retry
-    // overwrites rather than duplicates, and what it leaves in between is the
-    // window of overlapping blocks that the query-time deduplication absorbs.
+    // overwrites rather than creating another output object. The source
+    // manifests remain available for the next pass to retire.
     for planned in plan_metric_compactions(&manifests, policy) {
         let output = merge_metric_blocks(
             store,

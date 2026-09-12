@@ -18,13 +18,15 @@ pub(crate) fn enforce_out_of_order_window(
     if limits.out_of_order_time_window < Time::ZERO {
         return Ok(());
     }
-    let window_ms = limits.out_of_order_time_window.millis_i64();
-
     let mut guard = state.series_tracker.lock();
     let tracked =
         state
             .series_tracker
             .enter(&mut guard, tenant, limits.active_series_idle_timeout, now);
+    let window_ms = limits
+        .out_of_order_time_window
+        .max(tracked.clock_uncertainty)
+        .millis_i64();
     let mut updates = Vec::new();
     for series in series {
         let Some((min_timestamp, max_timestamp)) = sample_timestamp_bounds(series) else {

@@ -580,6 +580,30 @@ overrides:
             "one millisecond beyond it is not"
         );
 
+        // A reported clock-confidence bound widens the configured window for
+        // the tenant, so jitter the clock agent has measured is not rejected
+        // as an out-of-order sample.
+        let (state, _sink) = test_state();
+        state.series_tracker.record_clock_uncertainty(
+            &tenant,
+            Time::from_millis(25_000),
+            ten.active_series_idle_timeout,
+            now,
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(100_000)], now)
+                .is_ok()
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(75_000)], now)
+                .is_ok(),
+            "the clock-confidence bound is the effective window"
+        );
+        check!(
+            super::enforce_out_of_order_window(&state, &ten, &tenant, &[series(74_999)], now)
+                .is_err()
+        );
+
         // A negative window disables the check entirely.
         let (state, _sink) = test_state();
         let disabled = window(-1);

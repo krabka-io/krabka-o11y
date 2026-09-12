@@ -12,6 +12,7 @@ mod block;
 mod block_index;
 mod bloom;
 mod compaction;
+mod erasure;
 mod error;
 mod index;
 mod index_snapshot;
@@ -45,6 +46,10 @@ pub use compaction::{
     BlockLevel, CompactionCandidate, CompactionJob, CompactionPolicy, DEFAULT_LEVEL_WINDOW,
     DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
     input_key_fingerprint, level_above, plan_compactions,
+};
+pub use erasure::{
+    ERASURE_REQUEST_PREFIX, ErasureRequest, delete_erasure_request, list_erasure_requests,
+    put_erasure_request,
 };
 pub use error::{BlockReadFailure, BlockSkipReason, BlockStoreError, Result, SkippedBlock};
 pub use index::{
