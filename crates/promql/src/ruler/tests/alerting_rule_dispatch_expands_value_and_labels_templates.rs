@@ -11,11 +11,13 @@ labels:
 annotations:
   summary: "{{ $labels.job }} {{ $externalLabels.cluster }} {{ $externalURL }} value {{ $value }}"
   passthrough: "{{ humanize $value }}"
+  related: '{{ query "errors" | first | value }} {{ query "errors" | first | label "job" }}'
 "#,
     )
     .expect("alerting rule yaml");
     let mut store = InMemoryMetricStore::new();
     store.push_float("tenant-a", labels("up", "api"), 60_000, 1.0);
+    store.push_float("tenant-a", labels("errors", "worker"), 60_000, 7.0);
     let store = Arc::new(store);
     let engine = PromqlEngine::new(store, EngineOpts::default());
     let mut external_labels = Labels::new();
@@ -49,6 +51,7 @@ annotations:
                 ]),
                 annotations: BTreeMap::from([
                     ("passthrough".to_string(), "1".to_string()),
+                    ("related".to_string(), "7 worker".to_string()),
                     (
                         "summary".to_string(),
                         "api prod https://prom.example/graph?alert=InstanceUp value 1".to_string(),

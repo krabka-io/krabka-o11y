@@ -2,8 +2,8 @@ use super::{
     AlertStateKey, AlertmanagerAlert, AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine,
     PromqlError, QueryResult, RecordingRuleWalSink, RulerAlertState, RulerAlertStateRecord,
     RulerStateSink, SamplePayload, SampleValue, TenantId, TimeExt, WalRecord,
-    expand_alert_label_map, labels_to_map, yaml_duration, yaml_optional_string,
-    yaml_required_string, yaml_string_map,
+    alert_template_queries, expand_alert_label_map, labels_to_map, template_query_value,
+    yaml_duration, yaml_optional_string, yaml_required_string, yaml_string_map,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -33,6 +33,11 @@ where
 
     let rule_labels = yaml_string_map(rule, "labels");
     let annotations = yaml_string_map(rule, "annotations");
+    let mut template_queries = BTreeMap::new();
+    for query in alert_template_queries(rule_labels.values().chain(annotations.values())) {
+        let result = engine.query_instant(tenant, &query, eval_time_ms).await?;
+        template_queries.insert(query, template_query_value(result));
+    }
     let external_labels = sink.template_external_labels();
     let external_url = sink.template_external_url(&alert_name);
     let hold_for = yaml_duration(rule, "for")?;
@@ -57,6 +62,7 @@ where
             &sample.labels,
             &external_labels,
             &external_url,
+            &template_queries,
         );
         let key = AlertStateKey {
             tenant: tenant.to_string(),
@@ -122,6 +128,7 @@ where
             &sample.labels,
             &external_labels,
             &external_url,
+            &template_queries,
         );
         alerts.push(AlertmanagerAlert {
             labels,

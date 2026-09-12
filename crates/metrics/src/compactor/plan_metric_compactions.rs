@@ -6,12 +6,11 @@ use super::{
 /// Plans the merges the metrics index is due, under `policy`.
 ///
 /// The shared planner groups by tenant, level and time bucket. It knows nothing
-/// about payload kinds, so this runs it once per mergeable kind: a job holds
+/// about payload kinds, so this runs it once per kind: a job holds
 /// blocks of one kind, and the kind is what fixes the output schema.
 ///
-/// Only the kinds [`MetricBlockKind::is_mergeable`] admits are offered to the
-/// planner at all, so an exemplar, metadata or clock-reading block is never a
-/// compaction input. See that method for why each is left out.
+/// Each job still contains one payload kind, so its inputs share a schema and
+/// a row-identity policy.
 ///
 /// See [`plan_compactions`] for why repeated plan-and-apply terminates.
 #[must_use]
@@ -28,7 +27,6 @@ pub fn plan_metric_compactions(
     ];
     kinds
         .into_iter()
-        .filter(|kind| kind.is_mergeable())
         .flat_map(|kind| {
             let candidates: Vec<CompactionCandidate> = manifests
                 .iter()

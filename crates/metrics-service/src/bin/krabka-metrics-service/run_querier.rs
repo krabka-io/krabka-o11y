@@ -78,7 +78,7 @@ pub(crate) async fn run_querier(
         );
     }
     let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
-        store,
+        Arc::clone(&store),
         object_store_url.clone(),
         &cli.manifest_prefix,
         head,
@@ -86,6 +86,7 @@ pub(crate) async fn run_querier(
     .with_cold_cache_ttl(cli.cold_cache_ttl)
     .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
     let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
+        .with_erasure_store(store)
         .with_max_concurrent_queries(cli.max_concurrent_queries)
         .with_query_timeout(cli.query_timeout)
         .with_remote_read_max_body(cli.remote_read_max_body)

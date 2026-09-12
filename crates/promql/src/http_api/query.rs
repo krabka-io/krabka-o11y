@@ -11,12 +11,13 @@ use serde::Deserialize;
 use url::form_urlencoded;
 
 use super::{
-    ApiError, Extension, Principal, PrometheusApiState, QueryResponseStats, acquire_query_permit,
-    apply_result_limit, authorized_tenant_from_headers, check_range_resolution, duration_param,
-    enforce_query_range_limit, exemplar_key, exemplars_json, optional_timestamp_ms,
-    parse_limit_parameter, query_timeout, record_query_response, required_form_param,
-    selector_matchers, success_data_response, success_response, success_response_with_stats,
-    timestamp_ms, validate_timestamp_range,
+    ApiError, ERASURE_REQUEST_PREFIX, Extension, Principal, PrometheusApiState, QueryResponseStats,
+    acquire_query_permit, apply_result_limit, authorized_tenant_from_headers,
+    check_range_resolution, duration_param, enforce_query_range_limit, exemplar_key,
+    exemplars_json, has_erasure_requests, optional_timestamp_ms, parse_limit_parameter,
+    query_timeout, record_query_response, required_form_param, selector_matchers,
+    success_data_response, success_response, success_response_with_stats, timestamp_ms,
+    validate_timestamp_range,
 };
 use crate::{
     AnnotatedQueryResult, MetricStore,
