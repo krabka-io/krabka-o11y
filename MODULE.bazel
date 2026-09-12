@@ -102,14 +102,18 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
         # the behaviour of an in-process `InMemory` map.
         #
         # Pinned to a dated release rather than to whatever `latest` was.
-        # `mirror.gcr.io` mirrors Docker Hub, MinIO stopped publishing there
-        # after this release, and the mirror then served neither the old
-        # digest nor `minio:latest` -- both 404. Every Bazel invocation that
-        # analyses `//...` fetches this repository, so a cold cache failed the
-        # lint, coverage and container-selection jobs at once while a warm one
-        # carried on. A release tag cannot be retagged out from under the pin
-        # the way `latest` was.
-        ("minio", "mirror.gcr.io/minio/minio", "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"),
+        #
+        # Served from `quay.io`, which is MinIO's own registry, not from
+        # `mirror.gcr.io`. The mirror copies Docker Hub, MinIO stopped
+        # publishing there after this release, and the mirror then served
+        # neither the old digest nor `minio:latest` -- both 404. Every Bazel
+        # invocation that analyses `//...` fetches this repository, so a cold
+        # cache failed the lint, coverage and container-selection jobs at once
+        # while a warm one carried on.
+        #
+        # The digest is unchanged, so this is the same image bytes from a
+        # registry that still serves them.
+        ("minio", "quay.io/minio/minio", "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"),
         ("prometheus", "mirror.gcr.io/prom/prometheus", "sha256:67abe619da66a6b14cc0e185205f93a29d5b03cedd1aaa06930745b21f95a374"),
         ("pyroscope", "mirror.gcr.io/grafana/pyroscope", "sha256:b65dffe6719cf91dcb7dcbb9790c439be164220f051a41a8477e06acfea1bbf9"),
         ("tempo", "mirror.gcr.io/grafana/tempo", "sha256:a095c183ca7d433062dd2780d715df8bc15fca9656a9167eb1ab59c78de09681"),
