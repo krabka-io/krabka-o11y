@@ -21,19 +21,11 @@ impl MetricBlockKind {
         }
     }
 
-    /// Whether a level compaction may merge two blocks of this kind into one.
-    ///
-    /// Every kind is mergeable. Float and native-histogram rows are
-    /// deduplicated by their real `(fingerprint, timestamp)` key. The other
-    /// kinds are merged without key deduplication: exemplars may legitimately
-    /// share that pair, metadata is already set-deduplicated by its read path,
-    /// and clock readings are an archival record beside their queryable float
-    /// projection.
-    pub(crate) const fn is_mergeable(self) -> bool {
-        true
-    }
-
     /// Whether repeated `(fingerprint, timestamp)` rows are duplicates.
+    ///
+    /// The other kinds preserve repeats: exemplars may legitimately share that
+    /// pair, metadata is set-deduplicated by its read path, and clock readings
+    /// are an archival record beside their queryable float projection.
     pub(crate) const fn deduplicates_series_timestamp(self) -> bool {
         matches!(self, Self::Float | Self::NativeHistograms)
     }

@@ -30,6 +30,9 @@ pub struct ErasureRequest {
 
 impl ErasureRequest {
     /// Creates a request and derives its stable object ID from its contents.
+    ///
+    /// # Panics
+    /// Panics if the string-and-matcher identity tuple cannot be serialized.
     #[must_use]
     pub fn new(
         tenant: impl Into<String>,
@@ -71,6 +74,9 @@ impl ErasureRequest {
 }
 
 /// Stores an erasure request as one independently removable object.
+///
+/// # Errors
+/// Returns an error when serialization or object-store I/O fails.
 pub async fn put_erasure_request(
     store: &Arc<dyn ObjectStore>,
     prefix: &str,
@@ -87,6 +93,9 @@ pub async fn put_erasure_request(
 }
 
 /// Lists active metric erasure requests, sorted by object ID.
+///
+/// # Errors
+/// Returns an error when object-store I/O fails or a request is malformed.
 pub async fn list_erasure_requests(
     store: &Arc<dyn ObjectStore>,
     prefix: &str,
@@ -103,6 +112,9 @@ pub async fn list_erasure_requests(
 }
 
 /// Removes a materialised or cancelled request.
+///
+/// # Errors
+/// Returns an error when object-store deletion fails.
 pub async fn delete_erasure_request(
     store: &Arc<dyn ObjectStore>,
     prefix: &str,
