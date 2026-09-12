@@ -88,7 +88,7 @@ impl EdgeStore {
             );
             if edge.client_service.is_some() && edge.server_service.is_some() {
                 let edge = self.edges.remove(&key).expect("edge exists after get_mut");
-                self.complete(edge);
+                self.complete(&edge);
                 return RecordOutcome::Completed;
             }
             return RecordOutcome::Recorded;
@@ -272,11 +272,11 @@ impl EdgeStore {
         out
     }
 
-    pub(crate) fn complete(&mut self, edge: Edge) {
+    pub(crate) fn complete(&mut self, edge: &Edge) {
         let bucket_count = self.bucket_edges_ns.len() + 1;
         let agg = self
             .aggregates
-            .entry(label_key_for_edge(&edge))
+            .entry(label_key_for_edge(edge))
             .or_insert_with(|| EdgeAgg::new(bucket_count));
         agg.requests += edge.multiplier;
         if edge.failed {

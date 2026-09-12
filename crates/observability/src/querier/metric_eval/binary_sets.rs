@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code, unused_imports))]
+
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeSet, ColdBlockScan, ComparisonOp, HttpQueryError, Labels,
     MetricBinarySetOp, MetricQuery, MetricScalarArithmeticOp, MetricValue,

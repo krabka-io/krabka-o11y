@@ -208,6 +208,9 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     }
 
     /// Stream one cumulative search response whenever a shard completes.
+    ///
+    /// # Errors
+    /// Returns an error when the query cannot be planned or no querier is ready.
     pub async fn search_stream(
         &self,
         tenant: &TenantId,

@@ -799,7 +799,8 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
                             ["17000000000", "api later secret"]
                         ]
                     }
-                ]
+                ],
+                "dropped_entries": []
             })
     );
 }

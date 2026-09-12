@@ -4,6 +4,9 @@ use super::{
 
 /// Resolver used by the persistent symbolizer. Unlike the query fallback it
 /// leaves misses unresolved so a later debuginfo upload can fill them.
+///
+/// # Errors
+/// Returns an error when the debuginfod client configuration is invalid.
 pub fn offline_resolver_from_debuginfod_config(
     urls: Vec<String>,
     config: DebuginfodConfig,

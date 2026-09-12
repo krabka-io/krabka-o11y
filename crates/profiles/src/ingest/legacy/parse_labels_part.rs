@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use prost::Message as _;
 
 use super::{JfrLabels, LabelsSnapshot, ProfilesError};
@@ -32,7 +34,7 @@ pub(crate) fn parse_labels_part(raw: &[u8]) -> Result<JfrLabels, ProfilesError> 
             .collect::<Result<_, _>>()?;
         return Ok(JfrLabels {
             global,
-            contexts: Default::default(),
+            contexts: HashMap::default(),
         });
     }
 

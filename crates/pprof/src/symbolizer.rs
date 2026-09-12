@@ -222,7 +222,7 @@ mod tests {
                 .unwrap()
                 .address()
         };
-        let resolver = ObjectSymbolResolver::from_bytes(bytes).unwrap();
+        let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
             .symbolize(&SymbolizeRequest {
@@ -272,7 +272,7 @@ mod tests {
                 .unwrap()
                 .address()
         };
-        let resolver = ObjectSymbolResolver::from_bytes(bytes).unwrap();
+        let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
             .symbolize(&SymbolizeRequest {
@@ -407,7 +407,7 @@ mod tests {
         let bytes = b"not an object file".to_vec();
 
         assert!(parse_object_guarded(&bytes).is_err());
-        assert!(ObjectSymbolResolver::from_bytes(bytes).is_err());
+        assert!(ObjectSymbolResolver::from_bytes(&bytes).is_err());
     }
 
     #[cfg(target_os = "linux")]

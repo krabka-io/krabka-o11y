@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code, unused_imports))]
+
 use crate::{
     BTreeMap, TimeRange, Value, VectorScalarExpressionParser, eval_times, json, loki_success_value,
     unix_ns_string_to_loki_seconds,

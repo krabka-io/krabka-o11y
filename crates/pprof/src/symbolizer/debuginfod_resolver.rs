@@ -102,7 +102,7 @@ impl DebuginfodResolver {
             let Some(bytes) = read_capped(response, cap) else {
                 continue;
             };
-            if let Ok(resolver) = ObjectSymbolResolver::from_bytes(bytes) {
+            if let Ok(resolver) = ObjectSymbolResolver::from_bytes(&bytes) {
                 return Some(resolver);
             }
         }

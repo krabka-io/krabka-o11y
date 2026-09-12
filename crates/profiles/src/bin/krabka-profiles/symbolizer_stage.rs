@@ -32,7 +32,7 @@ pub(crate) fn symbolizer_stage(
                     .await
                     {
                         Ok(updated) => {
-                            tracing::info!(updated, "offline symbolization pass complete")
+                            tracing::info!(updated, "offline symbolization pass complete");
                         }
                         Err(error) => tracing::warn!(%error, "offline symbolization pass failed"),
                     },

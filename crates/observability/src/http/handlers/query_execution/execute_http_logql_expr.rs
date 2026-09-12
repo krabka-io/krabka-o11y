@@ -11,6 +11,7 @@ use super::{
 };
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn execute_http_logql_expr(
     state: &QuerierState,
     tenant: &str,

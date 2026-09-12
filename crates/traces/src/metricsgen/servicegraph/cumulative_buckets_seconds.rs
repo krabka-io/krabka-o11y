@@ -1,4 +1,4 @@
-use super::*;
+use super::NS_PER_SEC;
 
 pub(crate) fn cumulative_buckets_seconds(
     bucket_edges_ns: &[f64],

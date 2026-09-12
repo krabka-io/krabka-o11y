@@ -22,48 +22,29 @@ use std::{
 #[cfg(test)]
 use krabka_logql::{
     MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricLabelJoin,
-    MetricScalarArithmetic, MetricScalarComparison, parse_metric_binary_arithmetic_query,
-    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
-    parse_metric_label_replace_query, parse_metric_query, parse_metric_scalar_arithmetic_query,
-    parse_metric_scalar_comparison_query,
+    MetricScalarArithmetic, MetricScalarComparison,
 };
 
 #[cfg(test)]
-use self::{
-    http::params_format::{
-        aggregation_formatting::{
-            FormattedVectorBinaryModifiers, format_scalar_vector_expression,
-            format_vector_function_text, format_vector_label_replace_function,
-            parse_logql_string_argument, split_logql_function_arguments,
-        },
-        metric_formatting::{
-            format_logql_quoted_string, split_top_level_arithmetic_query,
-            split_top_level_comparison_query, split_top_level_set_query,
-        },
-        request_formatting::split_leading_vector_group_modifier,
-        stream_formatting::{parse_formatted_vector_function, parse_vector_arithmetic_operator},
+#[allow(unused_imports)]
+use self::querier::metric_eval::{
+    binary_sets::{
+        apply_metric_scalar_arithmetic_to_loki_result,
+        apply_metric_scalar_comparison_to_loki_result,
     },
-    querier::metric_eval::{
-        binary_sets::{
-            apply_metric_scalar_arithmetic_to_loki_result,
-            apply_metric_scalar_comparison_to_loki_result,
-        },
-        expressions::{
-            LabelReplaceMetricBinaryExpression, MetricVectorArithmeticExpression,
-            MetricVectorComparisonExpression, MetricVectorSetExpression, SortVectorExpression,
-            parse_label_replace_expression, parse_label_replace_metric_binary_expression,
-            parse_metric_vector_arithmetic_expression, parse_metric_vector_comparison_expression,
-            parse_metric_vector_set_expression, parse_sort_vector_expression,
-        },
-        result_transforms::{
-            execute_http_metric_binary_arithmetic_query,
-            execute_http_metric_binary_comparison_query, execute_http_metric_binary_set_query,
-            execute_http_metric_scalar_arithmetic_query,
-            execute_http_metric_scalar_comparison_query,
-            execute_http_scalar_vector_expression_result,
-        },
-        validation::{apply_label_join_to_loki_result, scalar_vector_query_is_vector},
+    expressions::{
+        LabelReplaceMetricBinaryExpression, MetricVectorArithmeticExpression,
+        MetricVectorComparisonExpression, MetricVectorSetExpression, SortVectorExpression,
+        parse_label_replace_expression, parse_label_replace_metric_binary_expression,
+        parse_metric_vector_arithmetic_expression, parse_metric_vector_comparison_expression,
+        parse_metric_vector_set_expression, parse_sort_vector_expression,
     },
+    result_transforms::{
+        execute_http_metric_binary_arithmetic_query, execute_http_metric_binary_comparison_query,
+        execute_http_metric_binary_set_query, execute_http_metric_scalar_arithmetic_query,
+        execute_http_metric_scalar_comparison_query, execute_http_scalar_vector_expression_result,
+    },
+    validation::{apply_label_join_to_loki_result, scalar_vector_query_is_vector},
 };
 
 pub mod audit;
@@ -139,7 +120,11 @@ use krabka_logql::{
     MetricScalarArithmeticOp, MetricVectorGroupModifier, MetricVectorMatching, ParseError,
     ParserStage, PipelineStage, PlanError, Quantile, RangeAggregation, StreamPlan, StreamQuery,
     UNWRAP_SAMPLE_VALUE_LABEL, UnwrapConversion, VectorAggregation, VectorAggregationOp,
-    VectorGrouping, parse_logql_expr, parse_query, plan_stream_query,
+    VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
+    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
+    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
+    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
+    plan_stream_query,
 };
 use krabka_query_frontend::{
     CacheKey, ExecutionOptions, InMemoryCache, PlannedQuery, QueryFrontend, QueryFrontendAdapter,
@@ -379,17 +364,34 @@ pub(crate) use self::{
         },
         params_format::{
             aggregation_formatting::{
-                format_loki_duration_ns, format_loki_offset_duration_ns, format_quantile,
-                format_range_aggregation_name, format_vector_aggregation_query,
-                format_vector_grouping,
+                FormattedVectorBinaryModifiers, format_loki_duration_ns,
+                format_loki_offset_duration_ns, format_quantile, format_range_aggregation_name,
+                format_scalar_vector_expression, format_vector_aggregation_query,
+                format_vector_function_text, format_vector_grouping,
+                format_vector_label_replace_function, parse_logql_string_argument,
+                split_logql_function_arguments,
             },
-            metric_formatting::format_metric_query,
+            metric_formatting::{
+                format_label_replace_metric_scalar_expression,
+                format_label_replace_metric_vector_expression, format_logql_quoted_string,
+                format_metric_label_replace_query, format_metric_query,
+                format_metric_scalar_arithmetic_expression,
+                format_metric_scalar_arithmetic_operator,
+                format_metric_scalar_comparison_expression,
+                format_metric_scalar_comparison_operator,
+                format_metric_vector_comparison_expression, format_metric_vector_set_expression,
+                format_simple_metric_query, format_sort_vector_expression, indent_logql_lines,
+                split_top_level_arithmetic_query, split_top_level_comparison_query,
+                split_top_level_set_query,
+            },
             request_formatting::{
-                execute_format_query, form_body_query, post_query_params,
-                post_query_params_body_first,
+                execute_format_query, form_body_query, format_metric_vector_arithmetic_expression,
+                format_metric_vector_binary_expression, post_query_params,
+                post_query_params_body_first, split_leading_vector_binary_modifiers,
             },
             stream_formatting::{
-                format_stream_query, quote_logql_string, validate_query_bytes_limit,
+                format_stream_query, parse_formatted_vector_function,
+                parse_vector_arithmetic_operator, quote_logql_string, validate_query_bytes_limit,
                 validate_query_series_limit,
             },
         },

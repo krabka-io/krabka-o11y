@@ -1,4 +1,4 @@
-use super::*;
+use super::NS_PER_SEC;
 
 #[derive(Clone, Debug)]
 pub(crate) struct LatencyHistogram {

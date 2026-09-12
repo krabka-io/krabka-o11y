@@ -48,15 +48,15 @@ mod tests {
         };
 
         let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
-        store.complete(edge(
+        store.complete(&edge(
             "a",
             "b",
             false,
             Some(1_000_000_000),
             Some(2_000_000_000),
         ));
-        store.complete(edge("a", "b", true, Some(3_000_000_000), None));
-        store.complete(edge("c", "d", false, None, None));
+        store.complete(&edge("a", "b", true, Some(3_000_000_000), None));
+        store.complete(&edge("c", "d", false, None, None));
 
         let agg = &store.aggregates[&key("a", "b")];
         check!(is(agg.requests, 2.0), "one per completed edge");
@@ -88,7 +88,7 @@ mod tests {
         let mut store = super::EdgeStore::new(&super::MetricsGenConfig::default());
         let mut messaging = edge("a", "b", false, Some(1_000_000_000), Some(2_000_000_000));
         messaging.connection_type = super::ConnectionType::MessagingSystem;
-        store.complete(messaging.clone());
+        store.complete(&messaging);
         let agg = &store.aggregates[&(
             "a".to_string(),
             "b".to_string(),
@@ -103,7 +103,7 @@ mod tests {
             ..super::MetricsGenConfig::default()
         };
         let mut store = super::EdgeStore::new(&cfg);
-        store.complete(messaging);
+        store.complete(&messaging);
         let agg = &store.aggregates[&(
             "a".to_string(),
             "b".to_string(),
@@ -534,11 +534,14 @@ mod tests {
         check!(store.record_span(&client, 0) == RecordOutcome::Recorded);
         check!(store.record_span(&server, 1) == RecordOutcome::Completed);
         let out = store.drain(1_000);
-        check!(counter(&out, "traces_service_graph_request_total") == 3.0);
+        check!((counter(&out, "traces_service_graph_request_total") - 3.0).abs() < f64::EPSILON);
         let labels = labels_for(&out, "traces_service_graph_request_total");
         check!(labels.contains(&("client_http_method".into(), "GET".into())));
         check!(labels.contains(&("server_http_method".into(), "POST".into())));
-        check!(histogram_count(&out, "traces_service_graph_request_client_seconds") == 3.0);
+        check!(
+            (histogram_count(&out, "traces_service_graph_request_client_seconds") - 3.0).abs()
+                < f64::EPSILON
+        );
     }
 
     #[test]

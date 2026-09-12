@@ -39,6 +39,7 @@ fn cached_symbol_db(cache: &mut SymbolDbCache, block_key: &str, now: Instant) ->
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod symdb_cache_tests {
     use super::*;
 

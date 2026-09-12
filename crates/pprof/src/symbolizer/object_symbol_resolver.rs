@@ -12,10 +12,10 @@ pub struct ObjectSymbolResolver {
 impl ObjectSymbolResolver {
     /// # Errors
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         use std::io::Write as _;
         let mut file = tempfile::NamedTempFile::new().map_err(|err| err.to_string())?;
-        file.write_all(&bytes).map_err(|err| err.to_string())?;
+        file.write_all(bytes).map_err(|err| err.to_string())?;
         file.flush().map_err(|err| err.to_string())?;
         let loader = addr2line::Loader::new(file.path()).map_err(|err| err.to_string())?;
         Ok(Self {
@@ -64,8 +64,7 @@ impl NativeResolver for ObjectSymbolResolver {
             }
             let function = loader
                 .find_symbol(address)
-                .map(ToString::to_string)
-                .unwrap_or_else(|| format!("{filename}+0x{address:x}"));
+                .map_or_else(|| format!("{filename}+0x{address:x}"), ToString::to_string);
             Some(vec![NativeSymbol {
                 function,
                 file: filename,

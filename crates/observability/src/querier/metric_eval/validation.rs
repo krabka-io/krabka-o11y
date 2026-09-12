@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code, unused_imports))]
+
 use crate::{HttpQueryError, ParseError, Regex, Value, json};
 #[cfg(test)]
 use crate::{MetricLabelJoin, ScalarVectorExpressionResult, scalar_vector_expression_result};

@@ -25,7 +25,7 @@ pub struct FlameEngine<S: ProfileStore> {
 
 fn frontend_options() -> ExecutionOptions {
     ExecutionOptions {
-        max_parallelism: NonZeroUsize::new(32).expect("32 is non-zero"),
+        max_parallelism: NonZeroUsize::new(32).unwrap_or(NonZeroUsize::MIN),
         max_retries: 0,
         max_cache_freshness: Duration::ZERO,
     }
@@ -40,14 +40,14 @@ impl<S: ProfileStore> FlameEngine<S> {
             tree_frontend: QueryFrontend::new(
                 InMemoryCache::new_bounded(
                     FRONTEND_RESULT_CACHE_TTL,
-                    NonZeroUsize::new(FRONTEND_RESULT_CACHE_ENTRIES).expect("cache is non-empty"),
+                    NonZeroUsize::new(FRONTEND_RESULT_CACHE_ENTRIES).unwrap_or(NonZeroUsize::MIN),
                 ),
                 frontend_options(),
             ),
             series_frontend: QueryFrontend::new(
                 InMemoryCache::new_bounded(
                     FRONTEND_RESULT_CACHE_TTL,
-                    NonZeroUsize::new(FRONTEND_RESULT_CACHE_ENTRIES).expect("cache is non-empty"),
+                    NonZeroUsize::new(FRONTEND_RESULT_CACHE_ENTRIES).unwrap_or(NonZeroUsize::MIN),
                 ),
                 frontend_options(),
             ),

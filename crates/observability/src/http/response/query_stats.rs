@@ -49,10 +49,15 @@ pub(crate) fn populate_loki_query_execution_stats(
     let lines = summary["totalLinesProcessed"].as_u64().unwrap_or(0);
     summary["execTime"] = json!(seconds);
     summary["queueTime"] = json!(queue_time.as_secs_f64());
-    if seconds > 0.0 {
-        summary["bytesProcessedPerSecond"] = json!((bytes as f64 / seconds) as u64);
-        summary["linesProcessedPerSecond"] = json!((lines as f64 / seconds) as u64);
+    if !elapsed.is_zero() {
+        summary["bytesProcessedPerSecond"] = json!(rate_per_second(bytes, elapsed));
+        summary["linesProcessedPerSecond"] = json!(rate_per_second(lines, elapsed));
     }
+}
+
+fn rate_per_second(total: u64, elapsed: Duration) -> u64 {
+    let rate = u128::from(total).saturating_mul(1_000_000_000) / elapsed.as_nanos();
+    u64::try_from(rate).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

@@ -24,6 +24,8 @@ impl ArtifactCache {
         }
     }
 
+    // The outer option is a cache miss; the inner one is a cached failed lookup.
+    #[allow(clippy::option_option)]
     pub(crate) fn get(&mut self, key: &str) -> Option<Option<ObjectSymbolResolver>> {
         let expired = self.entries.get(key).is_some_and(|(resolver, inserted)| {
             resolver.is_none() && inserted.elapsed() >= self.negative_ttl

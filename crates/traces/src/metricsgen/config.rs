@@ -82,7 +82,7 @@ mod tests {
         let mut config = MetricsGenConfig::default();
         config
             .apply_runtime_overrides(
-                r#"
+                r"
 overrides:
   tenant-a:
     max_spans_per_trace: 10
@@ -90,7 +90,7 @@ overrides:
       processor:
         span_metrics:
           dimensions: [http.method]
-"#,
+",
             )
             .unwrap();
 

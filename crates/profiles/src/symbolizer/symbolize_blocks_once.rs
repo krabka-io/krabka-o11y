@@ -20,6 +20,9 @@ impl NativeResolver for UploadedResolver<'_> {
 
 /// Resolve unsymbolized locations in every indexed block and persist the
 /// updated symbol database beside that block.
+///
+/// # Errors
+/// Returns an error when a block or its symbol database cannot be read, decoded, or written.
 pub async fn symbolize_blocks_once(
     store: &Arc<dyn ObjectStore>,
     index: &ProfileIndex,
@@ -54,7 +57,7 @@ pub async fn symbolize_blocks_once(
             let Ok(bytes) = object.bytes().await else {
                 continue;
             };
-            if let Ok(object) = krabka_pprof::ObjectSymbolResolver::from_bytes(bytes.to_vec()) {
+            if let Ok(object) = krabka_pprof::ObjectSymbolResolver::from_bytes(&bytes) {
                 uploaded.insert(request.build_id, object);
             }
         }

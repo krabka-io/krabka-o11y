@@ -1,3 +1,5 @@
+use axum::body::Bytes;
+
 use super::{
     Duration, Message, TailStream, WebSocket, add_loki_tail_encoding_flags,
     apply_loki_tail_frame_limit, eligible_tail_record_count,
@@ -27,11 +29,11 @@ pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
                         return;
                     }
                 }
-                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+                Some(Ok(Message::Close(_)) | Err(_)) | None => return,
                 Some(Ok(Message::Text(_) | Message::Binary(_) | Message::Pong(_))) => {}
             },
             _ = keepalive.tick() => {
-                if socket.send(Message::Ping(Default::default())).await.is_err() {
+                if socket.send(Message::Ping(Bytes::default())).await.is_err() {
                     return;
                 }
             },

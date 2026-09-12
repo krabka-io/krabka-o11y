@@ -156,7 +156,7 @@ pub(crate) fn binary_jfr_to_pprof(
                     }
                 }
                 EventKind::NewTlab => {
-                    add_pair(&mut samples, 2, &stack, &context_labels, decoded.tlab_size)
+                    add_pair(&mut samples, 2, &stack, &context_labels, decoded.tlab_size);
                 }
                 EventKind::OutsideTlab => add_pair(
                     &mut samples,
@@ -166,17 +166,17 @@ pub(crate) fn binary_jfr_to_pprof(
                     decoded.allocation_size,
                 ),
                 EventKind::Monitor => {
-                    add_pair(&mut samples, 6, &stack, &context_labels, decoded.duration)
+                    add_pair(&mut samples, 6, &stack, &context_labels, decoded.duration);
                 }
                 EventKind::Park => {
-                    add_pair(&mut samples, 8, &stack, &context_labels, decoded.duration)
+                    add_pair(&mut samples, 8, &stack, &context_labels, decoded.duration);
                 }
                 EventKind::Live => add_sample(&mut samples, 10, &stack, &context_labels, 1),
                 EventKind::Allocation => {
-                    add_pair(&mut samples, 11, &stack, &context_labels, decoded.weight)
+                    add_pair(&mut samples, 11, &stack, &context_labels, decoded.weight);
                 }
                 EventKind::Malloc => {
-                    add_pair(&mut samples, 13, &stack, &context_labels, decoded.size)
+                    add_pair(&mut samples, 13, &stack, &context_labels, decoded.size);
                 }
             }
         }

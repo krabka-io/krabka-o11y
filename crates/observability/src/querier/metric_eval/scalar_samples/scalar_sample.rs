@@ -139,7 +139,6 @@ impl ScalarSample {
         format!("{sign}{whole}.{decimals}")
     }
 
-    #[cfg(test)]
     pub(crate) fn format_fixed_six(self) -> String {
         format!("{:.6}", self.to_f64().unwrap_or_default())
     }

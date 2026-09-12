@@ -98,6 +98,9 @@ impl MetricsGenConfig {
     }
 
     /// Read processor overrides from the same runtime file as trace limits.
+    ///
+    /// # Errors
+    /// Returns an error when `yaml` is not a valid runtime overrides document.
     pub fn apply_runtime_overrides(&mut self, yaml: &str) -> Result<(), serde_yaml::Error> {
         let file = serde_yaml::from_str::<RuntimeOverrides>(yaml)?;
         self.overrides = file

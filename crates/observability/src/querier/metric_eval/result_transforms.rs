@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code, unused_imports))]
+
 #[cfg(test)]
 use crate::{
     HttpQueryError, MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet,
