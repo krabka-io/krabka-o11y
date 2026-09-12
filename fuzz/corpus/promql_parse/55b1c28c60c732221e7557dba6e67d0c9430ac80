@@ -1,1 +1,0 @@
-info(build_info, {__name__=~".+_info", build_data=~".+"})

@@ -1,0 +1,1 @@
+histogram_count(rate(reset{timing="late"}[5m]))

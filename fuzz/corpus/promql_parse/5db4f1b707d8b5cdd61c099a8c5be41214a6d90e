@@ -1,0 +1,1 @@
+avg_over_time(histogram_over_time[4m:1m])

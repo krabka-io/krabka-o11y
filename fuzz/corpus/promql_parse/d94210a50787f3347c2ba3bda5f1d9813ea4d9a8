@@ -1,1 +1,0 @@
-histogram_quantile(1.01, testhistogram)

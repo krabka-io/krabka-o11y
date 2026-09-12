@@ -1,0 +1,1 @@
+http_requests_total{group="canary"} and http_requests_total{instance="0"}

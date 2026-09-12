@@ -1,0 +1,1 @@
+min_over_time(rate(metric_total[5m])[20m:1m])
