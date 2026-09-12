@@ -92,12 +92,14 @@ mod tests {
     }
 }
 
+mod annotated_query_result;
 mod annotations;
 mod instant_sample;
 mod query_result;
 mod range_series;
 mod sample_value;
 
+pub use annotated_query_result::AnnotatedQueryResult;
 pub use annotations::Annotations;
 pub use instant_sample::InstantSample;
 pub use query_result::QueryResult;

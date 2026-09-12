@@ -63,9 +63,9 @@ use datafusion::{
 use flate2::read::{DeflateDecoder, GzDecoder};
 pub use ids::{Offset, PartitionIndex};
 use krabka_blockstore::{
-    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex,
+    BlockDeletion, BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex,
     LogBlockStoreError as BlockStoreError, LogLabels as Labels, LogRow,
-    LogSeriesFingerprint as SeriesFingerprint, TenantId, TimeRange, read_log_block,
+    LogSeriesFingerprint as SeriesFingerprint, TenantId, TimeRange, delete_blocks, read_log_block,
     read_log_block_from_object_store, read_log_index_manifest,
     read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store,
@@ -231,7 +231,7 @@ pub(crate) use self::{
         },
         delete_materialization::{
             LogCompactionIndexOutput, TenantCompactionIndexCache, active_log_delete_tenants,
-            compact_log_block_to_object_store_with_index_output,
+            compact_log_block_to_object_store_with_index_output, insert_descriptor_labels,
             materialize_delete_requests_in_existing_local_manifest_blocks,
             materialize_delete_requests_in_existing_object_store_blocks,
             poll_accumulated_log_compaction_records, wal_compaction_chunks, wal_record_time_range,
@@ -245,6 +245,7 @@ pub(crate) use self::{
             build_configured_object_store, compactor_delete_requests_for_config,
             load_querier_shared_compaction_frontier,
         },
+        retention::{log_block_deletion, sweep_expired_log_blocks},
         runtime::{
             advance_and_persist_compaction_frontier, load_existing_compaction_frontier,
             materialize_deletes_then_compact_next_kafka_wal_batch,
@@ -416,6 +417,7 @@ pub(crate) use self::{
                 execute_detected_labels_query, execute_index_stats_query, execute_patterns_query,
             },
         },
+        blocks::read_planned_log_block,
         metadata::{
             execute_api_prom_label_names_query, execute_api_prom_series_query,
             execute_label_names_query, execute_label_values_query, execute_series_query,

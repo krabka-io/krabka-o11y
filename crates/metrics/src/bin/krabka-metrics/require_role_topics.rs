@@ -10,8 +10,11 @@ use super::{Cli, ClientSecurity, METRICS_TOPICS, require_topics};
 /// would say so. The check therefore runs before any producer or consumer is
 /// built.
 ///
-/// Both roles of this binary reach the broker, so both are asked. The read
-/// path, which can serve compacted blocks with no broker at all, is
+/// The two write-path roles reach the broker, so both are asked. The compactor
+/// does not: it reads and writes the object store only, so a broker it never
+/// opens is not a condition of its starting. See
+/// [`Target::touches_the_wal`](super::Target::touches_the_wal). The read path,
+/// which can serve compacted blocks with no broker at all, is
 /// `krabka-metrics-service`, and it makes that call for itself.
 ///
 /// `security` is the write-ahead log client security that the binary loaded.
@@ -24,6 +27,9 @@ pub(crate) async fn require_role_topics(
     cli: &Cli,
     security: Option<ClientSecurity>,
 ) -> Result<(), TopicContractError> {
+    if !cli.target.touches_the_wal() {
+        return Ok(());
+    }
     require_topics(&cli.bootstrap, &METRICS_TOPICS, security).await?;
     Ok(())
 }

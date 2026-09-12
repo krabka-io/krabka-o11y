@@ -3,21 +3,30 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use arrow::{
     array::{
-        ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, MapBuilder, StringBuilder,
-        StringDictionaryBuilder, UInt32Builder, UInt64Builder,
+        ArrayRef, BooleanArray, BooleanBuilder, Float64Builder, Int64Array, Int64Builder,
+        MapBuilder, StringBuilder, StringDictionaryBuilder, UInt32Builder, UInt64Array,
+        UInt64Builder,
     },
+    compute::filter_record_batch,
     datatypes::{DataType, Field, Int32Type},
+    error::ArrowError,
     record_batch::RecordBatch,
 };
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use krabka_blockstore::{
-    BlockMeta, BlockStoreError, BlockWriter, ObjectStoreMetrics, ObjectStoreRetryPolicy,
-    RetryingObjectStore, escape_object_path_segment,
+    BlockDeletion, BlockDeletionFailure, BlockDeletionReport, BlockLevel, BlockMeta,
+    BlockStoreError, BlockTimestampUnit, BlockWriter, CompactionCandidate, CompactionJob,
+    CompactionPolicy, DEFAULT_BLOCK_SWEEP_GRACE, Labels, LifecycleError, MERGE_BATCH_ROWS,
+    MERGE_READ_BATCH_ROWS, ObjectStoreMetrics, ObjectStoreRetryPolicy, OrphanSweepStats,
+    RetentionWindows, RetryingObjectStore, SortedMerge, SummaryColumns, delete_blocks,
+    escape_object_path_segment, input_key_fingerprint, open_block_stream, plan_compactions,
+    plan_expired_blocks, reconcile_orphans, series_block_schema, versioned_compaction_key,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerRecord};
 use krabka_ids::{Offset, PartitionIndex};
@@ -28,7 +37,9 @@ use serde::{Deserialize, Serialize};
 use tracing::Instrument as _;
 
 use crate::{
-    NativeHistogram, encode_float_samples, encode_native_histograms,
+    NativeHistogram,
+    arrow_codec::typed_column,
+    encode_float_samples, encode_native_histograms,
     histogram::HistogramCodecError,
     metrics::ServiceMetrics,
     schema::{
@@ -112,17 +123,24 @@ mod tests {
     use std::{
         collections::BTreeMap,
         sync::{Arc, Mutex},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use assert2::{assert, check};
     use async_trait::async_trait;
-    use krabka_blockstore::Labels;
+    use futures::{StreamExt as _, stream::BoxStream};
+    use krabka_blockstore::{BlockDeletionFailure, Labels, OrphanSweepStats, RetentionWindows};
     use krabka_units::prelude::*;
-    use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory};
+    use object_store::{
+        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
+        ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
+        path::Path,
+    };
 
     use super::{
-        CompactionLoopContext, ObjectStoreMetrics, ObjectStoreRetryPolicy, RetryingObjectStore,
-        ServiceMetrics, compact_wal_records, encode_tenant_batches,
+        CompactionLoopContext, CompactionRetentionPhase, ObjectStoreMetrics,
+        ObjectStoreRetryPolicy, RetryingObjectStore, ServiceMetrics, compact_wal_records,
+        encode_tenant_batches,
     };
     use crate::{
         BucketSpan, FloatRow, NativeHistogram, ResetHint,
@@ -326,6 +344,23 @@ mod tests {
                         99,
                     ),
                 ),
+                // A merged block. The `compacted` segment is what keeps the
+                // level-keyed names apart from the offset-keyed ones in a
+                // listing, and the tenant is escaped by the same rule.
+                (
+                    5,
+                    super::compacted_metric_object_key(
+                        &krabka_blockstore::CompactionJob {
+                            tenant: tenant.to_string(),
+                            input_keys: vec!["a".to_string(), "b".to_string()],
+                            output_level: krabka_blockstore::BlockLevel(1),
+                            min_ts: 42,
+                            max_ts: 99,
+                            row_count: 2,
+                        },
+                        super::MetricBlockKind::Float,
+                    ),
+                ),
             ];
             for (segment_count, key) in keys {
                 let segments = key.split('/').collect::<Vec<_>>();
@@ -432,6 +467,7 @@ mod tests {
                     index_key:
                         "metrics/tenant-a/float/00000000000000000042-00000000000000000099.index"
                             .to_string(),
+                    level: krabka_blockstore::BlockLevel::INGESTED,
                     first_offset: 42,
                     last_offset: 99,
                     row_count: 2,
@@ -481,71 +517,199 @@ mod tests {
         assert!(decoded == manifest);
     }
 
+    /// A wall-clock instant well inside the range every unit can express.
+    const NOW_MS: i64 = 1_700_000_000_000;
+    const REFUSING_STORE: &str = "refuses-one-delete";
+    const REFUSAL: &str = "this object will not delete";
+
+    fn at_ms(millis: i64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_millis(u64::try_from(millis).expect("an epoch time"))
+    }
+
+    /// A per-tenant window table. A tenant it does not name keeps its blocks
+    /// forever, which is what an unconfigured tenant does in production.
+    struct Windows(BTreeMap<String, Time>);
+
+    impl Windows {
+        fn new(entries: &[(&str, Time)]) -> Self {
+            Self(
+                entries
+                    .iter()
+                    .map(|(tenant, window)| ((*tenant).to_string(), *window))
+                    .collect(),
+            )
+        }
+    }
+
+    impl RetentionWindows for Windows {
+        fn block_retention(&self, tenant: &str) -> Time {
+            self.0.get(tenant).copied().unwrap_or(Time::ZERO)
+        }
+    }
+
+    /// An object store that refuses to delete one key, delegates the rest, and
+    /// records the order it was asked in.
+    ///
+    /// `InMemory` cannot fail a delete, and a pass that stopped at the first
+    /// refusal would leave every block behind it in the bucket forever. The
+    /// recorded order is how a test sees which of a block's two objects the
+    /// pass deleted first. An empty `refused` refuses nothing.
+    struct RefusesOneDelete {
+        inner: Arc<InMemory>,
+        refused: String,
+        asked: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl std::fmt::Debug for RefusesOneDelete {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(REFUSING_STORE)
+        }
+    }
+
+    impl std::fmt::Display for RefusesOneDelete {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(REFUSING_STORE)
+        }
+    }
+
+    #[async_trait]
+    impl ObjectStore for RefusesOneDelete {
+        async fn put_opts(
+            &self,
+            location: &Path,
+            payload: PutPayload,
+            opts: PutOptions,
+        ) -> object_store::Result<PutResult> {
+            self.inner.put_opts(location, payload, opts).await
+        }
+
+        async fn put_multipart_opts(
+            &self,
+            location: &Path,
+            opts: PutMultipartOptions,
+        ) -> object_store::Result<Box<dyn MultipartUpload>> {
+            self.inner.put_multipart_opts(location, opts).await
+        }
+
+        async fn get_opts(
+            &self,
+            location: &Path,
+            options: GetOptions,
+        ) -> object_store::Result<GetResult> {
+            self.inner.get_opts(location, options).await
+        }
+
+        fn delete_stream(
+            &self,
+            locations: BoxStream<'static, object_store::Result<Path>>,
+        ) -> BoxStream<'static, object_store::Result<Path>> {
+            let inner = self.inner.clone();
+            let refused = self.refused.clone();
+            let asked = self.asked.clone();
+            locations
+                .then(move |location| {
+                    let inner = inner.clone();
+                    let refused = refused.clone();
+                    let asked = asked.clone();
+                    async move {
+                        let location = location?;
+                        asked
+                            .lock()
+                            .expect("the delete order")
+                            .push(location.as_ref().to_string());
+                        if location.as_ref() == refused {
+                            return Err(object_store::Error::Generic {
+                                store: REFUSING_STORE,
+                                source: REFUSAL.into(),
+                            });
+                        }
+                        ObjectStoreExt::delete(inner.as_ref(), &location).await?;
+                        Ok(location)
+                    }
+                })
+                .boxed()
+        }
+
+        fn list(
+            &self,
+            prefix: Option<&Path>,
+        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+            self.inner.list(prefix)
+        }
+
+        async fn list_with_delimiter(
+            &self,
+            prefix: Option<&Path>,
+        ) -> object_store::Result<ListResult> {
+            self.inner.list_with_delimiter(prefix).await
+        }
+
+        async fn copy_opts(
+            &self,
+            from: &Path,
+            to: &Path,
+            options: CopyOptions,
+        ) -> object_store::Result<()> {
+            self.inner.copy_opts(from, to, options).await
+        }
+    }
+
+    /// Writes one float block and its index manifest the way the compactor
+    /// writes them, and answers with the manifest the sweep will read.
+    async fn write_float_block(
+        store: &Arc<dyn ObjectStore>,
+        tenant: &str,
+        first_offset: i64,
+        timestamp_ms: i64,
+    ) -> super::CompactionIndexManifest {
+        let block_writer = krabka_blockstore::BlockWriter::new(store.clone());
+        let sink = super::ObjectStoreCompactionIndexSink::new(store.clone());
+        let rows = super::TenantCompactionRows {
+            tenant: tenant.to_string(),
+            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]))]),
+            float_rows: vec![FloatRow {
+                fingerprint: 7,
+                timestamp_ms,
+                value: 1.0,
+            }],
+            histogram_rows: Vec::new(),
+            exemplar_rows: Vec::new(),
+            metadata_rows: Vec::new(),
+            clock_rows: Vec::new(),
+        };
+        let mut writes = super::write_compacted_tenant_blocks(
+            &block_writer,
+            &sink,
+            &rows,
+            first_offset,
+            first_offset + 1,
+        )
+        .await
+        .expect("write compacted blocks");
+        assert!(writes.len() == 1);
+        writes.remove(0).manifest
+    }
+
+    async fn exists(store: &Arc<dyn ObjectStore>, key: &str) -> bool {
+        store.head(&Path::from(key)).await.is_ok()
+    }
+
+    fn one_object_deleted() -> CompactionRetentionPhase {
+        CompactionRetentionPhase {
+            deleted: 1,
+            absent: 0,
+            failures: Vec::new(),
+        }
+    }
+
     #[tokio::test]
     async fn retention_deletes_blocks_and_indexes_older_than_cutoff() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
-        let sink = super::ObjectStoreCompactionIndexSink::new(object_store.clone());
+        let old = write_float_block(&object_store, "tenant-a", 1, NOW_MS - 10_000).await;
+        let fresh = write_float_block(&object_store, "tenant-a", 3, NOW_MS - 1_000).await;
+        let windows = Windows::new(&[("tenant-a", secs(5))]);
 
-        let old_plan = super::compaction_partition_object_plan(
-            "tenant-a",
-            super::MetricBlockKind::Float,
-            super::PartitionIndex(0),
-            1,
-            2,
-        );
-        let old_meta = block_writer
-            .write_block(
-                "tenant-a",
-                &old_plan.block_key,
-                crate::float_sample_schema(),
-                &[crate::encode_float_samples(&[(1, 1_000, 1.0)]).expect("encode old float")],
-            )
-            .await
-            .expect("write old block");
-        let old = super::CompactionIndexManifest::from_block_meta(
-            super::MetricBlockKind::Float,
-            &old_plan,
-            &old_meta,
-            vec![super::CompactionSeriesLabels {
-                fingerprint: 1,
-                labels: labels(&[("__name__", "up"), ("job", "old")]),
-            }],
-        );
-        super::CompactionIndexSink::write_manifest(&sink, &old)
-            .await
-            .expect("write old manifest");
-
-        let fresh_plan = super::compaction_partition_object_plan(
-            "tenant-a",
-            super::MetricBlockKind::Float,
-            super::PartitionIndex(0),
-            3,
-            4,
-        );
-        let fresh_meta = block_writer
-            .write_block(
-                "tenant-a",
-                &fresh_plan.block_key,
-                crate::float_sample_schema(),
-                &[crate::encode_float_samples(&[(2, 10_000, 1.0)]).expect("encode fresh float")],
-            )
-            .await
-            .expect("write fresh block");
-        let fresh = super::CompactionIndexManifest::from_block_meta(
-            super::MetricBlockKind::Float,
-            &fresh_plan,
-            &fresh_meta,
-            vec![super::CompactionSeriesLabels {
-                fingerprint: 2,
-                labels: labels(&[("__name__", "up"), ("job", "fresh")]),
-            }],
-        );
-        super::CompactionIndexSink::write_manifest(&sink, &fresh)
-            .await
-            .expect("write fresh manifest");
-
-        let stats = super::enforce_compaction_retention(object_store.clone(), 10_000, secs(5))
+        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
             .await
             .expect("enforce retention");
 
@@ -553,34 +717,76 @@ mod tests {
             stats
                 == super::CompactionRetentionStats {
                     manifests_scanned: 2,
-                    manifests_deleted: 1,
-                    blocks_deleted: 1,
+                    // The manifest first, then the block it named.
+                    manifests_retired: one_object_deleted(),
+                    blocks_deleted: one_object_deleted(),
+                    // The two objects of the surviving block, and nothing the
+                    // index does not name.
+                    orphans: OrphanSweepStats {
+                        listed: 2,
+                        live: 2,
+                        ..OrphanSweepStats::default()
+                    },
                 }
         );
-        check!(
-            object_store
-                .head(&object_store::path::Path::from(old.index_key.clone()))
-                .await
-                .is_err()
+        check!(!exists(&object_store, &old.index_key).await);
+        check!(!exists(&object_store, &old.block_key).await);
+        check!(exists(&object_store, &fresh.index_key).await);
+        check!(exists(&object_store, &fresh.block_key).await);
+    }
+
+    /// Three tenants, three windows, one clock. Every block is the same age,
+    /// so only the window can decide which of them goes. The tenant the file
+    /// never names reads the default window, and the sweep reaches it because
+    /// it lists the whole prefix rather than the configured tenants.
+    #[tokio::test]
+    async fn each_tenant_keeps_its_blocks_for_its_own_window() {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let overrides = crate::OverridesProvider::from_yaml(
+            "defaults:
+  compactor_blocks_retention_period: \"1h\"
+overrides:
+  tenant-short:
+    compactor_blocks_retention_period: \"5s\"
+  tenant-forever:
+    compactor_blocks_retention_period: \"0s\"
+",
+        )
+        .expect("parse runtime overrides");
+        let expired = write_float_block(&object_store, "tenant-short", 1, NOW_MS - 10_000).await;
+        let on_default =
+            write_float_block(&object_store, "tenant-default", 3, NOW_MS - 10_000).await;
+        let forever = write_float_block(&object_store, "tenant-forever", 5, NOW_MS - 10_000).await;
+
+        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &overrides)
+            .await
+            .expect("enforce retention");
+
+        assert!(
+            stats
+                == super::CompactionRetentionStats {
+                    manifests_scanned: 3,
+                    manifests_retired: one_object_deleted(),
+                    blocks_deleted: one_object_deleted(),
+                    orphans: OrphanSweepStats {
+                        listed: 4,
+                        live: 4,
+                        ..OrphanSweepStats::default()
+                    },
+                }
         );
+        check!(!exists(&object_store, &expired.block_key).await);
+        check!(!exists(&object_store, &expired.index_key).await);
         check!(
-            object_store
-                .head(&object_store::path::Path::from(old.block_key.clone()))
-                .await
-                .is_err()
+            exists(&object_store, &on_default.block_key).await,
+            "an unlisted tenant keeps the default window, not no window"
         );
+        check!(exists(&object_store, &on_default.index_key).await);
         check!(
-            object_store
-                .head(&object_store::path::Path::from(fresh.index_key.clone()))
-                .await
-                .is_ok()
+            exists(&object_store, &forever.block_key).await,
+            "a zero window keeps a block forever"
         );
-        check!(
-            object_store
-                .head(&object_store::path::Path::from(fresh.block_key.clone()))
-                .await
-                .is_ok()
-        );
+        check!(exists(&object_store, &forever.index_key).await);
     }
 
     /// A tenant name with a character that needs an escape still ages out.
@@ -591,33 +797,15 @@ mod tests {
     #[tokio::test]
     async fn retention_deletes_the_blocks_of_a_tenant_whose_name_is_escaped() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
-        let sink = super::ObjectStoreCompactionIndexSink::new(object_store.clone());
-        let rows = super::TenantCompactionRows {
-            tenant: "team*(1)".to_string(),
-            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]))]),
-            float_rows: vec![FloatRow {
-                fingerprint: 7,
-                timestamp_ms: 1_000,
-                value: 1.0,
-            }],
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
-            metadata_rows: Vec::new(),
-            clock_rows: Vec::new(),
-        };
-        let writes = super::write_compacted_tenant_blocks(&block_writer, &sink, &rows, 1, 2)
-            .await
-            .expect("write compacted blocks");
-        assert!(writes.len() == 1);
+        let manifest = write_float_block(&object_store, "team*(1)", 1, NOW_MS - 10_000).await;
         check!(
-            writes[0]
-                .manifest
+            manifest
                 .index_key
                 .starts_with("metrics/team!2A!281!29/float/")
         );
+        let windows = Windows::new(&[("team*(1)", secs(5))]);
 
-        let stats = super::enforce_compaction_retention(object_store.clone(), 10_000, secs(5))
+        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
             .await
             .expect("enforce retention");
 
@@ -625,8 +813,9 @@ mod tests {
             stats
                 == super::CompactionRetentionStats {
                     manifests_scanned: 1,
-                    manifests_deleted: 1,
-                    blocks_deleted: 1,
+                    manifests_retired: one_object_deleted(),
+                    blocks_deleted: one_object_deleted(),
+                    orphans: OrphanSweepStats::default(),
                 }
         );
     }
@@ -634,15 +823,305 @@ mod tests {
     #[tokio::test]
     async fn zero_and_negative_retention_windows_sweep_nothing() {
         // The retention window is an extent, so "no window configured" is any
-        // non-positive extent — the sweep must not treat it as "delete all".
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        for retention in [Time::ZERO, Time::from_millis(-1)] {
-            let stats =
-                super::enforce_compaction_retention(object_store.clone(), 10_000, retention)
-                    .await
-                    .expect("enforce retention");
-            assert!(stats == super::CompactionRetentionStats::default());
+        // non-positive extent. A sweep that read one as "delete everything"
+        // would empty the bucket of every tenant an operator never configured.
+        for (name, window) in [
+            ("a zero window", Time::ZERO),
+            ("a negative window", Time::from_millis(-1)),
+        ] {
+            let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+            let ancient = write_float_block(&object_store, "tenant-a", 1, 0).await;
+            let windows = Windows::new(&[("tenant-a", window)]);
+
+            let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
+                .await
+                .expect("enforce retention");
+
+            check!(
+                stats
+                    == super::CompactionRetentionStats {
+                        manifests_scanned: 1,
+                        manifests_retired: CompactionRetentionPhase::default(),
+                        blocks_deleted: CompactionRetentionPhase::default(),
+                        orphans: OrphanSweepStats {
+                            listed: 2,
+                            live: 2,
+                            ..OrphanSweepStats::default()
+                        },
+                    },
+                "{name}"
+            );
+            check!(exists(&object_store, &ancient.block_key).await, "{name}");
+            check!(exists(&object_store, &ancient.index_key).await, "{name}");
         }
+    }
+
+    /// The orphan half of the pass deletes every object the index does not
+    /// name, and the `.index` manifests live under the same prefix as the
+    /// blocks. A live set built from the block keys alone would name no
+    /// manifest at all, so this sweep would delete the whole index: every
+    /// block still in the bucket, and no query able to find one. Nothing else
+    /// in metrics records which blocks exist.
+    #[tokio::test]
+    async fn the_orphan_sweep_keeps_every_index_manifest() {
+        const GRACE_AND_MORE: Duration = Duration::from_hours(2);
+        // A zero window everywhere, so the orphan half is the only half that
+        // can delete anything here.
+        let windows = Windows::new(&[]);
+
+        for (name, now, deleted, within_grace) in [
+            (
+                "past the grace window",
+                SystemTime::now() + GRACE_AND_MORE,
+                1,
+                0,
+            ),
+            ("inside the grace window", SystemTime::now(), 0, 1),
+        ] {
+            let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+            let first = write_float_block(&object_store, "tenant-a", 1, NOW_MS).await;
+            let second = write_float_block(&object_store, "tenant-b", 3, NOW_MS).await;
+            // A block that no manifest names: a write that put its object and
+            // never published an index entry leaves exactly this.
+            let orphan = "metrics/tenant-a/float/00000000000000000009-00000000000000000010.parquet";
+            object_store
+                .put(
+                    &Path::from(orphan),
+                    PutPayload::from(b"an unreferenced block".to_vec()),
+                )
+                .await
+                .expect("put the orphan");
+
+            let stats = super::enforce_compaction_retention(&object_store, now, &windows)
+                .await
+                .expect("enforce retention");
+
+            check!(
+                stats
+                    == super::CompactionRetentionStats {
+                        manifests_scanned: 2,
+                        manifests_retired: CompactionRetentionPhase::default(),
+                        blocks_deleted: CompactionRetentionPhase::default(),
+                        orphans: OrphanSweepStats {
+                            listed: 5,
+                            live: 4,
+                            kept_within_grace: within_grace,
+                            deleted,
+                            absent: 0,
+                            failed: 0,
+                        },
+                    },
+                "{name}"
+            );
+            for manifest in [&first, &second] {
+                check!(
+                    exists(&object_store, &manifest.index_key).await,
+                    "{name}: {} is the index itself",
+                    manifest.index_key
+                );
+                check!(exists(&object_store, &manifest.block_key).await, "{name}");
+            }
+            check!(
+                exists(&object_store, orphan).await == (deleted == 0),
+                "{name}"
+            );
+        }
+    }
+
+    /// One object a backend refuses does not end the pass. A sweep covers
+    /// every tenant, so a stop at the first refusal would keep every block
+    /// behind it in the bucket for as long as that object refuses.
+    #[tokio::test]
+    async fn one_object_that_will_not_delete_does_not_stop_the_others() {
+        let inner = Arc::new(InMemory::new());
+        let seeded: Arc<dyn ObjectStore> = inner.clone();
+        let stubborn = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
+        let yielding = write_float_block(&seeded, "tenant-b", 3, NOW_MS - 10_000).await;
+        let object_store: Arc<dyn ObjectStore> = Arc::new(RefusesOneDelete {
+            inner: inner.clone(),
+            refused: stubborn.block_key.clone(),
+            asked: Arc::new(Mutex::new(Vec::new())),
+        });
+        let windows = Windows::new(&[("tenant-a", secs(5)), ("tenant-b", secs(5))]);
+
+        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
+            .await
+            .expect("a refused delete is not a failed pass");
+
+        check!(
+            stats
+                == super::CompactionRetentionStats {
+                    manifests_scanned: 2,
+                    // Both manifests go: the index entry of a block leaves
+                    // before the block does.
+                    manifests_retired: CompactionRetentionPhase {
+                        deleted: 2,
+                        absent: 0,
+                        failures: Vec::new(),
+                    },
+                    // The block whose object refused is then an object no
+                    // index names, and a later pass sweeps it as an orphan --
+                    // which is the way round that leaves no manifest naming a
+                    // block that is gone.
+                    blocks_deleted: CompactionRetentionPhase {
+                        deleted: 1,
+                        absent: 0,
+                        failures: vec![BlockDeletionFailure {
+                            object_key: stubborn.block_key.clone(),
+                            failed_key: stubborn.block_key.clone(),
+                            error: object_store::Error::Generic {
+                                store: REFUSING_STORE,
+                                source: REFUSAL.into(),
+                            }
+                            .to_string(),
+                        }],
+                    },
+                    orphans: OrphanSweepStats {
+                        listed: 1,
+                        live: 1,
+                        ..OrphanSweepStats::default()
+                    },
+                }
+        );
+        check!(
+            !exists(&seeded, &yielding.block_key).await,
+            "the block behind the refusal still went"
+        );
+        check!(exists(&seeded, &stubborn.block_key).await);
+    }
+
+    /// The `.index` manifest *is* the metrics index entry, so a pass that
+    /// deleted the block first would leave a live manifest naming an object
+    /// that is gone, and every query over that window would resolve a key with
+    /// nothing behind it. The other order leaves an unreferenced object, which
+    /// the orphan sweep reclaims and which no query ever reaches.
+    #[tokio::test]
+    async fn retention_retires_the_manifest_before_it_deletes_the_block() {
+        let inner = Arc::new(InMemory::new());
+        let seeded: Arc<dyn ObjectStore> = inner.clone();
+        let expired = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let object_store: Arc<dyn ObjectStore> = Arc::new(RefusesOneDelete {
+            inner: inner.clone(),
+            refused: String::new(),
+            asked: asked.clone(),
+        });
+        let windows = Windows::new(&[("tenant-a", secs(5))]);
+
+        super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
+            .await
+            .expect("enforce retention");
+
+        let asked = asked.lock().expect("the delete order").clone();
+        assert!(
+            asked == vec![expired.index_key.clone(), expired.block_key.clone()],
+            "the index entry leaves before the object it names"
+        );
+    }
+
+    /// A manifest the store refuses keeps its block. The index entry is still
+    /// live, so deleting the object would produce exactly the state the
+    /// ordering exists to prevent.
+    #[tokio::test]
+    async fn an_expired_block_whose_manifest_will_not_delete_is_left_alone() {
+        let inner = Arc::new(InMemory::new());
+        let seeded: Arc<dyn ObjectStore> = inner.clone();
+        let stubborn = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
+        let yielding = write_float_block(&seeded, "tenant-b", 3, NOW_MS - 10_000).await;
+        let object_store: Arc<dyn ObjectStore> = Arc::new(RefusesOneDelete {
+            inner: inner.clone(),
+            refused: stubborn.index_key.clone(),
+            asked: Arc::new(Mutex::new(Vec::new())),
+        });
+        let windows = Windows::new(&[("tenant-a", secs(5)), ("tenant-b", secs(5))]);
+
+        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
+            .await
+            .expect("a refused delete is not a failed pass");
+
+        check!(
+            stats
+                == super::CompactionRetentionStats {
+                    manifests_scanned: 2,
+                    manifests_retired: CompactionRetentionPhase {
+                        deleted: 1,
+                        absent: 0,
+                        failures: vec![BlockDeletionFailure {
+                            object_key: stubborn.index_key.clone(),
+                            failed_key: stubborn.index_key.clone(),
+                            error: object_store::Error::Generic {
+                                store: REFUSING_STORE,
+                                source: REFUSAL.into(),
+                            }
+                            .to_string(),
+                        }],
+                    },
+                    // One block, not two: the tenant whose manifest refused is
+                    // not offered to the second phase at all.
+                    blocks_deleted: one_object_deleted(),
+                    orphans: OrphanSweepStats {
+                        listed: 2,
+                        live: 2,
+                        ..OrphanSweepStats::default()
+                    },
+                }
+        );
+        check!(
+            exists(&seeded, &stubborn.block_key).await,
+            "a live manifest must never name a block that is gone"
+        );
+        check!(exists(&seeded, &stubborn.index_key).await);
+        check!(!exists(&seeded, &yielding.block_key).await);
+        check!(!exists(&seeded, &yielding.index_key).await);
+    }
+
+    /// Retention and orphan reconciliation are two halves of one pass, and a
+    /// deployment where no tenant has a window still has orphans: a writer that
+    /// put its block and died before it published the manifest leaves one, and
+    /// nothing else in metrics ever looks for it. The pass must therefore do the
+    /// orphan half and expire nothing.
+    #[tokio::test]
+    async fn a_deployment_with_no_retention_window_still_reclaims_orphans() {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        // The built-in limits, which is what a deployment with no overrides file
+        // reads. Its window is zero, so nothing can expire.
+        let no_windows = crate::OverridesProvider::new(crate::Limits::default());
+        check!(!no_windows.expires_any_blocks());
+        let live = write_float_block(&object_store, "tenant-a", 1, NOW_MS).await;
+        let orphan = "metrics/tenant-a/float/00000000000000000009-00000000000000000010.parquet";
+        object_store
+            .put(
+                &Path::from(orphan),
+                PutPayload::from(b"an unreferenced block".to_vec()),
+            )
+            .await
+            .expect("put the orphan");
+
+        let stats = super::enforce_compaction_retention(
+            &object_store,
+            SystemTime::now() + Duration::from_hours(2),
+            &no_windows,
+        )
+        .await
+        .expect("enforce retention");
+
+        assert!(
+            stats
+                == super::CompactionRetentionStats {
+                    manifests_scanned: 1,
+                    manifests_retired: CompactionRetentionPhase::default(),
+                    blocks_deleted: CompactionRetentionPhase::default(),
+                    orphans: OrphanSweepStats {
+                        listed: 3,
+                        live: 2,
+                        deleted: 1,
+                        ..OrphanSweepStats::default()
+                    },
+                }
+        );
+        check!(!exists(&object_store, orphan).await);
+        check!(exists(&object_store, &live.block_key).await);
+        check!(exists(&object_store, &live.index_key).await);
     }
 
     #[tokio::test]
@@ -655,6 +1134,7 @@ mod tests {
             kind: super::MetricBlockKind::Float,
             block_key: "metrics/tenant-a/float/block.parquet".to_string(),
             index_key: manifest_index_key.to_string(),
+            level: krabka_blockstore::BlockLevel::INGESTED,
             first_offset: 0,
             last_offset: 1,
             row_count: 1,
@@ -665,27 +1145,27 @@ mod tests {
         };
         object_store
             .put(
-                &object_store::path::Path::from(listed_index_key),
-                object_store::PutPayload::from(manifest.encode().expect("encode manifest")),
+                &Path::from(listed_index_key),
+                PutPayload::from(manifest.encode().expect("encode manifest")),
             )
             .await
             .expect("write mismatched manifest");
+        let windows = Windows::new(&[("tenant-a", secs(5))]);
 
-        let error = super::enforce_compaction_retention(object_store.clone(), 10_000, secs(5))
+        let error = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
             .await
             .expect_err("mismatched manifest should fail");
 
         assert!(matches!(
             error,
-            super::CompactionRetentionError::ManifestKeyMismatch { listed, manifest }
-                if listed == listed_index_key && manifest == manifest_index_key
+            super::CompactionRetentionError::Manifest(
+                super::CompactionManifestError::KeyMismatch { listed, manifest }
+            ) if listed == listed_index_key && manifest == manifest_index_key
         ));
-        assert!(
-            object_store
-                .head(&object_store::path::Path::from(listed_index_key))
-                .await
-                .is_ok()
-        );
+        // Nothing is deleted, and the orphan half never runs: the pass cannot
+        // tell which blocks the index names, and every object under the
+        // prefix would look unreferenced.
+        check!(exists(&object_store, listed_index_key).await);
     }
 
     #[test]
@@ -2284,9 +2764,11 @@ mod tests {
 
 mod clock_columns;
 mod clock_reading_row;
+mod compact_metric_blocks_once;
 mod compact_wal_records;
 mod compacted_block_request;
 mod compacted_block_write;
+mod compacted_metric_object_key;
 mod compaction_batch_result;
 mod compaction_batch_span;
 mod compaction_buffer;
@@ -2306,6 +2788,7 @@ mod compaction_index_sink;
 mod compaction_loop_config;
 mod compaction_loop_context;
 mod compaction_loop_result;
+mod compaction_manifest_error;
 mod compaction_object_key;
 mod compaction_object_plan;
 mod compaction_object_plan_for_rows;
@@ -2317,6 +2800,7 @@ mod compaction_partition_offset;
 mod compaction_poll_error;
 mod compaction_poll_result;
 mod compaction_retention_error;
+mod compaction_retention_phase;
 mod compaction_retention_stats;
 mod compaction_series_labels;
 mod compaction_wal_record;
@@ -2326,9 +2810,10 @@ mod compaction_window_result;
 mod compaction_write_error;
 mod consumer;
 mod consumer_build_error;
+mod deduplicate_series_timestamp_runs;
 mod default_flush_max_age;
 mod default_flush_max_rows;
-mod delete_if_exists;
+mod deferred_block_deletions;
 mod durable_compaction_consumer;
 mod encode_clock_reading_rows;
 mod encode_exemplar_rows;
@@ -2339,14 +2824,20 @@ mod exemplar_row;
 mod float_row;
 mod flush_buffer;
 mod flush_buffer_with_consumer;
+mod list_compaction_manifests;
+mod merge_metric_blocks;
 mod metadata_row;
 mod metric_block_kind;
+mod metric_compaction_error;
+mod metric_compaction_job;
+mod metric_compaction_pass;
 mod metrics_compactor_build_error;
 mod metrics_compactor_config;
 mod metrics_compactor_config_error;
 mod metrics_compactor_runtime;
 mod native_histogram_row;
 mod object_store_compaction_index_sink;
+mod plan_metric_compactions;
 mod poll_compactor_consumer_once;
 mod poll_compactor_once;
 mod process_compaction_partition_window;
@@ -2369,9 +2860,11 @@ mod write_compaction_partition_window;
 
 use clock_columns::ClockColumns;
 pub use clock_reading_row::ClockReadingRow;
+pub use compact_metric_blocks_once::compact_metric_blocks_once;
 pub use compact_wal_records::compact_wal_records;
 use compacted_block_request::CompactedBlockRequest;
 pub use compacted_block_write::CompactedBlockWrite;
+use compacted_metric_object_key::compacted_metric_object_key;
 pub use compaction_batch_result::CompactionBatchResult;
 use compaction_batch_span::compaction_batch_span;
 use compaction_buffer::CompactionBuffer;
@@ -2392,6 +2885,7 @@ pub use compaction_index_sink::CompactionIndexSink;
 pub use compaction_loop_config::CompactionLoopConfig;
 pub use compaction_loop_context::CompactionLoopContext;
 pub use compaction_loop_result::CompactionLoopResult;
+pub use compaction_manifest_error::CompactionManifestError;
 pub use compaction_object_key::compaction_object_key;
 pub use compaction_object_plan::CompactionObjectPlan;
 #[cfg_attr(test, mutants::skip)]
@@ -2406,6 +2900,7 @@ pub use compaction_partition_offset::CompactionPartitionOffset;
 pub use compaction_poll_error::CompactionPollError;
 pub use compaction_poll_result::CompactionPollResult;
 pub use compaction_retention_error::CompactionRetentionError;
+pub use compaction_retention_phase::CompactionRetentionPhase;
 pub use compaction_retention_stats::CompactionRetentionStats;
 pub use compaction_series_labels::CompactionSeriesLabels;
 pub use compaction_wal_record::CompactionWalRecord;
@@ -2415,9 +2910,10 @@ pub use compaction_window_result::CompactionWindowResult;
 pub use compaction_write_error::CompactionWriteError;
 pub use consumer::WalAssignmentConsumer;
 use consumer_build_error::consumer_build_error;
+use deduplicate_series_timestamp_runs::deduplicate_series_timestamp_runs;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;
 pub use default_flush_max_rows::DEFAULT_FLUSH_MAX_ROWS;
-use delete_if_exists::delete_if_exists;
+pub use deferred_block_deletions::DeferredBlockDeletions;
 pub use durable_compaction_consumer::DurableCompactionConsumer;
 use encode_clock_reading_rows::encode_clock_reading_rows;
 use encode_exemplar_rows::encode_exemplar_rows;
@@ -2429,14 +2925,20 @@ use exemplar_row::exemplar_row;
 pub use float_row::FloatRow;
 use flush_buffer::flush_buffer;
 use flush_buffer_with_consumer::flush_buffer_with_consumer;
+pub use list_compaction_manifests::list_compaction_manifests;
+use merge_metric_blocks::merge_metric_blocks;
 pub use metadata_row::MetadataRow;
 pub use metric_block_kind::MetricBlockKind;
+pub use metric_compaction_error::MetricCompactionError;
+pub use metric_compaction_job::MetricCompactionJob;
+pub use metric_compaction_pass::MetricCompactionPass;
 pub use metrics_compactor_build_error::MetricsCompactorBuildError;
 pub use metrics_compactor_config::MetricsCompactorConfig;
 pub use metrics_compactor_config_error::MetricsCompactorConfigError;
 pub use metrics_compactor_runtime::MetricsCompactorRuntime;
 pub use native_histogram_row::NativeHistogramRow;
 pub use object_store_compaction_index_sink::ObjectStoreCompactionIndexSink;
+pub use plan_metric_compactions::plan_metric_compactions;
 pub use poll_compactor_consumer_once::poll_compactor_consumer_once;
 pub use poll_compactor_once::poll_compactor_once;
 pub use process_compaction_partition_window::process_compaction_partition_window;

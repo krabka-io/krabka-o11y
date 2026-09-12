@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sibling: [krabka-protocol, krabka-client-rs, krabka-broker]
+        sibling: [krabka-protocol, krabka-client-rs, krabka-broker, krabka-schema-registry]
     steps:
       - uses: actions/checkout@v7
         with:

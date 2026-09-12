@@ -32,7 +32,8 @@ pub(crate) async fn prune_counts_partial_histogram_and_exemplar_retention() {
     let exemplars = store
         .exemplars("t", &matchers, i64::MIN, i64::MAX)
         .await
-        .unwrap();
+        .unwrap()
+        .exemplars;
     check!(exemplars.len() == 1);
     check!(exemplars[0].labels == lbls(&[("trace_id", "new")]));
     let stale_matchers = [LabelMatcher::new("job", MatchOp::Eq, "old")];

@@ -6,12 +6,15 @@ use super::*;
 /// replace it with an object-store or topic-backed implementation and keep the
 /// key contract that the tests cover here.
 ///
+/// Each entry holds the annotations of the evaluation beside its result, so a hit
+/// reports the same warnings and infos as the evaluation that stored it.
+///
 /// Each entry carries an insertion timestamp from the configured internal clock.
 /// When [`QueryFrontendCache::with_ttl`] sets a TTL, a `get` for an entry older
 /// than the TTL evicts that entry and reports a miss. With no TTL, the default,
 /// entries never expire.
 pub struct QueryFrontendCache {
-    pub(crate) range_results: Mutex<BTreeMap<RangeCacheKey, (i64, QueryResult)>>,
+    pub(crate) range_results: Mutex<BTreeMap<RangeCacheKey, (i64, AnnotatedQueryResult)>>,
     pub(crate) ttl: Option<Time>,
     pub(crate) clock: Arc<dyn Clock>,
 }
@@ -46,7 +49,7 @@ impl QueryFrontendCache {
     #[must_use]
     /// # Panics
     /// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
-    pub fn get(&self, tenant: &str, query: &FrontendRangeQuery) -> Option<QueryResult> {
+    pub fn get(&self, tenant: &str, query: &FrontendRangeQuery) -> Option<AnnotatedQueryResult> {
         let key = RangeCacheKey::new(tenant, query);
         let mut entries = self
             .range_results
@@ -62,7 +65,7 @@ impl QueryFrontendCache {
 
     /// # Panics
     /// Panics if shared metric state is poisoned or validated series data is missing an index entry required by the operation.
-    pub fn insert(&self, tenant: &str, query: &FrontendRangeQuery, result: QueryResult) {
+    pub fn insert(&self, tenant: &str, query: &FrontendRangeQuery, result: AnnotatedQueryResult) {
         let inserted = self.clock.now_epoch_millis();
         self.range_results
             .lock()
@@ -77,7 +80,7 @@ impl RangeQueryCache for QueryFrontendCache {
         &self,
         tenant: &str,
         query: &FrontendRangeQuery,
-    ) -> Result<Option<QueryResult>, PromqlError> {
+    ) -> Result<Option<AnnotatedQueryResult>, PromqlError> {
         Ok(QueryFrontendCache::get(self, tenant, query))
     }
 
@@ -85,7 +88,7 @@ impl RangeQueryCache for QueryFrontendCache {
         &self,
         tenant: &str,
         query: &FrontendRangeQuery,
-        result: QueryResult,
+        result: AnnotatedQueryResult,
     ) -> Result<(), PromqlError> {
         QueryFrontendCache::insert(self, tenant, query, result);
         Ok(())

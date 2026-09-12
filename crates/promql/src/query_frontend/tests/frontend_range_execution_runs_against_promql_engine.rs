@@ -44,13 +44,13 @@ pub(crate) async fn frontend_range_execution_runs_against_promql_engine() {
 
     assert2::assert!(
         result
-            == QueryResult::RangeMatrix(vec![RangeSeries {
+            == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
                 labels: labels(&[("__name__", "up"), ("job", "api")]),
                 samples: vec![
                     (0, SampleValue::Float(1.0)),
                     (60_000, SampleValue::Float(2.0)),
                     (120_000, SampleValue::Float(3.0)),
                 ],
-            }])
+            }]))
     );
 }

@@ -31,6 +31,11 @@ pub struct Limits {
     pub max_query_length: Time,
     /// `__session_id__` modulo-hash bucket cap; `0` means unlimited.
     pub max_session_id_cardinality: u64,
+    /// Pyroscope `compactor_blocks_retention_period`, the age at which the
+    /// compactor deletes a block. Zero keeps every block forever, which is
+    /// what the upstream flag calls "0 to disable".
+    #[serde(with = "krabka_units::serde_units::human::time")]
+    pub compactor_blocks_retention_period: Time,
 }
 
 impl Default for Limits {
@@ -46,6 +51,7 @@ impl Default for Limits {
             max_flamegraph_nodes_max: 0,
             max_query_length: DEFAULT_MAX_QUERY_LENGTH,
             max_session_id_cardinality: 0,
+            compactor_blocks_retention_period: <Time as TimeExt>::ZERO,
         }
     }
 }

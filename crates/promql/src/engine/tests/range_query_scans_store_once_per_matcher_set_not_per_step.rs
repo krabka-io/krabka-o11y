@@ -9,8 +9,8 @@ pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() 
     use crate::{
         error::Result,
         store::{
-            ExemplarRecord, LabelNameCardinality, LabelValueCardinality, MetadataRecord,
-            MetricStore, ScanResult, TsdbBlock, TsdbStats,
+            ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataScan, MetricStore,
+            ScanResult, TsdbBlock, TsdbStats,
         },
     };
 
@@ -57,10 +57,10 @@ pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() 
             m: &[LabelMatcher],
             s: i64,
             e: i64,
-        ) -> Result<Vec<ExemplarRecord>> {
+        ) -> Result<ExemplarScan> {
             self.inner.exemplars(t, m, s, e).await
         }
-        async fn metadata(&self, t: &str, metric: Option<&str>) -> Result<Vec<MetadataRecord>> {
+        async fn metadata(&self, t: &str, metric: Option<&str>) -> Result<MetadataScan> {
             self.inner.metadata(t, metric).await
         }
         async fn cardinality_label_names(&self, t: &str) -> Result<Vec<LabelNameCardinality>> {

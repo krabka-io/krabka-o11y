@@ -1,6 +1,7 @@
 pub(crate) mod state;
 pub use state::{QuerierState, build_querier_state};
 pub(crate) mod analytics;
+pub(crate) mod blocks;
 pub(crate) mod metadata;
 pub(crate) mod metric_eval;
 pub(crate) mod scan;

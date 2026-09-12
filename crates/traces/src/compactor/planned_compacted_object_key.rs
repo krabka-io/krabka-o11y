@@ -1,4 +1,6 @@
-use super::{CompactionJob, escape_object_path_segment, input_key_fingerprint};
+use super::{
+    CompactionJob, TRACE_BLOCK_OBJECT_PREFIX, escape_object_path_segment, input_key_fingerprint,
+};
 
 /// Names the span block a planned job writes.
 ///
@@ -11,7 +13,7 @@ pub fn planned_compacted_object_key(job: &CompactionJob) -> String {
     let (level, min_ts, max_ts) = (job.output_level, job.min_ts, job.max_ts);
     let tenant = escape_object_path_segment(&job.tenant);
     format!(
-        "traces/{tenant}/compacted/l{level}-{min_ts}-{max_ts}-{:016x}.parquet",
+        "{TRACE_BLOCK_OBJECT_PREFIX}/{tenant}/compacted/l{level}-{min_ts}-{max_ts}-{:016x}.parquet",
         input_key_fingerprint(&job.input_keys)
     )
 }

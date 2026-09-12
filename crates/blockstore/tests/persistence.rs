@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
 use krabka_blockstore::{
-    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, TimeRange, labels,
+    BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogBlockStoreError,
+    TimeRange, delete_tenant_log_index_shard_from_object_store, labels,
     log_tenant_index_manifest_object_path, log_tenant_index_shard_catalog_object_path,
     log_tenant_index_shard_manifest_object_path, read_log_index_manifest,
     read_log_index_manifest_from_object_store, read_tenant_log_index_manifest_from_object_store,
@@ -10,7 +11,9 @@ use krabka_blockstore::{
     write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shard_to_object_store,
     write_tenant_log_index_shards_to_object_store,
 };
-use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
+use object_store::{
+    ObjectStoreExt as _, PutPayload, local::LocalFileSystem, path::Path as ObjectPath,
+};
 
 #[test]
 fn log_index_manifest_round_trips_label_and_block_indexes() {
@@ -282,4 +285,118 @@ async fn tenant_log_index_shard_catalog_selects_overlapping_shards_and_merges_in
             == expected_blocks
     );
     assert2::assert!(loaded_labels.labels_for("tenant-a", admin) == None);
+}
+
+/// One shard, its manifest deleted, and a catalog that still names it. This is
+/// what a query sees when it races the retention sweep: the sweep deletes the
+/// manifest of a shard it empties, and the catalog this read falls back on was
+/// written before that delete.
+///
+/// The read has to answer for the shard rather than fail, because a sweep is
+/// allowed to produce a per-block error at worst and never a failed query.
+#[tokio::test]
+async fn an_absent_shard_manifest_reads_as_an_empty_shard() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let prefix = ObjectPath::from("tenant-indexes");
+    let mut labels_index = LabelIndex::default();
+    let api = labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let mut blocks = BlockIndex::default();
+    blocks.insert(BlockDescriptor::new(
+        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
+        BTreeSet::from([api]),
+    ));
+    let shard_range = TimeRange::new(100, 199).unwrap();
+    write_tenant_log_index_shards_to_object_store(
+        &store,
+        &prefix,
+        "tenant-a",
+        &[shard_range],
+        &labels_index,
+        &blocks,
+    )
+    .await
+    .unwrap();
+
+    delete_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", shard_range)
+        .await
+        .unwrap();
+    // A manifest that is already gone is not a fault, so a second sweep over
+    // the same shard is not one either.
+    delete_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", shard_range)
+        .await
+        .unwrap();
+
+    let query_range = TimeRange::new(0, 1_000).unwrap();
+    let (loaded_labels, loaded_blocks) =
+        read_tenant_log_index_shards_from_object_store(&store, &prefix, "tenant-a", query_range)
+            .await
+            .unwrap();
+
+    assert2::assert!(loaded_labels.label_values("tenant-a", "app") == BTreeSet::new());
+    assert2::assert!(loaded_blocks.match_blocks("tenant-a", query_range, &[]) == Vec::new());
+}
+
+/// A manifest that is present must still be well-formed. The tolerance above
+/// covers an absent object only, so a corrupt index is never read as an empty
+/// one.
+#[tokio::test]
+async fn a_present_shard_manifest_that_is_malformed_or_of_another_version_fails_the_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let prefix = ObjectPath::from("tenant-indexes");
+    let mut labels_index = LabelIndex::default();
+    let api = labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let mut blocks = BlockIndex::default();
+    blocks.insert(BlockDescriptor::new(
+        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
+        BTreeSet::from([api]),
+    ));
+    let shard_range = TimeRange::new(100, 199).unwrap();
+    write_tenant_log_index_shards_to_object_store(
+        &store,
+        &prefix,
+        "tenant-a",
+        &[shard_range],
+        &labels_index,
+        &blocks,
+    )
+    .await
+    .unwrap();
+    let manifest_path =
+        log_tenant_index_shard_manifest_object_path(&prefix, "tenant-a", shard_range);
+    let query_range = TimeRange::new(0, 1_000).unwrap();
+
+    let written = store
+        .get(&manifest_path)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&written).unwrap();
+    manifest["format_version"] = serde_json::Value::from(2);
+    store
+        .put(
+            &manifest_path,
+            serde_json::to_vec(&manifest).unwrap().into(),
+        )
+        .await
+        .unwrap();
+    let wrong_version =
+        read_tenant_log_index_shards_from_object_store(&store, &prefix, "tenant-a", query_range)
+            .await;
+    assert2::assert!(
+        let Err(LogBlockStoreError::InvalidManifestVersion { actual: 2, expected: 1 }) =
+            wrong_version
+    );
+
+    store
+        .put(&manifest_path, PutPayload::from_static(b"not a manifest"))
+        .await
+        .unwrap();
+    let malformed =
+        read_tenant_log_index_shards_from_object_store(&store, &prefix, "tenant-a", query_range)
+            .await;
+    assert2::assert!(let Err(LogBlockStoreError::Json(_)) = malformed);
 }

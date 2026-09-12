@@ -14,10 +14,10 @@ pub(crate) async fn object_store_range_result_cache_expires_stale_objects() {
         step: millis(60_000),
         shard: None,
     };
-    let result = QueryResult::RangeMatrix(vec![RangeSeries {
+    let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
         labels: labels(&[("__name__", "up")]),
         samples: vec![(0, SampleValue::Float(1.0))],
-    }]);
+    }]));
 
     cache
         .insert("tenant-a", &query, result.clone())

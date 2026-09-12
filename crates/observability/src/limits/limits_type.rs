@@ -119,6 +119,23 @@ pub struct Limits {
         deserialize_with = "super::non_negative_time::deserialize"
     )]
     pub max_query_range: Time,
+
+    /// How long a tenant's log blocks are kept. `Loki` default: `0s`.
+    ///
+    /// Zero keeps every block forever. It does **not** mean "delete
+    /// everything": a tenant that configures nothing keeps every block it ever
+    /// wrote, which is what `Loki` does with `retention_period: 0s`. Reading
+    /// it the other way round would delete the whole history of every
+    /// unconfigured tenant on the first sweep. A negative window is read the
+    /// same way as zero.
+    ///
+    /// The compactor's retention sweep reads this window through
+    /// [`krabka_blockstore::RetentionWindows`].
+    #[serde(
+        serialize_with = "krabka_units::serde_units::human::time::serialize",
+        deserialize_with = "super::non_negative_time::deserialize"
+    )]
+    pub retention_period: Time,
 }
 
 impl Default for Limits {
@@ -152,6 +169,8 @@ impl Default for Limits {
             max_query_string_bytes: ByteSize::ZERO,
             // Krabka's own, and off until an operator asks for it.
             max_query_range: Time::ZERO,
+            // `_ = l.RetentionPeriod.Set("0s")`
+            retention_period: Time::ZERO,
         }
     }
 }
@@ -184,6 +203,7 @@ impl Limits {
             max_query_read: ByteSize::ZERO,
             max_query_string_bytes: ByteSize::ZERO,
             max_query_range: Time::ZERO,
+            retention_period: Time::ZERO,
         }
     }
 }

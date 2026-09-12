@@ -1,12 +1,15 @@
 use super::{
-    ExemplarRecord, LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels,
-    MetadataRecord, PromqlError, ScanResult, TsdbBlock, TsdbStats,
+    ExemplarScan, LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels, MetadataScan,
+    PromqlError, ScanResult, TsdbBlock, TsdbStats,
 };
 
 /// Resolves `PromQL` matchers to `DataFusion` tables over the metric data of a tenant.
 #[async_trait::async_trait]
 pub trait MetricStore: Send + Sync {
     /// Registers the float and histogram tables for matched series in `[start_ms, end_ms]`.
+    ///
+    /// The result also names every block the scan answered without. See
+    /// [`ScanResult::warnings`].
     async fn scan(
         &self,
         tenant: &str,
@@ -44,22 +47,27 @@ pub trait MetricStore: Send + Sync {
     ) -> Result<Vec<Labels>, PromqlError>;
 
     /// Returns the exemplars attached to matched series in `[start_ms, end_ms]`.
+    ///
+    /// The result also names every block the scan answered without. See
+    /// [`ExemplarScan::warnings`].
     async fn exemplars(
         &self,
         tenant: &str,
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<ExemplarRecord>, PromqlError>;
+    ) -> Result<ExemplarScan, PromqlError>;
 
     /// Returns the metric metadata for a tenant.
     ///
-    /// The caller can restrict the result to one metric family.
+    /// The caller can restrict the result to one metric family. The result
+    /// also names every block the scan answered without. See
+    /// [`MetadataScan::warnings`].
     async fn metadata(
         &self,
         tenant: &str,
         metric: Option<&str>,
-    ) -> Result<Vec<MetadataRecord>, PromqlError>;
+    ) -> Result<MetadataScan, PromqlError>;
 
     /// Returns the distinct active-series count for each label name in a tenant.
     async fn cardinality_label_names(

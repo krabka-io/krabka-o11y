@@ -5,7 +5,7 @@ use krabka_observability::{
 
 use super::{
     Arc, Cli, RoleReadiness, ServiceMetrics, Target, readiness_router, require_role_topics,
-    run_block_builder, run_distributor,
+    run_block_builder, run_compactor, run_distributor,
 };
 
 /// Starts the role `cli` selects and serves until it stops.
@@ -46,7 +46,8 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         // Before any producer or consumer exists. A WAL topic's partition
         // count is the write-path shard count, so a role that started against
         // the wrong one would re-map every key it routes and report nothing;
-        // this is where it refuses instead.
+        // this is where it refuses instead. A role that opens no WAL client is
+        // asked nothing.
         require_role_topics(&cli, wal_security.clone()).await?;
         // With no `--audit-topic` this spawns nothing and reaches no broker.
         let audit_stop = CancellationToken::new();
@@ -74,6 +75,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 Target::BlockBuilder => {
                     run_block_builder(cli, metrics, readiness, wal_security).await
                 }
+                Target::Compactor => run_compactor(cli, metrics, readiness).await,
             }
         });
         let outcome: Result<(), Box<dyn std::error::Error>> = tokio::select! {

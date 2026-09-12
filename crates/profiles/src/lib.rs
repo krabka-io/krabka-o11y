@@ -4,7 +4,8 @@
 //! profiles doors and writes to a WAL partitioned by
 //! `(tenant, series_fingerprint)`. The block-builder consumer group builds the
 //! samples fact table, the deduped per-block `SymbolDb`, and the
-//! `ProfileIndex`.
+//! `ProfileIndex`. The compactor merges those blocks and deletes the ones
+//! nothing needs any more; see [`lifecycle`].
 #![forbid(unsafe_code)]
 
 pub mod all;
@@ -16,6 +17,7 @@ pub mod error;
 pub mod hot_store;
 pub mod ids;
 pub mod ingest;
+pub mod lifecycle;
 pub mod limits;
 pub mod metrics;
 pub mod query;

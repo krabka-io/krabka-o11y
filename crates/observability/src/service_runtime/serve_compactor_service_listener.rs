@@ -2,8 +2,9 @@ use super::{
     CancellationToken, CriticalTaskError, ObjectStore, ServerListener, ServiceConfig,
     ServiceDependencies, ServiceRuntimeError, SupervisedTasks, TcpListener,
     compactor_delete_requests_for_config, compactor_router_with_delete_requests,
-    query_authorizer_for_role, run_compactor_until_shutdown, serve_router,
-    service_audit_for_config, shutdown_signal, start_runtime_security, with_service_audit,
+    limits_provider_for_config, query_authorizer_for_role, run_compactor_until_shutdown,
+    serve_router, service_audit_for_config, shutdown_signal, start_runtime_security,
+    with_service_audit,
 };
 
 pub(crate) async fn serve_compactor_service_listener(
@@ -17,6 +18,11 @@ pub(crate) async fn serve_compactor_service_listener(
     // leave the audit writer waiting for a stop that never comes.
     let _audit_stop = security.audit_stop.clone().drop_guard();
     let dependencies = dependencies.with_audit(security.audit.clone());
+    // The block builder resolves a tenant's retention window through the same
+    // provider the other roles read their limits from. Without it the sweep
+    // would read no window for any tenant and delete nothing, whatever the
+    // operator configured.
+    let dependencies = dependencies.with_limits(limits_provider_for_config(&config)?);
     let delete_requests =
         compactor_delete_requests_for_config(&config, dependencies.delete_requests.clone())?;
     let readiness = dependencies.readiness.clone().unwrap_or_default();

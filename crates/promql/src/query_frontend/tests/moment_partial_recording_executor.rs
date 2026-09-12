@@ -11,7 +11,7 @@ impl RangeQueryExecutor for MomentPartialRecordingExecutor {
         &self,
         _tenant: &TenantId,
         query: &FrontendRangeQuery,
-    ) -> Result<QueryResult, PromqlError> {
+    ) -> Result<AnnotatedQueryResult, PromqlError> {
         self.calls
             .lock()
             .expect("moment partial executor calls poisoned")
@@ -31,9 +31,9 @@ impl RangeQueryExecutor for MomentPartialRecordingExecutor {
                 )));
             }
         };
-        Ok(QueryResult::RangeMatrix(vec![RangeSeries {
+        Ok(unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
             labels: labels(&[]),
             samples: vec![(query.start_ms, SampleValue::Float(value))],
-        }]))
+        }])))
     }
 }

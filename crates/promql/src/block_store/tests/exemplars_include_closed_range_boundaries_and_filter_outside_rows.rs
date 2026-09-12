@@ -54,7 +54,8 @@ pub(crate) async fn exemplars_include_closed_range_boundaries_and_filter_outside
             11_000,
         )
         .await
-        .unwrap();
+        .unwrap()
+        .exemplars;
 
     check!(exemplars.len() == 2);
     for (row, trace_id, span_id, ts_ms, value) in [

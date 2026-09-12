@@ -3,13 +3,17 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::SystemTime,
 };
 
 use clap::{
     Arg, Command, Parser, ValueEnum,
     builder::{EnumValueParser, PossibleValue, TypedValueParser},
     error::{Error, ErrorKind},
+};
+use krabka_blockstore::{
+    BlockLevel, BlockTimestampUnit, BlockWriter, CompactionPolicy, DEFAULT_BLOCK_READ_MAX,
+    DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_core::{
@@ -18,7 +22,8 @@ use krabka_client_core::{
 };
 use krabka_client_producer::Producer;
 use krabka_metrics::{
-    DEFAULT_MAX_RATE_BUCKETS, MetricsCompactorConfig, OverridesProvider,
+    DEFAULT_MAX_RATE_BUCKETS, Limits, MetricsCompactorConfig, ObjectStoreCompactionIndexSink,
+    OverridesProvider,
     distributor::{
         DistributorState, HA_TRACKER_TOPIC, KafkaHaElectionSink, KafkaSink,
         router as distributor_router, run_ha_election_consumer_loop,
@@ -465,8 +470,6 @@ mod tests {
             "metrics-c",
             "--block-builder-poll-timeout",
             "250ms",
-            "--block-builder-retention",
-            "1h",
             "--block-builder-retention-sweep-interval",
             "30s",
         ])
@@ -476,7 +479,6 @@ mod tests {
         check!(cli.bootstrap == "broker:9092");
         check!(cli.block_builder_group_id == "metrics-c");
         check!(cli.block_builder_poll_timeout == millis(250));
-        check!(cli.block_builder_retention == hours(1));
         check!(cli.block_builder_retention_sweep_interval == secs(30));
     }
 
@@ -490,7 +492,6 @@ mod tests {
                 ("KRABKA_METRICS_TARGET", Some("block-builder")),
                 ("KRABKA_METRICS_BLOCK_BUILDER_POLL_TIMEOUT", Some("250ms")),
                 ("KRABKA_METRICS_BLOCK_BUILDER_FLUSH_MAX_AGE", Some("2m")),
-                ("KRABKA_METRICS_BLOCK_BUILDER_RETENTION", Some("1h")),
                 (
                     "KRABKA_METRICS_BLOCK_BUILDER_RETENTION_SWEEP_INTERVAL",
                     Some("30s"),
@@ -503,12 +504,82 @@ mod tests {
                     (
                         cli.block_builder_poll_timeout,
                         cli.block_builder_flush_max_age,
-                        cli.block_builder_retention,
                         cli.block_builder_retention_sweep_interval,
-                    ) == (millis(250), minutes(2), hours(1), secs(30))
+                    ) == (millis(250), minutes(2), secs(30))
                 );
             },
         );
+    }
+
+    /// The compaction policy an operator configures, and the defaults it falls
+    /// back to. The defaults are `krabka-blockstore`'s, not this binary's, so a
+    /// drift between the two would give the metrics compactor a ladder no other
+    /// signal has.
+    #[test]
+    fn parses_compactor_policy_options() {
+        let defaults = Cli::try_parse_from(["krabka-metrics", "--target", "compactor"]).unwrap();
+        check!(
+            (
+                defaults.compactor_max_blocks_per_job,
+                defaults.compactor_target_rows,
+                defaults.compactor_max_level,
+                defaults.compactor_level_window,
+            ) == (
+                DEFAULT_MAX_BLOCKS_PER_JOB,
+                DEFAULT_TARGET_ROWS_PER_BLOCK,
+                DEFAULT_MAX_LEVEL.get(),
+                krabka_blockstore::DEFAULT_LEVEL_WINDOW,
+            )
+        );
+        check!(defaults.compactor_interval == minutes(5));
+
+        let configured = Cli::try_parse_from([
+            "krabka-metrics",
+            "--target",
+            "compactor",
+            "--compactor-max-blocks-per-job",
+            "3",
+            "--compactor-target-rows",
+            "7",
+            "--compactor-max-level",
+            "2",
+            "--compactor-level-window",
+            "30m",
+            "--compactor-interval",
+            "45s",
+        ])
+        .unwrap();
+        check!(
+            (
+                configured.compactor_max_blocks_per_job,
+                configured.compactor_target_rows,
+                configured.compactor_max_level,
+                configured.compactor_level_window,
+                configured.compactor_interval,
+            ) == (3, 7, 2, minutes(30), secs(45))
+        );
+
+        // A metrics block counts epoch milliseconds, and a policy built with any
+        // other unit puts every block into one bucket without saying so.
+        let policy = compactor_policy_from_cli(&configured);
+        check!(policy.timestamp_unit() == BlockTimestampUnit::Millis);
+        check!(policy.max_level() == BlockLevel(2));
+        check!(policy.window_ticks_for(BlockLevel(0)) == 30 * 60 * 1_000);
+
+        // Every value the policy would silently clamp is refused here instead.
+        for args in [
+            ["--compactor-max-blocks-per-job", "1"],
+            ["--compactor-target-rows", "0"],
+            ["--compactor-max-level", "0"],
+            ["--compactor-level-window", "0s"],
+            ["--compactor-interval", "0s"],
+        ] {
+            check!(
+                Cli::try_parse_from(["krabka-metrics", "--target", "compactor", args[0], args[1]])
+                    .is_err(),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]
@@ -666,6 +737,22 @@ mod tests {
         }
     }
 
+    /// A compactor reads and writes object storage and reaches no broker, so a
+    /// broker it never opens must not be a condition of its starting. Before the
+    /// check became role-aware, a compactor could not start without one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_compactor_starts_with_no_broker_to_answer_it() {
+        // Bound and dropped, so the address is one nothing answers on.
+        let unused = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let bootstrap = unused.local_addr().expect("local address").to_string();
+        drop(unused);
+
+        let cli = cli_for(Target::Compactor, &bootstrap);
+
+        check!(require_role_topics(&cli, None).await.is_ok());
+        check!(!cli.target.touches_the_wal());
+    }
+
     /// An address nothing answers on is a broken contract too, not a silent
     /// pass. Both roles here produce or consume, so neither may start without
     /// having read the contract back off a broker.
@@ -752,21 +839,27 @@ mod tests {
 mod alloc;
 mod build_object_store;
 mod cli;
+mod compactor_loop;
+mod compactor_policy_from_cli;
 mod ingest_rate_bucket_cap;
 mod load_runtime_overrides;
 mod parse_client_dispatch_queue_capacity;
 mod parse_client_frame_max;
+mod parse_compactor_max_blocks_per_job;
+mod parse_compactor_max_level;
+mod parse_compactor_target_rows;
 mod parse_distributor_max_decompressed;
 mod parse_ingest_rate_bucket_cap;
 mod require_role_topics;
 mod retired_role_message;
 mod run;
 mod run_block_builder;
+mod run_compactor;
+mod run_compactor_once;
 mod run_distributor;
 mod spawn_retention_sweeper;
 mod target;
 mod target_value_parser;
-mod unix_time_ms;
 
 // `alloc` deliberately has no `use` line. `#[global_allocator]` registers
 // the static by attribute, so naming it here imports something nothing
@@ -774,10 +867,16 @@ mod unix_time_ms;
 
 use build_object_store::build_object_store;
 use cli::Cli;
+#[cfg_attr(test, mutants::skip)]
+use compactor_loop::compactor_loop;
+use compactor_policy_from_cli::compactor_policy_from_cli;
 use ingest_rate_bucket_cap::IngestRateBucketCap;
 use load_runtime_overrides::load_runtime_overrides;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
+use parse_compactor_max_blocks_per_job::parse_compactor_max_blocks_per_job;
+use parse_compactor_max_level::parse_compactor_max_level;
+use parse_compactor_target_rows::parse_compactor_target_rows;
 use parse_distributor_max_decompressed::parse_distributor_max_decompressed;
 use parse_ingest_rate_bucket_cap::parse_ingest_rate_bucket_cap;
 use require_role_topics::require_role_topics;
@@ -785,13 +884,14 @@ use retired_role_message::retired_role_message;
 #[cfg_attr(test, mutants::skip)]
 use run::run;
 use run_block_builder::run_block_builder;
+#[cfg_attr(test, mutants::skip)]
+use run_compactor::run_compactor;
+use run_compactor_once::run_compactor_once;
 use run_distributor::run_distributor;
 #[cfg_attr(test, mutants::skip)]
 use spawn_retention_sweeper::spawn_retention_sweeper;
 use target::Target;
 use target_value_parser::TargetValueParser;
-#[cfg_attr(test, mutants::skip)]
-use unix_time_ms::unix_time_ms;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

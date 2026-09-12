@@ -40,11 +40,19 @@ pub(crate) async fn wal_head_delegates_metadata_cardinality_stats_and_blocks() {
     check!(
         head.exemplars("tenant-a", &matchers, 0, 5_000)
             .await
-            .unwrap()[0]
+            .unwrap()
+            .exemplars[0]
             .labels
             == lbls(&[("trace_id", "abc")])
     );
-    check!(head.metadata("tenant-a", Some("up")).await.unwrap()[0].help == "Target health.");
+    check!(
+        head.metadata("tenant-a", Some("up"))
+            .await
+            .unwrap()
+            .metadata[0]
+            .help
+            == "Target health."
+    );
     check!(
         head.cardinality_active_series("tenant-a")
             .await

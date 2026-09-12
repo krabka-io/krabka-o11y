@@ -11,7 +11,7 @@ impl RangeQueryExecutor for AvgPartialRecordingExecutor {
         &self,
         _tenant: &TenantId,
         query: &FrontendRangeQuery,
-    ) -> Result<QueryResult, PromqlError> {
+    ) -> Result<AnnotatedQueryResult, PromqlError> {
         self.calls
             .lock()
             .expect("avg partial executor calls poisoned")
@@ -28,9 +28,9 @@ impl RangeQueryExecutor for AvgPartialRecordingExecutor {
                 )));
             }
         };
-        Ok(QueryResult::RangeMatrix(vec![RangeSeries {
+        Ok(unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
             labels: labels(&[]),
             samples: vec![(query.start_ms, SampleValue::Float(value))],
-        }]))
+        }])))
     }
 }

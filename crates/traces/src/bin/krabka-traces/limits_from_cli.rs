@@ -16,5 +16,6 @@ pub(crate) fn limits_from_cli(cli: &Cli) -> Limits {
         max_spans_per_trace: u64_limit_from_usize(cli.max_spans_per_trace),
         max_attribute: cli.max_attr_value_len,
         max_search_duration: cli.max_search_duration,
+        block_retention: cli.block_retention,
     }
 }

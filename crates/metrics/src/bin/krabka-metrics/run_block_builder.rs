@@ -1,9 +1,9 @@
 use krabka_observability::{CancellationToken, CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Cli, ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity, MetricsCompactorConfig,
-    RoleReadiness, ServiceMetrics, Time, TimeExt, build_object_store, run_compactor_consumer_loop,
-    spawn_retention_sweeper,
+    Arc, Cli, ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity, Limits,
+    MetricsCompactorConfig, OverridesProvider, RoleReadiness, ServiceMetrics, build_object_store,
+    load_runtime_overrides, run_compactor_consumer_loop, spawn_retention_sweeper,
 };
 
 // cargo-mutants: live block-builder I/O wiring is covered by integration workflows.
@@ -21,7 +21,13 @@ pub(crate) async fn run_block_builder(
     let wal_consumer_gate = readiness.gate("wal-consumer");
     let store = build_object_store(&cli.object_store_url, metrics.object_store.clone())?;
     object_store_gate.mark_ready();
-    let retention = cli.block_builder_retention;
+    // The same runtime overrides file the distributor reads. It holds the
+    // retention window of every tenant, and without it every tenant keeps its
+    // blocks forever -- the built-in window is zero, which means "keep".
+    let overrides = Arc::new(
+        load_runtime_overrides(cli.runtime_overrides.as_deref())?
+            .unwrap_or_else(|| OverridesProvider::new(Limits::default())),
+    );
     let sweep_interval = cli.block_builder_retention_sweep_interval;
     let mut config = MetricsCompactorConfig::new(cli.bootstrap);
     config.client_dispatch_queue_capacity =
@@ -41,12 +47,16 @@ pub(crate) async fn run_block_builder(
     wal_consumer_gate.mark_ready();
     let stopping = CancellationToken::new();
     let mut tasks = SupervisedTasks::new(stopping.clone());
-    if retention > Time::ZERO {
-        tasks.adopt(
-            "metrics block-builder retention sweeper",
-            spawn_retention_sweeper(store, retention, sweep_interval, stopping.clone()),
-        );
-    }
+    // Always, and not only where a tenant has a retention window. Retention and
+    // orphan reconciliation are two halves of one pass, and the orphan half is
+    // the only thing in metrics that reclaims a block whose writer died before
+    // it published the manifest. A deployment with no window configured has
+    // those orphans too, and gating the sweeper on the window leaked every one
+    // of them forever. A pass with no window expires nothing.
+    tasks.adopt(
+        "metrics block-builder retention sweeper",
+        spawn_retention_sweeper(store, overrides, sweep_interval, stopping.clone()),
+    );
     let signal = stopping.clone();
     // Not supervised: this task is meant to finish, and finishing is how it
     // does its job.

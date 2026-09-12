@@ -12,7 +12,7 @@ use crate::{
     error::Result,
     ids::{Offset, PartitionIndex},
     store::{
-        ExemplarRecord, LabelNameCardinality, LabelValueCardinality, MetadataRecord, MetricStore,
+        ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataScan, MetricStore,
         ScanResult, TsdbBlock, TsdbStats,
     },
 };
@@ -239,12 +239,12 @@ impl MetricStore for WalHead {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<ExemplarRecord>> {
+    ) -> Result<ExemplarScan> {
         let store = self.snapshot();
         store.exemplars(tenant, matchers, start_ms, end_ms).await
     }
 
-    async fn metadata(&self, tenant: &str, metric: Option<&str>) -> Result<Vec<MetadataRecord>> {
+    async fn metadata(&self, tenant: &str, metric: Option<&str>) -> Result<MetadataScan> {
         let store = self.snapshot();
         store.metadata(tenant, metric).await
     }

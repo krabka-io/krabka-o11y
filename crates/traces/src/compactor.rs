@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
+    time::SystemTime,
 };
 
 use arrow::{
@@ -16,26 +17,29 @@ use arrow::{
 };
 use futures::StreamExt;
 use krabka_blockstore::{
-    BlockMeta, BlockStoreError, BlockStreamWriter, BlockWriter, CompactionJob, CompactionPolicy,
-    DEFAULT_BLOCK_READ_MAX, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, SCOL_ATTR_KEYS,
-    SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL, SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT,
-    SCOL_CHILD_COUNT, SCOL_DURATION_NANOS, SCOL_EVENTS, SCOL_INSTRUMENTATION_NAME,
-    SCOL_INSTRUMENTATION_VERSION, SCOL_LINKS, SCOL_NAME, SCOL_NESTED_SET_LEFT,
-    SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID, SCOL_ROOT_SERVICE_NAME,
-    SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID, SCOL_START_NANO, SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID,
-    SCOL_TRACE_START_NANO, ShardedTraceBloom, SortedMerge, SummaryColumns, TraceBlockStats,
-    TraceIndex, escape_object_path_segment, input_key_fingerprint, open_block_stream,
-    plan_compactions as plan_level_compactions, span_block_decl,
-    span_block_schema_with_promoted_attrs, versioned_compaction_key,
+    BlockDeletion, BlockDeletionReport, BlockMeta, BlockStoreError, BlockStreamWriter,
+    BlockTimestampUnit, BlockWriter, CompactionJob, CompactionPolicy, DEFAULT_BLOCK_READ_MAX,
+    ExpiredBlock, LifecycleError, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, OrphanSweepStats,
+    RetentionWindows, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL,
+    SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT, SCOL_CHILD_COUNT, SCOL_DURATION_NANOS,
+    SCOL_EVENTS, SCOL_INSTRUMENTATION_NAME, SCOL_INSTRUMENTATION_VERSION, SCOL_LINKS, SCOL_NAME,
+    SCOL_NESTED_SET_LEFT, SCOL_NESTED_SET_RIGHT, SCOL_PARENT_ID, SCOL_PARENT_SPAN_ID,
+    SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID, SCOL_START_NANO,
+    SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, ShardedTraceBloom,
+    SortedMerge, SummaryColumns, TraceBlockStats, TraceIndex, delete_blocks,
+    escape_object_path_segment, input_key_fingerprint, open_block_stream,
+    plan_compactions as plan_level_compactions, plan_expired_blocks, reconcile_orphans,
+    span_block_decl, span_block_schema_with_promoted_attrs, versioned_compaction_key,
 };
 #[cfg(test)]
 use krabka_blockstore::{read_block, span_block_schema};
-use krabka_units::ByteSize;
-use object_store::ObjectStore;
+use krabka_units::{ByteSize, Time};
+use object_store::{ObjectStore, path::Path};
 
 use crate::{
-    blockbuilder::prefixed_object_key,
+    blockbuilder::{TRACE_BLOCK_OBJECT_PREFIX, prefixed_object_key},
     error::TracesError,
+    ids::UnixNano,
     span::{
         batch::RESOURCE_ATTR_PREFIX,
         promoted::{align_batch_to_block_schema, merged_promoted_attrs},
@@ -46,6 +50,7 @@ use crate::{
 mod tests {
     use assert2::check;
     use krabka_blockstore::{BlockIndex, BlockLevel};
+    use krabka_units::days;
     use object_store::{ObjectStoreExt, memory::InMemory};
 
     use super::*;
@@ -427,7 +432,8 @@ mod tests {
             max_blocks_per_job,
             usize::MAX,
             BlockLevel(max_level),
-            i64::MAX,
+            days(36_500),
+            BlockTimestampUnit::Nanos,
         )
     }
 
@@ -472,16 +478,16 @@ mod tests {
         let mut levels = Vec::new();
         let mut passes = 0;
         loop {
-            let metas = compact_once(store.clone(), &writer, &mut index, "", policy)
+            let pass = compact_once(store.clone(), &writer, &mut index, "", policy)
                 .await
                 .unwrap();
-            if metas.is_empty() {
+            if pass.is_empty() {
                 break;
             }
             passes += 1;
             assert2::assert!(passes <= 4, "compaction did not converge");
             levels.push(
-                metas
+                pass.outputs
                     .iter()
                     .map(|meta| index.block_level(&meta.object_key))
                     .collect::<Vec<_>>(),
@@ -756,6 +762,7 @@ mod tests {
 }
 
 mod attr_value;
+mod block_sweep_error;
 mod boolean_array;
 mod collect_attr_metadata;
 mod collect_event_metadata;
@@ -768,6 +775,9 @@ mod compact_block_keys_with_max_bytes;
 mod compact_once;
 mod compact_once_with_policy;
 mod compacted_block_stats;
+mod compaction_pass_outcome;
+mod delete_trace_blocks;
+mod expire_trace_blocks;
 mod first_string_list_value;
 mod fixed_column;
 mod float64_array;
@@ -792,9 +802,11 @@ mod struct_fixed_field;
 mod struct_i64_field;
 mod struct_list_field;
 mod struct_string_field;
+mod sweep_orphaned_trace_blocks;
 mod trace_group_buffer;
 
 use attr_value::attr_value;
+pub use block_sweep_error::BlockSweepError;
 use collect_attr_metadata::collect_attr_metadata;
 use collect_event_metadata::collect_event_metadata;
 use collect_link_metadata::collect_link_metadata;
@@ -806,6 +818,9 @@ pub use compact_block_keys_with_max_bytes::compact_block_keys_with_max_bytes;
 pub use compact_once::compact_once;
 pub use compact_once_with_policy::compact_once_with_policy;
 use compacted_block_stats::CompactedBlockStats;
+pub use compaction_pass_outcome::CompactionPassOutcome;
+pub use delete_trace_blocks::delete_trace_blocks;
+pub use expire_trace_blocks::expire_trace_blocks;
 use first_string_list_value::first_string_list_value;
 use fixed_column::fixed_column;
 use insert_tag_value::insert_tag_value;
@@ -827,4 +842,5 @@ use struct_fixed_field::struct_fixed_field;
 use struct_i64_field::struct_i64_field;
 use struct_list_field::struct_list_field;
 use struct_string_field::struct_string_field;
+pub use sweep_orphaned_trace_blocks::sweep_orphaned_trace_blocks;
 use trace_group_buffer::TraceGroupBuffer;

@@ -17,8 +17,8 @@ use crate::{
     PromqlError,
     error::Result,
     store::{
-        ExemplarRecord, LabelNameCardinality, LabelValueCardinality, MetadataRecord, MetricStore,
-        NamedTsdbStat, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+        ExemplarRecord, ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataScan,
+        MetricStore, NamedTsdbStat, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
     },
 };
 

@@ -49,7 +49,8 @@ pub(crate) async fn exemplars_reads_compacted_exemplar_sidecar_blocks() {
             11_000,
         )
         .await
-        .unwrap();
+        .unwrap()
+        .exemplars;
 
     check!(exemplars.len() == 1);
     check!(exemplars[0].series_labels == series_labels);

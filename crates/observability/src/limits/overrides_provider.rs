@@ -1,4 +1,6 @@
-use super::{HashMap, Limits, OverridesError, RuntimeFile, TenantId, merge_limits};
+use krabka_blockstore::RetentionWindows;
+
+use super::{HashMap, Limits, OverridesError, RuntimeFile, TenantId, Time, TimeExt, merge_limits};
 
 /// The one place a tenant's [`Limits`] come from.
 ///
@@ -76,5 +78,32 @@ impl OverridesProvider {
     #[must_use]
     pub fn has_tenant_override(&self, tenant: &TenantId) -> bool {
         self.per_tenant.contains_key(tenant.as_str())
+    }
+
+    /// Whether any tenant's blocks can ever expire.
+    ///
+    /// False when every window is zero, including the default one that an
+    /// unlisted tenant reads. A deployment like that has nothing for the
+    /// retention sweep to delete, so the compactor should not pay for a pass
+    /// over the object store on every loop.
+    #[must_use]
+    pub fn expires_any_blocks(&self) -> bool {
+        [&self.defaults]
+            .into_iter()
+            .chain(self.per_tenant.values())
+            .any(|limits| limits.retention_period > Time::ZERO)
+    }
+}
+
+impl RetentionWindows for OverridesProvider {
+    // A tenant with no entry of its own answers from the defaults, so every
+    // tenant has a window here and not only the listed ones. The lookup takes
+    // a `&str` rather than a `TenantId`, because the sweep reads its tenants
+    // back out of object-store paths and not out of a request header.
+    fn block_retention(&self, tenant: &str) -> Time {
+        self.per_tenant
+            .get(tenant)
+            .unwrap_or(&self.defaults)
+            .retention_period
     }
 }

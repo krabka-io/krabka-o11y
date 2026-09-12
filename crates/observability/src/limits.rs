@@ -24,6 +24,14 @@
 //! and an `overrides` map keyed by tenant. The scalar CLI flags
 //! (`--max-query-range` and its siblings) set the process defaults that the
 //! file's `defaults` block, and then each tenant's entry, merge over.
+//!
+//! # Who reads these
+//!
+//! The distributor reads the ingest limits and the querier reads the query
+//! limits. `retention_period` is the one limit the compactor reads: it is the
+//! window its retention sweep expires a tenant's blocks against, through
+//! [`krabka_blockstore::RetentionWindows`]. All three roles share one
+//! provider, so they answer a tenant with the same numbers.
 
 use std::{collections::HashMap, path::Path as FsPath, sync::Arc};
 

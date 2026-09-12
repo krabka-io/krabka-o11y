@@ -11,8 +11,8 @@ use self::{
     stats::{label_name_cardinality, label_value_cardinality, merge_named_stats, min_present_time},
 };
 use crate::{
-    ExemplarRecord, LabelNameCardinality, LabelValueCardinality, MetadataRecord, MetricStore,
-    PromqlError, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+    ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataRecord, MetadataScan,
+    MetricStore, PromqlError, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
 };
 
 mod scan;
@@ -53,6 +53,8 @@ where
     ) -> Result<ScanResult, PromqlError> {
         let cold = self.cold.scan(tenant, matchers, start_ms, end_ms).await?;
         let hot = self.hot.scan(tenant, matchers, start_ms, end_ms).await?;
+        let mut warnings = cold.warnings;
+        warnings.extend(hot.warnings);
         let ctx = SessionContext::new();
         let float_table = merge_scan_table(
             &ctx,
@@ -79,6 +81,7 @@ where
             ctx,
             float_table,
             histogram_table,
+            warnings,
         })
     }
 
@@ -151,33 +154,37 @@ where
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<ExemplarRecord>, PromqlError> {
-        let mut exemplars = self
+    ) -> Result<ExemplarScan, PromqlError> {
+        let cold = self
             .cold
             .exemplars(tenant, matchers, start_ms, end_ms)
             .await?;
-        exemplars.extend(
-            self.hot
-                .exemplars(tenant, matchers, start_ms, end_ms)
-                .await?,
-        );
+        let hot = self
+            .hot
+            .exemplars(tenant, matchers, start_ms, end_ms)
+            .await?;
+        let mut exemplars = cold.exemplars;
+        exemplars.extend(hot.exemplars);
         exemplars.sort_by_key(|row| (row.series_labels.fingerprint(), row.ts_ms));
-        Ok(exemplars)
+        let mut warnings = cold.warnings;
+        warnings.extend(hot.warnings);
+        Ok(ExemplarScan {
+            exemplars,
+            warnings,
+        })
     }
 
     async fn metadata(
         &self,
         tenant: &str,
         metric: Option<&str>,
-    ) -> Result<Vec<MetadataRecord>, PromqlError> {
+    ) -> Result<MetadataScan, PromqlError> {
+        let cold = self.cold.metadata(tenant, metric).await?;
+        let hot = self.hot.metadata(tenant, metric).await?;
+        let mut warnings = cold.warnings;
+        warnings.extend(hot.warnings);
         let mut by_key = BTreeMap::<(String, String, String, String), MetadataRecord>::new();
-        for record in self
-            .cold
-            .metadata(tenant, metric)
-            .await?
-            .into_iter()
-            .chain(self.hot.metadata(tenant, metric).await?)
-        {
+        for record in cold.metadata.into_iter().chain(hot.metadata) {
             by_key.insert(
                 (
                     record.metric_family_name.clone(),
@@ -188,7 +195,10 @@ where
                 record,
             );
         }
-        Ok(by_key.into_values().collect())
+        Ok(MetadataScan {
+            metadata: by_key.into_values().collect(),
+            warnings,
+        })
     }
 
     async fn cardinality_label_names(

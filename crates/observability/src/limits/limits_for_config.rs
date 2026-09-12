@@ -21,6 +21,7 @@ pub(crate) fn limits_for_config(config: &ServiceConfig) -> Limits {
         max_query_string_bytes: config
             .max_query_string_bytes
             .unwrap_or(defaults.max_query_string_bytes),
+        retention_period: config.retention_period.unwrap_or(defaults.retention_period),
         ..defaults
     }
 }

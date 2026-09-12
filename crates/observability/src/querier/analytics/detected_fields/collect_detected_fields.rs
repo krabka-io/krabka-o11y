@@ -3,10 +3,9 @@ use super::{
     QueryError, RequestSecurity, TenantErrorSurface, TimeRange, active_log_delete_filters,
     authorized_tenant, clamp_query_lookback, current_unix_time_ns, detect_detected_level_field,
     detect_json_fields, detect_logfmt_fields, detect_structured_metadata_fields,
-    is_deleted_log_entry, parse_query, plan_stream_query, read_log_block,
-    read_log_block_from_object_store, validate_loki_volume_query_range_limit,
-    validate_query_bytes_limit, validate_query_range_limit, validate_query_series_limit,
-    validate_query_string_bytes_limit,
+    is_deleted_log_entry, parse_query, plan_stream_query, read_planned_log_block,
+    validate_loki_volume_query_range_limit, validate_query_bytes_limit, validate_query_range_limit,
+    validate_query_series_limit, validate_query_string_bytes_limit,
 };
 
 pub(crate) async fn collect_detected_fields(
@@ -48,15 +47,8 @@ pub(crate) async fn collect_detected_fields(
         if scanned_lines >= params.line_limit {
             break;
         }
-        let rows = if let Some(cold_store) = &state.cold_store {
-            read_log_block_from_object_store(
-                cold_store.store.as_ref(),
-                &cold_store.prefix,
-                &block.key,
-            )
-            .await?
-        } else {
-            read_log_block(&state.root, &block.key)?
+        let Some(rows) = read_planned_log_block(&state, &block.key).await? else {
+            continue;
         };
         for row in rows {
             if scanned_lines >= params.line_limit {

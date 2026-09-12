@@ -1,8 +1,9 @@
 use super::{
     Arc, AuditHandle, ClientSecurity, CompactionFrontier, CompactionFrontierSource,
     DeferredQueryAuthorizerConnect, DeferredWalConsumerConnect, HotTailDependency, LogHotTail,
-    LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink, RoleReadiness,
-    ServerSecurity, ServiceMetrics, SharedCompactionFrontier, SharedLogDeleteRequests,
+    LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink, OverridesProvider,
+    RoleReadiness, ServerSecurity, ServiceMetrics, SharedCompactionFrontier,
+    SharedLogDeleteRequests,
 };
 
 #[derive(Clone, Default)]
@@ -40,6 +41,9 @@ pub struct ServiceDependencies {
     /// The audit handle the handlers record through. `None` makes the service
     /// runtime start the audit layer that the `ServiceConfig` names.
     pub(crate) audit: Option<AuditHandle>,
+    /// The per-tenant limits the role resolves a tenant against. `None` makes
+    /// the role load them from the `ServiceConfig`.
+    pub(crate) limits: Option<Arc<OverridesProvider>>,
 }
 
 impl ServiceDependencies {
@@ -205,6 +209,17 @@ impl ServiceDependencies {
     #[must_use]
     pub fn with_audit(mut self, audit: AuditHandle) -> Self {
         self.audit = Some(audit);
+        self
+    }
+
+    /// Resolves every tenant of the role against `limits`, in place of the
+    /// overrides file that the `ServiceConfig` names.
+    ///
+    /// One process holds one provider, so the ingest gate, the read gate and
+    /// the compactor's retention sweep answer a tenant with the same numbers.
+    #[must_use]
+    pub fn with_limits(mut self, limits: Arc<OverridesProvider>) -> Self {
+        self.limits = Some(limits);
         self
     }
 }

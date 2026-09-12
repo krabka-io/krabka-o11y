@@ -54,5 +54,8 @@ pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
         out_of_order_time_window: partial
             .out_of_order_time_window
             .unwrap_or(base.out_of_order_time_window),
+        compactor_blocks_retention_period: partial
+            .compactor_blocks_retention_period
+            .unwrap_or(base.compactor_blocks_retention_period),
     }
 }

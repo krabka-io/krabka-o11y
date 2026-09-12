@@ -1,5 +1,6 @@
 use super::{
-    FrontendRangeQuery, PromqlError, QueryResult, RangeQueryCache, RangeQueryExecutor, TenantId,
+    AnnotatedQueryResult, FrontendRangeQuery, PromqlError, RangeQueryCache, RangeQueryExecutor,
+    TenantId,
 };
 
 pub(crate) async fn execute_single_range_query<E, C>(
@@ -7,17 +8,17 @@ pub(crate) async fn execute_single_range_query<E, C>(
     cache: &C,
     tenant: &TenantId,
     subquery: &FrontendRangeQuery,
-) -> Result<QueryResult, PromqlError>
+) -> Result<AnnotatedQueryResult, PromqlError>
 where
     E: RangeQueryExecutor,
     C: RangeQueryCache + ?Sized,
 {
-    if let Some(result) = cache.get(tenant.as_str(), subquery).await? {
-        return Ok(result);
+    if let Some(cached) = cache.get(tenant.as_str(), subquery).await? {
+        return Ok(cached);
     }
-    let result = executor.execute_range_query(tenant, subquery).await?;
+    let annotated = executor.execute_range_query(tenant, subquery).await?;
     cache
-        .insert(tenant.as_str(), subquery, result.clone())
+        .insert(tenant.as_str(), subquery, annotated.clone())
         .await?;
-    Ok(result)
+    Ok(annotated)
 }

@@ -28,7 +28,7 @@ pub(crate) async fn metadata_merges_cold_and_hot_records() {
     );
 
     let store = MergedMetricStore::new(cold, hot);
-    let metadata = store.metadata("tenant-a", None).await.unwrap();
+    let metadata = store.metadata("tenant-a", None).await.unwrap().metadata;
     let fields = metadata
         .iter()
         .map(|record| {

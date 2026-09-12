@@ -41,8 +41,8 @@ pub(crate) async fn query_exemplars_inner<S: MetricStore>(
             .exemplars(tenant.as_str(), &matchers, start_ms, end_ms)
             .await
         {
-            Ok(exemplars) => {
-                for exemplar in exemplars {
+            Ok(scan) => {
+                for exemplar in scan.exemplars {
                     by_key.insert(exemplar_key(&exemplar), exemplar);
                 }
             }

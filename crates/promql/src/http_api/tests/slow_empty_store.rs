@@ -43,6 +43,7 @@ impl MetricStore for SlowEmptyStore {
             ctx: datafusion::prelude::SessionContext::new(),
             float_table: None,
             histogram_table: None,
+            warnings: Vec::new(),
         })
     }
 
@@ -83,16 +84,16 @@ impl MetricStore for SlowEmptyStore {
         _matchers: &[LabelMatcher],
         _start_ms: i64,
         _end_ms: i64,
-    ) -> Result<Vec<ExemplarRecord>, PromqlError> {
-        Ok(Vec::new())
+    ) -> Result<ExemplarScan, PromqlError> {
+        Ok(ExemplarScan::default())
     }
 
     async fn metadata(
         &self,
         _tenant: &str,
         _metric: Option<&str>,
-    ) -> Result<Vec<MetadataRecord>, PromqlError> {
-        Ok(Vec::new())
+    ) -> Result<MetadataScan, PromqlError> {
+        Ok(MetadataScan::default())
     }
 
     async fn cardinality_label_names(

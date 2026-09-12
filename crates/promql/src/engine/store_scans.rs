@@ -4,6 +4,7 @@ use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
 
 use super::{
     PromqlEngine,
+    annotations::emit_warning,
     merge_by_fingerprint::merge_by_fingerprint,
     row_cache::{
         FloatRow, FloatWindow, HistogramRow, RANGE_SCAN_CACHE, collect_float_rows,
@@ -12,11 +13,25 @@ use super::{
     samples_per_query_exceeded, series_per_query_exceeded,
 };
 use crate::{
+    ScanResult,
     error::Result,
     extension::is_stale_nan,
     planner::{LabeledSeries, TimedValue},
     store::MetricStore,
 };
+
+/// Raises one `PromQL` warning for each block the scan answered without.
+///
+/// The warnings leave through the same annotation sink as every other engine
+/// warning, so a caller that reads the annotations of a query sees that the
+/// result is short a block. The warning is raised before the table is read,
+/// because a scan whose only candidate block was deleted registers no table
+/// and still has to report the block.
+fn emit_scan_warnings(scan: &ScanResult) {
+    for warning in &scan.warnings {
+        emit_warning(warning.clone());
+    }
+}
 
 impl<S: MetricStore> PromqlEngine<S> {
     async fn labels_by_fingerprint(
@@ -181,6 +196,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
     ) -> Result<Vec<FloatRow>> {
         let scan = self.store.scan(tenant, matchers, start_ms, end_ms).await?;
+        emit_scan_warnings(&scan);
         let Some(table) = scan.float_table.clone() else {
             return Ok(Vec::new());
         };
@@ -373,6 +389,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
     ) -> Result<Vec<HistogramRow>> {
         let scan = self.store.scan(tenant, matchers, start_ms, end_ms).await?;
+        emit_scan_warnings(&scan);
         let Some(table) = scan.histogram_table.clone() else {
             return Ok(Vec::new());
         };

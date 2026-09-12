@@ -12,11 +12,13 @@ pub(crate) async fn append_remote_read_exemplars<S: MetricStore>(
     labels_by_fp: &mut BTreeMap<SeriesFingerprint, Labels>,
     by_fp: &mut BTreeMap<SeriesFingerprint, pb::v1::TimeSeries>,
 ) -> Result<(), ApiError> {
-    for exemplar in store
+    // Remote read has no warnings field in its protobuf response, so a skipped
+    // block stays in the block store's log and reaches no further here.
+    let scan = store
         .exemplars(tenant, matchers, start_ms, end_ms)
         .await
-        .map_err(ApiError::from)?
-    {
+        .map_err(ApiError::from)?;
+    for exemplar in scan.exemplars {
         let fp = exemplar.series_labels.fingerprint();
         labels_by_fp
             .entry(fp)

@@ -3,8 +3,9 @@ use krabka_client_core::ClientSecurity;
 use crate::{
     Arc, BlockStoreError, BrokerAccessPolicy, CompactionFrontier, CompactionFrontierSource,
     CompactorDeleteRequests, Error, Infallible, LogHotTail, LogIngestLimiter, LogQueryAuthorizer,
-    LogWalConsumer, LogWalSink, Mutex, ParseError, PathBuf, Role, RoleReadiness, ServiceConfig,
-    ServiceMetrics, SharedCompactionFrontier, audit::AuditHandle, server_security::ServerSecurity,
+    LogWalConsumer, LogWalSink, Mutex, OverridesProvider, ParseError, PathBuf, Role, RoleReadiness,
+    ServiceConfig, ServiceMetrics, SharedCompactionFrontier, audit::AuditHandle,
+    server_security::ServerSecurity,
 };
 
 mod active_log_delete_filter_error;

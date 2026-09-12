@@ -14,10 +14,10 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
     cache.insert(
         "tenant-a",
         &cached_query,
-        QueryResult::RangeMatrix(vec![RangeSeries {
+        unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
             labels: labels(&[("__name__", "up"), ("job", "api")]),
             samples: vec![(0, SampleValue::Float(1.0))],
-        }]),
+        }])),
     );
 
     let result = execute_range_query_frontend(
@@ -56,19 +56,19 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
         cache
             .get("tenant-a", &calls[0])
             .expect("fresh subquery cached")
-            == QueryResult::RangeMatrix(vec![RangeSeries {
+            == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
                 labels: labels(&[("__name__", "up"), ("job", "api")]),
                 samples: vec![(120_000, SampleValue::Float(120_000.0))],
-            }])
+            }]))
     );
     assert2::assert!(
         result
-            == QueryResult::RangeMatrix(vec![RangeSeries {
+            == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
                 labels: labels(&[("__name__", "up"), ("job", "api")]),
                 samples: vec![
                     (0, SampleValue::Float(1.0)),
                     (120_000, SampleValue::Float(120_000.0)),
                 ],
-            }])
+            }]))
     );
 }

@@ -1,7 +1,7 @@
 use super::{
-    ApiError, Arc, FrontendRangeRequest, HeaderMap, IntoResponse, MetricStore, Principal,
-    PrometheusApiState, RangeQueryParams, Response, StdDurationExt, apply_result_limit,
-    authorized_tenant_from_headers, check_range_resolution, duration_param,
+    AnnotatedQueryResult, ApiError, Arc, FrontendRangeRequest, HeaderMap, IntoResponse,
+    MetricStore, Principal, PrometheusApiState, RangeQueryParams, Response, StdDurationExt,
+    apply_result_limit, authorized_tenant_from_headers, check_range_resolution, duration_param,
     enforce_query_range_limit, execute_range_query_frontend, success_response, timestamp_ms,
     validate_timestamp_range,
 };
@@ -42,7 +42,7 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
     // labelled `type="range"`; the whole-handler span stays on
     // `query_duration{route="query_range"}`.
     let eval_started = std::time::Instant::now();
-    let result = if let Some(frontend) = &state.query_frontend {
+    let outcome = if let Some(frontend) = &state.query_frontend {
         let engine = state.engine_for_tenant(&tenant);
         execute_range_query_frontend(
             &engine,
@@ -60,15 +60,22 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
     } else {
         state
             .engine_for_tenant(&tenant)
-            .query_range(&tenant, &params.query, start_ms, end_ms, step)
+            .query_range_with_annotations(&tenant, &params.query, start_ms, end_ms, step)
             .await
+            .map(|(result, annotations)| AnnotatedQueryResult {
+                result,
+                annotations,
+            })
     };
-    state.record_eval("range", result.is_ok(), eval_started.elapsed().as_time());
+    state.record_eval("range", outcome.is_ok(), eval_started.elapsed().as_time());
 
-    match result {
-        Ok(mut result) => {
+    match outcome {
+        Ok(AnnotatedQueryResult {
+            mut result,
+            annotations,
+        }) => {
             apply_result_limit(&mut result, params.limit);
-            success_response(result)
+            success_response(result, &annotations)
         }
         Err(error) => ApiError::from(error).into_response(),
     }

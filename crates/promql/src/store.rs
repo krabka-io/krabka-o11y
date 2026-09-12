@@ -29,6 +29,7 @@ mod tests {
                 ctx: SessionContext::new(),
                 float_table: None,
                 histogram_table: None,
+                warnings: Vec::new(),
             })
         }
 
@@ -69,16 +70,16 @@ mod tests {
             _matchers: &[krabka_blockstore::LabelMatcher],
             _start_ms: i64,
             _end_ms: i64,
-        ) -> Result<Vec<ExemplarRecord>, PromqlError> {
-            Ok(vec![])
+        ) -> Result<ExemplarScan, PromqlError> {
+            Ok(ExemplarScan::default())
         }
 
         async fn metadata(
             &self,
             _tenant: &str,
             _metric: Option<&str>,
-        ) -> Result<Vec<MetadataRecord>, PromqlError> {
-            Ok(vec![])
+        ) -> Result<MetadataScan, PromqlError> {
+            Ok(MetadataScan::default())
         }
 
         async fn cardinality_label_names(
@@ -133,9 +134,11 @@ mod tests {
 }
 
 mod exemplar_record;
+mod exemplar_scan;
 mod label_name_cardinality;
 mod label_value_cardinality;
 mod metadata_record;
+mod metadata_scan;
 mod metric_store;
 mod named_tsdb_stat;
 mod scan_result;
@@ -144,9 +147,11 @@ mod tsdb_head_stats;
 mod tsdb_stats;
 
 pub use exemplar_record::ExemplarRecord;
+pub use exemplar_scan::ExemplarScan;
 pub use label_name_cardinality::LabelNameCardinality;
 pub use label_value_cardinality::LabelValueCardinality;
 pub use metadata_record::MetadataRecord;
+pub use metadata_scan::MetadataScan;
 pub use metric_store::MetricStore;
 pub use named_tsdb_stat::NamedTsdbStat;
 pub use scan_result::ScanResult;

@@ -24,15 +24,20 @@ use krabka_blockstore::{
 use krabka_pprof::SymbolDb;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 
-use crate::{blockbuilder::STACKTRACE_PARTITION, error::ProfilesError};
+use crate::{
+    blockbuilder::{BLOCK_OBJECT_PREFIX, STACKTRACE_PARTITION},
+    error::ProfilesError,
+    lifecycle::symdb_key,
+};
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use assert2::{assert, check};
-    use krabka_blockstore::{BlockIndex, BlockLevel, Labels};
+    use krabka_blockstore::{BlockIndex, BlockLevel, BlockTimestampUnit, Labels};
     use krabka_pprof::{EngineOpts, FlameEngine};
+    use krabka_units::{days, hours};
     use object_store::{ObjectStore, memory::InMemory};
 
     /// The compacted object key spans the whole job -- the earliest start and
@@ -545,8 +550,48 @@ mod tests {
             max_blocks_per_job,
             usize::MAX,
             BlockLevel(max_level),
-            i64::MAX,
+            days(36_500),
+            BlockTimestampUnit::Millis,
         )
+    }
+
+    /// A job never spans two level windows, and a profile block's bounds are
+    /// epoch milliseconds. A window converted to nanoseconds instead would be
+    /// a million times too wide, put every block a deployment holds into one
+    /// bucket, and merge blocks hours apart while reporting nothing.
+    #[test]
+    fn a_job_never_spans_two_level_windows() {
+        const THREE_HOURS_MS: i64 = 3 * 60 * 60 * 1_000;
+        let policy = CompactionPolicy::new(
+            2,
+            usize::MAX,
+            BlockLevel(4),
+            hours(2),
+            BlockTimestampUnit::Millis,
+        );
+
+        for (name, second_min_ts, want_jobs) in [
+            ("inside one window", 1_000_i64, 1),
+            ("three hours apart", THREE_HOURS_MS, 0),
+        ] {
+            let mut index = ProfileIndex::new();
+            index.replace_profile_blocks(
+                "t",
+                &[],
+                &[
+                    (meta("a.parquet", 0, 500, 1), vec![0]),
+                    (
+                        meta("b.parquet", second_min_ts, second_min_ts + 500, 1),
+                        vec![0],
+                    ),
+                ],
+            );
+
+            check!(
+                plan_compactions(&index, policy).len() == want_jobs,
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -603,7 +648,10 @@ mod tests {
         let mut levels = Vec::new();
         let mut passes = 0;
         loop {
-            let metas = compact_once(&store, &mut index, policy).await.unwrap();
+            let metas = compact_once(&store, &mut index, policy)
+                .await
+                .unwrap()
+                .outputs;
             if metas.is_empty() {
                 break;
             }
@@ -687,6 +735,7 @@ mod compact_blocks_with_policy;
 mod compact_once;
 mod compact_once_with_policy;
 mod compacted_key;
+mod compaction_pass;
 mod destination_partitions;
 mod downsample_batches;
 mod downsample_key;
@@ -702,6 +751,7 @@ pub use compact_blocks_with_policy::compact_blocks_with_policy;
 pub use compact_once::compact_once;
 pub use compact_once_with_policy::compact_once_with_policy;
 use compacted_key::compacted_key;
+pub use compaction_pass::CompactionPass;
 use destination_partitions::destination_partitions;
 use downsample_batches::downsample_batches;
 use downsample_key::DownsampleKey;

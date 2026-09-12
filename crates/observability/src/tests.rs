@@ -53,9 +53,10 @@ pub(crate) mod prelude {
     pub(crate) use krabka_blockstore::{
         BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex,
         LogBlockStoreError as BlockStoreError, LogLabels as Labels, LogRow,
-        LogSeriesFingerprint as SeriesFingerprint, TENANT_HEADER, TenantId, TenantIdError,
-        TenantResolveError, TimeRange, read_log_block, read_log_block_from_object_store,
-        read_log_index_manifest, read_tenant_log_index_manifest_from_object_store,
+        LogSeriesFingerprint as SeriesFingerprint, RetentionWindows, TENANT_HEADER, TenantId,
+        TenantIdError, TenantResolveError, TimeRange, read_log_block,
+        read_log_block_from_object_store, read_log_index_manifest,
+        read_tenant_log_index_manifest_from_object_store,
         read_tenant_log_index_shard_from_object_store,
         read_tenant_log_index_shard_ranges_from_object_store,
         read_tenant_log_index_shards_from_object_store, register_log_blocks,

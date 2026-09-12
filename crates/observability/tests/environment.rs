@@ -43,6 +43,7 @@ fn service_config_reads_environment() {
             ("KRABKA_OBSERVABILITY_MAX_QUERY_SERIES", Some("10")),
             ("KRABKA_OBSERVABILITY_MAX_QUERY_READ", Some("1KiB")),
             ("KRABKA_OBSERVABILITY_MAX_QUERY_STRING_BYTES", Some("64B")),
+            ("KRABKA_OBSERVABILITY_RETENTION_PERIOD", Some("30d")),
             ("KRABKA_OBSERVABILITY_MAX_INGEST_BODY", Some("2KiB")),
             ("KRABKA_OBSERVABILITY_WAL_APPEND_TIMEOUT", Some("250ms")),
             (
@@ -90,6 +91,10 @@ fn service_config_reads_environment() {
                 Some("5000"),
             ),
             ("KRABKA_OBSERVABILITY_COMPACTOR_IDLE_INTERVAL", Some("20ms")),
+            (
+                "KRABKA_OBSERVABILITY_COMPACTOR_RETENTION_SWEEP_INTERVAL",
+                Some("5m"),
+            ),
             (
                 "KRABKA_OBSERVABILITY_COMPACTOR_OBJECT_STORE_INITIAL_BACKOFF",
                 Some("20ms"),
@@ -154,6 +159,7 @@ fn service_config_reads_environment() {
                         max_query_series: Some(10),
                         max_query_read: Some(kibibytes(1)),
                         max_query_string_bytes: Some(bytes(64)),
+                        retention_period: Some(days(30)),
                         logs_limits_overrides_config: None,
                         max_ingest_body: Some(kibibytes(2)),
                         wal_append_timeout: Some(millis(250)),
@@ -172,6 +178,7 @@ fn service_config_reads_environment() {
                         compactor_accumulation_poll_timeout: millis(300),
                         compactor_max_records_per_batch: NonZeroUsize::new(5000).unwrap(),
                         compactor_idle_interval: millis(20),
+                        compactor_retention_sweep_interval: minutes(5),
                         all_drain_stage_timeout: secs(30),
                         compactor_object_store_initial_backoff: millis(20),
                         compactor_object_store_max_backoff: millis(600),

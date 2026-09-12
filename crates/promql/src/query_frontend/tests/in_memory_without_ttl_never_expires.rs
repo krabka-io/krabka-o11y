@@ -11,10 +11,10 @@ pub(crate) fn in_memory_without_ttl_never_expires() {
         step: millis(60_000),
         shard: None,
     };
-    let result = QueryResult::RangeMatrix(vec![RangeSeries {
+    let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
         labels: labels(&[("__name__", "up")]),
         samples: vec![(0, SampleValue::Float(1.0))],
-    }]);
+    }]));
 
     cache.insert("tenant-a", &query, result.clone());
     clock.advance(i64::from(u32::MAX));

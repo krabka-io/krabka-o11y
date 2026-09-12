@@ -12,7 +12,9 @@ use super::{
     },
     plan::{plan_range_query, query_shard_execution, query_with_shard_selector},
 };
-use crate::{MetricStore, PromqlEngine, PromqlError, QueryResult};
+use crate::{
+    AnnotatedQueryResult, Annotations, MetricStore, PromqlEngine, PromqlError, QueryResult,
+};
 
 mod execute_avg_range_query_frontend;
 mod execute_moment_range_query_frontend;

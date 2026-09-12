@@ -23,7 +23,8 @@ pub(crate) async fn target_metadata<S: MetricStore>(
         .metadata(tenant.as_str(), params.metric.as_deref())
         .await
     {
-        Ok(mut metadata) => {
+        Ok(scan) => {
+            let mut metadata = scan.metadata;
             apply_limit(&mut metadata, params.limit);
             success_data_response(target_metadata_json(metadata))
         }

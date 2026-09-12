@@ -14,11 +14,15 @@ use std::{
     fmt::{Display, Formatter},
 };
 
+use krabka_units::{Time, hours};
 use serde::{Deserialize, Serialize};
+
+use crate::lifecycle::BlockTimestampUnit;
 
 #[cfg(test)]
 mod tests {
     use assert2::check;
+    use krabka_units::{convert::TimeExt as _, days};
 
     use super::*;
 
@@ -41,13 +45,15 @@ mod tests {
     }
 
     /// A policy with a wide window and no row target in the way, so a test can
-    /// isolate one rule at a time.
+    /// isolate one rule at a time. A century of window puts every candidate
+    /// these tests build into one bucket.
     fn policy(max_blocks_per_job: usize, target_rows: usize, max_level: u32) -> CompactionPolicy {
         CompactionPolicy::new(
             max_blocks_per_job,
             target_rows,
             BlockLevel(max_level),
-            i64::MAX,
+            days(36_500),
+            BlockTimestampUnit::Nanos,
         )
     }
 
@@ -119,7 +125,13 @@ mod tests {
         // Window 100ns at level 0, 200ns at level 1. The level-0 pair straddles
         // the 100ns boundary and so cannot merge; the level-1 pair sits inside
         // one 200ns bucket and does.
-        let policy = CompactionPolicy::new(4, 1_000, BlockLevel(4), 100);
+        let policy = CompactionPolicy::new(
+            4,
+            1_000,
+            BlockLevel(4),
+            Time::from_nanos(100),
+            BlockTimestampUnit::Nanos,
+        );
         let candidates = vec![
             candidate("t", "l0-early", 10, 20, 1, 0),
             candidate("t", "l0-late", 110, 120, 1, 0),
@@ -320,21 +332,67 @@ mod tests {
 
     #[test]
     fn a_policy_clamps_caps_that_would_make_planning_pointless() {
-        let clamped = CompactionPolicy::new(0, 0, BlockLevel(0), 0);
+        let clamped =
+            CompactionPolicy::new(0, 0, BlockLevel(0), Time::ZERO, BlockTimestampUnit::Nanos);
         check!(clamped.max_blocks_per_job() == 2);
         check!(clamped.target_rows_per_block() == 1);
         check!(clamped.max_level() == BlockLevel(1));
-        check!(clamped.window_ns_for(BlockLevel::INGESTED) == 1);
+        // A window of zero ticks would divide by zero where a block is
+        // bucketed, so it clamps to one tick rather than to no bucketing.
+        check!(clamped.window_ticks_for(BlockLevel::INGESTED) == 1);
     }
 
     #[test]
     fn the_window_doubles_per_level_and_saturates_rather_than_wrapping() {
-        let policy = CompactionPolicy::new(4, 100, BlockLevel(64), 1_000);
-        check!(policy.window_ns_for(BlockLevel(0)) == 1_000);
-        check!(policy.window_ns_for(BlockLevel(1)) == 2_000);
-        check!(policy.window_ns_for(BlockLevel(3)) == 8_000);
-        check!(policy.window_ns_for(BlockLevel(62)) == i64::MAX);
-        check!(policy.window_ns_for(BlockLevel(64)) == i64::MAX);
+        let policy = CompactionPolicy::new(
+            4,
+            100,
+            BlockLevel(64),
+            Time::from_nanos(1_000),
+            BlockTimestampUnit::Nanos,
+        );
+        check!(policy.window_ticks_for(BlockLevel(0)) == 1_000);
+        check!(policy.window_ticks_for(BlockLevel(1)) == 2_000);
+        check!(policy.window_ticks_for(BlockLevel(3)) == 8_000);
+        check!(policy.window_ticks_for(BlockLevel(62)) == i64::MAX);
+        check!(policy.window_ticks_for(BlockLevel(64)) == i64::MAX);
+    }
+
+    /// The same wall-clock window has to bucket a millisecond-stamped index
+    /// and a nanosecond-stamped one the same logical way.
+    ///
+    /// The window is an extent and the block timestamps are ticks whose size
+    /// the signal decides, so the two can only be compared once the policy
+    /// converts. A policy that measured millisecond timestamps with a
+    /// nanosecond window would put every block of that index into bucket zero:
+    /// the four blocks below would become one job of four, and the rule that a
+    /// job never spans two windows would restrict nothing at all.
+    #[test]
+    fn one_wall_clock_window_buckets_millis_and_nanos_the_same_way() {
+        const HOUR_MS: i64 = 60 * 60 * 1_000;
+
+        for (unit, per_ms) in [
+            (BlockTimestampUnit::Millis, 1_i64),
+            (BlockTimestampUnit::Nanos, 1_000_000),
+        ] {
+            let policy = CompactionPolicy::new(4, 1_000, BlockLevel(4), hours(2), unit);
+            // Two blocks inside the first two-hour bucket, two inside the next.
+            let candidates = vec![
+                candidate("t", "first-early", 0, 0, 1, 0),
+                candidate("t", "first-late", HOUR_MS * per_ms, 0, 1, 0),
+                candidate("t", "second-early", 2 * HOUR_MS * per_ms, 0, 1, 0),
+                candidate("t", "second-late", 3 * HOUR_MS * per_ms, 0, 1, 0),
+            ];
+
+            check!(
+                input_keys(&plan_compactions(&candidates, policy))
+                    == vec![
+                        vec!["first-early".to_string(), "first-late".to_string()],
+                        vec!["second-early".to_string(), "second-late".to_string()],
+                    ],
+                "{unit:?}"
+            );
+        }
     }
 
     #[test]
@@ -393,7 +451,7 @@ pub use block_level::BlockLevel;
 pub use compaction_candidate::CompactionCandidate;
 pub use compaction_job::CompactionJob;
 pub use compaction_policy::{
-    CompactionPolicy, DEFAULT_LEVEL_WINDOW_NS, DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL,
+    CompactionPolicy, DEFAULT_LEVEL_WINDOW, DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL,
     DEFAULT_TARGET_ROWS_PER_BLOCK,
 };
 pub use input_key_fingerprint::input_key_fingerprint;

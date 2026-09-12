@@ -63,9 +63,22 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         panic!("expected vector");
     };
     check!(vector[0].value == SampleValue::Float(1.0));
-    check!(store.metadata("tenant-a", Some("up")).await.unwrap()[0].help == "Target health.");
     check!(
-        store.exemplars("tenant-a", &[], 0, 10_000).await.unwrap()[0].labels
+        store
+            .metadata("tenant-a", Some("up"))
+            .await
+            .unwrap()
+            .metadata[0]
+            .help
+            == "Target health."
+    );
+    check!(
+        store
+            .exemplars("tenant-a", &[], 0, 10_000)
+            .await
+            .unwrap()
+            .exemplars[0]
+            .labels
             == lbls(&[("trace_id", "abc")])
     );
     check!(

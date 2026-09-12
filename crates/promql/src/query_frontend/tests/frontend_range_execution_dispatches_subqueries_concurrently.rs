@@ -21,7 +21,7 @@ pub(crate) async fn frontend_range_execution_dispatches_subqueries_concurrently(
     let executor = ConcurrencyProbeExecutor::new(width);
     let cache = QueryFrontendCache::default();
 
-    let results = tokio::time::timeout(
+    let (results, annotations) = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         execute_planned_range_queries(&executor, &cache, &tenant_id("tenant-a"), planned.clone()),
     )
@@ -39,6 +39,7 @@ pub(crate) async fn frontend_range_execution_dispatches_subqueries_concurrently(
     let mut expected = planned.clone();
     expected.sort_by_key(|query| query.start_ms);
     assert2::assert!(dispatched == expected);
+    assert2::assert!(annotations == Annotations::new());
 
     // Stitched result is identical to a deterministic sequential merge,
     // independent of completion order.

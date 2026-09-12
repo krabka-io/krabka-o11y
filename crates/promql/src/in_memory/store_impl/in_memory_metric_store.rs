@@ -1,6 +1,6 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, ExemplarRecord, InMemoryMetricStore, LabelMatcher,
-    LabelNameCardinality, LabelValueCardinality, Labels, MemTable, MetadataRecord, MetricStore,
+    Arc, BTreeMap, BTreeSet, ExemplarRecord, ExemplarScan, InMemoryMetricStore, LabelMatcher,
+    LabelNameCardinality, LabelValueCardinality, Labels, MemTable, MetadataScan, MetricStore,
     PromqlError, Result, RowChunks, ScanResult, SeriesFingerprint, SessionContext, TsdbBlock,
     TsdbHeadStats, TsdbStats, all_match, encode_float_samples, encode_native_histograms,
     float_sample_schema, named_stats, native_histogram_schema, prepare_matchers, row_matches,
@@ -60,6 +60,7 @@ impl MetricStore for InMemoryMetricStore {
             ctx,
             float_table,
             histogram_table,
+            warnings: Vec::new(),
         })
     }
 
@@ -112,7 +113,7 @@ impl MetricStore for InMemoryMetricStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<ExemplarRecord>> {
+    ) -> Result<ExemplarScan> {
         let matchers = prepare_matchers(matchers)?;
         let mut exemplars = Vec::new();
         if let Some(rows) = self.exemplars.get(tenant) {
@@ -135,10 +136,15 @@ impl MetricStore for InMemoryMetricStore {
             }
         }
         exemplars.sort_by_key(|row| (row.series_labels.fingerprint(), row.ts_ms));
-        Ok(exemplars)
+        // The hot head holds its rows in memory, so it never answers without a
+        // block and never raises a warning.
+        Ok(ExemplarScan {
+            exemplars,
+            warnings: Vec::new(),
+        })
     }
 
-    async fn metadata(&self, tenant: &str, metric: Option<&str>) -> Result<Vec<MetadataRecord>> {
+    async fn metadata(&self, tenant: &str, metric: Option<&str>) -> Result<MetadataScan> {
         let mut metadata = self
             .metadata
             .get(tenant)
@@ -156,7 +162,10 @@ impl MetricStore for InMemoryMetricStore {
                 .then_with(|| left.help.cmp(&right.help))
                 .then_with(|| left.unit.cmp(&right.unit))
         });
-        Ok(metadata)
+        Ok(MetadataScan {
+            metadata,
+            warnings: Vec::new(),
+        })
     }
 
     async fn cardinality_label_names(&self, tenant: &str) -> Result<Vec<LabelNameCardinality>> {

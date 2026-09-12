@@ -25,6 +25,7 @@ pub(crate) fn the_overrides_file_round_trips_through_the_limit_set() {
         max_query_read: bytes(8192),
         max_query_string_bytes: bytes(256),
         max_query_range: secs(13),
+        retention_period: days(14),
     };
 
     // `Limits` serialises to exactly the keys the override struct reads, so

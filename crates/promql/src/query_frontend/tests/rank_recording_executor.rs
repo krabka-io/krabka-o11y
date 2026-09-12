@@ -11,7 +11,7 @@ impl RangeQueryExecutor for RankRecordingExecutor {
         &self,
         _tenant: &TenantId,
         query: &FrontendRangeQuery,
-    ) -> Result<QueryResult, PromqlError> {
+    ) -> Result<AnnotatedQueryResult, PromqlError> {
         self.calls
             .lock()
             .expect("rank executor calls poisoned")
@@ -41,6 +41,6 @@ impl RangeQueryExecutor for RankRecordingExecutor {
             ],
             _ => Vec::new(),
         };
-        Ok(QueryResult::RangeMatrix(series))
+        Ok(unannotated(QueryResult::RangeMatrix(series)))
     }
 }

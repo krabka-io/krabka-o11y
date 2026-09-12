@@ -42,9 +42,9 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_avg_from_sum_and_co
     );
     assert2::assert!(
         result
-            == QueryResult::RangeMatrix(vec![RangeSeries {
+            == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
                 labels: labels(&[]),
                 samples: vec![(0, SampleValue::Float(4.0))],
-            }])
+            }]))
     );
 }

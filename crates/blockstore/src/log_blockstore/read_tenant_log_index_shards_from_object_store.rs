@@ -1,5 +1,17 @@
 use super::*;
 
+/// Merges every index shard of `tenant` that overlaps `query_range`.
+///
+/// An absent shard manifest is an empty shard, and so is an absent shard
+/// catalog. Retention deletes the manifest of a shard it empties, and the
+/// listing or the catalog this read started from can be older than that
+/// deletion. A query that races the sweep would otherwise fail on a shard that
+/// holds nothing.
+///
+/// A manifest that is present must still be well-formed. Malformed JSON and a
+/// `format_version` this build does not know are errors, so a corrupt index is
+/// never read as an empty one.
+///
 /// # Errors
 /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
 pub async fn read_tenant_log_index_shards_from_object_store(
@@ -34,8 +46,13 @@ pub async fn read_tenant_log_index_shards_from_object_store(
         .filter(|shard_range| shard_range.overlaps(query_range))
     {
         let (label_index, block_index) =
-            read_tenant_log_index_shard_from_object_store(store, prefix, tenant, shard_range)
-                .await?;
+            match read_tenant_log_index_shard_from_object_store(store, prefix, tenant, shard_range)
+                .await
+            {
+                Ok(indexes) => indexes,
+                Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => continue,
+                Err(error) => return Err(error),
+            };
 
         for (series_tenant, series) in label_index.series {
             for (_, labels) in series {

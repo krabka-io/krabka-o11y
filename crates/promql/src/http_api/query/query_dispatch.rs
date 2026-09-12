@@ -31,12 +31,14 @@ pub(crate) async fn query_dispatch<S: MetricStore>(
     // permit wait, and response encoding — that whole-handler span is already
     // covered by `query_duration{route}`.
     let eval_started = std::time::Instant::now();
-    let outcome = engine.query_instant(&tenant, &params.query, time_ms).await;
+    let outcome = engine
+        .query_instant_with_annotations(&tenant, &params.query, time_ms)
+        .await;
     state.record_eval("instant", outcome.is_ok(), eval_started.elapsed().as_time());
     match outcome {
-        Ok(mut result) => {
+        Ok((mut result, annotations)) => {
             apply_result_limit(&mut result, params.limit);
-            success_response(result)
+            success_response(result, &annotations)
         }
         Err(error) => ApiError::from(error).into_response(),
     }

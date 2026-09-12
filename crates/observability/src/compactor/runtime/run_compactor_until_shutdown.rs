@@ -1,16 +1,17 @@
 use krabka_blockstore::ObjectStoreMetrics;
 
 use super::{
-    BlockDescriptor, CompactorRunError, KafkaWalRecord, ObjectStore, ServiceConfig,
+    BlockDescriptor, CompactorRunError, Instant, KafkaWalRecord, ObjectStore, ServiceConfig,
     ServiceConfigError, ServiceDependencies, ServiceRuntimeError, TenantCompactionIndexCache, Time,
     TimeExt, advance_and_persist_compaction_frontier, build_compactor_configured_object_store,
     compact_polled_kafka_wal_records_to_object_store_from_existing_manifest,
     compactor_delete_requests_for_config, compactor_object_store,
-    compactor_run_error_is_object_store, effective_object_store_prefix,
+    compactor_run_error_is_object_store, effective_object_store_prefix, limits_provider_for_config,
     load_existing_compaction_frontier,
     materialize_delete_requests_in_existing_local_manifest_blocks,
     materialize_log_deletes_before_compaction, next_compactor_object_store_backoff,
-    poll_accumulated_log_compaction_records, sleep, validate_compactor_policy,
+    poll_accumulated_log_compaction_records, sleep, sweep_log_retention_before_compaction,
+    validate_compactor_policy,
 };
 use crate::compaction_metrics::CompactionMetrics;
 
@@ -50,6 +51,14 @@ pub async fn run_compactor_until_shutdown(
     let compaction_frontier = dependencies.compaction_frontier.unwrap_or_default();
     let delete_requests =
         compactor_delete_requests_for_config(config, dependencies.delete_requests)?;
+    // The retention window is a per-tenant limit, so the compactor reads the
+    // same provider the distributor and the querier read. A role that was
+    // handed one uses it; one that was not loads it from its own config, so a
+    // compactor never runs on a window nobody configured.
+    let overrides = match dependencies.limits {
+        Some(overrides) => overrides,
+        None => limits_provider_for_config(config)?,
+    };
     load_existing_compaction_frontier(store, &prefix, &compaction_frontier).await?;
     materialize_delete_requests_in_existing_local_manifest_blocks(
         &config.data_root,
@@ -62,6 +71,9 @@ pub async fn run_compactor_until_shutdown(
     let mut descriptors = Vec::new();
     let mut object_store_retry_backoff = config.compactor_object_store_initial_backoff;
     let mut tenant_indexes = TenantCompactionIndexCache::new();
+    // Now, so the first pass of the loop sweeps rather than waiting an
+    // interval out before it deletes anything.
+    let mut next_retention_sweep = Instant::now();
     let mut pending_compaction_records: Option<Vec<KafkaWalRecord>> = None;
     tokio::pin!(shutdown);
 
@@ -72,7 +84,7 @@ pub async fn run_compactor_until_shutdown(
             () = sleep(<Time as TimeExt>::ZERO.to_std()) => {}
         }
 
-        let batch_result = match materialize_log_deletes_before_compaction(
+        let prepared = match materialize_log_deletes_before_compaction(
             store,
             &prefix,
             &delete_requests,
@@ -80,6 +92,20 @@ pub async fn run_compactor_until_shutdown(
         )
         .await
         {
+            Ok(()) => {
+                sweep_log_retention_before_compaction(
+                    store,
+                    &prefix,
+                    overrides.as_ref(),
+                    &mut tenant_indexes,
+                    &mut next_retention_sweep,
+                    config.compactor_retention_sweep_interval,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        let batch_result = match prepared {
             Ok(()) => {
                 let records = match pending_compaction_records.take() {
                     Some(records) => records,

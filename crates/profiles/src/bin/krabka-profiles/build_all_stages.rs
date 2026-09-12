@@ -108,7 +108,7 @@ pub(crate) async fn build_all_stages(
         .with_metrics(metrics.clone()),
     );
     let querier_state = Arc::new(
-        QuerierState::new_with_overrides(Arc::clone(&read.union), overrides)
+        QuerierState::new_with_overrides(Arc::clone(&read.union), overrides.clone())
             .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
             .with_metrics(metrics.clone()),
     );
@@ -170,7 +170,7 @@ pub(crate) async fn build_all_stages(
     );
     stages.insert(
         RoleKind::Compactor,
-        compactor_stage(cli, store, index_key, metrics),
+        compactor_stage(cli, store, index_key, overrides, metrics),
     );
     Ok(Some(stages))
 }

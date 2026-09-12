@@ -1,4 +1,6 @@
-use super::{CompactionJob, escape_object_path_segment, input_key_fingerprint};
+use super::{
+    BLOCK_OBJECT_PREFIX, CompactionJob, escape_object_path_segment, input_key_fingerprint,
+};
 
 /// Names the block a job writes.
 ///
@@ -12,7 +14,7 @@ pub(crate) fn compacted_key(job: &CompactionJob) -> String {
     let tenant = escape_object_path_segment(&job.tenant);
     let (level, min_ts, max_ts) = (job.output_level, job.min_ts, job.max_ts);
     format!(
-        "blocks/{tenant}/compacted/l{level}-{min_ts}-{max_ts}-{:016x}.parquet",
+        "{BLOCK_OBJECT_PREFIX}/{tenant}/compacted/l{level}-{min_ts}-{max_ts}-{:016x}.parquet",
         input_key_fingerprint(&job.input_keys)
     )
 }

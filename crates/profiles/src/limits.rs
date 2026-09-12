@@ -34,6 +34,7 @@ mod tests {
                     max_flamegraph_nodes_max: 0,
                     max_query_length: secs(2_595_600),
                     max_session_id_cardinality: 0,
+                    compactor_blocks_retention_period: <Time as TimeExt>::ZERO,
                 }
         );
     }

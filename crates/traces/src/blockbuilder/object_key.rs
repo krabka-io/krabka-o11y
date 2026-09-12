@@ -1,4 +1,6 @@
-use super::{MaxOffset, MinOffset, WindowStartNs, escape_object_path_segment};
+use super::{
+    MaxOffset, MinOffset, TRACE_BLOCK_OBJECT_PREFIX, WindowStartNs, escape_object_path_segment,
+};
 
 /// Deterministic object key for one block-builder flush window.
 ///
@@ -17,6 +19,7 @@ pub fn object_key(
     let (min_offset, max_offset, window_start_ns) = (min_offset.0, max_offset.0, window_start_ns.0);
     let tenant = escape_object_path_segment(tenant);
     format!(
-        "traces/{tenant}/{partition:05}/{min_offset:020}-{max_offset:020}-{window_start_ns}.parquet"
+        "{TRACE_BLOCK_OBJECT_PREFIX}/{tenant}/{partition:05}/\
+         {min_offset:020}-{max_offset:020}-{window_start_ns}.parquet"
     )
 }

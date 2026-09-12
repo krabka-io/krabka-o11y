@@ -23,7 +23,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_stddev_from_moment_
     .await
     .unwrap();
 
-    let QueryResult::RangeMatrix(series) = result else {
+    let QueryResult::RangeMatrix(series) = result.result else {
         panic!("stddev range matrix");
     };
     let SampleValue::Float(value) = series[0].samples[0].1 else {
