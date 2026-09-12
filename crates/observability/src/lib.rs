@@ -20,10 +20,7 @@ use std::{
 };
 
 #[cfg(test)]
-use krabka_logql::{
-    MetricBinaryArithmetic, MetricBinaryComparison, MetricBinarySet, MetricLabelJoin,
-    MetricScalarArithmetic, MetricScalarComparison,
-};
+use krabka_logql::{MetricLabelJoin, MetricScalarArithmetic, MetricScalarComparison};
 
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -39,11 +36,7 @@ use self::querier::metric_eval::{
         parse_metric_vector_arithmetic_expression, parse_metric_vector_comparison_expression,
         parse_metric_vector_set_expression, parse_sort_vector_expression,
     },
-    result_transforms::{
-        execute_http_metric_binary_arithmetic_query, execute_http_metric_binary_comparison_query,
-        execute_http_metric_binary_set_query, execute_http_metric_scalar_arithmetic_query,
-        execute_http_metric_scalar_comparison_query, execute_http_scalar_vector_expression_result,
-    },
+    result_transforms::execute_http_scalar_vector_expression_result,
     validation::{apply_label_join_to_loki_result, scalar_vector_query_is_vector},
 };
 
