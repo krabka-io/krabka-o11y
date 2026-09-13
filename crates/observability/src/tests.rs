@@ -166,9 +166,8 @@ pub(crate) mod prelude {
             analytics::{detected_fields::*, index_patterns::*},
             metadata::*,
             metric_eval::{
-                binary_arithmetic::*, binary_sets::*, execution::*, expression_parser::*,
-                expressions::*, http_queries::*, result_transforms::*, scalar_samples::*,
-                validation::*,
+                binary_arithmetic::*, binary_sets::*, expression_parser::*, expressions::*,
+                http_queries::*, result_transforms::*, scalar_samples::*, validation::*,
             },
             scan::{metric_scans::*, object_store_scans::*, stream_scans::*},
             state::{object_store_support::*, request_state::*, types::*},

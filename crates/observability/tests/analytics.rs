@@ -4,7 +4,7 @@ mod support;
 
 use std::collections::BTreeMap;
 
-use assert2::assert;
+use assert2::{assert, check};
 use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
@@ -12,7 +12,9 @@ use axum::{
 use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels, write_log_block,
 };
-use krabka_observability::{QuerierState, loki_router};
+use krabka_observability::{
+    InMemoryWalSink, LogWalSink as _, QuerierState, WalLogRecord, loki_router,
+};
 use krabka_units::convert::ByteSizeExt as _;
 use serde_json::json;
 use support::{
@@ -199,7 +201,7 @@ async fn index_volume_endpoint_returns_series_vector_bytes() {
                                 "app": "api",
                                 "env": "prod"
                             },
-                            "value": [19, expected_block_bytes.to_string()]
+                            "value": [0.000_000_019, expected_block_bytes.to_string()]
                         }
                     ],
                     "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
@@ -209,7 +211,7 @@ async fn index_volume_endpoint_returns_series_vector_bytes() {
 }
 
 #[tokio::test]
-async fn index_volume_range_endpoint_returns_vector_with_target_labels() {
+async fn index_volume_range_endpoint_returns_matrix_with_target_labels() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
@@ -246,13 +248,13 @@ async fn index_volume_range_endpoint_returns_vector_with_target_labels() {
             == json!({
                 "status": "success",
                 "data": {
-                    "resultType": "vector",
+                    "resultType": "matrix",
                     "result": [
                         {
                             "metric": {
                                 "app": "api"
                             },
-                            "value": [30, expected_block_bytes.to_string()]
+                            "values": [[0.000_000_01, expected_block_bytes.to_string()]]
                         }
                     ],
                     "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
@@ -299,13 +301,13 @@ async fn index_volume_range_endpoint_accepts_form_post_query_with_raw_ampersand(
             == json!({
                 "status": "success",
                 "data": {
-                    "resultType": "vector",
+                    "resultType": "matrix",
                     "result": [
                         {
                             "metric": {
                                 "app": "api&edge"
                             },
-                            "value": [30, expected_block_bytes.to_string()]
+                            "values": [[0.000_000_01, expected_block_bytes.to_string()]]
                         }
                     ],
                     "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
@@ -315,7 +317,7 @@ async fn index_volume_range_endpoint_accepts_form_post_query_with_raw_ampersand(
 }
 
 #[tokio::test]
-async fn index_volume_range_endpoint_returns_vector_without_target_labels() {
+async fn index_volume_range_endpoint_returns_matrix_without_target_labels() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
@@ -348,14 +350,14 @@ async fn index_volume_range_endpoint_returns_vector_without_target_labels() {
             == json!({
                 "status": "success",
                 "data": {
-                    "resultType": "vector",
+                    "resultType": "matrix",
                     "result": [
                         {
                             "metric": {
                                 "app": "api",
                                 "env": "prod"
                             },
-                            "value": [30, expected_block_bytes.to_string()]
+                            "values": [[0.000_000_01, expected_block_bytes.to_string()]]
                         }
                     ],
                     "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
@@ -644,7 +646,7 @@ async fn index_volume_endpoint_supports_label_aggregation_and_limit() {
                             "metric": {
                                 "app": ""
                             },
-                            "value": [19, expected_block_bytes.to_string()]
+                            "value": [0.000_000_019, expected_block_bytes.to_string()]
                         }
                     ],
                     "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
@@ -1069,25 +1071,28 @@ async fn detected_fields_stops_scanning_at_the_line_limit() {
                         "label": "ok",
                         "type": "boolean",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["ok"]
                     },
                     {
                         "label": "path",
                         "type": "string",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["path"]
                     },
                     {
                         "label": "status",
                         "type": "int",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["status"]
                     },
                     {
                         "label": "trace_id",
                         "type": "string",
                         "cardinality": 1,
-                        "parsers": ["structured_metadata"]
+                        "parsers": null
                     }
                 ],
                 "limit": 10
@@ -1176,25 +1181,28 @@ async fn detected_fields_endpoint_discovers_json_logfmt_and_structured_metadata(
                         "label": "ok",
                         "type": "boolean",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["ok"]
                     },
                     {
                         "label": "path",
                         "type": "string",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["path"]
                     },
                     {
                         "label": "status",
                         "type": "int",
                         "cardinality": 2,
-                        "parsers": ["json", "logfmt"]
+                        "parsers": ["json", "logfmt"],
+                        "jsonPath": ["status"]
                     },
                     {
                         "label": "trace_id",
                         "type": "string",
                         "cardinality": 1,
-                        "parsers": ["structured_metadata"]
+                        "parsers": null
                     }
                 ],
                 "limit": 10
@@ -1519,7 +1527,8 @@ async fn detected_fields_endpoint_derives_start_from_since_when_start_is_omitted
                         "label": "new_field",
                         "type": "string",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["new_field"]
                     }
                 ],
                 "limit": 1000
@@ -1725,4 +1734,96 @@ async fn detected_field_values_endpoint_rejects_loki_query_ranges_over_limit() {
         text_body(response).await
             == "the query time range exceeds the limit (query length: 721h0m1s, limit: 30d1h)"
     );
+}
+
+/// Entries the block builder has not written yet are still in the WAL. Loki
+/// answers for the matching entries from its ingesters, so the detected-field
+/// and volume endpoints read the querier's hot tail as well as its blocks.
+#[tokio::test]
+async fn analytics_endpoints_read_entries_still_in_the_hot_tail() {
+    let hot_tail = InMemoryWalSink::default();
+    for (timestamp_ns, line, level) in [
+        (20, r#"{"status":500}"#, "error"),
+        (21, r#"{"status":200}"#, "info"),
+    ] {
+        hot_tail
+            .append(WalLogRecord {
+                tenant: "tenant-a".to_string(),
+                labels: labels([("app", "api"), ("detected_level", level)]),
+                timestamp_ns,
+                line: line.to_string(),
+                structured_metadata: BTreeMap::from([("pod".to_string(), "api-1".to_string())]),
+                position: None,
+            })
+            .await
+            .unwrap();
+    }
+    let state = QuerierState::new(
+        tempfile::tempdir().unwrap().keep(),
+        LabelIndex::default(),
+        BlockIndex::default(),
+    )
+    .with_hot_tail(hot_tail, i64::MIN);
+    let app = loki_router(state);
+
+    let cases = [
+        (
+            "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=10&end=30&limit=10",
+            json!({
+                "fields": [
+                    {"label": "detected_level", "type": "string", "cardinality": 2, "parsers": null},
+                    {"label": "pod", "type": "string", "cardinality": 1, "parsers": null},
+                    {
+                        "label": "status",
+                        "type": "int",
+                        "cardinality": 2,
+                        "parsers": ["json"],
+                        "jsonPath": ["status"]
+                    }
+                ],
+                "limit": 10
+            }),
+        ),
+        (
+            "/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&start=10&end=30",
+            json!({"values": ["200", "500"], "limit": 1000}),
+        ),
+        (
+            "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=10&end=30&targetLabels=app",
+            json!({
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [{"metric": {"app": "api"}, "value": [0.000_000_03, "28"]}],
+                    "stats": expected_loki_stats()
+                }
+            }),
+        ),
+        (
+            "/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=10&end=30&step=10ns&targetLabels=app",
+            json!({
+                "status": "success",
+                "data": {
+                    "resultType": "matrix",
+                    "result": [{"metric": {"app": "api"}, "values": [[0.000_000_02, "28"]]}],
+                    "stats": expected_loki_stats()
+                }
+            }),
+        ),
+    ];
+    for (uri, expected) in cases {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        check!(response.status() == StatusCode::OK, "{uri}");
+        check!(json_body(response).await == expected, "{uri}");
+    }
 }

@@ -6,8 +6,8 @@ use super::{
     apply_metric_selection, apply_scalar_arithmetic_to_loki_result,
     apply_scalar_comparison_to_loki_result, execute_http_metric_query, execute_http_stream_query,
     loki_instant_scalar_or_vector_response, loki_range_vector_response, merge_loki_query_stats,
-    normalize_loki_vector_sample_timestamps_to_seconds, resolved_range_step,
-    retain_metric_binary_on_labels, scalar_vector_expression_result, sort_loki_vector_result,
+    resolved_range_step, retain_metric_binary_on_labels, scalar_vector_expression_result,
+    sort_loki_vector_result,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -317,9 +317,6 @@ pub(crate) async fn execute_http_logql_expr(
                 full_query,
             ))
             .await?;
-            if left_is_vector && !right_is_vector && matches!(kind, QueryKind::Instant) {
-                normalize_loki_vector_sample_timestamps_to_seconds(&mut left);
-            }
             let right = Box::pin(execute_http_logql_expr(
                 state,
                 tenant,

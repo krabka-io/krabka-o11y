@@ -792,7 +792,7 @@ async fn configured_object_store_index_volume_endpoint_loads_request_tenant_mani
                                 "app": "api",
                                 "env": "stage"
                             },
-                            "value": [29, expected_block_bytes.to_string()]
+                            "value": [0.000_000_029, expected_block_bytes.to_string()]
                         }
                     ],
                     "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
@@ -986,13 +986,14 @@ async fn configured_object_store_detected_fields_endpoint_loads_request_tenant_m
                         "label": "status",
                         "type": "int",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["status"]
                     },
                     {
                         "label": "trace_id",
                         "type": "string",
                         "cardinality": 1,
-                        "parsers": ["structured_metadata"]
+                        "parsers": null
                     }
                 ],
                 "limit": 10
@@ -1680,6 +1681,7 @@ async fn a_retention_swept_block_degrades_every_read_surface_instead_of_failing(
                         "type": "int",
                         "cardinality": 1,
                         "parsers": ["json"],
+                        "jsonPath": ["status"],
                     },
                 ],
                 "limit": 10,

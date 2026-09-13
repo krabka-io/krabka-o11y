@@ -467,7 +467,6 @@ pub(crate) use self::{
                 metric_scalar_comparison_matches, metric_series_labels,
                 metric_vector_group_modifier, metric_vector_matching_key,
             },
-            execution::normalize_loki_vector_sample_timestamps_to_seconds,
             expression_parser::ScalarComparisonOp,
             expressions::{
                 ScalarVectorExpressionResult, loki_instant_scalar_or_vector_response,

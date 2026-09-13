@@ -1,10 +1,14 @@
-use super::{BTreeMap, Labels, Value, json, limit_volume_series, loki_success_value};
+use super::{
+    BTreeMap, Labels, Value, json, limit_volume_series, loki_success_value,
+    unix_ns_string_to_loki_seconds,
+};
 
 pub(crate) fn loki_volume_vector_response(
     volumes: BTreeMap<Labels, BTreeMap<i64, u64>>,
     timestamp: i64,
     limit: usize,
 ) -> Value {
+    let timestamp = unix_ns_string_to_loki_seconds(&timestamp.to_string());
     let result = limit_volume_series(volumes, limit)
         .into_iter()
         .map(|(metric, samples)| {

@@ -33,7 +33,6 @@ async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
                 "stream": {"app": "api", "detected_level": "unknown", "env": "prod"},
                 "values": [[timestamp, line]]
             }],
-            "dropped_entries": []
         })
     };
 
@@ -138,7 +137,6 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
                         ]
                     }
                 ],
-                "dropped_entries": []
             })
     );
 
@@ -191,7 +189,6 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
                             ]
                         }
                     ],
-                    "dropped_entries": []
             })
     );
 }
@@ -249,7 +246,6 @@ async fn tail_endpoint_applies_limit_to_hot_wal_tail_frame() {
                         ]
                     }
                 ],
-                "dropped_entries": []
             })
     );
 }

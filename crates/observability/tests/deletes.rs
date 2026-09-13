@@ -800,7 +800,6 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
                         ]
                     }
                 ],
-                "dropped_entries": []
             })
     );
 }
@@ -949,19 +948,22 @@ async fn compactor_delete_requests_filter_querier_detected_fields_results() {
                         "label": "msg",
                         "type": "string",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["msg"]
                     },
                     {
                         "label": "status",
                         "type": "int",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["status"]
                     },
                     {
                         "label": "visible_field",
                         "type": "string",
                         "cardinality": 1,
-                        "parsers": ["json"]
+                        "parsers": ["json"],
+                        "jsonPath": ["visible_field"]
                     }
                 ],
                 "limit": 10
