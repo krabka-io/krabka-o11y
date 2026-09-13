@@ -65,7 +65,7 @@ over the policy in [`deny.toml`](deny.toml).
 
 ## Run
 
-The repository publishes one image that holds the five service
+The repository publishes one `linux/amd64` image that holds the five service
 binaries and `krabka-o11y-bootstrap`. It sets no entrypoint, so a deployment
 names the binary it runs. Use an immutable digest:
 
@@ -80,8 +80,9 @@ Bazel builds the image from the same targets `bazel test //...` tests:
 bazel run //bazel/images/krabka:load     # loads krabka-o11y:dev into Docker
 ```
 
-On an ARM64 host, including an Apple Silicon Mac running Docker Desktop, select
-the Linux ARM64 platform explicitly:
+The published GHCR image remains `linux/amd64` only. On an ARM64 host, including
+an Apple Silicon Mac running Docker Desktop, build and load a native image
+locally by selecting the Linux ARM64 platform explicitly:
 
 ```
 bazel run --platforms=//:linux_arm64 //bazel/images/krabka:load
