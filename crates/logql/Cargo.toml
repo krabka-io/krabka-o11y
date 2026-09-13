@@ -9,8 +9,8 @@ rust-version.workspace = true
 description = "Small LogQL parser and planner front-end for Krabka observability"
 repository = "https://github.com/krabka-io/krabka-o11y"
 homepage = "https://github.com/krabka-io/krabka-o11y"
-documentation = "https://docs.rs/krabka-logql"
-readme = "../../README.md"
+documentation = "https://krabka-io.github.io/krabka-o11y/krabka_logql/"
+readme = "README.md"
 keywords = ["logql", "loki", "observability", "krabka"]
 categories = ["parser-implementations"]
 

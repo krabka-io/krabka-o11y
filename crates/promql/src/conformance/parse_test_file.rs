@@ -4,7 +4,7 @@ use super::{Result, TestFile, TestParser};
 ///
 /// # Errors
 ///
-/// Returns [`PromqlError::Parse`] when the input is not valid legacy `.test` DSL.
+/// Returns [`crate::PromqlError::Parse`] when the input is not valid legacy `.test` DSL.
 pub fn parse_test_file(src: &str) -> Result<TestFile> {
     let mut parser = TestParser::new(src);
     parser.parse_file()

@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  pages: write
   # The Aspect CLI uploads test logs and BEP through the Actions artifact
   # API, which GitHub gates behind an OIDC token it only mints for jobs
   # holding this. Without it those uploads are skipped and the run says so
@@ -263,6 +264,8 @@ jobs:
       # file cargo-fuzz never builds and never runs, which reads as covered
       # surface and is not.
       - run: tools/fuzz-corpus.py --check
+      - run: tools/route-inventory.py --self-test
+      - run: tools/route-inventory.py --check
       # //fuzz is a workspace of its own, so it repeats the sibling pins from
       # //Cargo.toml. sync-siblings.yml bumps one copy and knows nothing about
       # the other. This fails on the drift.
@@ -438,6 +441,38 @@ jobs:
           name: rustdoc
           path: bazel-bin/crates/**/*.rustdoc
           if-no-files-found: error
+  publish-docs:
+    name: publish rustdoc
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: rustdoc
+          path: rustdoc
+      - name: stage site
+        run: |
+          set -euo pipefail
+          mkdir _site
+          while IFS= read -r -d '' directory; do
+            cp -R --no-preserve=mode,ownership "${directory}/." _site/
+          done < <(find rustdoc -type d -name '*.rustdoc' -print0)
+          cp docs/rustdoc_index.html _site/index.html
+          touch _site/.nojekyll
+          test -f _site/krabka_blockstore/index.html
+          test -f _site/krabka_traces/index.html
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5
   # Container suites, one runner each.
   #
   # These saturate a runner: each boots a Grafana-stack component and compares

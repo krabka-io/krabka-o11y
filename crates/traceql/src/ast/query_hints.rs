@@ -1,6 +1,9 @@
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Execution hints carried by a TraceQL query.
 pub struct QueryHints {
+    /// Requests the most recent matching spans first.
     pub most_recent: bool,
+    /// Requests exemplar production when set.
     pub exemplars: Option<bool>,
     /// `with(sample=...)`: Tempo's probabilistic metrics-sampling hint.
     ///

@@ -11,8 +11,8 @@ publish = false
 description = "Role-selectable observability service for Krabka's Loki-compatible logs path"
 repository = "https://github.com/krabka-io/krabka-o11y"
 homepage = "https://github.com/krabka-io/krabka-o11y"
-documentation = "https://docs.rs/krabka-observability"
-readme = "../../README.md"
+documentation = "https://krabka-io.github.io/krabka-o11y/krabka_observability/"
+readme = "README.md"
 keywords = ["observability", "loki", "logs", "krabka"]
 categories = ["command-line-utilities"]
 

@@ -1,15 +1,17 @@
 use super::{IpAddr, IpRange, ParseError, ip_candidate_tokens, parse_ip_addr};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// An IP address, range, or CIDR matcher.
 pub struct IpMatcher {
     pub(crate) pattern: String,
     pub(crate) range: IpRange,
 }
 
 impl IpMatcher {
+    /// Parses an IP address, inclusive range, or CIDR pattern.
     #[tracing::instrument(level = "debug", skip_all, fields(pattern = %pattern), err)]
     /// # Errors
-    /// Returns an error when the query or template is malformed, a requested conversion is invalid, or evaluation cannot read its input data.
+    /// Returns an error when an address, range, or prefix is invalid.
     pub fn parse(pattern: &str) -> Result<Self, ParseError> {
         let range = if let Some((start, end)) = pattern.split_once('-') {
             IpRange::range(parse_ip_addr(start)?, parse_ip_addr(end)?)?
@@ -31,6 +33,7 @@ impl IpMatcher {
     }
 
     #[must_use]
+    /// Returns the original matcher pattern.
     pub fn pattern(&self) -> &str {
         &self.pattern
     }

@@ -1,0 +1,1758 @@
+{
+  "schema_version": 1,
+  "generated_by": "tools/route-inventory.py",
+  "routes": [
+    {
+      "signal": "logs",
+      "method": "DELETE",
+      "path": "/api/prom/rules/{namespace}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "DELETE",
+      "path": "/api/prom/rules/{namespace}/{group_name}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "DELETE",
+      "path": "/ingester/prepare_shutdown",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "DELETE",
+      "path": "/loki/api/v1/delete",
+      "sources": [
+        "crates/observability/src/http/router/delete_request_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "DELETE",
+      "path": "/loki/api/v1/rules/{namespace}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "DELETE",
+      "path": "/loki/api/v1/rules/{namespace}/{group_name}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/alerts",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/label",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/label/{name}/values",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/query",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/query_range",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/rules",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/rules/{namespace}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/rules/{namespace}/{group_name}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/series",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/api/prom/tail",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/compactor/ring",
+      "sources": [
+        "crates/observability/src/distributor/router/block_builder_ops.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/config",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/distributor/ring",
+      "sources": [
+        "crates/observability/src/distributor/router/all_ops.rs",
+        "crates/observability/src/distributor/router/distributor_ops.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/ingester/prepare_shutdown",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/ingester/shutdown",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/log_level",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/delete",
+      "sources": [
+        "crates/observability/src/http/router/delete_request_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/detected_field/{name}/values",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/detected_fields",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/detected_labels",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/format_query",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_router_with_sink.rs",
+        "crates/observability/src/http/router/compactor_router_with_delete_requests.rs",
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/index/shards",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/index/stats",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/index/volume",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/index/volume_range",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/label",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/label/{name}/values",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/labels",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/patterns",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/query",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/query_range",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/rules",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/rules/{namespace}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/rules/{namespace}/{group_name}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/series",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/status/buildinfo",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/loki/api/v1/tail",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/memberlist",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/metrics",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs",
+        "crates/observability/src/metrics/metrics_router.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/prometheus/api/v1/alerts",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/prometheus/api/v1/rules",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/ready",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs",
+        "crates/observability/src/readiness/readiness_router.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/ring",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/ruler/ring",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/scheduler/ring",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "GET",
+      "path": "/services",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/api/prom/label",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/api/prom/label/{name}/values",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/api/prom/push",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/api/prom/query",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/api/prom/query_range",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/api/prom/rules/{namespace}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/api/prom/series",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/flush",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/ingester/prepare_shutdown",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/ingester/shutdown",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/log_level",
+      "sources": [
+        "crates/observability/src/distributor/router/with_role_ops_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/delete",
+      "sources": [
+        "crates/observability/src/http/router/delete_request_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/detected_field/{name}/values",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/detected_fields",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/detected_labels",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/format_query",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_router_with_sink.rs",
+        "crates/observability/src/http/router/compactor_router_with_delete_requests.rs",
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/index/stats",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/index/volume",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/index/volume_range",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/label",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/label/{name}/values",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/labels",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/patterns",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/push",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/query",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/query_range",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/rules/{namespace}",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/loki/api/v1/series",
+      "sources": [
+        "crates/observability/src/http/router/loki_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/opentelemetry.proto.collector.logs.v1.LogsService/Export",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/otlp/v1/logs",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "POST",
+      "path": "/v1/logs",
+      "sources": [
+        "crates/observability/src/distributor/router/distributor_push_routes.rs"
+      ]
+    },
+    {
+      "signal": "logs",
+      "method": "PUT",
+      "path": "/loki/api/v1/delete",
+      "sources": [
+        "crates/observability/src/http/router/delete_request_routes.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "DELETE",
+      "path": "/prometheus/config/v1/rules/{namespace}",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "DELETE",
+      "path": "/prometheus/config/v1/rules/{namespace}/{group_name}",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/alertmanagers",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/alerts",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/cardinality/active_series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/cardinality/label_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/cardinality/label_values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/format_query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/label/{name}/values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/labels",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/metadata",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/parse_query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/query_exemplars",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/query_range",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/rules",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/scrape_pools",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/status/buildinfo",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/status/config",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/status/flags",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/status/runtimeinfo",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/status/tsdb",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/status/tsdb/blocks",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/status/walreplay",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/targets",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/targets/metadata",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/metrics",
+      "sources": [
+        "crates/metrics/src/metrics/metrics_router.rs",
+        "crates/promql/src/metrics/metrics_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/alertmanagers",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/alerts",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/cardinality/active_series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/cardinality/label_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/cardinality/label_values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/format_query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/label/{name}/values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/labels",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/metadata",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/parse_query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/query_exemplars",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/query_range",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/rules",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/scrape_pools",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/status/buildinfo",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/status/config",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/status/flags",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/status/runtimeinfo",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/status/tsdb",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/status/tsdb/blocks",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/status/walreplay",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/targets",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/targets/metadata",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/config/v1/rules",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/config/v1/rules/{namespace}",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/config/v1/rules/{namespace}/{group_name}",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/admin/tsdb/clean_tombstones",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/admin/tsdb/delete_series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/cardinality/active_series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/cardinality/label_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/cardinality/label_values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/clocks",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/format_query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/label/{name}/values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/labels",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/otlp/v1/metrics",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/parse_query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/push",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/query_exemplars",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/query_range",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/read",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/write",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/otlp/v1/metrics",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/admin/tsdb/clean_tombstones",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/admin/tsdb/delete_series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/cardinality/active_series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/cardinality/label_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/cardinality/label_values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/format_query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/label/{name}/values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/labels",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/parse_query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/query",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/query_exemplars",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/query_range",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/read",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/config/v1/rules/{namespace}",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/v1/metrics",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "GET",
+      "path": "/metrics",
+      "sources": [
+        "crates/profiles/src/metrics/metrics_router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "GET",
+      "path": "/pyroscope/render",
+      "sources": [
+        "crates/profiles/src/query/router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "GET",
+      "path": "/pyroscope/render-diff",
+      "sources": [
+        "crates/profiles/src/query/router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/ingest",
+      "sources": [
+        "crates/profiles/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/opentelemetry.proto.collector.profiles.v1development.ProfilesService/Export",
+      "sources": [
+        "crates/profiles/proto/opentelemetry/proto/collector/profiles/v1development/profiles_service.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/push.v1.PusherService/Push",
+      "sources": [
+        "crates/profiles/proto/push/v1/push.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/AnalyzeQuery",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/Diff",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/GetProfileStats",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/LabelNames",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/LabelValues",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/ProfileTypes",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/SelectHeatmap",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/SelectMergeProfile",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/SelectMergeSpanProfile",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/SelectMergeStacktraces",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/SelectSeries",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/querier.v1.QuerierService/Series",
+      "sources": [
+        "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/settings.v1.SettingsService/Get",
+      "sources": [
+        "crates/profiles/proto/settings/v1/settings.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/settings.v1.SettingsService/Set",
+      "sources": [
+        "crates/profiles/proto/settings/v1/settings.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/v1development/profiles",
+      "sources": [
+        "crates/profiles/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/echo",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/krabka/live/span-batches",
+      "sources": [
+        "crates/traces/src/bin/krabka-traces/build_live_store_router.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/metrics/query",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/metrics/query_range",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/overrides",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/search",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/search/stream",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/search/tag/{tag}/values",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/search/tags",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/status/buildinfo",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/traces/{trace_id}",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/v2/search/tag/{tag}/values",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/v2/search/tags",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/api/v2/traces/{trace_id}",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/metrics",
+      "sources": [
+        "crates/traces/src/metrics/metrics_router.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/ready",
+      "sources": [
+        "crates/traces/src/readiness/tempo_readiness_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "GET",
+      "path": "/status",
+      "sources": [
+        "crates/traces/src/readiness/tempo_readiness_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "POST",
+      "path": "/api/push",
+      "sources": [
+        "crates/traces/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "POST",
+      "path": "/api/traces",
+      "sources": [
+        "crates/traces/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "POST",
+      "path": "/api/v2/spans",
+      "sources": [
+        "crates/traces/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "POST",
+      "path": "/v1/traces",
+      "sources": [
+        "crates/traces/src/distributor/router.rs"
+      ]
+    }
+  ]
+}

@@ -18,8 +18,7 @@ use crate::wal_consumer_metrics::WalConsumerMetrics;
 ///
 /// [`Role::All`] takes the union: one process runs all three roles, so it
 /// needs everything all three need. The two WAL consumers it ends up with are
-/// deliberately in different groups -- see
-/// [`all_in_one_querier_group_id`](super::all_in_one_querier_group_id).
+/// deliberately in different groups -- see `all_in_one_querier_group_id`.
 ///
 /// # Errors
 /// Returns an error when a required Kafka dependency cannot connect.

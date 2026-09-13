@@ -1,6 +1,7 @@
 use super::Field;
 
 #[derive(Clone, Debug, PartialEq)]
+/// A TraceQL spanset or metrics aggregation.
 pub enum Aggregate {
     Count,
     Rate,

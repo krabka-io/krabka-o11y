@@ -1,4 +1,5 @@
 #[derive(Clone, Debug, PartialEq)]
+/// A scalar literal in a TraceQL field expression.
 pub enum Value {
     Str(String),
     Int(i64),

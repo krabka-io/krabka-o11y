@@ -19,7 +19,7 @@ use super::{
 /// tenant's prefix, keeps the one or two shards whose span meets the hour, and
 /// reads only those; it never holds the rest of the tenant, let alone the rest
 /// of the fleet. This is the layout the logs path already uses, in
-/// [`crate::log_blockstore`], reached for here for the same reason and kept
+/// `log_blockstore`, reached for here for the same reason and kept
 /// deliberately close to it.
 ///
 /// The price of the shape is that a series is written into every shard whose

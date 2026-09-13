@@ -1,16 +1,20 @@
 use super::{IpMatcher, LineFilterOp, ParseError, Regex, line_matches_pattern};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A substring, regular-expression, pattern, or IP filter over one log line.
 pub struct LineFilter {
+    /// The operation applied to the line.
     pub op: LineFilterOp,
+    /// The original filter pattern.
     pub pattern: String,
     pub(crate) ip_matcher: Option<IpMatcher>,
 }
 
 impl LineFilter {
+    /// Creates a line filter and validates its pattern.
     #[tracing::instrument(level = "debug", skip_all, fields(op = ?op), err)]
     /// # Errors
-    /// Returns an error when the query or template is malformed, a requested conversion is invalid, or evaluation cannot read its input data.
+    /// Returns an error when a regular expression is invalid.
     pub fn new(op: LineFilterOp, pattern: impl Into<String>) -> Result<Self, ParseError> {
         let filter = Self {
             op,
@@ -21,9 +25,10 @@ impl LineFilter {
         Ok(filter)
     }
 
+    /// Creates an IP line filter and validates its operation and pattern.
     #[tracing::instrument(level = "debug", skip_all, fields(op = ?op), err)]
     /// # Errors
-    /// Returns an error when the query or template is malformed, a requested conversion is invalid, or evaluation cannot read its input data.
+    /// Returns an error when the operation or IP pattern is invalid.
     pub fn ip(op: LineFilterOp, pattern: impl Into<String>) -> Result<Self, ParseError> {
         let pattern = pattern.into();
         let filter = Self {
@@ -36,11 +41,13 @@ impl LineFilter {
     }
 
     #[must_use]
+    /// Reports whether this filter matches IP addresses in the line.
     pub fn is_ip_matcher(&self) -> bool {
         self.ip_matcher.is_some()
     }
 
     #[must_use]
+    /// Tests the line against this filter.
     pub fn matches(&self, line: &str) -> bool {
         if let Some(matcher) = &self.ip_matcher {
             return match self.op {

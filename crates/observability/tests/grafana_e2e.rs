@@ -562,10 +562,16 @@ fn normalize(body: &Value) -> Value {
     let result_type = data["resultType"].as_str().unwrap_or_default();
     let Some(result) = data.get("result").and_then(Value::as_array) else {
         // The metadata endpoints answer a bare array: label names, label
-        // values, or series label sets. `serde_json` orders an object's
-        // members, so the text of an item is already canonical.
+        // values, or series label sets. Loki does not promise object-key
+        // order for a series label set, so canonicalize those objects.
         let mut items: Vec<String> = data.as_array().map_or_else(Vec::new, |items| {
-            items.iter().map(ToString::to_string).collect()
+            items
+                .iter()
+                .map(|item| {
+                    item.as_object()
+                        .map_or_else(|| item.to_string(), |_| canonical_labels(item))
+                })
+                .collect()
         });
         items.sort();
         return json!({ "data": items });

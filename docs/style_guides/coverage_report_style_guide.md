@@ -10,9 +10,9 @@ Coverage reports are **living documents**. Update a report when you add tests. A
 
 ## Krabka's Verification Model
 
-Krabka has no formal requirements database, and it keeps no hand-maintained compatibility matrix. Its "requirements" are the **upstream compatibility contract**: the query language, the HTTP API, and the wire format that Prometheus, Grafana Mimir, Grafana Loki, Grafana Tempo, and Grafana Pyroscope define for each signal. Verification traces to two kinds of executable artifact, and to nothing else:
+Krabka has no formal requirements database. Its [compatibility matrix](../api_compatibility.md) records scope, while its "requirements" are the **upstream compatibility contract**: the query language, the HTTP API, and the wire format that Prometheus, Grafana Mimir, Grafana Loki, Grafana Tempo, and Grafana Pyroscope define for each signal. Verification traces to two kinds of executable artifact, and to nothing else:
 
-- The **six differential suites** listed in the root [`README.md`](../../README.md#differential-suites). Each one boots the upstream component from an image pinned by digest in [`MODULE.bazel`](../../MODULE.bazel) and compares Krabka against it.
+- The **nine differential suites** listed in the root [`README.md`](../../README.md#differential-suites). Each one boots the upstream component from an image pinned by digest in [`MODULE.bazel`](../../MODULE.bazel) and compares Krabka against it.
 - The **vendored conformance corpora**: the Prometheus `promql` corpus under [`crates/promql/tests/testdata/`](../../crates/promql/tests/testdata/ATTRIBUTION.md), which names the upstream tag each file came from, and the TraceQL golden corpus under `crates/traceql/tests/testdata/traceql/`.
 
 Neither artifact is a document that someone can update out of step with the code. That is the point. A compatibility claim that no suite and no corpus establishes does not belong in a coverage report.

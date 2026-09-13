@@ -1,4 +1,5 @@
 #[derive(Debug, thiserror::Error)]
+/// An error while loading metric blocks or their compaction manifests.
 pub enum MetricsServiceError {
     #[error("object store error: {0}")]
     ObjectStore(String),

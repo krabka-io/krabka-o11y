@@ -1,6 +1,7 @@
 use super::WalHeadReplayError;
 
 #[derive(Debug, thiserror::Error)]
+/// An error from the metric WAL consumer that maintains the recent-sample head.
 pub enum WalHeadConsumerError {
     #[error("metrics WAL consumer poll failed: {0}")]
     Poll(String),

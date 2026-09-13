@@ -10,7 +10,7 @@ use super::{AssignedJob, JobShard, rendezvous_pick, shard_key};
 /// snapshot from the same bucket, and every querier reads blocks out of that
 /// bucket. Any ready querier gives byte-identical results for a block job. The
 /// only thing to decide is which one, and the answer is ownership rather than
-/// rotation -- see [`rendezvous_pick`].
+/// rotation -- see `rendezvous_pick`.
 ///
 /// **The live shard is not interchangeable.** A querier run with
 /// `--querier-live-store` holds its own hot tier, fed by a WAL consumer in the

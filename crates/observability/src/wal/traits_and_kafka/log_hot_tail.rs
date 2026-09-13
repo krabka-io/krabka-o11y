@@ -11,7 +11,7 @@ pub trait LogHotTail: Send + Sync + 'static {
     /// that share a coarse time bucket with the window edges. It MUST NOT drop
     /// any record whose timestamp lies in `[start_ns, end_ns]`. The default
     /// implementation filters [`LogHotTail::records`] and keeps its order.
-    /// Implementations that hold a time index, see [`BufferedLogHotTail`],
+    /// Implementations that hold a time index, see [`crate::BufferedLogHotTail`],
     /// override this to avoid a full-buffer scan.
     fn records_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<WalLogRecord> {
         self.records()

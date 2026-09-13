@@ -1,4 +1,4 @@
-/// Counts of what an [`InMemoryMetricStore::prune`] pass evicted.
+/// Counts of what an [`crate::InMemoryMetricStore::prune`] pass evicted.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PruneStats {
     /// Float, histogram, and exemplar rows dropped because they fell out of the

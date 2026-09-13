@@ -7,7 +7,7 @@ use super::{
     require_non_null, typed_column, validate_span_count_consistency,
 };
 
-/// Decodes a `RecordBatch` that [`encode_native_histograms`] produced.
+/// Decodes a `RecordBatch` that [`crate::encode_native_histograms`] produced.
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
 pub fn decode_native_histograms(

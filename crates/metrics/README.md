@@ -1,34 +1,49 @@
 # krabka-metrics
 
-Prometheus/Grafana-Mimir-equivalent metrics backend for Krabka.
+Prometheus and Mimir compatible metrics ingest and block building for Krabka.
 
-This crate starts with the metrics data layer: Arrow block schemas, native
-histogram encoding, float samples, exemplars, and the remote_write v2 symbol
-table. It also owns the distributor ingest path, WAL append wiring, and
-the block and index writes of both the block builder and the compactor. Query execution lives in `krabka-promql`.
+Part of [krabka-o11y](../../README.md), the Krabka observability stack.
 
-## The two binaries
+## Overview
 
-The metrics path is one write binary and one read binary, and each owns its own
-roles. They are not interchangeable, and neither has a role the other also has.
+This crate accepts Prometheus remote write, OTLP metrics, and Krabka clocks, appends decoded records to the broker WAL, and builds metric blocks and indexes.
 
-| Binary | `--target` | What it does |
-| --- | --- | --- |
-| `krabka-metrics` | `distributor`, `block-builder`, `compactor` | Remote-write and OTLP ingest into the WAL, the building of blocks out of that WAL, and the merging of those blocks into larger ones |
-| `krabka-metrics-service` | `querier`, `query-frontend`, `ruler` | The PromQL query API over those blocks, its splitting front end, and rule evaluation |
+PromQL serving lives in `krabka-metrics-service` because the read crate depends on these data types.
 
-The `block-builder` reads the WAL and writes one block per tenant, kind and
-offset window. The `compactor` reaches no broker: it reads the `.index`
-manifests, merges the float and native-histogram blocks a level policy chooses,
-and retires the inputs. The `block-builder` also runs the retention and orphan
-sweep.
+## Features
 
-The split follows the crate graph: `krabka-metrics-service` depends on
-`krabka-metrics` and on `krabka-promql`, so the read path can reach the write
-path's types and the reverse would be a cycle.
+- Prometheus remote write v1 and v2
+- OTLP HTTP and gRPC metric ingest
+- Float, native histogram, exemplar, metadata, and clock records
+- WAL replay, block building, compaction, retention, and tenant limits
 
-`krabka-metrics` once accepted the three read-path names as well, over a router
-that served `/api/v1/status/buildinfo` and nothing else -- it bound, logged,
-and reported itself ready while answering every query with a 404. Those roles
-are gone. `krabka-metrics --target=querier` now refuses to start, and says
-which binary to run instead.
+## Quick Start
+
+```bash
+bazel run //crates/metrics:krabka-metrics -- --help
+bazel run //crates/metrics:krabka-metrics -- \
+  --target=distributor --listen=127.0.0.1:4041 --bootstrap=127.0.0.1:9092
+```
+
+## Configuration
+
+The complete list is in `--help` and [`deploy/roles/`](../../deploy/roles).
+
+| Option | Environment | Default | Description |
+| --- | --- | --- | --- |
+| `--target` | `KRABKA_METRICS_TARGET` | required | Selects `distributor`, `block-builder`, or `compactor` |
+| `--listen` | `KRABKA_METRICS_LISTEN` | `0.0.0.0:4041` | Sets the data listen address |
+| `--bootstrap` | `KRABKA_METRICS_BOOTSTRAP` | `127.0.0.1:9092` | Sets the broker bootstrap address |
+| `--object-store-url` | `KRABKA_METRICS_OBJECT_STORE_URL` | `file://./.krabka-metrics-blocks` | Sets the block object store |
+| `--config.file` | `KRABKA_CONFIG_FILE` | none | Loads role configuration from YAML |
+
+## Documentation
+
+- [Getting started](../../docs/getting_started.md#metrics)
+- [API compatibility](../../docs/api_compatibility.md#metrics)
+- [Test coverage](test_coverage_report.md)
+- [Rustdoc](https://krabka-io.github.io/krabka-o11y/krabka_metrics/)
+
+## License
+
+Apache-2.0. See [LICENSE](../../LICENSE).

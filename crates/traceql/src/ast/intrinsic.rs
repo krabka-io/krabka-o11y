@@ -1,4 +1,5 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// A field supplied by the trace data model rather than an attribute map.
 pub enum Intrinsic {
     Name,
     Duration,

@@ -28,6 +28,23 @@ per signal above them.
 | `krabka-traces` | OTLP trace ingest and TraceQL serving |
 | `krabka-profiles` | Continuous-profiling ingest and pprof serving |
 | `krabka-observability` | The log path, and the surface that ties the four together |
+| `krabka-query-frontend` | Shared query planning, fan-out, retry, cache and merge orchestration |
+| `krabka-integration` | Cross-signal integration tests |
+
+## Documentation
+
+- [Getting started](docs/getting_started.md)
+- [Operations](docs/operations.md)
+- [Architecture](docs/architecture_design.md)
+- [Grafana datasource setup](docs/grafana.md)
+- [Test coverage](docs/test_coverage_report.md)
+- [Published rustdoc](https://krabka-io.github.io/krabka-o11y/)
+
+## Feature compatibility
+
+The [API compatibility matrix](docs/api_compatibility.md) maps every supported surface to a differential suite.
+
+The generated [route inventory](docs/api/routes.json) lists every served HTTP method and path.
 
 ## Build
 
@@ -162,10 +179,13 @@ bazel test //crates/promql:promql_mutants
 
 Sharded, and bounded per shard. A shard that overruns its bound reports
 *nothing* rather than reporting a failure, so a survivor count is only worth
-quoting once the totals line adds up — `caught + missed + unviable == total`.
+quoting once `tools/mutants-ratchet.py` validates every shard and the totals
+line adds up: `caught + missed + unviable == total`.
 
 ## Publishing
 
-These crates are not published from here. `robot-head/crabka` still owns every
-`krabka-*` name on crates.io; this repository is where the observability stack
-is developed.
+These crates are not published to crates.io from here. `robot-head/crabka`
+still owns every `krabka-*` name there.
+
+CI publishes the rendered workspace rustdoc to
+[`krabka-io.github.io/krabka-o11y`](https://krabka-io.github.io/krabka-o11y/).

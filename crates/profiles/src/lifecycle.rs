@@ -7,7 +7,7 @@
 //! - A merge retires its inputs. The compactor writes one block in their place
 //!   and the inputs become unreachable.
 //! - Retention expires a block that ends before its tenant's window. See
-//!   [`RetentionWindows`](krabka_blockstore::RetentionWindows), which the
+//!   [`RetentionWindows`], which the
 //!   profiles [`OverridesProvider`](crate::limits::OverridesProvider)
 //!   implements from the `compactor_blocks_retention_period` limit.
 //! - The orphan sweep deletes an object the index never named, or stopped
