@@ -24,7 +24,8 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use serde_json::{Value, json};
 use support::{
     assert_loki_error, expected_api_error, expected_loki_mixed_stats_with, expected_loki_stats,
-    expected_loki_stats_with, fixture, json_body, multi_tenant_fixture, text_body,
+    expected_loki_stats_with, fixture, json_body, loki_forwarded_fixture, multi_tenant_fixture,
+    text_body,
 };
 use tower::ServiceExt as _;
 
@@ -440,10 +441,16 @@ async fn metric_query_endpoint_populates_loki_stats_from_planned_cold_blocks() {
     let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
     let api_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10_000_000_000,
+            19_000_000_000,
+            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
+        ),
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
@@ -455,7 +462,7 @@ async fn metric_query_endpoint_populates_loki_stats_from_planned_cold_blocks() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -483,20 +490,20 @@ async fn metric_query_endpoint_splits_stats_for_cold_blocks_and_hot_tail_samples
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
             labels: labels([("app", "api"), ("env", "dev")]),
-            timestamp_ns: 20,
+            timestamp_ns: 20_000_000_000,
             line: "api hot error".to_string(),
             structured_metadata: BTreeMap::new(),
             position: None,
         })
         .await
         .unwrap();
-    let state = fixture().with_hot_tail(hot_tail, 19);
+    let state = loki_forwarded_fixture().with_hot_tail(hot_tail, 19_000_000_000);
     let app = loki_router(state);
 
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000030")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -518,7 +525,7 @@ async fn metric_query_endpoint_splits_stats_for_cold_blocks_and_hot_tail_samples
                                 "detected_level": "unknown",
                                 "env": "dev"
                             },
-                            "value": [0.000_000_03, "1"]
+                            "value": [30, "1"]
                         },
                         {
                             "metric": {
@@ -526,7 +533,7 @@ async fn metric_query_endpoint_splits_stats_for_cold_blocks_and_hot_tail_samples
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_03, "1"]
+                            "value": [30, "1"]
                         }
                     ],
                     "stats": expected_loki_mixed_stats_with(1819, 1, 1, 1)

@@ -12,7 +12,8 @@ use krabka_observability::loki_router;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use serde_json::json;
 use support::{
-    assert_loki_error, expected_loki_stats, expected_loki_stats_with, fixture, json_body, text_body,
+    assert_loki_error, expected_loki_stats, expected_loki_stats_with, json_body,
+    loki_forwarded_fixture as fixture, text_body,
 };
 use tower::ServiceExt as _;
 
@@ -24,7 +25,7 @@ async fn query_endpoint_returns_metric_query_as_loki_vector_json() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -46,7 +47,7 @@ async fn query_endpoint_returns_metric_query_as_loki_vector_json() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -150,7 +151,7 @@ async fn query_endpoint_filters_metric_query_with_scalar_comparison() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%20%3E%201&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%201&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -180,7 +181,7 @@ async fn query_endpoint_applies_metric_vector_bool_comparison_on_modifier() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%20%3E%20bool%20on%28%29%20vector%280%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%3E%20bool%20on%28%29%20vector%280%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -198,7 +199,7 @@ async fn query_endpoint_applies_metric_vector_bool_comparison_on_modifier() {
                     "result": [
                         {
                             "metric": {},
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -215,7 +216,7 @@ async fn query_endpoint_applies_metric_vector_set_and_on_modifier() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%20and%20on%28%29%20vector%281%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20and%20on%28%29%20vector%281%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -237,7 +238,7 @@ async fn query_endpoint_applies_metric_vector_set_and_on_modifier() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -254,7 +255,7 @@ async fn query_endpoint_applies_vector_metric_set_or_on_modifier() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=vector%281%29%20or%20on%28%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=vector%281%29%20or%20on%28%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -272,7 +273,7 @@ async fn query_endpoint_applies_vector_metric_set_or_on_modifier() {
                     "result": [
                         {
                             "metric": {},
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -289,7 +290,7 @@ async fn query_endpoint_applies_metric_query_scalar_arithmetic() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%20%2A%202&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -311,7 +312,7 @@ async fn query_endpoint_applies_metric_query_scalar_arithmetic() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -328,7 +329,7 @@ async fn query_endpoint_applies_metric_vector_arithmetic_on_modifier() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%20%2B%20on%28%29%20vector%281%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2B%20on%28%29%20vector%281%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -346,7 +347,7 @@ async fn query_endpoint_applies_metric_vector_arithmetic_on_modifier() {
                     "result": [
                         {
                             "metric": {},
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -363,7 +364,7 @@ async fn query_endpoint_applies_vector_metric_arithmetic_group_right_modifier() 
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=vector%281%29%20%2B%20on%28%29%20group_right%28app%2C%20env%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=vector%281%29%20%2B%20on%28%29%20group_right%28app%2C%20env%29%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -383,7 +384,7 @@ async fn query_endpoint_applies_vector_metric_arithmetic_group_right_modifier() 
                             "metric": {
                                 "detected_level": "unknown"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -400,7 +401,7 @@ async fn query_endpoint_applies_scalar_metric_query_arithmetic() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=2%20-%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=2%20-%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -422,7 +423,7 @@ async fn query_endpoint_applies_scalar_metric_query_arithmetic() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -439,7 +440,7 @@ async fn query_endpoint_applies_parenthesized_metric_query_scalar_arithmetic() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%20%2A%202%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%20%2A%202%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -461,7 +462,7 @@ async fn query_endpoint_applies_parenthesized_metric_query_scalar_arithmetic() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -478,7 +479,7 @@ async fn query_endpoint_applies_parenthesized_metric_operand_scalar_arithmetic()
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%29%20%2A%202&time=0.000000019")
+                .uri("/loki/api/v1/query?query=%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%29%20%2A%202&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -500,7 +501,7 @@ async fn query_endpoint_applies_parenthesized_metric_operand_scalar_arithmetic()
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -517,7 +518,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -539,7 +540,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -578,7 +579,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic_ignoring_modifier() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_025, "2"]
+                            "value": [25, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -613,14 +614,14 @@ async fn query_endpoint_applies_metric_binary_arithmetic_group_left_modifier() {
                         "app": "api",
                         "env": "prod"
                     },
-                    "value": [0.000_000_025, "0.666666666"]
+                    "value": [25, "0.666666666"]
                 },
                 {
                     "metric": {
                         "app": "worker",
                         "env": "prod"
                     },
-                    "value": [0.000_000_025, "0.333333333"]
+                    "value": [25, "0.333333333"]
                 }
             ]))
     );
@@ -652,14 +653,14 @@ async fn query_endpoint_applies_metric_binary_arithmetic_group_right_modifier() 
                         "app": "api",
                         "env": "prod"
                     },
-                    "value": [0.000_000_025, "1.5"]
+                    "value": [25, "1.5"]
                 },
                 {
                     "metric": {
                         "app": "worker",
                         "env": "prod"
                     },
-                    "value": [0.000_000_025, "3"]
+                    "value": [25, "3"]
                 }
             ]))
     );
@@ -673,7 +674,7 @@ async fn query_endpoint_filters_metric_binary_comparison() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%20%3E%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%3E%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -695,7 +696,7 @@ async fn query_endpoint_filters_metric_binary_comparison() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -734,7 +735,7 @@ async fn query_endpoint_applies_metric_binary_comparison_on_modifier() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_025, "1"]
+                            "value": [25, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -769,14 +770,14 @@ async fn query_endpoint_applies_metric_binary_comparison_group_left_modifier() {
                         "app": "api",
                         "env": "prod"
                     },
-                    "value": [0.000_000_025, "1"]
+                    "value": [25, "1"]
                 },
                 {
                     "metric": {
                         "app": "worker",
                         "env": "prod"
                     },
-                    "value": [0.000_000_025, "1"]
+                    "value": [25, "1"]
                 }
             ]))
     );
@@ -790,7 +791,7 @@ async fn query_endpoint_applies_metric_binary_set_and() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%20and%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20and%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -812,7 +813,7 @@ async fn query_endpoint_applies_metric_binary_set_and() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -851,7 +852,7 @@ async fn query_endpoint_applies_metric_binary_set_on_modifier() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_025, "2"]
+                            "value": [25, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -868,7 +869,7 @@ async fn query_endpoint_applies_metric_binary_set_unless() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%20unless%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20unless%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -898,7 +899,7 @@ async fn query_endpoint_filters_scalar_metric_query_comparison() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=2%20%3E%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=2%20%3E%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -920,7 +921,7 @@ async fn query_endpoint_filters_scalar_metric_query_comparison() {
                                 "detected_level": "unknown",
                                 "env": "prod"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -937,7 +938,7 @@ async fn query_endpoint_accepts_label_replace_metric_query() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -960,7 +961,7 @@ async fn query_endpoint_accepts_label_replace_metric_query() {
                                 "env": "prod",
                                 "service": "api-api"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -977,7 +978,7 @@ async fn query_endpoint_accepts_parenthesized_label_replace_metric_query() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%28label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=%28label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1000,7 +1001,7 @@ async fn query_endpoint_accepts_parenthesized_label_replace_metric_query() {
                                 "env": "prod",
                                 "service": "api-api"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -1017,7 +1018,7 @@ async fn query_endpoint_accepts_label_replace_metric_binary_expression() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2F%20count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1040,7 +1041,7 @@ async fn query_endpoint_accepts_label_replace_metric_binary_expression() {
                                 "env": "prod",
                                 "service": "api-api"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -1057,7 +1058,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_oper
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1080,7 +1081,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_oper
                                 "env": "prod",
                                 "service": "api-api"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -1097,7 +1098,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_scal
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%2F%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%20%2B%201%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1120,7 +1121,7 @@ async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_scal
                                 "env": "prod",
                                 "service": "api-api"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -1137,7 +1138,7 @@ async fn query_endpoint_applies_metric_binary_comparison_with_label_replace_oper
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3E%20bool%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20%3E%20bool%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1160,7 +1161,7 @@ async fn query_endpoint_applies_metric_binary_comparison_with_label_replace_oper
                                 "env": "prod",
                                 "service": "api-api"
                             },
-                            "value": [0.000_000_019, "0"]
+                            "value": [19, "0"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -1177,7 +1178,7 @@ async fn query_endpoint_applies_metric_binary_set_with_label_replace_operands() 
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30ns%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29%20or%20label_replace%28count_over_time%28%7Bapp%3D%22api%22%7D%5B30s%5D%29%2C%20%22service%22%2C%20%22%241-api%22%2C%20%22app%22%2C%20%22%28.%2A%29%22%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1200,7 +1201,7 @@ async fn query_endpoint_applies_metric_binary_set_with_label_replace_operands() 
                                 "env": "prod",
                                 "service": "api-api"
                             },
-                            "value": [0.000_000_019, "2"]
+                            "value": [19, "2"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -1236,7 +1237,7 @@ async fn query_endpoint_applies_metric_binary_group_left_with_label_replace_oper
                         "env": "prod",
                         "service": "api-api"
                     },
-                    "value": [0.000_000_025, "0.666666666"]
+                    "value": [25, "0.666666666"]
                 },
                 {
                     "metric": {
@@ -1244,7 +1245,7 @@ async fn query_endpoint_applies_metric_binary_group_left_with_label_replace_oper
                         "env": "prod",
                         "service": "worker-api"
                     },
-                    "value": [0.000_000_025, "0.333333333"]
+                    "value": [25, "0.333333333"]
                 }
             ]))
     );
@@ -1277,7 +1278,7 @@ async fn query_endpoint_applies_metric_binary_comparison_group_left_with_label_r
                         "env": "prod",
                         "service": "api-api"
                     },
-                    "value": [0.000_000_025, "1"]
+                    "value": [25, "1"]
                 },
                 {
                     "metric": {
@@ -1285,7 +1286,7 @@ async fn query_endpoint_applies_metric_binary_comparison_group_left_with_label_r
                         "env": "prod",
                         "service": "worker-api"
                     },
-                    "value": [0.000_000_025, "1"]
+                    "value": [25, "1"]
                 }
             ]))
     );
@@ -1299,7 +1300,7 @@ async fn query_endpoint_accepts_label_join_metric_query() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1322,7 +1323,7 @@ async fn query_endpoint_accepts_label_join_metric_query() {
                                 "env": "prod",
                                 "joined": "api/prod/"
                             },
-                            "value": [0.000_000_019, "1"]
+                            "value": [19, "1"]
                         }
                     ],
                     "stats": expected_loki_stats_with(1819, 1, 1)
@@ -1339,7 +1340,7 @@ async fn query_endpoint_rejects_parenthesized_label_join_metric_query_like_loki(
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%28label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30ns%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29%29&time=0.000000019")
+                .uri("/loki/api/v1/query?query=%28label_join%28count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22%20%5B30s%5D%29%2C%20%22joined%22%2C%20%22%2F%22%2C%20%22app%22%2C%20%22env%22%2C%20%22missing%22%29%29&time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1360,7 +1361,7 @@ async fn query_endpoint_rejects_metric_pipeline_errors() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%20json%20%5B30ns%5D%29&time=0.000000030")
+                .uri("/loki/api/v1/query?query=count_over_time%28%7Bapp%3D%22api%22%7D%20%7C%20json%20%5B30s%5D%29&time=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),

@@ -23,8 +23,8 @@ use krabka_units::convert::ByteSizeExt as _;
 use object_store::{ObjectStoreExt as _, local::LocalFileSystem, path::Path as ObjectPath};
 use serde_json::json;
 use support::{
-    expected_api_error, expected_loki_mixed_stats_with, expected_loki_stats_with, json_body,
-    tenant_object_store_shard_catalog_config_fixture,
+    expected_loki_forwarded_api_error as expected_api_error, expected_loki_mixed_stats_with,
+    expected_loki_stats_with, json_body, tenant_object_store_shard_catalog_config_fixture,
 };
 use tower::ServiceExt as _;
 
@@ -1027,10 +1027,16 @@ async fn configured_object_store_querier_loads_manifest_for_request_tenant_heade
     let stage_block = write_log_block_to_object_store(
         &store,
         &prefix,
-        &BlockKey::new("tenant-b", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
+        &BlockKey::new(
+            "tenant-b",
+            0,
+            20_000_000_000,
+            29_000_000_000,
+            TimeRange::new(20_000_000_000, 29_000_000_000).unwrap(),
+        ),
         vec![LogRow::new(
             stage_api,
-            29,
+            29_000_000_000,
             "tenant-b api error",
             BTreeMap::new(),
         )],
@@ -1112,7 +1118,7 @@ async fn configured_object_store_querier_loads_manifest_for_request_tenant_heade
                                 "env": "stage"
                             },
                             "values": [
-                                ["29", "tenant-b api error"]
+                                ["29000000000", "tenant-b api error"]
                             ]
                         }
                     ],
@@ -1191,10 +1197,16 @@ async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_
     let tenant_b_block = write_log_block_to_object_store(
         &store,
         &prefix,
-        &BlockKey::new("tenant-b", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
+        &BlockKey::new(
+            "tenant-b",
+            0,
+            20_000_000_000,
+            29_000_000_000,
+            TimeRange::new(20_000_000_000, 29_000_000_000).unwrap(),
+        ),
         vec![LogRow::new(
             tenant_b_api,
-            29,
+            29_000_000_000,
             "tenant-b api error",
             BTreeMap::new(),
         )],
@@ -1208,7 +1220,7 @@ async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_
         &store,
         &prefix,
         "tenant-b",
-        &[TimeRange::new(20, 29).unwrap()],
+        &[TimeRange::new(20_000_000_000, 29_000_000_000).unwrap()],
         &label_index,
         &block_index,
     )
@@ -1267,7 +1279,7 @@ async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_
                                 "env": "stage"
                             },
                             "values": [
-                                ["29", "tenant-b api error"]
+                                ["29000000000", "tenant-b api error"]
                             ]
                         }
                     ],
@@ -1358,10 +1370,16 @@ fn persisted_fixture() -> QuerierState {
 
     let api_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10_000_000_000,
+            19_000_000_000,
+            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
+        ),
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
@@ -1383,10 +1401,16 @@ async fn tenant_object_store_fixture() -> QuerierState {
 
     let api_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10_000_000_000,
+            19_000_000_000,
+            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
+        ),
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
@@ -1412,17 +1436,23 @@ async fn tenant_object_store_shard_fixture() -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
     let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
     let prefix = ObjectPath::from("indexes");
-    let shard_range = TimeRange::new(0, 30).unwrap();
+    let shard_range = TimeRange::new(0, 30_000_000_000).unwrap();
     let mut label_index = LabelIndex::default();
     let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
     label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
 
     let api_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10_000_000_000,
+            19_000_000_000,
+            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
+        ),
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
@@ -1456,10 +1486,16 @@ async fn tenant_object_store_shard_catalog_fixture() -> QuerierState {
 
     let api_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10_000_000_000,
+            19_000_000_000,
+            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
+        ),
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
@@ -1468,23 +1504,39 @@ async fn tenant_object_store_shard_catalog_fixture() -> QuerierState {
         &prefix,
         &api_block.key,
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
         ],
     )
     .await
     .unwrap();
     let worker_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 1, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(worker, 25, "worker error", BTreeMap::new())],
+        &BlockKey::new(
+            "tenant-a",
+            1,
+            20_000_000_000,
+            29_000_000_000,
+            TimeRange::new(20_000_000_000, 29_000_000_000).unwrap(),
+        ),
+        vec![LogRow::new(
+            worker,
+            25_000_000_000,
+            "worker error",
+            BTreeMap::new(),
+        )],
     )
     .unwrap();
     write_log_block_to_object_store(
         &store,
         &prefix,
         &worker_block.key,
-        vec![LogRow::new(worker, 25, "worker error", BTreeMap::new())],
+        vec![LogRow::new(
+            worker,
+            25_000_000_000,
+            "worker error",
+            BTreeMap::new(),
+        )],
     )
     .await
     .unwrap();
@@ -1497,8 +1549,8 @@ async fn tenant_object_store_shard_catalog_fixture() -> QuerierState {
         &prefix,
         "tenant-a",
         &[
-            TimeRange::new(0, 19).unwrap(),
-            TimeRange::new(20, 29).unwrap(),
+            TimeRange::new(0, 19_000_000_000).unwrap(),
+            TimeRange::new(20_000_000_000, 29_000_000_000).unwrap(),
         ],
         &label_index,
         &block_index,

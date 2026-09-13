@@ -174,6 +174,14 @@ impl LogWalSink for PartialWalSink {
 }
 
 pub fn fixture() -> QuerierState {
+    fixture_with_time_scale(1)
+}
+
+pub fn loki_forwarded_fixture() -> QuerierState {
+    fixture_with_time_scale(1_000_000_000)
+}
+
+fn fixture_with_time_scale(scale: i64) -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
@@ -184,17 +192,34 @@ pub fn fixture() -> QuerierState {
     let mut block_index = BlockIndex::default();
     let api_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10 * scale,
+            19 * scale,
+            TimeRange::new(10 * scale, 19 * scale).unwrap(),
+        ),
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10 * scale, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19 * scale, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
     let worker_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 1, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(worker, 25, "worker error", BTreeMap::new())],
+        &BlockKey::new(
+            "tenant-a",
+            1,
+            20 * scale,
+            29 * scale,
+            TimeRange::new(20 * scale, 29 * scale).unwrap(),
+        ),
+        vec![LogRow::new(
+            worker,
+            25 * scale,
+            "worker error",
+            BTreeMap::new(),
+        )],
     )
     .unwrap();
     block_index.insert(api_block);
@@ -204,6 +229,14 @@ pub fn fixture() -> QuerierState {
 }
 
 pub fn multi_tenant_fixture() -> (QuerierState, u64, u64) {
+    multi_tenant_fixture_with_time_scale(1)
+}
+
+pub fn loki_forwarded_multi_tenant_fixture() -> (QuerierState, u64, u64) {
+    multi_tenant_fixture_with_time_scale(1_000_000_000)
+}
+
+fn multi_tenant_fixture_with_time_scale(scale: i64) -> (QuerierState, u64, u64) {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let prod_api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
@@ -212,10 +245,16 @@ pub fn multi_tenant_fixture() -> (QuerierState, u64, u64) {
 
     let prod_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            20 * scale,
+            29 * scale,
+            TimeRange::new(20 * scale, 29 * scale).unwrap(),
+        ),
         vec![LogRow::new(
             prod_api,
-            29,
+            29 * scale,
             "tenant-a api error",
             BTreeMap::new(),
         )],
@@ -223,10 +262,16 @@ pub fn multi_tenant_fixture() -> (QuerierState, u64, u64) {
     .unwrap();
     let stage_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-b", 0, 20, 29, TimeRange::new(20, 29).unwrap()),
+        &BlockKey::new(
+            "tenant-b",
+            0,
+            20 * scale,
+            29 * scale,
+            TimeRange::new(20 * scale, 29 * scale).unwrap(),
+        ),
         vec![LogRow::new(
             stage_api,
-            29,
+            29 * scale,
             "tenant-b api error",
             BTreeMap::new(),
         )],
@@ -248,7 +293,8 @@ pub fn multi_tenant_fixture() -> (QuerierState, u64, u64) {
 
 pub async fn tenant_object_store_shard_catalog_config_fixture() -> (QuerierState, std::path::PathBuf)
 {
-    let (config, store, dir) = tenant_object_store_shard_catalog_service_fixture().await;
+    let (config, store, dir) =
+        tenant_object_store_shard_catalog_service_fixture_with_time_scale(1_000_000_000).await;
     let state = build_querier_state(&config, Some(&store)).await.unwrap();
 
     (state, dir)
@@ -256,6 +302,17 @@ pub async fn tenant_object_store_shard_catalog_config_fixture() -> (QuerierState
 
 pub async fn tenant_object_store_shard_catalog_service_fixture()
 -> (ServiceConfig, LocalFileSystem, std::path::PathBuf) {
+    tenant_object_store_shard_catalog_service_fixture_with_time_scale(1).await
+}
+
+pub async fn loki_forwarded_tenant_object_store_shard_catalog_service_fixture()
+-> (ServiceConfig, LocalFileSystem, std::path::PathBuf) {
+    tenant_object_store_shard_catalog_service_fixture_with_time_scale(1_000_000_000).await
+}
+
+async fn tenant_object_store_shard_catalog_service_fixture_with_time_scale(
+    scale: i64,
+) -> (ServiceConfig, LocalFileSystem, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap().keep();
     let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
     let prefix = ObjectPath::from("indexes");
@@ -266,10 +323,16 @@ pub async fn tenant_object_store_shard_catalog_service_fixture()
 
     let api_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10 * scale,
+            19 * scale,
+            TimeRange::new(10 * scale, 19 * scale).unwrap(),
+        ),
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10 * scale, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19 * scale, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
@@ -278,23 +341,39 @@ pub async fn tenant_object_store_shard_catalog_service_fixture()
         &prefix,
         &api_block.key,
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10 * scale, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19 * scale, "api error", BTreeMap::new()),
         ],
     )
     .await
     .unwrap();
     let worker_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 1, 20, 29, TimeRange::new(20, 29).unwrap()),
-        vec![LogRow::new(worker, 25, "worker error", BTreeMap::new())],
+        &BlockKey::new(
+            "tenant-a",
+            1,
+            20 * scale,
+            29 * scale,
+            TimeRange::new(20 * scale, 29 * scale).unwrap(),
+        ),
+        vec![LogRow::new(
+            worker,
+            25 * scale,
+            "worker error",
+            BTreeMap::new(),
+        )],
     )
     .unwrap();
     write_log_block_to_object_store(
         &store,
         &prefix,
         &worker_block.key,
-        vec![LogRow::new(worker, 25, "worker error", BTreeMap::new())],
+        vec![LogRow::new(
+            worker,
+            25 * scale,
+            "worker error",
+            BTreeMap::new(),
+        )],
     )
     .await
     .unwrap();
@@ -307,8 +386,8 @@ pub async fn tenant_object_store_shard_catalog_service_fixture()
         &prefix,
         "tenant-a",
         &[
-            TimeRange::new(0, 19).unwrap(),
-            TimeRange::new(20, 29).unwrap(),
+            TimeRange::new(0, 19 * scale).unwrap(),
+            TimeRange::new(20 * scale, 29 * scale).unwrap(),
         ],
         &label_index,
         &block_index,
@@ -328,7 +407,7 @@ pub async fn tenant_object_store_shard_catalog_service_fixture()
         tenant: Some("tenant-a".to_string()),
         index_prefix: Some(prefix.to_string()),
         query_start_ns: Some(0),
-        query_end_ns: Some(19),
+        query_end_ns: Some(19 * scale),
         max_query_range: None,
         max_query_series: None,
         max_query_read: None,
@@ -481,7 +560,19 @@ pub fn expected_api_error() -> Value {
     expected_api_error_with_stats(&expected_loki_stats_with(1819, 1, 1))
 }
 
+pub fn expected_loki_forwarded_api_error() -> Value {
+    expected_loki_forwarded_api_error_with_stats(&expected_loki_stats_with(1819, 1, 1))
+}
+
 pub fn expected_api_error_with_stats(stats: &Value) -> Value {
+    expected_api_error_at_with_stats("19", stats)
+}
+
+pub fn expected_loki_forwarded_api_error_with_stats(stats: &Value) -> Value {
+    expected_api_error_at_with_stats("19000000000", stats)
+}
+
+fn expected_api_error_at_with_stats(timestamp_ns: &str, stats: &Value) -> Value {
     json!({
         "status": "success",
         "data": {
@@ -494,7 +585,7 @@ pub fn expected_api_error_with_stats(stats: &Value) -> Value {
                         "env": "prod"
                     },
                     "values": [
-                        ["19", "api error"]
+                        [timestamp_ns, "api error"]
                     ]
                 }
             ],

@@ -43,10 +43,10 @@ pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams,
             "query" if query.is_none() => query = Some(value),
             "time" if time.is_none() => {
                 let mut timestamp = parse_loki_timestamp_query_param("time", &value)?;
-                // Loki's instant-query frontend forwards timestamps in this
-                // range as ten-digit nanoseconds, which its querier parses as
-                // seconds again.
-                if (1_000_000_000..10_000_000_000).contains(&timestamp) {
+                // Loki's instant-query frontend forwards the parsed value as
+                // an integer. Its querier parses every nonzero integer whose
+                // decimal form has at most ten characters as seconds again.
+                if timestamp != 0 && timestamp.to_string().len() <= 10 {
                     timestamp = timestamp.checked_mul(1_000_000_000).ok_or_else(|| {
                         HttpQueryError::InvalidTimestampQueryParameter {
                             name: "time",

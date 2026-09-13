@@ -225,7 +225,7 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
         .append(WalLogRecord {
             tenant: TENANT.to_string(),
             labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 20_000_000,
+            timestamp_ns: 20_000_000_000,
             line: "api live tail error".to_string(),
             structured_metadata: BTreeMap::new(),
             position: None,
@@ -237,7 +237,7 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
     let body = query_until_values(
         &querier,
         TENANT,
-        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.020000000",
+        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=20.000000000",
         1,
     )
     .await;
@@ -253,7 +253,7 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
                         "detected_level": "unknown",
                         "env": "prod",
                     },
-                    "values": [["20000000", "api live tail error"]],
+                    "values": [["20000000000", "api live tail error"]],
                 }],
                 "stats": expected_loki_mixed_stats_with(0, 0, 1, 0),
             },
@@ -603,7 +603,7 @@ async fn a_log_produced_by_a_native_kafka_client_reaches_a_query_answer() {
     let data_root = TempDir::new().expect("data root");
     let object_root = TempDir::new().expect("object root");
 
-    produce_native_kafka_log(&live, "20000000", "api native kafka error").await;
+    produce_native_kafka_log(&live, "20000000000", "api native kafka error").await;
 
     let descriptors = live.compact(&data_root, &object_root, "native-loop").await;
     assert!(descriptors.len() == 1);
@@ -616,7 +616,7 @@ async fn a_log_produced_by_a_native_kafka_client_reaches_a_query_answer() {
     let body = query_until_values(
         &querier,
         TENANT,
-        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.020000000",
+        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=20.000000000",
         1,
     )
     .await;
@@ -632,7 +632,7 @@ async fn a_log_produced_by_a_native_kafka_client_reaches_a_query_answer() {
     );
     check!(
         body.pointer("/data/result/0/values")
-            == Some(&json!([["20000000", "api native kafka error"]]))
+            == Some(&json!([["20000000000", "api native kafka error"]]))
     );
 
     live.shutdown().await;
