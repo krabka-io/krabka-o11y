@@ -108,6 +108,12 @@ pub async fn enforce_compaction_retention(
     // The live set still names the expired blocks, so an object that would
     // not delete stays with the retention half of the pass. The orphan sweep
     // does not take it over, and the next pass reports it again.
+    let partial_stats = CompactionRetentionStats {
+        manifests_scanned: manifests.len(),
+        manifests_retired: manifests_retired.into(),
+        blocks_deleted: blocks_deleted.into(),
+        ..CompactionRetentionStats::default()
+    };
     let orphans = reconcile_orphans(
         store,
         COMPACTION_OBJECT_PREFIX,
@@ -115,13 +121,15 @@ pub async fn enforce_compaction_retention(
         DEFAULT_BLOCK_SWEEP_GRACE,
         now,
     )
-    .await?;
+    .await
+    .map_err(|source| CompactionRetentionError::Lifecycle {
+        source,
+        stats: Box::new(partial_stats.clone()),
+    })?;
 
     Ok(CompactionRetentionStats {
-        manifests_scanned: manifests.len(),
-        manifests_retired: manifests_retired.into(),
-        blocks_deleted: blocks_deleted.into(),
         orphans,
+        ..partial_stats
     })
 }
 

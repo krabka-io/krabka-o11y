@@ -48,6 +48,11 @@ pub enum ProfilesError {
     },
     #[error("block build failed: {0}")]
     Block(String),
+    #[error("block lifecycle failed: {message}")]
+    Lifecycle {
+        message: String,
+        report: Box<crate::lifecycle::LifecycleReport>,
+    },
     #[error("pprof: {0}")]
     Pprof(String),
     /// An unexpected server-side fault, for example a poisoned lock. The inner
@@ -83,6 +88,7 @@ impl ProfilesError {
             | Self::Produce(_)
             | Self::ProduceBatch { .. }
             | Self::Block(_)
+            | Self::Lifecycle { .. }
             | Self::Internal(_) => 500,
         }
     }

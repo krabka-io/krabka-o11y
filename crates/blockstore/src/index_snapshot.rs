@@ -20,7 +20,10 @@ use xxhash_rust::xxh3::xxh3_128;
 
 use crate::{
     error::{BlockStoreError, Result},
-    index::{IndexShardRange, index_shards_prefix_for_key, parse_shard_bound_key, shard_bound_key},
+    index::{
+        IndexShardObject, IndexShardRange, index_shards_prefix_for_key, parse_index_shard_location,
+        parse_shard_bound_key, shard_bound_key,
+    },
     path_escape::{escape_object_path_segment, unescape_object_path_segment},
 };
 

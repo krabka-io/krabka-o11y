@@ -1,7 +1,8 @@
 use krabka_blockstore::DEFAULT_BLOCK_SWEEP_GRACE;
 use krabka_profiles::{
+    ProfilesError,
     blockbuilder::BLOCK_OBJECT_PREFIX,
-    lifecycle::{LifecycleOptions, run_lifecycle_pass},
+    lifecycle::{LifecycleOptions, LifecycleReport, run_lifecycle_pass},
 };
 
 use super::{
@@ -33,7 +34,7 @@ pub(crate) async fn run_compaction_pass(
         cli.index_snapshot_max,
     )
     .await?;
-    let report = run_lifecycle_pass(
+    let result = run_lifecycle_pass(
         store,
         &mut index,
         &LifecycleOptions {
@@ -47,7 +48,19 @@ pub(crate) async fn run_compaction_pass(
             now: SystemTime::now(),
         },
     )
-    .await?;
+    .await;
+    match &result {
+        Ok(report) => record_lifecycle_report(metrics, report),
+        Err(ProfilesError::Lifecycle { report, .. }) => {
+            record_lifecycle_report(metrics, report);
+        }
+        Err(_) => {}
+    }
+    let report = result?;
+    Ok(report.compacted.len())
+}
+
+fn record_lifecycle_report(metrics: &ServiceMetrics, report: &LifecycleReport) {
     if !report.compacted.is_empty() {
         metrics
             .compaction
@@ -71,5 +84,4 @@ pub(crate) async fn run_compaction_pass(
             "profiles compactor reclaimed block storage"
         );
     }
-    Ok(report.compacted.len())
 }

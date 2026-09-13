@@ -32,42 +32,11 @@ pub(crate) fn spawn_retention_sweeper(
             )
             .await
             {
-                Ok(stats) => {
-                    metrics.compaction.record_deleted(
-                        stats.blocks_deleted.deleted as u64,
-                        stats.manifests_retired.deleted as u64,
-                        stats.failures().count() as u64,
-                    );
-                    metrics.compaction.record_orphan_sweep(
-                        stats.orphans.deleted as u64,
-                        stats.orphans.failed as u64,
-                    );
-                    // Every object the store refused, one line each. A pass
-                    // that reported only its totals would hide an object that
-                    // fails on every pass, and that object is the one an
-                    // operator has to act on.
-                    for failure in stats.failures() {
-                        tracing::warn!(
-                            block = %failure.object_key,
-                            object = %failure.failed_key,
-                            error = %failure.error,
-                            "metrics compactor retention could not delete an object"
-                        );
-                    }
-                    if stats.deleted_anything() {
-                        tracing::info!(
-                            manifests_scanned = stats.manifests_scanned,
-                            manifests_retired = stats.manifests_retired.deleted,
-                            blocks_deleted = stats.blocks_deleted.deleted,
-                            manifests_absent = stats.manifests_retired.absent,
-                            blocks_absent = stats.blocks_deleted.absent,
-                            orphans_deleted = stats.orphans.deleted,
-                            orphans_failed = stats.orphans.failed,
-                            "metrics compactor retention deleted old blocks"
-                        );
-                    }
-                }
+                Ok(stats) => record_retention_stats(&metrics, &stats),
                 Err(error) => {
+                    if let Some(stats) = error.partial_stats() {
+                        record_retention_stats(&metrics, stats);
+                    }
                     tracing::warn!(%error, "metrics compactor retention sweep failed");
                 }
             }
@@ -77,4 +46,38 @@ pub(crate) fn spawn_retention_sweeper(
             }
         }
     })
+}
+
+fn record_retention_stats(
+    metrics: &ServiceMetrics,
+    stats: &krabka_metrics::CompactionRetentionStats,
+) {
+    metrics.compaction.record_deleted(
+        stats.blocks_deleted.deleted as u64,
+        stats.manifests_retired.deleted as u64,
+        stats.failures().count() as u64,
+    );
+    metrics
+        .compaction
+        .record_orphan_sweep(stats.orphans.deleted as u64, stats.orphans.failed as u64);
+    for failure in stats.failures() {
+        tracing::warn!(
+            block = %failure.object_key,
+            object = %failure.failed_key,
+            error = %failure.error,
+            "metrics compactor retention could not delete an object"
+        );
+    }
+    if stats.deleted_anything() {
+        tracing::info!(
+            manifests_scanned = stats.manifests_scanned,
+            manifests_retired = stats.manifests_retired.deleted,
+            blocks_deleted = stats.blocks_deleted.deleted,
+            manifests_absent = stats.manifests_retired.absent,
+            blocks_absent = stats.blocks_deleted.absent,
+            orphans_deleted = stats.orphans.deleted,
+            orphans_failed = stats.orphans.failed,
+            "metrics compactor retention deleted old blocks"
+        );
+    }
 }

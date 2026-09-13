@@ -1708,6 +1708,8 @@ fn query_parameter_cases(timeline: &Timeline) -> Vec<Case> {
             .raw_query("query=vector%281%29&time=1000000000000000000&time=2000000000000000000"),
         Case::get("query_single_digit_time", "/loki/api/v1/query")
             .raw_query("query=vector%281%29&time=1"),
+        Case::get("query_zero_padded_single_digit_time", "/loki/api/v1/query")
+            .raw_query("query=vector%281%29&time=01"),
         Case::get("query_vector_at_corpus_time", "/loki/api/v1/query").params([
             ("query", "vector(1)".to_string()),
             ("time", timeline.at(60).to_string()),
