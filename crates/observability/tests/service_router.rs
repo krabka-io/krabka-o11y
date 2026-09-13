@@ -36,7 +36,8 @@ use snap::raw::Encoder as SnappyEncoder;
 use support::{
     DenyingQueryAuthorizer, LokiProtoEntry, LokiProtoPushRequest, LokiProtoStream,
     RejectingIngestLimiter, assert_loki_error, current_unix_epoch_nanos, expected_api_error,
-    expected_api_error_with_stats, json_body, proto_logs_request_at_ns,
+    expected_loki_forwarded_api_error, expected_loki_forwarded_api_error_with_stats, json_body,
+    loki_forwarded_tenant_object_store_shard_catalog_service_fixture, proto_logs_request_at_ns,
     tenant_object_store_shard_catalog_service_fixture, text_body,
 };
 use tokio::{
@@ -1000,7 +1001,8 @@ async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
 
 #[tokio::test]
 async fn service_router_builds_querier_role_from_object_store_shard_catalog_config() {
-    let (config, store, _dir) = tenant_object_store_shard_catalog_service_fixture().await;
+    let (config, store, _dir) =
+        loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
     let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
         .await
         .unwrap();
@@ -1019,7 +1021,7 @@ async fn service_router_builds_querier_role_from_object_store_shard_catalog_conf
         .unwrap();
 
     assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert!(json_body(response).await == expected_loki_forwarded_api_error());
 }
 
 #[tokio::test]
@@ -1088,7 +1090,7 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),
             labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 19,
+            timestamp_ns: 19_000_000_000,
             line: "api error".to_string(),
             structured_metadata: BTreeMap::new(),
             position: Some(WalPosition {
@@ -1144,7 +1146,7 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
     assert!(response.status() == StatusCode::OK);
     assert!(
         json_body(response).await
-            == expected_api_error_with_stats(&expected_loki_ingester_stats_with(1))
+            == expected_loki_forwarded_api_error_with_stats(&expected_loki_ingester_stats_with(1))
     );
 }
 
@@ -1351,7 +1353,7 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
     let record = WalLogRecord {
         tenant: "tenant-a".to_string(),
         labels: labels([("app", "api"), ("env", "prod")]),
-        timestamp_ns: 19,
+        timestamp_ns: 19_000_000_000,
         line: "api error".to_string(),
         structured_metadata: BTreeMap::new(),
         position: None,
@@ -1404,7 +1406,11 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
 
             assert!(response.status() == StatusCode::OK);
             let body = json_body(response).await;
-            if body == expected_api_error_with_stats(&expected_loki_ingester_stats_with(1)) {
+            if body
+                == expected_loki_forwarded_api_error_with_stats(
+                    &expected_loki_ingester_stats_with(1),
+                )
+            {
                 break body;
             }
             tokio::task::yield_now().await;
@@ -1413,7 +1419,9 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
     .await
     .unwrap();
 
-    assert!(body == expected_api_error_with_stats(&expected_loki_ingester_stats_with(1)));
+    assert!(
+        body == expected_loki_forwarded_api_error_with_stats(&expected_loki_ingester_stats_with(1))
+    );
 }
 
 #[tokio::test]
@@ -1474,7 +1482,8 @@ async fn service_router_loads_persisted_frontier_for_configured_querier_hot_tail
 
 #[tokio::test]
 async fn service_router_builds_configured_local_object_store_for_querier_role() {
-    let (mut config, _store, dir) = tenant_object_store_shard_catalog_service_fixture().await;
+    let (mut config, _store, dir) =
+        loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
     config.object_store_url = Some(format!("file://{}", dir.display()));
     let app = build_service_router(&config, ServiceDependencies::default(), None)
         .await
@@ -1494,7 +1503,7 @@ async fn service_router_builds_configured_local_object_store_for_querier_role() 
         .unwrap();
 
     assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert!(json_body(response).await == expected_loki_forwarded_api_error());
 }
 
 struct RecordingWalConsumer {

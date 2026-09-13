@@ -1716,6 +1716,8 @@ fn query_parameter_cases(timeline: &Timeline) -> Vec<Case> {
             .raw_query("query=vector%281%29&time=1"),
         Case::get("query_zero_padded_single_digit_time", "/loki/api/v1/query")
             .raw_query("query=vector%281%29&time=01"),
+        Case::get("query_forwarded_subsecond_time", "/loki/api/v1/query")
+            .raw_query("query=vector%281%29&time=0.5"),
         Case::get("query_forwarded_time_overflow", "/loki/api/v1/query")
             .raw_query("query=vector%281%29&time=9.223372037"),
         Case::get("query_vector_at_corpus_time", "/loki/api/v1/query").params([

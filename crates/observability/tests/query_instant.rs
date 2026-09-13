@@ -19,14 +19,15 @@ use krabka_observability::{
 use krabka_units::{bytes, convert::ByteSizeExt as _};
 use serde_json::{Value, json};
 use support::{
-    DenyingQueryAuthorizer, assert_loki_error, expected_api_error, expected_loki_mixed_stats_with,
-    expected_loki_stats_with, fixture, json_body, multi_tenant_fixture, text_body,
+    DenyingQueryAuthorizer, assert_loki_error, expected_loki_forwarded_api_error,
+    expected_loki_mixed_stats_with, expected_loki_stats_with, fixture, json_body,
+    loki_forwarded_fixture, loki_forwarded_multi_tenant_fixture, text_body,
 };
 use tower::ServiceExt as _;
 
 #[tokio::test]
 async fn query_endpoint_returns_loki_streams_json_for_tenant() {
-    let state = fixture();
+    let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
     let response = app
@@ -43,12 +44,12 @@ async fn query_endpoint_returns_loki_streams_json_for_tenant() {
         .unwrap();
 
     assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert!(json_body(response).await == expected_loki_forwarded_api_error());
 }
 
 #[tokio::test]
 async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
-    let (state, prod_bytes, stage_bytes) = multi_tenant_fixture();
+    let (state, prod_bytes, stage_bytes) = loki_forwarded_multi_tenant_fixture();
     let app = loki_router(state);
 
     let response = app
@@ -79,7 +80,7 @@ async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
                                 "env": "prod"
                             },
                             "values": [
-                                ["29", "tenant-a api error"]
+                                ["29000000000", "tenant-a api error"]
                             ]
                         },
                         {
@@ -89,7 +90,7 @@ async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
                                 "env": "stage"
                             },
                             "values": [
-                                ["29", "tenant-b api error"]
+                                ["29000000000", "tenant-b api error"]
                             ]
                         }
                     ],
@@ -105,7 +106,7 @@ async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_form_encoded_post_body() {
-    let state = fixture();
+    let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
     let response = app
@@ -124,12 +125,12 @@ async fn query_endpoint_accepts_form_encoded_post_body() {
         .unwrap();
 
     assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert!(json_body(response).await == expected_loki_forwarded_api_error());
 }
 
 #[tokio::test]
 async fn deprecated_api_prom_query_endpoint_returns_loki_streams_json() {
-    let state = fixture();
+    let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
     let response = app
@@ -144,12 +145,12 @@ async fn deprecated_api_prom_query_endpoint_returns_loki_streams_json() {
         .unwrap();
 
     assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert!(json_body(response).await == expected_loki_forwarded_api_error());
 }
 
 #[tokio::test]
 async fn deprecated_api_prom_query_endpoint_accepts_form_encoded_post_body() {
-    let state = fixture();
+    let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
     let response = app
@@ -168,12 +169,12 @@ async fn deprecated_api_prom_query_endpoint_accepts_form_encoded_post_body() {
         .unwrap();
 
     assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert!(json_body(response).await == expected_loki_forwarded_api_error());
 }
 
 #[tokio::test]
 async fn deprecated_api_prom_query_endpoint_rejects_metric_results_like_loki() {
-    let state = fixture();
+    let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
     let response = app
@@ -196,7 +197,7 @@ async fn deprecated_api_prom_query_endpoint_rejects_metric_results_like_loki() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_fractional_unix_seconds_time() {
-    let state = fixture();
+    let state = loki_forwarded_fixture();
     let app = loki_router(state);
 
     let response = app
@@ -213,7 +214,7 @@ async fn query_endpoint_accepts_fractional_unix_seconds_time() {
         .unwrap();
 
     assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert!(json_body(response).await == expected_loki_forwarded_api_error());
 }
 
 #[tokio::test]
@@ -250,10 +251,16 @@ async fn query_endpoint_populates_loki_stats_from_planned_cold_blocks() {
     let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
     let api_block = write_log_block(
         &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10_000_000_000,
+            19_000_000_000,
+            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
+        ),
         vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
+            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
         ],
     )
     .unwrap();
