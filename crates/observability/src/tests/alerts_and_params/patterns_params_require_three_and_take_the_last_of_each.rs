@@ -15,8 +15,8 @@ pub(crate) fn patterns_params_require_three_and_take_the_last_of_each() {
 
     let params = parse("query=up&start=100&end=200").expect("all three present");
     check!(params.query == "up");
-    check!(params.start == 100);
-    check!(params.end == 200);
+    check!(params.start == 100_000_000_000);
+    check!(params.end == 200_000_000_000);
     check!(
         params.step == 1_000_000_000,
         "the step defaults to a second"
@@ -26,7 +26,7 @@ pub(crate) fn patterns_params_require_three_and_take_the_last_of_each() {
     let params = parse("query=a&query=b&start=100&end=200").expect("parses");
     check!(params.query == "b", "the last query, unlike series params");
     let params = parse("query=up&start=100&start=300&end=200").expect("parses");
-    check!(params.start == 300, "and the last start");
+    check!(params.start == 300_000_000_000, "and the last start");
 
     // An explicit step overrides the default.
     let params = parse("query=up&start=100&end=200&step=5s").expect("parses");

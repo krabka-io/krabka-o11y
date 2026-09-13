@@ -106,9 +106,9 @@ async fn series_endpoint_allows_missing_matcher_parameter_like_loki() {
 #[tokio::test]
 async fn metadata_endpoints_reject_loki_query_ranges_over_limit() {
     let paths = [
-        "/loki/api/v1/labels?start=0&end=2595601000000000",
-        "/loki/api/v1/label/app/values?start=0&end=2595601000000000",
-        "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0&end=2595601000000000",
+        "/loki/api/v1/labels?start=0.000000000&end=2595601000000000",
+        "/loki/api/v1/label/app/values?start=0.000000000&end=2595601000000000",
+        "/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000",
     ];
 
     for path in paths {
@@ -366,7 +366,7 @@ async fn deprecated_api_prom_metadata_endpoints_return_loki_metadata() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/prom/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0&end=30")
+                .uri("/api/prom/series?match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -395,7 +395,7 @@ async fn deprecated_api_prom_metadata_endpoints_return_loki_metadata() {
                 .header("X-Scope-OrgID", "tenant-a")
                 .header("content-type", "application/x-www-form-urlencoded")
                 .body(Body::from(
-                    "match%5B%5D=%7Bapp%3D%22api%22%7D&start=0&end=30",
+                    "match%5B%5D=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030",
                 ))
                 .unwrap(),
         )
@@ -439,7 +439,7 @@ async fn labels_endpoint_applies_time_range() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/labels?start=10&end=19")
+                .uri("/loki/api/v1/labels?start=0.000000010&end=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -480,7 +480,7 @@ async fn label_values_endpoint_applies_since_when_start_is_absent() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/label/app/values?end=29&since=9ns")
+                .uri("/loki/api/v1/label/app/values?end=0.000000029&since=9ns")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -747,7 +747,7 @@ async fn label_values_endpoint_applies_time_range() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/label/app/values?start=10&end=19")
+                .uri("/loki/api/v1/label/app/values?start=0.000000010&end=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -773,7 +773,7 @@ async fn series_endpoint_applies_matchers_time_range_and_tenant() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/series?match%5B%5D=%7Benv%3D%22prod%22%7D&start=20&end=30")
+                .uri("/loki/api/v1/series?match%5B%5D=%7Benv%3D%22prod%22%7D&start=0.000000020&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -840,7 +840,7 @@ async fn series_endpoint_includes_matching_hot_wal_tail_series() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/series?match%5B%5D=%7Blevel%3D%22error%22%7D&start=0&end=30")
+                .uri("/loki/api/v1/series?match%5B%5D=%7Blevel%3D%22error%22%7D&start=0.000000000&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -876,7 +876,7 @@ async fn series_endpoint_accepts_form_encoded_post_body() {
                 .header("X-Scope-OrgID", "tenant-a")
                 .header("content-type", "application/x-www-form-urlencoded")
                 .body(Body::from(
-                    "match%5B%5D=%7Benv%3D%22prod%22%7D&start=20&end=30",
+                    "match%5B%5D=%7Benv%3D%22prod%22%7D&start=0.000000020&end=0.000000030",
                 ))
                 .unwrap(),
         )
@@ -907,7 +907,7 @@ async fn series_endpoint_accepts_post_query_parameters_when_body_is_empty() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22worker%22%7D&start=20&end=30")
+                .uri("/loki/api/v1/series?match%5B%5D=%7Bapp%3D%22worker%22%7D&start=0.000000020&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -939,7 +939,7 @@ async fn series_endpoint_merges_post_query_parameters_with_form_body() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/loki/api/v1/series?start=20&end=30")
+                .uri("/loki/api/v1/series?start=0.000000020&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .header("content-type", "application/x-www-form-urlencoded")
                 .body(Body::from("match%5B%5D=%7Benv%3D%22prod%22%7D"))
@@ -987,7 +987,9 @@ async fn series_endpoint_accepts_form_post_matcher_with_raw_ampersand() {
                 .uri("/loki/api/v1/series")
                 .header("X-Scope-OrgID", "tenant-a")
                 .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(r#"match[]={app="api&edge"}&start=0&end=30"#))
+                .body(Body::from(
+                    r#"match[]={app="api&edge"}&start=0.000000000&end=0.000000030"#,
+                ))
                 .unwrap(),
         )
         .await

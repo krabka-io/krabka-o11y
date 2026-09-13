@@ -59,7 +59,7 @@ pub use index::{
 };
 pub use index_snapshot::{
     DEFAULT_INDEX_SNAPSHOT_MAX, DEFAULT_INDEX_SNAPSHOT_RETAIN, IndexSnapshotRetain,
-    index_snapshot_prefix_for_key,
+    index_snapshot_prefix_for_key, list_index_object_keys,
 };
 pub use labels::{Labels, SeriesFingerprint};
 pub use lifecycle::{

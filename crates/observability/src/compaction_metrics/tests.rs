@@ -39,6 +39,8 @@ fn every_compaction_instrument_reaches_a_scrape_under_the_service_prefix() {
     metrics.record_run(true, millis(250));
     metrics.record_run(false, millis(250));
     metrics.record_output(4);
+    metrics.record_deleted(2, 3, 1);
+    metrics.record_orphan_sweep(5, 1);
 
     let mut buffer = String::new();
     prometheus_client::encoding::text::encode(&mut buffer, &registry).expect("encoding");
@@ -49,6 +51,13 @@ fn every_compaction_instrument_reaches_a_scrape_under_the_service_prefix() {
         "krabka_test_compaction_duration_seconds_count 2",
         "krabka_test_compaction_duration_seconds_sum 0.5",
         "krabka_test_compaction_blocks_total 4",
+        "krabka_test_compaction_deletion_sweeps_total 1",
+        "krabka_test_compaction_deleted_blocks_total 2",
+        "krabka_test_compaction_deleted_sidecars_total 3",
+        "krabka_test_compaction_deletion_failures_total 1",
+        "krabka_test_compaction_orphan_sweeps_total 1",
+        "krabka_test_compaction_orphans_deleted_total 5",
+        "krabka_test_compaction_orphan_failures_total 1",
     ] {
         check!(buffer.contains(needle), "missing {needle} in:\n{buffer}");
     }

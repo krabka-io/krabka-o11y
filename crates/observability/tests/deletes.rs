@@ -767,10 +767,11 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let mut request =
-        format!("ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D&start=0&end=20000000000")
-            .into_client_request()
-            .unwrap();
+    let mut request = format!(
+        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=20000000000"
+    )
+    .into_client_request()
+    .unwrap();
     request
         .headers_mut()
         .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());

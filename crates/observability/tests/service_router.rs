@@ -1009,7 +1009,7 @@ async fn service_router_builds_querier_role_from_object_store_shard_catalog_conf
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=19",
+                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -1132,7 +1132,7 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=19",
+                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -1182,7 +1182,7 @@ async fn service_router_applies_configured_query_range_limit() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0&end=30")
+                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1275,7 +1275,7 @@ async fn service_router_applies_configured_query_series_limit() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%7Benv%3D%22prod%22%7D&start=0&end=30")
+                .uri("/loki/api/v1/query?query=%7Benv%3D%22prod%22%7D&start=0.000000000&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1329,7 +1329,7 @@ async fn service_router_applies_configured_query_bytes_limit() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0&end=30")
+                .uri("/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1393,7 +1393,7 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
                 .oneshot(
                     Request::builder()
                         .uri(
-                            "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=19",
+                            "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
                         )
                         .header("X-Scope-OrgID", "tenant-a")
                         .body(Body::empty())
@@ -1459,7 +1459,7 @@ async fn service_router_loads_persisted_frontier_for_configured_querier_hot_tail
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end=30",
+                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -1484,7 +1484,7 @@ async fn service_router_builds_configured_local_object_store_for_querier_role() 
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=19",
+                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -1656,7 +1656,7 @@ async fn the_all_in_one_router_serves_the_write_and_read_surfaces_together() {
 
     let queried = get_response(
         app.clone(),
-        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0&end=10",
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000010",
     )
     .await;
     assert!(queried.status() != StatusCode::NOT_FOUND);

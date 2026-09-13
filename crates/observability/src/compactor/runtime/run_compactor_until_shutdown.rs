@@ -89,6 +89,7 @@ pub async fn run_compactor_until_shutdown(
             &prefix,
             &delete_requests,
             &mut tenant_indexes,
+            &compaction_metrics,
         )
         .await
         {
@@ -100,6 +101,7 @@ pub async fn run_compactor_until_shutdown(
                     &mut tenant_indexes,
                     &mut next_retention_sweep,
                     config.compactor_retention_sweep_interval,
+                    &compaction_metrics,
                 )
                 .await
             }

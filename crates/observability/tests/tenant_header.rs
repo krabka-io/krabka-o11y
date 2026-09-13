@@ -266,11 +266,13 @@ async fn a_query_answers_every_oracle_row_by_its_query_kind() {
 
     let cases = [
         (
-            format!("/loki/api/v1/query_range?{log_query}&start=0&end=100"),
+            format!("/loki/api/v1/query_range?{log_query}&start=0.000000000&end=0.000000100"),
             [rpc(SLASH), rpc(TOO_LONG), rpc(DOT_DOT)],
         ),
         (
-            format!("/loki/api/v1/query_range?{metric_query}&start=0&end=100&step=10"),
+            format!(
+                "/loki/api/v1/query_range?{metric_query}&start=0.000000000&end=0.000000100&step=10"
+            ),
             [
                 plain(StatusCode::BAD_REQUEST, SLASH),
                 plain(StatusCode::BAD_REQUEST, TOO_LONG),
@@ -278,7 +280,7 @@ async fn a_query_answers_every_oracle_row_by_its_query_kind() {
             ],
         ),
         (
-            format!("/loki/api/v1/query?{log_query}&time=100"),
+            format!("/loki/api/v1/query?{log_query}&time=0.000000100"),
             [
                 plain(StatusCode::INTERNAL_SERVER_ERROR, SLASH),
                 plain(StatusCode::INTERNAL_SERVER_ERROR, TOO_LONG),
@@ -286,7 +288,7 @@ async fn a_query_answers_every_oracle_row_by_its_query_kind() {
             ],
         ),
         (
-            format!("/loki/api/v1/query?{metric_query}&time=100"),
+            format!("/loki/api/v1/query?{metric_query}&time=0.000000100"),
             [
                 plain(StatusCode::BAD_REQUEST, SLASH),
                 plain(StatusCode::BAD_REQUEST, TOO_LONG),
@@ -294,7 +296,7 @@ async fn a_query_answers_every_oracle_row_by_its_query_kind() {
             ],
         ),
         (
-            format!("/api/prom/query?{log_query}&time=100"),
+            format!("/api/prom/query?{log_query}&time=0.000000100"),
             [rpc(SLASH), rpc(TOO_LONG), rpc(DOT_DOT)],
         ),
     ];
@@ -331,7 +333,7 @@ async fn a_query_that_names_two_tenants_runs_across_both() {
         let answer = call_for_test(
             &app,
             "GET",
-            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0&end=100",
+            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000100",
             Some(tenants),
             ("", String::new()),
         )
@@ -344,7 +346,7 @@ async fn a_query_that_names_two_tenants_runs_across_both() {
 async fn the_label_series_and_index_reads_answer_every_oracle_row() {
     let app = loki_router(fixture());
     let plain = |status, body: &str| Some(answer_for_test(status, TEXT, body));
-    let window = "start=0&end=100";
+    let window = "start=0.000000000&end=0.000000100";
     let selector = "%7Bapp%3D%22api%22%7D";
 
     let bad_request_reads = [

@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn artifact_cache_evicts_by_bytes_and_expires_negative_entries() {
-        let mut cache = ArtifactCache::new(3, std::time::Duration::from_secs(60));
+        let mut cache = ArtifactCache::new(3, std::time::Duration::from_mins(1));
         cache.insert("aa".into(), None);
         cache.insert("bb".into(), None);
         assert!(cache.get("aa").is_none());

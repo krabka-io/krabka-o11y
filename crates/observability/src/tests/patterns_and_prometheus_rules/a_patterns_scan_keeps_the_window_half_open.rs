@@ -28,17 +28,17 @@ pub(crate) async fn a_patterns_scan_keeps_the_window_half_open() {
         0,
         0,
         0,
-        TimeRange::new(0, 100).expect("a valid range"),
+        TimeRange::new(10_000_000_000, 10_000_000_100).expect("a valid range"),
     );
     let descriptor = write_log_block(
         dir.path(),
         &key,
         vec![
-            row(5, "cache warmed"),
-            row(10, "request served"),
-            row(20, "request served"),
-            row(30, "cache warmed"),
-            row(40, "cache warmed"),
+            row(10_000_000_005, "cache warmed"),
+            row(10_000_000_010, "request served"),
+            row(10_000_000_020, "request served"),
+            row(10_000_000_030, "cache warmed"),
+            row(10_000_000_040, "cache warmed"),
         ],
     )
     .expect("the block writes");
@@ -55,7 +55,7 @@ pub(crate) async fn a_patterns_scan_keeps_the_window_half_open() {
         &state,
         &super::super::prelude::RequestSecurity::unauthenticated(),
         &headers,
-        Some("query=%7Bapp%3D%22web%22%7D&start=10&end=30&step=1h"),
+        Some("query=%7Bapp%3D%22web%22%7D&start=10000000010&end=10000000030&step=1h"),
     )
     .await
     .expect("the patterns query runs");

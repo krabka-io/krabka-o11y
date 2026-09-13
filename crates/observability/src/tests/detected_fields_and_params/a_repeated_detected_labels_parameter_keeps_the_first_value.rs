@@ -16,8 +16,8 @@ pub(crate) fn a_repeated_detected_labels_parameter_keeps_the_first_value() {
         "query={a=\"b\"}&query={c=\"d\"}&start=100&start=200&end=900&end=800&limit=5&limit=9",
     );
     check!(params.query.as_deref() == Some("{a=\"b\"}"));
-    check!(params.start == 100);
-    check!(params.end == 900);
+    check!(params.start == 100_000_000_000);
+    check!(params.end == 900_000_000_000);
     check!(params.limit == 5);
 
     // `since` is read only when `start` is absent, and it sets the span

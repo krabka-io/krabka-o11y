@@ -12,7 +12,7 @@ pub(crate) async fn the_post_query_endpoints_answer_with_a_body() {
     let mut headers = HeaderMap::new();
     headers.insert("X-Scope-OrgID", "tenant-a".parse().expect("a header value"));
     let body =
-        || axum::body::Bytes::from_static(b"query=%7Bapp%3D%22web%22%7D&start=0&end=1000000000");
+        || axum::body::Bytes::from_static(b"query=%7Bapp%3D%22web%22%7D&start=0&end=10000000001");
     let read = |response: axum::response::Response| async move {
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)

@@ -19,8 +19,7 @@ use krabka_traces::{
     AttrValue, KeyValue, Limits, Span, SpanKind, SpanRecord, StatusCode,
     blockbuilder::{TRACE_BLOCK_OBJECT_PREFIX, build_blocks},
     compactor::{
-        BlockSweepError, compact_once, delete_trace_blocks, expire_trace_blocks,
-        sweep_orphaned_trace_blocks,
+        compact_once, delete_trace_blocks, expire_trace_blocks, sweep_orphaned_trace_blocks,
     },
     ids::UnixNano,
     limits::OverridesProvider,
@@ -337,9 +336,9 @@ async fn the_orphan_sweep_deletes_only_the_blocks_no_index_names() {
 /// and the next sweep would delete the blocks too because nothing named them.
 ///
 /// An operator can put the index there with `--trace-index-key`, so the sweep
-/// refuses rather than trusting the configuration.
+/// must explicitly protect every object owned by it.
 #[tokio::test]
-async fn the_orphan_sweep_refuses_to_run_when_the_index_is_inside_the_block_prefix() {
+async fn the_orphan_sweep_preserves_an_index_inside_the_block_prefix() {
     // Inside the block prefix, which is the worst case `--trace-index-key`
     // allows.
     const KEY: &str = "traces/index.json";
@@ -362,7 +361,7 @@ async fn the_orphan_sweep_refuses_to_run_when_the_index_is_inside_the_block_pref
         "the index has objects of its own to lose"
     );
 
-    let refused = sweep_orphaned_trace_blocks(
+    let swept = sweep_orphaned_trace_blocks(
         &store,
         "",
         KEY,
@@ -372,15 +371,12 @@ async fn the_orphan_sweep_refuses_to_run_when_the_index_is_inside_the_block_pref
     )
     .await;
 
-    assert2::assert!(matches!(
-        refused,
-        Err(BlockSweepError::IndexInsideBlockPrefix { .. })
-    ));
+    check!(swept.expect("the sweep succeeds").deleted == 0);
     check!(
         keys_under(&store, TRACE_BLOCK_OBJECT_PREFIX).await == before,
         "the index and the blocks are all still there"
     );
-    // The index still loads, which is the property the refusal protects.
+    // The index still loads, which is the property the protection preserves.
     let loaded = TraceIndex::load_latest_snapshot(&store, KEY)
         .await
         .expect("the index still loads");

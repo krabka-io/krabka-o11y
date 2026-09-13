@@ -22,12 +22,16 @@ pub(crate) fn series_params_accumulate_matchers_but_keep_the_first_time_bound() 
     let params = parse("match%5B%5D=a").expect("matchers parse");
     check!(params.matchers == vec!["a".to_string()]);
 
-    // Time bounds keep the FIRST value, not the last. A bare integer is
-    // read as nanoseconds directly rather than as seconds.
+    // Time bounds keep the FIRST value, not the last. As in Loki, integers
+    // up to ten digits are seconds and longer integers are nanoseconds.
     let params = parse("start=100&start=200").expect("bounds parse");
-    check!(params.start == Some(100), "the first bound, in nanoseconds");
+    check!(
+        params.start == Some(100_000_000_000),
+        "the first bound, in seconds"
+    );
     let params = parse("end=100&end=200").expect("bounds parse");
-    check!(params.end == Some(100));
+    check!(params.end == Some(100_000_000_000));
+    check!(parse("start=10000000001").expect("nanoseconds").start == Some(10_000_000_001));
     // A decimal is seconds, and RFC3339 is accepted too -- three
     // spellings reaching one field.
     check!(parse("start=1.5").expect("decimal seconds").start == Some(1_500_000_000));

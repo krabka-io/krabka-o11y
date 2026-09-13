@@ -90,13 +90,22 @@ pub async fn run_lifecycle_pass(
             .map_err(|err| ProfilesError::Block(err.to_string()))?;
     }
     report.deletions = delete_blocks(store, &block_deletions(&dropped_keys)).await;
-    report.orphans = sweep_orphan_blocks(
+    report.orphans = match sweep_orphan_blocks(
         store,
         index,
         options.block_prefix,
         options.orphan_grace,
         options.now,
     )
-    .await?;
+    .await
+    {
+        Ok(orphans) => orphans,
+        Err(error) => {
+            return Err(ProfilesError::Lifecycle {
+                message: error.to_string(),
+                report: Box::new(report),
+            });
+        }
+    };
     Ok(report)
 }

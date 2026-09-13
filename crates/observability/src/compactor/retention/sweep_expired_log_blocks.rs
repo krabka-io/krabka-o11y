@@ -2,6 +2,7 @@ use super::{
     BlockDeletion, CompactorRunError, ObjectPath, ObjectStore, RetentionWindows, delete_blocks,
     list_log_index_tenants, sweep_expired_tenant_log_blocks,
 };
+use crate::compaction_metrics::CompactionMetrics;
 
 /// Retires every log block that has fallen outside its tenant's retention
 /// window, then deletes the objects.
@@ -27,6 +28,7 @@ pub(crate) async fn sweep_expired_log_blocks(
     prefix: &ObjectPath,
     now_ns: i64,
     windows: &dyn RetentionWindows,
+    metrics: &CompactionMetrics,
 ) -> Result<(), CompactorRunError> {
     let mut deletions: Vec<BlockDeletion> = Vec::new();
     for tenant in list_log_index_tenants(store, prefix).await? {
@@ -35,10 +37,16 @@ pub(crate) async fn sweep_expired_log_blocks(
         );
     }
     if deletions.is_empty() {
+        metrics.record_deleted(0, 0, 0);
         return Ok(());
     }
 
     let report = delete_blocks(store, &deletions).await;
+    metrics.record_deleted(
+        report.blocks_deleted as u64,
+        report.sidecars_deleted as u64,
+        report.failures.len() as u64,
+    );
     // Every object the store refused, one line each. A pass that reported only
     // its totals would hide an object that fails on every pass, and that
     // object is the one an operator has to act on.

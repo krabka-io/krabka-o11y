@@ -72,6 +72,11 @@ pub(crate) async fn run_compactor_once(
             )
             .await?;
         let report = delete_trace_blocks(&configured.store, &retired).await;
+        metrics.compaction.record_deleted(
+            report.blocks_deleted as u64,
+            report.sidecars_deleted as u64,
+            report.failures.len() as u64,
+        );
         if report.failures.is_empty() {
             tracing::debug!(
                 blocks_deleted = report.blocks_deleted,
@@ -99,6 +104,9 @@ pub(crate) async fn run_compactor_once(
         now,
     )
     .await?;
+    metrics
+        .compaction
+        .record_orphan_sweep(swept.deleted as u64, swept.failed as u64);
     tracing::debug!(
         listed = swept.listed,
         live = swept.live,

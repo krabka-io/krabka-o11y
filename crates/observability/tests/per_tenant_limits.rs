@@ -60,7 +60,7 @@ fn push_body(timestamp_ns: &str, line: &str) -> Body {
 async fn a_per_tenant_override_changes_what_the_querier_serves() {
     let (state, _prod_bytes, _stage_bytes) = multi_tenant_fixture();
     let app = loki_router(state.with_limits_overrides(provider()));
-    let uri = "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0&end=30";
+    let uri = "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
     let refused = app
         .clone()
@@ -155,7 +155,7 @@ async fn the_defaults_block_caps_a_tenant_with_no_entry_of_its_own() {
     .expect("the overrides file parses");
     let (state, _prod_bytes, _stage_bytes) = multi_tenant_fixture();
     let app = loki_router(state.with_limits_overrides(overrides));
-    let uri = "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0&end=30";
+    let uri = "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
     // `tenant-a` has no entry, so the defaults block applies to it.
     let refused = app
@@ -434,7 +434,7 @@ async fn a_lookback_cap_moves_the_query_start_rather_than_refusing_the_query() {
             .expect("the overrides file parses");
     let (state, _prod_bytes, _stage_bytes) = multi_tenant_fixture();
     let app = loki_router(state.with_limits_overrides(overrides));
-    let uri = "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0&end=30";
+    let uri = "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030";
 
     let clamped = app
         .clone()
@@ -482,7 +482,8 @@ async fn an_entries_limit_caps_the_limit_parameter_per_tenant() {
     .expect("the overrides file parses");
     let (state, _prod_bytes, _stage_bytes) = multi_tenant_fixture();
     let app = loki_router(state.with_limits_overrides(overrides));
-    let uri = "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0&end=30&limit=6";
+    let uri =
+        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030&limit=6";
 
     let refused = app
         .clone()

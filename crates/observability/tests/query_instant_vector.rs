@@ -13,6 +13,23 @@ use support::{expected_loki_stats, fixture, json_body, text_body};
 use tower::ServiceExt as _;
 
 #[tokio::test]
+async fn query_endpoint_matches_lokis_one_digit_time_forwarding() {
+    let response = loki_router(fixture())
+        .oneshot(
+            Request::builder()
+                .uri("/loki/api/v1/query?query=vector%281%29&time=1")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(response.status() == StatusCode::OK);
+    assert!(json_body(response).await["data"]["result"][0]["value"][0] == json!(1_000_000_000i64));
+}
+
+#[tokio::test]
 async fn query_endpoint_accepts_grafana_loki_health_vector_expression() {
     let state = fixture();
     let app = loki_router(state);
