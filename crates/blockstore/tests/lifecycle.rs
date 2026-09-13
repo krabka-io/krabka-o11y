@@ -268,6 +268,31 @@ async fn deleting_a_block_deletes_its_sidecars_too() {
     check!(listed_keys(&store).await == strings(&["blocks/keep.parquet"]));
 }
 
+/// The sidecar is the durable index for metrics and profiles. If retiring it
+/// fails, deleting the data block would leave that index pointing at nothing.
+#[tokio::test]
+async fn a_failed_sidecar_keeps_its_block() {
+    let inner = store();
+    put_all(&inner, &["blocks/b1.parquet", "blocks/b1.parquet.index"]).await;
+    let store: Arc<dyn ObjectStore> = Arc::new(RefusingStore {
+        inner: Arc::clone(&inner),
+        refuse: "blocks/b1.parquet.index".to_string(),
+    });
+
+    let report = delete_blocks(
+        &store,
+        &[BlockDeletion {
+            object_key: "blocks/b1.parquet".to_string(),
+            sidecars: strings(&["blocks/b1.parquet.index"]),
+        }],
+    )
+    .await;
+
+    check!(report.blocks_deleted == 0);
+    check!(report.failures.len() == 1);
+    check!(listed_keys(&inner).await == strings(&["blocks/b1.parquet", "blocks/b1.parquet.index"]));
+}
+
 /// An object that is already gone counts as success rather than as a failure.
 /// A sweep that was interrupted, and a sweep that simply runs twice, both
 /// reach objects a previous pass already deleted.

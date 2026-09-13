@@ -1,6 +1,9 @@
+use object_store::path::Path;
+
 use super::{
-    Arc, BTreeSet, BlockSweepError, ObjectStore, OrphanSweepStats, Path, SystemTime,
-    TRACE_BLOCK_OBJECT_PREFIX, Time, TraceIndex, prefixed_object_key, reconcile_orphans,
+    Arc, BTreeSet, LifecycleError, ObjectStore, OrphanSweepStats, SystemTime,
+    TRACE_BLOCK_OBJECT_PREFIX, Time, TraceIndex, list_index_object_keys, prefixed_object_key,
+    reconcile_orphans,
 };
 
 /// Deletes the span block objects that the trace index does not name.
@@ -23,16 +26,10 @@ use super::{
 /// the compactor. Nothing else on the traces path writes to object storage, so
 /// every object the sweep can see is a span block.
 ///
-/// The one exception is the trace index, whose location an operator chooses
-/// with `--trace-index-key`. `trace_index_key` is that key, and the sweep
-/// refuses to run when it names a location inside the swept prefix. See
-/// [`BlockSweepError::IndexInsideBlockPrefix`].
-///
 /// # Errors
-/// Returns [`BlockSweepError::IndexInsideBlockPrefix`] when the index is inside
-/// the prefix this would sweep, and [`BlockSweepError::Lifecycle`] when listing
-/// the prefix fails. The sweep then deletes nothing, because deleting on a
-/// partial listing would delete live blocks.
+/// Returns [`LifecycleError`] when listing the prefix or the index objects
+/// fails. The sweep then deletes nothing, because deleting on a partial listing
+/// would delete live blocks.
 pub async fn sweep_orphaned_trace_blocks(
     store: &Arc<dyn ObjectStore>,
     object_key_prefix: &str,
@@ -40,23 +37,17 @@ pub async fn sweep_orphaned_trace_blocks(
     index: &TraceIndex,
     grace: Time,
     now: SystemTime,
-) -> Result<OrphanSweepStats, BlockSweepError> {
+) -> Result<OrphanSweepStats, LifecycleError> {
     let prefix = prefixed_object_key(object_key_prefix, TRACE_BLOCK_OBJECT_PREFIX);
-    // The same path-prefix test the listing itself uses, so what this rejects
-    // is exactly what the sweep would have reached. The index's snapshots,
-    // shard manifests and shard payloads are siblings of the key, so they share
-    // its parent and are inside the prefix if and only if the key is.
-    if Path::from(trace_index_key).prefix_matches(&Path::from(prefix.as_str())) {
-        return Err(BlockSweepError::IndexInsideBlockPrefix {
-            prefix,
-            trace_index_key: trace_index_key.to_string(),
-        });
-    }
-
-    let live_keys: BTreeSet<String> = index
+    let mut live_keys: BTreeSet<String> = index
         .compaction_candidates()
         .into_iter()
         .map(|candidate| candidate.object_key)
         .collect();
-    Ok(reconcile_orphans(store, &prefix, &live_keys, grace, now).await?)
+    let index_key = trace_index_key.trim_matches('/');
+    let index_root = index_key.strip_suffix(".json").unwrap_or(index_key);
+    if Path::from(index_root).prefix_matches(&Path::from(prefix.as_str())) {
+        live_keys.extend(list_index_object_keys(store, trace_index_key).await?);
+    }
+    reconcile_orphans(store, &prefix, &live_keys, grace, now).await
 }

@@ -36,19 +36,35 @@ pub async fn delete_blocks(
 ) -> BlockDeletionReport {
     let mut report = BlockDeletionReport::default();
     for deletion in deletions {
-        let block = std::iter::once((&deletion.object_key, true));
-        let sidecars = deletion.sidecars.iter().map(|sidecar| (sidecar, false));
-        for (key, is_block) in block.chain(sidecars) {
+        let mut sidecar_failed = false;
+        for key in &deletion.sidecars {
             match store.delete(&Path::from(key.as_str())).await {
-                Ok(()) if is_block => report.blocks_deleted += 1,
                 Ok(()) => report.sidecars_deleted += 1,
                 Err(object_store::Error::NotFound { .. }) => report.objects_absent += 1,
-                Err(error) => report.failures.push(BlockDeletionFailure {
-                    object_key: deletion.object_key.clone(),
-                    failed_key: key.clone(),
-                    error: error.to_string(),
-                }),
+                Err(error) => {
+                    sidecar_failed = true;
+                    report.failures.push(BlockDeletionFailure {
+                        object_key: deletion.object_key.clone(),
+                        failed_key: key.clone(),
+                        error: error.to_string(),
+                    });
+                }
             }
+        }
+        if sidecar_failed {
+            continue;
+        }
+        match store
+            .delete(&Path::from(deletion.object_key.as_str()))
+            .await
+        {
+            Ok(()) => report.blocks_deleted += 1,
+            Err(object_store::Error::NotFound { .. }) => report.objects_absent += 1,
+            Err(error) => report.failures.push(BlockDeletionFailure {
+                object_key: deletion.object_key.clone(),
+                failed_key: deletion.object_key.clone(),
+                error: error.to_string(),
+            }),
         }
     }
 

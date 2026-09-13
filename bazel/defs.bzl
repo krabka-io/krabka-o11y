@@ -229,6 +229,11 @@ def crate_binary(name, crate_root, lib, tests = True, **kwargs):
         deps = all_crate_deps(normal = True) + [lib],
         **kwargs
     )
+    clippy_test(
+        name = name + "_clippy",
+        srcs = [":" + name],
+        tags = kwargs.get("tags", []),
+    )
 
     if tests:
         rust_test(
@@ -239,6 +244,11 @@ def crate_binary(name, crate_root, lib, tests = True, **kwargs):
             edition = edition(),
             rustc_flags = WORKSPACE_RUSTC_FLAGS,
             deps = all_crate_deps(normal_dev = True),
+        )
+        clippy_test(
+            name = name + "_test_clippy",
+            srcs = [":" + name + "_test"],
+            tags = kwargs.get("tags", []),
         )
 
 def crate_tests(
@@ -359,6 +369,11 @@ def crate_tests(
         tags = unit_tags,
         deps = all_crate_deps(normal_dev = True),
     )
+    clippy_test(
+        name = unit + "_clippy",
+        srcs = [":" + unit],
+        tags = unit_tags,
+    )
 
     if doc_tests:
         rust_doc_test(
@@ -423,8 +438,11 @@ def crate_tests(
         # binary itself is `manual`: on its own it would find no corpus and fail.
         wrapped = stem in no_harness
 
+        test_tags = (["manual"] if stem in manual or wrapped or stem in scale else []) + \
+                    (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else [])
+        target = _suite_name(stem, "", no_harness)
         rust_test(
-            name = _suite_name(stem, "", no_harness),
+            name = target,
             srcs = [src] + helpers + extra_srcs.get(stem, []),
             crate_root = src,
             aliases = _aliases(["deps", "dev_deps"]),
@@ -443,14 +461,18 @@ def crate_tests(
             # off as a clean run -- so the flakiness stays visible instead of
             # being hidden by a `#[ignore]`.
             flaky = stem in cpu_heavy and not wrapped,
-            tags = (["manual"] if stem in manual or wrapped or stem in scale else []) +
-                   (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else []),
+            tags = test_tags,
             use_libtest_harness = not wrapped,
             # One call, not two concatenated: an integration test links the
             # crate's normal *and* dev dependencies, and several crates list the
             # same package in both tables. `all_crate_deps` merges the two specs
             # through a set, so asking for both at once dedupes them.
             deps = all_crate_deps(normal = True, normal_dev = True) + [":" + lib],
+        )
+        clippy_test(
+            name = target + "_clippy",
+            srcs = [":" + target],
+            tags = test_tags,
         )
 
         if wrapped:
@@ -562,6 +584,11 @@ def crate_tests(
             tags = unit_tags,
             deps = all_crate_deps(normal_dev = True),
         )
+        clippy_test(
+            name = variant_lib + "_test_clippy",
+            srcs = [":" + variant_lib + "_test"],
+            tags = unit_tags,
+        )
 
         for src in native.glob(["tests/*.rs"], allow_empty = True):
             stem = src[len("tests/"):-len(".rs")]
@@ -575,8 +602,11 @@ def crate_tests(
 
             wrapped = stem in no_harness
 
+            test_tags = (["manual"] if stem in manual or wrapped or stem in scale else []) + \
+                        (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else [])
+            target = _suite_name(stem, suffix, no_harness)
             rust_test(
-                name = _suite_name(stem, suffix, no_harness),
+                name = target,
                 srcs = [src] + helpers + extra_srcs.get(stem, []),
                 crate_root = src,
                 aliases = _aliases(["deps", "dev_deps"]),
@@ -588,11 +618,15 @@ def crate_tests(
                 rustc_env = rustc_env,
                 rustc_flags = WORKSPACE_RUSTC_FLAGS,
                 flaky = stem in cpu_heavy and not wrapped,
-                tags = (["manual"] if stem in manual or wrapped or stem in scale else []) +
-                       (["cpu:4", "timing-sensitive"] if stem in cpu_heavy else []),
+                tags = test_tags,
                 use_libtest_harness = not wrapped,
                 deps = all_crate_deps(normal = True, normal_dev = True) +
                        [":" + variant_lib],
+            )
+            clippy_test(
+                name = target + "_clippy",
+                srcs = [":" + target],
+                tags = test_tags,
             )
 
             if wrapped:

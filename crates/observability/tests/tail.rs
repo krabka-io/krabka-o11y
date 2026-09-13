@@ -10,7 +10,7 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use krabka_blockstore::labels;
 use krabka_observability::{InMemoryWalSink, LogWalSink, WalLogRecord, loki_router};
 use serde_json::{Value, json};
-use support::{current_unix_epoch_nanos, fixture};
+use support::fixture;
 use tokio::{
     net::TcpListener,
     time::{Duration, timeout},
@@ -49,7 +49,7 @@ async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
         axum::serve(listener, app).await.unwrap();
     });
     let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end=30"
+        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030"
     )
     .into_client_request()
     .unwrap();
@@ -109,7 +109,7 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
         axum::serve(listener, app).await.unwrap();
     });
     let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end=30"
+        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030"
     )
     .into_client_request()
     .unwrap();
@@ -217,7 +217,7 @@ async fn tail_endpoint_applies_limit_to_hot_wal_tail_frame() {
         axum::serve(listener, app).await.unwrap();
     });
     let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end=30&limit=1"
+        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&limit=1"
     )
     .into_client_request()
     .unwrap();
@@ -274,7 +274,7 @@ async fn tail_endpoint_defaults_limit_to_one_hundred_entries() {
         axum::serve(listener, app).await.unwrap();
     });
     let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end=200"
+        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000200"
     )
     .into_client_request()
     .unwrap();
@@ -360,7 +360,9 @@ async fn tail_endpoint_accepts_delay_for_at_five_seconds() {
 #[tokio::test]
 async fn tail_endpoint_delays_fresh_records_when_delay_for_is_set() {
     let hot_tail = InMemoryWalSink::default();
-    let timestamp_ns = i64::try_from(current_unix_epoch_nanos()).unwrap();
+    // Future-dated records stay inside the delay window regardless of how
+    // long fixture and socket setup take on a loaded runner.
+    let timestamp_ns = i64::MAX / 2;
     hot_tail
         .append(WalLogRecord {
             tenant: "tenant-a".to_string(),

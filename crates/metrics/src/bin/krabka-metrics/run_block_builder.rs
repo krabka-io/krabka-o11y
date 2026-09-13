@@ -55,7 +55,13 @@ pub(crate) async fn run_block_builder(
     // of them forever. A pass with no window expires nothing.
     tasks.adopt(
         "metrics block-builder retention sweeper",
-        spawn_retention_sweeper(store, overrides, sweep_interval, stopping.clone()),
+        spawn_retention_sweeper(
+            store,
+            overrides,
+            sweep_interval,
+            stopping.clone(),
+            metrics.clone(),
+        ),
     );
     let signal = stopping.clone();
     // Not supervised: this task is meant to finish, and finishing is how it

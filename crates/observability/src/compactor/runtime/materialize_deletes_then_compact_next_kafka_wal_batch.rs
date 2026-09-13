@@ -15,8 +15,14 @@ pub(crate) async fn materialize_deletes_then_compact_next_kafka_wal_batch(
     tenant_indexes: &mut TenantCompactionIndexCache,
     metrics: &CompactionMetrics,
 ) -> Result<Vec<BlockDescriptor>, CompactorRunError> {
-    materialize_log_deletes_before_compaction(store, prefix, delete_requests, tenant_indexes)
-        .await?;
+    materialize_log_deletes_before_compaction(
+        store,
+        prefix,
+        delete_requests,
+        tenant_indexes,
+        metrics,
+    )
+    .await?;
     compact_next_kafka_wal_batch_to_object_store_from_existing_manifest(
         store,
         prefix,

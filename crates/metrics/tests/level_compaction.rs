@@ -10,16 +10,17 @@ use arrow::{
 use assert2::{assert, check};
 use krabka_blockstore::{
     BlockLevel, BlockTimestampUnit, BlockWriter, CompactionPolicy, DEFAULT_BLOCK_READ_MAX,
-    ERASURE_REQUEST_PREFIX, ErasureRequest, LabelMatcher, Labels, MatchOp, list_erasure_requests,
-    put_erasure_request, read_block,
+    ERASURE_REQUEST_PREFIX, ErasureRequest, LabelMatcher, Labels, LifecycleError, MatchOp,
+    list_erasure_requests, put_erasure_request, read_block,
 };
 use krabka_metrics::{
     BucketSpan, ClockReadingPayload, ClockReadingRow, CompactionIndexManifest,
-    CompactionObjectPlan, CompactionSeriesLabels, DeferredBlockDeletions, ExemplarRow, FloatRow,
-    MetadataRow, MetricBlockKind, MetricCompactionPass, NativeHistogram, NativeHistogramRow,
-    ObjectStoreCompactionIndexSink, ResetHint, TenantCompactionRows, compact_metric_blocks_once,
-    decode_float_samples, decode_native_histograms, enforce_compaction_retention,
-    list_compaction_manifests, plan_metric_compactions,
+    CompactionManifestError, CompactionObjectPlan, CompactionRetentionError,
+    CompactionRetentionStats, CompactionSeriesLabels, DeferredBlockDeletions, ExemplarRow,
+    FloatRow, MetadataRow, MetricBlockKind, MetricCompactionPass, NativeHistogram,
+    NativeHistogramRow, ObjectStoreCompactionIndexSink, ResetHint, TenantCompactionRows,
+    compact_metric_blocks_once, decode_float_samples, decode_native_histograms,
+    enforce_compaction_retention, list_compaction_manifests, plan_metric_compactions,
     wire::{ClockSourceKind, ClockSyncState, DecodedClockReading, UnixNanos},
     write_compacted_tenant_blocks,
 };
@@ -28,6 +29,21 @@ use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory, path::Path};
 
 /// A wall-clock instant well inside the range every unit can express.
 const NOW_MS: i64 = 1_700_000_000_000;
+
+#[test]
+fn only_lifecycle_retention_errors_expose_partial_stats() {
+    let stats = CompactionRetentionStats::default();
+    let lifecycle = CompactionRetentionError::Lifecycle {
+        source: LifecycleError::ObjectStore("listing failed".to_string()),
+        stats: Box::new(stats.clone()),
+    };
+    assert!(lifecycle.partial_stats() == Some(&stats));
+
+    let manifest = CompactionRetentionError::Manifest(CompactionManifestError::ObjectStore(
+        "manifest failed".to_string(),
+    ));
+    assert!(manifest.partial_stats().is_none());
+}
 
 fn labels(name: &str) -> Labels {
     Labels::from_pairs([("__name__", name)])

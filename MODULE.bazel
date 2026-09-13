@@ -145,13 +145,21 @@ oci.pull(
 use_repo(
     oci,
     "distroless_cc",
+    "distroless_cc_linux_amd64",
     "grafana",
+    "grafana_linux_amd64",
     "loki",
+    "loki_linux_amd64",
     "mimir",
+    "mimir_linux_amd64",
     "minio",
+    "minio_linux_amd64",
     "prometheus",
+    "prometheus_linux_amd64",
     "pyroscope",
+    "pyroscope_linux_amd64",
     "tempo",
+    "tempo_linux_amd64",
 )
 
 # ---------------------------------------------------------------------------
@@ -206,7 +214,7 @@ toolchains.toolchain(
     # dependency source of truth" arrangement exists to avoid.
     version = "1.97.1",
 )
-use_repo(toolchains, "krabka_rust_toolchains")
+use_repo(toolchains, "default_rust_toolchains", "krabka_rust_toolchains")
 
 register_toolchains("@krabka_rust_toolchains//...")
 

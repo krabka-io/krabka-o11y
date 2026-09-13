@@ -27,14 +27,14 @@ use krabka_blockstore::{
     SCOL_ROOT_SERVICE_NAME, SCOL_ROOT_SPAN_NAME, SCOL_SPAN_ID, SCOL_START_NANO,
     SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, ShardedTraceBloom,
     SortedMerge, SummaryColumns, TraceBlockStats, TraceIndex, delete_blocks,
-    escape_object_path_segment, input_key_fingerprint, open_block_stream,
+    escape_object_path_segment, input_key_fingerprint, list_index_object_keys, open_block_stream,
     plan_compactions as plan_level_compactions, plan_expired_blocks, reconcile_orphans,
     span_block_decl, span_block_schema_with_promoted_attrs, versioned_compaction_key,
 };
 #[cfg(test)]
 use krabka_blockstore::{read_block, span_block_schema};
 use krabka_units::{ByteSize, Time};
-use object_store::{ObjectStore, path::Path};
+use object_store::ObjectStore;
 
 use crate::{
     blockbuilder::{TRACE_BLOCK_OBJECT_PREFIX, prefixed_object_key},
@@ -762,7 +762,6 @@ mod tests {
 }
 
 mod attr_value;
-mod block_sweep_error;
 mod boolean_array;
 mod collect_attr_metadata;
 mod collect_event_metadata;
@@ -806,7 +805,6 @@ mod sweep_orphaned_trace_blocks;
 mod trace_group_buffer;
 
 use attr_value::attr_value;
-pub use block_sweep_error::BlockSweepError;
 use collect_attr_metadata::collect_attr_metadata;
 use collect_event_metadata::collect_event_metadata;
 use collect_link_metadata::collect_link_metadata;
