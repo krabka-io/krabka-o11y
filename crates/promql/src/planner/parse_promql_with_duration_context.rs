@@ -6,13 +6,13 @@ use super::{
 /// Parses `PromQL` and first folds Prometheus duration expressions to fixed durations.
 ///
 /// The parser crate stores selector ranges, subquery resolutions, and offsets as
-/// concrete [`Duration`] values. Prometheus 3.x accepts scalar expressions in
+/// concrete [`std::time::Duration`] values. Prometheus 3.x accepts scalar expressions in
 /// those positions, so Krabka normalizes them before it sends the query to the
 /// parser.
 ///
 /// # Errors
 ///
-/// Returns [`PromqlError::Parse`] when normalization or the upstream parser
+/// Returns [`crate::PromqlError::Parse`] when normalization or the upstream parser
 /// rejects the query.
 #[tracing::instrument(
     name = "promql.parse",

@@ -1,6 +1,7 @@
 use super::{Bytes, RulerStateWalRecord};
 
 #[must_use]
+/// Returns the stable broker compaction key for one ruler group or alert.
 pub fn ruler_state_compaction_key(record: &RulerStateWalRecord) -> Bytes {
     match record {
         RulerStateWalRecord::Group(record) => Bytes::from(format!(

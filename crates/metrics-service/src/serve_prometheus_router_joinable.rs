@@ -2,7 +2,7 @@ use krabka_observability::server_security::{ServerListener, ServerSecurity, serv
 
 use super::{JoinHandle, Router, SocketAddr, TcpListener};
 
-/// Like [`serve_prometheus_router`], but returns the spawned server task to the
+/// Like [`crate::serve_prometheus_router`], but returns the spawned server task to the
 /// caller.
 ///
 /// Await the returned [`JoinHandle`] after you signal `shutdown`. The process

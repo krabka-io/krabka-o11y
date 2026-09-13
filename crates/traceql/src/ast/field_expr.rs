@@ -1,6 +1,7 @@
 use super::{ComparisonOp, Field, Value};
 
 #[derive(Clone, Debug, PartialEq)]
+/// A Boolean expression over trace fields and scalar values.
 pub enum FieldExpr {
     Comparison {
         lhs: Field,

@@ -43,7 +43,7 @@ bazel_dep(name = "llvm", version = "0.8.18")
 register_toolchains("@llvm//toolchain:all")
 
 # ---------------------------------------------------------------------------
-# Kafka images for the container-driven suites.
+# Grafana-stack images for the container-driven suites.
 #
 # Pinned by digest and fetched by Bazel, so a test loads known bytes from the
 # repository cache instead of pulling a mutable tag over the network mid-run.

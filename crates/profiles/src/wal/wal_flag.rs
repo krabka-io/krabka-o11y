@@ -1,6 +1,6 @@
 use super::{Deserialize, Serialize};
 
-/// A wire-compatible boolean flag that [`WalMapping`] uses.
+/// A wire-compatible boolean flag that [`crate::WalMapping`] uses.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]

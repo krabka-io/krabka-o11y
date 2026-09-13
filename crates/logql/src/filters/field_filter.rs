@@ -4,13 +4,18 @@ use super::{
 };
 
 #[derive(Clone, Debug, PartialEq)]
+/// A comparison against one extracted log field.
 pub struct FieldFilter {
+    /// The extracted field name.
     pub name: String,
+    /// The comparison applied to the field.
     pub op: ComparisonOp,
+    /// The expected typed value.
     pub value: FieldValue,
 }
 
 impl FieldFilter {
+    /// Creates a field filter without validation.
     #[must_use]
     pub fn new(name: impl Into<String>, op: ComparisonOp, value: FieldValue) -> Self {
         Self {
@@ -20,9 +25,10 @@ impl FieldFilter {
         }
     }
 
+    /// Creates and validates a field filter.
     #[tracing::instrument(level = "debug", skip_all, fields(op = ?op), err)]
     /// # Errors
-    /// Returns an error when the query or template is malformed, a requested conversion is invalid, or evaluation cannot read its input data.
+    /// Returns an error for an invalid regular expression or an unsupported IP comparison.
     pub fn try_new(
         name: impl Into<String>,
         op: ComparisonOp,
@@ -34,11 +40,13 @@ impl FieldFilter {
     }
 
     #[must_use]
+    /// Tests the filter without changing the supplied fields.
     pub fn matches(&self, fields: &Labels) -> bool {
         let mut fields = fields.clone();
         self.apply(&mut fields)
     }
 
+    /// Applies the filter and records conversion errors in the extracted fields.
     pub fn apply(&self, fields: &mut Labels) -> bool {
         let candidate = fields
             .get(&self.name)

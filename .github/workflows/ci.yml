@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  pages: write
   # The Aspect CLI uploads test logs and BEP through the Actions artifact
   # API, which GitHub gates behind an OIDC token it only mints for jobs
   # holding this. Without it those uploads are skipped and the run says so
@@ -263,6 +264,8 @@ jobs:
       # file cargo-fuzz never builds and never runs, which reads as covered
       # surface and is not.
       - run: tools/fuzz-corpus.py --check
+      - run: tools/route-inventory.py --self-test
+      - run: tools/route-inventory.py --check
       # //fuzz is a workspace of its own, so it repeats the sibling pins from
       # //Cargo.toml. sync-siblings.yml bumps one copy and knows nothing about
       # the other. This fails on the drift.
@@ -415,10 +418,9 @@ jobs:
           disable_search: true
           fail_ci_if_error: true
           use_oidc: true
-  # rustdoc for every crate, kept as an artifact. The `ci` job already builds
-  # these -- a `rust_doc` per crate is an ordinary target -- so this exists to
-  # publish the output, and to keep rendering the whole set even when `aspect
-  # build` narrowed to the crates a change touched.
+  # One workspace rustdoc tree, kept as an artifact. Independent Bazel
+  # `rust_doc` trees each carry their own search index, so merging them would
+  # leave search and source links for only the last crate copied.
   docs:
     name: docgen
     if: github.event_name != 'schedule'
@@ -426,18 +428,50 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+      - id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)"
+          test -n "${channel}"
+          echo "channel=${channel}" >>"${GITHUB_OUTPUT}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
-          bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-docs
-          repository-cache: true
-      - run: bazel build $(bazel query 'kind("rust_doc rule", //crates/...)')
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked
+      - name: add site index
+        run: cp docs/rustdoc_index.html target/doc/index.html
       - uses: actions/upload-artifact@v4
         with:
           name: rustdoc
-          path: bazel-bin/crates/**/*.rustdoc
+          path: target/doc
           if-no-files-found: error
+  publish-docs:
+    name: publish rustdoc
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: rustdoc
+          path: _site
+      - name: verify site
+        run: |
+          set -euo pipefail
+          touch _site/.nojekyll
+          test -f _site/krabka_blockstore/index.html
+          test -f _site/krabka_traces/index.html
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5
   # Container suites, one runner each.
   #
   # These saturate a runner: each boots a Grafana-stack component and compares

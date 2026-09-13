@@ -11,7 +11,7 @@ pub trait LogWalSink: Send + Sync + 'static {
     /// A Loki push becomes one record per entry, so this is the call that
     /// decides how many broker round trips one push costs. The default appends
     /// serially and stops at the first failure, which is all a sink with no
-    /// produce pipeline can do. [`super::KafkaLogWalSink`] overrides it.
+    /// produce pipeline can do. [`crate::KafkaLogWalSink`] overrides it.
     ///
     /// # Errors
     /// Returns [`WalBatchError`] when a record fails to append. The error

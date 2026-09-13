@@ -1,0 +1,36 @@
+name: Bug report
+description: Report behavior that differs from the documented Krabka contract.
+title: ""
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not report security vulnerabilities here. Use the private Security advisory form.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include the signal, route or query, tenant setup, and complete error.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Link the upstream behavior or Krabka documentation that defines the expectation.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Provide the smallest safe command, payload, or test case that reproduces the problem.
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Krabka revision
+      placeholder: Commit SHA or image digest
+    validations:
+      required: true

@@ -1,6 +1,7 @@
 use super::{ByteSize, Ordering, Regex};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A `LogQL` field comparison operator.
 pub enum ComparisonOp {
     Equal,
     NotEqual,

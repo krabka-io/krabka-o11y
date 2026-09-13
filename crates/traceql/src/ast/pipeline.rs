@@ -1,6 +1,7 @@
 use super::{Aggregate, ComparisonOp, Field, SpansetExpr, WithBinding};
 
 #[derive(Clone, Debug, PartialEq)]
+/// A `TraceQL` pipeline operation applied after spanset selection.
 pub enum Pipeline {
     Aggregate(Aggregate),
     Filter {

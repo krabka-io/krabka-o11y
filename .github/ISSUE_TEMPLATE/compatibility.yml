@@ -1,0 +1,33 @@
+name: Compatibility gap
+description: Report a difference from Prometheus, Mimir, Loki, Tempo, Pyroscope, or Grafana.
+title: ""
+labels: [compatibility]
+body:
+  - type: dropdown
+    id: signal
+    attributes:
+      label: Signal
+      options: [Metrics, Logs, Traces, Profiles, Cross-signal]
+    validations:
+      required: true
+  - type: textarea
+    id: surface
+    attributes:
+      label: Upstream surface
+      description: Name the endpoint, query construct, wire field, and upstream version or image digest.
+    validations:
+      required: true
+  - type: textarea
+    id: comparison
+    attributes:
+      label: Differential evidence
+      description: Show the same request and the normalized upstream and Krabka responses.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: State whether this changes a documented out-of-scope decision.
+    validations:
+      required: true

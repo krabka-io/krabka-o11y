@@ -74,7 +74,7 @@ Link to the coverage report and any relevant differential-test suites
 When you write or update a design document:
 
 - **Consult the upstream documentation and the upstream source** to make sure the terminology is accurate and the compatibility descriptions are correct. Use the upstream names for query-language constructs, wire fields, and HTTP endpoints. The upstream is Prometheus and Grafana Mimir for metrics, Grafana Loki for logs, Grafana Tempo for traces, and Grafana Pyroscope for profiles.
-- **Where the upstream behaviour is undocumented or version-dependent, verify it empirically** against the container image the differential suite pins. Do not rely on a blog post or a wiki. See the root [`README.md`](../../README.md) for the six suites and [`CLAUDE.md`](../../CLAUDE.md) for the rule. Document what you observed and the image you observed it against.
+- **Where the upstream behaviour is undocumented or version-dependent, verify it empirically** against the container image the differential suite pins. Do not rely on a blog post or a wiki. See the root [`README.md`](../../README.md) for the nine suites and [`CLAUDE.md`](../../CLAUDE.md) for the rule. Document what you observed and the image you observed it against.
 - **Ask clarifying questions** if the code does not make the design intent clear. It is better to ask the maintainer than to guess or to document assumptions that may be wrong.
 
 ## Writing Style

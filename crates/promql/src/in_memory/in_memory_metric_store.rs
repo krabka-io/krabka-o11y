@@ -6,7 +6,7 @@ use super::{
 
 /// In-memory metric store keyed by tenant.
 ///
-/// Everything the WAL appends to lives in a [`RowChunks`], so cloning the
+/// Everything the WAL appends to lives in `RowChunks`, so cloning the
 /// store -- which is what `Arc::make_mut` does in [`WalHead`](super::WalHead)
 /// while a query holds a snapshot -- shares the sealed chunks by pointer and
 /// copies only each tenant's open chunk.
@@ -20,7 +20,7 @@ pub struct InMemoryMetricStore {
     /// tenant, and do not grow with ingest, so a plain vector is enough.
     pub(crate) blocks: HashMap<String, Vec<TsdbBlock>>,
     /// Samples whose timestamp is older than `now_ms - retention` are eligible
-    /// for [`InMemoryMetricStore::prune`].
+    /// for [`crate::InMemoryMetricStore::prune`].
     pub(crate) retention: Time,
     /// WAL offset range currently materialized in the head, keyed by partition.
     /// Offsets track ingestion progress for observability and rebuild bounds.

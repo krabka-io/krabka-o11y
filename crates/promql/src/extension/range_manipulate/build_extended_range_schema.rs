@@ -6,7 +6,7 @@ use super::{Arc, DataType, Field, RANGE_SUFFIX, Schema, SchemaRef, range_array_t
 /// the `time_index` `Int64` column, and the `field_column` `Float64` column.
 /// The returned schema carries the label columns through, keeps a scalar eval
 /// `time_index` column, and adds the `<time_index>_range` and
-/// `<field_column>_range` [`RangeArray`] columns.
+/// `<field_column>_range` [`crate::RangeArray`] columns.
 #[must_use]
 pub fn build_extended_range_schema(
     input_schema: &Schema,

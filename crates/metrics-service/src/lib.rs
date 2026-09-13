@@ -1,4 +1,13 @@
-//! Role-selectable metrics service for the Prometheus/Mimir-compatible backend.
+//! Role-selectable metrics service for the Prometheus and Mimir compatible backend.
+//!
+//! This crate joins the metric WAL and block store to the `PromQL` HTTP API,
+//! query frontend, ruler, and alert delivery paths.
+//!
+//! # Key Types
+//!
+//! - [`MetricsServiceError`] reports object-store and manifest failures.
+//! - [`WalHeadConsumerError`] reports recent-sample WAL failures.
+//! - [`RulerStateConsumerError`] reports ruler-state WAL failures.
 
 // Proving the async service futures `Send` traverses DataFusion's deep
 // `sqlparser` AST type graph (reached through `SessionContext` held across

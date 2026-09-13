@@ -11,7 +11,7 @@ use super::{
 /// the shard payloads, the compaction sidecar -- so that one 503 in the middle
 /// of a flush does not end the role.
 ///
-/// # Do not wrap the store a [`BlockWriter`] holds
+/// # Do not wrap the store a [`crate::BlockWriter`] holds
 ///
 /// [`BlockWriter`](crate::BlockWriter) retries the whole block write itself,
 /// which is the only correct unit for a block: a Parquet block is streamed

@@ -10,7 +10,7 @@ use super::{
 
 /// Clock confidence readings, one row per clock, per host, per moment.
 ///
-/// [`COL_TIMESTAMP`] carries the host reading in epoch milliseconds, the unit
+/// [`crate::COL_TIMESTAMP`] carries the host reading in epoch milliseconds, the unit
 /// that every other metric block in this crate uses. The ingest path converts
 /// [`CCOL_READING_UNIX_NANOS`] to milliseconds to fill it. The nanosecond
 /// reading stays in its own column, so the conversion drops no precision from

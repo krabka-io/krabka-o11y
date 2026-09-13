@@ -2,7 +2,7 @@ use super::TracesError;
 
 /// Minimal WAL-consumer commit surface the block-builder loop drives.
 ///
-/// This trait stays separate from [`WalConsumerPoll`], so a test can express
+/// This trait stays separate from [`crate::blockbuilder::WalConsumerPoll`], so a test can express
 /// the commit-only invariant as its own recorded call. That invariant is that a
 /// commit happens strictly after a durable flush.
 #[async_trait::async_trait]
