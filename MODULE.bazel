@@ -10,6 +10,7 @@ module(
     version = "0.4.0",
 )
 
+bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_rs", version = "0.0.110")
 bazel_dep(name = "rules_rs_mutants", version = "0.0.1")
 
@@ -140,18 +141,30 @@ oci.pull(
     name = "distroless_cc",
     digest = "sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc",
     image = "gcr.io/distroless/cc-debian12",
-    platforms = ["linux/amd64"],
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
 )
 use_repo(
     oci,
     "distroless_cc",
+    "distroless_cc_linux_amd64",
+    "distroless_cc_linux_arm64_v8",
     "grafana",
+    "grafana_linux_amd64",
     "loki",
+    "loki_linux_amd64",
     "mimir",
+    "mimir_linux_amd64",
     "minio",
+    "minio_linux_amd64",
     "prometheus",
+    "prometheus_linux_amd64",
     "pyroscope",
+    "pyroscope_linux_amd64",
     "tempo",
+    "tempo_linux_amd64",
 )
 
 # ---------------------------------------------------------------------------
@@ -206,7 +219,7 @@ toolchains.toolchain(
     # dependency source of truth" arrangement exists to avoid.
     version = "1.97.1",
 )
-use_repo(toolchains, "krabka_rust_toolchains")
+use_repo(toolchains, "default_rust_toolchains", "krabka_rust_toolchains")
 
 register_toolchains("@krabka_rust_toolchains//...")
 
