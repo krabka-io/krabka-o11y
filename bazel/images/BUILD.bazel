@@ -5,30 +5,32 @@ rather than pulled by testcontainers over the network mid-test. That pins the
 bytes a test runs against, keeps the network out of the test itself, and lets
 the repository cache carry the images between CI runs.
 
-`oci_load` produces a `docker load`-able tarball; `//bazel:docker_test.sh` loads
+`image_load` produces a `docker load`-able tarball; `//bazel:docker_test.sh` loads
 each one it is handed before executing the test binary.
 """
 
-load("@rules_oci//oci:defs.bzl", "oci_load")
+load("@rules_img//img:load.bzl", "image_load")
 load(":images.bzl", "IMAGES")
 
 package(default_visibility = ["//visibility:public"])
 
 [
-    oci_load(
+    image_load(
         name = name,
         image = "@" + name,
-        repo_tags = [tag],
+        tag = tag,
+        tags = ["docker"],
     )
     for name, tag in IMAGES.items()
 ]
 
-# The tarball each `oci_load` produces, which is what a test consumes.
+# The tarball each `image_load` produces, which is what a test consumes.
 [
     filegroup(
         name = name + "_tar",
         srcs = [":" + name],
         output_group = "tarball",
+        tags = ["docker"],
     )
     for name in IMAGES
 ]

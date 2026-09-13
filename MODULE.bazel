@@ -67,35 +67,33 @@ use_repo(protoc, "toolchains_protoc_hub")
 
 register_toolchains("@toolchains_protoc_hub//:all")
 
-bazel_dep(name = "rules_oci", version = "2.3.0")
-
-# Both already resolve through rules_oci; //bazel/images/krabka uses them by
-# name, and bzlmod only puts a module's repositories in scope for the modules
-# that declare it. `tar` builds the image's one layer, `expand_template`
-# stamps the revision label.
-bazel_dep(name = "aspect_bazel_lib", version = "2.22.0")
-bazel_dep(name = "tar.bzl", version = "0.10.4")
+# rules_img owns pulled and assembled images. The application images start from
+# locked Chainguard Wolfi packages assembled by apko, matching krabka-broker.
+bazel_dep(name = "rules_img", version = "0.3.20")
+bazel_dep(name = "rules_apko", version = "1.5.56")
 
 # `sh_test`, for the wrapper that loads those images before a suite runs.
 bazel_dep(name = "rules_shell", version = "0.8.0")
 
-oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
 
 [
-    oci.pull(
+    pull_image(
         name = name,
         digest = digest,
-        image = image,
-        platforms = ["linux/amd64"],
+        layer_handling = "eager",
+        registry = registry,
+        repository = repository,
+        tag = tag,
     )
-    for name, image, digest in [
+    for name, registry, repository, tag, digest in [
         # The systems the differential suites compare against. Several of these
         # suites defaulted to `:latest`, which is the thing digest pinning
         # exists to remove: a differential test that disagrees with a moving
         # target reports a difference nobody changed.
-        ("grafana", "mirror.gcr.io/grafana/grafana", "sha256:95173c11b36f53a423ce47f00baee3f913a3e403f202a83c8bc3c7115a2cfdd0"),
-        ("loki", "mirror.gcr.io/grafana/loki", "sha256:a74594532eec4cc313401beedc4dd2708c43674c032084b1aeb87c14a5be1745"),
-        ("mimir", "mirror.gcr.io/grafana/mimir", "sha256:5bdf62ac23417da24c320f399972c7334b6438a410ad2c73d27736228066cf43"),
+        ("grafana", "mirror.gcr.io", "grafana/grafana", "11.6.1", "sha256:95173c11b36f53a423ce47f00baee3f913a3e403f202a83c8bc3c7115a2cfdd0"),
+        ("loki", "mirror.gcr.io", "grafana/loki", "3.5.1", "sha256:3a4e80320df38087263e9d450fd812010ee57e1e0b0679465672c0e227441f43"),
+        ("mimir", "mirror.gcr.io", "grafana/mimir", "2.16.1", "sha256:5bdf62ac23417da24c320f399972c7334b6438a410ad2c73d27736228066cf43"),
         # The object store the `scale` suites run against. Not a differential
         # oracle: nothing here compares an answer against MinIO. It is a real
         # S3 API in front of real storage, which is what makes a scale run
@@ -114,58 +112,29 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
         #
         # The digest is unchanged, so this is the same image bytes from a
         # registry that still serves them.
-        ("minio", "quay.io/minio/minio", "sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"),
-        ("prometheus", "mirror.gcr.io/prom/prometheus", "sha256:67abe619da66a6b14cc0e185205f93a29d5b03cedd1aaa06930745b21f95a374"),
-        ("pyroscope", "mirror.gcr.io/grafana/pyroscope", "sha256:b65dffe6719cf91dcb7dcbb9790c439be164220f051a41a8477e06acfea1bbf9"),
-        ("tempo", "mirror.gcr.io/grafana/tempo", "sha256:a095c183ca7d433062dd2780d715df8bc15fca9656a9167eb1ab59c78de09681"),
+        ("minio", "quay.io", "minio/minio", "RELEASE.2025-04-22T22-12-26Z", "sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb"),
+        ("prometheus", "mirror.gcr.io", "prom/prometheus", "v3.8.0", "sha256:67abe619da66a6b14cc0e185205f93a29d5b03cedd1aaa06930745b21f95a374"),
+        ("pyroscope", "mirror.gcr.io", "grafana/pyroscope", "latest", "sha256:b65dffe6719cf91dcb7dcbb9790c439be164220f051a41a8477e06acfea1bbf9"),
+        ("tempo", "mirror.gcr.io", "grafana/tempo", "latest", "sha256:a095c183ca7d433062dd2780d715df8bc15fca9656a9167eb1ab59c78de09681"),
     ]
 ]
 
-# The base the krabka image is built on. See //bazel/images for what goes on
-# top of it.
-#
-# `cc` rather than `static`: the binaries this repository builds are glibc
-# binaries. The toolchain's sysroot caps them at GLIBC_2.28 and they still
-# carry the pre-2.34 `librt`/`libpthread`/`libdl` sonames, which Debian 12's
-# glibc 2.36 provides -- so the base is chosen to satisfy what the linker
-# already asked for rather than the other way round.
-#
-# `debug-nonroot` rather than `nonroot`: the debug variant adds busybox, and
-# nothing else. Without a shell in the image there is no way to express a
-# `docker compose` healthcheck at all -- compose runs the check inside the
-# container -- and a compose file with no healthcheck is the failure this
-# image exists to avoid: a dependent starting against a role that is listening
-# and not yet able to answer. busybox buys that, and an operator a way into a
-# stopped pod, for one statically linked multi-call binary of surface.
-oci.pull(
-    name = "distroless_cc",
-    digest = "sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc",
-    image = "gcr.io/distroless/cc-debian12",
-    platforms = [
-        "linux/amd64",
-        "linux/arm64/v8",
-    ],
+apko_toolchain = use_extension("@rules_apko//apko:extensions.bzl", "apko")
+apko_toolchain.toolchain(apko_version = "v1.2.40")
+use_repo(apko_toolchain, "apko_toolchains")
+
+register_toolchains("@apko_toolchains//:all")
+
+apk = use_extension("@rules_apko//apko:extensions.bzl", "apko")
+apk.translate_lock(
+    name = "o11y_base_lock",
+    lock = "//bazel/images/krabka:base.apko.lock.json",
 )
-use_repo(
-    oci,
-    "distroless_cc",
-    "distroless_cc_linux_amd64",
-    "distroless_cc_linux_arm64_v8",
-    "grafana",
-    "grafana_linux_amd64",
-    "loki",
-    "loki_linux_amd64",
-    "mimir",
-    "mimir_linux_amd64",
-    "minio",
-    "minio_linux_amd64",
-    "prometheus",
-    "prometheus_linux_amd64",
-    "pyroscope",
-    "pyroscope_linux_amd64",
-    "tempo",
-    "tempo_linux_amd64",
+apk.translate_lock(
+    name = "o11y_base_arm64_lock",
+    lock = "//bazel/images/krabka:base.arm64.apko.lock.json",
 )
+use_repo(apk, "o11y_base_arm64_lock", "o11y_base_lock")
 
 # ---------------------------------------------------------------------------
 # Format and lint. See //tools/format and //tools/lint.
