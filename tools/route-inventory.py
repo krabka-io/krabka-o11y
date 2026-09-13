@@ -16,6 +16,12 @@ SIGNAL_CRATES = {
     "traces": ("traces",),
     "profiles": ("profiles",),
 }
+SHARED_ROUTERS = {
+    "readiness_router": (
+        "observability",
+        "crates/observability/src/readiness/readiness_router.rs",
+    ),
+}
 METHODS = ("get", "post", "put", "delete", "patch")
 
 
@@ -140,6 +146,32 @@ def rust_routes(signal, crate):
                     yield signal, method, path_match.group(1), relative
 
 
+def merges_router(text, router):
+    return re.search(
+        rf"\.merge\(\s*(?:[\w:]+::)?{re.escape(router)}\s*\(",
+        without_test_modules(text),
+    ) is not None
+
+
+def shared_routes(signal, crates):
+    for router, (provider_crate, provider_source) in SHARED_ROUTERS.items():
+        if provider_crate in crates:
+            continue
+        uses_router = any(
+            router in text and merges_router(text, router)
+            for crate in crates
+            for source in (ROOT / "crates" / crate / "src").rglob("*.rs")
+            if source.name != "tests.rs" and "tests" not in source.parts
+            for text in (source.read_text(),)
+        )
+        if uses_router:
+            yield from (
+                route
+                for route in rust_routes(signal, provider_crate)
+                if route[3] == provider_source
+            )
+
+
 def profile_connect_routes():
     proto_root = ROOT / "crates" / "profiles" / "proto"
     for source in sorted(proto_root.rglob("*.proto")):
@@ -165,6 +197,8 @@ def inventory():
         for crate in crates:
             for route_signal, method, path, source in rust_routes(signal, crate):
                 routes.setdefault((route_signal, method, path), set()).add(source)
+        for route_signal, method, path, source in shared_routes(signal, crates):
+            routes.setdefault((route_signal, method, path), set()).add(source)
     for signal, method, path, source in profile_connect_routes():
         routes.setdefault((signal, method, path), set()).add(source)
     return {
@@ -205,6 +239,12 @@ mod tests {
         re.search(rf"(?:^|[.:])\s*{method}\s*\(", handler)
         for method in ("get", "post")
     )
+    assert merges_router("Router::new().merge(readiness_router(state))", "readiness_router")
+    assert merges_router(
+        "Router::new().merge(krabka_observability::readiness_router(state))",
+        "readiness_router",
+    )
+    assert not merges_router(sample, "readiness_router")
     print("route inventory self-test passed")
 
 

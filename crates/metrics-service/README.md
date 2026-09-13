@@ -12,7 +12,8 @@ Start the metrics distributor and block builder first, then run:
 bazel run //crates/metrics-service:krabka-metrics-service -- --help
 bazel run //crates/metrics-service:krabka-metrics-service -- \
   --target=querier --listen=127.0.0.1:9090 \
-  --object-store-url=memory:/// --wal-bootstrap=127.0.0.1:9092
+  --object-store-url=file://./.krabka-metrics-blocks \
+  --wal-bootstrap=127.0.0.1:9092
 ```
 
 Send `X-Scope-OrgID` on every query.

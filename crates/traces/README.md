@@ -27,8 +27,8 @@ The complete list is in `--help` and [`deploy/roles/`](../../deploy/roles).
 | `--listen` | `KRABKA_TRACES_LISTEN` | `0.0.0.0:3200` | Sets the Tempo query address |
 | `--grpc-listen` | `KRABKA_TRACES_GRPC_LISTEN` | `0.0.0.0:4317` | Sets OTLP gRPC ingest |
 | `--otlp-http-listen` | `KRABKA_TRACES_OTLP_HTTP_LISTEN` | `0.0.0.0:4318` | Sets OTLP HTTP ingest |
-| `--bootstrap` | `KRABKA_TRACES_BOOTSTRAP` | none | Sets the broker address |
-| `--object-store-url` | `KRABKA_TRACES_OBJECT_STORE_URL` | none | Sets the trace block store |
+| `--bootstrap` | `KRABKA_TRACES_BOOTSTRAP` | `127.0.0.1:9092` | Sets the broker address |
+| `--object-store-url` | `KRABKA_TRACES_OBJECT_STORE_URL` | `memory:///` | Sets the trace block store |
 | `--config.file` | `KRABKA_CONFIG_FILE` | none | Loads role configuration from YAML |
 
 ## Compatibility decisions

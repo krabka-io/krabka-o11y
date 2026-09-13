@@ -1,7 +1,7 @@
 use super::FieldExpr;
 
 #[derive(Clone, Debug, PartialEq)]
-/// A named field expression introduced by a TraceQL `with` pipeline.
+/// A named field expression introduced by a `TraceQL` `with` pipeline.
 pub struct WithBinding {
     /// The binding name.
     pub name: String,

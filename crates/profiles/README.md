@@ -26,7 +26,7 @@ The complete list is in `--help` and [`deploy/roles/`](../../deploy/roles).
 | `--target` | `KRABKA_PROFILES_TARGET` | required | Selects a profile role or `all` |
 | `--listen` | `KRABKA_PROFILES_LISTEN_ADDR` | `0.0.0.0:4040` | Sets the ingest or query address |
 | `--bootstrap` | `KRABKA_PROFILES_BOOTSTRAP` | `127.0.0.1:9092` | Sets the broker address |
-| `--object-store-url` | `KRABKA_PROFILES_OBJECT_STORE_URL` | none | Sets the profile block store |
+| `--object-store-url` | `KRABKA_PROFILES_OBJECT_STORE_URL` | `file://./.krabka-profiles-blocks` | Sets the profile block store |
 | `--config.file` | `KRABKA_CONFIG_FILE` | none | Loads role configuration from YAML |
 
 ## Documentation

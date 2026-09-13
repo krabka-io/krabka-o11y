@@ -1,6 +1,6 @@
 //! Role-selectable metrics service for the Prometheus and Mimir compatible backend.
 //!
-//! This crate joins the metric WAL and block store to the PromQL HTTP API,
+//! This crate joins the metric WAL and block store to the `PromQL` HTTP API,
 //! query frontend, ruler, and alert delivery paths.
 //!
 //! # Key Types

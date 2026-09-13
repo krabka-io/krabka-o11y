@@ -1,5 +1,5 @@
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-/// Execution hints carried by a TraceQL query.
+/// Execution hints carried by a `TraceQL` query.
 pub struct QueryHints {
     /// Requests the most recent matching spans first.
     pub most_recent: bool,

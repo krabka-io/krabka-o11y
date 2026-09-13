@@ -10,7 +10,8 @@ The generated [route inventory](api/routes.json) is the exhaustive method and pa
 
 | Surface | Status | Evidence |
 | --- | --- | --- |
-| Prometheus remote write v1/v2 and Mimir push aliases | Supported | [`diff_prometheus::prometheus_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_prometheus.rs), [`diff_mimir::mimir_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_mimir.rs) |
+| Prometheus remote write v1 and Mimir push aliases | Supported | [`diff_prometheus::prometheus_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_prometheus.rs), [`diff_mimir::mimir_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_mimir.rs) |
+| Prometheus remote write v2 | Implemented | [`metrics::wire::v2`](../crates/metrics/src/wire/v2.rs) decoder tests |
 | PromQL instant and range query APIs | Supported | [`diff_prometheus::prometheus_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_prometheus.rs), [`diff_mimir::mimir_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_mimir.rs) |
 | Grafana Prometheus datasource resources | Supported | [`grafana_integration::grafana_e2e_covers_all_api_surfaces_and_query_shapes`](../crates/metrics-service/tests/grafana_integration.rs) |
 | OTLP metrics and Krabka clocks | Implemented | [`metrics::ingest_roundtrip`](../crates/metrics/tests/ingest_roundtrip.rs), [`metrics::clock_ingest`](../crates/metrics/tests/clock_ingest.rs) |
@@ -44,7 +45,7 @@ The generated [route inventory](api/routes.json) is the exhaustive method and pa
 | --- | --- | --- |
 | Legacy pprof ingest and render | Supported | [`pyroscope_differential::real_pyroscope_render_matches_krabka_after_identical_ingest`](../crates/profiles/tests/pyroscope_differential.rs), [`pyroscope_differential::real_pyroscope_legacy_ingest_formats_match_krabka`](../crates/profiles/tests/pyroscope_differential.rs) |
 | Pyroscope Connect labels, series, merge, diff, and profile stats | Supported | [`pyroscope_differential::real_pyroscope_series_and_stats_match_krabka_after_identical_ingest`](../crates/profiles/tests/pyroscope_differential.rs) |
-| Grafana Pyroscope datasource | Supported | [`pyroscope_differential::grafana_accepts_pyroscope_datasource_pointing_at_krabka`](../crates/profiles/tests/pyroscope_differential.rs) |
+| Grafana Pyroscope datasource | Supported | [`pyroscope_differential::grafana_renders_krabka_profiles_end_to_end`](../crates/profiles/tests/pyroscope_differential.rs) |
 | OTLP profiles | Supported | [`pyroscope_differential::real_pyroscope_otlp_export_matches_krabka`](../crates/profiles/tests/pyroscope_differential.rs) |
 | Legacy `/pyroscope/labels` and `/pyroscope/label-values` | Out of scope | Grafana uses the Connect label methods |
 

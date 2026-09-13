@@ -1,7 +1,7 @@
 use super::{Pipeline, QueryHints, SpansetExpr};
 
 #[derive(Clone, Debug, PartialEq)]
-/// A parsed TraceQL spanset expression, pipeline, and hint set.
+/// A parsed `TraceQL` spanset expression, pipeline, and hint set.
 pub struct Query {
     /// The spanset selection expression.
     pub root: SpansetExpr,

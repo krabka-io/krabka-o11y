@@ -1132,6 +1132,14 @@
     },
     {
       "signal": "metrics",
+      "method": "GET",
+      "path": "/ready",
+      "sources": [
+        "crates/observability/src/readiness/readiness_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
       "method": "POST",
       "path": "/api/v1/admin/tsdb/clean_tombstones",
       "sources": [
@@ -1444,6 +1452,14 @@
     },
     {
       "signal": "profiles",
+      "method": "GET",
+      "path": "/ready",
+      "sources": [
+        "crates/observability/src/readiness/readiness_router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
       "method": "POST",
       "path": "/ingest",
       "sources": [
@@ -1711,6 +1727,7 @@
       "method": "GET",
       "path": "/ready",
       "sources": [
+        "crates/observability/src/readiness/readiness_router.rs",
         "crates/traces/src/readiness/tempo_readiness_routes.rs"
       ]
     },

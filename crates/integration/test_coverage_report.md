@@ -42,7 +42,7 @@ Docker-tagged differential suites are listed in the root [compatibility matrix](
 Run the scoped measurement with:
 
 ```bash
-cargo llvm-cov nextest --package krabka-integration --profile ci --lib --bins --lcov --output-path lcov.info
+cargo llvm-cov nextest --package krabka-integration --profile ci --tests --lcov --output-path lcov.info
 lcov --summary lcov.info
 ```
 
