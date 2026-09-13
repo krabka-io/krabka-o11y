@@ -38,5 +38,10 @@ pub(crate) async fn run_compactor_once(
     )
     .await?;
     metrics.compaction.record_output(pass.outputs.len() as u64);
+    metrics.compaction.record_deleted(
+        pass.blocks_deleted.deleted as u64,
+        pass.manifests_retired.deleted as u64,
+        (pass.blocks_deleted.failures.len() + pass.manifests_retired.failures.len()) as u64,
+    );
     Ok(pass)
 }

@@ -15,9 +15,9 @@ pub(crate) fn a_repeated_log_query_parameter_keeps_the_first_value() {
         parse(r#"query={app="web"}"#).query == r#"{app="web"}"#,
         "the value keeps its own `=`"
     );
-    check!(parse("query=a&time=100&time=200").time == Some(100));
-    check!(parse("query=a&start=100&start=200").start == Some(100));
-    check!(parse("query=a&end=500&end=900").end == Some(500));
+    check!(parse("query=a&time=100&time=200").time == Some(100_000_000_000));
+    check!(parse("query=a&start=100&start=200").start == Some(100_000_000_000));
+    check!(parse("query=a&end=500&end=900").end == Some(500_000_000_000));
     check!(parse("query=a&limit=5&limit=9").limit == Some(5));
     check!(
         parse("query=a&direction=forward&direction=backward").direction

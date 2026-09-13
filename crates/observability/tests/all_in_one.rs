@@ -278,7 +278,7 @@ impl AllInOne {
             let response = self
                 .client
                 .get(format!(
-                    "http://{}/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0&end=30&direction=forward",
+                    "http://{}/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=forward",
                     self.addr
                 ))
                 .header("X-Scope-OrgID", TENANT)

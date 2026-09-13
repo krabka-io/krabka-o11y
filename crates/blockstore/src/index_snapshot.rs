@@ -20,7 +20,7 @@ use xxhash_rust::xxh3::xxh3_128;
 
 use crate::{
     error::{BlockStoreError, Result},
-    index::{IndexShardRange, parse_shard_bound_key, shard_bound_key},
+    index::{IndexShardRange, index_shards_prefix_for_key, parse_shard_bound_key, shard_bound_key},
     path_escape::{escape_object_path_segment, unescape_object_path_segment},
 };
 
@@ -344,6 +344,7 @@ mod default_index_snapshot_retain;
 mod index_snapshot_prefix_for_key;
 mod index_snapshot_retain;
 mod latest_index_snapshot_path;
+mod list_index_object_keys;
 mod list_index_snapshot_objects;
 mod manifest_shard;
 mod manifest_snapshot_base;
@@ -378,6 +379,7 @@ pub use default_index_snapshot_retain::DEFAULT_INDEX_SNAPSHOT_RETAIN;
 pub use index_snapshot_prefix_for_key::index_snapshot_prefix_for_key;
 pub use index_snapshot_retain::IndexSnapshotRetain;
 pub use latest_index_snapshot_path::latest_index_snapshot_path;
+pub use list_index_object_keys::list_index_object_keys;
 pub use list_index_snapshot_objects::list_index_snapshot_objects;
 pub(crate) use manifest_shard::ManifestShard;
 pub(crate) use manifest_snapshot_base::ManifestSnapshotBase;

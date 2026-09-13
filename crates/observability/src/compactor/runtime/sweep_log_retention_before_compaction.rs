@@ -2,6 +2,7 @@ use super::{
     CompactorRunError, Instant, ObjectPath, ObjectStore, OverridesProvider, SystemTime,
     TenantCompactionIndexCache, Time, TimeExt, UNIX_EPOCH, sweep_expired_log_blocks,
 };
+use crate::compaction_metrics::CompactionMetrics;
 
 /// Runs the retention sweep when one is due, and drops the index cache after
 /// it.
@@ -27,6 +28,7 @@ pub(crate) async fn sweep_log_retention_before_compaction(
     tenant_indexes: &mut TenantCompactionIndexCache,
     next_sweep: &mut Instant,
     sweep_interval: Time,
+    metrics: &CompactionMetrics,
 ) -> Result<(), CompactorRunError> {
     if !overrides.expires_any_blocks() {
         return Ok(());
@@ -44,7 +46,7 @@ pub(crate) async fn sweep_log_retention_before_compaction(
         .ok()
         .and_then(|since| i64::try_from(since.as_nanos()).ok())
         .unwrap_or(i64::MIN);
-    sweep_expired_log_blocks(store, prefix, now_ns, overrides).await?;
+    sweep_expired_log_blocks(store, prefix, now_ns, overrides, metrics).await?;
     // The sweep rewrote manifests that the cache may hold, so the cache goes
     // with them.
     tenant_indexes.clear();

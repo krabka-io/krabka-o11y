@@ -1,6 +1,6 @@
 use krabka_observability::CancellationToken;
 
-use super::{Arc, ObjectStore, OverridesProvider, SystemTime, Time, TimeExt};
+use super::{Arc, ObjectStore, OverridesProvider, ServiceMetrics, SystemTime, Time, TimeExt};
 
 /// Runs the compaction-retention sweep on a timer, returning its handle for
 /// the caller to supervise.
@@ -21,6 +21,7 @@ pub(crate) fn spawn_retention_sweeper(
     overrides: Arc<OverridesProvider>,
     sweep_interval: Time,
     stopping: CancellationToken,
+    metrics: ServiceMetrics,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -32,6 +33,15 @@ pub(crate) fn spawn_retention_sweeper(
             .await
             {
                 Ok(stats) => {
+                    metrics.compaction.record_deleted(
+                        stats.blocks_deleted.deleted as u64,
+                        stats.manifests_retired.deleted as u64,
+                        stats.failures().count() as u64,
+                    );
+                    metrics.compaction.record_orphan_sweep(
+                        stats.orphans.deleted as u64,
+                        stats.orphans.failed as u64,
+                    );
                     // Every object the store refused, one line each. A pass
                     // that reported only its totals would hide an object that
                     // fails on every pass, and that object is the one an

@@ -16,6 +16,13 @@ pub struct CompactionMetrics {
     runs: Family<CompactionStatusLabel, Counter>,
     duration: Histogram,
     blocks: Counter,
+    deletion_sweeps: Counter,
+    deleted_blocks: Counter,
+    deleted_sidecars: Counter,
+    deletion_failures: Counter,
+    orphan_sweeps: Counter,
+    orphans_deleted: Counter,
+    orphan_failures: Counter,
 }
 
 impl CompactionMetrics {
@@ -46,6 +53,45 @@ impl CompactionMetrics {
              which is where the writes actually happen.",
             this.blocks.clone(),
         );
+        for (name, help, counter) in [
+            (
+                "deletion_sweeps",
+                "Block deletion passes run.",
+                &this.deletion_sweeps,
+            ),
+            (
+                "deleted_blocks",
+                "Data blocks deleted.",
+                &this.deleted_blocks,
+            ),
+            (
+                "deleted_sidecars",
+                "Block sidecars deleted.",
+                &this.deleted_sidecars,
+            ),
+            (
+                "deletion_failures",
+                "Block objects that could not be deleted.",
+                &this.deletion_failures,
+            ),
+            (
+                "orphan_sweeps",
+                "Orphan reconciliation passes run.",
+                &this.orphan_sweeps,
+            ),
+            (
+                "orphans_deleted",
+                "Orphaned block objects deleted.",
+                &this.orphans_deleted,
+            ),
+            (
+                "orphan_failures",
+                "Orphaned block objects that could not be deleted.",
+                &this.orphan_failures,
+            ),
+        ] {
+            registry.register(name, help, counter.clone());
+        }
 
         this
     }
@@ -60,6 +106,13 @@ impl CompactionMetrics {
             runs: Family::default(),
             duration: Histogram::new(COMPACTION_DURATION_BUCKETS),
             blocks: Counter::default(),
+            deletion_sweeps: Counter::default(),
+            deleted_blocks: Counter::default(),
+            deleted_sidecars: Counter::default(),
+            deletion_failures: Counter::default(),
+            orphan_sweeps: Counter::default(),
+            orphans_deleted: Counter::default(),
+            orphan_failures: Counter::default(),
         }
     }
 
@@ -84,6 +137,21 @@ impl CompactionMetrics {
         if blocks > 0 {
             self.blocks.inc_by(blocks);
         }
+    }
+
+    /// Records one block-deletion pass and its result.
+    pub fn record_deleted(&self, blocks: u64, sidecars: u64, failures: u64) {
+        self.deletion_sweeps.inc();
+        self.deleted_blocks.inc_by(blocks);
+        self.deleted_sidecars.inc_by(sidecars);
+        self.deletion_failures.inc_by(failures);
+    }
+
+    /// Records one orphan-reconciliation pass and its result.
+    pub fn record_orphan_sweep(&self, deleted: u64, failures: u64) {
+        self.orphan_sweeps.inc();
+        self.orphans_deleted.inc_by(deleted);
+        self.orphan_failures.inc_by(failures);
     }
 
     /// The pass count for one outcome.

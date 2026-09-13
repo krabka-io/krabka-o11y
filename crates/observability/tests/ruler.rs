@@ -741,7 +741,7 @@ rules:
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=19")
+                .uri("/prometheus/api/v1/alerts?time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -778,8 +778,11 @@ rules:
             })
     );
 
-    let rules_body =
-        prometheus_rules_body_for_test(&app, "/prometheus/api/v1/rules?time=19&type=alert").await;
+    let rules_body = prometheus_rules_body_for_test(
+        &app,
+        "/prometheus/api/v1/rules?time=0.000000019&type=alert",
+    )
+    .await;
     assert!(rules_body["data"]["groups"][0]["rules"][0]["alerts"][0]["state"] == "firing");
     assert!(
         rules_body["data"]["groups"][0]["rules"][0]["alerts"][0]["labels"]["alertname"]
@@ -811,7 +814,7 @@ rules:
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=19")
+                .uri("/prometheus/api/v1/alerts?time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -850,7 +853,7 @@ rules:
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=19")
+                .uri("/prometheus/api/v1/alerts?time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -888,7 +891,7 @@ rules:
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=19")
+                .uri("/prometheus/api/v1/alerts?time=0.000000019")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -901,8 +904,11 @@ rules:
     check!(pending_body["data"]["alerts"][0]["state"] == "pending");
     check!(pending_body["data"]["alerts"][0]["activeAt"] == "1970-01-01T00:00:00.000000019Z");
 
-    let firing_body =
-        prometheus_rules_body_for_test(&app, "/prometheus/api/v1/rules?time=40&type=alert").await;
+    let firing_body = prometheus_rules_body_for_test(
+        &app,
+        "/prometheus/api/v1/rules?time=0.000000040&type=alert",
+    )
+    .await;
     assert!(firing_body["data"]["groups"][0]["rules"][0]["alerts"][0]["state"] == "firing");
     assert!(
         firing_body["data"]["groups"][0]["rules"][0]["alerts"][0]["activeAt"]
@@ -927,15 +933,18 @@ rules:
     )
     .await;
 
-    let firing_body =
-        prometheus_rules_body_for_test(&app, "/prometheus/api/v1/rules?time=40&type=alert").await;
+    let firing_body = prometheus_rules_body_for_test(
+        &app,
+        "/prometheus/api/v1/rules?time=0.000000040&type=alert",
+    )
+    .await;
     assert!(firing_body["data"]["groups"][0]["rules"][0]["alerts"][0]["state"] == "firing");
 
     let retained_response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=80")
+                .uri("/prometheus/api/v1/alerts?time=0.000000080")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -952,7 +961,7 @@ rules:
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=100")
+                .uri("/prometheus/api/v1/alerts?time=0.000000100")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -977,8 +986,11 @@ rules:
 ";
     post_loki_rule_group_for_test(&app, "default", rule_group).await;
 
-    let first_body =
-        prometheus_rules_body_for_test(&app, "/prometheus/api/v1/rules?time=19&type=alert").await;
+    let first_body = prometheus_rules_body_for_test(
+        &app,
+        "/prometheus/api/v1/rules?time=0.000000019&type=alert",
+    )
+    .await;
     assert!(first_body["data"]["groups"][0]["rules"][0]["alerts"][0]["state"] == "pending");
 
     let delete_response = app
@@ -996,8 +1008,11 @@ rules:
     assert!(delete_response.status() == StatusCode::ACCEPTED);
 
     post_loki_rule_group_for_test(&app, "default", rule_group).await;
-    let recreated_body =
-        prometheus_rules_body_for_test(&app, "/prometheus/api/v1/rules?time=40&type=alert").await;
+    let recreated_body = prometheus_rules_body_for_test(
+        &app,
+        "/prometheus/api/v1/rules?time=0.000000040&type=alert",
+    )
+    .await;
     assert!(recreated_body["data"]["groups"][0]["rules"][0]["alerts"][0]["state"] == "pending");
     assert!(
         recreated_body["data"]["groups"][0]["rules"][0]["alerts"][0]["activeAt"]
@@ -1023,7 +1038,7 @@ rules:
 
     let body = prometheus_rules_body_for_test(
         &app,
-        "/prometheus/api/v1/rules?time=19&type=alert&exclude_alerts=true",
+        "/prometheus/api/v1/rules?time=0.000000019&type=alert&exclude_alerts=true",
     )
     .await;
 

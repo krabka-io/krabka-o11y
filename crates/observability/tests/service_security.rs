@@ -637,8 +637,9 @@ async fn tls_and_bearer_tokens_guard_the_query_and_ruler_routes() {
     .await;
     let client = secrets.https_client();
     let rule_group = "name: api-errors\nrules:\n  - alert: ApiErrors\n    expr: count_over_time({app=\"api\"} |= \"error\" [5m]) > 0\n";
-    let labels = "/loki/api/v1/labels?start=0&end=100".to_owned();
-    let federated = format!("/loki/api/v1/query_range?query={SELECTOR}&start=0&end=100");
+    let labels = "/loki/api/v1/labels?start=0.000000000&end=0.000000100".to_owned();
+    let federated =
+        format!("/loki/api/v1/query_range?query={SELECTOR}&start=0.000000000&end=0.000000100");
     let token = Some(GRAFANA_TOKEN);
     let cases = [
         (
@@ -1285,7 +1286,7 @@ async fn a_broker_acl_refusal_records_one_authorization_denied_on_the_wal_topic(
     let read = send_for_test(
         querier.addr,
         "GET",
-        "/loki/api/v1/labels?start=0&end=100",
+        "/loki/api/v1/labels?start=0.000000000&end=0.000000100",
         &[tenant_for_test("tenant-a"), bearer_for_test(GRAFANA_TOKEN)],
         "",
     )

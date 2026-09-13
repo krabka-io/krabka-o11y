@@ -4,8 +4,17 @@ pub(crate) fn parse_loki_timestamp_query_param(
     name: &'static str,
     value: &str,
 ) -> Result<i64, HttpQueryError> {
-    if let Ok(timestamp_ns) = value.parse::<i64>() {
-        return Ok(timestamp_ns);
+    if let Ok(timestamp) = value.parse::<i64>() {
+        return if value.len() <= 10 {
+            timestamp.checked_mul(1_000_000_000).ok_or_else(|| {
+                HttpQueryError::InvalidTimestampQueryParameter {
+                    name,
+                    value: value.to_string(),
+                }
+            })
+        } else {
+            Ok(timestamp)
+        };
     }
 
     if let Some(timestamp_ns) = parse_decimal_seconds_timestamp(value) {

@@ -53,6 +53,14 @@ pub(crate) async fn run_compaction_pass(
             .compaction
             .record_output(report.compacted.len() as u64);
     }
+    metrics.compaction.record_deleted(
+        report.deletions.blocks_deleted as u64,
+        report.deletions.sidecars_deleted as u64,
+        report.deletions.failures.len() as u64,
+    );
+    metrics
+        .compaction
+        .record_orphan_sweep(report.orphans.deleted as u64, report.orphans.failed as u64);
     if report.expired > 0 || report.deletions.blocks_deleted > 0 || report.orphans.deleted > 0 {
         tracing::info!(
             expired_blocks = report.expired,

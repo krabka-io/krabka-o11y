@@ -237,7 +237,7 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
     let body = query_until_values(
         &querier,
         TENANT,
-        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=20000000",
+        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.020000000",
         1,
     )
     .await;
@@ -300,7 +300,7 @@ async fn a_websocket_tail_on_a_served_listener_streams_the_live_wal() {
     let timestamp = fixture_timestamp_ns(20_000_000);
     let end = timestamp.parse::<i64>().expect("timestamp") + 10_000_000;
     let mut request = format!(
-        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22tail%22&start=0&end={end}"
+        "ws://{addr}/loki/api/v1/tail?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22tail%22&start=0.000000000&end={end}"
     )
     .into_client_request()
     .expect("tail request");
@@ -616,7 +616,7 @@ async fn a_log_produced_by_a_native_kafka_client_reaches_a_query_answer() {
     let body = query_until_values(
         &querier,
         TENANT,
-        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=20000000",
+        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.020000000",
         1,
     )
     .await;
