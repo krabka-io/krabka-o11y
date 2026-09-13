@@ -29,3 +29,23 @@ pub(crate) fn parse_loki_timestamp_query_param(
             value: value.to_string(),
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{HttpQueryError, parse_loki_timestamp_query_param};
+
+    #[test]
+    fn second_precision_timestamp_that_overflows_nanoseconds_is_rejected() {
+        let value = "9999999999";
+        let error = parse_loki_timestamp_query_param("time", value)
+            .expect_err("the nanosecond timestamp overflows i64");
+
+        assert!(matches!(
+            error,
+            HttpQueryError::InvalidTimestampQueryParameter {
+                name: "time",
+                value: rejected,
+            } if rejected == value
+        ));
+    }
+}

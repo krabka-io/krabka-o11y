@@ -130,3 +130,36 @@ async fn delete_emptied_block_objects(
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use object_store::{ObjectStoreExt as _, PutPayload, memory::InMemory};
+
+    use super::{
+        BTreeMap, BlockDescriptor, CompactionMetrics, ObjectPath, delete_emptied_block_objects,
+    };
+
+    #[tokio::test]
+    async fn an_emptied_block_object_is_deleted() {
+        let store = InMemory::new();
+        let prefix = ObjectPath::from("logs");
+        let object_key = "tenant/block.parquet";
+        let object_path = prefix.clone().join("tenant").join("block.parquet");
+        store
+            .put(&object_path, PutPayload::from_static(b"block"))
+            .await
+            .expect("write block");
+        let materialized: BTreeMap<String, Option<BlockDescriptor>> =
+            BTreeMap::from([(object_key.to_string(), None)]);
+
+        delete_emptied_block_objects(
+            &store,
+            &prefix,
+            &materialized,
+            &CompactionMetrics::unregistered(),
+        )
+        .await;
+
+        assert!(store.head(&object_path).await.is_err());
+    }
+}
