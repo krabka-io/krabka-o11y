@@ -13,20 +13,41 @@ build loaded `11.6.1` and `v3.8.0`, so that suite pulled both images from the
 network on every run and compared against whatever it got. //bazel/defs.bzl now
 hands each suite the reference from this map, and no suite carries a default.
 
-The tag half of a reference is a local label for bytes a digest already fixed,
-so `latest` here is not the moving tag it looks like: `docker load` re-creates
-it from the pinned tarball before every run. It is written this way for the two
-images whose pinned digest carries no version to name it by.
+The tag half of a reference is a local label for bytes a digest already fixed;
+`docker load` re-creates it from the pinned tarball before every run.
 """
+
+ORACLES = {
+    "loki": struct(
+        binary = "/usr/bin/loki",
+        image = "mirror.gcr.io/grafana/loki:3.7.7",
+        revision = "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+    ),
+    "mimir": struct(
+        binary = "/bin/mimir",
+        image = "mirror.gcr.io/grafana/mimir:3.2.1",
+        revision = "e49585d43c6e852225e114bd1ddd98da58a4c060",
+    ),
+    "pyroscope": struct(
+        binary = "/usr/bin/pyroscope",
+        image = "mirror.gcr.io/grafana/pyroscope:2.3.1",
+        revision = "7aeaa0ff91e83538b3ff0d09bfefb168bddc022d",
+    ),
+    "tempo": struct(
+        binary = "/tempo",
+        image = "mirror.gcr.io/grafana/tempo:3.0.3",
+        revision = "1900ed7bb5cad1a3edc285783d7d4ac4278337dc",
+    ),
+}
 
 IMAGES = {
     "grafana": "mirror.gcr.io/grafana/grafana:11.6.1",
-    "loki": "mirror.gcr.io/grafana/loki:3.5.1",
-    "mimir": "mirror.gcr.io/grafana/mimir:2.16.1",
+    "loki": ORACLES["loki"].image,
+    "mimir": ORACLES["mimir"].image,
     "minio": "mirror.gcr.io/minio/minio:RELEASE.2025-04-22T22-12-26Z",
     "prometheus": "mirror.gcr.io/prom/prometheus:v3.8.0",
-    "pyroscope": "mirror.gcr.io/grafana/pyroscope:latest",
-    "tempo": "mirror.gcr.io/grafana/tempo:latest",
+    "pyroscope": ORACLES["pyroscope"].image,
+    "tempo": ORACLES["tempo"].image,
 }
 
 def image_tag_env(name):

@@ -161,8 +161,18 @@ const LOKI_KNOWN_DIVERGENCE: &[Divergence] = &[
                  value, while Krabka leaves that malformed row unmatched.",
     },
     Divergence {
+        case: "push_protobuf_empty_structured_metadata_name",
+        reason: "Loki 3.7.7 rejects a protobuf push whose structured metadata has an empty \
+                 label name with 500, \"label name is empty\". Krabka accepts it with 204.",
+    },
+    Divergence {
+        case: "delete_list_after_create",
+        reason: "Loki 3.7.7 includes `user_id` as an empty string in each delete request; \
+                 Krabka's delete-list response omits that field.",
+    },
+    Divergence {
         case: "tail_live_frame",
-        reason: "Under the default encoding, Loki 3.5.1 writes an entry that reaches a tail \
+        reason: "Under the default encoding, Loki 3.7.7 writes an entry that reaches a tail \
                  live with its stream labels alone: its structured metadata and its \
                  `detected_level` are not in the frame. An entry it replays from history comes \
                  with both folded into the labels, as `tail_first_frame` shows. Krabka folds \
@@ -3207,7 +3217,7 @@ fn reduce_tail_frame(status: u16, text: &str) -> Value {
 /// A tail frame's streams as one `{stream, entry}` pair per entry, sorted.
 ///
 /// How a frame groups its entries into stream objects is batching, and Loki
-/// is not consistent about it. Loki 3.5.1 writes one stream object per entry
+/// is not consistent about it. Loki 3.7.7 writes one stream object per entry
 /// when it replays history into a tail, even where several entries share a
 /// label set. Each entry and the labels it carries are the answer.
 fn tail_entries(streams: &Value) -> Value {

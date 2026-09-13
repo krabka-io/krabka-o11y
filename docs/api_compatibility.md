@@ -2,52 +2,72 @@
 
 This matrix states the supported, implemented, stubbed, and excluded surfaces of the four signals.
 
-“Supported” means that a differential suite compares the behavior with the named upstream product.
+`Supported` means that all named cases in the row compare Krabka with the upstream product and agree.
+Cases outside the row do not get this status.
+`Known gap` means that the linked executable suite records an expected mismatch or excludes it with a stated reason.
+The suite does not count the affected cases as compatible.
+`Implemented` means that a local or integration test checks the behavior without an upstream comparison.
+`Stubbed` means that the route exists and returns a documented placeholder.
+`Out of scope` means that Krabka does not plan to implement the surface.
+`Krabka extension` means that the surface is not an upstream compatibility claim.
 
 The generated [route inventory](api/routes.json) is the exhaustive method and path list.
+The [upstream surface manifest](api/upstream_surfaces.json) classifies each tagged upstream surface.
+See the [upstream upgrade process](compatibility_upgrade_process.md) before a version change.
 
 ## Metrics
 
-| Surface | Status | Evidence |
-| --- | --- | --- |
-| Prometheus remote write v1 and Mimir push aliases | Supported | [`diff_prometheus::prometheus_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_prometheus.rs), [`diff_mimir::mimir_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_mimir.rs) |
-| Prometheus remote write v2 | Implemented | [`metrics::wire::v2`](../crates/metrics/src/wire/v2.rs) decoder tests |
-| PromQL instant and range query APIs | Supported | [`diff_prometheus::prometheus_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_prometheus.rs), [`diff_mimir::mimir_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_mimir.rs) |
-| Grafana Prometheus datasource resources | Supported | [`grafana_integration::grafana_e2e_covers_all_api_surfaces_and_query_shapes`](../crates/metrics-service/tests/grafana_integration.rs) |
-| OTLP metrics and Krabka clocks | Implemented | [`metrics::ingest_roundtrip`](../crates/metrics/tests/ingest_roundtrip.rs), [`metrics::clock_ingest`](../crates/metrics/tests/clock_ingest.rs) |
-| Rules, alerts, cardinality, metadata, status, and admin routes | Implemented | [`promql::http_api`](../crates/promql/tests/http_api.rs) |
-| Targets, scrape pools, and alertmanager discovery | Stubbed as empty | [`promql::http_api`](../crates/promql/tests/http_api.rs) |
-| Target scraping and service discovery | Out of scope | Use Prometheus agent mode or Grafana Alloy |
+| Surface                                                        | Status           | Evidence                                                                                                                                                                                                                    |
+| -------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prometheus remote write v1 corpus ingest and seeded-query path | Supported        | [`diff_prometheus::prometheus_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_prometheus.rs), [`diff_mimir::mimir_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_mimir.rs) |
+| Mimir push aliases                                             | Implemented      | [`ingest_roundtrip::remote_write_v1_lands_as_block`](../crates/metrics/tests/ingest_roundtrip.rs)                                                                                                                           |
+| Prometheus remote write v2                                     | Implemented      | [`metrics::wire::v2`](../crates/metrics/src/wire/v2.rs) decoder tests                                                                                                                                                       |
+| Agreeing PromQL instant and range cases in the vendored corpus | Supported        | [`diff_prometheus::prometheus_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_prometheus.rs), [`diff_mimir::mimir_compliance_corpus_matches_krabka`](../crates/metrics-service/tests/diff_mimir.rs) |
+| Prometheus v3.8 listed PromQL divergences                      | Known gap        | [`promql_corpus::UPSTREAM_DIVERGENCES`](../crates/metrics-service/tests/support/promql_corpus.rs) keeps every listed case executable and expects disagreement                                                               |
+| Mimir 3.2.1 listed PromQL divergences                          | Known gap        | [`diff_mimir::MIMIR_DIVERGENCES`](../crates/metrics-service/tests/diff_mimir.rs) keeps every listed case executable and expects disagreement                                                                                |
+| Grafana Prometheus datasource resources                        | Implemented      | [`grafana_integration::grafana_e2e_covers_all_api_surfaces_and_query_shapes`](../crates/metrics-service/tests/grafana_integration.rs)                                                                                       |
+| OTLP metrics and Krabka clocks                                 | Implemented      | [`metrics::ingest_roundtrip`](../crates/metrics/tests/ingest_roundtrip.rs), [`metrics::clock_ingest`](../crates/metrics/tests/clock_ingest.rs)                                                                              |
+| Rules, alerts, cardinality, metadata, status, and admin routes | Implemented      | [`promql::http_api`](../crates/promql/tests/http_api.rs)                                                                                                                                                                    |
+| Targets, scrape pools, and alertmanager discovery              | Stubbed as empty | [`promql::http_api`](../crates/promql/tests/http_api.rs)                                                                                                                                                                    |
+| Target scraping and service discovery                          | Out of scope     | Use Prometheus agent mode or Grafana Alloy                                                                                                                                                                                  |
 
 ## Logs
 
-| Surface | Status | Evidence |
-| --- | --- | --- |
-| Loki JSON, snappy-protobuf, and OTLP push | Supported | [`loki_differential::loki_corpus_matches_krabka`](../crates/observability/tests/loki_differential.rs) |
-| LogQL query, range, label, series, pattern, field, and index APIs | Supported | [`loki_differential::loki_corpus_matches_krabka`](../crates/observability/tests/loki_differential.rs) |
-| Grafana Loki datasource proxy and backend calls | Supported | [`grafana_integration::a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_backend_path`](../crates/observability/tests/grafana_integration.rs), [`grafana_e2e::grafana_reads_the_same_answer_from_krabka_and_from_loki`](../crates/observability/tests/grafana_e2e.rs) |
-| Ruler and delete-request routes | Implemented | [`observability::ruler`](../crates/observability/tests/ruler.rs), [`observability::deletes`](../crates/observability/tests/deletes.rs) |
-| Readiness, ring, build, config, service, and shutdown routes | Krabka extension | [`observability::status_endpoints`](../crates/observability/tests/status_endpoints.rs) |
+| Surface                                                                     | Status           | Evidence                                                                                                                                                                                                                                            |
+| --------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agreeing Loki JSON and snappy-protobuf push cases                           | Supported        | [`loki_differential::loki_corpus_matches_krabka`](../crates/observability/tests/loki_differential.rs)                                                                                                                                               |
+| Loki OTLP push                                                              | Implemented      | [`distributor_otlp::otlp_logs_endpoint_writes_tenant_scoped_wal_records`](../crates/observability/tests/distributor_otlp.rs), [`distributor_otlp::otlp_logs_endpoint_accepts_protobuf_payloads`](../crates/observability/tests/distributor_otlp.rs) |
+| Agreeing LogQL query, range, label, series, pattern, field, and index cases | Supported        | [`loki_differential::loki_corpus_matches_krabka`](../crates/observability/tests/loki_differential.rs)                                                                                                                                               |
+| Loki 3.7.7 listed differential divergences                                  | Known gap        | [`loki_differential::LOKI_KNOWN_DIVERGENCE`](../crates/observability/tests/loki_differential.rs) keeps every listed case executable and expects disagreement                                                                                        |
+| Agreeing Grafana Loki datasource proxy cases                                | Supported        | [`grafana_e2e::grafana_reads_the_same_answer_from_krabka_and_from_loki`](../crates/observability/tests/grafana_e2e.rs)                                                                                                                              |
+| Grafana Loki `label_join` proxy case                                        | Known gap        | [`grafana_e2e::KNOWN_DIVERGENCE`](../crates/observability/tests/grafana_e2e.rs) expects Krabka to accept this PromQL superset while Loki rejects it                                                                                                 |
+| Grafana Loki backend calls                                                  | Implemented      | [`grafana_integration::a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_backend_path`](../crates/observability/tests/grafana_integration.rs)                                                                                      |
+| Ruler and delete-request routes                                             | Implemented      | [`observability::ruler`](../crates/observability/tests/ruler.rs), [`observability::deletes`](../crates/observability/tests/deletes.rs)                                                                                                              |
+| Readiness, ring, build, config, service, and shutdown routes                | Krabka extension | [`observability::status_endpoints`](../crates/observability/tests/status_endpoints.rs)                                                                                                                                                              |
 
 ## Traces
 
-| Surface | Status | Evidence |
-| --- | --- | --- |
-| Tempo trace by ID, search, tags, and TraceQL metrics APIs | Supported | [`tempo_differential::real_tempo_and_krabka_match_basic_by_id_and_search`](../crates/traces/tests/tempo_differential.rs), [`tempo_differential::real_tempo_and_krabka_match_traceql_metrics_query_range`](../crates/traces/tests/tempo_differential.rs) |
-| Grafana Tempo datasource and service graphs | Supported | [`tempo_differential::grafana_accepts_tempo_datasource_pointing_at_krabka`](../crates/traces/tests/tempo_differential.rs), [`grafana_e2e::grafana_e2e_full_surface`](../crates/traces/tests/grafana_e2e.rs) |
-| OTLP, Tempo push, Zipkin, and Jaeger ingest | Implemented | [`grafana_e2e::ingest_all_doors_decode_correctly`](../crates/traces/tests/grafana_e2e.rs) |
-| Jaeger query API | Out of scope | Jaeger is ingest-only; use Tempo or TraceQL for reads |
-| Distributor head or tail sampling | Out of scope | Apply sampling in an OpenTelemetry Collector before ingest |
+| Surface                                             | Status       | Evidence                                                                                                                                                                                                                                                   |
+| --------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tempo trace-by-ID, tag discovery, and search corpus | Supported    | [`tempo_differential::real_tempo_and_krabka_match_basic_by_id_and_search`](../crates/traces/tests/tempo_differential.rs)                                                                                                                                   |
+| TraceQL metrics count, rate, and grouped-rate cases | Supported    | [`tempo_differential::real_tempo_and_krabka_match_traceql_metrics_query_range`](../crates/traces/tests/tempo_differential.rs), [`tempo_differential::real_tempo_and_krabka_match_traceql_metrics_by_labels`](../crates/traces/tests/tempo_differential.rs) |
+| Grafana Tempo datasource                            | Implemented  | [`tempo_differential::grafana_accepts_tempo_datasource_pointing_at_krabka`](../crates/traces/tests/tempo_differential.rs), [`grafana_e2e::grafana_e2e_full_surface`](../crates/traces/tests/grafana_e2e.rs)                                                |
+| Service graph generation and Grafana query loop     | Implemented  | [`grafana_e2e::grafana_e2e_full_surface`](../crates/traces/tests/grafana_e2e.rs)                                                                                                                                                                           |
+| OTLP, Tempo push, Zipkin, and Jaeger ingest         | Implemented  | [`grafana_e2e::ingest_all_doors_decode_correctly`](../crates/traces/tests/grafana_e2e.rs)                                                                                                                                                                  |
+| Jaeger query API                                    | Out of scope | Jaeger is ingest-only; use Tempo or TraceQL for reads                                                                                                                                                                                                      |
+| Distributor head or tail sampling                   | Out of scope | Apply sampling in an OpenTelemetry Collector before ingest                                                                                                                                                                                                 |
 
 ## Profiles
 
-| Surface | Status | Evidence |
-| --- | --- | --- |
-| Legacy pprof ingest and render | Supported | [`pyroscope_differential::real_pyroscope_render_matches_krabka_after_identical_ingest`](../crates/profiles/tests/pyroscope_differential.rs), [`pyroscope_differential::real_pyroscope_legacy_ingest_formats_match_krabka`](../crates/profiles/tests/pyroscope_differential.rs) |
-| Pyroscope Connect labels, series, merge, diff, and profile stats | Supported | [`pyroscope_differential::real_pyroscope_series_and_stats_match_krabka_after_identical_ingest`](../crates/profiles/tests/pyroscope_differential.rs) |
-| Grafana Pyroscope datasource | Supported | [`pyroscope_differential::grafana_renders_krabka_profiles_end_to_end`](../crates/profiles/tests/pyroscope_differential.rs) |
-| OTLP profiles | Supported | [`pyroscope_differential::real_pyroscope_otlp_export_matches_krabka`](../crates/profiles/tests/pyroscope_differential.rs) |
-| Legacy `/pyroscope/labels` and `/pyroscope/label-values` | Out of scope | Grafana uses the Connect label methods |
+| Surface                                                              | Status       | Evidence                                                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Legacy pprof ingest and render cases                                 | Supported    | [`pyroscope_differential::real_pyroscope_render_matches_krabka_after_identical_ingest`](../crates/profiles/tests/pyroscope_differential.rs), [`pyroscope_differential::real_pyroscope_legacy_ingest_formats_match_krabka`](../crates/profiles/tests/pyroscope_differential.rs)                   |
+| Pyroscope Connect label, series, merge, diff, and profile-stat cases | Supported    | [`pyroscope_differential::real_pyroscope_render_matches_krabka_after_identical_ingest`](../crates/profiles/tests/pyroscope_differential.rs), [`pyroscope_differential::real_pyroscope_series_and_stats_match_krabka_after_identical_ingest`](../crates/profiles/tests/pyroscope_differential.rs) |
+| Grafana Pyroscope datasource                                         | Implemented  | [`pyroscope_differential::grafana_renders_krabka_profiles_end_to_end`](../crates/profiles/tests/pyroscope_differential.rs)                                                                                                                                                                       |
+| OTLP profile export and render case                                  | Supported    | [`pyroscope_differential::real_pyroscope_otlp_export_matches_krabka`](../crates/profiles/tests/pyroscope_differential.rs)                                                                                                                                                                        |
+| Speedscope legacy ingest                                             | Known gap    | [`pyroscope_differential::real_pyroscope_legacy_ingest_formats_match_krabka`](../crates/profiles/tests/pyroscope_differential.rs) records that Pyroscope 2.3.1 stores no series, but Krabka stores data.                                                                                         |
+| JFR legacy ingest                                                    | Known gap    | [`pyroscope_differential::real_pyroscope_legacy_ingest_formats_match_krabka`](../crates/profiles/tests/pyroscope_differential.rs) records Pyroscope 2.3.1 and Krabka structural behavior. A full value and label comparison remains open.                                                        |
+| Legacy `/pyroscope/labels` and `/pyroscope/label-values`             | Out of scope | Grafana uses the Connect label methods                                                                                                                                                                                                                                                           |
 
 ## Common contract
 
