@@ -65,9 +65,10 @@ over the policy in [`deny.toml`](deny.toml).
 
 ## Run
 
-The repository publishes one `linux/amd64` image that holds the five service
-binaries and `krabka-o11y-bootstrap`. It sets no entrypoint, so a deployment
-names the binary it runs. Use an immutable digest:
+The repository publishes a `linux/amd64` and `linux/arm64` image index for each
+release and for `latest`. The image holds the five service binaries and
+`krabka-o11y-bootstrap`. It sets no entrypoint, so a deployment names the
+binary it runs. Use an immutable digest:
 
 ```bash
 docker run --rm ghcr.io/krabka-io/krabka-o11y@sha256:<digest> \
@@ -78,6 +79,14 @@ Bazel builds the image from the same targets `bazel test //...` tests:
 
 ```bash
 bazel run //bazel/images/krabka:load     # loads krabka-o11y:dev into Docker
+```
+
+On an ARM64 host, including an Apple Silicon Mac running Docker Desktop, build
+and load a native image locally by selecting the Linux ARM64 platform
+explicitly:
+
+```
+bazel run --platforms=//:linux_arm64 //bazel/images/krabka:load
 ```
 
 Every signal names its stages with one vocabulary -- `distributor`,

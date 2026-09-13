@@ -1,121 +1,144 @@
-"""The krabka-o11y container image.
+"""The krabka-o11y application image.
 
-One image, six binaries, no entrypoint: the role is named by the command, the
-way `command: ["krabka-metrics", "--target=distributor"]` reads in //deploy.
-That is the artefact this repository already publishes and the one the
-`krabka-o11y-demo` repository pins, and splitting it per binary would buy
-smaller pulls at the cost of six digests to keep in step across a stack whose
-roles are deployed together.
-
-It is built here rather than from a `Dockerfile`, because a Dockerfile would be
-a second build of the same artefact. `cargo build --release` inside a `rust:`
-image is neither the Bazel build CI gates nor the Cargo build a developer runs:
-it resolves `protoc` through the `protoc-bin-vendored` fallback, links with
-whatever that image carries rather than the hermetic `@llvm` toolchain, and
-applies none of the annotations //MODULE.bazel puts on `aws-lc-sys`,
-`tikv-jemalloc-sys`, `zstd-sys` and `datafusion-common`. The bytes that shipped
-were never the bytes that passed a test. `oci_image` packages the
-`rust_binary` outputs themselves, so they are.
-
-What is lost with the Dockerfile is buildkit's SBOM and provenance
-attestations. `.github/workflows/image.yml` restores provenance over the pushed
-digest with `actions/attest-build-provenance`; there is no SBOM today.
+apko assembles locked Chainguard Wolfi bases for each CPU architecture.
+rules_img adds the Bazel-built binaries and owns local loading, release indexes
+and registry delivery. The same platform-aware manifest target is used for both
+architectures so their contents cannot drift.
 """
 
-load("@aspect_bazel_lib//lib:expand_template.bzl", "expand_template")
-load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load", "oci_push")
-load("@tar.bzl//tar:tar.bzl", "tar")
+load("@rules_apko//apko:defs.bzl", "apko_image")
+load("@rules_img//img:convert.bzl", "image_manifest_from_oci_layout")
+load("@rules_img//img:image.bzl", "image_index", "image_manifest")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("@rules_img//img:load.bzl", "image_load")
+load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
+load("@rules_img//img:push.bzl", "image_push")
 
 package(default_visibility = ["//visibility:public"])
 
-# The six binaries `cargo build` produces, under the names they are invoked by.
+config_setting(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+apko_image(
+    name = "base_oci",
+    config = "base.apko.yaml",
+    contents = "@o11y_base_lock//:contents",
+    tag = "krabka-o11y-base:amd64-locked",
+)
+
+apko_image(
+    name = "base_arm64_oci",
+    config = "base.arm64.apko.yaml",
+    contents = "@o11y_base_arm64_lock//:contents",
+    tag = "krabka-o11y-base:arm64-locked",
+)
+
+image_manifest_from_oci_layout(
+    name = "base",
+    src = ":base_oci",
+    architecture = "amd64",
+    layers = [GZIP_LAYER],
+    os = "linux",
+)
+
+image_manifest_from_oci_layout(
+    name = "base_arm64",
+    src = ":base_arm64_oci",
+    architecture = "arm64",
+    layers = [GZIP_LAYER],
+    os = "linux",
+)
+
+NONROOT = file_metadata(
+    gid = 65532,
+    mode = "0755",
+    uid = 65532,
+)
+
 BINARIES = {
-    "krabka-metrics": "//crates/metrics:krabka-metrics",
-    "krabka-metrics-service": "//crates/metrics-service:krabka-metrics-service",
-    "krabka-o11y-bootstrap": "//crates/observability:krabka-o11y-bootstrap",
-    "krabka-observability": "//crates/observability:krabka-observability",
-    "krabka-profiles": "//crates/profiles:krabka-profiles",
-    "krabka-traces": "//crates/traces:krabka-traces",
+    "/usr/local/bin/krabka-metrics": "//crates/metrics:krabka-metrics",
+    "/usr/local/bin/krabka-metrics-service": "//crates/metrics-service:krabka-metrics-service",
+    "/usr/local/bin/krabka-o11y-bootstrap": "//crates/observability:krabka-o11y-bootstrap",
+    "/usr/local/bin/krabka-observability": "//crates/observability:krabka-observability",
+    "/usr/local/bin/krabka-profiles": "//crates/profiles:krabka-profiles",
+    "/usr/local/bin/krabka-traces": "//crates/traces:krabka-traces",
 }
 
-# `time=0` on every entry, and no `mtime` anywhere: the layer has to be a
-# function of the binaries alone, or two builds of one commit produce two
-# digests and "pin the digest" stops meaning "pin the code".
-tar(
-    name = "layer",
-    srcs = BINARIES.values(),
-    mtree = [
-        "usr/local/bin uid=0 gid=0 mode=0755 time=0 type=dir",
-    ] + [
-        "usr/local/bin/{} uid=0 gid=0 mode=0755 time=0 type=file content=$(location {})".format(
-            name,
-            label,
-        )
-        for name, label in BINARIES.items()
-    ] + [
-        # `--data-root` and a `file://` object store land here. The image
-        # declares it so a deployment that forgets to mount a volume writes to
-        # a directory that exists and is writable by the runtime user, rather
-        # than failing on the first flush.
-        "var/lib/krabka uid=65532 gid=65532 mode=0755 time=0 type=dir",
-    ],
+image_layer(
+    name = "binaries_layer",
+    srcs = BINARIES,
+    default_metadata = NONROOT,
+    include_runfiles = False,
 )
 
-# `--stamp --embed_label=<sha>` fills the revision in; an unstamped build says
-# so rather than claiming a commit it was not built from.
-expand_template(
-    name = "labels",
-    out = "labels.txt",
-    stamp_substitutions = {"REVISION": "{{BUILD_EMBED_LABEL}}"},
-    substitutions = {"REVISION": "unstamped"},
-    template = [
-        "org.opencontainers.image.title=krabka-o11y",
-        "org.opencontainers.image.description=The krabka observability stack: metrics, traces, profiles and logs",
-        "org.opencontainers.image.source=https://github.com/krabka-io/krabka-o11y",
-        "org.opencontainers.image.url=https://github.com/krabka-io/krabka-o11y",
-        "org.opencontainers.image.licenses=Apache-2.0",
-        "org.opencontainers.image.revision=REVISION",
-    ],
-)
-
-oci_image(
+image_manifest(
     name = "image",
-    base = "@distroless_cc",
-    # Cleared, not left to the base. The `debug` variant's own entrypoint is
-    # `/busybox/sh`, so an inherited entrypoint would make every `command:` in
-    # a manifest a shell argument -- `krabka-metrics` would be read as a script
-    # to open, the container would exit 127, and a shell would be PID 1 in the
-    # cases where it did start.
+    base = select({
+        ":linux_arm64": ":base_arm64",
+        "//conditions:default": ":base",
+    }),
     entrypoint = [],
-    labels = ":labels",
-    tars = [":layer"],
-    # No entrypoint of our own either. Six binaries share the image and the
-    # deployment names the one it wants, so there is no honest default to pick;
-    # `docker run` with no command fails loudly rather than starting an
-    # arbitrary role.
-    #
-    # The consequence worth stating: whatever the deployment names becomes PID
-    # 1 directly, with no shell between it and the signal. Every one of the six
-    # installs a SIGTERM handler (see `shutdown_signal` in
-    # //crates/observability), which is what PID 1 has to do -- the kernel
-    # gives PID 1 no default terminate action, so an unhandled SIGTERM there is
-    # simply discarded and the container runs until the grace period expires
-    # and it is killed mid-flush.
+    labels = {
+        "org.opencontainers.image.description": "The krabka observability stack: metrics, traces, profiles and logs",
+        "org.opencontainers.image.licenses": "Apache-2.0",
+        "org.opencontainers.image.source": "https://github.com/krabka-io/krabka-o11y",
+        "org.opencontainers.image.title": "krabka-o11y",
+        "org.opencontainers.image.url": "https://github.com/krabka-io/krabka-o11y",
+    },
+    layers = [":binaries_layer"],
+    target_compatible_with = ["@platforms//os:linux"],
     user = "65532:65532",
-    workdir = "/var/lib/krabka",
+    working_dir = "/var/lib/krabka",
 )
 
-# `bazel run //bazel/images/krabka:load` puts it in the local daemon.
-oci_load(
+filegroup(
+    name = "image_manifest_blob",
+    srcs = [":image"],
+    output_group = "root_blob",
+)
+
+# This target is built only by a v* release workflow. The split transition
+# builds `image` once for each platform and writes one OCI image index.
+image_index(
+    name = "image_multiarch",
+    manifests = [":image"],
+    platforms = [
+        "//:linux_amd64",
+        "//:linux_arm64",
+    ],
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "image_multiarch_index_blob",
+    srcs = [":image_multiarch"],
+    output_group = "root_blob",
+    tags = ["manual"],
+)
+
+image_load(
     name = "load",
     image = ":image",
-    repo_tags = ["krabka-o11y:dev"],
+    tag = "krabka-o11y:dev",
 )
 
-# `bazel run //bazel/images/krabka:push -- --tag=<tag>`; see
-# //.github/workflows/image.yml for the tags a release carries.
-oci_push(
+image_push(
     name = "push",
     image = ":image",
-    repository = "ghcr.io/krabka-io/krabka-o11y",
+    registry = "ghcr.io",
+    repository = "krabka-io/krabka-o11y",
+    tags = ["manual"],
+)
+
+image_push(
+    name = "push_multiarch",
+    image = ":image_multiarch",
+    registry = "ghcr.io",
+    repository = "krabka-io/krabka-o11y",
+    tags = ["manual"],
 )
