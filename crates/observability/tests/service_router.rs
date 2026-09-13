@@ -164,7 +164,7 @@ async fn role_operations_routes_match_existing_behavior() {
             &format!("{name} /config"),
         );
         assert!(
-            text_body(response).await == "target: all\n",
+            text_body(response).await == "target: all\nauth_enabled: true\n",
             "{name} /config body"
         );
 

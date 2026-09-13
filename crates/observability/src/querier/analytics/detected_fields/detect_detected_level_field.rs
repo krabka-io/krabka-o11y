@@ -8,14 +8,16 @@ pub(crate) fn detect_detected_level_field(
     labels: &Labels,
     line: &str,
 ) {
-    if !should_insert_unknown_detected_level(labels) {
+    // The distributor writes the level it discovered at push time. An entry
+    // that reached a block without one is classified from its line here, the
+    // way the distributor would have, unless its stream carries a level label
+    // of its own.
+    let level = if let Some(level) = labels.get("detected_level") {
+        level.clone()
+    } else if should_insert_unknown_detected_level(labels) {
+        detect_log_level(line).unwrap_or("unknown").to_string()
+    } else {
         return;
-    }
-    let level = detect_log_level(line).unwrap_or("unknown");
-    add_generated_detected_field(
-        fields,
-        "detected_level",
-        level.to_string(),
-        DetectedFieldType::String,
-    );
+    };
+    add_generated_detected_field(fields, "detected_level", level, DetectedFieldType::String);
 }

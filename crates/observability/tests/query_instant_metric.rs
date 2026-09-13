@@ -55,15 +55,17 @@ async fn query_endpoint_returns_metric_query_as_loki_vector_json() {
     );
 }
 
+/// A synthetic vector sample is written in seconds, as every instant sample
+/// is. `time=20000000000` is twenty seconds in nanoseconds.
 #[tokio::test]
-async fn query_endpoint_returns_synthetic_vector_timestamps_as_loki_raw_nanoseconds() {
+async fn query_endpoint_returns_synthetic_vector_timestamps_in_seconds() {
     let state = fixture();
     let app = loki_router(state);
 
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=2%2Avector%283%29&time=20")
+                .uri("/loki/api/v1/query?query=2%2Avector%283%29&time=20000000000")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),

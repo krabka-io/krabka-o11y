@@ -8,7 +8,7 @@ use super::{
 
 pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
     let Some(source) = tail.source else {
-        let mut frame = json!({ "streams": [], "dropped_entries": [] });
+        let mut frame = json!({ "streams": [] });
         add_loki_tail_encoding_flags(&mut frame, &tail.encoding_flags);
         let _ = send_tail_frame(&mut socket, frame).await;
         return;
@@ -47,7 +47,7 @@ pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
                     if eligible > 0 {
                         let eligible_end = sent_records + eligible;
                         let frontier = tail.frontier.snapshot();
-                        let mut frame = execute_tail_query_with_frontier_and_deletes(
+                        let frame = execute_tail_query_with_frontier_and_deletes(
                             &tail.plan,
                             &records[sent_records..eligible_end],
                             &frontier,
@@ -55,7 +55,6 @@ pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
                             tail.encoding,
                         );
                         sent_records = eligible_end;
-                        frame["dropped_entries"] = json!([]);
                         let mut frame = apply_loki_tail_frame_limit(frame, tail.limit);
                         if !tail_frame_is_empty(&frame) {
                             add_loki_tail_encoding_flags(&mut frame, &tail.encoding_flags);

@@ -13,7 +13,6 @@ pub(crate) fn loki_instant_scalar_or_vector_response(
             "result": [timestamp, sample]
         })),
         ScalarVectorExpressionResult::Vector { sample, metric } => {
-            let timestamp = json!(timestamp_ns);
             let result = sample.map_or_else(Vec::new, |sample| {
                 vec![json!({
                     "metric": metric,

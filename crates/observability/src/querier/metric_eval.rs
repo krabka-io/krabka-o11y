@@ -1,6 +1,5 @@
 pub(crate) mod binary_arithmetic;
 pub(crate) mod binary_sets;
-pub(crate) mod execution;
 pub(crate) mod expression_parser;
 pub(crate) mod expressions;
 pub(crate) mod http_queries;

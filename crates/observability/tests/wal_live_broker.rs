@@ -338,7 +338,6 @@ async fn a_websocket_tail_on_a_served_listener_streams_the_live_wal() {
                     },
                     "values": [[timestamp, "api live websocket tail error"]],
                 }],
-                "dropped_entries": [],
             })
     );
 

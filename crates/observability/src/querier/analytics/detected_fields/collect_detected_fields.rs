@@ -1,11 +1,10 @@
 use super::{
     BTreeMap, DetectedFieldStats, DetectedFieldsParams, HeaderMap, HttpQueryError, QuerierState,
     QueryError, RequestSecurity, TenantErrorSurface, TimeRange, active_log_delete_filters,
-    authorized_tenant, clamp_query_lookback, current_unix_time_ns, detect_detected_level_field,
-    detect_json_fields, detect_logfmt_fields, detect_structured_metadata_fields,
-    is_deleted_log_entry, parse_query, plan_stream_query, read_planned_log_block,
-    validate_loki_volume_query_range_limit, validate_query_bytes_limit, validate_query_range_limit,
-    validate_query_series_limit, validate_query_string_bytes_limit,
+    authorized_tenant, clamp_query_lookback, current_unix_time_ns, detect_entry_fields,
+    is_deleted_log_entry, parse_query, plan_hot_tail_records, plan_stream_query,
+    read_planned_log_block, validate_loki_volume_query_range_limit, validate_query_bytes_limit,
+    validate_query_range_limit, validate_query_series_limit, validate_query_string_bytes_limit,
 };
 
 pub(crate) async fn collect_detected_fields(
@@ -83,11 +82,34 @@ pub(crate) async fn collect_detected_fields(
                 continue;
             }
             scanned_lines += 1;
-            detect_detected_level_field(&mut fields, labels, &row.line);
-            detect_structured_metadata_fields(&mut fields, &row.structured_metadata);
-            detect_json_fields(&mut fields, &row.line);
-            detect_logfmt_fields(&mut fields, &row.line);
+            detect_entry_fields(&mut fields, labels, &row.line, &row.structured_metadata);
         }
+    }
+
+    for record in plan_hot_tail_records(&state, &plan) {
+        if scanned_lines >= params.line_limit {
+            break;
+        }
+        if is_deleted_log_entry(
+            &delete_filters,
+            &record.labels,
+            &record.line,
+            &record.structured_metadata,
+            record.timestamp_ns,
+        ) || !plan.query.matches_with_fields(
+            &record.labels,
+            &record.line,
+            &record.structured_metadata,
+        ) {
+            continue;
+        }
+        scanned_lines += 1;
+        detect_entry_fields(
+            &mut fields,
+            &record.labels,
+            &record.line,
+            &record.structured_metadata,
+        );
     }
 
     Ok(fields)
