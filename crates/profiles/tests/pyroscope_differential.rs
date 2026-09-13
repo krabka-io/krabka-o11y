@@ -3000,18 +3000,16 @@ fn drain_sink_into_store(sink: &CapturingSink, store: &WalTailProfileStore) -> T
 /// profile in nanoseconds named `process_cpu`, whatever `?units=` says, and
 /// its counts are stored as the time they stand for.
 ///
-/// Two formats are deliberately absent, and neither is a silent skip:
+/// Two formats remain deliberate, measured exclusions against
+/// `grafana/pyroscope:2.3.1`:
 ///
-///   * **speedscope.** `grafana/pyroscope:2.2.1` answers a speedscope upload
-///     with 200 and stores nothing. No series appears under the application
-///     afterwards, so there is no upstream flamegraph to compare against.
-///     Krabka stores it, which is the more useful of the two behaviors. The
-///     divergence is that krabka has data where Pyroscope has none.
-///   * **jfr.** Pyroscope splits one JFR recording into a series per event
-///     type (a wall recording yields both `wall` and `process_cpu`, tagged
-///     `jfr_event`), while krabka decodes it into a single profile. That is a
-///     structural difference in the decoder rather than a value difference,
-///     and it is too large to hide behind a flamebearer comparison.
+///   * **speedscope.** Pyroscope answers a valid nanosecond speedscope upload
+///     with 200 and stores no series. Krabka stores it. Pyroscope also rejects
+///     the speedscope unit `samples` with 422.
+///   * **jfr.** Pyroscope splits the fixture into `wall` and `process_cpu`
+///     series tagged `jfr_event="wall"`. Krabka decodes both sample types into
+///     one input profile before the common sample-type split. A full value and
+///     label comparison belongs to the Pyroscope compatibility milestone.
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
 async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {

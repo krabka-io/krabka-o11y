@@ -71,32 +71,15 @@ const MIMIR_PORT: u16 = 9009;
 const SAMPLES_PER_BATCH: usize = 20_000;
 
 /// Queries in flight against one engine.
-const QUERY_CONCURRENCY: usize = 12;
-
-/// Corpus files Mimir cannot be asked about, and why.
 ///
-/// These are not Krabka divergences. Mimir 2.16.1 embeds an older Prometheus
-/// `PromQL` than the corpus was vendored from, and the syntax these files are
-/// about does not parse there at all -- every case in them would come back as a
-/// parse error against a Krabka answer, which says nothing about either engine's
-/// semantics. `diff_prometheus` runs all three against a Prometheus that does
-/// have them.
-const MIMIR_UNSUPPORTED_FILES: &[(&str, &str)] = &[
-    (
-        "duration_expression.test",
-        "Mimir 2.16.1 has no `promql-duration-expr`, so a duration written as an expression is a \
-         parse error there",
-    ),
-    (
-        "extended_vectors.test",
-        "Mimir 2.16.1 has no `promql-extended-range-selectors`, so `[3m] smoothed` and `[3m] \
-         anchored` are parse errors there",
-    ),
-];
+/// Mimir's monolithic query frontend applies its outstanding-request limit to
+/// the internal work a query fans out into. Serializing this correctness probe
+/// avoids load-shedding responses that are unrelated to query semantics.
+const QUERY_CONCURRENCY: usize = 1;
 
 /// Where Mimir disagrees with Krabka for reasons that are Mimir's own.
 ///
-/// Mimir 2.16.1 embeds a Prometheus older than the `v3.8.1` the corpus is
+/// Mimir 3.2.1 embeds a Prometheus older than the `v3.8.1` the corpus is
 /// vendored from, and every entry here is that gap rather than a Krabka bug:
 /// `diff_prometheus` runs the same cases against a Prometheus that has the
 /// behaviour and Krabka agrees with it there. Anything Krabka gets wrong
@@ -107,7 +90,7 @@ const MIMIR_UNSUPPORTED_FILES: &[(&str, &str)] = &[
 /// cannot quietly become a licence.
 const MIMIR_DIVERGENCES: &[KnownDivergence] = &[
     KnownDivergence {
-        reason: "Mimir 2.16.1 has no type-and-unit labels, so `__type__` and `__unit__` are ordinary \
+        reason: "Mimir 3.2.1 has no type-and-unit labels, so `__type__` and `__unit__` are ordinary \
              labels there and survive every operation. Krabka drops them where Prometheus v3.8 \
              drops them, which is what `diff_prometheus` confirms.",
         cases: &[
@@ -125,41 +108,7 @@ const MIMIR_DIVERGENCES: &[KnownDivergence] = &[
         ],
     },
     KnownDivergence {
-        reason: "`histogram_fraction` over a classic histogram's `_bucket` series returns an empty \
-             vector on Mimir 2.16.1. Prometheus v3.8 and Krabka both compute the fraction.",
-        cases: &[
-            "histograms.test:119",
-            "histograms.test:127",
-            "histograms.test:135",
-            "histograms.test:145",
-            "histograms.test:156",
-            "histograms.test:172",
-            "histograms.test:191",
-            "histograms.test:211",
-            "histograms.test:228",
-            "histograms.test:245",
-            "histograms.test:263",
-            "histograms.test:281",
-            "histograms.test:300",
-            "histograms.test:318",
-            "histograms.test:335",
-            "histograms.test:350",
-            "histograms.test:365",
-            "histograms.test:380",
-            "histograms.test:399",
-            "histograms.test:418",
-            "histograms.test:437",
-            "histograms.test:455",
-            "histograms.test:475",
-            "histograms.test:488",
-            "histograms.test:501",
-            "histograms.test:515",
-            "histograms.test:529",
-            "histograms.test:1084",
-        ],
-    },
-    KnownDivergence {
-        reason: "A native histogram carrying NaN observations is read differently: Mimir 2.16.1 \
+        reason: "A native histogram carrying NaN observations is read differently: Mimir 3.2.1 \
              answers a number where Prometheus v3.8 and Krabka answer NaN. Upstream changed how \
              `histogram_quantile` and `histogram_fraction` treat NaN buckets after the Prometheus \
              that Mimir embeds.",
@@ -172,7 +121,7 @@ const MIMIR_DIVERGENCES: &[KnownDivergence] = &[
         ],
     },
     KnownDivergence {
-        reason: "Mimir 2.16.1 omits the NaN-observation info annotations emitted by Prometheus \
+        reason: "Mimir 3.2.1 omits the NaN-observation info annotations emitted by Prometheus \
              v3.8 and Krabka; the query values are identical.",
         cases: &[
             "native_histograms.test:1506",
@@ -181,66 +130,56 @@ const MIMIR_DIVERGENCES: &[KnownDivergence] = &[
         ],
     },
     KnownDivergence {
-        reason: "The function does not exist in Mimir 2.16.1 at all: the query comes back as `parse \
-             error: unknown function`. `ts_of_first_over_time`, `ts_of_last_over_time` and \
-             `first_over_time` all arrived upstream after it.",
+        reason: "Mimir 3.2.1 serializes infinite results from finite overflow as `+Inf` and \
+             `-Inf`; Krabka preserves the lowercase `inf` spelling returned by its evaluator.",
+        cases: &["aggregators.test:659", "aggregators.test:662"],
+    },
+    KnownDivergence {
+        reason: "Mimir 3.2.1 loses a finite contribution when summing values around a cancelling \
+             `1e100` pair, while Prometheus v3.8 and Krabka retain it.",
+        cases: &["aggregators.test:695", "aggregators.test:698"],
+    },
+    KnownDivergence {
+        reason: "Mimir 3.2.1 accepts arithmetic duration expressions but does not accept `min` or \
+             `max` calls inside a range or offset duration. Prometheus v3.8 and Krabka do.",
         cases: &[
-            "functions.test:1324",
-            "functions.test:1327",
-            "functions.test:1346",
-            "functions.test:1349",
-            "functions.test:1618",
-            "name_label_dropping.test:47",
+            "duration_expression.test:170",
+            "duration_expression.test:173",
+            "duration_expression.test:176",
+            "duration_expression.test:203",
+            "duration_expression.test:206",
+            "duration_expression.test:209",
+            "duration_expression.test:212",
+            "duration_expression.test:215",
+            "duration_expression.test:218",
+            "duration_expression.test:221",
+            "duration_expression.test:224",
+            "duration_expression.test:227",
         ],
     },
     KnownDivergence {
-        reason: "Mimir 2.16.1 renders an empty native histogram with `buckets: []`, while \
-             Prometheus v3.8 and Krabka omit the empty field.",
+        reason: "Mimir 3.2.1 successfully evaluates this aggregation by `__name__`, while Krabka \
+             and Prometheus v3.8 report an execution error.",
+        cases: &["name_label_dropping.test:80"],
+    },
+    KnownDivergence {
+        reason: "For an anchored window whose left-edge sample is absent, Mimir 3.2.1 omits one \
+             series while Prometheus v3.8 and Krabka include it.",
+        cases: &["extended_vectors.test:321", "extended_vectors.test:344"],
+    },
+    KnownDivergence {
+        reason: "Mimir 3.2.1 classifies invalid uses of `smoothed` and `anchored` as internal \
+             errors, while Prometheus v3.8 and Krabka classify them as execution errors.",
         cases: &[
-            "functions.test:1075",
-            "functions.test:1078",
-            "functions.test:1081",
-            "functions.test:1606",
-            "native_histograms.test:5",
-            "native_histograms.test:989",
-            "native_histograms.test:993",
-            "native_histograms.test:997",
-            "native_histograms.test:1001",
-            "native_histograms.test:1013",
-            "subquery.test:146",
-            "subquery.test:151",
+            "extended_vectors.test:364",
+            "extended_vectors.test:367",
+            "extended_vectors.test:370",
+            "extended_vectors.test:373",
+            "extended_vectors.test:376",
+            "extended_vectors.test:379",
+            "extended_vectors.test:386",
+            "extended_vectors.test:389",
         ],
-    },
-    KnownDivergence {
-        reason: "An aggregation whose parameter is an expression rather than a literal -- \
-             `topk(scalar(foo), ...)` -- is evaluated once on Mimir 2.16.1 and per step on \
-             Prometheus v3.8 and Krabka.",
-        cases: &[
-            "aggregators.test:363",
-            "aggregators.test:366",
-            "aggregators.test:560",
-        ],
-    },
-    KnownDivergence {
-        reason: "A parenthesised string literal fails on Mimir 2.16.1 with `unexpected result in \
-             StepInvariantExpr evaluation`. Prometheus v3.8 and Krabka answer with the string.",
-        cases: &["literals.test:61", "literals.test:70"],
-    },
-    KnownDivergence {
-        reason: "`info()` joins a different `target_info` sample on Mimir 2.16.1: instance `b` comes \
-             back `state=\"running\"` where Prometheus v3.8 and Krabka give `state=\"stopped\"`.",
-        cases: &["info.test:142", "info.test:147"],
-    },
-    KnownDivergence {
-        reason: "`min_over_time` over a subquery of `topk` makes Mimir 2.16.1 panic -- the query \
-             answers `unexpected error: runtime error: index out of range [0] with length 0`. \
-             Prometheus v3.8 and Krabka answer it.",
-        cases: &["subquery.test:158"],
-    },
-    KnownDivergence {
-        reason: "`irate` over a window whose newest sample is NaN answers 0.016667 on Mimir 2.16.1, \
-             where Prometheus v3.8 and Krabka both answer NaN.",
-        cases: &["functions.test:241"],
     },
 ];
 
@@ -250,7 +189,7 @@ const MIMIR_DIVERGENCES: &[KnownDivergence] = &[
 /// older engine still behaves the way Krabka does, the case agrees here and
 /// would otherwise be reported as a divergence that had been fixed.
 const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[KnownDivergence {
-    reason: "Mimir 2.16.1 does not return the warning and info annotations added by newer \
+    reason: "Mimir 3.2.1 does not return the warning and info annotations added by newer \
              Prometheus versions, so these annotation-only upstream divergences are absent.",
     cases: &[
         "functions.test:122",
@@ -267,6 +206,7 @@ const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[KnownDivergence {
         "functions.test:370",
         "histograms.test:1016",
         "histograms.test:1028",
+        "histograms.test:156",
         "histograms.test:545",
         "histograms.test:702",
         "histograms.test:712",
@@ -291,6 +231,7 @@ const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[KnownDivergence {
         "histograms.test:983",
         "histograms.test:992",
         "name_label_dropping.test:39",
+        "name_label_dropping.test:85",
         "name_label_dropping.test:92",
         "operators.test:117",
         "operators.test:121",
@@ -383,13 +324,7 @@ limits:
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
-    let corpus = promql_corpus::promql_corpus()
-        .without_files(MIMIR_UNSUPPORTED_FILES)
-        .without_custom_bucket_histograms(
-            "Mimir 2.16.1's distributor refuses a native histogram with schema -53 outright -- \
-             `err-mimir-invalid-native-histogram-schema` -- so a custom-bucket histogram cannot be \
-             seeded into it at all. `diff_prometheus` covers these cases.",
-        );
+    let corpus = promql_corpus::promql_corpus();
     let client = reqwest::Client::new();
 
     // Real Mimir in monolithic mode.
@@ -520,7 +455,7 @@ async fn start_mimir() -> TestResult<testcontainers::ContainerAsync<GenericImage
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/mimir".to_string(), tag)
             .with_exposed_port(MIMIR_PORT.tcp())
-            // Mimir 2.16.x logs go-kit lines to stderr; the HTTP server announces
+            // Mimir logs go-kit lines to stderr; the HTTP server announces
             // itself with "server listening on addresses" once the port is up. (It
             // never logs the literal "Starting Mimir" — its banner is "Starting
             // application".) Readiness of the ingester ring is then polled via the
@@ -547,6 +482,7 @@ async fn start_mimir() -> TestResult<testcontainers::ContainerAsync<GenericImage
                 // upstream, and Mimir gates them per tenant rather than by the
                 // `--enable-feature` flag Prometheus uses.
                 "-query-frontend.enabled-promql-experimental-functions=all",
+                "-query-frontend.enabled-promql-extended-range-selectors=all",
             ])
             .start(),
     )

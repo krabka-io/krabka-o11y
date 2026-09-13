@@ -161,74 +161,6 @@ pub struct PromqlCorpus {
 }
 
 impl PromqlCorpus {
-    /// The corpus with the named files' cases moved to the skip list.
-    ///
-    /// This is how a suite says that one upstream cannot be asked about a file
-    /// at all -- an older `PromQL` that cannot parse the syntax the file is
-    /// about, say. The samples stay seeded, because a file's series are not
-    /// only its own.
-    #[must_use]
-    pub fn without_files(mut self, files: &[(&str, &str)]) -> Self {
-        let mut kept = Vec::with_capacity(self.cases.len());
-        for case in self.cases {
-            match files
-                .iter()
-                .find(|(file, _)| case.name.starts_with(&format!("{file}:")))
-            {
-                Some((_, reason)) => self.skipped.push(SkippedCase {
-                    name: case.name,
-                    promql: case.promql,
-                    reason: (*reason).to_string(),
-                }),
-                None => kept.push(case),
-            }
-        }
-        self.cases = kept;
-        self
-    }
-
-    /// The corpus with every custom-bucket histogram, and every case that
-    /// names a metric carrying one, taken out.
-    ///
-    /// A `remote_write` receiver that refuses schema `-53` cannot be seeded
-    /// with the corpus at all, so the samples have to go; the cases that read
-    /// them would then compare two empty answers, which is worse than not
-    /// running them, so they go too. A metric is matched by its name appearing
-    /// in the query text as a whole token, which errs towards skipping a case
-    /// that would have been fine.
-    #[must_use]
-    pub fn without_custom_bucket_histograms(mut self, reason: &str) -> Self {
-        let mut dropped: BTreeSet<String> = BTreeSet::new();
-        self.series.retain(|series| {
-            if !series
-                .histograms
-                .iter()
-                .any(|(_, histogram)| histogram.is_nhcb())
-            {
-                return true;
-            }
-            if let Some((_, name)) = series.labels.iter().find(|(name, _)| name == "__name__") {
-                dropped.insert(name.clone());
-            }
-            false
-        });
-
-        let mut kept = Vec::with_capacity(self.cases.len());
-        for case in self.cases {
-            if dropped.iter().any(|name| names_metric(&case.promql, name)) {
-                self.skipped.push(SkippedCase {
-                    name: case.name,
-                    promql: case.promql,
-                    reason: reason.to_string(),
-                });
-            } else {
-                kept.push(case);
-            }
-        }
-        self.cases = kept;
-        self
-    }
-
     /// Total seeded samples, floats and histograms together.
     #[must_use]
     pub fn sample_count(&self) -> usize {
@@ -613,20 +545,6 @@ fn case_end_ms(kind: QueryKind) -> i64 {
         QueryKind::Instant { time } => time,
         QueryKind::Range { end, .. } => end,
     }
-}
-
-/// Whether the expression uses `name` as a metric name rather than as part of
-/// a longer one.
-///
-/// `metric` appears inside `some_metric`, and a plain substring test would take
-/// every case about the second for a case about the first.
-fn names_metric(expr: &str, name: &str) -> bool {
-    let is_name_char = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b':';
-    expr.match_indices(name).any(|(at, _)| {
-        let before = at.checked_sub(1).map(|index| expr.as_bytes()[index]);
-        let after = expr.as_bytes().get(at + name.len()).copied();
-        !before.is_some_and(is_name_char) && !after.is_some_and(is_name_char)
-    })
 }
 
 /// Whether the expression carries an `@` whose argument is a literal timestamp.

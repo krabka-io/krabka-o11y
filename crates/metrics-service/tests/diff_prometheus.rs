@@ -44,8 +44,7 @@ use tokio::sync::oneshot;
 #[path = "../../metrics/tests/support/diff_corpus.rs"]
 mod diff_corpus;
 
-// `without_files` belongs to `diff_mimir`, which has an upstream that cannot be
-// asked about every file; this suite runs the corpus whole.
+// The two Docker-backed PromQL suites share this corpus support module.
 #[allow(dead_code)]
 #[path = "support/promql_corpus.rs"]
 mod promql_corpus;

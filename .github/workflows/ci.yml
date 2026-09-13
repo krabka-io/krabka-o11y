@@ -266,6 +266,8 @@ jobs:
       - run: tools/fuzz-corpus.py --check
       - run: tools/route-inventory.py --self-test
       - run: tools/route-inventory.py --check
+      - run: tools/upstream-surface.py --self-test
+      - run: tools/upstream-surface.py --check
       # //fuzz is a workspace of its own, so it repeats the sibling pins from
       # //Cargo.toml. sync-siblings.yml bumps one copy and knows nothing about
       # the other. This fails on the drift.
@@ -511,7 +513,9 @@ jobs:
           # budget is 60 minutes for a differential run, not the ingest of ten
           # thousand series. The `scale` job below is theirs.
           all() {
-            bazel query 'attr(tags, "docker", //crates/...) except attr(tags, "scale", //crates/...)'
+            suites='attr(tags, "docker", //crates/...) except attr(tags, "scale", //crates/...)'
+            versions='attr(name, ".*_version_test", //bazel/images:*)'
+            bazel query "(${suites}) union ${versions}"
           }
 
           event="${{ github.event_name }}"
