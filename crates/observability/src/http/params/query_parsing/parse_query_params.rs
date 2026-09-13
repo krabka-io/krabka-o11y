@@ -47,7 +47,12 @@ pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams,
                 // range as ten-digit nanoseconds, which its querier parses as
                 // seconds again.
                 if (1_000_000_000..10_000_000_000).contains(&timestamp) {
-                    timestamp *= 1_000_000_000;
+                    timestamp = timestamp.checked_mul(1_000_000_000).ok_or_else(|| {
+                        HttpQueryError::InvalidTimestampQueryParameter {
+                            name: "time",
+                            value: value.clone(),
+                        }
+                    })?;
                 }
                 time = Some(timestamp);
             }

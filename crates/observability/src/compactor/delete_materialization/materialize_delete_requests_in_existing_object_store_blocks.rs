@@ -7,11 +7,13 @@ use super::{
     read_tenant_log_index_shard_ranges_from_object_store,
     write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shard_to_object_store,
 };
+use crate::compaction_metrics::CompactionMetrics;
 
 pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     delete_requests: &SharedLogDeleteRequests,
+    metrics: &CompactionMetrics,
 ) -> Result<(), CompactorRunError> {
     for tenant in active_log_delete_tenants(delete_requests)? {
         let mut materialized_blocks: BTreeMap<String, Option<BlockDescriptor>> = BTreeMap::new();
@@ -51,7 +53,7 @@ pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
         {
             Ok(shard_ranges) => shard_ranges,
             Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => {
-                delete_emptied_block_objects(store, prefix, &materialized_blocks).await;
+                delete_emptied_block_objects(store, prefix, &materialized_blocks, metrics).await;
                 continue;
             }
             Err(error) => return Err(error.into()),
@@ -89,7 +91,7 @@ pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
         // descriptor names any more is unreachable and can go. A block the
         // delete requests emptied is exactly that: the manifest rewrite above
         // dropped its descriptor, and nothing else names the object.
-        delete_emptied_block_objects(store, prefix, &materialized_blocks).await;
+        delete_emptied_block_objects(store, prefix, &materialized_blocks, metrics).await;
     }
     Ok(())
 }
@@ -104,6 +106,7 @@ async fn delete_emptied_block_objects(
     store: &dyn ObjectStore,
     prefix: &ObjectPath,
     materialized_blocks: &BTreeMap<String, Option<BlockDescriptor>>,
+    metrics: &CompactionMetrics,
 ) {
     let deletions: Vec<BlockDeletion> = materialized_blocks
         .iter()
@@ -114,6 +117,11 @@ async fn delete_emptied_block_objects(
         return;
     }
     let report = delete_blocks(store, &deletions).await;
+    metrics.record_deleted(
+        report.blocks_deleted as u64,
+        report.sidecars_deleted as u64,
+        report.failures.len() as u64,
+    );
     for failure in &report.failures {
         tracing::warn!(
             object = %failure.failed_key,

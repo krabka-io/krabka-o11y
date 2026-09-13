@@ -89,6 +89,7 @@ pub async fn run_compactor_until_shutdown(
             &prefix,
             &delete_requests,
             &mut tenant_indexes,
+            &compaction_metrics,
         )
         .await
         {

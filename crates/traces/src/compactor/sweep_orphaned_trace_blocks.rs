@@ -1,3 +1,5 @@
+use object_store::path::Path;
+
 use super::{
     Arc, BTreeSet, LifecycleError, ObjectStore, OrphanSweepStats, SystemTime,
     TRACE_BLOCK_OBJECT_PREFIX, Time, TraceIndex, list_index_object_keys, prefixed_object_key,
@@ -42,6 +44,10 @@ pub async fn sweep_orphaned_trace_blocks(
         .into_iter()
         .map(|candidate| candidate.object_key)
         .collect();
-    live_keys.extend(list_index_object_keys(store, trace_index_key).await?);
+    let index_key = trace_index_key.trim_matches('/');
+    let index_root = index_key.strip_suffix(".json").unwrap_or(index_key);
+    if Path::from(index_root).prefix_matches(&Path::from(prefix.as_str())) {
+        live_keys.extend(list_index_object_keys(store, trace_index_key).await?);
+    }
     reconcile_orphans(store, &prefix, &live_keys, grace, now).await
 }

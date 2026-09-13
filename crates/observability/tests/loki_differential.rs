@@ -134,6 +134,12 @@ const OVERSIZED_END_NS: &str = "2595601000000000";
 /// measured on one side's own storage, clock or build.
 const LOKI_KNOWN_DIVERGENCE: &[Divergence] = &[
     Divergence {
+        case: "query_forwarded_time_overflow",
+        reason: "Loki accepts a decimal instant whose frontend-to-querier rescaling exceeds \
+                 signed 64-bit nanoseconds. Krabka returns 400 instead of overflowing the \
+                 timestamp used by its query engine.",
+    },
+    Divergence {
         case: "instant_selector_api_stream",
         reason: "Loki refuses a log selector on `/query` outright: 400, \"log queries are not \
                  supported as an instant query type\". Krabka answers it, with an empty stream \
@@ -1710,6 +1716,8 @@ fn query_parameter_cases(timeline: &Timeline) -> Vec<Case> {
             .raw_query("query=vector%281%29&time=1"),
         Case::get("query_zero_padded_single_digit_time", "/loki/api/v1/query")
             .raw_query("query=vector%281%29&time=01"),
+        Case::get("query_forwarded_time_overflow", "/loki/api/v1/query")
+            .raw_query("query=vector%281%29&time=9.223372037"),
         Case::get("query_vector_at_corpus_time", "/loki/api/v1/query").params([
             ("query", "vector(1)".to_string()),
             ("time", timeline.at(60).to_string()),
