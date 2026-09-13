@@ -1,6 +1,7 @@
 use super::{
     DecodedMetadata, DecodedSample, DecodedSeries, ExemplarPolicy, KeyValue, NumberDataPoint,
-    OtlpError, exemplars_from_number_point, labels, nanos_to_millis, number_value,
+    OtlpError, TranslationStrategy, exemplars_from_number_point, labels, nanos_to_millis,
+    number_value,
 };
 
 pub(crate) fn scalar_series(
@@ -9,15 +10,16 @@ pub(crate) fn scalar_series(
     resource_attributes: &[KeyValue],
     metadata: Option<DecodedMetadata>,
     exemplar_policy: ExemplarPolicy,
+    strategy: TranslationStrategy,
 ) -> Result<DecodedSeries, OtlpError> {
     let value = number_value(point)
         .ok_or_else(|| OtlpError::Invalid(name.into(), "missing number datapoint value".into()))?;
     let exemplars = match exemplar_policy {
-        ExemplarPolicy::Keep => exemplars_from_number_point(point),
+        ExemplarPolicy::Keep => exemplars_from_number_point(point, strategy),
         ExemplarPolicy::Drop => Vec::new(),
     };
     Ok(DecodedSeries {
-        labels: labels(name, resource_attributes, &point.attributes, None),
+        labels: labels(name, resource_attributes, &point.attributes, None, strategy),
         samples: vec![DecodedSample::with_start_timestamp(
             nanos_to_millis(point.time_unix_nano),
             value,

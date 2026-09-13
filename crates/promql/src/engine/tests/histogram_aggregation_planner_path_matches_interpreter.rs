@@ -16,7 +16,7 @@ use super::*;
 /// - `count`/`group` count every sample regardless of type;
 /// - `min`/`max`/`stddev`/`stdvar`/`topk`/`bottomk`/`quantile` ignore and drop
 ///   histogram samples, and reduce only the floats;
-/// - `count_values` formats a histogram value as its JSON label value.
+/// - `count_values` formats a histogram value as Prometheus bucket notation.
 #[tokio::test]
 pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
     use crate::{DurationExprContext, parse_promql_with_duration_context};
@@ -102,7 +102,7 @@ pub(crate) async fn histogram_aggregation_planner_path_matches_interpreter() {
         ("topk by (g) (1, m)", 300_000),
         ("bottomk by (g) (1, m)", 300_000),
         ("quantile by (g) (0.5, m)", 300_000),
-        // count_values formats histogram values as JSON label values.
+        // count_values formats histogram values as Prometheus bucket notation.
         ("count_values by (g) (\"v\", m)", 300_000),
     ];
 

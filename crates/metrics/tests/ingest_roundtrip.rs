@@ -73,7 +73,7 @@ async fn remote_write_v1_lands_as_block() {
         .await
         .expect("push response");
 
-    assert!(response.status() == StatusCode::NO_CONTENT);
+    assert!(response.status() == StatusCode::OK);
 
     let wal_record = inspect_wal_record(&bootstrap).await;
     let fingerprint = wal_record.series_fingerprint();

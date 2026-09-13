@@ -2,8 +2,8 @@
 use super::double_exponential_smoothing_sample_from_series;
 use super::{
     ExtendedSelectorModifier, Labels, OuterRangeFn, RangeSeries, SampleValue, Time,
-    deriv_sample_from_series, instant_delta_sample_from_series, labels_without_metric_name,
-    over_time_sample_from_series, predict_linear_sample_from_series,
+    deriv_sample_from_series, instant_delta_sample_from_series, labels_without_label,
+    labels_without_metric_name, over_time_sample_from_series, predict_linear_sample_from_series,
     quantile_over_time_sample_from_series, range_function_sample_from_series,
 };
 
@@ -24,14 +24,16 @@ pub(crate) fn outer_range_sample_from_series(
     modifier: Option<ExtendedSelectorModifier>,
     eval_ms: i64,
 ) -> Option<(Labels, SampleValue)> {
+    let drop_range_name =
+        |labels: &Labels| labels_without_label(&labels_without_metric_name(labels), "__name__");
     match outer {
         OuterRangeFn::Range(kind) => {
             range_function_sample_from_series(series, range_end_ms, range, kind, modifier)
-                .map(|value| (labels_without_metric_name(&series.labels), value))
+                .map(|value| (drop_range_name(&series.labels), value))
         }
         OuterRangeFn::InstantDelta(kind) => {
             instant_delta_sample_from_series(series, range_end_ms, range, kind)
-                .map(|value| (labels_without_metric_name(&series.labels), value))
+                .map(|value| (drop_range_name(&series.labels), value))
         }
         OuterRangeFn::Deriv => deriv_sample_from_series(series, range_end_ms, range).map(|value| {
             (

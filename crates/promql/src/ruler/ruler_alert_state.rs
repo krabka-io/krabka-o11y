@@ -1,7 +1,7 @@
 use super::{AlertStateKey, BTreeMap, RulerAlertStateRecord};
 
 /// Pending/firing alert state for ruler evaluations.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RulerAlertState {
     pub(crate) active_since_ms: BTreeMap<AlertStateKey, i64>,
     /// Wall-clock deadline for each alert instance that has reached the firing

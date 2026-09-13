@@ -14,6 +14,15 @@ use crate::{
 };
 
 impl InMemoryMetricStore {
+    /// Removes every queryable value owned by `tenant`.
+    pub fn delete_tenant(&mut self, tenant: &str) {
+        self.floats.remove(tenant);
+        self.hists.remove(tenant);
+        self.exemplars.remove(tenant);
+        self.metadata.remove(tenant);
+        self.blocks.remove(tenant);
+    }
+
     /// Appends a float sample.
     ///
     /// `labels` is taken as `impl Into<Arc<Labels>>` so a caller that already

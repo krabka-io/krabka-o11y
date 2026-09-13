@@ -14,6 +14,7 @@ tokio::task_local! {
     pub(crate) static ANNOTATIONS: RefCell<Annotations>;
 }
 
+mod annotation_source;
 mod bad_bucket_label_warning;
 mod emit_info;
 mod emit_warning;
@@ -25,7 +26,7 @@ mod incompatible_types_in_binop_info;
 mod invalid_quantile_warning;
 mod invalid_ratio_warning;
 mod is_valid_quantile;
-mod maybe_with_metric_name;
+mod metric_might_not_be_counter_info;
 mod mismatched_custom_buckets_info;
 mod mixed_classic_native_warning;
 mod mixed_exponential_custom_warning;
@@ -38,6 +39,7 @@ mod native_histogram_quantile_nan_result_info;
 mod native_histogram_quantile_nan_skew_info;
 mod warn_mixed_histograms;
 
+pub(super) use annotation_source::{ANNOTATION_SOURCE, with_source_position};
 pub(super) use bad_bucket_label_warning::bad_bucket_label_warning;
 pub(super) use emit_info::emit_info;
 pub(super) use emit_warning::emit_warning;
@@ -50,7 +52,9 @@ pub(super) use invalid_quantile_warning::invalid_quantile_warning;
 #[cfg(feature = "experimental-functions")]
 pub(super) use invalid_ratio_warning::invalid_ratio_warning;
 pub(super) use is_valid_quantile::is_valid_quantile;
-use maybe_with_metric_name::maybe_with_metric_name;
+pub(super) use metric_might_not_be_counter_info::{
+    emit_metric_might_not_be_counter_info, metric_might_not_be_counter_info,
+};
 pub(super) use mismatched_custom_buckets_info::mismatched_custom_buckets_info;
 use mixed_classic_native_warning::mixed_classic_native_warning;
 pub(super) use mixed_exponential_custom_warning::mixed_exponential_custom_warning;

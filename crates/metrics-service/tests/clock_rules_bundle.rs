@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Drives the shipped KFC-8 clock rule bundle through the ruler it ships for.
 //!
 //! Every assertion here comes from an evaluation. The suite loads the bundle

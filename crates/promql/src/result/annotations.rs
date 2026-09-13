@@ -4,8 +4,7 @@
 /// `PromQLWarning`-class messages go into [`Annotations::warnings`], and
 /// `PromQLInfo`-class messages go into [`Annotations::infos`]. The engine
 /// removes duplicate messages and keeps the exact Prometheus annotation text.
-/// The text has no trailing position suffix, because Krabka does not track that
-/// suffix through evaluation.
+/// Each engine annotation includes the original expression source position.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct Annotations {
     /// `PromQL warning:`-class annotations, in first-seen order.

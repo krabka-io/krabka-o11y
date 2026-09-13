@@ -83,4 +83,15 @@ impl AlertmanagerSink for RulerAlertmanagerSink {
             Self::Noop(sink) => sink.dispatch_alerts(alerts).await,
         }
     }
+
+    async fn dispatch_alerts_for_tenant(
+        &self,
+        tenant: &krabka_blockstore::TenantId,
+        alerts: Vec<krabka_promql::AlertmanagerAlert>,
+    ) -> Result<(), RulerWalError> {
+        match self {
+            Self::Http(sink) => sink.dispatch_alerts_for_tenant(tenant, alerts).await,
+            Self::Noop(sink) => sink.dispatch_alerts_for_tenant(tenant, alerts).await,
+        }
+    }
 }

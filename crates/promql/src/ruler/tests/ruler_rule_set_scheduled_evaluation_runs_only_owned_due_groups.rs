@@ -95,3 +95,65 @@ rules:
     }
     assert2::assert!(wal_sink.records().len() == expected_groups.len());
 }
+
+#[tokio::test]
+async fn replayed_group_state_prevents_duplicate_output_after_replica_failover() {
+    let group: serde_yaml::Value = serde_yaml::from_str(
+        r"
+name: availability
+interval: 1m
+rules:
+  - record: job:up
+    expr: up
+",
+    )
+    .expect("recording group yaml");
+    let rules = BTreeMap::from([(
+        "team-a".to_string(),
+        BTreeMap::from([("availability".to_string(), group)]),
+    )]);
+    let mut store = InMemoryMetricStore::new();
+    store.push_float("tenant-a", labels("up", "api"), 120_000, 1.0);
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    let tenant = tenant_id("tenant-a");
+    let shard = super::super::RulerShard::new(1, 1).expect("ruler shard");
+
+    let first_wal = RecordingSink::default();
+    let first_state_sink = RecordingRulerStateSink::default();
+    let mut first_group_state = super::super::RulerGroupState::default();
+    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
+        &engine,
+        (
+            &first_wal,
+            &RecordingAlertmanagerSink::default(),
+            &first_state_sink,
+        ),
+        &mut super::super::RulerAlertState::default(),
+        &tenant,
+        &rules,
+        (&mut first_group_state, shard, 120_000),
+    )
+    .await
+    .expect("first replica evaluation");
+
+    let mut replacement_group_state = super::super::RulerGroupState::default();
+    replacement_group_state.apply_records(first_state_sink.group_records());
+    let replacement_wal = RecordingSink::default();
+    super::super::evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval(
+        &engine,
+        (
+            &replacement_wal,
+            &RecordingAlertmanagerSink::default(),
+            &RecordingRulerStateSink::default(),
+        ),
+        &mut super::super::RulerAlertState::default(),
+        &tenant,
+        &rules,
+        (&mut replacement_group_state, shard, 120_000),
+    )
+    .await
+    .expect("replacement replica evaluation");
+
+    assert2::assert!(first_wal.records().len() == 1);
+    assert2::assert!(replacement_wal.records().is_empty());
+}

@@ -4431,6 +4431,7 @@ dependencies = [
  "assert2",
  "async-trait",
  "axum",
+ "base64 0.23.1",
  "datafusion",
  "datatest-stable",
  "futures",

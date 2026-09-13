@@ -7,4 +7,5 @@ pub(crate) struct HistogramExtrapolation<'a> {
     pub(crate) range_end_ms: i64,
     pub(crate) range: Time,
     pub(crate) kind: RangeFn,
+    pub(crate) duration_to_zero: Option<f64>,
 }

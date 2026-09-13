@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{
     BTreeMap, MetricStore, PrometheusApiState, PromqlError, RuleRenderOptions, TenantId, TimeExt,
     Value, json, prometheus_rules_json, rfc3339_time_string, yaml_duration, yaml_string,
@@ -9,10 +11,19 @@ pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
     tenant: &TenantId,
     rules: BTreeMap<String, BTreeMap<String, serde_yaml::Value>>,
     options: RuleRenderOptions,
-) -> Result<Vec<Value>, PromqlError> {
+    rule_names: &BTreeSet<String>,
+    rule_groups: &BTreeSet<String>,
+    files: &BTreeSet<String>,
+) -> Result<Vec<(String, String, Value)>, PromqlError> {
     let mut groups = Vec::new();
     for (namespace, namespace_groups) in rules {
+        if !files.is_empty() && !files.contains(&namespace) {
+            continue;
+        }
         for (stored_group_name, group) in namespace_groups {
+            if !rule_groups.is_empty() && !rule_groups.contains(&stored_group_name) {
+                continue;
+            }
             let rules = prometheus_rules_json(
                 state,
                 tenant,
@@ -20,6 +31,7 @@ pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
                 &stored_group_name,
                 &group,
                 options,
+                rule_names,
             )
             .await?;
             if rules.is_empty() {
@@ -30,16 +42,16 @@ pub(crate) async fn prometheus_rule_groups_json<S: MetricStore>(
             let last_evaluation = state
                 .ruler_group_last_eval_ms(tenant.as_str(), &namespace, &stored_group_name)
                 .map_or_else(|| zero_evaluation_time().to_string(), rfc3339_time_string);
-            groups.push(json!({
+            let value = json!({
                 "name": group_name,
                 "file": namespace,
                 "interval": yaml_duration(&group, "interval").secs_i64(),
                 "lastEvaluation": last_evaluation,
                 "evaluationTime": status.as_ref().map_or(0.0, |status| status.evaluation_time_seconds),
-                "lastError": status.map_or_else(String::new, |status| status.last_error),
-                "limit": 0,
+                "sourceTenants": [],
                 "rules": rules,
-            }));
+            });
+            groups.push((namespace.clone(), stored_group_name, value));
         }
     }
     Ok(groups)

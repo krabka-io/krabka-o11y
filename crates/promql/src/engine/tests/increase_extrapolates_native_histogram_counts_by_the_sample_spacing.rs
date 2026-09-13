@@ -58,11 +58,11 @@ pub(crate) async fn increase_extrapolates_native_histogram_counts_by_the_sample_
     for (query, want) in [
         // 20s to the range end clamps to half a 10s spacing; 10s to the start
         // does not.
-        ("increase(gh_ends_short[1m])", 45.0),
+        ("increase(gh_ends_short[1m])", 35.0),
         // The mirror.
         ("increase(gh_starts_late[1m])", 35.0),
         // 11.05s to the end: over 1.1x the spacing, under the spacing plus 1.1.
-        ("increase(gh_thr_edge[1m])", 30.0),
+        ("increase(gh_thr_edge[1m])", 25.0),
     ] {
         let result = engine
             .query_instant(&tenant_id("tenant-a"), query, 100_000)

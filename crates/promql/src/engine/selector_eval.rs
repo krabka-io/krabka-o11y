@@ -1,13 +1,17 @@
 use std::collections::BTreeMap;
 
 use krabka_blockstore::SeriesFingerprint;
+use krabka_metrics::{NativeHistogram, ResetHint};
 use krabka_units::prelude::*;
 use promql_parser::parser::{Expr, MatrixSelector, SubqueryExpr, VectorSelector};
 
 use super::{
-    AtModifierBounds, PromqlEngine, RangeEval,
+    AtModifierBounds, PromqlEngine, RangeEval, current_at_modifier_bounds,
+    histogram::native_histogram_detect_reset,
+    histogram_stats_enabled,
     planner_support::validate_extended_selector_modifier,
     range_functions::{align_subquery_start, instant_smoothed_boundary_value},
+    row_cache::HistogramRow,
     selector::{apply_selector_time_modifier, label_matcher_sets, selector_duration},
 };
 use crate::{
@@ -32,7 +36,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             time_ms,
             selector.at.as_ref(),
             selector.offset.as_ref(),
-            None,
+            current_at_modifier_bounds(),
         )?;
         let start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
         let matcher_sets = label_matcher_sets(selector);
@@ -42,9 +46,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         let rows = self
             .scan_float_row_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
             .await?;
-        let hist_rows = self
+        let mut hist_rows = self
             .scan_histogram_row_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
             .await?;
+        recompute_histogram_stats(&mut hist_rows);
 
         let mut latest_by_fp: BTreeMap<SeriesFingerprint, (i64, SampleValue)> = BTreeMap::new();
         for row in rows {
@@ -101,7 +106,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             time_ms,
             selector.at.as_ref(),
             selector.offset.as_ref(),
-            None,
+            current_at_modifier_bounds(),
         )?;
         let scan_start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
         let scan_end_ms = eval_time_ms.saturating_add(self.opts.lookback_delta.millis_i64());
@@ -197,9 +202,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         let rows = self
             .scan_float_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
-        let hist_rows = self
+        let mut hist_rows = self
             .scan_histogram_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
+        recompute_histogram_stats(&mut hist_rows);
 
         let mut float_samples_by_fp: BTreeMap<SeriesFingerprint, Vec<TimedValue>> = BTreeMap::new();
         for row in rows {
@@ -368,5 +374,27 @@ impl<S: MetricStore> PromqlEngine<S> {
                 "{function_name} expects a range-vector selector"
             ))),
         }
+    }
+}
+
+fn recompute_histogram_stats(rows: &mut [HistogramRow]) {
+    if !histogram_stats_enabled() {
+        return;
+    }
+    rows.sort_unstable_by_key(|row| (row.fp, row.ts_ms));
+    let mut previous = BTreeMap::<SeriesFingerprint, NativeHistogram>::new();
+    for row in rows {
+        if row.hist.reset_hint != ResetHint::Gauge {
+            let mut current = row.hist.clone();
+            current.reset_hint = ResetHint::Unknown;
+            row.hist.reset_hint = previous.get(&row.fp).map_or(ResetHint::Unknown, |last| {
+                if native_histogram_detect_reset(last, &current) {
+                    ResetHint::Yes
+                } else {
+                    ResetHint::No
+                }
+            });
+        }
+        previous.insert(row.fp, row.hist.clone());
     }
 }

@@ -1,13 +1,8 @@
 use super::*;
 
-/// `increase` over native histograms needs every consecutive pair in the
-/// window to line up -- same schema, same shape, same zero threshold -- and
-/// yields nothing when they do not. The check is an eight-clause conjunction
-/// and no test ever gave it a mismatched pair, so any one of its `&&` could
-/// have been an `||` and the fold would have run on histograms it cannot
-/// combine. Each variant below differs in exactly one of those clauses.
+/// `increase` reconciles compatible native-histogram layouts before subtraction.
 #[tokio::test]
-pub(crate) async fn increase_refuses_native_histograms_that_do_not_line_up() {
+pub(crate) async fn increase_reconciles_native_histograms_that_do_not_line_up() {
     fn base() -> NativeHistogram {
         NativeHistogram {
             schema: 0,
@@ -142,7 +137,7 @@ pub(crate) async fn increase_refuses_native_histograms_that_do_not_line_up() {
         else {
             panic!("expected a vector for {field}");
         };
-        assert2::assert!(samples.is_empty(), "{field} differs, so there is no sample");
+        assert2::assert!(samples.len() == 1, "{field} is reconciled");
     }
 
     let QueryResult::InstantVector(samples) = engine

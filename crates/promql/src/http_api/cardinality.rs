@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use krabka_blockstore::Labels;
+use krabka_metrics::decode_native_histograms;
 
 use super::{
     ApiError, CardinalityParams, Extension, Principal, PrometheusApiState, active_series_response,
@@ -17,6 +18,7 @@ use super::{
 };
 use crate::MetricStore;
 
+mod cardinality_active_native_histogram_metrics;
 mod cardinality_active_series;
 mod cardinality_active_series_inner;
 mod cardinality_active_series_post;
@@ -29,6 +31,9 @@ mod cardinality_label_values_post;
 mod cardinality_series;
 mod cardinality_series_for_params;
 
+pub(super) use cardinality_active_native_histogram_metrics::{
+    cardinality_active_native_histogram_metrics, cardinality_active_native_histogram_metrics_post,
+};
 pub(super) use cardinality_active_series::cardinality_active_series;
 use cardinality_active_series_inner::cardinality_active_series_inner;
 pub(super) use cardinality_active_series_post::cardinality_active_series_post;

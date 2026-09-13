@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{
     MetricStore, PrometheusApiState, PromqlError, RuleRenderOptions, TenantId, Value,
     prometheus_rule_json,
@@ -10,12 +12,22 @@ pub(crate) async fn prometheus_rules_json<S: MetricStore>(
     group_name: &str,
     group: &serde_yaml::Value,
     options: RuleRenderOptions,
+    rule_names: &BTreeSet<String>,
 ) -> Result<Vec<Value>, PromqlError> {
     let Some(rules) = group.get("rules").and_then(serde_yaml::Value::as_sequence) else {
         return Ok(Vec::new());
     };
     let mut out = Vec::new();
     for (rule_index, rule) in rules.iter().enumerate() {
+        if !rule_names.is_empty()
+            && !rule
+                .get("record")
+                .or_else(|| rule.get("alert"))
+                .and_then(serde_yaml::Value::as_str)
+                .is_some_and(|name| rule_names.contains(name))
+        {
+            continue;
+        }
         if let Some(rule_json) = prometheus_rule_json(
             state, tenant, namespace, group_name, rule_index, rule, options,
         )

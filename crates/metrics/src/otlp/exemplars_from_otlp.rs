@@ -1,5 +1,11 @@
-use super::{DecodedExemplar, OtlpExemplar, exemplar};
+use super::{DecodedExemplar, OtlpExemplar, TranslationStrategy, exemplar};
 
-pub(crate) fn exemplars_from_otlp(exemplars: &[OtlpExemplar]) -> Vec<DecodedExemplar> {
-    exemplars.iter().filter_map(exemplar).collect()
+pub(crate) fn exemplars_from_otlp(
+    exemplars: &[OtlpExemplar],
+    strategy: TranslationStrategy,
+) -> Vec<DecodedExemplar> {
+    exemplars
+        .iter()
+        .filter_map(|item| exemplar(item, strategy))
+        .collect()
 }

@@ -252,7 +252,7 @@ where
     });
     let count = alerts.len();
     if count > 0 {
-        sink.dispatch_alerts(alerts).await?;
+        sink.dispatch_alerts_for_tenant(tenant, alerts).await?;
     }
     Ok(count)
 }

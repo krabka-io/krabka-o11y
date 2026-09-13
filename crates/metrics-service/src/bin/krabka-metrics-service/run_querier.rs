@@ -1,10 +1,11 @@
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, ObjectStore,
-    PrometheusApiState, RoleReadiness, ServerSecurity, Shutdown, WalHead, load_runtime_overrides,
-    prometheus_router, query_engine_opts, readiness_router, serve_prometheus_router_joinable,
-    spawn_shutdown_signal_listener, spawn_wal_head_consumer_task,
+    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, MimirTenantAdminState,
+    ObjectStore, PrometheusApiState, RoleReadiness, ServerSecurity, Shutdown, WalHead,
+    load_runtime_overrides, mimir_tenant_admin_router, prometheus_router, query_engine_opts,
+    readiness_router, serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
+    spawn_wal_head_consumer_task,
 };
 
 #[tracing::instrument(
@@ -77,16 +78,18 @@ pub(crate) async fn run_querier(
             ),
         );
     }
-    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
-        Arc::clone(&store),
-        object_store_url.clone(),
-        &cli.manifest_prefix,
-        head,
-    )
-    .with_cold_cache_ttl(cli.cold_cache_ttl)
-    .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
-    let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
-        .with_erasure_store(store)
+    let metric_store = Arc::new(
+        krabka_metrics_service::RefreshingMetricBlockStore::new(
+            Arc::clone(&store),
+            object_store_url.clone(),
+            &cli.manifest_prefix,
+            head.clone(),
+        )
+        .with_cold_cache_ttl(cli.cold_cache_ttl)
+        .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback),
+    );
+    let state = PrometheusApiState::new(Arc::clone(&metric_store), query_engine_opts(&cli))
+        .with_erasure_store(Arc::clone(&store))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
         .with_query_timeout(cli.query_timeout)
         .with_remote_read_max_body(cli.remote_read_max_body)
@@ -102,7 +105,13 @@ pub(crate) async fn run_querier(
         state
     };
     let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
-    let router = prometheus_router(Arc::new(state)).merge(readiness_router(readiness));
+    let router = prometheus_router(Arc::new(state))
+        .merge(mimir_tenant_admin_router(MimirTenantAdminState::new(
+            store,
+            metric_store,
+            head,
+        )))
+        .merge(readiness_router(readiness));
     let (bound, server) =
         serve_prometheus_router_joinable(cli.listen, router, security, shutdown.signalled())
             .await?;

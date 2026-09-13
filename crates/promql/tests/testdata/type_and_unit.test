@@ -75,8 +75,6 @@ eval instant at 50m http_requests_total{group="canary"} and http_requests_total{
 	http_requests_total{__type__="counter", __unit__="request", group="canary", instance="0", job="app-server"} 700
 
 eval instant at 50m (http_requests_total{group="canary"} + 1) and http_requests_total{instance="0"}
-	{group="canary", instance="0", job="api-server"} 301
-	{group="canary", instance="0", job="app-server"} 701
 
 eval instant at 50m http_requests_total{group="canary"} or http_requests_total{group="production"}
 	http_requests_total{__type__="counter", __unit__="request", group="canary", instance="0", job="api-server"} 300
@@ -94,6 +92,8 @@ eval instant at 50m (http_requests_total{group="canary"} + 1) or http_requests_t
 	{group="canary", instance="0", job="app-server"} 701
 	{group="canary", instance="1", job="api-server"} 401
 	{group="canary", instance="1", job="app-server"} 801
+	http_requests_total{__type__="counter", __unit__="request", group="canary", instance="1", job="api-server"} 400
+	http_requests_total{__type__="counter", __unit__="request", group="canary", instance="1", job="app-server"} 800
 	http_requests_total{__type__="counter", __unit__="request", group="production", instance="1", job="api-server"} 200
 	http_requests_total{__type__="counter", __unit__="request", group="production", instance="1", job="app-server"} 600
 
@@ -220,8 +220,6 @@ eval instant at 50m http_requests_total{group="canary"} and http_requests_total{
 	http_requests_total{__type__="counter", __unit__="", group="canary", instance="0", job="app-server"} 700
 
 eval instant at 50m (http_requests_total{group="canary"} + 1) and http_requests_total{instance="0"}
-	{group="canary", instance="0", job="api-server"} 301
-	{group="canary", instance="0", job="app-server"} 701
 
 eval instant at 50m http_requests_total{group="canary"} or http_requests_total{group="production"}
 	http_requests_total{__type__="gauge", __unit__="not-request", group="canary", instance="0", job="api-server"} 300
@@ -239,6 +237,7 @@ eval instant at 50m (http_requests_total{group="canary"} + 1) or http_requests_t
 	{group="canary", instance="0", job="app-server"} 701
 	{group="canary", instance="1", job="api-server"} 401
 	{group="canary", instance="1", job="app-server"} 801
+	http_requests_total{__type__="counter", __unit__="not-request", group="canary", instance="1", job="api-server"} 400
 	http_requests_total{__type__="gauge", __unit__="request", group="production", instance="1", job="api-server"} 200
 	http_requests_total{__type__="counter", __unit__="request", group="production", instance="1", job="app-server"} 600
 

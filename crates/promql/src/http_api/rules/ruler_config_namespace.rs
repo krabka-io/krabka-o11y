@@ -22,6 +22,9 @@ pub(crate) async fn ruler_config_namespace<S: MetricStore>(
     };
     match groups {
         Some(groups) => yaml_response(StatusCode::OK, &groups.into_values().collect::<Vec<_>>()),
-        None => ApiError::not_found("rule namespace not found").into_response(),
+        None => yaml_response(
+            StatusCode::OK,
+            &std::collections::BTreeMap::<String, String>::new(),
+        ),
     }
 }

@@ -272,6 +272,7 @@ async fn query_endpoint_returns_native_histogram_buckets() {
                 [1, "-1", "-0.5", "1"],
                 [3, "-0.25", "0.25", "3"],
                 [0, "0.5", "1", "2"],
+                [0, "2", "4", "-1"],
                 [0, "4", "8", "4"],
             ])
     );
@@ -2004,8 +2005,9 @@ async fn rules_endpoint_returns_loaded_recording_rules() {
     assert2::assert!(group["interval"].as_i64() == Some(30));
     assert2::assert!(group["lastEvaluation"].as_str() == Some("0001-01-01T00:00:00Z"));
     assert2::assert!(group["evaluationTime"].as_f64() == Some(0.0));
-    assert2::assert!(group["lastError"].as_str() == Some(""));
-    assert2::assert!(group["limit"].as_i64() == Some(0));
+    assert2::assert!(group["sourceTenants"] == serde_json::json!([]));
+    assert2::assert!(group.get("lastError").is_none());
+    assert2::assert!(group.get("limit").is_none());
     assert2::assert!(group["name"].as_str() == Some("latency"));
     assert2::assert!(rule["lastEvaluation"].as_str() == Some("0001-01-01T00:00:00Z"));
     assert2::assert!(rule["evaluationTime"].as_f64() == Some(0.0));
@@ -2153,7 +2155,7 @@ async fn rules_endpoint_rejects_invalid_type_parameter() {
     let body = response_json(response).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(body["error"].as_str() == Some("invalid type parameter"));
+    assert2::assert!(body["error"].as_str() == Some("not supported value \"notify\""));
 }
 
 #[tokio::test]
@@ -3044,7 +3046,10 @@ async fn ruler_config_rules_crud_round_trips_yaml_groups() {
         )
         .await
         .unwrap();
-    assert2::assert!(response.status() == StatusCode::NOT_FOUND);
+    assert2::assert!(response.status() == StatusCode::OK);
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&response_text(response).await).expect("namespace yaml");
+    assert2::assert!(yaml == serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 }
 
 #[tokio::test]
@@ -3074,14 +3079,7 @@ rules:
         .await
         .unwrap();
     assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(
-        body["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("expr"))
-    );
+    assert2::assert!(response_text(response).await.contains("expr"));
 
     let response = app
         .clone()
@@ -3104,14 +3102,7 @@ rules:
         .await
         .unwrap();
     assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
-    assert2::assert!(
-        body["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("PromQL"))
-    );
+    assert2::assert!(response_text(response).await.contains("PromQL"));
 
     let response = app
         .oneshot(
@@ -3863,25 +3854,20 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
         .unwrap();
 
     assert2::assert!(response.status() == StatusCode::OK);
-    assert2::assert!(response.headers()["Content-Encoding"] == "snappy");
+    assert2::assert!(
+        response.headers()["Content-Type"]
+            == "application/x-streamed-protobuf; proto=prometheus.ChunkedReadResponse"
+    );
     let bytes = to_bytes(response.into_body(), 1024 * 1024)
         .await
         .expect("response body");
-    let decoded = SnappyDecoder::new()
-        .decompress_vec(&bytes)
-        .expect("snappy response");
-    let read_response =
-        pb::v1::ReadResponse::decode(decoded.as_slice()).expect("remote read response");
-    let series = &read_response.results[0].timeseries[0];
-    assert2::assert!(read_response.results.len() == 1);
-    assert2::assert!(read_response.results[0].timeseries.len() == 1);
-    assert2::assert!(series.samples.is_empty());
-    assert2::assert!(series.histograms.len() == 1);
-    assert2::assert!(series.histograms[0].timestamp == 10_000);
-    assert2::assert!((series.histograms[0].sum - 10.0).abs() < f64::EPSILON);
-    assert2::assert!(
-        &series.histograms[0].count == &Some(pb::v1::histogram::Count::CountFloat(4.0))
-    );
+    let streamed = pb::v1::ChunkedReadResponse::decode(first_streamed_payload(&bytes))
+        .expect("streamed remote read response");
+    let chunk = &streamed.chunked_series[0].chunks[0];
+    assert2::assert!(chunk.r#type == pb::v1::chunk::Encoding::FloatHistogram as i32);
+    assert2::assert!(chunk.min_time_ms == 10_000);
+    assert2::assert!(chunk.max_time_ms == 10_000);
+    assert2::assert!(chunk.data.starts_with(&[0, 1, 0x40]));
 
     let request = pb::v1::ReadRequest {
         queries: vec![pb::v1::Query {
@@ -3913,12 +3899,15 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
         .await
         .unwrap();
 
-    assert2::assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    let body = response_json(response).await;
+    assert2::assert!(response.status() == StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response body");
+    let streamed = pb::v1::ChunkedReadResponse::decode(first_streamed_payload(&bytes))
+        .expect("streamed remote read response");
     assert2::assert!(
-        body["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("native-histogram encoding is not implemented"))
+        streamed.chunked_series[0].chunks[0].r#type
+            == pb::v1::chunk::Encoding::FloatHistogram as i32
     );
 }
 

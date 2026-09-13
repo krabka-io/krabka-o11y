@@ -455,6 +455,7 @@ mod native_histograms_are_range_compatible;
 mod native_quantile_bucket;
 mod normalized_classic_histogram_buckets;
 mod parse_classic_bucket_bound;
+mod reconcile_native_histogram_layouts;
 mod reduced_counts_outside_zero;
 mod remap_custom_counts;
 mod scale_native_histogram_values;
@@ -499,6 +500,7 @@ pub(super) use native_histograms_are_range_compatible::native_histograms_are_ran
 use native_quantile_bucket::NativeQuantileBucket;
 use normalized_classic_histogram_buckets::normalized_classic_histogram_buckets;
 use parse_classic_bucket_bound::parse_classic_bucket_bound;
+pub(super) use reconcile_native_histogram_layouts::reconcile_native_histogram_layouts;
 use reduced_counts_outside_zero::reduced_counts_outside_zero;
 use remap_custom_counts::remap_custom_counts;
 pub(super) use scale_native_histogram_values::scale_native_histogram_values;

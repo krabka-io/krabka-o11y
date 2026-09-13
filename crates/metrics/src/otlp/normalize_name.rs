@@ -3,7 +3,10 @@ use super::TranslationStrategy;
 /// Normalizes an OTLP identifier into a Prometheus-compatible metric name or
 /// label name.
 #[must_use]
-pub fn normalize_name(name: &str, _strategy: TranslationStrategy) -> String {
+pub fn normalize_name(name: &str, strategy: TranslationStrategy) -> String {
+    if !strategy.escapes_names() {
+        return name.to_string();
+    }
     let mut out = String::with_capacity(name.len());
     for (index, ch) in name.chars().enumerate() {
         let valid = ch == '_' || ch.is_ascii_alphanumeric();

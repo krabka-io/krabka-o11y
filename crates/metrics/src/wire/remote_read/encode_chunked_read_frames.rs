@@ -1,6 +1,6 @@
 use prost::Message;
 
-use super::{RemoteReadError, encode_xor_chunks, v1};
+use super::{RemoteReadError, encode_histogram_chunks, encode_xor_chunks, v1};
 
 pub fn encode_chunked_read_frames(
     response: v1::ReadResponse,
@@ -13,14 +13,17 @@ pub fn encode_chunked_read_frames(
             result
                 .timeseries
                 .into_iter()
-                .filter(|series| !series.samples.is_empty())
+                .filter(|series| !series.samples.is_empty() || !series.histograms.is_empty())
                 .map(move |series| {
                     let query_index = i64::try_from(query_index)
                         .map_err(|_| RemoteReadError::TooManyQueries(query_index))?;
+                    let mut chunks = encode_xor_chunks(&series.samples)?;
+                    chunks.extend(encode_histogram_chunks(&series.histograms));
+                    chunks.sort_by_key(|chunk| chunk.min_time_ms);
                     let response = v1::ChunkedReadResponse {
                         chunked_series: vec![v1::ChunkedSeries {
                             labels: series.labels,
-                            chunks: encode_xor_chunks(&series.samples)?,
+                            chunks,
                         }],
                         query_index,
                     };

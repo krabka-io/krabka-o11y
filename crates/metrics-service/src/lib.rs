@@ -1022,13 +1022,16 @@ rules:
         let received_for_route = std::sync::Arc::clone(&received);
         let router = axum::Router::new().route(
             "/api/v2/alerts",
-            axum::routing::post(move |body: bytes::Bytes| {
+            axum::routing::post(move |headers: axum::http::HeaderMap, body: bytes::Bytes| {
                 let received = std::sync::Arc::clone(&received_for_route);
                 async move {
-                    received
-                        .lock()
-                        .expect("received alerts poisoned")
-                        .push(body.to_vec());
+                    received.lock().expect("received alerts poisoned").push((
+                        headers
+                            .get("X-Scope-OrgID")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_owned),
+                        body.to_vec(),
+                    ));
                     axum::http::StatusCode::OK
                 }
             }),
@@ -1045,25 +1048,29 @@ rules:
         .unwrap();
 
         let sink = super::AlertmanagerHttpSink::new(format!("http://{bound}/api/v2/alerts"));
-        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([
-                ("alertname".to_string(), "InstanceDown".to_string()),
-                ("severity".to_string(), "page".to_string()),
-            ]),
-            annotations: std::collections::BTreeMap::from([(
-                "summary".to_string(),
-                "instance is down".to_string(),
-            )]),
-            starts_at_ms: 60_000,
-            ends_at_ms: None,
-            generator_url: "http://krabka.example/graph".to_string(),
-        }])
+        sink.dispatch_alerts_for_tenant(
+            &krabka_blockstore::TenantId::new("tenant-a").unwrap(),
+            vec![krabka_promql::AlertmanagerAlert {
+                labels: std::collections::BTreeMap::from([
+                    ("alertname".to_string(), "InstanceDown".to_string()),
+                    ("severity".to_string(), "page".to_string()),
+                ]),
+                annotations: std::collections::BTreeMap::from([(
+                    "summary".to_string(),
+                    "instance is down".to_string(),
+                )]),
+                starts_at_ms: 60_000,
+                ends_at_ms: None,
+                generator_url: "http://krabka.example/graph".to_string(),
+            }],
+        )
         .await
         .unwrap();
 
         let bodies = received.lock().expect("received alerts poisoned");
         assert2::assert!(bodies.len() == 1);
-        let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
+        assert2::assert!(bodies[0].0.as_deref() == Some("tenant-a"));
+        let body: serde_json::Value = serde_json::from_slice(&bodies[0].1).unwrap();
         let expected = serde_json::json!([{
             "labels": {
                 "alertname": "InstanceDown",
@@ -1546,16 +1553,19 @@ rules:
         let sink = super::AlertmanagerHttpSink::new("not a URL");
 
         let error = sink
-            .deliver(vec![krabka_promql::AlertmanagerAlert {
-                labels: std::collections::BTreeMap::from([(
-                    "alertname".to_string(),
-                    "InstanceDown".to_string(),
-                )]),
-                annotations: std::collections::BTreeMap::new(),
-                starts_at_ms: 60_000,
-                ends_at_ms: None,
-                generator_url: String::new(),
-            }])
+            .deliver(
+                None,
+                vec![krabka_promql::AlertmanagerAlert {
+                    labels: std::collections::BTreeMap::from([(
+                        "alertname".to_string(),
+                        "InstanceDown".to_string(),
+                    )]),
+                    annotations: std::collections::BTreeMap::new(),
+                    starts_at_ms: 60_000,
+                    ends_at_ms: None,
+                    generator_url: String::new(),
+                }],
+            )
             .await
             .unwrap_err();
 
@@ -2823,6 +2833,8 @@ mod load_compaction_manifests_filtered_with_cache;
 mod load_compaction_manifests_for_range;
 mod load_compaction_manifests_for_range_with_cache;
 mod metrics_service_error;
+mod mimir_block_upload;
+mod mimir_tenant_admin;
 mod noop_alertmanager_sink;
 mod normalize_refresh_range;
 mod poll_ruler_state_consumer_once;
@@ -2893,6 +2905,7 @@ use load_compaction_manifests_filtered_with_cache::load_compaction_manifests_fil
 pub use load_compaction_manifests_for_range::load_compaction_manifests_for_range;
 use load_compaction_manifests_for_range_with_cache::load_compaction_manifests_for_range_with_cache;
 pub use metrics_service_error::MetricsServiceError;
+pub use mimir_tenant_admin::{MimirTenantAdminState, mimir_tenant_admin_router};
 pub use noop_alertmanager_sink::NoopAlertmanagerSink;
 use normalize_refresh_range::normalize_refresh_range;
 pub use poll_ruler_state_consumer_once::poll_ruler_state_consumer_once;
@@ -2905,6 +2918,7 @@ pub use query_frontend_prometheus_router_for_store_with_cache::query_frontend_pr
 pub use queued_alertmanager_sink::QueuedAlertmanagerSink;
 pub use refreshing_blockstore_prometheus_router::refreshing_blockstore_prometheus_router;
 pub use refreshing_blockstore_prometheus_router_with_hot_store::refreshing_blockstore_prometheus_router_with_hot_store;
+pub(crate) use refreshing_metric_block_store::MIMIR_TENANT_DELETION_PREFIX;
 pub use refreshing_metric_block_store::RefreshingMetricBlockStore;
 pub use replay_ruler_state_records::replay_ruler_state_records;
 pub use replay_wal_head_records::replay_wal_head_records;

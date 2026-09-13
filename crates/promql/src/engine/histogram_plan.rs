@@ -12,6 +12,7 @@ use super::{
         apply_histogram_quantile,
     },
     planned::PlannedInstant,
+    with_histogram_stats,
 };
 use crate::{
     error::Result,
@@ -155,9 +156,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         let [arg] = call.args.args.as_slice() else {
             return Ok(None);
         };
-        let Some(samples) = self
-            .histogram_fold_inner_vector(tenant, arg, time_ms)
-            .await?
+        let Some(samples) =
+            with_histogram_stats(self.histogram_fold_inner_vector(tenant, arg, time_ms)).await?
         else {
             return Ok(None);
         };

@@ -18,6 +18,7 @@ pub(crate) fn summary_series(
             point,
             resource_attributes,
             Some(metadata.clone()),
+            strategy,
         ));
     }
     out

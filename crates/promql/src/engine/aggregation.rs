@@ -11,6 +11,7 @@ use super::{
     annotations::{
         emit_info, emit_warning, histogram_counter_reset_collision_warning,
         histogram_ignored_in_aggregation_info, invalid_quantile_warning, is_valid_quantile,
+        mismatched_custom_buckets_info, mixed_exponential_custom_warning,
         mixed_floats_histograms_agg_warning,
     },
     histogram::{add_compatible_native_histogram, scaled_native_histogram},

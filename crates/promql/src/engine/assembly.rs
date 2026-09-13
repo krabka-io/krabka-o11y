@@ -6,7 +6,10 @@ use arrow::{
 };
 use krabka_blockstore::{Labels, SeriesFingerprint};
 
-use super::{labels::labels_without_metric_name, step_vectors::GridPoint};
+use super::{
+    labels::{labels_without_label, labels_without_metric_name},
+    step_vectors::GridPoint,
+};
 use crate::{
     PromqlError,
     error::Result,

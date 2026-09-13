@@ -14,12 +14,18 @@ pub struct PrometheusApiState<S: MetricStore> {
     pub(crate) store: Arc<S>,
     pub(crate) ruler_rules: RwLock<RulerRuleStore>,
     pub(crate) ruler_alerts: RwLock<RulerAlertStateStore>,
+    ruler_evaluation_alerts: RwLock<crate::RulerAlertState>,
     pub(crate) ruler_group_state: RwLock<RulerGroupState>,
     pub(crate) ruler_evaluation_time_ms: RwLock<i64>,
     pub(crate) ruler_rule_status:
         RwLock<BTreeMap<(String, String, String, usize), RulerRuleEvaluationStatus>>,
     pub(crate) ruler_group_status:
         RwLock<BTreeMap<(String, String, String), RulerGroupEvaluationStatus>>,
+    pub(crate) alertmanager_configs: RwLock<BTreeMap<TenantId, String>>,
+    pub(crate) alertmanager_alerts: RwLock<BTreeMap<TenantId, Vec<serde_json::Value>>>,
+    pub(crate) alertmanager_silences:
+        RwLock<BTreeMap<TenantId, BTreeMap<String, serde_json::Value>>>,
+    pub(crate) mimir_config_store: Option<Arc<dyn object_store::ObjectStore>>,
     pub(crate) query_frontend: Option<QueryFrontendState>,
     /// The per-tenant query limits. A state built without
     /// [`PrometheusApiState::with_query_limits`] applies `Limits::default()` to
@@ -48,10 +54,15 @@ impl<S: MetricStore> PrometheusApiState<S> {
             store,
             ruler_rules: RwLock::new(BTreeMap::new()),
             ruler_alerts: RwLock::new(BTreeMap::new()),
+            ruler_evaluation_alerts: RwLock::new(crate::RulerAlertState::default()),
             ruler_group_state: RwLock::new(RulerGroupState::default()),
             ruler_evaluation_time_ms: RwLock::new(0),
             ruler_rule_status: RwLock::new(BTreeMap::new()),
             ruler_group_status: RwLock::new(BTreeMap::new()),
+            alertmanager_configs: RwLock::new(BTreeMap::new()),
+            alertmanager_alerts: RwLock::new(BTreeMap::new()),
+            alertmanager_silences: RwLock::new(BTreeMap::new()),
+            mimir_config_store: None,
             query_frontend: None,
             query_limits: OverridesProvider::new(Limits::default()),
             query_gate: None,
@@ -140,6 +151,13 @@ impl<S: MetricStore> PrometheusApiState<S> {
     #[must_use]
     pub fn with_erasure_store(mut self, store: Arc<dyn object_store::ObjectStore>) -> Self {
         self.erasure_store = Some(store);
+        self
+    }
+
+    /// Enables persistent ruler and Alertmanager tenant configuration.
+    #[must_use]
+    pub fn with_mimir_config_store(mut self, store: Arc<dyn object_store::ObjectStore>) -> Self {
+        self.mimir_config_store = Some(store);
         self
     }
 
@@ -258,6 +276,9 @@ impl<S: MetricStore> PrometheusApiState<S> {
 
     /// Applies replayed ruler alert state for HTTP alert rendering.
     pub fn apply_ruler_alert_state(&self, record: RulerAlertStateRecord) {
+        if let Ok(mut alert_states) = self.ruler_evaluation_alerts.write() {
+            alert_states.apply_record(record.clone());
+        }
         if let Ok(mut alert_states) = self.ruler_alerts.write() {
             let key = AlertStateKey {
                 tenant: record.tenant,
@@ -273,6 +294,20 @@ impl<S: MetricStore> PrometheusApiState<S> {
                 }
             }
         }
+    }
+
+    /// Returns the recovered scheduling and alert state used by the next evaluation pass.
+    #[must_use]
+    pub fn ruler_evaluation_state(&self) -> (crate::RulerAlertState, RulerGroupState) {
+        let alerts = self
+            .ruler_evaluation_alerts
+            .read()
+            .map_or_else(|_| crate::RulerAlertState::default(), |state| state.clone());
+        let groups = self
+            .ruler_group_state
+            .read()
+            .map_or_else(|_| RulerGroupState::default(), |state| state.clone());
+        (alerts, groups)
     }
 
     /// Sets the timestamp for the ruler evaluations that the HTTP API renders.

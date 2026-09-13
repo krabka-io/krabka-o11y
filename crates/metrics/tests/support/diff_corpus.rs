@@ -105,6 +105,11 @@ fn normalize_object(object: &Map<String, Value>) -> Value {
     if let Some(Value::Array(result)) = out.get_mut("result") {
         result.sort_by(compare_series_result);
     }
+    for field in ["infos", "warnings"] {
+        if let Some(Value::Array(annotations)) = out.get_mut(field) {
+            annotations.sort_by_key(Value::to_string);
+        }
+    }
 
     Value::Object(out)
 }

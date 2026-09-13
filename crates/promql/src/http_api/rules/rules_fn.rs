@@ -3,6 +3,7 @@ use super::{
     RawQuery, Response, RuleRenderOptions, RuleTypeFilter, State, authorized_tenant_from_headers,
     json, parse_rules_params, prometheus_rule_groups_json, success_data_response,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 pub(crate) async fn rules<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
@@ -30,13 +31,39 @@ pub(crate) async fn rules<S: MetricStore>(
             type_filter: RuleTypeFilter::from_param(params.rule_type.as_deref()),
             exclude_alerts: params.exclude_alerts.unwrap_or(false),
         },
+        &params.rule_names,
+        &params.rule_groups,
+        &params.files,
     )
     .await
     {
         Ok(groups) => groups,
         Err(error) => return ApiError::from(error).into_response(),
     };
-    success_data_response(json!({
-        "groups": groups,
-    }))
+    let start = params.group_next_token.as_deref().map_or(0, |token| {
+        let decoded = URL_SAFE.decode(token).unwrap_or_default();
+        groups
+            .iter()
+            .position(|(namespace, group, _)| {
+                format!("{namespace}/{group}").as_bytes() >= decoded.as_slice()
+            })
+            .unwrap_or(groups.len())
+    });
+    let limit = params.group_limit.filter(|limit| *limit > 0);
+    let next_token = limit.and_then(|limit| {
+        groups
+            .get(start.saturating_add(limit))
+            .map(|(namespace, group, _)| URL_SAFE.encode(format!("{namespace}/{group}")))
+    });
+    let groups = groups
+        .into_iter()
+        .skip(start)
+        .take(limit.unwrap_or(usize::MAX))
+        .map(|(_, _, group)| group)
+        .collect::<Vec<_>>();
+    let mut data = json!({ "groups": groups });
+    if let Some(token) = next_token {
+        data["groupNextToken"] = json!(token);
+    }
+    success_data_response(data)
 }

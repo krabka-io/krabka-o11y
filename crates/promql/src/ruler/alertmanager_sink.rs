@@ -1,4 +1,4 @@
-use krabka_blockstore::Labels;
+use krabka_blockstore::{Labels, TenantId};
 
 use super::{AlertmanagerAlert, RulerWalError};
 
@@ -14,4 +14,12 @@ pub trait AlertmanagerSink: Send + Sync {
     }
 
     async fn dispatch_alerts(&self, alerts: Vec<AlertmanagerAlert>) -> Result<(), RulerWalError>;
+
+    async fn dispatch_alerts_for_tenant(
+        &self,
+        _tenant: &TenantId,
+        alerts: Vec<AlertmanagerAlert>,
+    ) -> Result<(), RulerWalError> {
+        self.dispatch_alerts(alerts).await
+    }
 }

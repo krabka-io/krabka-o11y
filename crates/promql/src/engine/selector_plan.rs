@@ -2,7 +2,8 @@ use krabka_units::prelude::*;
 use promql_parser::parser::{MatrixSelector, VectorSelector};
 
 use super::{
-    InstantShape, OuterRangeFn, PlannedInstant, PromqlEngine, RangeEval, apply_outer_range_fn,
+    InstantShape, OuterRangeFn, PlannedInstant, PromqlEngine, RangeEval,
+    annotations::emit_metric_might_not_be_counter_info, apply_outer_range_fn,
     apply_selector_time_modifier, current_at_modifier_bounds, label_matcher_sets,
     selector_duration,
 };
@@ -170,6 +171,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         let samples = self
             .labeled_series_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms, true)
             .await?;
+
+        if selector.vs.name.is_some() && matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
+            for series in samples.iter().filter(|series| series.samples.len() >= 2) {
+                emit_metric_might_not_be_counter_info(&series.labels);
+            }
+        }
 
         let RateRangePlan {
             ctx,

@@ -46,19 +46,11 @@ The divergences, by file:
   whose destination label name is an invalid UTF-8 byte that a Rust `String`
   cannot carry, so the label-name validation that upstream fails on never sees
   it.
-- `aggregators.test` (8 of 160): five `count_values` cases over native
-  histograms, which Krabka renders as JSON where Prometheus renders
-  `FloatHistogram.String()` bucket notation; `count_values("a\xc5z", …)`, an
-  invalid UTF-8 label name; and the `limitk(NaN, …)` and `limit_ratio(NaN, …)`
-  refusals, which need `experimental-functions`.
-- `native_histograms.test` (44 of 374): mostly one gap, the reconciliation of
-  native histograms whose bucket layouts differ (19 cases). The rest are
-  `histogram_count`'s counter-reset-recomputing read path (11), the zero-point
-  clamp in `increase` over a counter histogram (4), schema reduction in the
-  corpus loader's `+` increment (2), an infinite `sum` in `histogram_stddev` and
-  `histogram_stdvar` (2), a subquery over a histogram whose layout changes (2),
-  `@ start()` inside a subquery (1), and the three `limitk` / `limit_ratio`
-  range queries, which need `experimental-functions`.
+- `aggregators.test` (3 of 160): `count_values("a\xc5z", …)`, an invalid UTF-8
+  label name; and the `limitk(NaN, …)` and `limit_ratio(NaN, …)` refusals,
+  which need `experimental-functions`.
+- `native_histograms.test` (3 of 374): the three `limitk` / `limit_ratio` range
+  queries, which need `experimental-functions`.
 
 Each annotation in the file states its own reason; the list above only groups
 them.

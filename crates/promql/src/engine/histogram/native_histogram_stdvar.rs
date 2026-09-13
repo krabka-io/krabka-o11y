@@ -4,6 +4,9 @@ pub(crate) fn native_histogram_stdvar(hist: &NativeHistogram) -> f64 {
     if hist.count <= 0.0 || hist.count.is_nan() {
         return f64::NAN;
     }
+    if hist.sum.is_infinite() {
+        return f64::INFINITY;
+    }
 
     let mean = hist.sum / hist.count;
     native_histogram_buckets(hist)

@@ -299,7 +299,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                         &label_name.val,
                         aggregate.modifier.as_ref(),
                         time_ms,
-                    )?,
+                    ),
                 )))
             }
             T_STDDEV | T_STDVAR => {

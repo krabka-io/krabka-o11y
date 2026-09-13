@@ -3,6 +3,9 @@ use super::{
     alertmanager_http_sink::encode_url_component,
 };
 
+type AlertBatch = (Option<String>, Vec<krabka_promql::AlertmanagerAlert>);
+type AlertSender = tokio::sync::mpsc::Sender<AlertBatch>;
+
 /// A bounded FIFO in front of Alertmanager delivery.
 ///
 /// Enqueueing is the evaluation-path success boundary. When the queue is full,
@@ -10,11 +13,7 @@ use super::{
 /// each batch until one configured endpoint accepts it.
 #[derive(Clone)]
 pub struct QueuedAlertmanagerSink {
-    sender: std::sync::Arc<
-        tokio::sync::Mutex<
-            Option<tokio::sync::mpsc::Sender<Vec<krabka_promql::AlertmanagerAlert>>>,
-        >,
-    >,
+    sender: std::sync::Arc<tokio::sync::Mutex<Option<AlertSender>>>,
     worker: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     external_labels: std::collections::BTreeMap<String, String>,
     generator_url_template: Option<String>,
@@ -29,12 +28,14 @@ impl QueuedAlertmanagerSink {
     ) -> Self {
         let external_labels = sink.external_labels.clone();
         let generator_url_template = sink.generator_url_template.clone();
-        let (sender, mut receiver) =
-            tokio::sync::mpsc::channel::<Vec<krabka_promql::AlertmanagerAlert>>(capacity.max(1));
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<(
+            Option<String>,
+            Vec<krabka_promql::AlertmanagerAlert>,
+        )>(capacity.max(1));
         let worker = tokio::spawn(async move {
-            while let Some(alerts) = receiver.recv().await {
+            while let Some((tenant, alerts)) = receiver.recv().await {
                 loop {
-                    match sink.deliver(alerts.clone()).await {
+                    match sink.deliver(tenant.as_deref(), alerts.clone()).await {
                         Ok(()) => break,
                         Err(error) if error.is_retryable() => {
                             tracing::warn!(%error, "alertmanager delivery failed; retrying queued batch");
@@ -104,7 +105,24 @@ impl AlertmanagerSink for QueuedAlertmanagerSink {
             RulerWalError::Append("alertmanager delivery queue stopped".to_string())
         })?;
         sender
-            .send(alerts)
+            .send((None, alerts))
+            .await
+            .map_err(|_| RulerWalError::Append("alertmanager delivery queue stopped".to_string()))
+    }
+
+    async fn dispatch_alerts_for_tenant(
+        &self,
+        tenant: &krabka_blockstore::TenantId,
+        alerts: Vec<krabka_promql::AlertmanagerAlert>,
+    ) -> Result<(), RulerWalError> {
+        if alerts.is_empty() {
+            return Ok(());
+        }
+        let sender = self.sender.lock().await.clone().ok_or_else(|| {
+            RulerWalError::Append("alertmanager delivery queue stopped".to_string())
+        })?;
+        sender
+            .send((Some(tenant.as_str().to_owned()), alerts))
             .await
             .map_err(|_| RulerWalError::Append("alertmanager delivery queue stopped".to_string()))
     }

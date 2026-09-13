@@ -11,7 +11,7 @@ use promql_parser::parser::{
 };
 
 use super::{
-    annotations::{emit_info, incompatible_types_in_binop_info},
+    annotations::{emit_info, incompatible_types_in_binop_info, mismatched_custom_buckets_info},
     histogram::{
         add_compatible_native_histogram, scale_native_histogram_values, scaled_native_histogram,
     },
@@ -51,7 +51,7 @@ use apply_binary_fill_value::apply_binary_fill_value;
 use apply_binary_sample_value::apply_binary_sample_value;
 use apply_histogram_float_binary::apply_histogram_float_binary;
 use apply_histogram_histogram_binary::apply_histogram_histogram_binary;
-use binary_match_key::binary_match_key;
+use binary_match_key::{binary_match_key, set_binary_match_key};
 use binary_op::BinaryOp;
 use binary_returns_bool::binary_returns_bool;
 pub(super) use combine_instant_binary::combine_instant_binary;

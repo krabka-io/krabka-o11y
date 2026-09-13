@@ -27,6 +27,7 @@ pub(crate) fn sum_series(
                     resource_attributes,
                     accumulator,
                     Some(metric_metadata(metric, &name, sum_metadata_type(sum))),
+                    strategy,
                 )
             })
             .collect();
@@ -52,6 +53,7 @@ pub(crate) fn sum_series(
                 resource_attributes,
                 Some(metric_metadata(metric, &name, sum_metadata_type(sum))),
                 exemplar_policy,
+                strategy,
             )
         })
         .collect()

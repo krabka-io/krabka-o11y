@@ -20,10 +20,11 @@ use krabka_client_core::{
 use krabka_client_producer::Producer;
 use krabka_metrics::{Limits, OverridesProvider, WAL_TOPIC};
 use krabka_metrics_service::{
-    KafkaRecordingRuleWalSink, KafkaRulerStateSink, PrometheusRulerStateSink, RULER_STATE_TOPIC,
-    RulerAlertmanagerSink, RulerStateFanoutSink, WalHeadConsumerCommit, WalHeadConsumerPoll,
-    install_bundled_rule_groups, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
-    run_wal_head_consumer_loop, serve_prometheus_router_joinable,
+    KafkaRecordingRuleWalSink, KafkaRulerStateSink, MimirTenantAdminState,
+    PrometheusRulerStateSink, RULER_STATE_TOPIC, RulerAlertmanagerSink, RulerStateFanoutSink,
+    WalHeadConsumerCommit, WalHeadConsumerPoll, install_bundled_rule_groups,
+    mimir_tenant_admin_router, poll_ruler_state_consumer_once, run_ruler_evaluation_loop,
+    run_ruler_state_consumer_loop, run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
 use krabka_observability::{
     CancellationToken, ConfigFileArgs, CriticalTaskError, ReadinessGate, RoleReadiness,
@@ -34,7 +35,9 @@ use krabka_observability::{
     wal_client_security::WalClientSecurityArgs,
 };
 use krabka_promql::{
-    EngineOpts, PrometheusApiState, QueryFrontendOptions, RulerShard, WalHead, prometheus_router,
+    EngineOpts, PrometheusApiState, QueryFrontendOptions, RulerShard, WalHead,
+    mimir_alertmanager_router, mimir_ruler_prometheus_router, mimir_ruler_router,
+    prometheus_router,
 };
 use krabka_telemetry::OtlpConfig;
 use krabka_units::{parse, prelude::*};
@@ -1040,14 +1043,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         run_query_frontend(cli, metrics, readiness, &server_security, audit).await
                     }
                     Target::Ruler => {
-                        run_ruler(
+                        Box::pin(run_ruler(
                             cli,
                             metrics,
                             readiness,
                             &server_security,
                             wal_security,
                             audit,
-                        )
+                        ))
                         .await
                     }
                 }

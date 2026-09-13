@@ -38,7 +38,7 @@ use krabka_telemetry::propagation::current_trace_headers;
 use krabka_units::prelude::*;
 use opentelemetry_proto::tonic::{
     collector::metrics::v1::{
-        ExportMetricsServiceRequest, ExportMetricsServiceResponse,
+        ExportMetricsPartialSuccess, ExportMetricsServiceRequest, ExportMetricsServiceResponse,
         metrics_service_server::{MetricsService, MetricsServiceServer},
     },
     metrics::v1::MetricsData,
@@ -51,9 +51,8 @@ use crate::{
     IngestEnforcer, LimitError, Limits, OverridesProvider,
     metrics::ServiceMetrics,
     otlp::{
-        OtlpError, TenantDeltaAccumulators, TranslationStrategy,
-        decode_otlp_stateful_bytes_with_promoted_resource_attributes,
-        decode_otlp_stateful_with_promoted_resource_attributes,
+        OtlpError, PartialOtlpDecode, TenantDeltaAccumulators, TranslationStrategy,
+        decode_otlp_stateful_bytes_partial, decode_otlp_stateful_with_promoted_resource_attributes,
     },
     request_tenant::{
         RequestTenantError, TenantAccessError, authorized_tenant_from_headers, tenant_from_metadata,
@@ -185,17 +184,14 @@ overrides:
             "two series exceed the override of one"
         );
         check!(
-            push_v1(&app, "tenant-loose", v1_body_with_series_count(2)).await
-                == StatusCode::NO_CONTENT,
+            push_v1(&app, "tenant-loose", v1_body_with_series_count(2)).await == StatusCode::OK,
             "an unlisted tenant keeps the default of 100_000"
         );
         check!(
             push_v1(&app, "tenant-tight", v1_body_with_samples(2)).await == StatusCode::BAD_REQUEST,
             "two samples exceed the override of one"
         );
-        check!(
-            push_v1(&app, "tenant-loose", v1_body_with_samples(2)).await == StatusCode::NO_CONTENT
-        );
+        check!(push_v1(&app, "tenant-loose", v1_body_with_samples(2)).await == StatusCode::OK);
         check!(
             sink.records().len() == 4,
             "only the loose tenant appended: two series, then two samples"
@@ -254,12 +250,12 @@ overrides:
 
         check!(
             push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "first")])).await
-                == StatusCode::NO_CONTENT
+                == StatusCode::OK
         );
         clock.advance(std::time::Duration::from_mins(21));
         check!(
             push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "second")])).await
-                == StatusCode::NO_CONTENT,
+                == StatusCode::OK,
             "the first series went idle, so the second fits the cap of one"
         );
         check!(
@@ -290,7 +286,7 @@ overrides:
 
         check!(
             push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "first")])).await
-                == StatusCode::NO_CONTENT
+                == StatusCode::OK
         );
         // Past the sweep interval, so a sweep does run, but well inside the
         // five-minute idle window.
@@ -323,14 +319,14 @@ overrides:
 
         check!(
             push_v1(&app, "tenant-a", v1_body(vec![label("__name__", "up")])).await
-                == StatusCode::NO_CONTENT
+                == StatusCode::OK
         );
         check!(state.series_tracker.tenants() == vec!["tenant-a".to_string()]);
 
         clock.advance(std::time::Duration::from_mins(21));
         check!(
             push_v1(&app, "tenant-b", v1_body(vec![label("__name__", "up")])).await
-                == StatusCode::NO_CONTENT
+                == StatusCode::OK
         );
         check!(
             state.series_tracker.tenants() == vec!["tenant-b".to_string()],
@@ -350,7 +346,7 @@ overrides:
         for tenant in ["tenant-a", "tenant-b", "tenant-c"] {
             check!(
                 push_v1(&app, tenant, v1_body(vec![label("__name__", "up")])).await
-                    == StatusCode::NO_CONTENT
+                    == StatusCode::OK
             );
         }
 
@@ -1861,6 +1857,37 @@ overrides:
         .encode_to_vec()
     }
 
+    fn otlp_mixed_gauge_body() -> Vec<u8> {
+        MetricsData {
+            resource_metrics: vec![ResourceMetrics {
+                resource: None,
+                scope_metrics: vec![ScopeMetrics {
+                    metrics: vec![Metric {
+                        name: "mixed.gauge".into(),
+                        data: Some(metric::Data::Gauge(Gauge {
+                            data_points: vec![
+                                NumberDataPoint {
+                                    time_unix_nano: 1_000_000,
+                                    value: Some(number_data_point::Value::AsDouble(2.0)),
+                                    ..Default::default()
+                                },
+                                NumberDataPoint {
+                                    time_unix_nano: 2_000_000,
+                                    value: None,
+                                    ..Default::default()
+                                },
+                            ],
+                        })),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                schema_url: String::new(),
+            }],
+        }
+        .encode_to_vec()
+    }
+
     fn otlp_resource_body() -> Vec<u8> {
         MetricsData {
             resource_metrics: vec![ResourceMetrics {
@@ -1903,7 +1930,7 @@ overrides:
     }
 
     #[tokio::test]
-    async fn push_v1_returns_204_and_appends() {
+    async fn push_v1_returns_200_and_appends() {
         let (state, sink) = test_state();
         let response = router(state)
             .oneshot(
@@ -1920,7 +1947,7 @@ overrides:
             .unwrap();
 
         let records = sink.records();
-        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(response.status() == StatusCode::OK);
         assert_eq!(
             records,
             vec![WalRecord {
@@ -1953,7 +1980,7 @@ overrides:
             .await
             .unwrap();
 
-        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(response.status() == StatusCode::OK);
         assert!(sink.records().len() == 1);
     }
 
@@ -1974,7 +2001,7 @@ overrides:
             .await
             .unwrap();
 
-        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(response.status() == StatusCode::OK);
         assert!(sink.records().len() == 1);
     }
 
@@ -1998,7 +2025,7 @@ overrides:
             .await
             .unwrap();
 
-        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(response.status() == StatusCode::OK);
         let records = sink.records();
         assert!(records.len() == 1);
         assert!(
@@ -2030,7 +2057,7 @@ overrides:
             .await
             .unwrap();
 
-        check!(response.status() == StatusCode::NO_CONTENT);
+        check!(response.status() == StatusCode::OK);
         check!(
             response
                 .headers()
@@ -2074,7 +2101,7 @@ overrides:
             .await
             .unwrap();
 
-        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(response.status() == StatusCode::OK);
         let records = sink.records();
         assert!(records.len() == 1);
         let SamplePayload::Float {
@@ -2108,7 +2135,7 @@ overrides:
             .unwrap();
 
         let records = sink.records();
-        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(response.status() == StatusCode::OK);
         assert!(records.len() == 2);
         let metadata = records
             .iter()
@@ -2122,6 +2149,73 @@ overrides:
                     help: "Total HTTP requests.".to_string(),
                     unit: "requests".to_string(),
                 }
+        );
+    }
+
+    #[tokio::test]
+    async fn otlp_translation_strategy_header_controls_metric_and_label_names() {
+        let (state, sink) = test_state();
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/otlp/v1/metrics")
+                    .header("Content-Type", "application/x-protobuf")
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .header("X-Mimir-OTLP-TranslationStrategy", "NoTranslation")
+                    .body(Body::from(otlp_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(response.status() == StatusCode::OK);
+        let sample = sink
+            .records()
+            .into_iter()
+            .find(|record| matches!(record.payload, SamplePayload::Float { .. }))
+            .expect("float wal record");
+        assert!(
+            sample.labels
+                == vec![
+                    ("__name__".to_string(), "system.cpu.utilization".to_string()),
+                    ("host.name".to_string(), "api-1".to_string())
+                ]
+        );
+    }
+
+    #[tokio::test]
+    async fn influx_line_protocol_maps_to_the_shared_wal_and_path() {
+        let (state, sink) = test_state();
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/push/influx/write?precision=ms")
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .body(Body::from("cpu,host=api-1 value=1.5 1234"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(
+            sink.records()
+                == vec![WalRecord {
+                    tenant: "tenant-a".to_string(),
+                    labels: vec![
+                        ("__name__".to_string(), "cpu".to_string()),
+                        ("__proxy_source__".to_string(), "influx".to_string()),
+                        ("host".to_string(), "api-1".to_string()),
+                    ],
+                    payload: SamplePayload::Float {
+                        timestamp_ms: 1_234,
+                        value: 1.5,
+                        start_timestamp_ms: None,
+                    },
+                    exemplars: Vec::new(),
+                }]
         );
     }
 
@@ -2146,7 +2240,7 @@ overrides:
             .unwrap();
 
         let records = sink.records();
-        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(response.status() == StatusCode::OK);
         assert!(records.len() == 2);
         let metadata = records
             .iter()
@@ -2263,7 +2357,7 @@ overrides:
             .unwrap();
 
         check!(tight_response.status() == StatusCode::BAD_REQUEST);
-        check!(loose_response.status() == StatusCode::NO_CONTENT);
+        check!(loose_response.status() == StatusCode::OK);
         check!(sink.records().len() == 1);
     }
 
@@ -2436,7 +2530,7 @@ overrides:
             .await
             .unwrap();
 
-        check!(first_response.status() == StatusCode::NO_CONTENT);
+        check!(first_response.status() == StatusCode::OK);
         check!(second_response.status() == StatusCode::TOO_MANY_REQUESTS);
         check!(sink.records().len() == 1);
     }
@@ -2477,7 +2571,7 @@ defaults:
 
         let admitted = statuses
             .iter()
-            .filter(|status| **status == StatusCode::NO_CONTENT)
+            .filter(|status| **status == StatusCode::OK)
             .count();
         let rejected = statuses
             .iter()
@@ -2526,7 +2620,7 @@ defaults:
             .await
             .unwrap();
 
-        check!(exemplar_response.status() == StatusCode::NO_CONTENT);
+        check!(exemplar_response.status() == StatusCode::OK);
         check!(sample_response.status() == StatusCode::TOO_MANY_REQUESTS);
         check!(sink.records().len() == 1);
     }
@@ -2582,8 +2676,8 @@ defaults:
             .await
             .unwrap();
 
-        check!(newest_response.status() == StatusCode::NO_CONTENT);
-        check!(within_window_response.status() == StatusCode::NO_CONTENT);
+        check!(newest_response.status() == StatusCode::OK);
+        check!(within_window_response.status() == StatusCode::OK);
         check!(too_old_response.status() == StatusCode::BAD_REQUEST);
         check!(sink.records().len() == 2);
     }
@@ -2635,8 +2729,8 @@ overrides:
             .await
             .unwrap();
 
-        check!(newest_response.status() == StatusCode::NO_CONTENT);
-        check!(overridden_window_response.status() == StatusCode::NO_CONTENT);
+        check!(newest_response.status() == StatusCode::OK);
+        check!(overridden_window_response.status() == StatusCode::OK);
         check!(sink.records().len() == 2);
     }
 
@@ -2677,7 +2771,7 @@ overrides:
             .await
             .unwrap();
 
-        check!(newest_response.status() == StatusCode::NO_CONTENT);
+        check!(newest_response.status() == StatusCode::OK);
         check!(too_old_response.status() == StatusCode::BAD_REQUEST);
         check!(sink.records().len() == 1);
     }
@@ -2701,7 +2795,7 @@ overrides:
         let current = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(1_000)).await;
 
         check!(future == StatusCode::BAD_REQUEST);
-        check!(current == StatusCode::NO_CONTENT);
+        check!(current == StatusCode::OK);
         check!(sink.records().len() == 1);
     }
 
@@ -2890,7 +2984,7 @@ overrides:
             .await
             .unwrap();
 
-        check!(response.status() == StatusCode::NO_CONTENT);
+        check!(response.status() == StatusCode::OK);
         let records = sink.records();
         assert!(records.len() == 1);
         check!(records[0].tenant == "tenant-a");
@@ -2938,23 +3032,24 @@ overrides:
     }
 
     #[tokio::test]
-    async fn unsupported_content_type_is_415() {
+    async fn push_treats_a_legacy_content_type_as_v1() {
         let (state, sink) = test_state();
         let response = router(state)
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/api/v1/push")
-                    .header("Content-Type", "application/json")
+                    .header("Content-Type", "text/plain")
+                    .header("Content-Encoding", "snappy")
                     .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(vec![1, 2, 3]))
+                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert!(response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        assert!(sink.records().is_empty());
+        assert!(response.status() == StatusCode::OK);
+        assert!(sink.records().len() == 1);
     }
 
     #[tokio::test]
@@ -2975,6 +3070,27 @@ overrides:
 
         let records = sink.records();
         assert!(response.status() == StatusCode::OK);
+        check!(
+            response
+                .headers()
+                .get("content-type")
+                .map(HeaderValue::as_bytes)
+                == Some(&b"application/x-protobuf"[..])
+        );
+        check!(
+            response
+                .headers()
+                .get("x-content-type-options")
+                .map(HeaderValue::as_bytes)
+                == Some(&b"nosniff"[..])
+        );
+        check!(
+            response
+                .headers()
+                .get("content-length")
+                .map(HeaderValue::as_bytes)
+                == Some(&b"0"[..])
+        );
         assert!(records.len() == 2);
         let sample = records
             .iter()
@@ -3009,6 +3125,56 @@ overrides:
                     unit: "1".to_string(),
                 }
         );
+    }
+
+    #[tokio::test]
+    async fn otlp_http_reports_partial_success_and_appends_valid_data_points() {
+        let (state, sink) = test_state();
+        let response = router(state)
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/otlp/v1/metrics")
+                    .header("Content-Type", "application/x-protobuf")
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .body(Body::from(otlp_mixed_gauge_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        check!(response.status() == StatusCode::OK);
+        let content_length = response
+            .headers()
+            .get("content-length")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<usize>().ok())
+            .expect("partial-success body length");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        check!(content_length == body.len());
+        let partial = ExportMetricsServiceResponse::decode(body)
+            .unwrap()
+            .partial_success
+            .expect("mixed request reports partial success");
+        check!(partial.rejected_data_points == 1);
+        check!(
+            partial
+                .error_message
+                .contains("missing number datapoint value")
+        );
+        check!(sink.records().len() == 2, "one sample and its metadata");
+        check!(sink.records().iter().any(|record| {
+            matches!(
+                record.payload,
+                SamplePayload::Float {
+                    timestamp_ms: 1,
+                    value: 2.0,
+                    ..
+                }
+            )
+        }));
     }
 
     #[tokio::test]
@@ -3382,7 +3548,7 @@ overrides:
             .await
             .unwrap();
 
-        assert!(response.status() == StatusCode::NO_CONTENT);
+        assert!(response.status() == StatusCode::OK);
         assert!(sink.records().len() == 1);
         let elections = election_sink.elections();
         assert!(elections.len() == 1);
@@ -3850,6 +4016,7 @@ mod clock_wal_records;
 mod clocks_push;
 mod clocks_push_inner;
 mod consumer;
+mod decode_influx;
 mod decode_otlp_http_body;
 mod decoded_sample_count;
 mod decoded_series;
@@ -3874,6 +4041,8 @@ mod ha_election_replay_result;
 mod ha_election_sink;
 mod header_list_includes;
 mod indicator;
+mod influx_push;
+mod influx_push_inner;
 mod ingest_clock;
 mod ingest_span;
 mod ingest_stamp;
@@ -3884,11 +4053,13 @@ mod kafka_sink;
 mod keyed_producer_record;
 mod label_pairs;
 mod max_exemplar_label_codepoints;
+mod mimir_tenant_status;
 mod otlp_grpc_export_inner;
 mod otlp_metrics_service;
 mod otlp_metrics_service_server;
 mod otlp_push;
 mod otlp_push_inner;
+mod otlp_translation_strategy;
 mod poll_ha_election_consumer_once;
 mod produce_error;
 mod projected_labels;
@@ -3931,6 +4102,7 @@ use clock_state_series::clock_state_series;
 pub use clock_wal_records::clock_wal_records;
 use clocks_push::clocks_push;
 use clocks_push_inner::clocks_push_inner;
+use decode_influx::decode_influx;
 use decode_otlp_http_body::decode_otlp_http_body;
 use decoded_sample_count::decoded_sample_count;
 use decoded_series::decoded_series;
@@ -3955,6 +4127,8 @@ pub use ha_election_replay_result::HaElectionReplayResult;
 pub use ha_election_sink::HaElectionSink;
 use header_list_includes::header_list_includes;
 use indicator::indicator;
+use influx_push::influx_push;
+use influx_push_inner::influx_push_inner;
 pub use ingest_clock::IngestClock;
 use ingest_span::ingest_span;
 use ingest_stamp::ingest_stamp;
@@ -3965,11 +4139,13 @@ pub use kafka_sink::KafkaSink;
 use keyed_producer_record::keyed_producer_record;
 use label_pairs::label_pairs;
 use max_exemplar_label_codepoints::MAX_EXEMPLAR_LABEL_CODEPOINTS;
+use mimir_tenant_status::{all_user_stats, runtime_config, user_limits, user_stats};
 use otlp_grpc_export_inner::otlp_grpc_export_inner;
 pub use otlp_metrics_service::{OtlpMetricsService, otlp_metrics_service};
 pub use otlp_metrics_service_server::otlp_metrics_service_server;
 use otlp_push::otlp_push;
 use otlp_push_inner::otlp_push_inner;
+use otlp_translation_strategy::otlp_translation_strategy;
 pub use poll_ha_election_consumer_once::poll_ha_election_consumer_once;
 pub use produce_error::ProduceError;
 use projected_labels::projected_labels;

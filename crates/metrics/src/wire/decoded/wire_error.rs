@@ -25,8 +25,8 @@ impl WireError {
     pub fn status_code(&self) -> u16 {
         match self {
             Self::UnsupportedContentType(_) | Self::UnsupportedContentEncoding(_) => 415,
+            Self::DecodedBodyTooLarge(_) => 413,
             Self::SnappyOutputTooLarge(_)
-            | Self::DecodedBodyTooLarge(_)
             | Self::SnappyDecode(_)
             | Self::GzipDecode(_)
             | Self::ProtobufDecode(_)

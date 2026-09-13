@@ -16,7 +16,7 @@ pub(crate) fn histogram_series(
     let mut out = Vec::new();
     for point in &histogram.data_points {
         let mut point_series =
-            classic_histogram_series(&name, point, resource_attributes, Some(&metadata))?;
+            classic_histogram_series(&name, point, resource_attributes, Some(&metadata), strategy)?;
         if histogram.aggregation_temporality == AggregationTemporality::Delta as i32 {
             let Some(accumulator) = accumulator.as_deref_mut() else {
                 return Err(OtlpError::DeltaUnsupported(metric.name.clone()));

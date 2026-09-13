@@ -11,11 +11,14 @@ pub(crate) async fn histogram_quantile_mixed_emits_exact_warning_and_no_info() {
         )
         .await
         .expect("query");
-    assert2::assert!(annotations == crate::Annotations {
-            warnings: vec![
-                "PromQL warning: vector contains a mix of classic and native histograms for metric name \"series\""
-                    .to_string()
-            ],
-            infos: vec![],
-        });
+    assert2::assert!(
+        annotations
+            == crate::Annotations {
+                warnings: vec![
+                    "PromQL warning: vector contains a mix of classic and native histograms (1:25)"
+                        .to_string()
+                ],
+                infos: vec![],
+            }
+    );
 }

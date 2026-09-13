@@ -40,6 +40,7 @@ pub(crate) async fn prometheus_rule_json<S: MetricStore>(
             "health": health,
             "lastError": last_error,
             "lastEvaluation": last_evaluation,
+            "labels": yaml_mapping_json(rule, "labels"),
             "name": name,
             "query": yaml_string(rule, "expr"),
             "type": "recording",
@@ -65,6 +66,7 @@ pub(crate) async fn prometheus_rule_json<S: MetricStore>(
     let mut rule_json = json!({
         "annotations": yaml_mapping_json(rule, "annotations"),
         "duration": yaml_duration(rule, "for").secs_i64(),
+        "keepFiringFor": yaml_duration(rule, "keep_firing_for").secs_i64(),
         "evaluationTime": evaluation_time,
         "health": health,
         "lastError": last_error,

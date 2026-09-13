@@ -32,7 +32,7 @@ pub(crate) async fn query_range_annotations_agree_through_the_frontend_and_the_d
         "status": "success",
         "data": {"resultType": "matrix", "result": []},
         "warnings": [
-            "PromQL warning: bucket label \"le\" is missing or has a malformed value of \"\" for metric name \"up\""
+            "PromQL warning: bucket label \"le\" is missing or has a malformed value of \"\" (1:25)"
         ],
     });
     check!(direct_status == StatusCode::OK);

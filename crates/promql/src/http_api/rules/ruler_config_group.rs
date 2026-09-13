@@ -23,6 +23,6 @@ pub(crate) async fn ruler_config_group<S: MetricStore>(
     };
     match group {
         Some(group) => yaml_response(StatusCode::OK, &group),
-        None => ApiError::not_found("rule group not found").into_response(),
+        None => (StatusCode::NOT_FOUND, "group does not exist\n").into_response(),
     }
 }

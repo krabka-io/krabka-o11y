@@ -446,21 +446,18 @@ load 5m
 	version{job="app-server", instance="2", group="canary"}		{{schema:0 sum:10 count:20 z_bucket_w:0.001 z_bucket:2 buckets:[1 2] n_buckets:[1 2]}}
 	version{job="app-server", instance="3", group="canary"}		{{schema:0 sum:10 count:20 z_bucket_w:0.001 z_bucket:2 buckets:[1 2] n_buckets:[1 2]}}
 
-# krabka:divergence `count_values` renders a native-histogram sample as JSON, where Prometheus renders it in `FloatHistogram.String()` bucket notation, so the label value differs.
 eval instant at 1m count_values("version", version)
 	{version="6"} 5
 	{version="7"} 2
 	{version="8"} 2
     {version="{count:20, sum:10, [-2,-1):2, [-1,-0.5):1, [-0.001,0.001]:2, (0.5,1]:1, (1,2]:2}"} 2
 
-# krabka:divergence `count_values` renders a native-histogram sample as JSON, where Prometheus renders it in `FloatHistogram.String()` bucket notation, so the label value differs.
 eval instant at 1m count_values(((("version"))), version)
     {version="6"} 5
     {version="7"} 2
     {version="8"} 2
     {version="{count:20, sum:10, [-2,-1):2, [-1,-0.5):1, [-0.001,0.001]:2, (0.5,1]:1, (1,2]:2}"} 2
 
-# krabka:divergence `count_values` renders a native-histogram sample as JSON, where Prometheus renders it in `FloatHistogram.String()` bucket notation, so the label value differs.
 eval instant at 1m count_values without (instance)("version", version)
 	{job="api-server", group="production", version="6"} 3
 	{job="api-server", group="canary", version="8"} 2
@@ -469,7 +466,6 @@ eval instant at 1m count_values without (instance)("version", version)
     {job="app-server", group="canary", version="{count:20, sum:10, [-2,-1):2, [-1,-0.5):1, [-0.001,0.001]:2, (0.5,1]:1, (1,2]:2}"} 2
 
 # Overwrite label with output. Don't do this.
-# krabka:divergence `count_values` renders a native-histogram sample as JSON, where Prometheus renders it in `FloatHistogram.String()` bucket notation, so the label value differs.
 eval instant at 1m count_values without (instance)("job", version)
 	{job="6", group="production"} 5
 	{job="8", group="canary"} 2
@@ -477,7 +473,6 @@ eval instant at 1m count_values without (instance)("job", version)
     {job="{count:20, sum:10, [-2,-1):2, [-1,-0.5):1, [-0.001,0.001]:2, (0.5,1]:1, (1,2]:2}", group="canary"} 2
 
 # Overwrite label with output. Don't do this.
-# krabka:divergence `count_values` renders a native-histogram sample as JSON, where Prometheus renders it in `FloatHistogram.String()` bucket notation, so the label value differs.
 eval instant at 1m count_values by (job, group)("job", version)
 	{job="6", group="production"} 5
 	{job="8", group="canary"} 2
@@ -550,7 +545,7 @@ eval instant at 1m quantile without(point)((scalar(foo)), data)
 	{test="NaN sample"} 0.6
 
 eval instant at 1m quantile without(point)(NaN, data)
-	expect warn msg: PromQL warning: quantile value should be between 0 and 1, got NaN
+	expect warn msg: PromQL warning: quantile value should be between 0 and 1, got NaN (1:25)
 	{test="two samples"} NaN
 	{test="three samples"} NaN
 	{test="uneven samples"} NaN

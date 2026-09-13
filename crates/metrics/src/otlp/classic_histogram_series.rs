@@ -1,6 +1,7 @@
 use super::{
     DecodedMetadata, DecodedSample, DecodedSeries, HistogramDataPoint, KeyValue, OtlpError,
-    ToPrimitive, exemplars_for_bucket, exemplars_from_histogram_point, labels, nanos_to_millis,
+    ToPrimitive, TranslationStrategy, exemplars_for_bucket, exemplars_from_histogram_point, labels,
+    nanos_to_millis,
 };
 
 pub(crate) fn classic_histogram_series(
@@ -8,6 +9,7 @@ pub(crate) fn classic_histogram_series(
     point: &HistogramDataPoint,
     resource_attributes: &[KeyValue],
     metadata: Option<&DecodedMetadata>,
+    strategy: TranslationStrategy,
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
     if !point.bucket_counts.is_empty()
         && point.bucket_counts.len() != point.explicit_bounds.len() + 1
@@ -19,7 +21,7 @@ pub(crate) fn classic_histogram_series(
     }
 
     let timestamp = nanos_to_millis(point.time_unix_nano);
-    let point_exemplars = exemplars_from_histogram_point(point);
+    let point_exemplars = exemplars_from_histogram_point(point, strategy);
     let mut out = Vec::new();
     let base_name = format!("{name}_bucket");
     let mut cumulative = 0_u64;
@@ -35,6 +37,7 @@ pub(crate) fn classic_histogram_series(
                 resource_attributes,
                 &point.attributes,
                 Some(("le", &le)),
+                strategy,
             ),
             samples: vec![DecodedSample::with_start_timestamp(
                 timestamp,
@@ -54,6 +57,7 @@ pub(crate) fn classic_histogram_series(
             resource_attributes,
             &point.attributes,
             None,
+            strategy,
         ),
         samples: vec![DecodedSample::with_start_timestamp(
             timestamp,
@@ -72,6 +76,7 @@ pub(crate) fn classic_histogram_series(
                 resource_attributes,
                 &point.attributes,
                 None,
+                strategy,
             ),
             samples: vec![DecodedSample::with_start_timestamp(
                 timestamp,

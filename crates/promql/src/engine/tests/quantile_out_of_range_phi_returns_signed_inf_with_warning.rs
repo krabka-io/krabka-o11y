@@ -45,7 +45,7 @@ pub(crate) async fn quantile_out_of_range_phi_returns_signed_inf_with_warning() 
         assert2::assert!(
             annotations.warnings
                 == vec![format!(
-                    "PromQL warning: quantile value should be between 0 and 1, got {phi_text}"
+                    "PromQL warning: quantile value should be between 0 and 1, got {phi_text} (1:10)"
                 )]
         );
     }
