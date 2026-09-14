@@ -24,7 +24,7 @@ where
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &span_ids,
                 (req.start, req.end),
-                req.max_nodes,
+                req.max_nodes.unwrap_or_default(),
             )
             .await
             .map_err(connect_error)?;
@@ -38,7 +38,7 @@ where
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &span_ids,
                 (req.start, req.end),
-                req.max_nodes,
+                req.max_nodes.unwrap_or_default(),
             )
             .await
             .map_err(connect_error)?;

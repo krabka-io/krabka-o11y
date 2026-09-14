@@ -1,7 +1,7 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
     ProfileStore, QuerierState, authorize_tenant, connect_error, flamegraph_dot,
-    merge_profile_id_selector, pb, stack_trace_call_sites_from_json, tenant_connect_error,
+    merge_profile_id_selector, pb, stack_trace_call_sites, tenant_connect_error,
     tenant_denied_connect_error, tenant_from_headers,
 };
 
@@ -20,15 +20,15 @@ where
     let req = req.0;
     let label_selector = merge_profile_id_selector(&req.label_selector, &req.profile_id_selector)
         .map_err(connect_error)?;
-    let stack_trace_call_sites =
-        stack_trace_call_sites_from_json(&req.stack_trace_selector).map_err(connect_error)?;
+    let stack_trace_call_sites = stack_trace_call_sites(req.stack_trace_selector.as_ref());
+    let max_nodes = req.max_nodes.unwrap_or_default();
     let response = match req.format {
         format if format == pb::querier::v1::ProfileFormat::Tree as i32 => {
             let tree = state
                 .select_merge_stacktraces_tree_with_stack_trace_selector(
                     (&tenant, &req.profile_type_id, &label_selector),
                     (req.start, req.end),
-                    req.max_nodes,
+                    max_nodes,
                     &stack_trace_call_sites,
                 )
                 .await
@@ -37,6 +37,7 @@ where
                 flamegraph: None,
                 tree,
                 dot: String::new(),
+                ..Default::default()
             }
         }
         format if format == pb::querier::v1::ProfileFormat::Dot as i32 => {
@@ -44,7 +45,7 @@ where
                 .select_merge_stacktraces_with_stack_trace_selector(
                     (&tenant, &req.profile_type_id, &label_selector),
                     (req.start, req.end),
-                    req.max_nodes,
+                    max_nodes,
                     &stack_trace_call_sites,
                 )
                 .await
@@ -53,6 +54,7 @@ where
                 flamegraph: None,
                 tree: Vec::new(),
                 dot: flamegraph_dot(&flamegraph),
+                ..Default::default()
             }
         }
         _ => {
@@ -60,7 +62,7 @@ where
                 .select_merge_stacktraces_with_stack_trace_selector(
                     (&tenant, &req.profile_type_id, &label_selector),
                     (req.start, req.end),
-                    req.max_nodes,
+                    max_nodes,
                     &stack_trace_call_sites,
                 )
                 .await
@@ -69,6 +71,7 @@ where
                 flamegraph: Some(flamegraph.into()),
                 tree: Vec::new(),
                 dot: String::new(),
+                ..Default::default()
             }
         }
     };

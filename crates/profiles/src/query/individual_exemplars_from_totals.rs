@@ -39,6 +39,7 @@ pub(crate) async fn individual_exemplars_from_totals(
                     timestamp,
                     profile_id: profile_id.to_string(),
                     span_id: String::new(),
+                    trace_id: String::new(),
                     value: totals.value(row),
                     labels: label_pairs.clone(),
                 });

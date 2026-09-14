@@ -24,7 +24,7 @@ where
     state
         .validate_query_range(&tenant, req.start, req.end)
         .map_err(connect_error)?;
-    let max_nodes = state.effective_max_nodes(&tenant, req.max_nodes);
+    let max_nodes = state.effective_max_nodes(&tenant, req.max_nodes.unwrap_or_default());
     let profile = state
         .engine
         .select_merge_profile_with_max_nodes_and_stack_trace_selector(

@@ -18,9 +18,7 @@ where
         .map_err(|error| tenant_connect_error(&error))?;
     authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
     let req = req.0;
-    let agg = if req.aggregation
-        == pb::querier::v1::SeriesAggregationType::TimeSeriesAggregationTypeAverage as i32
-    {
+    let agg = if req.aggregation == Some(pb::querier::v1::SeriesAggregationType::Average as i32) {
         SeriesAgg::Average
     } else {
         SeriesAgg::Sum

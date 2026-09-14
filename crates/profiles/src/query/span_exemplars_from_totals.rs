@@ -45,6 +45,7 @@ pub(crate) async fn span_exemplars_from_totals(
                     timestamp,
                     profile_id: String::new(),
                     span_id: span_id_hex_from_u64(span_ids.value(row)),
+                    trace_id: String::new(),
                     value: totals.value(row),
                     labels: label_pairs.clone(),
                 });

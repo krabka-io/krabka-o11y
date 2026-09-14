@@ -1926,6 +1926,14 @@
     {
       "signal": "profiles",
       "method": "POST",
+      "path": "/settings.v1.SettingsService/Delete",
+      "sources": [
+        "crates/profiles/proto/settings/v1/settings.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
       "path": "/settings.v1.SettingsService/Get",
       "sources": [
         "crates/profiles/proto/settings/v1/settings.proto"

@@ -52,6 +52,7 @@ pub(crate) async fn heatmap_span_exemplars_from_scan(
                     timestamp,
                     profile_id: String::new(),
                     span_id: span_id_hex_from_u64(span_ids.value(row)),
+                    trace_id: String::new(),
                     value: totals.value(row),
                     labels: labels.clone(),
                 });

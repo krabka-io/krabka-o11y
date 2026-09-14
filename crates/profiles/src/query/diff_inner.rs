@@ -1,7 +1,7 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
     ProfileError, ProfileStore, QuerierState, authorize_tenant, connect_error,
-    merge_profile_id_selector, pb, stack_trace_call_sites_from_json, tenant_connect_error,
+    merge_profile_id_selector, pb, stack_trace_call_sites, tenant_connect_error,
     tenant_denied_connect_error, tenant_from_headers,
 };
 
@@ -37,11 +37,12 @@ where
     let right_label_selector =
         merge_profile_id_selector(&right.label_selector, &right.profile_id_selector)
             .map_err(connect_error)?;
-    let left_call_sites =
-        stack_trace_call_sites_from_json(&left.stack_trace_selector).map_err(connect_error)?;
-    let right_call_sites =
-        stack_trace_call_sites_from_json(&right.stack_trace_selector).map_err(connect_error)?;
-    let max_nodes = state.effective_max_nodes(&tenant, left.max_nodes.max(right.max_nodes));
+    let left_call_sites = stack_trace_call_sites(left.stack_trace_selector.as_ref());
+    let right_call_sites = stack_trace_call_sites(right.stack_trace_selector.as_ref());
+    let max_nodes = state.effective_max_nodes(
+        &tenant,
+        left.max_nodes.max(right.max_nodes).unwrap_or_default(),
+    );
     let flamegraph = state
         .engine
         .diff_with_stack_trace_selector(

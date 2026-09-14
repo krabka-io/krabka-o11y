@@ -72,6 +72,10 @@ fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
+            if *filename == "google.v1.rs" && line == "pub struct Mapping {" {
+                normalized.push_str("#[allow(clippy::struct_excessive_bools)]\n");
+            }
+
             let indent_len = line.len() - line.trim_start().len();
             if line.trim_start().starts_with("pub fn ") {
                 normalized.push_str(&line[..indent_len]);

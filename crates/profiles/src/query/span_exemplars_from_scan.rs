@@ -72,6 +72,7 @@ pub(crate) async fn span_exemplars_from_scan(
                 timestamp,
                 profile_id: String::new(),
                 span_id: span_id_hex_from_u64(span_id),
+                trace_id: String::new(),
                 value,
                 labels: label_pairs.clone(),
             });

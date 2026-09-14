@@ -961,7 +961,7 @@ overrides:
     }
 
     #[tokio::test]
-    async fn settings_service_get_returns_empty_and_set_echoes() {
+    async fn settings_service_matches_fresh_tenant_semantics() {
         // Regression: the Grafana Profiles Drilldown app calls
         // `settings.v1.SettingsService/Get` during init. A 404 aborts init — the
         // app never issues the per-panel SelectSeries queries and the landing
@@ -1021,6 +1021,21 @@ overrides:
         assert!(
             json.pointer("/setting/name").and_then(|v| v.as_str()) == Some("flamegraph.collapsed"),
             "Set must echo the setting, got {json}"
+        );
+
+        let resp = client
+            .post(format!("http://{bound}/settings.v1.SettingsService/Delete"))
+            .header("content-type", "application/json")
+            .header("connect-protocol-version", "1")
+            .header("x-scope-orgid", "tenant-a")
+            .body(r#"{"name":"flamegraph.collapsed"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status() == reqwest::StatusCode::OK,
+            "Delete must succeed, got {}",
+            resp.status()
         );
     }
 
@@ -1587,7 +1602,9 @@ overrides:
             .json(&json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
-                "stackTraceSelector": r#"{"callSite":[{"name":"hot.path"}]}"#,
+                "stackTraceSelector": {
+                    "callSite": [{ "name": "hot.path" }]
+                },
                 "start": 0,
                 "end": 100,
             }))
@@ -1631,14 +1648,18 @@ overrides:
                 "left": {
                     "profileTypeID": PT,
                     "labelSelector": r#"{service_name="api"}"#,
-                    "stackTraceSelector": r#"{"callSite":[{"name":"hot.path"}]}"#,
+                    "stackTraceSelector": {
+                        "callSite": [{ "name": "hot.path" }]
+                    },
                     "start": 0,
                     "end": 100
                 },
                 "right": {
                     "profileTypeID": PT,
                     "labelSelector": r#"{service_name="api"}"#,
-                    "stackTraceSelector": r#"{"callSite":[{"name":"cold.path"}]}"#,
+                    "stackTraceSelector": {
+                        "callSite": [{ "name": "cold.path" }]
+                    },
                     "start": 0,
                     "end": 100
                 }
@@ -2530,8 +2551,8 @@ overrides:
 
     #[test]
     fn limit_zero_means_unlimited() {
-        assert!(limit(0) == usize::MAX);
-        assert!(limit(2) == 2);
+        assert!(limit(None) == usize::MAX);
+        assert!(limit(Some(2)) == 2);
     }
 
     #[test]
@@ -2878,6 +2899,7 @@ mod connect_error;
 mod default_heatmap_time_buckets_max;
 mod default_heatmap_value_buckets;
 mod default_store;
+mod delete_settings_handler;
 mod deserialize_group_by;
 mod diff_handler;
 mod diff_inner;
@@ -2957,9 +2979,6 @@ mod span_exemplars_from_scan;
 mod span_exemplars_from_totals;
 mod span_heatmap_points_from_scan;
 mod stack_trace_call_sites;
-mod stack_trace_call_sites_from_json;
-mod stack_trace_location_json;
-mod stack_trace_selector_json;
 mod tenant_connect_error;
 mod tenant_denied_connect_error;
 mod tenant_error_response;
@@ -2974,6 +2993,7 @@ use connect_error::connect_error;
 use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;
 use default_heatmap_value_buckets::DEFAULT_HEATMAP_VALUE_BUCKETS;
 pub use default_store::DefaultStore;
+use delete_settings_handler::delete_settings_handler;
 use deserialize_group_by::deserialize_group_by;
 use diff_handler::diff_handler;
 use diff_inner::diff_inner;
@@ -3050,9 +3070,6 @@ use span_exemplars_from_scan::span_exemplars_from_scan;
 use span_exemplars_from_totals::span_exemplars_from_totals;
 use span_heatmap_points_from_scan::span_heatmap_points_from_scan;
 use stack_trace_call_sites::stack_trace_call_sites;
-use stack_trace_call_sites_from_json::stack_trace_call_sites_from_json;
-use stack_trace_location_json::StackTraceLocationJson;
-use stack_trace_selector_json::StackTraceSelectorJson;
 use tenant_connect_error::tenant_connect_error;
 use tenant_denied_connect_error::tenant_denied_connect_error;
 use tenant_error_response::tenant_error_response;
