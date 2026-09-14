@@ -21,6 +21,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_prost_config(move |config| {
             config.protoc_executable(protoc_path.clone());
         })
+        .with_pbjson_config(|config| {
+            config.ignore_unknown_fields();
+        })
         .compile()?;
     normalize_generated_code()?;
     for path in [

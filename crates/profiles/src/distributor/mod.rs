@@ -15,6 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use base64::Engine as _;
 use connectrpc_axum::{
     MakeServiceBuilder, MessageLimits,
     message::{Code, ConnectError, ConnectRequest, ConnectResponse},
