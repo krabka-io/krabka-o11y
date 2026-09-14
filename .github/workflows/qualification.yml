@@ -11,6 +11,9 @@ jobs:
     name: qualification · ${{ matrix.id }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     strategy:
       fail-fast: false
       matrix:
@@ -20,15 +23,15 @@ jobs:
           - id: ordinary-cargo
             command: cargo test --workspace --locked
           - id: oracle-versions
-            command: bazel test --config=docker //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:tempo_version_test //bazel/images:pyroscope_version_test
+            command: bazel test --config=docker --flaky_test_attempts=1 //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:tempo_version_test //bazel/images:pyroscope_version_test
           - id: mimir
-            command: bazel test --config=docker //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:grafana_integration_docker_test
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test //crates/metrics-service:grafana_integration_docker_test
           - id: loki
-            command: bazel test --config=docker //crates/observability:loki_differential_docker_test //crates/observability:grafana_e2e_docker_test
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:loki_differential_docker_test //crates/observability:grafana_e2e_docker_test //crates/observability:grafana_integration_docker_test
           - id: tempo
-            command: bazel test --config=docker //crates/traces:tempo_differential_docker_test //crates/traces:grafana_e2e_docker_test
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/traces:tempo_differential_docker_test //crates/traces:grafana_e2e_docker_test
           - id: pyroscope
-            command: bazel test --config=docker //crates/profiles:pyroscope_differential_docker_test
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/profiles:pyroscope_differential_docker_test
           - id: clients-and-correlation
             command: bazel test //crates/integration:logs_to_traces_trace_id_test //crates/integration:traces_to_metrics_exemplars_test //crates/integration:traces_to_profiles_span_profiles_test
           - id: lifecycle-and-failures
@@ -36,9 +39,9 @@ jobs:
           - id: security-and-limits
             command: bazel test //crates/metrics:tenant_quota_isolation_test //crates/observability:audit_test //crates/observability:server_security_test //crates/observability:service_security_test //crates/profiles:tenant_resolution_test //crates/promql:tenant_isolation_test //crates/traces:tenant_isolation_test
           - id: scale-object-store
-            command: bazel test --config=scale //crates/observability:scale_object_store_docker_test
+            command: bazel test --config=scale --flaky_test_attempts=1 //crates/observability:scale_object_store_docker_test
           - id: scale-soak
-            command: bazel test --config=scale //crates/observability:soak_ingest_query_docker_test
+            command: bazel test --config=scale --flaky_test_attempts=1 //crates/observability:soak_ingest_query_docker_test
     steps:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9

@@ -71,8 +71,8 @@ def validate(report, final=False, commit=None):
     for gate in gates:
         if not gate.get("commands") or not all(isinstance(command, str) and command for command in gate["commands"]):
             fail(f"{gate['id']} must name its commands")
-        if not isinstance(gate.get("case_count"), int) or gate["case_count"] < 0:
-            fail(f"{gate['id']} must have a non-negative case_count")
+        if not isinstance(gate.get("command_count"), int) or gate["command_count"] < 0:
+            fail(f"{gate['id']} must have a non-negative command_count")
         if gate.get("result") not in {"pending", "passed"}:
             fail(f"{gate['id']} has an invalid result")
 
@@ -83,8 +83,8 @@ def validate(report, final=False, commit=None):
         if not COMMIT.fullmatch(actual) or (commit and actual != commit):
             fail("final report must name the exact immutable Krabka commit")
         for gate in gates:
-            if gate["result"] != "passed" or gate["case_count"] == 0:
-                fail(f"{gate['id']} has no passing case evidence")
+            if gate["result"] != "passed" or gate["command_count"] != len(gate["commands"]):
+                fail(f"{gate['id']} has incomplete command evidence")
             evidence = gate.get("evidence", "")
             if not re.fullmatch(r"https://github\.com/[^/]+/[^/]+/actions/runs/[0-9]+", evidence):
                 fail(f"{gate['id']} evidence must be an immutable Actions run URL")
@@ -99,7 +99,7 @@ def promote(report, commit, evidence):
     promoted["krabka_commit"] = commit
     for gate in promoted["gates"]:
         gate["result"] = "passed"
-        gate["case_count"] = len(gate["commands"])
+        gate["command_count"] = len(gate["commands"])
         gate["evidence"] = evidence
     validate(promoted, final=True, commit=commit)
     return promoted
@@ -117,7 +117,7 @@ def self_test():
     final = promote(sample, "a" * 40, "https://github.com/krabka-io/krabka-o11y/actions/runs/1")
     validate(final, final=True, commit="a" * 40)
     broken = copy.deepcopy(final)
-    broken["gates"][0]["case_count"] = 0
+    broken["gates"][0]["command_count"] = 0
     try:
         validate(broken, final=True, commit="a" * 40)
     except ValueError:
