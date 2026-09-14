@@ -29,16 +29,18 @@ pub(crate) fn normalize_otlp_proto_logs_for_tenant(
                 .attributes_config
                 .iter()
                 .find(|rule| rule.matches(name))
-                .map(|rule| rule.action)
-                .unwrap_or_else(|| {
-                    if !limits.otlp_config.resource_attributes.ignore_defaults
-                        && is_default_otlp_resource_label(name)
-                    {
-                        OtlpAttributeAction::IndexLabel
-                    } else {
-                        OtlpAttributeAction::StructuredMetadata
-                    }
-                })
+                .map_or_else(
+                    || {
+                        if !limits.otlp_config.resource_attributes.ignore_defaults
+                            && is_default_otlp_resource_label(name)
+                        {
+                            OtlpAttributeAction::IndexLabel
+                        } else {
+                            OtlpAttributeAction::StructuredMetadata
+                        }
+                    },
+                    |rule| rule.action,
+                )
         };
         let mut resource_labels = Labels::default();
         let mut resource_metadata = Labels::default();

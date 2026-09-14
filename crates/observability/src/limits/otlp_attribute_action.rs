@@ -1,17 +1,12 @@
 use super::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OtlpAttributeAction {
     IndexLabel,
+    #[default]
     StructuredMetadata,
     Drop,
-}
-
-impl Default for OtlpAttributeAction {
-    fn default() -> Self {
-        Self::StructuredMetadata
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
