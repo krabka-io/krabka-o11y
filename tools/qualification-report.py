@@ -22,6 +22,7 @@ REQUIRED_GATES = {
     "security_and_limits",
     "scale",
 }
+WORKFLOW = ROOT / ".github/workflows/qualification.yml"
 
 
 def fail(message):
@@ -31,6 +32,14 @@ def fail(message):
 def load(path):
     with path.open(encoding="utf-8") as source:
         return json.load(source)
+
+
+def workflow_commands():
+    source = WORKFLOW.read_text(encoding="utf-8")
+    return {
+        match.group(1).strip()
+        for match in re.finditer(r"^\s+command:\s+(.+)$", source, re.MULTILINE)
+    }
 
 
 def validate(report, final=False, commit=None):
@@ -76,6 +85,10 @@ def validate(report, final=False, commit=None):
         if gate.get("result") not in {"pending", "passed"}:
             fail(f"{gate['id']} has an invalid result")
 
+    declared_commands = {command for gate in gates for command in gate["commands"]}
+    if workflow_commands() != declared_commands:
+        fail("qualification workflow commands differ from the report")
+
     if final:
         if report["status"] != "qualified":
             fail("final report must be qualified")
@@ -108,6 +121,14 @@ def promote(report, commit, evidence):
 def self_test():
     sample = load(REPORT)
     validate(sample)
+    drifted = copy.deepcopy(sample)
+    drifted["gates"][0]["commands"].append("false")
+    try:
+        validate(drifted)
+    except ValueError:
+        pass
+    else:
+        fail("workflow command drift unexpectedly validated")
     try:
         validate(sample, final=True)
     except ValueError:
