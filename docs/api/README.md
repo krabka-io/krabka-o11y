@@ -1,8 +1,8 @@
-# HTTP Route Inventory
+# API Inventory
 
-[`routes.json`](routes.json) lists every HTTP method and path registered by the four signal implementations.
+[`routes.json`](routes.json) lists every HTTP method and path registered by the four signal implementations. It also records every Profiles protobuf file hash, service, method, message, field, enum, and value.
 
-The generator reads production router declarations and the local Pyroscope Connect service definitions.
+The generator reads production router declarations and the local Pyroscope and OTLP protobuf definitions.
 
 Regenerate it with:
 

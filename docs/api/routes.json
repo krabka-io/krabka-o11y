@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "generated_by": "tools/route-inventory.py",
   "routes": [
     {
@@ -2148,5 +2148,2492 @@
         "crates/traces/src/distributor/router.rs"
       ]
     }
-  ]
+  ],
+  "protobuf": {
+    "files": [
+      {
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "sha256": "06472c503fb99cc947e7db0a5b7ed22930b1f905e5a5a150aad4d1a7264fb4d6"
+      },
+      {
+        "source": "crates/profiles/proto/opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
+        "sha256": "80df9975ac3b14b7028b7ebe50a22761f1ad1f5e21b976218647b1495b178377"
+      },
+      {
+        "source": "crates/profiles/proto/opentelemetry/proto/common/v1/common.proto",
+        "sha256": "7e7e191dad05f3ed687b52adf578a4d60a62c8ce07a9f81b20571631dc4df461"
+      },
+      {
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "sha256": "7e74f12c5c5483b9de7ba61ab2da3105037aaacca1640172d6cfa5deb6961637"
+      },
+      {
+        "source": "crates/profiles/proto/opentelemetry/proto/resource/v1/resource.proto",
+        "sha256": "83cec6023874fe451ddf34281af1e832c4cb9ed4293806ed019898f092a2fcb3"
+      },
+      {
+        "source": "crates/profiles/proto/push/v1/push.proto",
+        "sha256": "6485c905664f027423a855da4e7a0c4a6ca562e68b2ab9dd2b4cdefb1bd2eadc"
+      },
+      {
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "sha256": "5ee68d0c47d597d0f1b76bd28b3c2e81eef7900c251aac72ce9513aee7198c64"
+      },
+      {
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "sha256": "bda2490d6849d010eec8282c532bfb7b1286fa3165afa8e2115b117849a111ae"
+      },
+      {
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "sha256": "9dc7be1d3eae36ccb27ed3f59bdbdc8f6216439e33ab1ea0e0ebaa7e0ae1aaf7"
+      }
+    ],
+    "services": [
+      {
+        "name": "opentelemetry.proto.collector.profiles.v1development.ProfilesService",
+        "source": "crates/profiles/proto/opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
+        "methods": [
+          {
+            "name": "Export",
+            "request": "ExportProfilesServiceRequest",
+            "request_stream": false,
+            "response": "ExportProfilesServiceResponse",
+            "response_stream": false
+          }
+        ]
+      },
+      {
+        "name": "push.v1.PusherService",
+        "source": "crates/profiles/proto/push/v1/push.proto",
+        "methods": [
+          {
+            "name": "Push",
+            "request": "PushRequest",
+            "request_stream": false,
+            "response": "PushResponse",
+            "response_stream": false
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.QuerierService",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "methods": [
+          {
+            "name": "ProfileTypes",
+            "request": "ProfileTypesRequest",
+            "request_stream": false,
+            "response": "ProfileTypesResponse",
+            "response_stream": false
+          },
+          {
+            "name": "LabelValues",
+            "request": "types.v1.LabelValuesRequest",
+            "request_stream": false,
+            "response": "types.v1.LabelValuesResponse",
+            "response_stream": false
+          },
+          {
+            "name": "LabelNames",
+            "request": "types.v1.LabelNamesRequest",
+            "request_stream": false,
+            "response": "types.v1.LabelNamesResponse",
+            "response_stream": false
+          },
+          {
+            "name": "Series",
+            "request": "SeriesRequest",
+            "request_stream": false,
+            "response": "SeriesResponse",
+            "response_stream": false
+          },
+          {
+            "name": "SelectMergeStacktraces",
+            "request": "SelectMergeStacktracesRequest",
+            "request_stream": false,
+            "response": "SelectMergeStacktracesResponse",
+            "response_stream": false
+          },
+          {
+            "name": "SelectMergeSpanProfile",
+            "request": "SelectMergeSpanProfileRequest",
+            "request_stream": false,
+            "response": "SelectMergeSpanProfileResponse",
+            "response_stream": false
+          },
+          {
+            "name": "SelectMergeProfile",
+            "request": "SelectMergeProfileRequest",
+            "request_stream": false,
+            "response": "google.v1.Profile",
+            "response_stream": false
+          },
+          {
+            "name": "SelectSeries",
+            "request": "SelectSeriesRequest",
+            "request_stream": false,
+            "response": "SelectSeriesResponse",
+            "response_stream": false
+          },
+          {
+            "name": "SelectHeatmap",
+            "request": "SelectHeatmapRequest",
+            "request_stream": false,
+            "response": "SelectHeatmapResponse",
+            "response_stream": false
+          },
+          {
+            "name": "Diff",
+            "request": "DiffRequest",
+            "request_stream": false,
+            "response": "DiffResponse",
+            "response_stream": false
+          },
+          {
+            "name": "GetProfileStats",
+            "request": "types.v1.GetProfileStatsRequest",
+            "request_stream": false,
+            "response": "types.v1.GetProfileStatsResponse",
+            "response_stream": false
+          },
+          {
+            "name": "AnalyzeQuery",
+            "request": "AnalyzeQueryRequest",
+            "request_stream": false,
+            "response": "AnalyzeQueryResponse",
+            "response_stream": false
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.SettingsService",
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "methods": [
+          {
+            "name": "Get",
+            "request": "GetSettingsRequest",
+            "request_stream": false,
+            "response": "GetSettingsResponse",
+            "response_stream": false
+          },
+          {
+            "name": "Set",
+            "request": "SetSettingsRequest",
+            "request_stream": false,
+            "response": "SetSettingsResponse",
+            "response_stream": false
+          },
+          {
+            "name": "Delete",
+            "request": "DeleteSettingsRequest",
+            "request_stream": false,
+            "response": "DeleteSettingsResponse",
+            "response_stream": false
+          }
+        ]
+      }
+    ],
+    "messages": [
+      {
+        "name": "google.v1.Profile",
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "fields": [
+          {
+            "name": "sample_type",
+            "number": 1,
+            "type": "ValueType",
+            "label": "repeated"
+          },
+          {
+            "name": "sample",
+            "number": 2,
+            "type": "Sample",
+            "label": "repeated"
+          },
+          {
+            "name": "mapping",
+            "number": 3,
+            "type": "Mapping",
+            "label": "repeated"
+          },
+          {
+            "name": "location",
+            "number": 4,
+            "type": "Location",
+            "label": "repeated"
+          },
+          {
+            "name": "function",
+            "number": 5,
+            "type": "Function",
+            "label": "repeated"
+          },
+          {
+            "name": "string_table",
+            "number": 6,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "drop_frames",
+            "number": 7,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "keep_frames",
+            "number": 8,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "time_nanos",
+            "number": 9,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "duration_nanos",
+            "number": 10,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "period_type",
+            "number": 11,
+            "type": "ValueType",
+            "label": "singular"
+          },
+          {
+            "name": "period",
+            "number": 12,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "comment",
+            "number": 13,
+            "type": "int64",
+            "label": "repeated"
+          },
+          {
+            "name": "default_sample_type",
+            "number": 14,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "google.v1.ValueType",
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "fields": [
+          {
+            "name": "type",
+            "number": 1,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "unit",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "google.v1.Sample",
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "fields": [
+          {
+            "name": "location_id",
+            "number": 1,
+            "type": "uint64",
+            "label": "repeated"
+          },
+          {
+            "name": "value",
+            "number": 2,
+            "type": "int64",
+            "label": "repeated"
+          },
+          {
+            "name": "label",
+            "number": 3,
+            "type": "Label",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "google.v1.Label",
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "fields": [
+          {
+            "name": "key",
+            "number": 1,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "str",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "num",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "num_unit",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "google.v1.Mapping",
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "memory_start",
+            "number": 2,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "memory_limit",
+            "number": 3,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "file_offset",
+            "number": 4,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "filename",
+            "number": 5,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "build_id",
+            "number": 6,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "has_functions",
+            "number": 7,
+            "type": "bool",
+            "label": "singular"
+          },
+          {
+            "name": "has_filenames",
+            "number": 8,
+            "type": "bool",
+            "label": "singular"
+          },
+          {
+            "name": "has_line_numbers",
+            "number": 9,
+            "type": "bool",
+            "label": "singular"
+          },
+          {
+            "name": "has_inline_frames",
+            "number": 10,
+            "type": "bool",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "google.v1.Location",
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "mapping_id",
+            "number": 2,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "address",
+            "number": 3,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "line",
+            "number": 4,
+            "type": "Line",
+            "label": "repeated"
+          },
+          {
+            "name": "is_folded",
+            "number": 5,
+            "type": "bool",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "google.v1.Line",
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "fields": [
+          {
+            "name": "function_id",
+            "number": 1,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "line",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "google.v1.Function",
+        "source": "crates/profiles/proto/google/v1/profile.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "name",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "system_name",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "filename",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "start_line",
+            "number": 5,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.collector.profiles.v1development.ExportProfilesServiceRequest",
+        "source": "crates/profiles/proto/opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
+        "fields": [
+          {
+            "name": "resource_profiles",
+            "number": 1,
+            "type": "opentelemetry.proto.profiles.v1development.ResourceProfiles",
+            "label": "repeated"
+          },
+          {
+            "name": "dictionary",
+            "number": 2,
+            "type": "opentelemetry.proto.profiles.v1development.ProfilesDictionary",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.collector.profiles.v1development.ExportProfilesServiceResponse",
+        "source": "crates/profiles/proto/opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
+        "fields": [
+          {
+            "name": "partial_success",
+            "number": 1,
+            "type": "ExportProfilesPartialSuccess",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.collector.profiles.v1development.ExportProfilesPartialSuccess",
+        "source": "crates/profiles/proto/opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
+        "fields": [
+          {
+            "name": "rejected_profiles",
+            "number": 1,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "error_message",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.common.v1.InstrumentationScope",
+        "source": "crates/profiles/proto/opentelemetry/proto/common/v1/common.proto",
+        "fields": [
+          {
+            "name": "name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "version",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.common.v1.KeyValue",
+        "source": "crates/profiles/proto/opentelemetry/proto/common/v1/common.proto",
+        "fields": [
+          {
+            "name": "key",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "value",
+            "number": 2,
+            "type": "AnyValue",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.common.v1.AnyValue",
+        "source": "crates/profiles/proto/opentelemetry/proto/common/v1/common.proto",
+        "fields": [
+          {
+            "name": "string_value",
+            "number": 1,
+            "type": "string",
+            "label": "singular",
+            "oneof": "value"
+          },
+          {
+            "name": "int_value",
+            "number": 2,
+            "type": "int64",
+            "label": "singular",
+            "oneof": "value"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.ProfilesDictionary",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "mapping_table",
+            "number": 1,
+            "type": "Mapping",
+            "label": "repeated"
+          },
+          {
+            "name": "location_table",
+            "number": 2,
+            "type": "Location",
+            "label": "repeated"
+          },
+          {
+            "name": "function_table",
+            "number": 3,
+            "type": "Function",
+            "label": "repeated"
+          },
+          {
+            "name": "link_table",
+            "number": 4,
+            "type": "Link",
+            "label": "repeated"
+          },
+          {
+            "name": "string_table",
+            "number": 5,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "attribute_table",
+            "number": 6,
+            "type": "KeyValueAndUnit",
+            "label": "repeated"
+          },
+          {
+            "name": "stack_table",
+            "number": 7,
+            "type": "Stack",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.ProfilesData",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "resource_profiles",
+            "number": 1,
+            "type": "ResourceProfiles",
+            "label": "repeated"
+          },
+          {
+            "name": "dictionary",
+            "number": 2,
+            "type": "ProfilesDictionary",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.ResourceProfiles",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "resource",
+            "number": 1,
+            "type": "opentelemetry.proto.resource.v1.Resource",
+            "label": "singular"
+          },
+          {
+            "name": "scope_profiles",
+            "number": 2,
+            "type": "ScopeProfiles",
+            "label": "repeated"
+          },
+          {
+            "name": "schema_url",
+            "number": 3,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.ScopeProfiles",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "scope",
+            "number": 1,
+            "type": "opentelemetry.proto.common.v1.InstrumentationScope",
+            "label": "singular"
+          },
+          {
+            "name": "profiles",
+            "number": 2,
+            "type": "Profile",
+            "label": "repeated"
+          },
+          {
+            "name": "schema_url",
+            "number": 3,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.Profile",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "sample_type",
+            "number": 1,
+            "type": "ValueType",
+            "label": "singular"
+          },
+          {
+            "name": "samples",
+            "number": 2,
+            "type": "Sample",
+            "label": "repeated"
+          },
+          {
+            "name": "time_unix_nano",
+            "number": 3,
+            "type": "fixed64",
+            "label": "singular"
+          },
+          {
+            "name": "duration_nano",
+            "number": 4,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "period_type",
+            "number": 5,
+            "type": "ValueType",
+            "label": "singular"
+          },
+          {
+            "name": "period",
+            "number": 6,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "profile_id",
+            "number": 7,
+            "type": "bytes",
+            "label": "singular"
+          },
+          {
+            "name": "dropped_attributes_count",
+            "number": 8,
+            "type": "uint32",
+            "label": "singular"
+          },
+          {
+            "name": "original_payload_format",
+            "number": 9,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "original_payload",
+            "number": 10,
+            "type": "bytes",
+            "label": "singular"
+          },
+          {
+            "name": "attribute_indices",
+            "number": 11,
+            "type": "int32",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.Link",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "trace_id",
+            "number": 1,
+            "type": "bytes",
+            "label": "singular"
+          },
+          {
+            "name": "span_id",
+            "number": 2,
+            "type": "bytes",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.ValueType",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "type_strindex",
+            "number": 1,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "unit_strindex",
+            "number": 2,
+            "type": "int32",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.Sample",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "stack_index",
+            "number": 1,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "attribute_indices",
+            "number": 2,
+            "type": "int32",
+            "label": "repeated"
+          },
+          {
+            "name": "link_index",
+            "number": 3,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "values",
+            "number": 4,
+            "type": "int64",
+            "label": "repeated"
+          },
+          {
+            "name": "timestamps_unix_nano",
+            "number": 5,
+            "type": "fixed64",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.Mapping",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "memory_start",
+            "number": 1,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "memory_limit",
+            "number": 2,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "file_offset",
+            "number": 3,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "filename_strindex",
+            "number": 4,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "attribute_indices",
+            "number": 5,
+            "type": "int32",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.Stack",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "location_indices",
+            "number": 1,
+            "type": "int32",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.Location",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "mapping_index",
+            "number": 1,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "address",
+            "number": 2,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "lines",
+            "number": 3,
+            "type": "Line",
+            "label": "repeated"
+          },
+          {
+            "name": "attribute_indices",
+            "number": 4,
+            "type": "int32",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.Line",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "function_index",
+            "number": 1,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "line",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "column",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.Function",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "name_strindex",
+            "number": 1,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "system_name_strindex",
+            "number": 2,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "filename_strindex",
+            "number": 3,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "start_line",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.profiles.v1development.KeyValueAndUnit",
+        "source": "crates/profiles/proto/opentelemetry/proto/profiles/v1development/profiles.proto",
+        "fields": [
+          {
+            "name": "key_strindex",
+            "number": 1,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "value",
+            "number": 2,
+            "type": "opentelemetry.proto.common.v1.AnyValue",
+            "label": "singular"
+          },
+          {
+            "name": "unit_strindex",
+            "number": 3,
+            "type": "int32",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "opentelemetry.proto.resource.v1.Resource",
+        "source": "crates/profiles/proto/opentelemetry/proto/resource/v1/resource.proto",
+        "fields": [
+          {
+            "name": "attributes",
+            "number": 1,
+            "type": "opentelemetry.proto.common.v1.KeyValue",
+            "label": "repeated"
+          },
+          {
+            "name": "dropped_attributes_count",
+            "number": 2,
+            "type": "uint32",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "push.v1.PushResponse",
+        "source": "crates/profiles/proto/push/v1/push.proto",
+        "fields": []
+      },
+      {
+        "name": "push.v1.PushRequest",
+        "source": "crates/profiles/proto/push/v1/push.proto",
+        "fields": [
+          {
+            "name": "series",
+            "number": 1,
+            "type": "RawProfileSeries",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "push.v1.RawProfileSeries",
+        "source": "crates/profiles/proto/push/v1/push.proto",
+        "fields": [
+          {
+            "name": "labels",
+            "number": 1,
+            "type": "types.v1.LabelPair",
+            "label": "repeated"
+          },
+          {
+            "name": "samples",
+            "number": 2,
+            "type": "RawSample",
+            "label": "repeated"
+          },
+          {
+            "name": "annotations",
+            "number": 3,
+            "type": "types.v1.ProfileAnnotation",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "push.v1.RawSample",
+        "source": "crates/profiles/proto/push/v1/push.proto",
+        "fields": [
+          {
+            "name": "raw_profile",
+            "number": 1,
+            "type": "bytes",
+            "label": "singular"
+          },
+          {
+            "name": "ID",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.ProfileTypesRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "start",
+            "number": 1,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.ProfileTypesResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "profile_types",
+            "number": 1,
+            "type": "types.v1.ProfileType",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SeriesRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "matchers",
+            "number": 1,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "label_names",
+            "number": 2,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "start",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SeriesResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "labels_set",
+            "number": 2,
+            "type": "types.v1.Labels",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectMergeStacktracesRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "profile_typeID",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "label_selector",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "start",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "max_nodes",
+            "number": 5,
+            "type": "int64",
+            "label": "optional"
+          },
+          {
+            "name": "format",
+            "number": 6,
+            "type": "ProfileFormat",
+            "label": "singular"
+          },
+          {
+            "name": "stack_trace_selector",
+            "number": 7,
+            "type": "types.v1.StackTraceSelector",
+            "label": "optional"
+          },
+          {
+            "name": "profile_id_selector",
+            "number": 8,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "async",
+            "number": 9,
+            "type": "AsyncQueryRequest",
+            "label": "optional"
+          },
+          {
+            "name": "trace_id_selector",
+            "number": 10,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "span_selector",
+            "number": 11,
+            "type": "string",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectMergeStacktracesResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "flamegraph",
+            "number": 1,
+            "type": "FlameGraph",
+            "label": "singular"
+          },
+          {
+            "name": "tree",
+            "number": 2,
+            "type": "bytes",
+            "label": "singular"
+          },
+          {
+            "name": "dot",
+            "number": 3,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "async",
+            "number": 4,
+            "type": "AsyncQueryResponse",
+            "label": "optional"
+          },
+          {
+            "name": "pprof",
+            "number": 5,
+            "type": "PprofProfile",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.PprofProfile",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "profile",
+            "number": 1,
+            "type": "google.v1.Profile",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.AsyncQueryRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "request_id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "type",
+            "number": 2,
+            "type": "AsyncQueryType",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.AsyncQueryResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "request_id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "status",
+            "number": 2,
+            "type": "AsyncQueryStatus",
+            "label": "singular"
+          },
+          {
+            "name": "error_message",
+            "number": 3,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectMergeSpanProfileRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "profile_typeID",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "label_selector",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "span_selector",
+            "number": 3,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "start",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 5,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "max_nodes",
+            "number": 6,
+            "type": "int64",
+            "label": "optional"
+          },
+          {
+            "name": "format",
+            "number": 7,
+            "type": "ProfileFormat",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectMergeSpanProfileResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "flamegraph",
+            "number": 1,
+            "type": "FlameGraph",
+            "label": "singular"
+          },
+          {
+            "name": "tree",
+            "number": 2,
+            "type": "bytes",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.DiffRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "left",
+            "number": 1,
+            "type": "SelectMergeStacktracesRequest",
+            "label": "singular"
+          },
+          {
+            "name": "right",
+            "number": 2,
+            "type": "SelectMergeStacktracesRequest",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.DiffResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "flamegraph",
+            "number": 1,
+            "type": "FlameGraphDiff",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.FlameGraph",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "names",
+            "number": 1,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "levels",
+            "number": 2,
+            "type": "Level",
+            "label": "repeated"
+          },
+          {
+            "name": "total",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "max_self",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.FlameGraphDiff",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "names",
+            "number": 1,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "levels",
+            "number": 2,
+            "type": "Level",
+            "label": "repeated"
+          },
+          {
+            "name": "total",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "max_self",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "leftTicks",
+            "number": 5,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "rightTicks",
+            "number": 6,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.Level",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "values",
+            "number": 1,
+            "type": "int64",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectMergeProfileRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "profile_typeID",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "label_selector",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "start",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "max_nodes",
+            "number": 5,
+            "type": "int64",
+            "label": "optional"
+          },
+          {
+            "name": "stack_trace_selector",
+            "number": 6,
+            "type": "types.v1.StackTraceSelector",
+            "label": "optional"
+          },
+          {
+            "name": "profile_id_selector",
+            "number": 7,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "trace_id_selector",
+            "number": 8,
+            "type": "string",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectSeriesRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "profile_typeID",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "label_selector",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "start",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "group_by",
+            "number": 5,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "step",
+            "number": 6,
+            "type": "double",
+            "label": "singular"
+          },
+          {
+            "name": "aggregation",
+            "number": 7,
+            "type": "types.v1.TimeSeriesAggregationType",
+            "label": "optional"
+          },
+          {
+            "name": "stack_trace_selector",
+            "number": 8,
+            "type": "types.v1.StackTraceSelector",
+            "label": "optional"
+          },
+          {
+            "name": "limit",
+            "number": 9,
+            "type": "int64",
+            "label": "optional"
+          },
+          {
+            "name": "exemplar_type",
+            "number": 10,
+            "type": "types.v1.ExemplarType",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectSeriesResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "series",
+            "number": 1,
+            "type": "types.v1.Series",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectHeatmapRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "profile_typeID",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "label_selector",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "start",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "step",
+            "number": 5,
+            "type": "double",
+            "label": "singular"
+          },
+          {
+            "name": "group_by",
+            "number": 6,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "query_type",
+            "number": 7,
+            "type": "HeatmapQueryType",
+            "label": "singular"
+          },
+          {
+            "name": "exemplar_type",
+            "number": 8,
+            "type": "types.v1.ExemplarType",
+            "label": "singular"
+          },
+          {
+            "name": "limit",
+            "number": 9,
+            "type": "int64",
+            "label": "optional"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.SelectHeatmapResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "series",
+            "number": 1,
+            "type": "types.v1.HeatmapSeries",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.AnalyzeQueryRequest",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "start",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "query",
+            "number": 4,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.AnalyzeQueryResponse",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "query_scopes",
+            "number": 1,
+            "type": "QueryScope",
+            "label": "repeated"
+          },
+          {
+            "name": "query_impact",
+            "number": 2,
+            "type": "QueryImpact",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.QueryScope",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "component_type",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "component_count",
+            "number": 2,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "block_count",
+            "number": 3,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "series_count",
+            "number": 4,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "profile_count",
+            "number": 5,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "sample_count",
+            "number": 6,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "index_bytes",
+            "number": 7,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "profile_bytes",
+            "number": 8,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "symbol_bytes",
+            "number": 9,
+            "type": "uint64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.QueryImpact",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "fields": [
+          {
+            "name": "total_bytes_in_time_range",
+            "number": 2,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "total_queried_series",
+            "number": 3,
+            "type": "uint64",
+            "label": "singular"
+          },
+          {
+            "name": "deduplication_needed",
+            "number": 4,
+            "type": "bool",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.GetSettingsRequest",
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "fields": []
+      },
+      {
+        "name": "settings.v1.GetSettingsResponse",
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "fields": [
+          {
+            "name": "settings",
+            "number": 1,
+            "type": "Setting",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.SetSettingsRequest",
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "fields": [
+          {
+            "name": "setting",
+            "number": 1,
+            "type": "Setting",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.SetSettingsResponse",
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "fields": [
+          {
+            "name": "setting",
+            "number": 1,
+            "type": "Setting",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.DeleteSettingsRequest",
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "fields": [
+          {
+            "name": "name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.DeleteSettingsResponse",
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "fields": []
+      },
+      {
+        "name": "settings.v1.Setting",
+        "source": "crates/profiles/proto/settings/v1/settings.proto",
+        "fields": [
+          {
+            "name": "name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "value",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "modifiedAt",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.LabelPair",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "value",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.ProfileType",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "ID",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "name",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "sample_type",
+            "number": 4,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "sample_unit",
+            "number": 5,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "period_type",
+            "number": 6,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "period_unit",
+            "number": 7,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.Labels",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "labels",
+            "number": 1,
+            "type": "LabelPair",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.Series",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "labels",
+            "number": 1,
+            "type": "LabelPair",
+            "label": "repeated"
+          },
+          {
+            "name": "points",
+            "number": 2,
+            "type": "Point",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.Point",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "value",
+            "number": 1,
+            "type": "double",
+            "label": "singular"
+          },
+          {
+            "name": "timestamp",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "annotations",
+            "number": 3,
+            "type": "ProfileAnnotation",
+            "label": "repeated"
+          },
+          {
+            "name": "exemplars",
+            "number": 4,
+            "type": "Exemplar",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.ProfileAnnotation",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "key",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "value",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.LabelValuesRequest",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "matchers",
+            "number": 2,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "start",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.LabelValuesResponse",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "names",
+            "number": 1,
+            "type": "string",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.LabelNamesRequest",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "matchers",
+            "number": 1,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "start",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "end",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.LabelNamesResponse",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "names",
+            "number": 1,
+            "type": "string",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.BlockInfo",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "ulid",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "min_time",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "max_time",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "compaction",
+            "number": 4,
+            "type": "BlockCompaction",
+            "label": "singular"
+          },
+          {
+            "name": "labels",
+            "number": 5,
+            "type": "LabelPair",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.BlockCompaction",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "level",
+            "number": 1,
+            "type": "int32",
+            "label": "singular"
+          },
+          {
+            "name": "sources",
+            "number": 2,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "parents",
+            "number": 3,
+            "type": "string",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.StackTraceSelector",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "call_site",
+            "number": 1,
+            "type": "Location",
+            "label": "repeated"
+          },
+          {
+            "name": "go_pgo",
+            "number": 2,
+            "type": "GoPGO",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.Location",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.GoPGO",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "keep_locations",
+            "number": 1,
+            "type": "uint32",
+            "label": "singular"
+          },
+          {
+            "name": "aggregate_callees",
+            "number": 2,
+            "type": "bool",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.GetProfileStatsRequest",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": []
+      },
+      {
+        "name": "types.v1.GetProfileStatsResponse",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "data_ingested",
+            "number": 1,
+            "type": "bool",
+            "label": "singular"
+          },
+          {
+            "name": "oldest_profile_time",
+            "number": 2,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "newest_profile_time",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.Exemplar",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "timestamp",
+            "number": 1,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "profile_id",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "span_id",
+            "number": 3,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "value",
+            "number": 4,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "labels",
+            "number": 5,
+            "type": "LabelPair",
+            "label": "repeated"
+          },
+          {
+            "name": "trace_id",
+            "number": 6,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.HeatmapSeries",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "labels",
+            "number": 1,
+            "type": "LabelPair",
+            "label": "repeated"
+          },
+          {
+            "name": "slots",
+            "number": 2,
+            "type": "HeatmapSlot",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "types.v1.HeatmapSlot",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "fields": [
+          {
+            "name": "timestamp",
+            "number": 1,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "y_min",
+            "number": 2,
+            "type": "double",
+            "label": "repeated"
+          },
+          {
+            "name": "counts",
+            "number": 3,
+            "type": "int32",
+            "label": "repeated"
+          },
+          {
+            "name": "exemplars",
+            "number": 4,
+            "type": "Exemplar",
+            "label": "repeated"
+          }
+        ]
+      }
+    ],
+    "enums": [
+      {
+        "name": "querier.v1.ProfileFormat",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "values": [
+          {
+            "name": "PROFILE_FORMAT_UNSPECIFIED",
+            "number": 0
+          },
+          {
+            "name": "PROFILE_FORMAT_FLAMEGRAPH",
+            "number": 1
+          },
+          {
+            "name": "PROFILE_FORMAT_TREE",
+            "number": 2
+          },
+          {
+            "name": "PROFILE_FORMAT_DOT",
+            "number": 3
+          },
+          {
+            "name": "PROFILE_FORMAT_PPROF",
+            "number": 4
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.AsyncQueryType",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "values": [
+          {
+            "name": "ASYNC_QUERY_TYPE_DISABLED",
+            "number": 0
+          },
+          {
+            "name": "ASYNC_QUERY_TYPE_FORCE",
+            "number": 1
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.AsyncQueryStatus",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "values": [
+          {
+            "name": "ASYNC_QUERY_STATUS_UNKNOWN",
+            "number": 0
+          },
+          {
+            "name": "ASYNC_QUERY_STATUS_IN_PROGRESS",
+            "number": 1
+          },
+          {
+            "name": "ASYNC_QUERY_STATUS_SUCCESS",
+            "number": 2
+          },
+          {
+            "name": "ASYNC_QUERY_STATUS_FAILURE",
+            "number": 3
+          }
+        ]
+      },
+      {
+        "name": "querier.v1.HeatmapQueryType",
+        "source": "crates/profiles/proto/querier/v1/querier.proto",
+        "values": [
+          {
+            "name": "HEATMAP_QUERY_TYPE_UNSPECIFIED",
+            "number": 0
+          },
+          {
+            "name": "HEATMAP_QUERY_TYPE_INDIVIDUAL",
+            "number": 1
+          },
+          {
+            "name": "HEATMAP_QUERY_TYPE_SPAN",
+            "number": 2
+          }
+        ]
+      },
+      {
+        "name": "types.v1.TimeSeriesAggregationType",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "values": [
+          {
+            "name": "TIME_SERIES_AGGREGATION_TYPE_SUM",
+            "number": 0
+          },
+          {
+            "name": "TIME_SERIES_AGGREGATION_TYPE_AVERAGE",
+            "number": 1
+          }
+        ]
+      },
+      {
+        "name": "types.v1.ExemplarType",
+        "source": "crates/profiles/proto/types/v1/types.proto",
+        "values": [
+          {
+            "name": "EXEMPLAR_TYPE_UNSPECIFIED",
+            "number": 0
+          },
+          {
+            "name": "EXEMPLAR_TYPE_NONE",
+            "number": 1
+          },
+          {
+            "name": "EXEMPLAR_TYPE_INDIVIDUAL",
+            "number": 2
+          },
+          {
+            "name": "EXEMPLAR_TYPE_SPAN",
+            "number": 3
+          }
+        ]
+      }
+    ]
+  }
 }

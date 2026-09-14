@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Generate the checked-in inventory of Krabka's served HTTP routes."""
+"""Generate the checked-in HTTP and Profiles protobuf API inventory."""
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -195,6 +196,117 @@ def profile_connect_routes():
                 )
 
 
+def proto_definitions(text, source):
+    package_match = re.search(r"^package\s+([\w.]+);", text, re.MULTILINE)
+    if not package_match:
+        return {"services": [], "messages": [], "enums": []}
+    package = package_match.group(1)
+    services = []
+    for service in re.finditer(r"^\s*service\s+(\w+)\s*\{", text, re.MULTILINE):
+        opening = text.index("{", service.start())
+        body = text[opening + 1 : matching_brace(text, opening)]
+        methods = [
+            {
+                "name": match.group(1),
+                "request": match.group(3),
+                "request_stream": bool(match.group(2)),
+                "response": match.group(5),
+                "response_stream": bool(match.group(4)),
+            }
+            for match in re.finditer(
+                r"\brpc\s+(\w+)\s*\(\s*(stream\s+)?([\w.]+)\s*\)\s*"
+                r"returns\s*\(\s*(stream\s+)?([\w.]+)\s*\)",
+                body,
+            )
+        ]
+        services.append(
+            {
+                "name": f"{package}.{service.group(1)}",
+                "source": source,
+                "methods": methods,
+            }
+        )
+
+    messages = []
+    field_pattern = re.compile(
+        r"^\s*(?:(optional|required|repeated)\s+)?"
+        r"(map\s*<[^;=]+>|[\w.]+)\s+(\w+)\s*=\s*(\d+)"
+        r"(?:\s*\[[^\]]*\])?\s*;",
+        re.MULTILINE,
+    )
+    for message in re.finditer(r"^\s*message\s+(\w+)\s*\{", text, re.MULTILINE):
+        opening = text.index("{", message.start())
+        body = text[opening + 1 : matching_brace(text, opening)]
+        oneofs = []
+        for oneof in re.finditer(r"^\s*oneof\s+(\w+)\s*\{", body, re.MULTILINE):
+            oneof_opening = body.index("{", oneof.start())
+            oneofs.append(
+                (
+                    oneof_opening,
+                    matching_brace(body, oneof_opening),
+                    oneof.group(1),
+                )
+            )
+        fields = []
+        for field in field_pattern.finditer(body):
+            item = {
+                "name": field.group(3),
+                "number": int(field.group(4)),
+                "type": re.sub(r"\s+", "", field.group(2)),
+                "label": field.group(1) or "singular",
+            }
+            if oneof := next(
+                (
+                    name
+                    for start, end, name in oneofs
+                    if start < field.start() < end
+                ),
+                None,
+            ):
+                item["oneof"] = oneof
+            fields.append(item)
+        messages.append(
+            {
+                "name": f"{package}.{message.group(1)}",
+                "source": source,
+                "fields": fields,
+            }
+        )
+
+    enums = []
+    for enum in re.finditer(r"^\s*enum\s+(\w+)\s*\{", text, re.MULTILINE):
+        opening = text.index("{", enum.start())
+        body = text[opening + 1 : matching_brace(text, opening)]
+        enums.append(
+            {
+                "name": f"{package}.{enum.group(1)}",
+                "source": source,
+                "values": [
+                    {"name": name, "number": int(number)}
+                    for name, number in re.findall(
+                        r"\b([A-Z][A-Z0-9_]*)\s*=\s*(-?\d+)\s*;", body
+                    )
+                ],
+            }
+        )
+    return {"services": services, "messages": messages, "enums": enums}
+
+
+def profile_proto_inventory():
+    result = {"files": [], "services": [], "messages": [], "enums": []}
+    proto_root = ROOT / "crates" / "profiles" / "proto"
+    for path in sorted(proto_root.rglob("*.proto")):
+        text = path.read_text()
+        source = path.relative_to(ROOT).as_posix()
+        result["files"].append(
+            {"source": source, "sha256": hashlib.sha256(text.encode()).hexdigest()}
+        )
+        definitions = proto_definitions(text, source)
+        for kind in ("services", "messages", "enums"):
+            result[kind].extend(definitions[kind])
+    return result
+
+
 def inventory():
     routes = {}
     for signal, crates in SIGNAL_CRATES.items():
@@ -206,7 +318,7 @@ def inventory():
     for signal, method, path, source in profile_connect_routes():
         routes.setdefault((signal, method, path), set()).add(source)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_by": "tools/route-inventory.py",
         "routes": [
             {
@@ -217,6 +329,7 @@ def inventory():
             }
             for (signal, method, path), sources in sorted(routes.items())
         ],
+        "protobuf": profile_proto_inventory(),
     }
 
 
@@ -249,6 +362,49 @@ mod tests {
         "readiness_router",
     )
     assert not merges_router(sample, "readiness_router")
+    proto = proto_definitions(
+        """
+package example.v1;
+service Example { rpc Watch(stream Request) returns (stream Response) {} }
+message Request {
+  repeated string names = 1;
+  oneof selector {
+    string label = 2;
+    int64 id = 3;
+  }
+}
+message Response {}
+enum State { STATE_UNSPECIFIED = 0; STATE_READY = 1; }
+""",
+        "example.proto",
+    )
+    assert proto["services"][0]["methods"] == [
+        {
+            "name": "Watch",
+            "request": "Request",
+            "request_stream": True,
+            "response": "Response",
+            "response_stream": True,
+        }
+    ]
+    assert proto["messages"][0]["fields"] == [
+        {"name": "names", "number": 1, "type": "string", "label": "repeated"},
+        {
+            "name": "label",
+            "number": 2,
+            "type": "string",
+            "label": "singular",
+            "oneof": "selector",
+        },
+        {
+            "name": "id",
+            "number": 3,
+            "type": "int64",
+            "label": "singular",
+            "oneof": "selector",
+        },
+    ]
+    assert proto["enums"][0]["values"][1] == {"name": "STATE_READY", "number": 1}
     print("route inventory self-test passed")
 
 
@@ -270,7 +426,13 @@ def main():
                 file=sys.stderr,
             )
             raise SystemExit(1)
-        print(f"route inventory is current ({len(inventory()['routes'])} routes)")
+        data = inventory()
+        print(
+            "route inventory is current "
+            f"({len(data['routes'])} routes; "
+            f"{len(data['protobuf']['services'])} protobuf services; "
+            f"{len(data['protobuf']['messages'])} messages)"
+        )
         return
     print(rendered, end="")
 
