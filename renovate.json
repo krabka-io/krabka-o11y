@@ -106,7 +106,7 @@
       "automerge": false
     },
     {
-      "description": "The sibling crates reach this repository through [patch.crates-io], which Renovate's Cargo manager does not read -- it sees only the `version = \"0.4.0\"` in each member manifest and takes them for registry dependencies. Those versions are a formality: the patch table decides what is built. A bump toward a newer crates.io release would leave the manifest asking for a version the patched revision does not provide, which fails to resolve. The revisions move through .github/workflows/sync-siblings.yml instead, which rewrites the patch table and regenerates Cargo.lock together.",
+      "description": "The sibling crates reach this repository through [patch.crates-io], which Renovate's Cargo manager does not read -- it sees only the `version = \"0.4.0\"` in each member manifest and takes them for registry dependencies. Those versions are a formality: the patch table decides what is built. A bump toward a newer crates.io release would leave the manifest asking for a version the patched revision does not provide, which fails to resolve. The revisions are moved by hand instead. //fuzz and //benches are workspaces of their own and repeat the table, and tools/check-fuzz-patch.sh rejects a drifted copy, so a bump edits all three patch tables and regenerates all three lockfiles together.",
       "matchManagers": [
         "cargo"
       ],

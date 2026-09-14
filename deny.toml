@@ -92,8 +92,8 @@ allow-git = [
     # Temporary DataFusion pin for profile query support.
     "https://github.com/apache/datafusion",
     # The sibling repositories. `[patch.crates-io]` in Cargo.toml pins every
-    # crate each one publishes to a single revision, and sync-siblings.yml
-    # proposes the bumps. krabka-schema-registry is on the list because the
+    # crate each one publishes to a single revision. krabka-schema-registry
+    # is on the list because the
     # broker depends on `krabka-schema-serde`, which that repository owns.
     "https://github.com/krabka-io/krabka-broker",
     "https://github.com/krabka-io/krabka-client-rs",

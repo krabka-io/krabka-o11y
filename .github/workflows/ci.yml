@@ -115,8 +115,7 @@ jobs:
       - uses: actions/checkout@v7
       # The toolchain comes from `rust-toolchain.toml` rather than being named
       # again here. The action needs the input, so it is read out of the file
-      # the rest of the repo already resolves against, the same way
-      # //.github/workflows/sync-siblings.yml reads it.
+      # the rest of the repo already resolves against.
       - id: toolchain
         run: |
           set -euo pipefail
@@ -168,9 +167,9 @@ jobs:
       # `[patch.crates-io]` in Cargo.toml and `SIBLING_MEMBERS` in
       # MODULE.bazel. The script reads the pinned checkouts through `cargo
       # metadata`, so it needs a resolved dependency graph, which a sandboxed
-      # Bazel test does not have. sync-siblings.yml runs it on the weekly bump.
-      # Running it here catches a hand edit to either list on the pull request
-      # that makes it. It comes first because it takes about a second.
+      # Bazel test does not have. Running it here catches a hand edit to either
+      # list on the pull request that makes it. It comes first because it takes
+      # about a second.
       - name: sibling crate lists
         run: tools/check-sibling-members.sh
       - name: test
@@ -269,8 +268,8 @@ jobs:
       - run: tools/upstream-surface.py --self-test
       - run: tools/upstream-surface.py --check
       # //fuzz is a workspace of its own, so it repeats the sibling pins from
-      # //Cargo.toml. sync-siblings.yml bumps one copy and knows nothing about
-      # the other. This fails on the drift.
+      # //Cargo.toml. A bump to one copy knows nothing about the other. This
+      # fails on the drift.
       - run: tools/check-fuzz-patch.sh
   # The fuzz targets, compiled. //fuzz is outside the root workspace and
   # outside Bazel, so neither the `ci` job nor the `cargo` job builds it, and a
