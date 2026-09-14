@@ -15,8 +15,8 @@
 #     because rules_rs cannot match a crate name against the `crates/*` glob in
 #     the sibling workspace manifest.
 #
-# Nothing else enforces that. sync-siblings.yml moves a revision and
-# regenerates the lockfile, and it never adds a list entry. A sibling that adds
+# Nothing else enforces that. Moving a revision and regenerating the lockfile
+# never adds a list entry. A sibling that adds
 # a crate this repo then reaches gets that crate from crates.io. A sibling that
 # moves a crate directory breaks Bazel analysis with a path error. This script
 # fails the sync job in both cases, before the job opens a green pull request.
