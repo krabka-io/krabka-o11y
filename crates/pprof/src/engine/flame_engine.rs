@@ -7,10 +7,9 @@ use krabka_query_frontend::{
 use super::{
     Arc, BTreeMap, Duration, EngineOpts, FRONTEND_RESULT_CACHE_ENTRIES, FRONTEND_RESULT_CACHE_TTL,
     FlameGraph, FlameGraphDiff, Frame, Heatmap, LabelMatcher, LabeledHeatmap, MatchOp,
-    NonZeroUsize, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_VALUE,
-    ProfileError, ProfileStore, ProfileType, Series, SeriesAgg, Time, Tree, bin_heatmap,
-    covering_range, diff_trees, fold_bucket, group_frame_name, heatmap_points_from_totals,
-    merge_scan_to_tree, merge_sql_to_tree, series_buckets_from_stacktrace_selector,
+    NonZeroUsize, ProfileError, ProfileStore, ProfileType, SampleSelector, Series, SeriesAgg, Time,
+    Tree, bin_heatmap, covering_range, diff_trees, fold_bucket, group_frame_name,
+    heatmap_points_from_totals, merge_scan_to_tree, series_buckets_from_stacktrace_selector,
     series_buckets_from_totals, tree_to_pprof, tree_to_pprof_with_max_nodes, validate_range,
     validated_step,
 };
@@ -128,7 +127,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 file: String::new(),
                 line: 0,
             }];
-            merge_scan_to_tree(&scan, &mut tree, &prefix, None, &[]).await?;
+            merge_scan_to_tree(&scan, &mut tree, &prefix, SampleSelector::None, &[]).await?;
         }
         let max_nodes = if max_nodes > 0 {
             max_nodes
@@ -149,13 +148,34 @@ impl<S: ProfileStore> FlameEngine<S> {
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<FlameGraph, ProfileError> {
+        self.select_merge_stacktraces_with_selectors(
+            (tenant, profile_type, label_selector),
+            range_ms,
+            max_nodes,
+            call_sites,
+            SampleSelector::None,
+        )
+        .await
+    }
+
+    /// # Errors
+    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+    pub async fn select_merge_stacktraces_with_selectors(
+        &self,
+        query: (&str, &str, &str),
+        range_ms: (i64, i64),
+        max_nodes: i64,
+        call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
+    ) -> Result<FlameGraph, ProfileError> {
+        let (tenant, profile_type, label_selector) = query;
         let tree = self
-            .merge_to_tree(
+            .merge_to_tree_with_sample_selector(
                 tenant,
                 profile_type,
                 label_selector,
                 range_ms,
-                None,
+                sample_selector,
                 call_sites,
             )
             .await?;
@@ -178,13 +198,34 @@ impl<S: ProfileStore> FlameEngine<S> {
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<Vec<u8>, ProfileError> {
+        self.select_merge_stacktraces_tree_with_selectors(
+            (tenant, profile_type, label_selector),
+            range_ms,
+            max_nodes,
+            call_sites,
+            SampleSelector::None,
+        )
+        .await
+    }
+
+    /// # Errors
+    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+    pub async fn select_merge_stacktraces_tree_with_selectors(
+        &self,
+        query: (&str, &str, &str),
+        range_ms: (i64, i64),
+        max_nodes: i64,
+        call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
+    ) -> Result<Vec<u8>, ProfileError> {
+        let (tenant, profile_type, label_selector) = query;
         let tree = self
-            .merge_to_tree(
+            .merge_to_tree_with_sample_selector(
                 tenant,
                 profile_type,
                 label_selector,
                 range_ms,
-                None,
+                sample_selector,
                 call_sites,
             )
             .await?;
@@ -212,7 +253,14 @@ impl<S: ProfileStore> FlameEngine<S> {
             ));
         }
         let merged = self
-            .execute_tree_shards(tenant, profile_type, label_selector, ranges, None, &[])
+            .execute_tree_shards(
+                tenant,
+                profile_type,
+                label_selector,
+                ranges,
+                SampleSelector::None,
+                &[],
+            )
             .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
@@ -233,18 +281,39 @@ impl<S: ProfileStore> FlameEngine<S> {
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<FlameGraph, ProfileError> {
+        self.select_merge_stacktraces_with_selectors_sharded(
+            (tenant, profile_type, label_selector),
+            ranges,
+            max_nodes,
+            call_sites,
+            SampleSelector::None,
+        )
+        .await
+    }
+
+    /// # Errors
+    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+    pub async fn select_merge_stacktraces_with_selectors_sharded(
+        &self,
+        query: (&str, &str, &str),
+        ranges: &[(i64, i64)],
+        max_nodes: i64,
+        call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
+    ) -> Result<FlameGraph, ProfileError> {
         if ranges.is_empty() {
             return Err(ProfileError::Plan(
                 "sharded stacktrace query requires at least one time range".to_string(),
             ));
         }
+        let (tenant, profile_type, label_selector) = query;
         let merged = self
             .execute_tree_shards(
                 tenant,
                 profile_type,
                 label_selector,
                 ranges,
-                None,
+                sample_selector,
                 call_sites,
             )
             .await?;
@@ -267,18 +336,39 @@ impl<S: ProfileStore> FlameEngine<S> {
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<Vec<u8>, ProfileError> {
+        self.select_merge_stacktraces_tree_with_selectors_sharded(
+            (tenant, profile_type, label_selector),
+            ranges,
+            max_nodes,
+            call_sites,
+            SampleSelector::None,
+        )
+        .await
+    }
+
+    /// # Errors
+    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+    pub async fn select_merge_stacktraces_tree_with_selectors_sharded(
+        &self,
+        query: (&str, &str, &str),
+        ranges: &[(i64, i64)],
+        max_nodes: i64,
+        call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
+    ) -> Result<Vec<u8>, ProfileError> {
         if ranges.is_empty() {
             return Err(ProfileError::Plan(
                 "sharded stacktrace query requires at least one time range".to_string(),
             ));
         }
+        let (tenant, profile_type, label_selector) = query;
         let merged = self
             .execute_tree_shards(
                 tenant,
                 profile_type,
                 label_selector,
                 ranges,
-                None,
+                sample_selector,
                 call_sites,
             )
             .await?;
@@ -296,7 +386,7 @@ impl<S: ProfileStore> FlameEngine<S> {
         profile_type: &str,
         label_selector: &str,
         ranges: &[(i64, i64)],
-        span_ids: Option<&[u64]>,
+        sample_selector: SampleSelector<'_>,
         call_sites: &[String],
     ) -> Result<Tree, ProfileError> {
         let adapter = TreeShardAdapter {
@@ -305,7 +395,7 @@ impl<S: ProfileStore> FlameEngine<S> {
             profile_type,
             label_selector,
             ranges,
-            span_ids,
+            sample_selector,
             call_sites,
         };
         self.tree_frontend
@@ -323,35 +413,46 @@ impl<S: ProfileStore> FlameEngine<S> {
         span_ids: Option<&[u64]>,
         call_sites: &[String],
     ) -> Result<Tree, ProfileError> {
-        if matches!(span_ids, Some(ids) if ids.is_empty()) {
-            return Err(ProfileError::Plan(
-                "span selector must contain at least one span id".to_string(),
-            ));
+        self.merge_to_tree_with_sample_selector(
+            tenant,
+            profile_type,
+            label_selector,
+            range_ms,
+            span_ids.map_or(SampleSelector::None, SampleSelector::Span),
+            call_sites,
+        )
+        .await
+    }
+
+    pub(crate) async fn merge_to_tree_with_sample_selector(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        label_selector: &str,
+        range_ms: (i64, i64),
+        sample_selector: SampleSelector<'_>,
+        call_sites: &[String],
+    ) -> Result<Tree, ProfileError> {
+        match sample_selector {
+            SampleSelector::Span([]) => {
+                return Err(ProfileError::Plan(
+                    "span selector must contain at least one span id".to_string(),
+                ));
+            }
+            SampleSelector::Trace([]) => {
+                return Err(ProfileError::Plan(
+                    "trace selector must contain at least one trace id".to_string(),
+                ));
+            }
+            SampleSelector::None | SampleSelector::Span(_) | SampleSelector::Trace(_) => {}
         }
         let matchers = crate::matcher::parse_label_selector(label_selector)?;
         let scan = self
             .store
             .select(tenant, profile_type, &matchers, range_ms.0, range_ms.1)
             .await?;
-        let span_where = span_ids.map_or_else(String::new, |ids| {
-            format!(
-                " WHERE {span} IN ({ids})",
-                span = PCOL_SPAN_ID,
-                ids = ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",")
-            )
-        });
-        let sql = format!(
-            "SELECT {partition}, {stacktrace}, SUM({value}) AS v \
-             FROM {table}{span_where} GROUP BY {partition}, {stacktrace} \
-             ORDER BY {partition}, {stacktrace}",
-            partition = PCOL_STACKTRACE_PARTITION,
-            stacktrace = PCOL_STACKTRACE_ID,
-            value = PCOL_VALUE,
-            table = scan.samples_table,
-            span_where = span_where,
-        );
         let mut tree = Tree::new();
-        merge_sql_to_tree(&scan, &sql, &mut tree, &[], call_sites).await?;
+        merge_scan_to_tree(&scan, &mut tree, &[], sample_selector, call_sites).await?;
         Ok(tree)
     }
 
@@ -513,23 +614,43 @@ impl<S: ProfileStore> FlameEngine<S> {
         left_call_sites: &[String],
         right_call_sites: &[String],
     ) -> Result<FlameGraphDiff, ProfileError> {
+        self.diff_with_selectors(
+            tenant,
+            (left, left_call_sites, SampleSelector::None),
+            (right, right_call_sites, SampleSelector::None),
+            max_nodes,
+        )
+        .await
+    }
+
+    /// # Errors
+    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+    pub async fn diff_with_selectors(
+        &self,
+        tenant: &str,
+        left: ((&str, &str, i64, i64), &[String], SampleSelector<'_>),
+        right: ((&str, &str, i64, i64), &[String], SampleSelector<'_>),
+        max_nodes: i64,
+    ) -> Result<FlameGraphDiff, ProfileError> {
+        let (left, left_call_sites, left_selector) = left;
+        let (right, right_call_sites, right_selector) = right;
         let left_tree = self
-            .merge_to_tree(
+            .merge_to_tree_with_sample_selector(
                 tenant,
                 left.0,
                 left.1,
                 (left.2, left.3),
-                None,
+                left_selector,
                 left_call_sites,
             )
             .await?;
         let right_tree = self
-            .merge_to_tree(
+            .merge_to_tree_with_sample_selector(
                 tenant,
                 right.0,
                 right.1,
                 (right.2, right.3),
-                None,
+                right_selector,
                 right_call_sites,
             )
             .await?;
@@ -596,16 +717,36 @@ impl<S: ProfileStore> FlameEngine<S> {
         max_nodes: i64,
         call_sites: &[String],
     ) -> Result<Vec<u8>, ProfileError> {
+        self.select_merge_profile_with_selectors(
+            query,
+            range,
+            max_nodes,
+            call_sites,
+            SampleSelector::None,
+        )
+        .await
+    }
+
+    /// # Errors
+    /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
+    pub async fn select_merge_profile_with_selectors(
+        &self,
+        query: (&str, &str, &str),
+        range: (i64, i64),
+        max_nodes: i64,
+        call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
+    ) -> Result<Vec<u8>, ProfileError> {
         let (tenant, profile_type, label_selector) = query;
         let (start_ms, end_ms) = range;
         let profile_type = ProfileType::parse(profile_type)?;
         let tree = self
-            .merge_to_tree(
+            .merge_to_tree_with_sample_selector(
                 tenant,
                 &profile_type.to_string(),
                 label_selector,
                 (start_ms, end_ms),
-                None,
+                sample_selector,
                 call_sites,
             )
             .await?;
@@ -702,7 +843,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 profile_type,
                 label_selector,
                 ranges,
-                Some(span_selector),
+                SampleSelector::Span(span_selector),
                 &[],
             )
             .await?;
@@ -741,7 +882,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 profile_type,
                 label_selector,
                 ranges,
-                Some(span_selector),
+                SampleSelector::Span(span_selector),
                 &[],
             )
             .await?;
@@ -826,7 +967,7 @@ struct TreeShardAdapter<'a, S: ProfileStore> {
     profile_type: &'a str,
     label_selector: &'a str,
     ranges: &'a [(i64, i64)],
-    span_ids: Option<&'a [u64]>,
+    sample_selector: SampleSelector<'a>,
     call_sites: &'a [String],
 }
 
@@ -853,7 +994,7 @@ impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
                         self.label_selector,
                         range.0,
                         range.1,
-                        self.span_ids,
+                        self.sample_selector,
                         self.call_sites,
                     )),
                     end_epoch_millis: range.1,
@@ -864,12 +1005,12 @@ impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
 
     async fn execute(&self, range: &Self::Query) -> Result<Self::Output, Self::Error> {
         self.engine
-            .merge_to_tree(
+            .merge_to_tree_with_sample_selector(
                 self.tenant,
                 self.profile_type,
                 self.label_selector,
                 *range,
-                self.span_ids,
+                self.sample_selector,
                 self.call_sites,
             )
             .await

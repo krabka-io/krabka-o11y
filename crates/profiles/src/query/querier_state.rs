@@ -3,8 +3,8 @@ use super::{
     EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapSpanExemplarsBySeries,
     InMemoryProfileStore, LabelMatcher, LabeledHeatmap, Limits, MatchOp, OverridesProvider,
     PROFILE_ID_LABEL, ProfileError, ProfileStats, ProfileStore, QueryExecution, QueryRange,
-    QueryTarget, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs, TenantId,
-    TenantPolicy, Time, bin_heatmap, heatmap_individual_exemplars_from_scan,
+    QueryTarget, SampleSelector, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs,
+    TenantId, TenantPolicy, Time, bin_heatmap, heatmap_individual_exemplars_from_scan,
     heatmap_span_exemplars_from_scan, individual_exemplars_from_scan, parse_label_selector,
     span_exemplars_from_scan, span_heatmap_points_from_scan, split_inclusive_range,
 };
@@ -196,6 +196,24 @@ impl<S: ProfileStore> QuerierState<S> {
         max_nodes: i64,
         stack_trace_call_sites: &[String],
     ) -> Result<FlameGraph, ProfileError> {
+        self.select_merge_stacktraces_with_selectors(
+            target,
+            range,
+            max_nodes,
+            stack_trace_call_sites,
+            SampleSelector::None,
+        )
+        .await
+    }
+
+    pub(crate) async fn select_merge_stacktraces_with_selectors(
+        &self,
+        target: QueryTarget<'_>,
+        range: QueryRange,
+        max_nodes: i64,
+        stack_trace_call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
+    ) -> Result<FlameGraph, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
@@ -203,38 +221,37 @@ impl<S: ProfileStore> QuerierState<S> {
         match &self.execution {
             QueryExecution::Direct => {
                 self.engine
-                    .select_merge_stacktraces_with_stack_trace_selector(
-                        tenant.as_str(),
-                        profile_type,
-                        label_selector,
+                    .select_merge_stacktraces_with_selectors(
+                        (tenant.as_str(), profile_type, label_selector),
                         (start_ms, end_ms),
                         max_nodes,
                         stack_trace_call_sites,
+                        sample_selector,
                     )
                     .await
             }
             QueryExecution::Sharded(config) => {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
-                    .select_merge_stacktraces_with_stack_trace_selector_sharded(
-                        tenant.as_str(),
-                        profile_type,
-                        label_selector,
+                    .select_merge_stacktraces_with_selectors_sharded(
+                        (tenant.as_str(), profile_type, label_selector),
                         &shards,
                         max_nodes,
                         stack_trace_call_sites,
+                        sample_selector,
                     )
                     .await
             }
         }
     }
 
-    pub(crate) async fn select_merge_stacktraces_tree_with_stack_trace_selector(
+    pub(crate) async fn select_merge_stacktraces_tree_with_selectors(
         &self,
         target: QueryTarget<'_>,
         range: QueryRange,
         max_nodes: i64,
         stack_trace_call_sites: &[String],
+        sample_selector: SampleSelector<'_>,
     ) -> Result<Vec<u8>, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
@@ -243,26 +260,24 @@ impl<S: ProfileStore> QuerierState<S> {
         match &self.execution {
             QueryExecution::Direct => {
                 self.engine
-                    .select_merge_stacktraces_tree_with_stack_trace_selector(
-                        tenant.as_str(),
-                        profile_type,
-                        label_selector,
+                    .select_merge_stacktraces_tree_with_selectors(
+                        (tenant.as_str(), profile_type, label_selector),
                         (start_ms, end_ms),
                         max_nodes,
                         stack_trace_call_sites,
+                        sample_selector,
                     )
                     .await
             }
             QueryExecution::Sharded(config) => {
                 let shards = split_inclusive_range(start_ms, end_ms, config.shard_width)?;
                 self.engine
-                    .select_merge_stacktraces_tree_with_stack_trace_selector_sharded(
-                        tenant.as_str(),
-                        profile_type,
-                        label_selector,
+                    .select_merge_stacktraces_tree_with_selectors_sharded(
+                        (tenant.as_str(), profile_type, label_selector),
                         &shards,
                         max_nodes,
                         stack_trace_call_sites,
+                        sample_selector,
                     )
                     .await
             }

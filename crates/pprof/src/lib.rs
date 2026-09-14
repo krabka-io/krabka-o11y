@@ -28,7 +28,7 @@ pub mod proto {
 }
 
 pub use diff::diff_trees;
-pub use engine::{EngineOpts, FlameEngine};
+pub use engine::{EngineOpts, FlameEngine, SampleSelector};
 pub use error::ProfileError;
 pub use frame::{Frame, SymbolSource};
 pub use heatmap::{Heatmap, LabeledHeatmap, bin_heatmap};

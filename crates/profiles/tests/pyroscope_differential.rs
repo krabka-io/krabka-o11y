@@ -23,6 +23,7 @@ use krabka_profiles::{
     hot_store::WalTailProfileStore,
     limits::{Limits, OverridesProvider},
     query::{self, QuerierState},
+    wire::pb,
 };
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -141,6 +142,8 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
     assert_label_names_match(&client, &pyroscope_base, &krabka.querier_base).await?;
     assert_label_values_match(&client, &pyroscope_base, &krabka.querier_base, "env").await?;
     assert_select_merge_stacktraces_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    assert_select_merge_pprof_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    assert_async_request_match(&client, &pyroscope_base, &krabka.querier_base).await?;
     assert_select_series_match(&client, &pyroscope_base, &krabka.querier_base).await?;
     assert_diff_match(&client, &pyroscope_base, &krabka.querier_base).await?;
 
@@ -1367,6 +1370,106 @@ async fn assert_select_merge_stacktraces_match(
     assert_connect_flamegraph_equal("SelectMergeStacktraces", &pyroscope, &krabka)
 }
 
+async fn assert_select_merge_pprof_match(
+    client: &reqwest::Client,
+    pyroscope_base: &str,
+    krabka_base: &str,
+) -> TestResult {
+    let mut body = select_merge_stacktraces_body();
+    body["format"] = json!("PROFILE_FORMAT_PPROF");
+    let pyroscope = connect_json_until(
+        client,
+        pyroscope_base,
+        None,
+        "SelectMergeStacktraces",
+        body.clone(),
+        |value| pprof_total(value) > 0,
+    )
+    .await?;
+    let krabka = connect_json_until(
+        client,
+        krabka_base,
+        Some(TENANT),
+        "SelectMergeStacktraces",
+        body,
+        |value| pprof_total(value) > 0,
+    )
+    .await?;
+
+    assert_eq!(pprof_total(&pyroscope), pprof_total(&krabka));
+    assert_eq!(
+        pprof_function_names(&pyroscope),
+        pprof_function_names(&krabka)
+    );
+    Ok(())
+}
+
+fn pprof_total(response: &Value) -> i64 {
+    response
+        .pointer("/pprof/profile/sample")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|sample| sample.get("value").and_then(Value::as_array))
+        .flatten()
+        .filter_map(json_i64)
+        .sum()
+}
+
+fn pprof_function_names(response: &Value) -> BTreeSet<&str> {
+    let Some(profile) = response.pointer("/pprof/profile") else {
+        return BTreeSet::new();
+    };
+    let Some(strings) = profile.get("stringTable").and_then(Value::as_array) else {
+        return BTreeSet::new();
+    };
+    profile
+        .get("function")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|function| function.get("name").and_then(json_i64))
+        .filter_map(|index| usize::try_from(index).ok())
+        .filter_map(|index| strings.get(index).and_then(Value::as_str))
+        .collect()
+}
+
+async fn assert_async_request_match(
+    client: &reqwest::Client,
+    pyroscope_base: &str,
+    krabka_base: &str,
+) -> TestResult {
+    let mut body = select_merge_stacktraces_body();
+    body["async"] = json!({ "type": "ASYNC_QUERY_TYPE_FORCE" });
+    let pyroscope = connect_json_until(
+        client,
+        pyroscope_base,
+        None,
+        "SelectMergeStacktraces",
+        body.clone(),
+        |value| {
+            value
+                .get("flamegraph")
+                .is_some_and(|flamegraph| flamegraph_ticks(flamegraph) > 0)
+        },
+    )
+    .await?;
+    let krabka = connect_json_until(
+        client,
+        krabka_base,
+        Some(TENANT),
+        "SelectMergeStacktraces",
+        body,
+        |value| {
+            value
+                .get("flamegraph")
+                .is_some_and(|flamegraph| flamegraph_ticks(flamegraph) > 0)
+        },
+    )
+    .await?;
+    assert_connect_flamegraph_equal("SelectMergeStacktraces async", &pyroscope, &krabka)
+}
+
 async fn assert_diff_has_ticks(
     client: &reqwest::Client,
     base: &str,
@@ -2234,53 +2337,153 @@ fn connect_diff_differential_rejects_tick_drift() {
 //       X-Scope-OrgID header injection.
 // ---------------------------------------------------------------------------
 
-/// Regression for the Grafana-compat bug that
-/// `grafana_renders_krabka_profiles_end_to_end` found.
-///
-/// Grafana's built-in Pyroscope datasource is a connect-go client. It issues
-/// unary requests with `Content-Type: application/proto` and rejects any 200
-/// response whose content-type does not echo `application/proto`. This
-/// reproduction sends a real `application/proto` `ProfileTypes` request and
-/// asserts that the response content-type echoes it. The test needs no Docker
-/// and runs in CI.
+/// Every public querier RPC accepts binary Connect messages and responds in
+/// kind. This also guards the Grafana datasource's connect-go client path.
 #[tokio::test]
-async fn querier_echoes_proto_content_type_for_proto_requests() -> TestResult {
+async fn every_querier_rpc_accepts_binary_connect() -> TestResult {
     let store = WalTailProfileStore::new();
     let krabka = start_krabka_public(CapturingSink::default(), store).await?;
     let client = reqwest::Client::new();
+    let stack_query = pb::querier::v1::SelectMergeStacktracesRequest {
+        profile_type_id: PROFILE_TYPE.to_string(),
+        label_selector: SELECTOR.to_string(),
+        start: 0,
+        end: 100,
+        ..Default::default()
+    };
+    let cases = vec![
+        (
+            "ProfileTypes",
+            prost::Message::encode_to_vec(&pb::querier::v1::ProfileTypesRequest {
+                start: 0,
+                end: 100,
+            }),
+        ),
+        (
+            "LabelNames",
+            prost::Message::encode_to_vec(&pb::querier::v1::LabelNamesRequest {
+                matchers: vec![SELECTOR.to_string()],
+                start: 0,
+                end: 100,
+            }),
+        ),
+        (
+            "LabelValues",
+            prost::Message::encode_to_vec(&pb::querier::v1::LabelValuesRequest {
+                name: "env".to_string(),
+                matchers: vec![SELECTOR.to_string()],
+                start: 0,
+                end: 100,
+            }),
+        ),
+        (
+            "Series",
+            prost::Message::encode_to_vec(&pb::querier::v1::SeriesRequest {
+                matchers: vec![SELECTOR.to_string()],
+                label_names: Vec::new(),
+                start: 0,
+                end: 100,
+            }),
+        ),
+        (
+            "SelectMergeStacktraces",
+            prost::Message::encode_to_vec(&stack_query),
+        ),
+        (
+            "SelectMergeSpanProfile",
+            prost::Message::encode_to_vec(&pb::querier::v1::SelectMergeSpanProfileRequest {
+                profile_type_id: PROFILE_TYPE.to_string(),
+                label_selector: SELECTOR.to_string(),
+                span_selector: vec!["000000000000002a".to_string()],
+                start: 0,
+                end: 100,
+                ..Default::default()
+            }),
+        ),
+        (
+            "SelectMergeProfile",
+            prost::Message::encode_to_vec(&pb::querier::v1::SelectMergeProfileRequest {
+                profile_type_id: PROFILE_TYPE.to_string(),
+                label_selector: SELECTOR.to_string(),
+                start: 0,
+                end: 100,
+                ..Default::default()
+            }),
+        ),
+        (
+            "SelectSeries",
+            prost::Message::encode_to_vec(&pb::querier::v1::SelectSeriesRequest {
+                profile_type_id: PROFILE_TYPE.to_string(),
+                label_selector: SELECTOR.to_string(),
+                start: 0,
+                end: 100,
+                step: 1.0,
+                ..Default::default()
+            }),
+        ),
+        (
+            "SelectHeatmap",
+            prost::Message::encode_to_vec(&pb::querier::v1::SelectHeatmapRequest {
+                profile_type_id: PROFILE_TYPE.to_string(),
+                label_selector: SELECTOR.to_string(),
+                start: 0,
+                end: 100,
+                step: 1.0,
+                ..Default::default()
+            }),
+        ),
+        (
+            "Diff",
+            prost::Message::encode_to_vec(&pb::querier::v1::DiffRequest {
+                left: Some(stack_query.clone()),
+                right: Some(stack_query),
+            }),
+        ),
+        (
+            "GetProfileStats",
+            prost::Message::encode_to_vec(&pb::querier::v1::GetProfileStatsRequest {}),
+        ),
+        (
+            "AnalyzeQuery",
+            prost::Message::encode_to_vec(&pb::querier::v1::AnalyzeQueryRequest {
+                start: 0,
+                end: 100,
+                query: format!("{PROFILE_TYPE}{SELECTOR}"),
+            }),
+        ),
+    ];
 
-    // An all-default ProfileTypesRequest (start=end=0) encodes to zero proto bytes, so an
-    // empty body with Content-Type application/proto is a valid Connect unary proto request.
-    let response = client
-        .post(format!(
-            "http://127.0.0.1:{}/querier.v1.QuerierService/ProfileTypes",
-            krabka.querier_port
-        ))
-        .header(reqwest::header::CONTENT_TYPE, "application/proto")
-        .header("x-scope-orgid", TENANT)
-        .body(Vec::<u8>::new())
-        .send()
-        .await?;
-
-    let status = response.status();
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
-    let body = response.text().await.unwrap_or_default();
+    for (method, request_body) in cases {
+        let response = client
+            .post(format!(
+                "http://127.0.0.1:{}/querier.v1.QuerierService/{method}",
+                krabka.querier_port
+            ))
+            .header(reqwest::header::CONTENT_TYPE, "application/proto")
+            .header("x-scope-orgid", TENANT)
+            .body(request_body)
+            .send()
+            .await?;
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let body = response.bytes().await?;
+        assert!(
+            status.is_success(),
+            "{method} (application/proto) returned {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
+        assert!(
+            content_type.starts_with("application/proto"),
+            "{method} response must echo application/proto, got `{content_type}`"
+        );
+    }
 
     krabka.shutdown();
-
-    assert!(
-        status.is_success(),
-        "ProfileTypes (application/proto) returned {status}: ct=`{content_type}` body=`{body}`"
-    );
-    assert!(
-        content_type.starts_with("application/proto"),
-        "ProfileTypes (application/proto) response must echo application/proto, got `{content_type}` (status {status})"
-    );
     Ok(())
 }
 

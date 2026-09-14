@@ -26,18 +26,18 @@
 //! # The join is not shared code
 //!
 //! `krabka-traces` holds a span id as `[u8; 8]`; `krabka-profiles` holds it as
-//! `u64` and its selector parses decimal or `0x`-hex strings. Nothing in the
-//! workspace converts between the two: the profiles OTLP decoder does its own
-//! `u64::from_be_bytes` privately, and that big-endian reading is the only
-//! thing making the two halves agree. This suite performs the same conversion,
-//! and the negative case below is what keeps it honest — a selector that
+//! `u64` and its selector uses Pyroscope's fixed-width hexadecimal form. The
+//! profiles OTLP decoder and this test both read the bytes as big-endian, and
+//! the negative case below is what keeps the join honest — a selector that
 //! matched everything would pass the positive assertion on its own.
 
 use std::sync::Arc;
 
 use assert2::{assert, check};
 use axum::http::{Request, StatusCode};
-use krabka_blockstore::{BlockIndex as _, LABEL_PROFILE_TYPE, Labels, ProfileIndex};
+use krabka_blockstore::{
+    BlockIndex as _, LABEL_PROFILE_TYPE, Labels, ProfileIndex, span_id_hex_from_u64,
+};
 use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use krabka_profiles::{
     ProfileRecord, WalSample,
@@ -282,23 +282,37 @@ async fn a_span_id_stored_by_traces_selects_that_span_s_profile() {
     // the three together show that `span_selector` is what decides: the middle
     // case alone would also pass if the query silently returned a fixed subset,
     // and the last alone would also pass if it always returned nothing.
-    let both = [wanted_id.to_string(), other_id.to_string()];
+    let both = [
+        span_id_hex_from_u64(wanted_id),
+        span_id_hex_from_u64(other_id),
+    ];
     let (names, total) = span_profile(querier_over(&record).await, &both).await;
     check!(names.iter().any(|name| name == FRAME));
     check!(total == 14);
 
-    let (names, total) = span_profile(querier_over(&record).await, &[wanted_id.to_string()]).await;
+    let (names, total) = span_profile(
+        querier_over(&record).await,
+        &[span_id_hex_from_u64(wanted_id)],
+    )
+    .await;
     check!(names.iter().any(|name| name == FRAME));
     check!(total == 7);
 
-    let (names, total) = span_profile(querier_over(&record).await, &[other_id.to_string()]).await;
+    let (names, total) = span_profile(
+        querier_over(&record).await,
+        &[span_id_hex_from_u64(other_id)],
+    )
+    .await;
     check!(names.iter().any(|name| name == FRAME));
     check!(total == 7);
 
     // A span id that no sample carries. The profile is not merely smaller, it
     // is absent: the frame is gone with it.
-    let (names, total) =
-        span_profile(querier_over(&record).await, &["999999999".to_string()]).await;
+    let (names, total) = span_profile(
+        querier_over(&record).await,
+        &[span_id_hex_from_u64(999_999_999)],
+    )
+    .await;
     check!(!names.iter().any(|name| name == FRAME));
     check!(total == 0);
 }

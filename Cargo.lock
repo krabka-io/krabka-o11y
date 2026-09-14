@@ -4378,6 +4378,7 @@ dependencies = [
  "derive_more",
  "flate2",
  "futures",
+ "hex",
  "jfrs",
  "krabka-audit",
  "krabka-blockstore",

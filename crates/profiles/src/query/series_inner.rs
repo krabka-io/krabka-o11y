@@ -1,7 +1,8 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataRange,
-    Principal, ProfileStore, QuerierState, authorize_tenant, connect_error, label_pairs,
-    parse_matchers, pb, tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    Principal, ProfileStore, QuerierState, authorize_tenant, client_allows_utf8_label_names,
+    connect_error, is_internal_label, is_legacy_label_name, label_pairs, parse_matchers, pb,
+    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn series_inner<S>(
@@ -25,12 +26,24 @@ where
     let range = MetadataRange::from_request(req.0.start, req.0.end)
         .validate(&state, &tenant)
         .map_err(connect_error)?;
+    let mut label_names = req.0.label_names.clone();
+    if label_names.is_empty() {
+        label_names = state
+            .store
+            .label_names(tenant.as_str(), &matchers, range.start_ms, range.end_ms)
+            .await
+            .map_err(connect_error)?;
+        label_names.retain(|name| !is_internal_label(name));
+    }
+    if !client_allows_utf8_label_names(&headers) {
+        label_names.retain(|name| is_legacy_label_name(name));
+    }
     let labels_set = state
         .store
         .series(
             tenant.as_str(),
             &matchers,
-            &req.0.label_names,
+            &label_names,
             range.start_ms,
             range.end_ms,
         )
