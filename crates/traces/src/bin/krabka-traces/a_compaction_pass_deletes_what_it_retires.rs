@@ -209,5 +209,6 @@ async fn a_pass_with_nothing_to_do_deletes_nothing() {
 }
 
 fn load_overrides(cli: &Cli) -> OverridesProvider {
-    load_traces_limits_overrides_config(None, limits_from_cli(cli)).expect("the overrides load")
+    load_traces_limits_overrides_config(None, None, limits_from_cli(cli))
+        .expect("the overrides load")
 }

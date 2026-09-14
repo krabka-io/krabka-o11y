@@ -14,11 +14,19 @@ use super::{Limits, OverridesProvider};
 /// expected YAML document.
 pub(crate) fn load_traces_limits_overrides_config(
     path: Option<&Path>,
+    api_path: Option<&Path>,
     defaults: Limits,
 ) -> Result<OverridesProvider, Box<dyn std::error::Error + Send + Sync>> {
-    let Some(path) = path else {
-        return Ok(OverridesProvider::new(defaults));
+    let provider = if let Some(path) = path {
+        let text = std::fs::read_to_string(path)?;
+        OverridesProvider::from_yaml_with_defaults(&text, defaults)?
+    } else {
+        OverridesProvider::new(defaults)
     };
-    let text = std::fs::read_to_string(path)?;
-    Ok(OverridesProvider::from_yaml_with_defaults(&text, defaults)?)
+    match api_path {
+        Some(path) => provider
+            .with_api_file(path.to_path_buf())
+            .map_err(Into::into),
+        None => Ok(provider),
+    }
 }

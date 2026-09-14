@@ -34,6 +34,7 @@ pub fn router(state: Arc<DistributorState>) -> Router {
 
     Router::new()
         .route("/ingest", post(ingest_handler))
+        .route("/pyroscope/ingest", post(ingest_handler))
         .route("/v1development/profiles", post(otlp_http_handler))
         // Cap raw request bodies at the same limit as Connect and decompression.
         // This bounds memory before the body is buffered and is kept consistent

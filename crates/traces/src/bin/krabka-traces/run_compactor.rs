@@ -40,6 +40,7 @@ pub(crate) async fn run_compactor(
     // deleted blocks under the wrong window.
     let overrides = load_traces_limits_overrides_config(
         cli.traces_limits_overrides_config.as_deref(),
+        cli.traces_api_overrides_file.as_deref(),
         limits_from_cli(&cli),
     )?;
     let configured = object_store.get(&cli, metrics.object_store.clone()).await?;

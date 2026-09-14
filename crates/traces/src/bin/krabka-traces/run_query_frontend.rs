@@ -19,6 +19,7 @@ pub(crate) async fn run_query_frontend(
     let mut cfg = frontend_config_from_cli(&cli, addr)?;
     cfg.overrides = load_traces_limits_overrides_config(
         cli.traces_limits_overrides_config.as_deref(),
+        cli.traces_api_overrides_file.as_deref(),
         limits_from_cli(&cli),
     )?;
     // The catalog is built before the listener binds; `querier-membership` is

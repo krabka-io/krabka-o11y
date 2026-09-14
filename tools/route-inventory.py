@@ -139,7 +139,11 @@ def rust_routes(signal, crate):
                     if re.search(rf"(?:^|[.:])\s*{method}\s*\(", handler)
                 )
                 if not methods and relative.endswith("tempo_query_routes.rs"):
-                    methods = ("GET",)
+                    methods = (
+                        ("GET", "POST", "DELETE", "PATCH")
+                        if path_match.group(1) == "/api/overrides"
+                        else ("GET",)
+                    )
                 if not methods:
                     raise ValueError(f"{relative}: cannot determine method for {path_expr}")
                 for method in methods:

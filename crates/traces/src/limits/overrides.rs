@@ -177,6 +177,35 @@ overrides:
     }
 
     #[test]
+    fn api_overrides_are_shared_and_survive_provider_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace-api-overrides.json");
+        let first = OverridesProvider::new(Limits::default())
+            .with_api_file(path.clone())
+            .unwrap();
+        let second = OverridesProvider::new(Limits::default())
+            .with_api_file(path.clone())
+            .unwrap();
+
+        assert2::assert!(
+            first.api_set(
+                "tenant-a",
+                serde_json::json!({"max_spans_per_trace": 7}),
+                "0",
+            ) == Ok("1".into())
+        );
+        assert2::check!(second.for_tenant("tenant-a").max_spans_per_trace == 7);
+
+        drop(first);
+        drop(second);
+        let restarted = OverridesProvider::new(Limits::default())
+            .with_api_file(path)
+            .unwrap();
+        assert2::check!(restarted.for_tenant("tenant-a").max_spans_per_trace == 7);
+        assert2::check!(restarted.api_get("tenant-a").unwrap().1 == "1");
+    }
+
+    #[test]
     fn trace_limits_accept_metrics_generator_settings_in_the_shared_file() {
         let provider = OverridesProvider::from_yaml(
             r"

@@ -15,6 +15,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use base64::Engine as _;
 use connectrpc_axum::{
     MakeServiceBuilder, MessageLimits,
     message::{Code, ConnectError, ConnectRequest, ConnectResponse},
@@ -43,7 +44,7 @@ use crate::{
     ids::{IngestBytes, IngestItems},
     ingest::{
         LegacyDecodeLimits, RelabelConfig, apply_relabel, cap_session_id,
-        decode_ingest_body_with_limits, decode_otlp, decode_push, enforce_limits,
+        decode_ingest_body_with_limits, decode_otlp, decode_push, enforce_limits, gunzip,
         parse_ingest_query, require_service_name, split_sample_types,
     },
     limits::{Limits, OverridesProvider},
@@ -1312,6 +1313,43 @@ overrides:
     }
 
     #[tokio::test]
+    async fn otlp_http_accepts_gzipped_json() {
+        use std::io::Write as _;
+
+        let sink = Arc::new(RecordingSink::default());
+        let state = state_with(sink.clone());
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        let json = serde_json::to_vec(&otlp_export_request()).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&json).unwrap();
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{bound}/v1development/profiles"))
+            .header("content-type", "application/json")
+            .header("content-encoding", "gzip")
+            .header("x-scope-orgid", "tenant-a")
+            .body(encoder.finish().unwrap())
+            .send()
+            .await
+            .unwrap();
+
+        assert!(response.status() == StatusCode::OK, "{response:?}");
+        check!(response.headers()["content-type"] == "application/json");
+        check!(response.json::<serde_json::Value>().await.unwrap() == serde_json::json!({}));
+        check!(sink.0.lock().unwrap().len() == 1);
+    }
+
+    #[tokio::test]
     async fn legacy_ingest_accepts_plain_folded_groups_body() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());
@@ -1363,6 +1401,37 @@ overrides:
         assert!(recs[0].samples.len() == 1);
         check!(recs[0].samples[0].value == 30_000_000);
         check!(recs[0].samples[0].timestamp_ns == 1_700_000_000_000_000_000);
+    }
+
+    #[tokio::test]
+    async fn pyroscope_ingest_alias_uses_the_legacy_handler() {
+        let sink = Arc::new(RecordingSink::default());
+        let state = state_with(sink.clone());
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+
+        let response = reqwest::Client::new()
+            .post(format!(
+                "http://{bound}/pyroscope/ingest?name=myapp&format=groups&units=samples&until=1700000000000"
+            ))
+            .header("content-type", "text/plain")
+            .header("x-scope-orgid", "tenant-a")
+            .body("main;work 3\n")
+            .send()
+            .await
+            .unwrap();
+
+        assert!(response.status() == StatusCode::OK, "{response:?}");
+        check!(sink.0.lock().unwrap().len() == 1);
     }
 
     #[tokio::test]

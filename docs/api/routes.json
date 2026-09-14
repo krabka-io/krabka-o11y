@@ -1822,6 +1822,14 @@
     {
       "signal": "profiles",
       "method": "POST",
+      "path": "/pyroscope/ingest",
+      "sources": [
+        "crates/profiles/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
       "path": "/querier.v1.QuerierService/AnalyzeQuery",
       "sources": [
         "crates/profiles/proto/querier/v1/querier.proto"
@@ -1937,6 +1945,14 @@
       "path": "/v1development/profiles",
       "sources": [
         "crates/profiles/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "DELETE",
+      "path": "/api/overrides",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
       ]
     },
     {
@@ -2074,6 +2090,22 @@
       "path": "/status",
       "sources": [
         "crates/traces/src/readiness/tempo_readiness_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "PATCH",
+      "path": "/api/overrides",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "POST",
+      "path": "/api/overrides",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
       ]
     },
     {

@@ -409,6 +409,9 @@ pub(crate) struct Cli {
     /// the flags set.
     #[arg(long, env = "KRABKA_TRACES_LIMITS_OVERRIDES_CONFIG")]
     pub(crate) traces_limits_overrides_config: Option<std::path::PathBuf>,
+    /// Shared durable state for overrides written through `/api/overrides`.
+    #[arg(long, env = "KRABKA_TRACES_API_OVERRIDES_FILE")]
+    pub(crate) traces_api_overrides_file: Option<std::path::PathBuf>,
     #[arg(
         long = "promote-span-attr",
         env = "KRABKA_TRACES_PROMOTE_SPAN_ATTR",
