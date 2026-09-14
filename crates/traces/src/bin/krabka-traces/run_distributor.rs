@@ -35,6 +35,7 @@ pub(crate) async fn run_distributor(
     // role at once rather than after it has connected and bound seven ports.
     let overrides = load_traces_limits_overrides_config(
         cli.traces_limits_overrides_config.as_deref(),
+        cli.traces_api_overrides_file.as_deref(),
         limits_from_cli(&cli),
     )?;
     // Boxed: the producer-startup future is several KB and would otherwise be

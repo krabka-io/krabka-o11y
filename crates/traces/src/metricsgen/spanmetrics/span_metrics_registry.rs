@@ -52,10 +52,18 @@ impl SpanMetricsRegistry {
                     .iter()
                     .find(|(name, value)| name == identifier && !value.is_empty())
                 {
-                    self.hosts.insert(sorted_labels(vec![
+                    let labels = sorted_labels(vec![
                         ("grafana_host_id".into(), value.clone()),
                         ("host_source".into(), identifier.clone()),
-                    ]));
+                    ]);
+                    if self.hosts.contains(&labels)
+                        || self.max_active_series == 0
+                        || self.hosts.len() < self.max_active_series
+                    {
+                        self.hosts.insert(labels);
+                    } else {
+                        self.discarded_series += 1.0;
+                    }
                     break;
                 }
             }

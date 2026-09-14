@@ -16,7 +16,7 @@ pub(crate) fn overrides_api_response(
     body: &Bytes,
 ) -> Response {
     match *method {
-        Method::GET => get(overrides, tenant, query),
+        Method::GET | Method::HEAD => get(overrides, tenant, query),
         Method::POST => post(overrides, tenant, headers, query, body),
         Method::PATCH => patch(overrides, tenant, query, body),
         Method::DELETE => delete(overrides, tenant, headers),
@@ -38,15 +38,12 @@ fn get(overrides: &OverridesProvider, tenant: &str, query: Option<&str>) -> Resp
             &format!("unknown scope \"{scope}\", valid options are api and merged"),
         );
     }
+    if scope == "merged" {
+        let version = overrides.api_get(tenant).map(|(_, version)| version);
+        return json_response(overrides.for_tenant(tenant), version);
+    }
     match overrides.api_get(tenant) {
-        Some((limits, version)) => json_response(
-            if scope == "merged" {
-                serde_json::to_value(overrides.for_tenant(tenant)).unwrap_or(limits)
-            } else {
-                limits
-            },
-            Some(version),
-        ),
+        Some((limits, version)) => json_response(limits, Some(version)),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -67,13 +64,20 @@ fn post(
             "must specify If-Match header",
         );
     };
-    if let Some(response) = invalid_skip_conflicts(query) {
-        return response;
-    }
+    let skip_conflicts = match skip_conflicts(query) {
+        Ok(skip) => skip,
+        Err(error) => return text_error(StatusCode::BAD_REQUEST, error),
+    };
     let raw = match serde_json::from_slice(body) {
         Ok(raw) => raw,
         Err(error) => return text_error(StatusCode::BAD_REQUEST, &error.to_string()),
     };
+    if !skip_conflicts && overrides.api_conflicts_with_file(tenant, &raw) {
+        return text_error(
+            StatusCode::CONFLICT,
+            "API overrides conflict with runtime-file overrides",
+        );
+    }
     match overrides.api_set(tenant, raw, expected) {
         Ok(version) => empty_response(StatusCode::OK, Some(version)),
         Err(error) => mutation_error(&error),
@@ -86,32 +90,38 @@ fn patch(
     query: Option<&str>,
     body: &Bytes,
 ) -> Response {
-    if let Some(response) = invalid_skip_conflicts(query) {
-        return response;
-    }
+    let skip_conflicts = match skip_conflicts(query) {
+        Ok(skip) => skip,
+        Err(error) => return text_error(StatusCode::BAD_REQUEST, error),
+    };
     let patch = match serde_json::from_slice(body) {
         Ok(patch) => patch,
         Err(error) => return text_error(StatusCode::BAD_REQUEST, &error.to_string()),
     };
+    if !skip_conflicts && overrides.api_conflicts_with_file(tenant, &patch) {
+        return text_error(
+            StatusCode::CONFLICT,
+            "API overrides conflict with runtime-file overrides",
+        );
+    }
     match overrides.api_patch(tenant, patch) {
         Ok((limits, version)) => json_response(limits, Some(version)),
         Err(error) => mutation_error(&error),
     }
 }
 
-fn invalid_skip_conflicts(query: Option<&str>) -> Option<Response> {
+fn skip_conflicts(query: Option<&str>) -> Result<bool, &'static str> {
     let value = query.and_then(|query| {
         url::form_urlencoded::parse(query.as_bytes())
             .find(|(key, _)| key == "skip-conflicting-overrides-check")
             .map(|(_, value)| value)
     });
-    if value.is_some_and(|value| value.parse::<bool>().is_err()) {
-        return Some(text_error(
-            StatusCode::BAD_REQUEST,
-            "could not parse skip-conflicting-overrides-check, must be a boolean value",
-        ));
+    match value {
+        Some(value) => value.parse::<bool>().map_err(
+            |_| "could not parse skip-conflicting-overrides-check, must be a boolean value",
+        ),
+        None => Ok(false),
     }
-    None
 }
 
 fn delete(overrides: &OverridesProvider, tenant: &str, headers: &HeaderMap) -> Response {
@@ -135,6 +145,7 @@ fn mutation_error(error: &OverrideMutationError) -> Response {
         OverrideMutationError::NotFound => StatusCode::NOT_FOUND,
         OverrideMutationError::VersionMismatch => StatusCode::PRECONDITION_FAILED,
         OverrideMutationError::Invalid(_) => StatusCode::BAD_REQUEST,
+        OverrideMutationError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     text_error(status, &error.to_string())
 }
@@ -228,5 +239,47 @@ mod tests {
                     "max_traces_per_search": 9,
                 })
         );
+    }
+
+    #[tokio::test]
+    async fn merged_head_and_runtime_conflicts_follow_tempo() {
+        let overrides =
+            OverridesProvider::from_yaml("overrides:\n  tenant-a:\n    max_spans_per_trace: 7\n")
+                .unwrap();
+
+        for method in [Method::GET, Method::HEAD] {
+            let response = overrides_api_response(
+                &overrides,
+                "tenant-a",
+                &method,
+                &HeaderMap::new(),
+                Some("scope=merged"),
+                &Bytes::new(),
+            );
+            assert2::check!(response.status() == StatusCode::OK);
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.insert("if-match", "0".parse().unwrap());
+        let conflict = overrides_api_response(
+            &overrides,
+            "tenant-a",
+            &Method::POST,
+            &headers,
+            None,
+            &Bytes::from_static(br#"{"max_spans_per_trace":9}"#),
+        );
+        assert2::check!(conflict.status() == StatusCode::CONFLICT);
+
+        let bypassed = overrides_api_response(
+            &overrides,
+            "tenant-a",
+            &Method::POST,
+            &headers,
+            Some("skip-conflicting-overrides-check=true"),
+            &Bytes::from_static(br#"{"max_spans_per_trace":9}"#),
+        );
+        assert2::check!(bypassed.status() == StatusCode::OK);
+        assert2::check!(overrides.for_tenant("tenant-a").max_spans_per_trace == 9);
     }
 }

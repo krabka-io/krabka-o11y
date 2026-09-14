@@ -1727,12 +1727,18 @@ mod tests {
             "querier",
             "--traces-limits-overrides-config",
             "overrides.yaml",
+            "--traces-api-overrides-file",
+            "api-overrides.json",
         ])
         .unwrap();
 
         check!(
             cli.traces_limits_overrides_config.as_deref()
                 == Some(std::path::Path::new("overrides.yaml"))
+        );
+        check!(
+            cli.traces_api_overrides_file.as_deref()
+                == Some(std::path::Path::new("api-overrides.json"))
         );
     }
 
@@ -1750,7 +1756,8 @@ mod tests {
         ])
         .unwrap();
 
-        let overrides = load_traces_limits_overrides_config(None, limits_from_cli(&cli)).unwrap();
+        let overrides =
+            load_traces_limits_overrides_config(None, None, limits_from_cli(&cli)).unwrap();
 
         check!(overrides.for_tenant("tenant-a") == limits_from_cli(&cli));
         check!(overrides.for_tenant("tenant-a").max_spans_per_request == 9);
@@ -1788,6 +1795,7 @@ overrides:
 
         let overrides = load_traces_limits_overrides_config(
             cli.traces_limits_overrides_config.as_deref(),
+            cli.traces_api_overrides_file.as_deref(),
             limits_from_cli(&cli),
         )
         .unwrap();

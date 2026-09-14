@@ -377,6 +377,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn host_info_respects_the_active_series_cap() {
+        let mut cfg = capped(1);
+        cfg.processor.host_info = HostInfoConfig {
+            enabled: true,
+            host_identifiers: vec!["host.id".into()],
+            metric_name: "traces_host_info".into(),
+        };
+        let mut reg = SpanMetricsRegistry::new(&cfg);
+        for host in ["node-1", "node-2"] {
+            let mut span = ok_span("api", "GET /x");
+            span.resource_attributes = vec![("host.id".into(), host.into())];
+            reg.record_span(&span);
+        }
+
+        let out = reg.drain(1_000);
+        check!(
+            out.iter()
+                .filter(|series| series.name == "traces_host_info")
+                .count()
+                == 1
+        );
+        check!((discarded(&out) - 1.0).abs() < 1e-9);
+    }
+
     /// Zero is Tempo's spelling of "no cap", and it must not read as "admit
     /// nothing". A registry that refused every span under the default-shaped
     /// zero would publish no RED metrics at all.

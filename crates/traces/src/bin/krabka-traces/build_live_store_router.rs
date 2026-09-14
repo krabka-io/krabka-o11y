@@ -17,6 +17,7 @@ pub(crate) fn build_live_store_router(
     // querier builds.
     let overrides = load_traces_limits_overrides_config(
         cli.traces_limits_overrides_config.as_deref(),
+        cli.traces_api_overrides_file.as_deref(),
         limits_from_cli(cli),
     )?;
     let trace_index: SharedTraceIndex = Arc::new(ArcSwap::from_pointee(TraceIndex::new()));

@@ -1949,6 +1949,14 @@
     },
     {
       "signal": "traces",
+      "method": "DELETE",
+      "path": "/api/overrides",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
       "method": "GET",
       "path": "/api/echo",
       "sources": [
@@ -2082,6 +2090,22 @@
       "path": "/status",
       "sources": [
         "crates/traces/src/readiness/tempo_readiness_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "PATCH",
+      "path": "/api/overrides",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
+      ]
+    },
+    {
+      "signal": "traces",
+      "method": "POST",
+      "path": "/api/overrides",
+      "sources": [
+        "crates/traces/src/tempo_query_routes.rs"
       ]
     },
     {

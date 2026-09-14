@@ -23,6 +23,7 @@ pub(crate) async fn build_querier_router_with_live(
     // reaches the object store.
     let overrides = load_traces_limits_overrides_config(
         cli.traces_limits_overrides_config.as_deref(),
+        cli.traces_api_overrides_file.as_deref(),
         limits_from_cli(cli),
     )?;
     let configured = object_store.get(cli, metrics.object_store.clone()).await?;
