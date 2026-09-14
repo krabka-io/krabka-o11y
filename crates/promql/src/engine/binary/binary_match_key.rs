@@ -37,3 +37,19 @@ pub(crate) fn binary_match_key(labels: &Labels, modifier: Option<&BinModifier>) 
     }
     labels_key(&key_labels)
 }
+
+pub(crate) fn set_binary_match_key(labels: &Labels, modifier: Option<&BinModifier>) -> String {
+    if modifier
+        .and_then(|modifier| modifier.matching.as_ref())
+        .is_some()
+    {
+        return binary_match_key(labels, modifier);
+    }
+    let mut key_labels = Labels::new();
+    for (name, value) in labels.iter() {
+        if name != "__name__" {
+            key_labels.insert(name, value);
+        }
+    }
+    labels_key(&key_labels)
+}

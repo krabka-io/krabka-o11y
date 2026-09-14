@@ -4,6 +4,7 @@ use std::{
 };
 
 use axum::{
+    Json,
     body::Bytes,
     extract::{ConnectInfo, Path, RawQuery, State},
     http::{HeaderMap, StatusCode, header},
@@ -30,6 +31,7 @@ use super::{
 };
 use crate::{MetricStore, PromqlError, QueryResult, SampleValue, parse_promql};
 
+mod accepted_response;
 mod alert_labels_map;
 mod alerts;
 mod delete_ruler_config_group;
@@ -43,7 +45,6 @@ mod prometheus_rule_groups_json;
 mod prometheus_rule_json;
 mod prometheus_rules_json;
 mod record_ruler_config_change;
-mod require_yaml_content_type;
 mod rfc3339_time_string;
 mod rule_group_name;
 mod rule_render_options;
@@ -63,6 +64,7 @@ mod yaml_response;
 mod yaml_string;
 mod zero_evaluation_time;
 
+use accepted_response::accepted_response;
 use alert_labels_map::alert_labels_map;
 pub(super) use alerts::alerts;
 pub(super) use delete_ruler_config_group::delete_ruler_config_group;
@@ -76,7 +78,6 @@ use prometheus_rule_groups_json::prometheus_rule_groups_json;
 use prometheus_rule_json::prometheus_rule_json;
 use prometheus_rules_json::prometheus_rules_json;
 use record_ruler_config_change::record_ruler_config_change;
-use require_yaml_content_type::require_yaml_content_type;
 use rfc3339_time_string::rfc3339_time_string;
 use rule_group_name::rule_group_name;
 use rule_render_options::RuleRenderOptions;

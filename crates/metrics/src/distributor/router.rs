@@ -1,6 +1,7 @@
 use super::{
-    Arc, ByteSizeExt, DefaultBodyLimit, DistributorState, Router, clocks_push,
-    otlp_metrics_service_server, otlp_push, post, push,
+    Arc, ByteSizeExt, DefaultBodyLimit, DistributorState, Router, all_user_stats, clocks_push,
+    influx_push, otlp_metrics_service_server, otlp_push, post, push, runtime_config, user_limits,
+    user_stats,
 };
 
 /// Builds the distributor HTTP router.
@@ -20,6 +21,17 @@ pub fn router(state: Arc<DistributorState>) -> Router {
             "/api/v1/write",
             post(push).layer(DefaultBodyLimit::max(max_body)),
         )
+        .route(
+            "/api/v1/push/influx/write",
+            post(influx_push).layer(DefaultBodyLimit::max(max_body)),
+        )
+        .route("/api/v1/user_limits", axum::routing::get(user_limits))
+        .route("/api/v1/user_stats", axum::routing::get(user_stats))
+        .route(
+            "/distributor/all_user_stats",
+            axum::routing::get(all_user_stats),
+        )
+        .route("/runtime_config", axum::routing::get(runtime_config))
         .route(
             "/api/v1/clocks",
             post(clocks_push).layer(DefaultBodyLimit::max(max_body)),

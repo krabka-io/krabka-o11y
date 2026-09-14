@@ -1,8 +1,8 @@
 use super::{
     ExtendedSelectorModifier, RangeFn, RangeSeries, SampleValue, Time, TimeExt,
-    anchored_float_range_value, count_changes, count_resets, count_step_transitions, emit_warning,
-    extrapolated_rate, mixed_floats_histograms_warning, range_histogram_sample,
-    smoothed_float_range_value,
+    anchored_float_range_value, count_changes, count_resets, count_step_transitions, emit_info,
+    emit_warning, extrapolated_rate, metric_might_not_be_counter_info,
+    mixed_floats_histograms_warning, range_histogram_sample, smoothed_float_range_value,
 };
 
 pub(crate) fn range_function_sample_from_series(
@@ -53,6 +53,7 @@ pub(crate) fn range_function_sample_from_series(
 
     if matches!(modifier, Some(ExtendedSelectorModifier::Anchored)) && !values.is_empty() {
         let value = anchored_float_range_value(&timestamps, &values, range_start_ms, range, kind)?;
+        emit_non_counter_info(series, kind);
         return Some(SampleValue::Float(value));
     }
     if matches!(modifier, Some(ExtendedSelectorModifier::Smoothed)) && !values.is_empty() {
@@ -64,6 +65,7 @@ pub(crate) fn range_function_sample_from_series(
             range,
             kind,
         )?;
+        emit_non_counter_info(series, kind);
         return Some(SampleValue::Float(value));
     }
 
@@ -91,7 +93,19 @@ pub(crate) fn range_function_sample_from_series(
             kind,
         ),
     }?;
+    emit_non_counter_info(series, kind);
     Some(SampleValue::Float(value))
+}
+
+fn emit_non_counter_info(series: &RangeSeries, kind: RangeFn) {
+    if !matches!(kind, RangeFn::Rate | RangeFn::Increase) {
+        return;
+    }
+    let metric = series.labels.get("__name__").unwrap_or("");
+    let metric_type = series.labels.get("__type__").unwrap_or("");
+    if !metric.is_empty() && !matches!(metric_type, "counter" | "histogram") {
+        emit_info(metric_might_not_be_counter_info(metric, metric_type));
+    }
 }
 
 /// Warns that a rate-family window holds both floats and histograms, and drops

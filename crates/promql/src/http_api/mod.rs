@@ -42,12 +42,16 @@ mod alert_templates;
 mod cardinality;
 mod discovery;
 mod metadata;
+mod mimir_alertmanager_router;
+mod mimir_config_persistence;
+mod mimir_ruler_router;
 mod parse;
 mod query;
 mod remote_read;
 mod request;
 mod response;
 mod rules;
+mod search;
 mod status;
 
 #[cfg(test)]
@@ -56,6 +60,7 @@ pub(crate) use alert_templates::expand_alert_template;
 pub(crate) use alert_templates::expand_alert_template_with_external;
 pub(crate) use alert_templates::expand_alert_template_with_queries;
 use cardinality::{
+    cardinality_active_native_histogram_metrics, cardinality_active_native_histogram_metrics_post,
     cardinality_active_series, cardinality_active_series_post, cardinality_label_names,
     cardinality_label_names_post, cardinality_label_values, cardinality_label_values_post,
 };
@@ -74,15 +79,19 @@ use request::{
     parse_limit_parameter, query_timeout, required_form_param, selector_matchers, timestamp_ms,
     validate_timestamp_range,
 };
-pub(crate) use response::format_sample_value;
 use response::{
     QueryResponseStats, active_series_response, cardinality_label_names_response,
     cardinality_label_values_response, exemplar_key, exemplars_json, labels_json, labels_key,
     sample_string, success_data_response, success_response, success_response_with_stats,
 };
+pub(crate) use response::{format_sample_value, native_histogram_string};
 use rules::{
     alerts, delete_ruler_config_group, delete_ruler_config_namespace, ruler_config_group,
     ruler_config_namespace, ruler_config_rules, rules, set_ruler_config_group,
+};
+use search::{
+    search_label_names, search_label_names_post, search_label_values, search_label_values_post,
+    search_metric_names, search_metric_names_post,
 };
 use status::{
     alertmanagers, build_info, runtime_info, scrape_pools, status_config, status_flags, targets,
@@ -109,8 +118,10 @@ use active_query_guard::ActiveQueryGuard;
 use admin::{clean_tombstones, delete_series};
 use alert_state_key::AlertStateKey;
 use api_error::ApiError;
+pub use mimir_alertmanager_router::mimir_alertmanager_router;
+pub use mimir_ruler_router::mimir_ruler_router;
 pub use prometheus_api_state::PrometheusApiState;
-pub use prometheus_router::prometheus_router;
+pub use prometheus_router::{mimir_ruler_prometheus_router, prometheus_router};
 use query_frontend_state::QueryFrontendState;
 use record_query_response::record_query_response;
 use ruler_alert_state_store::RulerAlertStateStore;

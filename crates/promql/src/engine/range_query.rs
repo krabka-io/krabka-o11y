@@ -6,7 +6,7 @@ use promql_parser::parser::Expr;
 
 use super::{
     AT_MODIFIER_BOUNDS, AtModifierBounds, PromqlEngine,
-    annotations::ANNOTATIONS,
+    annotations::{ANNOTATION_SOURCE, ANNOTATIONS},
     check_resolution_points,
     planner_support::range_expr_routes_through_planner,
     query_stats_step,
@@ -73,14 +73,17 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
         step: Time,
     ) -> Result<(QueryResult, Annotations)> {
-        ANNOTATIONS
-            .scope(RefCell::new(Annotations::new()), async move {
-                let result = self
-                    .eval_range_query(tenant.as_str(), query, start_ms, end_ms, step)
-                    .await?;
-                let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
-                Ok((result, annotations))
-            })
+        ANNOTATION_SOURCE
+            .scope(
+                query.to_owned(),
+                ANNOTATIONS.scope(RefCell::new(Annotations::new()), async move {
+                    let result = self
+                        .eval_range_query(tenant.as_str(), query, start_ms, end_ms, step)
+                        .await?;
+                    let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
+                    Ok((result, annotations))
+                }),
+            )
             .await
     }
 

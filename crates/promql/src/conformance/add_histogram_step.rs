@@ -1,28 +1,28 @@
-use super::{NativeHistogram, add_histogram_counts};
+use super::NativeHistogram;
+use crate::engine::add_compatible_native_histogram;
 
 pub(crate) fn add_histogram_step(
     start: &NativeHistogram,
     step: &NativeHistogram,
     offset: u32,
 ) -> NativeHistogram {
+    if offset == 0 {
+        return start.clone();
+    }
     let multiplier = f64::from(offset);
     let mut histogram = start.clone();
-    histogram.sum += step.sum * multiplier;
-    histogram.count += step.count * multiplier;
-    histogram.zero_count += step.zero_count * multiplier;
-    (histogram.positive_spans, histogram.positive_counts) = add_histogram_counts(
-        &start.positive_spans,
-        &start.positive_counts,
-        &step.positive_spans,
-        &step.positive_counts,
-        multiplier,
-    );
-    (histogram.negative_spans, histogram.negative_counts) = add_histogram_counts(
-        &start.negative_spans,
-        &start.negative_counts,
-        &step.negative_spans,
-        &step.negative_counts,
-        multiplier,
-    );
+    let mut increment = step.clone();
+    increment.sum *= multiplier;
+    increment.count *= multiplier;
+    increment.zero_count *= multiplier;
+    for count in increment
+        .positive_counts
+        .iter_mut()
+        .chain(&mut increment.negative_counts)
+    {
+        *count *= multiplier;
+    }
+    add_compatible_native_histogram(&mut histogram, &increment)
+        .expect("histogram expansion operands have compatible bucket kinds");
     histogram
 }

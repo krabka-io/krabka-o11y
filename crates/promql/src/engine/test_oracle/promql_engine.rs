@@ -356,7 +356,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             &label_name.val,
             aggregate.modifier.as_ref(),
             time_ms,
-        )?))
+        )))
     }
 
     #[cfg(test)]
@@ -1008,7 +1008,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             )));
         };
 
-        let input = self.eval_instant_expr(tenant, arg, time_ms).await?;
+        let input = with_histogram_stats(self.eval_instant_expr(tenant, arg, time_ms)).await?;
         let QueryResult::InstantVector(samples) = input else {
             return Err(PromqlError::Plan(format!(
                 "{} requires an instant vector",

@@ -198,6 +198,39 @@ mod tests {
     }
 
     #[test]
+    fn streamed_frames_encode_native_histogram_chunks() {
+        let response = v1::ReadResponse {
+            results: vec![v1::QueryResult {
+                timeseries: vec![v1::TimeSeries {
+                    histograms: vec![v1::Histogram {
+                        count: Some(v1::histogram::Count::CountFloat(4.0)),
+                        sum: 10.0,
+                        schema: 0,
+                        zero_threshold: 0.0,
+                        zero_count: Some(v1::histogram::ZeroCount::ZeroCountFloat(0.0)),
+                        reset_hint: v1::histogram::ResetHint::No as i32,
+                        timestamp: 10_000,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+            }],
+        };
+
+        let frames = encode_chunked_read_frames(response)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let (_, delimiter_len) = read_uvarint(&frames[0]);
+        let decoded = v1::ChunkedReadResponse::decode(&frames[0][delimiter_len + 4..]).unwrap();
+        let chunk = &decoded.chunked_series[0].chunks[0];
+
+        check!(chunk.r#type == v1::chunk::Encoding::FloatHistogram as i32);
+        check!(chunk.min_time_ms == 10_000);
+        check!(chunk.max_time_ms == 10_000);
+        assert!(chunk.data.starts_with(&[0, 1, 0x40]));
+    }
+
+    #[test]
     fn xor_series_split_at_prometheus_chunk_sample_limit() {
         let samples = (0..121)
             .map(|timestamp| v1::Sample {
@@ -230,6 +263,7 @@ mod tests {
 mod decode_read_request;
 mod default_max_read_decompressed;
 mod encode_chunked_read_frames;
+mod encode_histogram_chunk;
 mod encode_read_response;
 mod encode_xor_chunk;
 mod matchers_to_selectors;
@@ -241,6 +275,7 @@ mod series_to_timeseries;
 pub use decode_read_request::decode_read_request;
 pub use default_max_read_decompressed::DEFAULT_MAX_READ_DECOMPRESSED;
 pub use encode_chunked_read_frames::encode_chunked_read_frames;
+use encode_histogram_chunk::encode_histogram_chunks;
 pub use encode_read_response::encode_read_response;
 use encode_xor_chunk::encode_xor_chunks;
 pub use matchers_to_selectors::matchers_to_selectors;

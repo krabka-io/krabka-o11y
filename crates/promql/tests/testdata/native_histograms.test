@@ -162,7 +162,7 @@ clear
 load 5m
 	low_res_histogram	{{schema:-1 sum:4 count:1 buckets:[1] offset:1}}+{{schema:0 sum:4 count:4 buckets:[2 2] offset:1}}x1
 
-# krabka:divergence the corpus loader's `+` increment adds bucket counts without first reducing the two histograms to their coarser schema, which `FloatHistogram.Add` does, so a series that mixes schemas loads with the finer layout.
+# Histogram expansion reduces operands to their shared coarser schema.
 eval instant at 5m low_res_histogram
 	{__name__="low_res_histogram"} {{schema:-1 count:5 sum:8 offset:1 buckets:[5]}}
 
@@ -176,7 +176,7 @@ eval instant at 5m histogram_avg(low_res_histogram)
 	{} 1.6
 
 # We expect all values to fall into the lower-resolution bucket with the range 1 < x <= 4.
-# krabka:divergence the corpus loader's `+` increment adds bucket counts without first reducing the two histograms to their coarser schema, which `FloatHistogram.Add` does, so a series that mixes schemas loads with the finer layout.
+# The reduced expansion keeps every observation in the shared bucket.
 eval instant at 5m histogram_fraction(1, 4, low_res_histogram)
 	{} 1
 
@@ -392,11 +392,11 @@ clear
 load 10m
    histogram_stddev_stdvar_7 {{schema:3 count:7 sum:Inf z_bucket:1 buckets:[0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 1 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 ] n_buckets:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 ]}}x1
 
-# krabka:divergence `histogram_stddev` and `histogram_stdvar` answer NaN where the histogram's sum is infinite, and Prometheus answers with that infinity.
+# Infinite histogram sums produce infinite standard deviation.
 eval instant at 10m histogram_stddev(histogram_stddev_stdvar_7)
     {} Inf
 
-# krabka:divergence `histogram_stddev` and `histogram_stdvar` answer NaN where the histogram's sum is infinite, and Prometheus answers with that infinity.
+# Infinite histogram sums produce infinite variance.
 eval instant at 10m histogram_stdvar(histogram_stddev_stdvar_7)
     {} Inf
 
@@ -1087,12 +1087,12 @@ load 30s
 
 # Test the case where we only have two points for rate
 eval instant at 30s rate(some_metric[1m])
-    expect warn msg: PromQL warning: this native histogram metric is not a counter: "some_metric"
+    expect warn msg: PromQL warning: this native histogram metric is not a counter: "some_metric" (1:6)
     {} {{count:0.03333333333333333 sum:0.03333333333333333 buckets:[0.03333333333333333]}}
 
 # Test the case where we have more than two points for rate
 eval instant at 1m rate(some_metric[1m30s])
-    expect warn msg: PromQL warning: this native histogram metric is not a counter: "some_metric"
+    expect warn msg: PromQL warning: this native histogram metric is not a counter: "some_metric" (1:6)
     {} {{count:0.03333333333333333 sum:0.03333333333333333 buckets:[0.03333333333333333]}}
 
 clear
@@ -1102,21 +1102,21 @@ load 30s
     some_metric {{schema:0 sum:1 count:1 buckets:[1]}} {{schema:-53 sum:1 count:1 custom_values:[5 10] buckets:[1]}} {{schema:0 sum:5 count:4 buckets:[1 2 1]}} {{schema:-53 sum:1 count:1 custom_values:[5 10] buckets:[1]}}
 
 # Start and end with exponential, with custom in the middle.
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Mixed layouts in a multi-sample range are dropped with a warning.
 eval instant at 1m rate(some_metric[1m30s])
-    expect warn msg: PromQL warning: vector contains a mix of histograms with exponential and custom buckets schemas for metric name "some_metric"
+    expect warn msg: PromQL warning: vector contains a mix of histograms with exponential and custom buckets schemas for metric name "some_metric" (1:6)
     # Should produce no results.
 
 # Start and end with custom, with exponential in the middle.
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# The reverse mixed-layout sequence follows the same warning rule.
 eval instant at 1m30s rate(some_metric[1m30s])
-    expect warn msg: PromQL warning: vector contains a mix of histograms with exponential and custom buckets schemas for metric name "some_metric"
+    expect warn msg: PromQL warning: vector contains a mix of histograms with exponential and custom buckets schemas for metric name "some_metric" (1:6)
     # Should produce no results.
 
 # Start with custom, end with exponential. Return the exponential histogram divided by 48.
 # (The 1st sample is the NHCB with count:1. It is mostly ignored with the exception of the
 # count, which means the rate calculation extrapolates until the count hits 0.)
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# A two-sample custom-to-exponential transition is a counter reset.
 eval instant at 1m rate(some_metric[1m])
     expect no_warn
     {} {{count:0.08333333333333333 sum:0.10416666666666666 counter_reset_hint:gauge buckets:[0.020833333333333332 0.041666666666666664 0.020833333333333332]}}
@@ -1124,7 +1124,7 @@ eval instant at 1m rate(some_metric[1m])
 # Start with exponential, end with custom. Return the custom buckets histogram divided by 30.
 # (With the 2nd sample having a count of 1, the extrapolation to zero lands exactly at the
 # left boundary of the range, so no extrapolation limitation needed.)
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# A two-sample exponential-to-custom transition is a counter reset.
 eval instant at 30s rate(some_metric[1m])
     expect no_warn
     {} {{schema:-53 sum:0.03333333333333333 count:0.03333333333333333 custom_values:[5 10] buckets:[0.03333333333333333]}}
@@ -1196,12 +1196,12 @@ load 6m
 # T=0: only exponential
 # T=6: only custom
 # T=12: mixed, should be ignored and emit a warning
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Mixed histogram aggregation drops only the incompatible group.
 eval range from 0 to 12m step 6m sum(metric)
   expect warn
   {} {{sum:7 count:5 buckets:[2 3 2]}} {{schema:-53 sum:16 count:3 custom_values:[5 10] buckets:[1 2]}} _
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Average aggregation follows the same per-group compatibility rule.
 eval range from 0 to 12m step 6m avg(metric)
   expect warn
   {} {{sum:3.5 count:2.5 buckets:[1 1.5 1]}} {{schema:-53 sum:8 count:1.5 custom_values:[5 10] buckets:[0.5 1]}} _
@@ -1254,14 +1254,14 @@ eval range from 0 to 12m step 6m metric{series="1"} or ignoring(series) metric{s
   metric{series="2"} {{schema:-53 sum:1 count:1 custom_values:[10] buckets:[1]}} _                                                             _
 
 # Test mismatched boundaries with arithmetic binary operators
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Addition reconciles custom histograms to their shared bounds.
 eval range from 0 to 12m step 6m metric{series="2"} + ignoring (series) metric{series="3"}
-  expect info msg:PromQL info: mismatched custom buckets were reconciled during addition
+  expect info msg:PromQL info: mismatched custom buckets were reconciled during addition (1:1)
   {} {{schema:-53 count:2 sum:2 custom_values:[10] buckets:[2]}} _ {{schema:-53 count:2 sum:2 custom_values:[5] buckets:[2]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Subtraction reconciles custom histograms to their shared bounds.
 eval range from 0 to 12m step 6m metric{series="2"} - ignoring (series) metric{series="3"}
-  expect info msg:PromQL info: mismatched custom buckets were reconciled during subtraction
+  expect info msg:PromQL info: mismatched custom buckets were reconciled during subtraction (1:1)
   {} {{schema:-53 custom_values:[10] counter_reset_hint:gauge}} _ {{schema:-53 custom_values:[5] counter_reset_hint:gauge}}
 
 clear
@@ -1271,12 +1271,12 @@ load 6m
   metric1 {{schema:-53 sum:1 count:1 custom_values:[2] buckets:[1]}} {{schema:-53 sum:1 count:1 custom_values:[5 10] buckets:[1]}}
   metric2 {{schema:-53 sum:1 count:1 custom_values:[5 10] buckets:[1]}} {{schema:-53 sum:1 count:1 custom_values:[5 10] buckets:[1]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Equality compares custom histograms on their shared layout.
 eval range from 0 to 6m step 6m metric1 == metric2
     expect no_info
     metric1{} _ {{schema:-53 count:1 sum:1 custom_values:[5 10] buckets:[1]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Inequality compares custom histograms on their shared layout.
 eval range from 0 to 6m step 6m metric1 != metric2
     expect no_info
     metric1{} {{schema:-53 sum:1 count:1 custom_values:[2] buckets:[1]}} _
@@ -1292,16 +1292,16 @@ load 6m
 # If evaluating at 12m, the first two NHCBs have the same custom values
 # while the 3rd one has different ones.
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Custom-bucket bounds are reconciled by sum_over_time.
 eval instant at 12m sum_over_time(nhcb_metric[13m])
   expect no_warn
-  expect info msg: PromQL info: mismatched custom buckets were reconciled during aggregation
+  expect info msg: PromQL info: mismatched custom buckets were reconciled during aggregation (1:15)
   {} {{schema:-53 count:3 sum:3 custom_values:[5] buckets:[3]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Custom-bucket bounds are reconciled by avg_over_time.
 eval instant at 12m avg_over_time(nhcb_metric[13m])
   expect no_warn
-  expect info msg: PromQL info: mismatched custom buckets were reconciled during aggregation
+  expect info msg: PromQL info: mismatched custom buckets were reconciled during aggregation (1:15)
   {} {{schema:-53 count:1 sum:1 custom_values:[5] counter_reset_hint:gauge buckets:[1]}}
 
 eval instant at 12m last_over_time(nhcb_metric[13m])
@@ -1320,17 +1320,17 @@ eval instant at 12m changes(nhcb_metric[13m])
   expect no_warn
   {} 1
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Custom layouts are reconciled before delta.
 eval instant at 12m delta(nhcb_metric[13m])
-  expect warn msg: PromQL warning: this native histogram metric is not a gauge: "nhcb_metric"
+  expect warn msg: PromQL warning: this native histogram metric is not a gauge: "nhcb_metric" (1:7)
   {} {{schema:-53 custom_values:[5]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Custom layouts are reconciled before increase.
 eval instant at 12m increase(nhcb_metric[13m])
   expect no_warn
   {} {{schema:-53 custom_values:[5]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Custom layouts are reconciled before rate.
 eval instant at 12m rate(nhcb_metric[13m])
   expect no_warn
   {} {{schema:-53 custom_values:[5] }}
@@ -1366,18 +1366,18 @@ eval instant at 18m changes(nhcb_metric[13m])
   expect no_warn
   {} 1
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Reconciliation also applies when the first layout differs.
 eval instant at 18m delta(nhcb_metric[13m])
-  expect warn msg: PromQL warning: this native histogram metric is not a gauge: "nhcb_metric"
-  expect info msg: PromQL info: mismatched custom buckets were reconciled during subtraction
+  expect warn msg: PromQL warning: this native histogram metric is not a gauge: "nhcb_metric" (1:7)
+  expect info msg: PromQL info: mismatched custom buckets were reconciled during subtraction (1:7)
   {} {{schema:-53 custom_values:[5]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Increase uses the reconciled layout.
 eval instant at 18m increase(nhcb_metric[13m])
   expect no_warn
   {} {{schema:-53 custom_values:[5]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Rate uses the reconciled layout.
 eval instant at 18m rate(nhcb_metric[13m])
   expect no_warn
   {} {{schema:-53 custom_values:[5]}}
@@ -1402,7 +1402,7 @@ load 1m
   metric{group="mismatched-custom-histograms", series="1"} {{schema:-53 sum:1 count:1 custom_values:[5 10] buckets:[1]}}
   metric{group="mismatched-custom-histograms", series="2"} {{schema:-53 sum:1 count:1 custom_values:[10] buckets:[1]}}
 
-# krabka:divergence the engine refuses to combine native histograms whose bucket layouts differ -- an exponential one with a custom-bucket one, or two custom-bucket ones with different bounds -- where Prometheus reconciles them to the layout the two share and reports the reconciliation.
+# Incompatible groups are dropped without suppressing compatible groups.
 eval instant at 0 sum by (group) (metric)
   expect warn
   {group="just-floats"} 5
@@ -1477,7 +1477,7 @@ clear
 load 2m
     http_request_duration_seconds{pod="nginx-1"} {{schema:0 count:3 sum:14.00 buckets:[1 2]}}x20
 
-# krabka:divergence an `@ start()` or `@ end()` modifier inside a subquery is refused: the engine scopes those bounds only for a top-level range query.
+# Selectors nested in subqueries resolve `@ start()` against the outer query bounds.
 eval range from 0s to 60s step 15s last_over_time({__name__="http_request_duration_seconds"} @ start()[1h:1m] offset 1m16s)
     {__name__="http_request_duration_seconds", pod="nginx-1"} {{count:3 sum:14 buckets:[1 2]}}x4
 
@@ -1490,39 +1490,39 @@ load 1m
     histogram_nan{case="20% NaNs"} {{schema:0 count:0 sum:0}} {{schema:0 count:15 sum:NaN buckets:[12]}}
 
 eval instant at 1m histogram_quantile(1, histogram_nan)
-    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is NaN for metric name "histogram_nan"
+    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is NaN (1:20)
     {case="100% NaNs"} NaN
     {case="20% NaNs"} NaN
 
 eval instant at 1m histogram_quantile(0.81, histogram_nan)
-    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is NaN for metric name "histogram_nan"
+    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is NaN (1:20)
     {case="100% NaNs"} NaN
     {case="20% NaNs"} NaN
 
 eval instant at 1m histogram_quantile(0.8, histogram_nan{case="100% NaNs"})
-    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is NaN for metric name "histogram_nan"
+    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is NaN (1:20)
     {case="100% NaNs"} NaN
 
 eval instant at 1m histogram_quantile(0.8, histogram_nan{case="20% NaNs"})
-    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is skewed higher for metric name "histogram_nan"
+    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is skewed higher (1:20)
     {case="20% NaNs"} 1
 
 eval instant at 1m histogram_quantile(0.4, histogram_nan{case="100% NaNs"})
-    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is NaN for metric name "histogram_nan"
+    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is NaN (1:20)
     {case="100% NaNs"} NaN
 
 # histogram_quantile and histogram_fraction equivalence if quantile is not NaN
 eval instant at 1m histogram_quantile(0.4, histogram_nan{case="20% NaNs"})
-    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is skewed higher for metric name "histogram_nan"
+    expect info msg: PromQL info: input to histogram_quantile has NaN observations, result is skewed higher (1:20)
     {case="20% NaNs"} 0.7071067811865475
 
 eval instant at 1m histogram_fraction(-Inf, 0.7071067811865475, histogram_nan)
-    expect info msg: PromQL info: input to histogram_fraction has NaN observations, which are excluded from all fractions for metric name "histogram_nan"
+    expect info msg: PromQL info: input to histogram_fraction has NaN observations, which are excluded from all fractions (1:20)
     {case="100% NaNs"} 0.0
     {case="20% NaNs"} 0.4
 
 eval instant at 1m histogram_fraction(-Inf, +Inf, histogram_nan)
-    expect info msg: PromQL info: input to histogram_fraction has NaN observations, which are excluded from all fractions for metric name "histogram_nan"
+    expect info msg: PromQL info: input to histogram_fraction has NaN observations, which are excluded from all fractions (1:20)
     {case="100% NaNs"} 0.0
     {case="20% NaNs"} 0.8
 
@@ -1538,7 +1538,7 @@ load 1m
 # End of range coincides with sample. Zero point of count is reached within the range.
 # Note that the 2nd bucket has an exaggerated increase of 2479.939393939394 (although
 # it has a value of only 2475 at the end of the range).
-# krabka:divergence the native-histogram extrapolation in `increase` does not stop where a bucket's count would reach zero, which Prometheus clamps for a counter histogram exactly as it does for a float counter.
+# Native-histogram extrapolation stops where its count reaches zero.
 eval instant at 55m increase(metric[90m])
     expect no_warn
     {type="histogram"} {{count:2490 sum:50.303030303030305 counter_reset_hint:gauge buckets:[10.06060606060606 2479.939393939394]}}
@@ -1547,7 +1547,7 @@ eval instant at 55m increase(metric[90m])
 # End of range does not coincide with sample. Zero point of count is reached within the range.
 # The 2nd bucket again has an exaggerated increase, but it is less obvious because of the
 # right-side extrapolation.
-# krabka:divergence the native-histogram extrapolation in `increase` does not stop where a bucket's count would reach zero, which Prometheus clamps for a counter histogram exactly as it does for a float counter.
+# The same count-derived limit applies with right-side extrapolation.
 eval instant at 54m30s increase(metric[90m])
     expect no_warn
     {type="histogram"} {{count:2512.9166666666665 sum:50.76599326599326 counter_reset_hint:gauge buckets:[10.153198653198652 2502.7634680134674]}}
@@ -1558,7 +1558,7 @@ eval instant at 54m30s increase(metric[90m])
 # however, the 2nd bucket's extrapolation will reach zero within the range. The overestimation is visible
 # easily here because the last sample in the range coincides with the boundary, where the 2nd bucket has
 # a value of 2475 but has increased by 2476.2045454545455 according to the returned result.
-# krabka:divergence the native-histogram extrapolation in `increase` does not stop where a bucket's count would reach zero, which Prometheus clamps for a counter histogram exactly as it does for a float counter.
+# Count-derived extrapolation scales every histogram component uniformly.
 eval instant at 55m increase(metric[55m15s])
     expect no_warn
     {type="histogram"} {{count:2486.25 sum:50.227272727272734 counter_reset_hint:gauge buckets:[10.045454545454547 2476.2045454545455]}}
@@ -1567,19 +1567,19 @@ eval instant at 55m increase(metric[55m15s])
 # End of range does not coincide with sample. Zero point of count is reached outside of (i.e. before) the range.
 # This means no change of extrapolation is required for the histogram count (and neither for the float counter),
 # however, the 2nd bucket's extrapolation will reach zero within the range.
-# krabka:divergence the native-histogram extrapolation in `increase` does not stop where a bucket's count would reach zero, which Prometheus clamps for a counter histogram exactly as it does for a float counter.
+# Count-derived limits also apply between scrape timestamps.
 eval instant at 54m30s increase(metric[54m45s])
     expect no_warn
     {type="histogram"} {{count:2509.375 sum:50.69444444444444 counter_reset_hint:gauge buckets:[10.13888888888889 2499.236111111111]}}
     {type="counter"} 2509.375
 
 # Try the same, but now extract just the histogram count via `histogram_count`.
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# The accessor sees the zero-limited histogram count.
 eval instant at 55m histogram_count(increase(metric[90m]))
     expect no_warn
     {type="histogram"} 2490
 
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# The accessor preserves the right-extrapolated histogram count.
 eval instant at 54m30s histogram_count(increase(metric[90m]))
     expect no_warn
     {type="histogram"} 2512.9166666666665
@@ -1731,42 +1731,42 @@ eval instant at 15m avg_over_time(mixed[10m])
 # special iterator does counter reset detection on the fly and therefore
 # is able to create the counter reset hint "reset", which we can then mix
 # with the "not_reset" hint in the test and provoke the warning.
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# Histogram accessors recompute reset hints before aggregation.
 eval instant at 6m histogram_count(sum(metric))
-  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation
+  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation (1:21)
   expect no_info
   {} 49
 
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# Average aggregation sees the same recomputed hints.
 eval instant at 6m histogram_count(avg(metric))
-  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation
+  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation (1:21)
   expect no_info
   {} 16.333333333333332
 
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# Range aggregation recomputes reset hints before summing.
 eval instant at 14m histogram_count(sum_over_time(mixed[10m]))
-  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation
+  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation (1:31)
   expect no_info
   {} 93
 
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# Range average uses the same iterator semantics.
 eval instant at 14m histogram_count(avg_over_time(mixed[10m]))
-  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation
+  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation (1:31)
   expect no_info
   {} 9.3
 
 # In the following two tests, the first sample has hint "not_reset"
 # and the second has "reset". This tests if the conflict is detected
 # between the first two samples, too.
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# Reset detection includes the first transition in the selected window.
 eval instant at 11m histogram_count(sum_over_time(mixed[2m]))
-  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation
+  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation (1:31)
   expect no_info
   {} 21
 
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# Range average includes that first transition too.
 eval instant at 11m histogram_count(avg_over_time(mixed[2m]))
-  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation
+  expect warn msg:PromQL warning: conflicting counter resets during histogram aggregation (1:31)
   expect no_info
   {} 10.5
 
@@ -1785,17 +1785,17 @@ load 1m
 	mixedHistogram{}           {{schema:0 count:10 sum:50 buckets:[1 2 3]}}
 
 eval instant at 1m histogram_quantile(0.5, nonmonotonic_bucket)
-	expect info msg: PromQL info: input to histogram_quantile needed to be fixed for monotonicity (see https://prometheus.io/docs/prometheus/latest/querying/functions/#histogram_quantile) for metric name "nonmonotonic_bucket"
+	expect info msg: PromQL info: input to histogram_quantile needed to be fixed for monotonicity (see https://prometheus.io/docs/prometheus/latest/querying/functions/#histogram_quantile) (1:25)
 	{} 8.5
 
 eval instant at 1m histogram_quantile(0.5, myHistogram1)
-	expect warn msg: PromQL warning: bucket label "le" is missing or has a malformed value of "" for metric name "myHistogram1"
+	expect warn msg: PromQL warning: bucket label "le" is missing or has a malformed value of "" (1:25)
 
 eval instant at 1m histogram_quantile(0.5, myHistogram2)
-	expect warn msg: PromQL warning: bucket label "le" is missing or has a malformed value of "Hello World" for metric name "myHistogram2"
+	expect warn msg: PromQL warning: bucket label "le" is missing or has a malformed value of "Hello World" (1:25)
 
 eval instant at 1m histogram_quantile(0.5, mixedHistogram)
-	expect warn msg: PromQL warning: vector contains a mix of classic and native histograms for metric name "mixedHistogram"
+	expect warn msg: PromQL warning: vector contains a mix of classic and native histograms (1:25)
 
 clear
 
@@ -1810,11 +1810,11 @@ load 1m
      h{} {{schema:0 count:1 sum:10 buckets:[1]}}+{{}}x20 {{schema:0 count:1 sum:10 buckets:[0 1]}}+{{}}x20
 
 # Both evals below should yield the same value for the count.
-# krabka:divergence a subquery range over a native-histogram counter whose bucket layout changes mid-window is dropped, where Prometheus detects the reset and extrapolates through it.
+# Subquery rate windows reconcile changing native-histogram layouts.
 eval instant at 41m histogram_count(increase(h[40m:9m]))
     {} 1.4814814814814814
 
-# krabka:divergence a subquery range over a native-histogram counter whose bucket layout changes mid-window is dropped, where Prometheus detects the reset and extrapolates through it.
+# The full subquery histogram uses the reconciled bucket layout.
 eval instant at 41m increase(h[40m:9m])
     {} {{count:1.4814814814814814 sum:14.814814814814813 counter_reset_hint:gauge offset:1 buckets:[1.4814814814814814]}}
 
@@ -1826,19 +1826,19 @@ load 1m
 
 # Trigger an annotation about conflicting counter resets by going through the
 # HistogramStatsIterator, which creates counter reset hints on the fly.
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# A late reset collides with earlier non-reset samples.
 eval instant at 5m histogram_count(sum_over_time(reset{timing="late"}[5m]))
-    expect warn msg: PromQL warning: conflicting counter resets during histogram aggregation
+    expect warn msg: PromQL warning: conflicting counter resets during histogram aggregation (1:31)
     {timing="late"} 7
 
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# Instant sum propagates the recomputed collision.
 eval instant at 5m histogram_count(sum(reset))
-    expect warn msg: PromQL warning: conflicting counter resets during histogram aggregation
+    expect warn msg: PromQL warning: conflicting counter resets during histogram aggregation (1:21)
     {} 5
 
-# krabka:divergence `histogram_count` over a selector does not run Prometheus's `HistogramStatsIterator`, which recomputes counter-reset hints as it reads, so the conflicting-reset warning that iterator provokes is never raised.
+# Instant average propagates the recomputed collision.
 eval instant at 5m histogram_count(avg(reset))
-    expect warn msg: PromQL warning: conflicting counter resets during histogram aggregation
+    expect warn msg: PromQL warning: conflicting counter resets during histogram aggregation (1:21)
     {} 2.5
 
 # No annotation with the right timing.
@@ -1895,7 +1895,7 @@ load 1m
 
 eval instant at 1m irate(nhcb_add_buckets[2m]) * 60
     expect no_warn
-    expect info msg: PromQL info: mismatched custom buckets were reconciled during subtraction
+    expect info msg: PromQL info: mismatched custom buckets were reconciled during subtraction (1:7)
     {} {{schema:-53 sum:500 count:435 custom_values:[2 4 6] buckets:[29 68 105 233]}}
 
 load 1m
@@ -1903,7 +1903,7 @@ load 1m
 
 eval instant at 1m irate(nhcb_remove_buckets[2m]) * 60
     expect no_warn
-    expect info msg: PromQL info: mismatched custom buckets were reconciled during subtraction
+    expect info msg: PromQL info: mismatched custom buckets were reconciled during subtraction (1:7)
     {} {{schema:-53 sum:5505 count:955 custom_values:[3 5 7] buckets:[94 191 287 383]}}
 
 clear

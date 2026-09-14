@@ -121,20 +121,20 @@ fn write_value_delta(
     bits.write_bits(delta >> next_trailing, significant);
 }
 
-struct BitStream {
-    bytes: Vec<u8>,
+pub(super) struct BitStream {
+    pub(super) bytes: Vec<u8>,
     available: u8,
 }
 
 impl BitStream {
-    fn new(sample_count: u16) -> Self {
+    pub(super) fn new(sample_count: u16) -> Self {
         Self {
             bytes: sample_count.to_be_bytes().to_vec(),
             available: 0,
         }
     }
 
-    fn write_bit(&mut self, value: bool) {
+    pub(super) fn write_bit(&mut self, value: bool) {
         if self.available == 0 {
             self.bytes.push(0);
             self.available = 8;
@@ -149,7 +149,7 @@ impl BitStream {
         self.available -= 1;
     }
 
-    fn write_byte(&mut self, value: u8) {
+    pub(super) fn write_byte(&mut self, value: u8) {
         if self.available == 0 {
             self.bytes.push(value);
             return;
@@ -162,7 +162,7 @@ impl BitStream {
         self.bytes.push(value << self.available);
     }
 
-    fn write_bits(&mut self, value: u64, width: u32) {
+    pub(super) fn write_bits(&mut self, value: u64, width: u32) {
         let shifted = if width == 64 {
             value
         } else {

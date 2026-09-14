@@ -51,25 +51,25 @@ eval instant at 10m first_over_time(metric_total{env="1"}[10m])
 eval instant at 10m max_over_time(metric_total{env="1"}[10m])
 	{env="1"} 120
 
-# Allows relabeling (to-be-dropped) __name__  via label_replace.
+# Rate drops __name__ before label replacement, making these labelsets duplicates.
 eval instant at 10m label_replace(rate({env="1"}[10m]), "my_name", "rate_$1", "__name__", "(.+)")
-	{my_name="rate_metric_total", env="1"} 0.2
-	{my_name="rate_another_metric_total", env="1"} 0.2
+	expect fail
+# The two input series have the same remaining labels.
 
-# Allows preserving __name__ via label_replace.
+# The dropped source label also cannot be copied back into __name__.
 eval instant at 10m label_replace(rate({env="1"}[10m]), "__name__", "rate_$1", "__name__", "(.+)")
-	rate_metric_total{env="1"} 0.2
-	rate_another_metric_total{env="1"} 0.2
+	expect fail
+# Both series still collide before the outer function can evaluate.
 
-# Allows relabeling (to-be-dropped) __name__  via label_join.
+# Rate drops __name__ before label joining, making these labelsets duplicates.
 eval instant at 10m label_join(rate({env="1"}[10m]), "my_name", "_", "__name__")
-	{my_name="metric_total", env="1"} 0.2
-	{my_name="another_metric_total", env="1"} 0.2
+	expect fail
+# The two input series have the same remaining labels.
 
-# Allows preserving __name__ via label_join.
+# The dropped source label also cannot be joined back into __name__.
 eval instant at 10m label_join(rate({env="1"}[10m]), "__name__", "_", "__name__", "env")
-	metric_total_1{env="1"} 0.2
-	another_metric_total_1{env="1"} 0.2
+	expect fail
+# Both series still collide before the outer function can evaluate.
 
 # Does not drop metric names from aggregation operators.
 eval instant at 10m sum by (__name__, env) (metric_total{env="1"})
@@ -80,10 +80,9 @@ eval instant at 10m sum by (__name__, env) (metric_total{env="1"})
 eval instant at 10m sum by (__name__) (rate({env="1"}[10m]))
   expect fail
 
-# Aggregation operators aggregate metrics with same labelset and to-be-dropped names.
-# This is an accidental side effect of delayed __name__ label dropping
+# Rate produces duplicate labelsets before aggregation.
 eval instant at 10m sum(rate({env="1"}[10m])) by (env)
-	{env="1"} 0.4
+	expect fail
 
 # Aggregationk operators propagate __name__ label dropping information.
 eval instant at 10m topk(10, sum by (__name__, env) (metric_total{env="1"}))

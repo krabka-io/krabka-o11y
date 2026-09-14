@@ -1,20 +1,37 @@
 use super::{
     Arc, ByteSizeExt, DefaultBodyLimit, MetricStore, PrometheusApiState, Router, alertmanagers,
-    alerts, build_info, cardinality_active_series, cardinality_active_series_post,
-    cardinality_label_names, cardinality_label_names_post, cardinality_label_values,
-    cardinality_label_values_post, clean_tombstones, delete_ruler_config_group,
-    delete_ruler_config_namespace, delete_series, format_query, format_query_post, get,
-    label_values, label_values_post, labels, labels_post, metadata, parse_query, parse_query_post,
-    post, query, query_exemplars, query_exemplars_post, query_post, query_range, query_range_post,
-    remote_read, ruler_config_group, ruler_config_namespace, ruler_config_rules, rules,
-    runtime_info, scrape_pools, series, series_post, set_ruler_config_group, status_config,
+    alerts, build_info, cardinality_active_native_histogram_metrics,
+    cardinality_active_native_histogram_metrics_post, cardinality_active_series,
+    cardinality_active_series_post, cardinality_label_names, cardinality_label_names_post,
+    cardinality_label_values, cardinality_label_values_post, clean_tombstones,
+    delete_ruler_config_group, delete_ruler_config_namespace, delete_series, format_query,
+    format_query_post, get, label_values, label_values_post, labels, labels_post, metadata,
+    parse_query, parse_query_post, post, query, query_exemplars, query_exemplars_post, query_post,
+    query_range, query_range_post, remote_read, ruler_config_group, ruler_config_namespace,
+    ruler_config_rules, rules, runtime_info, scrape_pools, search_label_names,
+    search_label_names_post, search_label_values, search_label_values_post, search_metric_names,
+    search_metric_names_post, series, series_post, set_ruler_config_group, status_config,
     status_flags, target_metadata, targets, tsdb_blocks, tsdb_status, wal_replay_status,
 };
 
 /// Builds the routes for the Prometheus API and the `/prometheus` prefix of Mimir.
 pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>) -> Router {
+    prometheus_router_with_root_alerts(state, true)
+}
+
+/// Builds the ruler's Mimir API without Prometheus's conflicting root alerts alias.
+pub fn mimir_ruler_prometheus_router<S: MetricStore + 'static>(
+    state: Arc<PrometheusApiState<S>>,
+) -> Router {
+    prometheus_router_with_root_alerts(state, false)
+}
+
+fn prometheus_router_with_root_alerts<S: MetricStore + 'static>(
+    state: Arc<PrometheusApiState<S>>,
+    root_alerts: bool,
+) -> Router {
     let remote_read_max_body = state.remote_read_max_body.bytes_usize();
-    Router::new()
+    let router = Router::new()
         .route("/api/v1/query", get(query::<S>).post(query_post::<S>))
         .route(
             "/api/v1/query_range",
@@ -40,6 +57,23 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
             "/api/v1/cardinality/active_series",
             get(cardinality_active_series::<S>).post(cardinality_active_series_post::<S>),
         )
+        .route(
+            "/api/v1/cardinality/active_native_histogram_metrics",
+            get(cardinality_active_native_histogram_metrics::<S>)
+                .post(cardinality_active_native_histogram_metrics_post::<S>),
+        )
+        .route(
+            "/api/v1/search/metric_names",
+            get(search_metric_names::<S>).post(search_metric_names_post::<S>),
+        )
+        .route(
+            "/api/v1/search/label_names",
+            get(search_label_names::<S>).post(search_label_names_post::<S>),
+        )
+        .route(
+            "/api/v1/search/label_values",
+            get(search_label_values::<S>).post(search_label_values_post::<S>),
+        )
         .route("/api/v1/series", get(series::<S>).post(series_post::<S>))
         .route("/api/v1/labels", get(labels::<S>).post(labels_post::<S>))
         .route(
@@ -48,7 +82,6 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
         )
         .route("/api/v1/metadata", get(metadata::<S>))
         .route("/api/v1/rules", get(rules::<S>))
-        .route("/api/v1/alerts", get(alerts::<S>))
         .route("/api/v1/alertmanagers", get(alertmanagers))
         .route("/api/v1/targets", get(targets))
         .route("/api/v1/targets/metadata", get(target_metadata::<S>))
@@ -100,6 +133,23 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
         .route(
             "/prometheus/api/v1/cardinality/active_series",
             get(cardinality_active_series::<S>).post(cardinality_active_series_post::<S>),
+        )
+        .route(
+            "/prometheus/api/v1/cardinality/active_native_histogram_metrics",
+            get(cardinality_active_native_histogram_metrics::<S>)
+                .post(cardinality_active_native_histogram_metrics_post::<S>),
+        )
+        .route(
+            "/prometheus/api/v1/search/metric_names",
+            get(search_metric_names::<S>).post(search_metric_names_post::<S>),
+        )
+        .route(
+            "/prometheus/api/v1/search/label_names",
+            get(search_label_names::<S>).post(search_label_names_post::<S>),
+        )
+        .route(
+            "/prometheus/api/v1/search/label_values",
+            get(search_label_values::<S>).post(search_label_values_post::<S>),
         )
         .route(
             "/prometheus/api/v1/series",
@@ -165,6 +215,11 @@ pub fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState
         .route(
             "/prometheus/api/v1/admin/tsdb/clean_tombstones",
             post(clean_tombstones::<S>),
-        )
-        .with_state(state)
+        );
+    let router = if root_alerts {
+        router.route("/api/v1/alerts", get(alerts::<S>))
+    } else {
+        router
+    };
+    router.with_state(state)
 }

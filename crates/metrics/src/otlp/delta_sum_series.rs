@@ -1,6 +1,7 @@
 use super::{
     DecodedMetadata, DecodedSample, DecodedSeries, DeltaAccumulator, KeyValue, NumberDataPoint,
-    OtlpError, exemplars_from_number_point, labels, nanos_to_millis, number_value,
+    OtlpError, TranslationStrategy, exemplars_from_number_point, labels, nanos_to_millis,
+    number_value,
 };
 
 pub(crate) fn delta_sum_series(
@@ -9,10 +10,11 @@ pub(crate) fn delta_sum_series(
     resource_attributes: &[KeyValue],
     accumulator: &mut DeltaAccumulator,
     metadata: Option<DecodedMetadata>,
+    strategy: TranslationStrategy,
 ) -> Result<DecodedSeries, OtlpError> {
     let delta = number_value(point)
         .ok_or_else(|| OtlpError::Invalid(name.into(), "missing number datapoint value".into()))?;
-    let labels = labels(name, resource_attributes, &point.attributes, None);
+    let labels = labels(name, resource_attributes, &point.attributes, None, strategy);
     let cumulative = accumulator.accumulate_sum(&labels, point.start_time_unix_nano, delta);
     Ok(DecodedSeries {
         labels,
@@ -23,7 +25,7 @@ pub(crate) fn delta_sum_series(
                 .then_some(nanos_to_millis(point.start_time_unix_nano)),
         )],
         histograms: Vec::new(),
-        exemplars: exemplars_from_number_point(point),
+        exemplars: exemplars_from_number_point(point, strategy),
         metadata,
     })
 }

@@ -1,7 +1,7 @@
 use super::{BTreeMap, RulerGroupStateKey, RulerGroupStateRecord};
 
 /// Last-evaluation state for ruler groups, rebuildable from compacted records.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RulerGroupState {
     pub(crate) last_eval_ms: BTreeMap<RulerGroupStateKey, i64>,
 }

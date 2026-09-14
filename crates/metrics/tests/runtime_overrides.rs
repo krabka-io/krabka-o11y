@@ -143,17 +143,13 @@ async fn a_runtime_overrides_file_sets_the_limits_a_push_is_judged_by() {
         "two samples exceed the file's cap of one"
     );
     check!(
-        push(&client, addr, TIGHT, remote_write_v1_body(1, 1)).await
-            == reqwest::StatusCode::NO_CONTENT,
+        push(&client, addr, TIGHT, remote_write_v1_body(1, 1)).await == reqwest::StatusCode::OK,
         "one series of one sample is exactly the cap"
     );
 
     // A tenant the file does not list keeps the built-in defaults, so the
     // same load it refused for the listed tenant goes through.
-    check!(
-        push(&client, addr, LOOSE, remote_write_v1_body(2, 1)).await
-            == reqwest::StatusCode::NO_CONTENT
-    );
+    check!(push(&client, addr, LOOSE, remote_write_v1_body(2, 1)).await == reqwest::StatusCode::OK);
 
     check!(sink.len() == 3, "only the accepted pushes appended");
 }

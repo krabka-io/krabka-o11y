@@ -4,9 +4,11 @@ use super::{
     Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, KafkaRecordingRuleWalSink,
     KafkaRulerStateSink, ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink,
     RoleReadiness, RulerAlertmanagerSink, RulerShard, RulerStateFanoutSink, ServerSecurity,
-    Shutdown, WalHead, install_bundled_rule_groups, load_runtime_overrides, prometheus_router,
-    query_engine_opts, readiness_router, run_ruler_evaluation_loop, run_ruler_state_consumer_loop,
-    serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
+    Shutdown, WalHead, install_bundled_rule_groups, load_runtime_overrides,
+    mimir_alertmanager_router, mimir_ruler_prometheus_router, mimir_ruler_router,
+    poll_ruler_state_consumer_once, query_engine_opts, readiness_router, run_ruler_evaluation_loop,
+    run_ruler_state_consumer_loop, serve_prometheus_router_joinable,
+    spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -25,8 +27,10 @@ pub(crate) async fn run_ruler(
     audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
-    let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-    let store: Arc<dyn ObjectStore> = Arc::from(store);
+    let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
+    let store: Arc<dyn ObjectStore> =
+        Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
+    let config_store = Arc::clone(&store);
     let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
         store,
         object_store_url.clone(),
@@ -43,9 +47,14 @@ pub(crate) async fn run_ruler(
             krabka_observability::LogLevelControl::process().level(),
             None,
         )
+        .with_mimir_config_store(config_store)
         .with_metrics(metrics)
         .with_audit(audit);
     let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
+    state
+        .reload_mimir_configs()
+        .await
+        .map_err(std::io::Error::other)?;
     let state = Arc::new(state);
     let shard = RulerShard::new(cli.ruler_shard_index, cli.ruler_shard_total)?;
     let bootstrap = cli.wal_bootstrap.clone().ok_or_else(|| {
@@ -63,7 +72,11 @@ pub(crate) async fn run_ruler(
         .as_deref()
         .map(|path| (path, readiness.gate("bundled-rules")));
     let wal_broker = readiness.gate("wal-broker");
-    let router = prometheus_router(Arc::clone(&state)).merge(readiness_router(readiness));
+    let ruler_state_replay = readiness.gate("ruler-state-replay");
+    let router = mimir_ruler_prometheus_router(Arc::clone(&state))
+        .merge(mimir_ruler_router(Arc::clone(&state)))
+        .merge(mimir_alertmanager_router(Arc::clone(&state)))
+        .merge(readiness_router(readiness));
     // Installed before the first broker connect, and raced against it: the
     // clients retry an unreachable bootstrap rather than reporting it, so a
     // ruler that starts against a broker that is down would otherwise sit in
@@ -101,7 +114,15 @@ pub(crate) async fn run_ruler(
                 .maybe_security(wal_security.clone())
                 .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
                 .frame_max(cli.client_frame_max)
-                .group_id(format!("{}-ruler-state", cli.wal_group_id))
+                .group_id(format!(
+                    "{}-ruler-state-{}-{}",
+                    cli.wal_group_id,
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                ))
                 .client_id(format!("{}-ruler-state", cli.wal_client_id))
                 .auto_offset_reset(AutoOffsetReset::Earliest)
                 .subscribe([cli.ruler_state_topic.clone()])
@@ -134,6 +155,25 @@ pub(crate) async fn run_ruler(
         }
     };
     wal_broker.mark_ready();
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown.signalled() => {
+                server.await?;
+                return Ok(());
+            }
+            result = poll_ruler_state_consumer_once(
+                &mut state_consumer,
+                &state,
+                &cli.ruler_state_topic,
+                cli.wal_poll_timeout,
+            ) => result?,
+        };
+        if state_consumer.at_log_end().await {
+            break;
+        }
+    }
+    ruler_state_replay.mark_ready();
     let producer = Arc::new(producer);
     let wal_sink = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), cli.wal_topic.clone());
     let state_sink = RulerStateFanoutSink::new(
@@ -141,29 +181,11 @@ pub(crate) async fn run_ruler(
         KafkaRulerStateSink::new(producer, cli.ruler_state_topic.clone()),
     );
     let interval = cli.ruler_eval_interval;
-    let alertmanager_urls = cli.ruler_alertmanager_url.clone();
-    let alertmanager_queue_capacity = cli.ruler_alertmanager_queue_capacity;
-    let external_labels = cli
-        .ruler_external_label
-        .iter()
-        .chain(
-            cli.ruler_external_label_env
-                .iter()
-                .flat_map(|labels| &labels.0),
-        )
-        .cloned()
-        .collect();
-    let generator_url_template = cli.ruler_generator_url_template.clone();
     let state_for_replay = Arc::clone(&state);
     let state_topic = cli.ruler_state_topic.clone();
     let poll_timeout = cli.wal_poll_timeout;
 
-    let alert_sink = RulerAlertmanagerSink::from_endpoints(
-        alertmanager_urls,
-        external_labels,
-        generator_url_template,
-        alertmanager_queue_capacity,
-    );
+    let alert_sink = ruler_alert_sink(&cli);
 
     // The ruler state consumer and evaluation loop are critical: both feed
     // ruler correctness, and neither loop returns voluntarily. Supervising
@@ -215,4 +237,23 @@ pub(crate) async fn run_ruler(
     outcome?;
     drain_result?;
     Ok(())
+}
+
+fn ruler_alert_sink(cli: &Cli) -> RulerAlertmanagerSink {
+    let external_labels = cli
+        .ruler_external_label
+        .iter()
+        .chain(
+            cli.ruler_external_label_env
+                .iter()
+                .flat_map(|labels| &labels.0),
+        )
+        .cloned()
+        .collect();
+    RulerAlertmanagerSink::from_endpoints(
+        cli.ruler_alertmanager_url.clone(),
+        external_labels,
+        cli.ruler_generator_url_template.clone(),
+        cli.ruler_alertmanager_queue_capacity,
+    )
 }

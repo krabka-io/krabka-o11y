@@ -14,6 +14,7 @@ mod execution;
 mod grid_leaf;
 mod histogram;
 mod histogram_plan;
+mod histogram_stats_scope;
 mod info;
 mod info_plan;
 mod instant_query;
@@ -65,7 +66,11 @@ use histogram::apply_histogram_quantiles;
 use histogram::{
     HistogramAccessor, apply_histogram_accessor, apply_histogram_fraction, apply_histogram_quantile,
 };
-use histogram::{native_histograms_are_range_compatible, scale_native_histogram_values};
+use histogram::{
+    native_histograms_are_range_compatible, reconcile_native_histogram_layouts,
+    scale_native_histogram_values,
+};
+use histogram_stats_scope::{histogram_stats_enabled, with_histogram_stats};
 #[cfg(test)]
 use info::apply_info;
 use krabka_units::prelude::*;

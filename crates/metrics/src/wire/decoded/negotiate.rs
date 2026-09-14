@@ -11,7 +11,7 @@ pub fn negotiate(content_type: Option<&str>) -> Result<WireFormat, WireError> {
     let mut parts = content_type.split(';');
     let base = parts.next().unwrap_or_default().trim();
     if !base.eq_ignore_ascii_case("application/x-protobuf") {
-        return Err(WireError::UnsupportedContentType(base.to_string()));
+        return Ok(WireFormat::RemoteWriteV1);
     }
 
     let proto = parts.find_map(proto_param_value);

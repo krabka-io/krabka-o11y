@@ -137,6 +137,11 @@ impl WalHead {
         });
     }
 
+    /// Removes all hot-head data for `tenant` atomically.
+    pub fn delete_tenant(&self, tenant: &str) {
+        self.update(|store| store.delete_tenant(tenant));
+    }
+
     /// The store a query reads, as of now.
     ///
     /// Cloning the inner `Arc` is the whole cost. The returned store is

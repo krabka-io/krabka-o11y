@@ -1,7 +1,6 @@
 use super::{
-    AlertmanagerSink, Arc, MetricStore, PrometheusApiState, RecordingRuleWalSink, RulerAlertState,
-    RulerGroupState, RulerShard, RulerStateSink, Time, TimeExt, current_time_ms,
-    evaluate_ruler_once,
+    AlertmanagerSink, Arc, MetricStore, PrometheusApiState, RecordingRuleWalSink, RulerShard,
+    RulerStateSink, Time, TimeExt, current_time_ms, evaluate_ruler_once,
 };
 
 ///
@@ -22,11 +21,10 @@ where
     Stop: std::future::Future<Output = ()>,
 {
     let (wal_sink, alert_sink, state_sink) = sinks;
-    let mut alert_state = RulerAlertState::default();
-    let mut group_state = RulerGroupState::default();
     tokio::pin!(stop);
     loop {
         let eval_time_ms = current_time_ms();
+        let (mut alert_state, mut group_state) = state.ruler_evaluation_state();
         for tenant in state.ruler_tenants() {
             if let Err(error) = evaluate_ruler_once(
                 &state,

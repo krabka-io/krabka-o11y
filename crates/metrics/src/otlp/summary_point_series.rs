@@ -1,6 +1,6 @@
 use super::{
-    DecodedMetadata, DecodedSample, DecodedSeries, KeyValue, SummaryDataPoint, ToPrimitive, labels,
-    nanos_to_millis,
+    DecodedMetadata, DecodedSample, DecodedSeries, KeyValue, SummaryDataPoint, ToPrimitive,
+    TranslationStrategy, labels, nanos_to_millis,
 };
 
 pub(crate) fn summary_point_series(
@@ -8,6 +8,7 @@ pub(crate) fn summary_point_series(
     point: &SummaryDataPoint,
     resource_attributes: &[KeyValue],
     metadata: Option<DecodedMetadata>,
+    strategy: TranslationStrategy,
 ) -> Vec<DecodedSeries> {
     let timestamp = nanos_to_millis(point.time_unix_nano);
     let mut out = Vec::new();
@@ -19,6 +20,7 @@ pub(crate) fn summary_point_series(
                 resource_attributes,
                 &point.attributes,
                 Some(("quantile", &quantile_value)),
+                strategy,
             ),
             samples: vec![DecodedSample::with_start_timestamp(
                 timestamp,
@@ -37,6 +39,7 @@ pub(crate) fn summary_point_series(
             resource_attributes,
             &point.attributes,
             None,
+            strategy,
         ),
         samples: vec![DecodedSample::with_start_timestamp(
             timestamp,
@@ -54,6 +57,7 @@ pub(crate) fn summary_point_series(
             resource_attributes,
             &point.attributes,
             None,
+            strategy,
         ),
         samples: vec![DecodedSample::with_start_timestamp(
             timestamp,

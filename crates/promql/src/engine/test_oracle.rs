@@ -21,6 +21,7 @@ use super::{
         round_to_nearest,
     },
     selector::timestamp_seconds,
+    with_histogram_stats,
 };
 #[cfg(feature = "experimental-functions")]
 use super::{

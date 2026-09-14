@@ -1,3 +1,6 @@
+use krabka_blockstore::escape_object_path_segment;
+use object_store::{ObjectStoreExt, path::Path};
+
 use super::{
     Arc, BTreeMap, BlockStore, CachedMetricBlockStore, CompactionIndexManifest,
     DEFAULT_COLD_CACHE_TTL, DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, ExemplarScan, Instant,
@@ -6,6 +9,8 @@ use super::{
     Time, TsdbBlock, Url, WalHead, load_compaction_manifests_for_range_with_cache,
     normalize_refresh_range, unix_time_ms,
 };
+
+pub(crate) const MIMIR_TENANT_DELETION_PREFIX: &str = "mimir-tenant-deletions";
 
 pub struct RefreshingMetricBlockStore {
     pub(crate) store: Arc<dyn ObjectStore>,
@@ -50,6 +55,36 @@ impl RefreshingMetricBlockStore {
     pub fn with_unbounded_compatibility_lookback(mut self, lookback: Time) -> Self {
         self.unbounded_compatibility_lookback = lookback;
         self
+    }
+
+    pub(crate) async fn invalidate(&self) {
+        self.manifest_cache.write().await.clear();
+        *self.cold_cache.write().await = None;
+    }
+
+    async fn current_store_for_tenant(
+        &self,
+        tenant: &str,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<MergedMetricStore<MetricBlockStore, WalHead>, MetricsServiceError> {
+        let marker = Path::from(format!(
+            "{MIMIR_TENANT_DELETION_PREFIX}/{}.json",
+            escape_object_path_segment(tenant)
+        ));
+        match self.store.head(&marker).await {
+            Ok(_) => {
+                let float = BlockStore::new(self.store.clone(), self.base.clone());
+                let cold = MetricBlockStore::from_compaction_manifests(
+                    float,
+                    Some(BlockStore::new(self.store.clone(), self.base.clone())),
+                    &[],
+                );
+                Ok(MergedMetricStore::new(cold, WalHead::new()))
+            }
+            Err(object_store::Error::NotFound { .. }) => self.current_store(start_ms, end_ms).await,
+            Err(error) => Err(error.into()),
+        }
     }
 
     #[tracing::instrument(
@@ -137,7 +172,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<ScanResult, krabka_promql::PromqlError> {
-        self.current_store(start_ms, end_ms)
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
             .await?
             .scan(tenant, matchers, start_ms, end_ms)
             .await
@@ -157,7 +192,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<String>, krabka_promql::PromqlError> {
-        self.current_store(start_ms, end_ms)
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
             .await?
             .label_names(tenant, matchers, start_ms, end_ms)
             .await
@@ -178,7 +213,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<String>, krabka_promql::PromqlError> {
-        self.current_store(start_ms, end_ms)
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
             .await?
             .label_values(tenant, name, matchers, start_ms, end_ms)
             .await
@@ -198,7 +233,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<Labels>, krabka_promql::PromqlError> {
-        self.current_store(start_ms, end_ms)
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
             .await?
             .series(tenant, matchers, start_ms, end_ms)
             .await
@@ -218,7 +253,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<ExemplarScan, krabka_promql::PromqlError> {
-        self.current_store(start_ms, end_ms)
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
             .await?
             .exemplars(tenant, matchers, start_ms, end_ms)
             .await
@@ -236,7 +271,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         tenant: &str,
         metric: Option<&str>,
     ) -> Result<MetadataScan, krabka_promql::PromqlError> {
-        self.current_store(i64::MIN, i64::MAX)
+        self.current_store_for_tenant(tenant, i64::MIN, i64::MAX)
             .await?
             .metadata(tenant, metric)
             .await
@@ -253,7 +288,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         &self,
         tenant: &str,
     ) -> Result<Vec<LabelNameCardinality>, krabka_promql::PromqlError> {
-        self.current_store(i64::MIN, i64::MAX)
+        self.current_store_for_tenant(tenant, i64::MIN, i64::MAX)
             .await?
             .cardinality_label_names(tenant)
             .await
@@ -270,7 +305,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         &self,
         tenant: &str,
     ) -> Result<Vec<LabelValueCardinality>, krabka_promql::PromqlError> {
-        self.current_store(i64::MIN, i64::MAX)
+        self.current_store_for_tenant(tenant, i64::MIN, i64::MAX)
             .await?
             .cardinality_label_values(tenant)
             .await
@@ -287,7 +322,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         &self,
         tenant: &str,
     ) -> Result<Vec<Labels>, krabka_promql::PromqlError> {
-        self.current_store(i64::MIN, i64::MAX)
+        self.current_store_for_tenant(tenant, i64::MIN, i64::MAX)
             .await?
             .cardinality_active_series(tenant)
             .await
@@ -304,7 +339,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         &self,
         tenant: &str,
     ) -> Result<krabka_promql::TsdbStats, krabka_promql::PromqlError> {
-        self.current_store(i64::MIN, i64::MAX)
+        self.current_store_for_tenant(tenant, i64::MIN, i64::MAX)
             .await?
             .tsdb_stats(tenant)
             .await
@@ -321,7 +356,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         &self,
         tenant: &str,
     ) -> Result<Vec<TsdbBlock>, krabka_promql::PromqlError> {
-        self.current_store(i64::MIN, i64::MAX)
+        self.current_store_for_tenant(tenant, i64::MIN, i64::MAX)
             .await?
             .tsdb_blocks(tenant)
             .await

@@ -2289,7 +2289,6 @@ eval instant at 0m up{job="api"}
     }
 }
 
-mod add_histogram_counts;
 mod add_histogram_step;
 mod annotation_expect;
 mod chunk_reset_hints;
@@ -2343,7 +2342,6 @@ mod statement;
 mod test_file;
 mod test_parser;
 
-use add_histogram_counts::add_histogram_counts;
 use add_histogram_step::add_histogram_step;
 pub use annotation_expect::AnnotationExpect;
 use chunk_reset_hints::ChunkResetHints;

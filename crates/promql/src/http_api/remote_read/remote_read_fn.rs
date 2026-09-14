@@ -29,41 +29,15 @@ pub(crate) async fn remote_read<S: MetricStore>(
             return ApiError::bad_data(format!("protobuf decode failed: {error}")).into_response();
         }
     };
-    let mut response_type = match negotiate_remote_read_response_type(&request) {
+    let response_type = match negotiate_remote_read_response_type(&request) {
         Ok(response_type) => response_type,
         Err(error) => return error.into_response(),
     };
-    let samples_fallback = request
-        .accepted_response_types
-        .contains(&(pb::v1::ResponseType::Samples as i32));
 
     let response = match remote_read_response(state.as_ref(), &tenant, request).await {
         Ok(response) => response,
         Err(error) => return error.into_response(),
     };
-    // Prometheus v3.8 also permits HISTOGRAM and FLOAT_HISTOGRAM
-    // encoded chunks on this response type. Until those codecs exist here,
-    // preserve histogram values through SAMPLES or reject the request.
-    if response_type == pb::v1::ResponseType::StreamedXorChunks
-        && response.results.iter().any(|result| {
-            result
-                .timeseries
-                .iter()
-                .any(|series| !series.histograms.is_empty())
-        })
-    {
-        if samples_fallback {
-            response_type = pb::v1::ResponseType::Samples;
-        } else {
-            return ApiError {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                error_type: "execution",
-                message: "STREAMED_XOR_CHUNKS native-histogram encoding is not implemented; request a SAMPLES fallback".into(),
-            }
-            .into_response();
-        }
-    }
-
     if response_type == pb::v1::ResponseType::StreamedXorChunks {
         let stream = futures::stream::iter(
             encode_chunked_read_frames(response).map(|frame| frame.map(Bytes::from)),

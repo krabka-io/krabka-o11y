@@ -7,6 +7,7 @@ use super::{
         assemble_scalar_math_batches, assemble_selector_batches,
     },
     planned::{InstantShape, OperatorInstant, PlannedInstant},
+    result_utils::validate_unique_instant_labelsets,
 };
 use crate::{PromqlError, error::Result, result::QueryResult, store::MetricStore};
 
@@ -31,7 +32,9 @@ impl<S: MetricStore> PromqlEngine<S> {
             // A label-rewrite / ordering transform already produced its instant
             // vector; return it verbatim (no operator plan to execute).
             PlannedInstant::Precomputed(samples) => {
-                return Ok(QueryResult::InstantVector(samples));
+                let result = QueryResult::InstantVector(samples);
+                validate_unique_instant_labelsets(&result)?;
+                return Ok(result);
             }
             // A scalar-returning utility (`time`/`pi`/`scalar`) or
             // a scalar∘scalar fold already computed its value; return it verbatim.
@@ -84,6 +87,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 sample.drop_name |= drop_name;
             }
         }
+        validate_unique_instant_labelsets(&result)?;
         Ok(result)
     }
 

@@ -75,10 +75,8 @@ mod tests {
     }
 
     #[test]
-    fn negotiate_rejects_json() {
-        let err = negotiate(Some("application/json")).unwrap_err();
-        assert!(matches!(err, WireError::UnsupportedContentType(_)));
-        assert!(err.status_code() == 415);
+    fn negotiate_treats_a_legacy_content_type_as_v1() {
+        assert!(negotiate(Some("text/plain")).unwrap() == WireFormat::RemoteWriteV1);
     }
 
     #[test]

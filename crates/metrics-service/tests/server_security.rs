@@ -286,7 +286,7 @@ async fn a_granted_principal_pushes_and_queries_its_tenant() {
     let status = answer.status();
     let body: Value = answer.json().await.expect("a JSON answer");
 
-    check!(pushed.status() == reqwest::StatusCode::NO_CONTENT);
+    check!(pushed.status() == reqwest::StatusCode::OK);
     check!(sink.records().len() == 1);
     check!(status == reqwest::StatusCode::OK);
     check!(body["data"]["result"][0]["metric"]["job"] == "api");

@@ -684,6 +684,22 @@
     {
       "signal": "metrics",
       "method": "DELETE",
+      "path": "/alertmanager/api/v2/silence/{id}",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "DELETE",
+      "path": "/api/v1/alerts",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "DELETE",
       "path": "/prometheus/config/v1/rules/{namespace}",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
@@ -700,6 +716,54 @@
     {
       "signal": "metrics",
       "method": "GET",
+      "path": "/alertmanager/api/v2/alerts",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/alertmanager/api/v2/alerts/groups",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/alertmanager/api/v2/receivers",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/alertmanager/api/v2/silence/{id}",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/alertmanager/api/v2/silences",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/alertmanager/api/v2/status",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
       "path": "/api/v1/alertmanagers",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
@@ -709,6 +773,15 @@
       "signal": "metrics",
       "method": "GET",
       "path": "/api/v1/alerts",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs",
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/cardinality/active_native_histogram_metrics",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
       ]
@@ -820,6 +893,30 @@
     {
       "signal": "metrics",
       "method": "GET",
+      "path": "/api/v1/search/label_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/search/label_values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/search/metric_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
       "path": "/api/v1/series",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
@@ -900,6 +997,46 @@
     {
       "signal": "metrics",
       "method": "GET",
+      "path": "/api/v1/upload/block/{block}/check",
+      "sources": [
+        "crates/metrics-service/src/mimir_tenant_admin.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/user_limits",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/api/v1/user_stats",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/compactor/delete_tenant_status",
+      "sources": [
+        "crates/metrics-service/src/mimir_tenant_admin.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/distributor/all_user_stats",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
       "path": "/metrics",
       "sources": [
         "crates/metrics/src/metrics/metrics_router.rs",
@@ -918,6 +1055,14 @@
       "signal": "metrics",
       "method": "GET",
       "path": "/prometheus/api/v1/alerts",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/cardinality/active_native_histogram_metrics",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
       ]
@@ -1022,6 +1167,30 @@
       "signal": "metrics",
       "method": "GET",
       "path": "/prometheus/api/v1/scrape_pools",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/search/label_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/search/label_values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/prometheus/api/v1/search/metric_names",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
       ]
@@ -1140,6 +1309,54 @@
     },
     {
       "signal": "metrics",
+      "method": "GET",
+      "path": "/ruler/rule_groups",
+      "sources": [
+        "crates/promql/src/http_api/mimir_ruler_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/ruler/tenant/{tenant}/rule_groups",
+      "sources": [
+        "crates/promql/src/http_api/mimir_ruler_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/ruler/tenants",
+      "sources": [
+        "crates/promql/src/http_api/mimir_ruler_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "GET",
+      "path": "/runtime_config",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/alertmanager/api/v2/alerts",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/alertmanager/api/v2/silences",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
       "method": "POST",
       "path": "/api/v1/admin/tsdb/clean_tombstones",
       "sources": [
@@ -1150,6 +1367,22 @@
       "signal": "metrics",
       "method": "POST",
       "path": "/api/v1/admin/tsdb/delete_series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/alerts",
+      "sources": [
+        "crates/promql/src/http_api/mimir_alertmanager_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/cardinality/active_native_histogram_metrics",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
       ]
@@ -1237,6 +1470,14 @@
     {
       "signal": "metrics",
       "method": "POST",
+      "path": "/api/v1/push/influx/write",
+      "sources": [
+        "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
       "path": "/api/v1/query",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
@@ -1269,6 +1510,30 @@
     {
       "signal": "metrics",
       "method": "POST",
+      "path": "/api/v1/search/label_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/search/label_values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/search/metric_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
       "path": "/api/v1/series",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
@@ -1277,9 +1542,41 @@
     {
       "signal": "metrics",
       "method": "POST",
+      "path": "/api/v1/upload/block/{block}/files",
+      "sources": [
+        "crates/metrics-service/src/mimir_tenant_admin.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/upload/block/{block}/finish",
+      "sources": [
+        "crates/metrics-service/src/mimir_tenant_admin.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/api/v1/upload/block/{block}/start",
+      "sources": [
+        "crates/metrics-service/src/mimir_tenant_admin.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
       "path": "/api/v1/write",
       "sources": [
         "crates/metrics/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/compactor/delete_tenant",
+      "sources": [
+        "crates/metrics-service/src/mimir_tenant_admin.rs"
       ]
     },
     {
@@ -1310,6 +1607,14 @@
       "signal": "metrics",
       "method": "POST",
       "path": "/prometheus/api/v1/admin/tsdb/delete_series",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/cardinality/active_native_histogram_metrics",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
       ]
@@ -1405,6 +1710,30 @@
     {
       "signal": "metrics",
       "method": "POST",
+      "path": "/prometheus/api/v1/search/label_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/search/label_values",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/prometheus/api/v1/search/metric_names",
+      "sources": [
+        "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
       "path": "/prometheus/api/v1/series",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
@@ -1416,6 +1745,14 @@
       "path": "/prometheus/config/v1/rules/{namespace}",
       "sources": [
         "crates/promql/src/http_api/prometheus_router.rs"
+      ]
+    },
+    {
+      "signal": "metrics",
+      "method": "POST",
+      "path": "/ruler/delete_tenant_config",
+      "sources": [
+        "crates/promql/src/http_api/mimir_ruler_router.rs"
       ]
     },
     {

@@ -15,7 +15,11 @@
 //!
 //! `cargo test -p krabka-metrics-service --test diff_mimir -- --ignored --nocapture`
 
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use assert2::assert;
 use bytes::Bytes;
@@ -23,9 +27,15 @@ use futures::StreamExt;
 use krabka_metrics::{
     WalRecord,
     distributor::{DistributorState, ProduceError, WalSink},
+    wire::pb,
 };
 use krabka_promql::WalHead;
+use opentelemetry_proto::tonic::metrics::v1::{
+    Gauge, Metric, MetricsData, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric,
+    number_data_point,
+};
 use promql_corpus::{CorpusCase, KnownDivergence, PromqlCorpus, QueryKind};
+use prost::Message as _;
 use reqwest::StatusCode;
 use serde_json::Value;
 use testcontainers::{
@@ -88,110 +98,98 @@ const QUERY_CONCURRENCY: usize = 1;
 ///
 /// The contract runs both ways: a case listed here MUST disagree, so the list
 /// cannot quietly become a licence.
-const MIMIR_DIVERGENCES: &[KnownDivergence] = &[
-    KnownDivergence {
-        reason: "Mimir 3.2.1 has no type-and-unit labels, so `__type__` and `__unit__` are ordinary \
-             labels there and survive every operation. Krabka drops them where Prometheus v3.8 \
-             drops them, which is what `diff_prometheus` confirms.",
-        cases: &[
-            "type_and_unit.test:39",
-            "type_and_unit.test:53",
-            "type_and_unit.test:56",
-            "type_and_unit.test:63",
-            "type_and_unit.test:122",
-            "type_and_unit.test:140",
-            "type_and_unit.test:181",
-            "type_and_unit.test:195",
-            "type_and_unit.test:198",
-            "type_and_unit.test:208",
-            "type_and_unit.test:279",
-        ],
-    },
-    KnownDivergence {
-        reason: "A native histogram carrying NaN observations is read differently: Mimir 3.2.1 \
-             answers a number where Prometheus v3.8 and Krabka answer NaN. Upstream changed how \
-             `histogram_quantile` and `histogram_fraction` treat NaN buckets after the Prometheus \
-             that Mimir embeds.",
-        cases: &[
-            "native_histograms.test:1492",
-            "native_histograms.test:1497",
-            "native_histograms.test:1502",
-            "native_histograms.test:1510",
-            "native_histograms.test:1524",
-        ],
-    },
-    KnownDivergence {
-        reason: "Mimir 3.2.1 omits the NaN-observation info annotations emitted by Prometheus \
-             v3.8 and Krabka; the query values are identical.",
-        cases: &[
-            "native_histograms.test:1506",
-            "native_histograms.test:1515",
-            "native_histograms.test:1519",
-        ],
-    },
-    KnownDivergence {
-        reason: "Mimir 3.2.1 serializes infinite results from finite overflow as `+Inf` and \
-             `-Inf`; Krabka preserves the lowercase `inf` spelling returned by its evaluator.",
-        cases: &["aggregators.test:659", "aggregators.test:662"],
-    },
-    KnownDivergence {
-        reason: "Mimir 3.2.1 loses a finite contribution when summing values around a cancelling \
-             `1e100` pair, while Prometheus v3.8 and Krabka retain it.",
-        cases: &["aggregators.test:695", "aggregators.test:698"],
-    },
-    KnownDivergence {
-        reason: "Mimir 3.2.1 accepts arithmetic duration expressions but does not accept `min` or \
-             `max` calls inside a range or offset duration. Prometheus v3.8 and Krabka do.",
-        cases: &[
-            "duration_expression.test:170",
-            "duration_expression.test:173",
-            "duration_expression.test:176",
-            "duration_expression.test:203",
-            "duration_expression.test:206",
-            "duration_expression.test:209",
-            "duration_expression.test:212",
-            "duration_expression.test:215",
-            "duration_expression.test:218",
-            "duration_expression.test:221",
-            "duration_expression.test:224",
-            "duration_expression.test:227",
-        ],
-    },
-    KnownDivergence {
-        reason: "Mimir 3.2.1 successfully evaluates this aggregation by `__name__`, while Krabka \
-             and Prometheus v3.8 report an execution error.",
-        cases: &["name_label_dropping.test:80"],
-    },
-    KnownDivergence {
-        reason: "For an anchored window whose left-edge sample is absent, Mimir 3.2.1 omits one \
-             series while Prometheus v3.8 and Krabka include it.",
-        cases: &["extended_vectors.test:321", "extended_vectors.test:344"],
-    },
-    KnownDivergence {
-        reason: "Mimir 3.2.1 classifies invalid uses of `smoothed` and `anchored` as internal \
-             errors, while Prometheus v3.8 and Krabka classify them as execution errors.",
-        cases: &[
-            "extended_vectors.test:364",
-            "extended_vectors.test:367",
-            "extended_vectors.test:370",
-            "extended_vectors.test:373",
-            "extended_vectors.test:376",
-            "extended_vectors.test:379",
-            "extended_vectors.test:386",
-            "extended_vectors.test:389",
-        ],
-    },
-];
-
-/// Shared divergences that Mimir does not show.
-///
-/// `UPSTREAM_DIVERGENCES` is written against Prometheus v3.8. Where Mimir's
-/// older engine still behaves the way Krabka does, the case agrees here and
-/// would otherwise be reported as a divergence that had been fixed.
-const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[KnownDivergence {
-    reason: "Mimir 3.2.1 does not return the warning and info annotations added by newer \
-             Prometheus versions, so these annotation-only upstream divergences are absent.",
+const MIMIR_DIVERGENCES: &[KnownDivergence] = &[KnownDivergence {
+    reason: "Mimir 3.2.1 embeds an older Prometheus engine. These exact cases differ from the              v3.8.1 corpus while Krabka matches the pinned Prometheus v3.8.1 oracle; the              bidirectional list must be rebaselined if either dependency changes.",
     cases: &[
+        "aggregators.test:523",
+        "aggregators.test:547",
+        "aggregators.test:654",
+        "aggregators.test:657",
+        "aggregators.test:690",
+        "aggregators.test:693",
+        "at_modifier.test:93",
+        "duration_expression.test:170",
+        "duration_expression.test:173",
+        "duration_expression.test:176",
+        "duration_expression.test:203",
+        "duration_expression.test:206",
+        "duration_expression.test:209",
+        "duration_expression.test:212",
+        "duration_expression.test:215",
+        "duration_expression.test:218",
+        "duration_expression.test:221",
+        "duration_expression.test:224",
+        "duration_expression.test:227",
+        "extended_vectors.test:100",
+        "extended_vectors.test:103",
+        "extended_vectors.test:106",
+        "extended_vectors.test:109",
+        "extended_vectors.test:11",
+        "extended_vectors.test:112",
+        "extended_vectors.test:115",
+        "extended_vectors.test:118",
+        "extended_vectors.test:121",
+        "extended_vectors.test:124",
+        "extended_vectors.test:127",
+        "extended_vectors.test:130",
+        "extended_vectors.test:133",
+        "extended_vectors.test:136",
+        "extended_vectors.test:139",
+        "extended_vectors.test:14",
+        "extended_vectors.test:142",
+        "extended_vectors.test:145",
+        "extended_vectors.test:148",
+        "extended_vectors.test:151",
+        "extended_vectors.test:154",
+        "extended_vectors.test:157",
+        "extended_vectors.test:160",
+        "extended_vectors.test:163",
+        "extended_vectors.test:166",
+        "extended_vectors.test:169",
+        "extended_vectors.test:17",
+        "extended_vectors.test:178",
+        "extended_vectors.test:193",
+        "extended_vectors.test:198",
+        "extended_vectors.test:20",
+        "extended_vectors.test:220",
+        "extended_vectors.test:225",
+        "extended_vectors.test:23",
+        "extended_vectors.test:230",
+        "extended_vectors.test:235",
+        "extended_vectors.test:26",
+        "extended_vectors.test:29",
+        "extended_vectors.test:32",
+        "extended_vectors.test:321",
+        "extended_vectors.test:344",
+        "extended_vectors.test:35",
+        "extended_vectors.test:360",
+        "extended_vectors.test:364",
+        "extended_vectors.test:367",
+        "extended_vectors.test:370",
+        "extended_vectors.test:373",
+        "extended_vectors.test:376",
+        "extended_vectors.test:379",
+        "extended_vectors.test:38",
+        "extended_vectors.test:386",
+        "extended_vectors.test:389",
+        "extended_vectors.test:41",
+        "extended_vectors.test:44",
+        "extended_vectors.test:47",
+        "extended_vectors.test:50",
+        "extended_vectors.test:53",
+        "extended_vectors.test:56",
+        "extended_vectors.test:59",
+        "extended_vectors.test:62",
+        "extended_vectors.test:65",
+        "extended_vectors.test:68",
+        "extended_vectors.test:71",
+        "extended_vectors.test:74",
+        "extended_vectors.test:77",
+        "extended_vectors.test:8",
+        "extended_vectors.test:80",
+        "extended_vectors.test:83",
+        "extended_vectors.test:94",
+        "extended_vectors.test:97",
         "functions.test:122",
         "functions.test:135",
         "functions.test:150",
@@ -231,8 +229,32 @@ const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[KnownDivergence {
         "histograms.test:983",
         "histograms.test:992",
         "name_label_dropping.test:39",
-        "name_label_dropping.test:85",
-        "name_label_dropping.test:92",
+        "name_label_dropping.test:80",
+        "name_label_dropping.test:84",
+        "name_label_dropping.test:91",
+        "native_histograms.test:1200",
+        "native_histograms.test:1205",
+        "native_histograms.test:1217",
+        "native_histograms.test:1406",
+        "native_histograms.test:1427",
+        "native_histograms.test:1492",
+        "native_histograms.test:1497",
+        "native_histograms.test:1502",
+        "native_histograms.test:1506",
+        "native_histograms.test:1510",
+        "native_histograms.test:1515",
+        "native_histograms.test:1519",
+        "native_histograms.test:1524",
+        "native_histograms.test:1542",
+        "native_histograms.test:1551",
+        "native_histograms.test:1562",
+        "native_histograms.test:1571",
+        "native_histograms.test:1578",
+        "native_histograms.test:1583",
+        "native_histograms.test:1587",
+        "native_histograms.test:1591",
+        "native_histograms.test:1735",
+        "native_histograms.test:1835",
         "operators.test:117",
         "operators.test:121",
         "operators.test:131",
@@ -260,8 +282,25 @@ const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[KnownDivergence {
         "subquery.test:23",
         "subquery.test:34",
         "subquery.test:38",
+        "type_and_unit.test:122",
+        "type_and_unit.test:140",
+        "type_and_unit.test:181",
+        "type_and_unit.test:195",
+        "type_and_unit.test:198",
+        "type_and_unit.test:208",
+        "type_and_unit.test:222",
+        "type_and_unit.test:235",
+        "type_and_unit.test:278",
+        "type_and_unit.test:39",
+        "type_and_unit.test:53",
+        "type_and_unit.test:56",
+        "type_and_unit.test:63",
+        "type_and_unit.test:77",
+        "type_and_unit.test:90",
     ],
 }];
+
+const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[];
 
 /// Minimal Mimir monolithic config.
 ///
@@ -308,7 +347,15 @@ compactor:
 ruler_storage:
   backend: filesystem
   filesystem:
-    dir: /tmp/mimir/ruler
+      dir: /tmp/mimir/ruler
+
+alertmanager_storage:
+  backend: filesystem
+  filesystem:
+    dir: /tmp/mimir/alertmanager
+
+alertmanager:
+  data_dir: /tmp/mimir/alertmanager-data
 
 ingester:
   ring:
@@ -319,6 +366,12 @@ ingester:
 
 limits:
   native_histograms_ingestion_enabled: true
+
+distributor:
+  influx_endpoint_enabled: true
+
+api:
+  otlp_translation_headers_enabled: true
 ";
 
 #[tokio::test]
@@ -331,10 +384,21 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
     let mimir = start_mimir().await?;
     let mimir_base = mapped_base_url(&mimir, MIMIR_PORT).await?;
     wait_for_http_ok(&client, &mimir_base, "/ready").await?;
+    let mimir_alertmanager = start_mimir_alertmanager().await?;
+    let mimir_alertmanager_base = mapped_base_url(&mimir_alertmanager, MIMIR_PORT).await?;
+    wait_for_http_ok(&client, &mimir_alertmanager_base, "/ready").await?;
 
     // In-process Krabka write+query path (identical to diff_prometheus.rs).
     let krabka = start_krabka_query_server().await?;
+    verify_ruler_and_alertmanager_contracts(
+        &client,
+        &krabka.base_url,
+        &mimir_base,
+        &mimir_alertmanager_base,
+    )
+    .await?;
     seed_both(&client, &krabka.base_url, &mimir_base, &corpus).await?;
+    verify_ingest_contract(&client, &krabka.base_url, &mimir_base).await?;
 
     let mismatches = run_corpus(&client, &krabka.base_url, &mimir_base, &corpus).await?;
     promql_corpus::write_report("diff_mimir", &corpus, &mismatches, MIMIR_DIVERGENCES);
@@ -352,6 +416,379 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
         verdict.unwrap_or_default()
     );
     Ok(())
+}
+
+async fn verify_ruler_and_alertmanager_contracts(
+    client: &reqwest::Client,
+    krabka: &str,
+    mimir: &str,
+    mimir_alertmanager: &str,
+) -> TestResult {
+    let rule = "name: recording\nrules:\n  - record: m11:up\n    expr: vector(1)\n";
+    for base in [krabka, mimir] {
+        let response = client
+            .post(format!("{base}/prometheus/config/v1/rules/team"))
+            .header("X-Scope-OrgID", TENANT)
+            .body(rule)
+            .send()
+            .await?;
+        assert!(
+            response.status() == StatusCode::ACCEPTED,
+            "rule POST failed for {base}: {response:?}"
+        );
+    }
+    let krabka_group = client
+        .get(format!(
+            "{krabka}/prometheus/config/v1/rules/team/recording"
+        ))
+        .header("X-Scope-OrgID", TENANT)
+        .send()
+        .await?;
+    let mimir_group = client
+        .get(format!("{mimir}/prometheus/config/v1/rules/team/recording"))
+        .header("X-Scope-OrgID", TENANT)
+        .send()
+        .await?;
+    assert!(krabka_group.status() == mimir_group.status());
+    let krabka_group: serde_yaml::Value = serde_yaml::from_slice(&krabka_group.bytes().await?)?;
+    let mimir_group: serde_yaml::Value = serde_yaml::from_slice(&mimir_group.bytes().await?)?;
+    assert!(krabka_group == mimir_group, "ruler group payload differs");
+    for base in [krabka, mimir] {
+        let response = client
+            .delete(format!("{base}/prometheus/config/v1/rules/team/recording"))
+            .header("X-Scope-OrgID", TENANT)
+            .send()
+            .await?;
+        assert!(
+            response.status() == StatusCode::ACCEPTED,
+            "rule DELETE failed for {base}"
+        );
+    }
+
+    let config = "template_files: {}\nalertmanager_config: |\n  route:\n    receiver: default\n  receivers:\n    - name: default\n";
+    for base in [krabka, mimir_alertmanager] {
+        let response = client
+            .post(format!("{base}/api/v1/alerts"))
+            .header("X-Scope-OrgID", TENANT)
+            .body(config)
+            .send()
+            .await?;
+        assert!(
+            response.status() == StatusCode::CREATED,
+            "Alertmanager config POST failed for {base}: {response:?}"
+        );
+    }
+    wait_for_alertmanager_ready(client, mimir_alertmanager).await?;
+    let alert = serde_json::json!([{"labels":{"alertname":"M11Down","instance":"one"},"annotations":{"summary":"down"}}]);
+    for base in [krabka, mimir_alertmanager] {
+        let response = client
+            .post(format!("{base}/alertmanager/api/v2/alerts"))
+            .header("X-Scope-OrgID", TENANT)
+            .json(&alert)
+            .send()
+            .await?;
+        assert!(
+            response.status().is_success(),
+            "v2 alert POST failed for {base}: {response:?}"
+        );
+        let response = client
+            .get(format!(
+                "{base}/alertmanager/api/v2/alerts?filter=alertname%3DM11Down"
+            ))
+            .header("X-Scope-OrgID", TENANT)
+            .send()
+            .await?;
+        assert!(
+            response.status().is_success(),
+            "v2 alert GET failed for {base}: {response:?}"
+        );
+        let alerts: Value = response.json().await?;
+        assert!(alerts[0]["fingerprint"].as_str().is_some());
+        assert!(alerts[0]["status"]["state"] == "active");
+    }
+    let silence = serde_json::json!({"matchers":[{"name":"alertname","value":"M11Down","isRegex":false,"isEqual":true}],"startsAt":"2026-01-01T00:00:00Z","endsAt":"2099-01-01T00:00:00Z","createdBy":"differential","comment":"m11"});
+    for base in [krabka, mimir_alertmanager] {
+        let response = client
+            .post(format!("{base}/alertmanager/api/v2/silences"))
+            .header("X-Scope-OrgID", TENANT)
+            .json(&silence)
+            .send()
+            .await?;
+        assert!(
+            response.status().is_success(),
+            "v2 silence POST failed for {base}: {response:?}"
+        );
+        let body: Value = response.json().await?;
+        assert!(body["silenceID"].as_str().is_some());
+    }
+    Ok(())
+}
+
+async fn wait_for_alertmanager_ready(client: &reqwest::Client, base: &str) -> TestResult {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let response = client
+            .get(format!("{base}/alertmanager/api/v2/status"))
+            .header("X-Scope-OrgID", TENANT)
+            .send()
+            .await?;
+        if response.status().is_success() {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("Alertmanager API did not initialize: {response:?}").into());
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+#[derive(Debug)]
+struct IngestResponse {
+    status: StatusCode,
+    headers: reqwest::header::HeaderMap,
+    body: Bytes,
+}
+
+struct IngestCase<'a> {
+    path: &'a str,
+    request_headers: &'a [(&'a str, &'a str)],
+    response_headers: &'a [&'a str],
+    metric: &'a str,
+}
+
+impl IngestResponse {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|value| value.to_str().ok())
+    }
+}
+
+async fn verify_ingest_contract(
+    client: &reqwest::Client,
+    krabka_base: &str,
+    mimir_base: &str,
+) -> TestResult {
+    let now_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? - 1_000;
+
+    let v1 = pb::v1::WriteRequest {
+        timeseries: vec![pb::v1::TimeSeries {
+            labels: vec![
+                pb::v1::Label {
+                    name: "__name__".into(),
+                    value: "m11_remote_write_v1".into(),
+                },
+                pb::v1::Label {
+                    name: "source".into(),
+                    value: "differential".into(),
+                },
+            ],
+            samples: vec![pb::v1::Sample {
+                value: 1.0,
+                timestamp: now_ms,
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    compare_ingest(
+        client,
+        krabka_base,
+        mimir_base,
+        IngestCase {
+            path: "/api/v1/push",
+            request_headers: &[
+                ("Content-Type", "application/x-protobuf"),
+                ("Content-Encoding", "snappy"),
+            ],
+            response_headers: &[],
+            metric: "m11_remote_write_v1",
+        },
+        snappy(&v1.encode_to_vec())?,
+        now_ms,
+    )
+    .await?;
+
+    let v2 = pb::v2::Request {
+        symbols: vec![
+            String::new(),
+            "__name__".into(),
+            "m11_remote_write_v2".into(),
+            "source".into(),
+            "differential".into(),
+        ],
+        timeseries: vec![pb::v2::TimeSeries {
+            labels_refs: vec![1, 2, 3, 4],
+            samples: vec![pb::v2::Sample {
+                value: 2.0,
+                timestamp: now_ms,
+                start_timestamp: 0,
+            }],
+            ..Default::default()
+        }],
+    };
+    compare_ingest(
+        client,
+        krabka_base,
+        mimir_base,
+        IngestCase {
+            path: "/api/v1/push",
+            request_headers: &[
+                (
+                    "Content-Type",
+                    "application/x-protobuf;proto=io.prometheus.write.v2.Request",
+                ),
+                ("Content-Encoding", "snappy"),
+                ("X-Prometheus-Remote-Write-Version", "2.0.0"),
+            ],
+            response_headers: &[
+                "x-prometheus-remote-write-samples-written",
+                "x-prometheus-remote-write-histograms-written",
+                "x-prometheus-remote-write-exemplars-written",
+            ],
+            metric: "m11_remote_write_v2",
+        },
+        snappy(&v2.encode_to_vec())?,
+        now_ms,
+    )
+    .await?;
+
+    let otlp = MetricsData {
+        resource_metrics: vec![ResourceMetrics {
+            resource: None,
+            scope_metrics: vec![ScopeMetrics {
+                metrics: vec![Metric {
+                    name: "m11.otlp.gauge".into(),
+                    data: Some(metric::Data::Gauge(Gauge {
+                        data_points: vec![NumberDataPoint {
+                            time_unix_nano: u64::try_from(now_ms)?.saturating_mul(1_000_000),
+                            value: Some(number_data_point::Value::AsDouble(3.0)),
+                            ..Default::default()
+                        }],
+                    })),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            schema_url: String::new(),
+        }],
+    };
+    compare_ingest(
+        client,
+        krabka_base,
+        mimir_base,
+        IngestCase {
+            path: "/otlp/v1/metrics",
+            request_headers: &[("Content-Type", "application/x-protobuf")],
+            response_headers: &["content-type", "content-length", "x-content-type-options"],
+            metric: "m11_otlp_gauge",
+        },
+        otlp.encode_to_vec(),
+        now_ms,
+    )
+    .await?;
+
+    compare_ingest(
+        client,
+        krabka_base,
+        mimir_base,
+        IngestCase {
+            path: "/api/v1/push/influx/write?precision=ms",
+            request_headers: &[("Content-Type", "text/plain")],
+            response_headers: &["content-type", "content-length"],
+            metric: "m11_influx",
+        },
+        format!("m11_influx,source=differential value=4 {now_ms}\n").into_bytes(),
+        now_ms,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn compare_ingest(
+    client: &reqwest::Client,
+    krabka_base: &str,
+    mimir_base: &str,
+    case: IngestCase<'_>,
+    body: Vec<u8>,
+    at_ms: i64,
+) -> TestResult {
+    let krabka = post_ingest(client, krabka_base, case.path, case.request_headers, &body).await?;
+    let mimir = post_ingest(client, mimir_base, case.path, case.request_headers, &body).await?;
+    assert!(
+        krabka.status == mimir.status,
+        "{} status differs: Krabka {:?}, Mimir {:?}",
+        case.path,
+        krabka,
+        mimir
+    );
+    assert!(krabka.status.is_success(), "{}: {krabka:?}", case.path);
+    for header in case.response_headers {
+        assert!(
+            krabka.header(header) == mimir.header(header),
+            "{} header {header} differs: Krabka {:?}, Mimir {:?}",
+            case.path,
+            krabka,
+            mimir
+        );
+    }
+    assert!(
+        krabka.body == mimir.body,
+        "{} response body differs: Krabka {:?}, Mimir {:?}",
+        case.path,
+        krabka,
+        mimir
+    );
+
+    wait_for_query_ready(client, krabka_base, "/api/v1/query", case.metric, at_ms).await?;
+    wait_for_query_ready(
+        client,
+        mimir_base,
+        "/prometheus/api/v1/query",
+        case.metric,
+        at_ms,
+    )
+    .await?;
+    let krabka_query =
+        query_instant(client, krabka_base, "/api/v1/query", case.metric, at_ms).await?;
+    let mimir_query = query_instant(
+        client,
+        mimir_base,
+        "/prometheus/api/v1/query",
+        case.metric,
+        at_ms,
+    )
+    .await?;
+    assert!(
+        krabka_query["data"]["result"] == mimir_query["data"]["result"],
+        "{} query differs:\nKrabka: {krabka_query}\nMimir: {mimir_query}",
+        case.metric
+    );
+    Ok(())
+}
+
+async fn post_ingest(
+    client: &reqwest::Client,
+    base: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> TestResult<IngestResponse> {
+    let mut request = client
+        .post(format!("{base}{path}"))
+        .header("X-Scope-OrgID", TENANT)
+        .body(body.to_vec());
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let response = request.send().await?;
+    Ok(IngestResponse {
+        status: response.status(),
+        headers: response.headers().clone(),
+        body: response.bytes().await?,
+    })
+}
+
+fn snappy(body: &[u8]) -> TestResult<Vec<u8>> {
+    Ok(snap::raw::Encoder::new().compress_vec(body)?)
 }
 
 /// Writes the whole corpus to both engines, in batch order.
@@ -489,6 +926,25 @@ async fn start_mimir() -> TestResult<testcontainers::ContainerAsync<GenericImage
     .await??)
 }
 
+async fn start_mimir_alertmanager() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
+    let tag = std::env::var("KRABKA_MIMIR_IMAGE_TAG")
+        .expect("KRABKA_MIMIR_IMAGE_TAG is set by --config=docker");
+    Ok(tokio::time::timeout(
+        CONTAINER_START_TIMEOUT,
+        GenericImage::new("mirror.gcr.io/grafana/mimir".to_string(), tag)
+            .with_exposed_port(MIMIR_PORT.tcp())
+            .with_wait_for(WaitFor::message_on_stderr("server listening on addresses"))
+            .with_copy_to("/etc/mimir/mimir.yaml", MIMIR_CONFIG.as_bytes().to_vec())
+            .with_cmd([
+                "-target=alertmanager",
+                "-config.file=/etc/mimir/mimir.yaml",
+                "-alertmanager.enable-api=true",
+            ])
+            .start(),
+    )
+    .await??)
+}
+
 async fn mapped_base_url(
     container: &testcontainers::ContainerAsync<GenericImage>,
     port: u16,
@@ -512,7 +968,13 @@ impl KrabkaServer {
 
 async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
-    let query_router = krabka_metrics_service::prometheus_router_for_store(head.clone());
+    let state = Arc::new(krabka_promql::PrometheusApiState::new(
+        Arc::new(head.clone()),
+        krabka_promql::EngineOpts::default(),
+    ));
+    let query_router = krabka_promql::mimir_ruler_prometheus_router(Arc::clone(&state))
+        .merge(krabka_promql::mimir_ruler_router(Arc::clone(&state)))
+        .merge(krabka_promql::mimir_alertmanager_router(state));
     let sink: Arc<dyn WalSink> = Arc::new(WalHeadSink { head });
     let distributor = Arc::new(DistributorState::new(sink));
     let router = query_router.merge(krabka_metrics::distributor::router(distributor));

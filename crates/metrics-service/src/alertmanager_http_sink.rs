@@ -95,6 +95,7 @@ impl AlertmanagerHttpSink {
 
     pub(crate) async fn deliver(
         &self,
+        tenant: Option<&str>,
         mut alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), AlertmanagerDeliveryError> {
         if alerts.is_empty() {
@@ -106,14 +107,11 @@ impl AlertmanagerHttpSink {
         let mut retryable = false;
         for (endpoint_index, endpoint) in self.endpoints.iter().enumerate() {
             for attempt in 1..=self.max_attempts {
-                match self
-                    .client
-                    .post(endpoint)
-                    .timeout(self.request_timeout)
-                    .json(&payload)
-                    .send()
-                    .await
-                {
+                let mut request = self.client.post(endpoint).timeout(self.request_timeout);
+                if let Some(tenant) = tenant {
+                    request = request.header("X-Scope-OrgID", tenant);
+                }
+                match request.json(&payload).send().await {
                     Ok(response) if response.status().is_success() => return Ok(()),
                     Ok(response) => {
                         let status = response.status();
@@ -167,7 +165,17 @@ impl AlertmanagerSink for AlertmanagerHttpSink {
         &self,
         alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), RulerWalError> {
-        self.deliver(alerts)
+        self.deliver(None, alerts)
+            .await
+            .map_err(|error| RulerWalError::Append(error.to_string()))
+    }
+
+    async fn dispatch_alerts_for_tenant(
+        &self,
+        tenant: &krabka_blockstore::TenantId,
+        alerts: Vec<krabka_promql::AlertmanagerAlert>,
+    ) -> Result<(), RulerWalError> {
+        self.deliver(Some(tenant.as_str()), alerts)
             .await
             .map_err(|error| RulerWalError::Append(error.to_string()))
     }

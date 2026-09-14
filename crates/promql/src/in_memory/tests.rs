@@ -49,6 +49,7 @@ mod series_filters_histograms_by_matcher_and_time;
 mod store_cardinality_and_tsdb_stats_include_float_and_hist_series;
 mod store_with_float_and_hist_series;
 mod wal_head_delegates_metadata_cardinality_stats_and_blocks;
+mod wal_head_delete_tenant;
 
 use count_rows::count_rows;
 use expected_label_memory_stats::expected_label_memory_stats;

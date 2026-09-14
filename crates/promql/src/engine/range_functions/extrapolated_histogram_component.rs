@@ -27,6 +27,7 @@ pub(crate) fn extrapolated_histogram_component(
     extrapolate_histogram_delta(
         extrapolation.timestamps,
         result,
+        extrapolation.duration_to_zero,
         extrapolation.range_start_ms,
         extrapolation.range_end_ms,
         extrapolation.range,

@@ -6,6 +6,7 @@ use super::{
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct AggregateState {
     pub(crate) labels: Labels,
+    pub(crate) metric_name: String,
     pub(crate) drop_name: bool,
     pub(crate) count: usize,
     pub(crate) count_f64: f64,
@@ -44,6 +45,8 @@ pub(crate) struct AggregateState {
     pub(crate) min: f64,
     pub(crate) max: f64,
     pub(crate) histogram: Option<NativeHistogram>,
+    pub(crate) mismatched_custom_buckets: bool,
+    pub(crate) invalid_mixed_histogram_schema: bool,
     pub(crate) invalid_mixed_sample_type: bool,
     /// The counter-reset hints the group's histograms have stated.
     pub(crate) counter_reset_hints: CounterResetHints,
@@ -53,6 +56,7 @@ impl AggregateState {
     pub(crate) fn new(labels: Labels) -> Self {
         Self {
             labels,
+            metric_name: String::new(),
             drop_name: false,
             count: 0,
             count_f64: 0.0,
@@ -70,6 +74,8 @@ impl AggregateState {
             min: f64::NAN,
             max: f64::NAN,
             histogram: None,
+            mismatched_custom_buckets: false,
+            invalid_mixed_histogram_schema: false,
             invalid_mixed_sample_type: false,
             counter_reset_hints: CounterResetHints::default(),
         }
@@ -145,7 +151,7 @@ impl AggregateState {
     }
 
     pub(crate) fn push_histogram(&mut self, histogram: NativeHistogram) -> Result<()> {
-        if self.invalid_mixed_sample_type {
+        if self.invalid_mixed_sample_type || self.invalid_mixed_histogram_schema {
             return Ok(());
         }
         if self.count != 0 && self.histogram.is_none() {
@@ -155,7 +161,17 @@ impl AggregateState {
         self.counter_reset_hints.observe(histogram.reset_hint);
         self.push_observation();
         match &mut self.histogram {
-            Some(existing) => add_compatible_native_histogram(existing, &histogram)?,
+            Some(existing) => {
+                if existing.is_nhcb() != histogram.is_nhcb() {
+                    self.invalid_mixed_histogram_schema = true;
+                    self.histogram = None;
+                    return Ok(());
+                }
+                self.mismatched_custom_buckets |= existing.is_nhcb()
+                    && histogram.is_nhcb()
+                    && existing.custom_values != histogram.custom_values;
+                add_compatible_native_histogram(existing, &histogram)?;
+            }
             None => self.histogram = Some(histogram),
         }
         Ok(())

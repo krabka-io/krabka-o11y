@@ -44,7 +44,10 @@ pub use extension::{
 pub use functions::{
     delta_udf, idelta_udf, increase_udf, irate_udf, rate_family_udfs, rate_udf, register_rate_udfs,
 };
-pub use http_api::{PrometheusApiState, prometheus_router};
+pub use http_api::{
+    PrometheusApiState, mimir_alertmanager_router, mimir_ruler_prometheus_router,
+    mimir_ruler_router, prometheus_router,
+};
 pub use ids::{Offset, PartitionIndex};
 pub use in_memory::{
     DEFAULT_RETENTION, InMemoryMetricStore, PartitionWatermark, PruneStats, WalHead,

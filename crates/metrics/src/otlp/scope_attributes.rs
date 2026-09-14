@@ -1,9 +1,14 @@
-use super::{KeyValue, ScopeMetrics, instrumentation_scope_attributes, string_attribute};
+use super::{
+    KeyValue, ScopeMetrics, TranslationStrategy, instrumentation_scope_attributes, string_attribute,
+};
 
-pub(crate) fn scope_attributes(scope_metrics: &ScopeMetrics) -> Vec<KeyValue> {
+pub(crate) fn scope_attributes(
+    scope_metrics: &ScopeMetrics,
+    strategy: TranslationStrategy,
+) -> Vec<KeyValue> {
     let mut attributes = Vec::new();
     if let Some(scope) = &scope_metrics.scope {
-        attributes.extend(instrumentation_scope_attributes(scope));
+        attributes.extend(instrumentation_scope_attributes(scope, strategy));
     }
     if !scope_metrics.schema_url.is_empty() {
         attributes.push(string_attribute(

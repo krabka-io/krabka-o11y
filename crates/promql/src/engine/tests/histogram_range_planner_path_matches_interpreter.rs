@@ -142,7 +142,7 @@ pub(crate) async fn histogram_range_planner_path_matches_interpreter() {
         panic!("expected vector for rate");
     };
     assert2::assert!(rate_samples.len() == 1);
-    assert2::assert!(rate_samples[0].labels.get("__name__") == Some("h"));
+    assert2::assert!(rate_samples[0].labels.get("__name__").is_none());
     assert2::assert!(rate_samples[0].drop_name);
     assert2::assert!(matches!(rate_samples[0].value, SampleValue::Histogram(_)));
 

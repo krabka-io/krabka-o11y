@@ -3,6 +3,7 @@ use super::{RangeFn, Time, TimeExt, ToPrimitive};
 pub(crate) fn extrapolate_histogram_delta(
     timestamps: &[i64],
     mut result: f64,
+    duration_to_zero: Option<f64>,
     range_start_ms: i64,
     range_end_ms: i64,
     range: Time,
@@ -26,6 +27,12 @@ pub(crate) fn extrapolate_histogram_delta(
     }
     if duration_to_end >= extrapolation_threshold {
         duration_to_end = average_duration_between_samples / 2.0;
+    }
+
+    if let Some(duration_to_zero) = duration_to_zero
+        && duration_to_zero < duration_to_start
+    {
+        duration_to_start = duration_to_zero;
     }
 
     let extrapolated_interval = sampled_interval + duration_to_start + duration_to_end;

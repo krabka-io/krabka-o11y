@@ -39,7 +39,10 @@ impl AggregateOp {
     }
 
     pub(crate) fn finish(self, state: &AggregateState) -> Option<SampleValue> {
-        if state.count == 0 || state.invalid_mixed_sample_type {
+        if state.count == 0
+            || state.invalid_mixed_sample_type
+            || state.invalid_mixed_histogram_schema
+        {
             return None;
         }
         Some(match self {

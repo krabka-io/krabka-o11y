@@ -1,8 +1,8 @@
 use super::{
-    Arc, AuditHandle, Cli, ObjectStore, PrometheusApiState, QueryFrontendOptions, RoleReadiness,
-    ServerSecurity, Shutdown, TimeExt, WalHead, load_runtime_overrides, prometheus_router,
-    query_engine_opts, readiness_router, serve_prometheus_router_joinable,
-    spawn_shutdown_signal_listener,
+    Arc, AuditHandle, Cli, MimirTenantAdminState, ObjectStore, PrometheusApiState,
+    QueryFrontendOptions, RoleReadiness, ServerSecurity, Shutdown, TimeExt, WalHead,
+    load_runtime_overrides, mimir_tenant_admin_router, prometheus_router, query_engine_opts,
+    readiness_router, serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -20,17 +20,21 @@ pub(crate) async fn run_query_frontend(
     audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
-    let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-    let store: Arc<dyn ObjectStore> = Arc::from(store);
-    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
-        Arc::clone(&store),
-        object_store_url.clone(),
-        &cli.manifest_prefix,
-        WalHead::new(),
-    )
-    .with_cold_cache_ttl(cli.cold_cache_ttl)
-    .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
-    let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
+    let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
+    let store: Arc<dyn ObjectStore> =
+        Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
+    let head = WalHead::new();
+    let metric_store = Arc::new(
+        krabka_metrics_service::RefreshingMetricBlockStore::new(
+            Arc::clone(&store),
+            object_store_url.clone(),
+            &cli.manifest_prefix,
+            head.clone(),
+        )
+        .with_cold_cache_ttl(cli.cold_cache_ttl)
+        .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback),
+    );
+    let state = PrometheusApiState::new(Arc::clone(&metric_store), query_engine_opts(&cli))
         .with_erasure_store(Arc::clone(&store))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
         .with_query_timeout(cli.query_timeout)
@@ -48,7 +52,7 @@ pub(crate) async fn run_query_frontend(
             },
             Arc::new(
                 krabka_promql::ObjectStoreQueryFrontendCache::new(
-                    store,
+                    Arc::clone(&store),
                     cli.query_frontend_cache_prefix.clone(),
                 )
                 .with_ttl(cli.query_frontend_cache_ttl)
@@ -63,7 +67,13 @@ pub(crate) async fn run_query_frontend(
             ),
         );
     let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
-    let router = prometheus_router(Arc::new(state)).merge(readiness_router(readiness));
+    let router = prometheus_router(Arc::new(state))
+        .merge(mimir_tenant_admin_router(MimirTenantAdminState::new(
+            store,
+            metric_store,
+            head,
+        )))
+        .merge(readiness_router(readiness));
     let shutdown = Shutdown::new();
     spawn_shutdown_signal_listener(shutdown.clone());
     let (bound, server) =

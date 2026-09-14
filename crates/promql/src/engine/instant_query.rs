@@ -5,7 +5,7 @@ use promql_parser::parser::Expr;
 
 use super::{
     AT_MODIFIER_BOUNDS, AtModifierBounds, PromqlEngine,
-    annotations::ANNOTATIONS,
+    annotations::{ANNOTATION_SOURCE, ANNOTATIONS},
     result_utils::{finalize_metric_names, validate_unique_instant_labelsets},
 };
 use crate::{
@@ -54,35 +54,38 @@ impl<S: MetricStore> PromqlEngine<S> {
         query: &str,
         time_ms: i64,
     ) -> Result<(QueryResult, Annotations)> {
-        ANNOTATIONS
-            .scope(RefCell::new(Annotations::new()), async move {
-                AT_MODIFIER_BOUNDS
-                    .scope(
-                        AtModifierBounds {
-                            start_ms: time_ms,
-                            end_ms: time_ms,
-                        },
-                        async move {
-                            let expr = parse_promql_with_duration_context(
-                                query,
-                                DurationExprContext::instant(time_ms),
-                            )?;
-                            let mut result = self
-                                .eval_top_level_instant_expr(tenant.as_str(), &expr, time_ms)
-                                .await?;
-                            if let QueryResult::InstantVector(samples) = &mut result {
-                                for sample in samples {
-                                    sample.ts_ms = time_ms;
+        ANNOTATION_SOURCE
+            .scope(
+                query.to_owned(),
+                ANNOTATIONS.scope(RefCell::new(Annotations::new()), async move {
+                    AT_MODIFIER_BOUNDS
+                        .scope(
+                            AtModifierBounds {
+                                start_ms: time_ms,
+                                end_ms: time_ms,
+                            },
+                            async move {
+                                let expr = parse_promql_with_duration_context(
+                                    query,
+                                    DurationExprContext::instant(time_ms),
+                                )?;
+                                let mut result = self
+                                    .eval_top_level_instant_expr(tenant.as_str(), &expr, time_ms)
+                                    .await?;
+                                if let QueryResult::InstantVector(samples) = &mut result {
+                                    for sample in samples {
+                                        sample.ts_ms = time_ms;
+                                    }
                                 }
-                            }
-                            finalize_metric_names(&mut result);
-                            validate_unique_instant_labelsets(&result)?;
-                            let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
-                            Ok((result, annotations))
-                        },
-                    )
-                    .await
-            })
+                                finalize_metric_names(&mut result);
+                                validate_unique_instant_labelsets(&result)?;
+                                let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
+                                Ok((result, annotations))
+                            },
+                        )
+                        .await
+                }),
+            )
             .await
     }
 

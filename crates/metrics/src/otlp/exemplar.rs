@@ -1,16 +1,19 @@
 use super::{
-    DecodedExemplar, Labels, OtlpExemplar, ToPrimitive, bytes_to_hex, insert_attributes,
-    nanos_to_millis, otlp_exemplar,
+    DecodedExemplar, Labels, OtlpExemplar, ToPrimitive, TranslationStrategy, bytes_to_hex,
+    insert_attributes, nanos_to_millis, otlp_exemplar,
 };
 
-pub(crate) fn exemplar(exemplar: &OtlpExemplar) -> Option<DecodedExemplar> {
+pub(crate) fn exemplar(
+    exemplar: &OtlpExemplar,
+    strategy: TranslationStrategy,
+) -> Option<DecodedExemplar> {
     let value = match exemplar.value {
         Some(otlp_exemplar::Value::AsDouble(value)) => value,
         Some(otlp_exemplar::Value::AsInt(value)) => value.to_f64().unwrap_or(f64::MAX),
         None => return None,
     };
     let mut labels = Labels::new();
-    insert_attributes(&mut labels, &exemplar.filtered_attributes);
+    insert_attributes(&mut labels, &exemplar.filtered_attributes, strategy);
     if !exemplar.trace_id.is_empty() {
         labels.insert("trace_id", bytes_to_hex(&exemplar.trace_id));
     }

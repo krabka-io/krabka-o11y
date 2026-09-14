@@ -2,6 +2,7 @@ use super::{
     AggregateOp, AggregateState, BTreeMap, InstantSample, LabelModifier, PromqlError, Result,
     SampleValue, aggregate_labels, emit_info, emit_warning,
     histogram_counter_reset_collision_warning, histogram_ignored_in_aggregation_info, labels_key,
+    mismatched_custom_buckets_info, mixed_exponential_custom_warning,
     mixed_floats_histograms_agg_warning,
 };
 
@@ -44,10 +45,14 @@ pub(crate) fn apply_simple_aggregate(
 ) -> Result<Vec<InstantSample>> {
     let mut groups: BTreeMap<String, AggregateState> = BTreeMap::new();
     for sample in samples {
+        let metric_name = sample.labels.get("__name__").unwrap_or_default();
         let labels = aggregate_labels(&sample.labels, modifier);
         let state = groups
             .entry(labels_key(&labels))
             .or_insert_with(|| AggregateState::new(labels));
+        if state.metric_name.is_empty() {
+            state.metric_name = metric_name.to_string();
+        }
         state.drop_name |= sample.drop_name;
         match sample.value {
             SampleValue::Float(value) => {
@@ -77,6 +82,12 @@ pub(crate) fn apply_simple_aggregate(
         .filter_map(|state| {
             if state.has_counter_reset_collision() {
                 emit_warning(histogram_counter_reset_collision_warning("aggregation"));
+            }
+            if state.mismatched_custom_buckets {
+                emit_info(mismatched_custom_buckets_info("aggregation"));
+            }
+            if state.invalid_mixed_histogram_schema {
+                emit_warning(mixed_exponential_custom_warning(&state.metric_name));
             }
             if state.invalid_mixed_sample_type {
                 // A group that took in both a float and a histogram has no sum

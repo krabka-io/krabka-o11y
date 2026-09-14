@@ -192,7 +192,7 @@ pub(crate) async fn ruler_config_mutations_are_audited() {
                 StatusCode::BAD_REQUEST,
                 StatusCode::OK,
                 StatusCode::ACCEPTED,
-                StatusCode::ACCEPTED,
+                StatusCode::NOT_FOUND,
                 StatusCode::FORBIDDEN,
             ]
     );
@@ -232,7 +232,7 @@ pub(crate) async fn ruler_config_mutations_are_audited() {
                     source_endpoint(client()),
                     OPERATION_RULE_NAMESPACE_DELETE,
                     vec![tenant_a, namespace],
-                    AuditOutcome::Success,
+                    AuditOutcome::Failure,
                     EpochMs(0),
                 ),
                 AuditEvent::AuthorizationDenied {

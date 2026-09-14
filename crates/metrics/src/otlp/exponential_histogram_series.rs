@@ -16,7 +16,13 @@ pub(crate) fn exponential_histogram_series(
     let metadata = metric_metadata(metric, &name, "histogram");
     let mut out = Vec::new();
     for point in &histogram.data_points {
-        let labels = labels(&name, resource_attributes, &point.attributes, None);
+        let labels = labels(
+            &name,
+            resource_attributes,
+            &point.attributes,
+            None,
+            strategy,
+        );
         let mut native_histogram = exponential_histogram_to_native(point)?;
         if histogram.aggregation_temporality == AggregationTemporality::Delta as i32 {
             let Some(accumulator) = accumulator.as_deref_mut() else {
@@ -37,7 +43,7 @@ pub(crate) fn exponential_histogram_series(
             labels,
             samples: Vec::new(),
             histograms: vec![(nanos_to_millis(point.time_unix_nano), native_histogram)],
-            exemplars: exemplars_from_exponential_histogram_point(point),
+            exemplars: exemplars_from_exponential_histogram_point(point, strategy),
             metadata: Some(metadata.clone()),
         });
     }

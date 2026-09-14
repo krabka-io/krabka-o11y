@@ -1,7 +1,7 @@
 use super::{IntoResponse, Response, StatusCode, WrittenCounts, written_counts_response};
 
 pub(crate) enum PushSuccess {
-    Ok,
+    Ok { counts: Option<WrittenCounts> },
     Accepted { counts: Option<WrittenCounts> },
     NoContent { counts: Option<WrittenCounts> },
 }
@@ -9,7 +9,10 @@ pub(crate) enum PushSuccess {
 impl IntoResponse for PushSuccess {
     fn into_response(self) -> Response {
         match self {
-            Self::Ok => StatusCode::OK.into_response(),
+            Self::Ok { counts: None } => StatusCode::OK.into_response(),
+            Self::Ok {
+                counts: Some(counts),
+            } => written_counts_response(StatusCode::OK, counts),
             Self::Accepted { counts: None } => StatusCode::ACCEPTED.into_response(),
             Self::Accepted {
                 counts: Some(counts),

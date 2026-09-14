@@ -11,7 +11,10 @@
 //! leaves the rest of the engine untouched, and for the scoping and keying
 //! rules.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_units::prelude::*;
@@ -19,8 +22,9 @@ use promql_parser::parser::{MatrixSelector, Offset, VectorSelector};
 
 use super::{
     PromqlEngine,
+    annotations::emit_metric_might_not_be_counter_info,
     assembly::{assemble_range_fold_grid, assemble_selector_grid},
-    labels::labels_without_metric_name,
+    labels::{labels_without_label, labels_without_metric_name},
     query_stats_enabled,
     selector::{apply_selector_time_modifier, label_matcher_sets, selector_duration},
     step_vectors::{GridVectors, LeafLookup, LeafMemo, RANGE_STEP_VECTORS, StepVectorCache},
@@ -249,11 +253,28 @@ impl<S: MetricStore> PromqlEngine<S> {
         } = plan_rate_range_selector(series, plan_grid, range, kind).await?;
         let batches = ctx.execute_logical_plan(plan).await?.collect().await?;
         let steps = assemble_range_fold_grid(&batches, plan_grid, grid, RATE_VALUE_COLUMN)?;
+        if selector.vs.name.is_some() && matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
+            let result_fingerprints = steps
+                .iter()
+                .flatten()
+                .map(|point| point.fp)
+                .collect::<BTreeSet<_>>();
+            for fingerprint in result_fingerprints {
+                if let Some(labels) = labels_by_fp.get(&fingerprint) {
+                    emit_metric_might_not_be_counter_info(labels);
+                }
+            }
+        }
         // Rate-family results drop the metric name, as `assemble_rate_batches`
         // does for one step.
         let labels_by_fp = labels_by_fp
             .iter()
-            .map(|(fp, labels)| (*fp, labels_without_metric_name(labels)))
+            .map(|(fp, labels)| {
+                (
+                    *fp,
+                    labels_without_label(&labels_without_metric_name(labels), "__name__"),
+                )
+            })
             .collect();
         Ok(Some(GridVectors::new(grid, labels_by_fp, steps, true)))
     }

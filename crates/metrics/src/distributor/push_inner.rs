@@ -38,5 +38,5 @@ pub(crate) async fn push_inner(
     if let Some(metrics) = &state.metrics {
         metrics.record_ingest_series(tenant.as_str(), items);
     }
-    Ok((PushSuccess::NoContent { counts }, items))
+    Ok((PushSuccess::Ok { counts }, items))
 }

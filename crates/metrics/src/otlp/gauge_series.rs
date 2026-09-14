@@ -21,6 +21,7 @@ pub(crate) fn gauge_series(
                 resource_attributes,
                 Some(metadata),
                 ExemplarPolicy::Drop,
+                strategy,
             )
         })
         .collect()

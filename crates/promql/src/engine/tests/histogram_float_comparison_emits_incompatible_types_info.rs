@@ -17,7 +17,7 @@ pub(crate) async fn histogram_float_comparison_emits_incompatible_types_info() {
     assert2::assert!(matches!(result, QueryResult::InstantVector(ref v) if v.is_empty()));
     assert2::assert!(annotations == crate::Annotations {
             infos: vec![
-                "PromQL info: incompatible sample types encountered for binary operator \">\": histogram > float"
+                "PromQL info: incompatible sample types encountered for binary operator \">\": histogram > float (1:1)"
                     .to_string()
             ],
             warnings: vec![],

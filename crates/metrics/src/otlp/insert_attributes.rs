@@ -1,12 +1,13 @@
 use super::{KeyValue, Labels, TranslationStrategy, attribute_value, normalize_name};
 
-pub(crate) fn insert_attributes(labels: &mut Labels, attributes: &[KeyValue]) {
+pub(crate) fn insert_attributes(
+    labels: &mut Labels,
+    attributes: &[KeyValue],
+    strategy: TranslationStrategy,
+) {
     for attribute in attributes {
         if let Some(value) = attribute_value(attribute.value.as_ref()) {
-            labels.insert(
-                normalize_name(&attribute.key, TranslationStrategy::default()),
-                value,
-            );
+            labels.insert(normalize_name(&attribute.key, strategy), value);
         }
     }
 }
