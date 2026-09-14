@@ -1,11 +1,11 @@
-use super::{Deserialize, Time};
+use super::{Deserialize, Serialize, Time};
 
 // The Tempo-shaped runtime-overrides keys, in the units an operator writes them
 // (spans/sec, bytes, seconds). This is intentionally partial configuration, not
 // old-schema compatibility: each tenant entry overrides only the limit fields it
 // names, and `merge_limits` lifts them into the dimensioned `Limits`.
-#[derive(Default, Deserialize)]
-#[serde(default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct PartialLimits {
     pub(crate) ingestion_rate_spans_per_sec: Option<f64>,
     pub(crate) ingestion_burst_spans: Option<u64>,
@@ -19,4 +19,8 @@ pub(crate) struct PartialLimits {
     // file, so it keeps Tempo's spelling and Tempo's value form: `336h`.
     #[serde(with = "krabka_units::serde_units::human::option_time")]
     pub(crate) block_retention: Option<Time>,
+    // Parsed by `MetricsGenConfig` from the same document. Keeping it here
+    // lets the trace-limit reader validate a real Tempo override entry without
+    // owning the metrics-generator configuration.
+    pub(crate) metrics_generator: Option<serde_json::Value>,
 }

@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::RwLock};
 
 use krabka_blockstore::RetentionWindows;
 use krabka_units::{
     ByteSize, Frequency, Time,
     convert::{ByteSizeExt as _, FrequencyExt as _, TimeExt},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use thiserror::Error;
 
 use super::Limits;
@@ -81,7 +82,7 @@ overrides:
 
         // Overridden fields take the yaml values; the rest keep the defaults.
         assert2::assert!(
-            *tenant_a
+            tenant_a
                 == Limits {
                     ingestion_rate: per_sec(500),
                     ingestion_burst_spans: 100_000,
@@ -123,20 +124,74 @@ overrides:
         assert2::assert!(provider.for_tenant("tenant-a").max_traces_per_search == 9);
         // tenant-b's entry names neither, so both process defaults stand.
         assert2::assert!(
-            *provider.for_tenant("tenant-b")
+            provider.for_tenant("tenant-b")
                 == Limits {
                     max_attribute: bytes(64),
                     ..defaults
                 }
         );
-        assert2::assert!(*provider.for_tenant("tenant-z") == defaults);
+        assert2::assert!(provider.for_tenant("tenant-z") == defaults);
     }
 
     #[test]
     fn unlisted_tenant_gets_defaults() {
         let provider = OverridesProvider::from_yaml(YAML).unwrap();
 
-        assert2::assert!(*provider.for_tenant("tenant-z") == Limits::default());
+        assert2::assert!(provider.for_tenant("tenant-z") == Limits::default());
+    }
+
+    #[test]
+    fn api_overrides_use_versions_and_merge_patches() {
+        let provider = OverridesProvider::new(Limits::default());
+
+        assert2::assert!(
+            provider.api_set(
+                "tenant-a",
+                serde_json::json!({"max_spans_per_trace": 7}),
+                "0",
+            ) == Ok("1".into())
+        );
+        assert2::assert!(
+            provider.api_set("tenant-a", serde_json::json!({}), "0")
+                == Err(OverrideMutationError::VersionMismatch)
+        );
+        assert2::assert!(
+            provider
+                .api_patch(
+                    "tenant-a",
+                    serde_json::json!({"max_spans_per_trace": null, "max_traces_per_search": 9}),
+                )
+                .map(|(_, version)| version)
+                == Ok("2".into())
+        );
+        assert2::assert!(
+            provider.for_tenant("tenant-a").max_spans_per_trace
+                == Limits::default().max_spans_per_trace
+        );
+        assert2::assert!(provider.for_tenant("tenant-a").max_traces_per_search == 9);
+        assert2::assert!(
+            provider.api_delete("tenant-a", "1") == Err(OverrideMutationError::VersionMismatch)
+        );
+        assert2::assert!(provider.api_delete("tenant-a", "2").is_ok());
+        assert2::assert!(provider.api_get("tenant-a").is_none());
+    }
+
+    #[test]
+    fn trace_limits_accept_metrics_generator_settings_in_the_shared_file() {
+        let provider = OverridesProvider::from_yaml(
+            r"
+overrides:
+  tenant-a:
+    max_spans_per_trace: 7
+    metrics_generator:
+      processor:
+        host_info:
+          enabled: true
+",
+        )
+        .unwrap();
+
+        assert2::assert!(provider.for_tenant("tenant-a").max_spans_per_trace == 7);
     }
 }
 
@@ -148,6 +203,6 @@ mod runtime_file;
 
 use merge_limits::merge_limits;
 pub use overrides_error::OverridesError;
-pub use overrides_provider::OverridesProvider;
+pub use overrides_provider::{OverrideMutationError, OverridesProvider};
 use partial_limits::PartialLimits;
 use runtime_file::RuntimeFile;

@@ -6,7 +6,7 @@ use krabka_units::convert::ByteSizeExt as _;
 use num_traits::ToPrimitive as _;
 
 use crate::metricsgen::{
-    config::{MetricsGenConfig, SpanMetricsConfig},
+    config::{HostInfoConfig, MetricsGenConfig, SpanMetricsConfig},
     contract::{SpanKind, SpanRecord, StatusCode},
     series::{Exemplar, Series, SeriesSample, sorted_labels},
     servicegraph::RecordOutcome,
@@ -330,6 +330,50 @@ mod tests {
                     ("service".into(), "api".into()),
                     ("service_instance_id".into(), "api-1".into()),
                 ]
+        );
+    }
+
+    #[test]
+    fn host_info_and_subprocessors_follow_tempo_configuration() {
+        let mut cfg = MetricsGenConfig::default();
+        cfg.processor.host_info = HostInfoConfig {
+            enabled: true,
+            host_identifiers: vec!["host.id".into()],
+            metric_name: "custom_host_info".into(),
+        };
+        cfg.processor
+            .span_metrics
+            .subprocessors
+            .insert("latency".into(), false);
+        cfg.processor
+            .span_metrics
+            .subprocessors
+            .insert("size".into(), false);
+        let mut reg = SpanMetricsRegistry::new(&cfg);
+        let mut span = ok_span("api", "GET /x");
+        span.resource_attributes = vec![("host.id".into(), "node-1".into())];
+        reg.record_span(&span);
+
+        let out = reg.drain(1_000);
+        check!(out.iter().any(|series| {
+            series.name == "custom_host_info"
+                && series.labels
+                    == [
+                        ("grafana_host_id".into(), "node-1".into()),
+                        ("host_source".into(), "host.id".into()),
+                    ]
+        }));
+        check!(
+            out.iter()
+                .any(|series| series.name == "traces_spanmetrics_calls_total")
+        );
+        check!(
+            !out.iter()
+                .any(|series| series.name == "traces_spanmetrics_latency")
+        );
+        check!(
+            !out.iter()
+                .any(|series| series.name == "traces_spanmetrics_size_total")
         );
     }
 

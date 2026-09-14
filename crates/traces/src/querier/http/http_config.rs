@@ -27,7 +27,7 @@ impl Default for HttpConfig {
 }
 
 impl HttpConfig {
-    pub(crate) fn limits_for_tenant(&self, tenant: &TenantId) -> &Limits {
+    pub(crate) fn limits_for_tenant(&self, tenant: &TenantId) -> Limits {
         self.overrides.for_tenant(tenant.as_str())
     }
 }

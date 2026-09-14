@@ -1,4 +1,24 @@
+use std::collections::HashMap;
+
 use super::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HostInfoConfig {
+    pub enabled: bool,
+    pub host_identifiers: Vec<String>,
+    pub metric_name: String,
+}
+
+impl Default for HostInfoConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host_identifiers: vec!["k8s.node.name".into(), "host.id".into()],
+            metric_name: "traces_host_info".into(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -40,6 +60,7 @@ pub struct SpanMetricsConfig {
     pub exclude: Vec<FilterPolicy>,
     pub target_info_excluded_dimensions: Vec<String>,
     pub span_multiplier_key: Option<String>,
+    pub subprocessors: HashMap<String, bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,4 +94,12 @@ impl Default for ServiceGraphsConfig {
 pub struct ProcessorConfig {
     pub span_metrics: SpanMetricsConfig,
     pub service_graphs: ServiceGraphsConfig,
+    pub host_info: HostInfoConfig,
+}
+
+impl SpanMetricsConfig {
+    #[must_use]
+    pub(crate) fn subprocessor_enabled(&self, name: &str) -> bool {
+        self.subprocessors.get(name).copied().unwrap_or(true)
+    }
 }

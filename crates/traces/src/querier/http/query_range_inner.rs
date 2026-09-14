@@ -33,7 +33,7 @@ where
         return (StatusCode::BAD_REQUEST, "end must be >= start").into_response();
     }
     let limits = state.cfg.limits_for_tenant(&tenant);
-    if let Err(err) = QueryEnforcer::check_search_duration(limits, start_ns, end_ns) {
+    if let Err(err) = QueryEnforcer::check_search_duration(&limits, start_ns, end_ns) {
         return limit_error_response(&err);
     }
     let step_ns = match step_param(&uri, UnixNano(start_ns), UnixNano(end_ns)) {

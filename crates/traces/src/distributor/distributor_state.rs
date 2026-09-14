@@ -73,10 +73,10 @@ impl DistributorState {
         // Resolved once, and given to every gate below, so that no gate can
         // read a different limit from the one the tenant was granted.
         let limits = self.overrides.for_tenant(tenant.as_str());
-        validate_shared(spans, limits)?;
+        validate_shared(spans, &limits)?;
         self.ingest_enforcer
             .check_span_rate(
-                limits,
+                &limits,
                 tenant.as_str(),
                 u64::try_from(spans.len()).unwrap_or(u64::MAX),
             )

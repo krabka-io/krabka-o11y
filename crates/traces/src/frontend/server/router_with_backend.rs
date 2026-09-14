@@ -21,7 +21,7 @@ where
         Router::new();
         echo = get(echo),
         buildinfo = get(buildinfo),
-        overrides = get(overrides::<B, C>),
+        overrides = get(overrides::<B, C>).post(overrides::<B, C>).patch(overrides::<B, C>).delete(overrides::<B, C>),
         search = get(search::<B, C>),
         search_stream = get(search_stream::<B, C>),
         trace_v1 = get(trace_by_id_v1::<B, C>),

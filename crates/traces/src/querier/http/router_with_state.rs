@@ -13,7 +13,7 @@ where
         Router::new();
         echo = get(echo),
         buildinfo = get(buildinfo),
-        overrides = get(overrides::<S>),
+        overrides = get(overrides::<S>).post(overrides::<S>).patch(overrides::<S>).delete(overrides::<S>),
         search = get(search::<S>),
         search_stream = get(search_stream::<S>),
         trace_v1 = get(trace_by_id_v1::<S>),

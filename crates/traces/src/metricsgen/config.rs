@@ -120,6 +120,6 @@ mod processor_config;
 pub use default_latency_buckets_ns::DEFAULT_LATENCY_BUCKETS_NS;
 pub use metrics_gen_config::MetricsGenConfig;
 pub use processor_config::{
-    AttributeMatch, DimensionMapping, FilterPolicy, MatchType, ProcessorConfig,
+    AttributeMatch, DimensionMapping, FilterPolicy, HostInfoConfig, MatchType, ProcessorConfig,
     ServiceGraphsConfig, SpanMetricsConfig,
 };

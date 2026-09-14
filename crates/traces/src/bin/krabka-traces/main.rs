@@ -1752,7 +1752,7 @@ mod tests {
 
         let overrides = load_traces_limits_overrides_config(None, limits_from_cli(&cli)).unwrap();
 
-        check!(*overrides.for_tenant("tenant-a") == limits_from_cli(&cli));
+        check!(overrides.for_tenant("tenant-a") == limits_from_cli(&cli));
         check!(overrides.for_tenant("tenant-a").max_spans_per_request == 9);
     }
 
@@ -1793,7 +1793,7 @@ overrides:
         .unwrap();
 
         check!(
-            *overrides.for_tenant("tenant-a")
+            overrides.for_tenant("tenant-a")
                 == Limits {
                     ingestion_rate: <Frequency as FrequencyExt>::ZERO,
                     ingestion_burst_spans: 0,
@@ -1807,7 +1807,7 @@ overrides:
         );
         // A tenant the file does not name keeps the flags, not the compiled
         // defaults: `--max-spans-per-trace` reaches it too.
-        check!(*overrides.for_tenant("tenant-b") == limits_from_cli(&cli));
+        check!(overrides.for_tenant("tenant-b") == limits_from_cli(&cli));
         check!(overrides.for_tenant("tenant-b").max_spans_per_trace == 500);
     }
 
