@@ -7,7 +7,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use krabka_observability::server_security::Principal;
+use krabka_observability::server_security::{Principal, authorize_admin};
 
 use super::{MetricStore, PrometheusApiState, authorized_tenant_from_headers};
 
@@ -29,7 +29,11 @@ pub fn mimir_ruler_router<S: MetricStore + 'static>(state: Arc<PrometheusApiStat
 
 async fn all_rule_groups<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
 ) -> Response {
+    if let Err(error) = authorize_admin(&principal) {
+        return error.into_response();
+    }
     let rules = match state.ruler_rules.read() {
         Ok(rules) => rules
             .iter()
@@ -61,7 +65,11 @@ async fn all_rule_groups<S: MetricStore>(
 
 async fn ruler_tenants<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
-) -> Html<String> {
+    Extension(principal): Extension<Principal>,
+) -> Response {
+    if let Err(error) = authorize_admin(&principal) {
+        return error.into_response();
+    }
     let rows = state
         .ruler_tenants()
         .into_iter()
@@ -72,13 +80,17 @@ async fn ruler_tenants<S: MetricStore>(
         });
     Html(format!(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Ruler: bucket tenants</title></head><body><h1>Ruler: bucket tenants</h1><table><tbody>{rows}</tbody></table></body></html>"
-    ))
+    )).into_response()
 }
 
 async fn tenant_rule_groups<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,
+    Extension(principal): Extension<Principal>,
     Path(tenant): Path<String>,
-) -> Html<String> {
+) -> Response {
+    if let Err(error) = authorize_admin(&principal) {
+        return error.into_response();
+    }
     let groups = state
         .ruler_rules
         .read()
@@ -110,7 +122,7 @@ async fn tenant_rule_groups<S: MetricStore>(
     Html(format!(
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Ruler: tenant rule groups</title></head><body><h1>Ruler: tenant {}</h1><table><tbody>{rows}</tbody></table></body></html>",
         escape_html(&tenant)
-    ))
+    )).into_response()
 }
 
 fn escape_html(value: &str) -> String {

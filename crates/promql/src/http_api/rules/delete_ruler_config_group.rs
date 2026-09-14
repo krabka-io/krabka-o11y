@@ -18,13 +18,16 @@ pub(crate) async fn delete_ruler_config_group<S: MetricStore>(
         Ok(tenant) => tenant,
         Err(error) => return error.into_response(),
     };
+    let previous_rules = state.ruler_rules.read().ok().map(|rules| rules.clone());
     let mut response = match state.ruler_rules.write() {
         Ok(mut rules) => {
             if let Some(groups) = rules
                 .get_mut(&tenant)
                 .and_then(|namespaces| namespaces.get_mut(&namespace))
             {
-                groups.remove(&group_name);
+                if groups.remove(&group_name).is_none() {
+                    return (StatusCode::NOT_FOUND, "group does not exist\n").into_response();
+                }
                 if groups.is_empty() {
                     rules
                         .get_mut(&tenant)
@@ -44,6 +47,11 @@ pub(crate) async fn delete_ruler_config_group<S: MetricStore>(
     if response.status().is_success()
         && let Err(error) = state.persist_ruler_config(&tenant).await
     {
+        if let Some(previous_rules) = previous_rules
+            && let Ok(mut rules) = state.ruler_rules.write()
+        {
+            *rules = previous_rules;
+        }
         response = (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to persist ruler config: {error}\n"),

@@ -1,6 +1,5 @@
-use crate::engine::add_compatible_native_histogram;
-
 use super::NativeHistogram;
+use crate::engine::add_compatible_native_histogram;
 
 pub(crate) fn add_histogram_step(
     start: &NativeHistogram,

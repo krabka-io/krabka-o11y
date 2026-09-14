@@ -1,5 +1,6 @@
-use super::*;
 use serde_json::Value;
+
+use super::*;
 
 fn alertmanager_router_for_state(state: Arc<PrometheusApiState<InMemoryMetricStore>>) -> Router {
     authenticate_requests(

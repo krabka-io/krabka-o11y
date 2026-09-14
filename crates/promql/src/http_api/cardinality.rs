@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use krabka_blockstore::Labels;
-use krabka_metrics::decode_native_histograms;
+use krabka_metrics::{decode_float_samples, decode_native_histograms};
 
 use super::{
     ApiError, CardinalityParams, Extension, Principal, PrometheusApiState, active_series_response,

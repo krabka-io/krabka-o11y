@@ -254,7 +254,18 @@ async fn set_alerts<S: MetricStore>(
     }
     let stored = match state.alertmanager_alerts.write() {
         Ok(mut alerts) => {
-            alerts.entry(tenant.clone()).or_default().extend(new_alerts);
+            let stored = alerts.entry(tenant.clone()).or_default();
+            for alert in new_alerts {
+                let fingerprint = alert.get("fingerprint");
+                if let Some(existing) = stored
+                    .iter_mut()
+                    .find(|existing| existing.get("fingerprint") == fingerprint)
+                {
+                    *existing = alert;
+                } else {
+                    stored.push(alert);
+                }
+            }
             true
         }
         Err(_) => false,
@@ -400,16 +411,18 @@ async fn delete_silence<S: MetricStore>(
         Err(response) => return *response,
     };
     let deleted = match state.alertmanager_silences.write() {
-        Ok(mut silences) => {
-            if let Some(items) = silences.get_mut(&tenant) {
-                items.remove(&id);
-            }
-            true
-        }
+        Ok(mut silences) => silences
+            .get_mut(&tenant)
+            .and_then(|items| items.get_mut(&id))
+            .and_then(Value::as_object_mut)
+            .map(|silence| {
+                silence.insert("endsAt".into(), Value::String(now_rfc3339()));
+            })
+            .is_some(),
         Err(_) => false,
     };
     if !deleted {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        return StatusCode::NOT_FOUND.into_response();
     }
     match state.persist_alertmanager_silences(&tenant).await {
         Ok(()) => StatusCode::OK.into_response(),
@@ -524,25 +537,46 @@ fn matches_filters(value: &Value, query: Option<&str>) -> bool {
                     });
             }
             let filter = filter.trim_matches(|character| character == '{' || character == '}');
-            let Some((name, expected)) = filter.split_once('=') else {
+            let Some((name, operator, expected)) = parse_filter_matcher(filter) else {
                 return true;
             };
-            value
+            let actual = value
                 .get("labels")
                 .and_then(|labels| labels.get(name.trim()))
                 .and_then(Value::as_str)
-                == Some(expected.trim().trim_matches('"'))
-                || value
-                    .get("matchers")
-                    .and_then(Value::as_array)
-                    .is_some_and(|matchers| {
-                        matchers.iter().any(|matcher| {
-                            matcher.get("name").and_then(Value::as_str) == Some(name.trim())
-                                && matcher.get("value").and_then(Value::as_str)
-                                    == Some(expected.trim().trim_matches('"'))
+                .or_else(|| {
+                    value
+                        .get("matchers")
+                        .and_then(Value::as_array)
+                        .and_then(|matchers| {
+                            matchers.iter().find_map(|matcher| {
+                                (matcher.get("name").and_then(Value::as_str) == Some(name.trim()))
+                                    .then(|| matcher.get("value").and_then(Value::as_str))
+                                    .flatten()
+                            })
                         })
-                    })
+                });
+            matches_filter_value(actual, operator, expected.trim().trim_matches('"'))
         })
+}
+
+fn parse_filter_matcher(filter: &str) -> Option<(&str, &str, &str)> {
+    ["!=", "=~", "!~", "="].into_iter().find_map(|operator| {
+        filter
+            .split_once(operator)
+            .map(|(name, value)| (name, operator, value))
+    })
+}
+
+fn matches_filter_value(actual: Option<&str>, operator: &str, expected: &str) -> bool {
+    let regex = || regex::Regex::new(&format!("^(?:{expected})$"));
+    match operator {
+        "=" => actual == Some(expected),
+        "!=" => actual != Some(expected),
+        "=~" => regex().is_ok_and(|regex| actual.is_some_and(|v| regex.is_match(v))),
+        "!~" => regex().is_ok_and(|regex| actual.is_none_or(|v| !regex.is_match(v))),
+        _ => false,
+    }
 }
 
 fn with_silence_state(mut silence: Value) -> Value {
@@ -588,4 +622,19 @@ fn new_silence_id() -> String {
         .map_or(0, |duration| duration.as_nanos());
     let sequence = NEXT_SILENCE_ID.fetch_add(1, Ordering::Relaxed);
     format!("{nanos:032x}-{sequence:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alertmanager_filters_support_all_matcher_operators() {
+        let alert = json!({"labels":{"severity":"warning"}});
+        assert!(matches_filters(&alert, Some("filter=severity=warning")));
+        assert!(matches_filters(&alert, Some("filter=severity!=critical")));
+        assert!(matches_filters(&alert, Some("filter=severity=~warn.*")));
+        assert!(matches_filters(&alert, Some("filter=severity!~crit.*")));
+        assert!(!matches_filters(&alert, Some("filter=severity=~arn")));
+    }
 }

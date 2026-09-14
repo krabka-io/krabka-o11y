@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Extension, Json, Router,
-    extract::State,
+    extract::{DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -63,7 +63,7 @@ pub fn mimir_tenant_admin_router(state: MimirTenantAdminState) -> Router {
         )
         .route(
             "/api/v1/upload/block/{block}/files",
-            post(upload_block_file),
+            post(upload_block_file).layer(DefaultBodyLimit::max(1 << 30)),
         )
         .route(
             "/api/v1/upload/block/{block}/finish",
@@ -91,12 +91,8 @@ async fn delete_tenant(
         Err(error) => return error.into_response(),
     };
     let marker_key = tenant_deletion_marker_key(tenant.as_str());
-    let marker = match load_marker(&state.store, &marker_key).await {
-        Ok(Some(marker)) => marker,
-        Ok(None) => match new_marker(&state.store, tenant.as_str()).await {
-            Ok(marker) => marker,
-            Err(error) => return internal(error),
-        },
+    let marker = match new_marker(&state.store, tenant.as_str()).await {
+        Ok(marker) => marker,
         Err(error) => return internal(error),
     };
     if let Err(error) = persist_marker(&state.store, &marker_key, &marker).await {
@@ -125,8 +121,11 @@ async fn delete_tenant_status(
     let marker_key = tenant_deletion_marker_key(tenant.as_str());
     let blocks_deleted = match load_marker(&state.store, &marker_key).await {
         Ok(None) => true,
-        Ok(Some(marker)) => match marker_objects_absent(&state.store, &marker).await {
-            Ok(absent) => absent,
+        Ok(Some(marker)) => match new_marker(&state.store, tenant.as_str()).await {
+            Ok(current) => match marker_objects_absent(&state.store, &marker).await {
+                Ok(absent) => absent && current.objects.is_empty(),
+                Err(error) => return internal(error),
+            },
             Err(error) => return internal(error),
         },
         Err(error) => return internal(error),

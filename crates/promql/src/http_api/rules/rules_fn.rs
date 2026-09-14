@@ -1,9 +1,10 @@
+use base64::{Engine as _, engine::general_purpose::URL_SAFE};
+
 use super::{
     ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
     RawQuery, Response, RuleRenderOptions, RuleTypeFilter, State, authorized_tenant_from_headers,
     json, parse_rules_params, prometheus_rule_groups_json, success_data_response,
 };
-use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 
 pub(crate) async fn rules<S: MetricStore>(
     State(state): State<Arc<PrometheusApiState<S>>>,

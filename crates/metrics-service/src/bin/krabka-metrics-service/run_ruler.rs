@@ -27,8 +27,9 @@ pub(crate) async fn run_ruler(
     audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
-    let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-    let store: Arc<dyn ObjectStore> = Arc::from(store);
+    let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
+    let store: Arc<dyn ObjectStore> =
+        Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
     let config_store = Arc::clone(&store);
     let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
         store,
@@ -155,7 +156,7 @@ pub(crate) async fn run_ruler(
     };
     wal_broker.mark_ready();
     loop {
-        let replayed = tokio::select! {
+        tokio::select! {
             biased;
             () = shutdown.signalled() => {
                 server.await?;
@@ -168,7 +169,7 @@ pub(crate) async fn run_ruler(
                 cli.wal_poll_timeout,
             ) => result?,
         };
-        if replayed.polled_records == 0 {
+        if state_consumer.at_log_end().await {
             break;
         }
     }

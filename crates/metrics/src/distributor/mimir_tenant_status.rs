@@ -158,8 +158,12 @@ pub(crate) async fn all_user_stats(
 
 pub(crate) async fn runtime_config(
     State(state): State<Arc<DistributorState>>,
+    Extension(principal): Extension<Principal>,
     Query(query): Query<RuntimeConfigQuery>,
 ) -> Response {
+    if let Err(error) = authorize_admin(&principal) {
+        return error.into_response();
+    }
     let overrides = state
         .overrides
         .per_tenant
@@ -250,7 +254,12 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_config_reports_the_effective_safe_configuration() {
-        let response = runtime_config(State(state()), Query(RuntimeConfigQuery::default())).await;
+        let response = runtime_config(
+            State(state()),
+            Extension(Principal::Unauthenticated),
+            Query(RuntimeConfigQuery::default()),
+        )
+        .await;
         check!(response.status() == StatusCode::OK);
         check!(response.headers()[CONTENT_TYPE] == "application/yaml");
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();

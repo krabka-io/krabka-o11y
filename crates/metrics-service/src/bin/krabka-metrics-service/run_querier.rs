@@ -24,8 +24,9 @@ pub(crate) async fn run_querier(
     audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
-    let (store, _prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-    let store: Arc<dyn ObjectStore> = Arc::from(store);
+    let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
+    let store: Arc<dyn ObjectStore> =
+        Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
     let head = WalHead::with_retention(cli.wal_head_retention);
     let status_wal = cli
         .wal_bootstrap

@@ -13,9 +13,9 @@ use serde::Serialize;
 
 use super::{
     ApiError, Arc, CardinalityParams, MetricStore, Principal, PrometheusApiState,
-    authorized_tenant_from_headers, cardinality_series, decode_native_histograms,
-    enforce_selected_series_limit, parse_cardinality_form, parse_cardinality_params,
-    selector_matchers,
+    authorized_tenant_from_headers, cardinality_series, decode_float_samples,
+    decode_native_histograms, enforce_selected_series_limit, parse_cardinality_form,
+    parse_cardinality_params, selector_matchers,
 };
 
 #[derive(Serialize)]
@@ -33,8 +33,20 @@ struct ActiveNativeHistogramMetric {
     max_bucket_count: u64,
 }
 
+enum LatestSample {
+    Float { timestamp: i64 },
+    Histogram { timestamp: i64, bucket_count: u64 },
+}
+
+impl LatestSample {
+    const fn timestamp(&self) -> i64 {
+        match self {
+            Self::Float { timestamp } | Self::Histogram { timestamp, .. } => *timestamp,
+        }
+    }
+}
+
 struct LatestHistogram {
-    timestamp: i64,
     bucket_count: u64,
 }
 
@@ -81,8 +93,16 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
     if let Err(error) = enforce_selected_series_limit(&state, &tenant, series.len()) {
         return error.into_response();
     }
+    let active = match state.store.cardinality_active_series(tenant.as_str()).await {
+        Ok(series) => series
+            .into_iter()
+            .map(|labels| labels.fingerprint())
+            .collect::<std::collections::BTreeSet<_>>(),
+        Err(error) => return ApiError::from(error).into_response(),
+    };
     let metric_by_fingerprint = series
         .into_iter()
+        .filter(|labels| active.contains(&labels.fingerprint()))
         .filter_map(|labels| {
             let metric = labels.get("__name__")?.to_owned();
             Some((labels.fingerprint(), metric))
@@ -96,7 +116,7 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
         },
         None => vec![Vec::new()],
     };
-    let mut latest = BTreeMap::<SeriesFingerprint, LatestHistogram>::new();
+    let mut latest = BTreeMap::<SeriesFingerprint, LatestSample>::new();
     for matchers in matcher_sets {
         let scan = match state
             .store
@@ -106,6 +126,31 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
             Ok(scan) => scan,
             Err(error) => return ApiError::from(error).into_response(),
         };
+        if let Some(table) = scan.float_table {
+            let dataframe = match scan.ctx.sql(&format!("SELECT * FROM {table}")).await {
+                Ok(dataframe) => dataframe,
+                Err(error) => return ApiError::internal(error.to_string()).into_response(),
+            };
+            let batches = match dataframe.collect().await {
+                Ok(batches) => batches,
+                Err(error) => return ApiError::internal(error.to_string()).into_response(),
+            };
+            for batch in batches {
+                let decoded = match decode_float_samples(&batch) {
+                    Ok(decoded) => decoded,
+                    Err(error) => return ApiError::internal(error.to_string()).into_response(),
+                };
+                for (fingerprint, timestamp, _, _) in decoded {
+                    if metric_by_fingerprint.contains_key(&fingerprint)
+                        && latest
+                            .get(&fingerprint)
+                            .is_none_or(|current| current.timestamp() < timestamp)
+                    {
+                        latest.insert(fingerprint, LatestSample::Float { timestamp });
+                    }
+                }
+            }
+        }
         let Some(table) = scan.histogram_table else {
             continue;
         };
@@ -130,13 +175,13 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
                     histogram.positive_counts.len() + histogram.negative_counts.len(),
                 )
                 .expect("bucket count fits in u64");
-                let candidate = LatestHistogram {
+                let candidate = LatestSample::Histogram {
                     timestamp,
                     bucket_count,
                 };
                 if latest
                     .get(&fingerprint)
-                    .is_none_or(|current| current.timestamp < timestamp)
+                    .is_none_or(|current| current.timestamp() < timestamp)
                 {
                     latest.insert(fingerprint, candidate);
                 }
@@ -145,7 +190,15 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
     }
 
     let mut metrics = BTreeMap::<String, ActiveNativeHistogramMetric>::new();
-    for (fingerprint, histogram) in latest {
+    for (fingerprint, sample) in latest {
+        let LatestSample::Histogram {
+            timestamp: _,
+            bucket_count,
+        } = sample
+        else {
+            continue;
+        };
+        let histogram = LatestHistogram { bucket_count };
         let metric_name = metric_by_fingerprint
             .get(&fingerprint)
             .expect("latest histogram was selected from known series");

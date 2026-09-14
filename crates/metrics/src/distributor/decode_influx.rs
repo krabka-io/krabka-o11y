@@ -121,8 +121,11 @@ fn field_value(value: &str, line_number: usize) -> Result<Option<f64>, WireError
             .map(|value| num_traits::ToPrimitive::to_f64(&value))
             .map_err(|_| invalid_line(line_number, "invalid integer field"));
     }
-    if value.ends_with('u') {
-        return Ok(None);
+    if let Some(value) = value.strip_suffix('u') {
+        return value
+            .parse::<u64>()
+            .map(|value| num_traits::ToPrimitive::to_f64(&value))
+            .map_err(|_| invalid_line(line_number, "invalid unsigned integer field"));
     }
     match value {
         "t" | "T" | "true" | "TRUE" | "True" => return Ok(Some(1.0)),

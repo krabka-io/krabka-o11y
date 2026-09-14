@@ -99,3 +99,29 @@ async fn native_histogram_cardinality_reports_latest_bucket_counts() {
     assert2::check!(body["data"][0]["min_bucket_count"] == 2);
     assert2::check!(body["data"][0]["max_bucket_count"] == 2);
 }
+
+#[tokio::test]
+async fn native_histogram_cardinality_uses_the_latest_sample_type() {
+    let mut store = search_store();
+    let mut labels = Labels::new();
+    labels.insert("__name__", "request_duration_seconds");
+    labels.insert("job", "api");
+    store.push_float("tenant-a", labels, 2_000, 1.0);
+    let state = Arc::new(PrometheusApiState::new(
+        Arc::new(store),
+        EngineOpts::default(),
+    ));
+    let response = prometheus_router(state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/cardinality/active_native_histogram_metrics")
+                .header("x-scope-orgid", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert2::check!(body["data"] == serde_json::json!([]));
+}

@@ -1,3 +1,4 @@
+use arrow::array::{Array, Int64Array, UInt64Array};
 use axum::{
     Json,
     body::Bytes,
@@ -6,7 +7,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use krabka_blockstore::escape_object_path_segment;
-use krabka_metrics::{CompactionIndexManifest, MetricBlockKind};
+use krabka_metrics::{
+    COL_FINGERPRINT, COL_TIMESTAMP, CompactionIndexManifest, MetricBlockKind, exemplar_schema,
+    float_sample_schema, metadata_schema, native_histogram_schema,
+};
 use krabka_observability::server_security::Principal;
 use object_store::{ObjectStoreExt as _, PutPayload, path::Path as ObjectPath};
 use serde::{Deserialize, Serialize};
@@ -341,12 +345,10 @@ async fn complete_native_upload(
     if manifest.kind == MetricBlockKind::ClockReadings {
         return Err("clock-reading blocks are not queryable uploads".to_owned());
     }
-    krabka_blockstore::read_block(state.store.clone(), uploaded_block.as_ref())
+    let batches = krabka_blockstore::read_block(state.store.clone(), uploaded_block.as_ref())
         .await
         .map_err(|error| format!("uploaded Krabka Parquet block is invalid: {error}"))?;
-    if manifest.row_count == 0 {
-        return Err("uploaded block manifest has no rows".to_owned());
-    }
+    validate_uploaded_block(&manifest, meta, &batches)?;
 
     let stem = native_object_stem(state, tenant, block);
     let final_block = ObjectPath::from(format!("{stem}.parquet"));
@@ -367,6 +369,68 @@ async fn complete_native_upload(
         )
         .await
         .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn validate_uploaded_block(
+    manifest: &CompactionIndexManifest,
+    meta: &UploadMeta,
+    batches: &[arrow::record_batch::RecordBatch],
+) -> Result<(), String> {
+    let expected_schema = match manifest.kind {
+        MetricBlockKind::Float => float_sample_schema(),
+        MetricBlockKind::NativeHistograms => native_histogram_schema(),
+        MetricBlockKind::Exemplars => exemplar_schema(),
+        MetricBlockKind::Metadata => metadata_schema(),
+        MetricBlockKind::ClockReadings => unreachable!("clock blocks are rejected above"),
+    };
+    let row_count: usize = batches
+        .iter()
+        .map(arrow::record_batch::RecordBatch::num_rows)
+        .sum();
+    if row_count == 0 || row_count != manifest.row_count {
+        return Err("uploaded block row count does not match its manifest".to_owned());
+    }
+
+    let mut min_ts = i64::MAX;
+    let mut max_ts = i64::MIN;
+    let mut fingerprints = std::collections::BTreeSet::new();
+    for batch in batches {
+        if batch.schema().as_ref() != expected_schema.as_ref() {
+            return Err("uploaded block schema does not match its manifest kind".to_owned());
+        }
+        let timestamps = batch
+            .column_by_name(COL_TIMESTAMP)
+            .and_then(|column| column.as_any().downcast_ref::<Int64Array>())
+            .ok_or_else(|| "uploaded block timestamp column is invalid".to_owned())?;
+        let series = batch
+            .column_by_name(COL_FINGERPRINT)
+            .and_then(|column| column.as_any().downcast_ref::<UInt64Array>())
+            .ok_or_else(|| "uploaded block fingerprint column is invalid".to_owned())?;
+        for row in 0..batch.num_rows() {
+            if timestamps.is_null(row) || series.is_null(row) {
+                return Err("uploaded block index columns contain nulls".to_owned());
+            }
+            min_ts = min_ts.min(timestamps.value(row));
+            max_ts = max_ts.max(timestamps.value(row));
+            fingerprints.insert(series.value(row));
+        }
+    }
+    let manifest_fingerprints = manifest.fingerprints.iter().copied().collect();
+    let indexed_series = manifest
+        .series
+        .iter()
+        .map(|series| series.fingerprint)
+        .collect();
+    if min_ts != manifest.min_ts
+        || max_ts != manifest.max_ts
+        || min_ts != meta.min_time
+        || max_ts != meta.max_time
+        || fingerprints != manifest_fingerprints
+        || fingerprints != indexed_series
+    {
+        return Err("uploaded block statistics do not match its manifest or meta.json".to_owned());
+    }
     Ok(())
 }
 
@@ -716,6 +780,54 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|labels| labels.get("__name__") == Some("uploaded_metric"))
+        );
+    }
+
+    #[tokio::test]
+    async fn block_upload_rejects_a_manifest_that_does_not_describe_the_block() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (block_bytes, index) = native_block_and_manifest().await;
+        let mut manifest = CompactionIndexManifest::decode(&index).unwrap();
+        manifest.row_count += 1;
+        let block = BLOCK.to_owned();
+        store
+            .put(
+                &upload_object_key("tenant-a", &block, "files/index"),
+                PutPayload::from(manifest.encode().unwrap()),
+            )
+            .await
+            .unwrap();
+        store
+            .put(
+                &upload_object_key("tenant-a", &block, "files/chunks/000001"),
+                PutPayload::from(block_bytes.clone()),
+            )
+            .await
+            .unwrap();
+        let meta = UploadMeta {
+            ulid: block.clone(),
+            min_time: 1_000,
+            max_time: 1_000,
+            version: 1,
+            thanos: ThanosMeta {
+                files: vec![
+                    UploadFile {
+                        rel_path: "index".into(),
+                        size_bytes: i64::try_from(index.len()).unwrap(),
+                    },
+                    UploadFile {
+                        rel_path: "chunks/000001".into(),
+                        size_bytes: i64::try_from(block_bytes.len()).unwrap(),
+                    },
+                ],
+            },
+        };
+        let (state, _) = state(store);
+        assert!(
+            complete_native_upload(&state, "tenant-a", &block, &meta)
+                .await
+                .unwrap_err()
+                .contains("row count")
         );
     }
 }
