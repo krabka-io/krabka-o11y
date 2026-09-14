@@ -219,7 +219,9 @@ async fn role_operations_routes_match_existing_behavior() {
                     rule-evaluator => Running\n\
                     memberlist-kv => Running\n\
                     query-frontend-tripperware => Running\n\
-                    analytics => Running\n\
+                    pattern-ingester => Running\n\
+                    pattern-ingester-tee => Running\n\
+                    pattern-ring-client => Running\n\
                     ruler => Running\n\
                     cache-generation-loader => Running\n\
                     store => Running\n\
@@ -1011,7 +1013,7 @@ async fn service_router_builds_querier_role_from_object_store_shard_catalog_conf
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -1062,7 +1064,7 @@ async fn service_router_applies_query_authorizer_dependency_to_querier_role() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D")
+                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1134,7 +1136,7 @@ async fn service_router_builds_querier_role_with_hot_tail_dependency() {
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -1230,7 +1232,7 @@ async fn service_router_applies_configured_query_length_limit() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D")
+                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1277,7 +1279,7 @@ async fn service_router_applies_configured_query_series_limit() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%7Benv%3D%22prod%22%7D&start=0.000000000&end=0.000000030")
+                .uri("/loki/api/v1/query_range?query=%7Benv%3D%22prod%22%7D&start=0.000000000&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1331,7 +1333,7 @@ async fn service_router_applies_configured_query_bytes_limit() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
+                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
                 .unwrap(),
@@ -1395,7 +1397,7 @@ async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() 
                 .oneshot(
                     Request::builder()
                         .uri(
-                            "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                         )
                         .header("X-Scope-OrgID", "tenant-a")
                         .body(Body::empty())
@@ -1467,7 +1469,7 @@ async fn service_router_loads_persisted_frontier_for_configured_querier_hot_tail
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -1493,7 +1495,7 @@ async fn service_router_builds_configured_local_object_store_for_querier_role() 
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())

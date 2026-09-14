@@ -20,6 +20,7 @@ pub(crate) fn execute_list_delete_requests(
         .filter(|request| request.tenant == tenant.as_str())
         .filter(|request| delete_request_overlaps_filter(request, &params))
         .map(|request| CompactorDeleteRequestResponse {
+            user_id: String::new(),
             request_id: request.request_id.clone(),
             start_time: request.start_time,
             end_time: request.end_time,

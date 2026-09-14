@@ -11,18 +11,32 @@ use crate::apply_distinct_to_streams;
 /// not consistent about the default one: the frame it backfills when a tail
 /// opens folds an entry's structured metadata into the stream's labels, as
 /// `/query_range` does, while the frames it streams afterwards drop the
-/// metadata instead of folding it. Krabka folds throughout, which is the
-/// backfill's answer and the one that loses nothing.
+/// metadata instead of folding it. `live` distinguishes those two frames.
 pub(crate) fn execute_tail_query_with_frontier_and_deletes(
     plan: &StreamPlan,
     hot_tail: &[WalLogRecord],
     frontier: &CompactionFrontier,
     delete_filters: &[ActiveLogDeleteFilter],
     encoding: LokiStreamEncoding,
+    live: bool,
 ) -> Value {
     let mut streams: BTreeMap<Labels, Vec<LokiStreamEntry>> = BTreeMap::new();
     for record in hot_tail {
         append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters);
+    }
+    if live && matches!(encoding, LokiStreamEncoding::Folded) && plan.query.pipeline.is_empty() {
+        let mut live_streams: BTreeMap<Labels, Vec<LokiStreamEntry>> = BTreeMap::new();
+        for entries in streams.into_values() {
+            for mut entry in entries {
+                entry.structured_metadata.clear();
+                entry.parsed.remove("detected_level");
+                let mut labels = entry.source_labels.clone();
+                labels.remove("detected_level");
+                labels.extend(entry.parsed.clone());
+                live_streams.entry(labels).or_default().push(entry);
+            }
+        }
+        streams = live_streams;
     }
     sort_loki_stream_values(&mut streams);
     apply_distinct_to_streams(&mut streams, &plan.query);

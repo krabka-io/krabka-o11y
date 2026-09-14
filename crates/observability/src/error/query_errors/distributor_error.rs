@@ -56,6 +56,24 @@ pub(crate) enum DistributorError {
     NoValidStreams,
     #[error("invalid structured metadata")]
     InvalidStructuredMetadata,
+    #[error("label name is empty\n")]
+    EmptyStructuredMetadataLabelName,
+    #[error(
+        "stream '{stream}' has structured metadata too large: '{observed}' bytes, limit: '{limit}' bytes\n"
+    )]
+    StructuredMetadataTooLarge {
+        stream: String,
+        observed: usize,
+        limit: usize,
+    },
+    #[error(
+        "stream '{stream}' has too many structured metadata labels: '{observed}', limit: '{limit}'\n"
+    )]
+    TooManyStructuredMetadataLabels {
+        stream: String,
+        observed: usize,
+        limit: u64,
+    },
     #[error("{0}")]
     InvalidStructuredMetadataSyntax(String),
     #[error("invalid timestamp")]
@@ -151,7 +169,9 @@ impl IntoResponse for DistributorError {
             }
             Self::NoValidStreams => StatusCode::UNPROCESSABLE_ENTITY,
             Self::WalAppendTimeout | Self::WalBatch(_) => StatusCode::SERVICE_UNAVAILABLE,
-            Self::RecordTenantMismatch { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::RecordTenantMismatch { .. } | Self::EmptyStructuredMetadataLabelName => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
             Self::EmptyStreamLabels
             | Self::LineTooLong { .. }
             | Self::TooManyLabelNames { .. }
@@ -167,6 +187,8 @@ impl IntoResponse for DistributorError {
             | Self::InvalidPushPayload
             | Self::InvalidPushValue
             | Self::InvalidStructuredMetadata
+            | Self::StructuredMetadataTooLarge { .. }
+            | Self::TooManyStructuredMetadataLabels { .. }
             | Self::InvalidStructuredMetadataSyntax(_)
             | Self::InvalidTimestamp
             | Self::TimestampTooOld { .. }
@@ -193,6 +215,7 @@ impl IntoResponse for DistributorError {
                 | Self::LabelNameTooLong { .. }
                 | Self::LabelValueTooLong { .. }
                 | Self::NoValidStreams
+                | Self::EmptyStructuredMetadataLabelName
                 | Self::TimestampTooOld { .. }
                 | Self::TimestampTooOldString { .. }
                 | Self::TimestampTooNew { .. }

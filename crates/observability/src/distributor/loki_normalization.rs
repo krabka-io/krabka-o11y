@@ -1,9 +1,12 @@
 use krabka_units::convert::{ByteSizeExt, TimeExt};
 
+use super::otlp_normalization::{
+    is_default_otlp_resource_label, matches_otlp_attribute, normalize_otlp_attribute_name,
+};
 use crate::{
     ByteSize, CONTENT_TYPE, DistributorError, HeaderMap, Labels, Limits, LokiProtoPushRequest,
-    LokiTypedPushRequest, MatchOp, OtlpLogsRequest, TenantId, Time, Value, WalLogRecord,
-    current_unix_time_ns, discover_detected_level_label, discover_service_name_label,
+    LokiTypedPushRequest, MatchOp, OtlpAttributeAction, OtlpLogsRequest, TenantId, Time, Value,
+    WalLogRecord, current_unix_time_ns, discover_detected_level_label, discover_service_name_label,
     loki_decode_error_context, loki_missing_proto_timestamp_error,
     loki_proto_label_pairs_to_labels, loki_proto_timestamp_ns, loki_stale_sample_label_set,
     otlp_attributes_to_labels, otlp_log_record_structured_metadata, otlp_timestamp_ns,
@@ -26,10 +29,12 @@ mod normalize_loki_proto_push;
 mod normalize_loki_push;
 mod normalize_otlp_logs;
 mod parse_loki_proto_labels;
+mod truncate_loki_line;
 mod validate_loki_empty_json_value_timestamp_window;
 mod validate_loki_label_limits;
 mod validate_loki_line_size;
 mod validate_loki_stream_labels;
+mod validate_structured_metadata_limits;
 
 pub(crate) use is_loki_json_content_type::is_loki_json_content_type;
 pub(crate) use is_loki_label_name::is_loki_label_name;
@@ -46,7 +51,9 @@ pub(crate) use normalize_loki_proto_push::normalize_loki_proto_push;
 pub(crate) use normalize_loki_push::normalize_loki_push;
 pub(crate) use normalize_otlp_logs::normalize_otlp_logs;
 pub(crate) use parse_loki_proto_labels::parse_loki_proto_labels;
+pub(crate) use truncate_loki_line::truncate_loki_line;
 pub(crate) use validate_loki_empty_json_value_timestamp_window::validate_loki_empty_json_value_timestamp_window;
 pub(crate) use validate_loki_label_limits::validate_loki_label_limits;
 pub(crate) use validate_loki_line_size::validate_loki_line_size;
 pub(crate) use validate_loki_stream_labels::validate_loki_stream_labels;
+pub(crate) use validate_structured_metadata_limits::validate_structured_metadata_limits;

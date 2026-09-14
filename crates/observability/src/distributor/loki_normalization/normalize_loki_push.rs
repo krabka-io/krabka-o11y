@@ -1,9 +1,10 @@
 use super::{
     DistributorError, Limits, LokiTypedPushRequest, TenantId, Value, WalLogRecord,
     discover_service_name_label, loki_json_line_parse_error, loki_json_timestamp_parse_error,
-    loki_push_entry_labels, parse_structured_metadata, validate_ingest_timestamp_ns,
-    validate_loki_empty_json_value_timestamp_window, validate_loki_line_size,
-    validate_loki_stream_labels, validate_loki_timestamp_window,
+    loki_push_entry_labels, parse_structured_metadata, truncate_loki_line,
+    validate_ingest_timestamp_ns, validate_loki_empty_json_value_timestamp_window,
+    validate_loki_line_size, validate_loki_stream_labels, validate_loki_timestamp_window,
+    validate_structured_metadata_limits,
 };
 
 pub(crate) fn normalize_loki_push(
@@ -65,15 +66,19 @@ pub(crate) fn normalize_loki_push(
                 )?;
             }
             validate_loki_timestamp_window(timestamp_ns, &stream_labels, limits)?;
-            validate_loki_line_size(line, &stream_labels, limits)?;
-            let labels = loki_push_entry_labels(&stream_labels, line);
+            let mut line = line.to_string();
+            truncate_loki_line(&mut line, limits);
+            validate_loki_line_size(&line, &stream_labels, limits)?;
+            let labels = loki_push_entry_labels(&stream_labels, &line);
 
+            let structured_metadata = parse_structured_metadata(metadata.first())?;
+            validate_structured_metadata_limits(&structured_metadata, &stream_labels, limits)?;
             records.push(WalLogRecord {
                 tenant: tenant.to_owned(),
                 labels,
                 timestamp_ns,
-                line: line.to_string(),
-                structured_metadata: parse_structured_metadata(metadata.first())?,
+                line,
+                structured_metadata,
                 position: None,
             });
         }

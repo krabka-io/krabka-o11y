@@ -13,7 +13,8 @@ pub(crate) fn distributor_error_to_grpc_status(error: &DistributorError) -> toni
         DistributorError::IngestQuota(IngestLimitError::Unavailable { .. })
         | DistributorError::WalAppendTimeout
         | DistributorError::WalBatch(_) => tonic::Status::unavailable(message),
-        DistributorError::RecordTenantMismatch { .. } => tonic::Status::internal(message),
+        DistributorError::RecordTenantMismatch { .. }
+        | DistributorError::EmptyStructuredMetadataLabelName => tonic::Status::internal(message),
         DistributorError::EmptyStreamLabels
         | DistributorError::LineTooLong { .. }
         | DistributorError::TooManyLabelNames { .. }
@@ -30,6 +31,8 @@ pub(crate) fn distributor_error_to_grpc_status(error: &DistributorError) -> toni
         | DistributorError::NoValidStreams
         | DistributorError::InvalidJsonPushValueSyntax(_)
         | DistributorError::InvalidStructuredMetadata
+        | DistributorError::StructuredMetadataTooLarge { .. }
+        | DistributorError::TooManyStructuredMetadataLabels { .. }
         | DistributorError::InvalidStructuredMetadataSyntax(_)
         | DistributorError::InvalidTimestamp
         | DistributorError::TimestampTooOld { .. }

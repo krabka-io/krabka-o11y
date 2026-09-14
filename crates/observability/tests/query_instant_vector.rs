@@ -793,7 +793,7 @@ async fn query_endpoint_orders_label_replace_vector_set_or_like_loki() {
 }
 
 #[tokio::test]
-async fn query_endpoint_accepts_label_join_vector_function() {
+async fn query_endpoint_rejects_label_join_vector_function_like_loki() {
     let state = fixture();
     let app = loki_router(state);
 
@@ -808,25 +808,9 @@ async fn query_endpoint_accepts_label_join_vector_function() {
         .await
         .unwrap();
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "joined": "/"
-                            },
-                            "value": [4_000_000_000i64, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats()
-                }
-            })
-    );
+    assert!(response.status() == StatusCode::BAD_REQUEST);
+    let body = text_body(response).await;
+    assert!(body.contains("expecting range aggregation"), "{body}");
 }
 
 #[tokio::test]

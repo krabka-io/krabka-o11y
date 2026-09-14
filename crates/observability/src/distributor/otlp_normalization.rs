@@ -2,11 +2,11 @@ use krabka_units::convert::TimeExt;
 
 use crate::{
     BTreeMap, DistributorError, LOKI_REJECT_OLD_SAMPLES_MAX_AGE, Labels, Limits,
-    LokiProtoLabelPair, LokiProtoTimestamp, OffsetDateTime, OtlpAnyValue, OtlpKeyValue,
-    OtlpLogRecord, ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord, TenantId, Time,
-    Value, WalLogRecord, current_unix_time_ns, hex_string, metadata_value_to_string,
-    otlp_value_to_json, proto_value_to_string, quote_logql_string, validate_loki_label_limits,
-    validate_loki_line_size,
+    LokiProtoLabelPair, LokiProtoTimestamp, OffsetDateTime, OtlpAnyValue, OtlpAttributeAction,
+    OtlpKeyValue, OtlpLogRecord, ProtoExportLogsServiceRequest, ProtoKeyValue, ProtoLogRecord,
+    TenantId, Time, Value, WalLogRecord, current_unix_time_ns, hex_string,
+    metadata_value_to_string, otlp_value_to_json, proto_any_value, proto_value_to_string,
+    quote_logql_string, validate_loki_label_limits, validate_loki_line_size,
 };
 
 mod contains_log_level_token;
@@ -15,6 +15,7 @@ mod discover_detected_level_label;
 mod discover_service_name_label;
 mod insert_metadata_if_absent;
 mod insert_proto_trace_context_metadata;
+mod is_default_otlp_resource_label;
 mod is_log_level_word_byte;
 mod loki_missing_proto_timestamp_error;
 mod loki_proto_label_pairs_to_labels;
@@ -43,12 +44,15 @@ pub(crate) use discover_detected_level_label::discover_detected_level_label;
 pub(crate) use discover_service_name_label::discover_service_name_label;
 pub(crate) use insert_metadata_if_absent::insert_metadata_if_absent;
 pub(crate) use insert_proto_trace_context_metadata::insert_proto_trace_context_metadata;
+pub(crate) use is_default_otlp_resource_label::is_default_otlp_resource_label;
 pub(crate) use is_log_level_word_byte::is_log_level_word_byte;
 pub(crate) use loki_missing_proto_timestamp_error::loki_missing_proto_timestamp_error;
 pub(crate) use loki_proto_label_pairs_to_labels::loki_proto_label_pairs_to_labels;
 pub(crate) use loki_proto_timestamp_ns::loki_proto_timestamp_ns;
 pub(crate) use loki_stale_sample_label_set::loki_stale_sample_label_set;
-pub(crate) use normalize_otlp_attribute_name::normalize_otlp_attribute_name;
+pub(crate) use normalize_otlp_attribute_name::{
+    matches_otlp_attribute, normalize_otlp_attribute_name,
+};
 pub(crate) use normalize_otlp_proto_logs::normalize_otlp_proto_logs;
 pub(crate) use normalize_otlp_proto_logs_for_tenant::normalize_otlp_proto_logs_for_tenant;
 pub(crate) use otlp_attributes_to_labels::otlp_attributes_to_labels;

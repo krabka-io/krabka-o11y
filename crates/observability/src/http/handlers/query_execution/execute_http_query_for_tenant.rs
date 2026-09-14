@@ -55,9 +55,10 @@ pub(crate) async fn execute_http_query_for_tenant_inner(
     let direction = loki_direction(params.direction.as_deref())?;
     let interval = params.interval;
     reject_signed_vector_function_literal(&params.query)?;
-    if strip_outer_parenthesized_expression(&params.query)
-        .is_some_and(|inner| inner.trim_start().starts_with("label_join"))
-    {
+    let unwrapped = strip_outer_parenthesized_expression(&params.query)
+        .unwrap_or(&params.query)
+        .trim_start();
+    if unwrapped.starts_with("label_join") {
         return Err(HttpQueryError::LokiPlainParse(
             "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER, expecting range aggregation"
                 .to_string(),

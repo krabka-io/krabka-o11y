@@ -1588,7 +1588,7 @@ async fn loki_push_endpoint_accepts_invalid_protobuf_structured_metadata_name() 
 }
 
 #[tokio::test]
-async fn loki_push_endpoint_accepts_empty_protobuf_structured_metadata_name() {
+async fn loki_push_endpoint_rejects_empty_protobuf_structured_metadata_name_like_loki() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
     let payload = LokiProtoPushRequest {
@@ -1626,23 +1626,9 @@ async fn loki_push_endpoint_accepts_empty_protobuf_structured_metadata_name() {
         .await
         .unwrap();
 
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
-    assert!(
-        records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("service_name", "api"),
-                ]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([(String::new(), "metadata".to_string())]),
-                position: None,
-            }]
-    );
+    assert!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(text_body(response).await == "label name is empty\n");
+    assert!(sink.records().is_empty());
 }
 
 #[tokio::test]

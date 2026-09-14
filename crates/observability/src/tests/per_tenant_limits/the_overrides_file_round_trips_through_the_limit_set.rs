@@ -1,4 +1,5 @@
 use super::*;
+use crate::{BTreeMap, OtlpAttributeAction};
 
 /// Every field of the limit set has to survive a write and a read. A field
 /// whose serde attribute names the wrong unit adapter, or whose key differs
@@ -12,6 +13,21 @@ use super::*;
 pub(crate) fn the_overrides_file_round_trips_through_the_limit_set() {
     let limits = Limits {
         max_line_size: bytes(4096),
+        max_line_size_truncate: true,
+        max_structured_metadata_size: bytes(3072),
+        max_structured_metadata_entries_count: 6,
+        otlp_resource_attributes: BTreeMap::from([(
+            "host.name".to_string(),
+            OtlpAttributeAction::IndexLabel,
+        )]),
+        otlp_scope_attributes: BTreeMap::from([(
+            "scope.secret".to_string(),
+            OtlpAttributeAction::Drop,
+        )]),
+        otlp_log_attributes: BTreeMap::from([(
+            "log.secret".to_string(),
+            OtlpAttributeAction::Drop,
+        )]),
         max_label_names_per_series: 7,
         max_label_name_length: bytes(64),
         max_label_value_length: bytes(128),

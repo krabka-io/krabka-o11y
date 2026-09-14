@@ -15,5 +15,6 @@ pub fn execute_tail_query_with_frontier(
         frontier,
         &[],
         LokiStreamEncoding::Folded,
+        false,
     )
 }

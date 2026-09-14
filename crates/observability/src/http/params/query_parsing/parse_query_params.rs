@@ -47,12 +47,17 @@ pub(crate) fn parse_query_params(raw_query: Option<&str>) -> Result<QueryParams,
                 // an integer. Its querier parses every nonzero integer whose
                 // decimal form has at most ten characters as seconds again.
                 if timestamp != 0 && timestamp.to_string().len() <= 10 {
-                    timestamp = timestamp.checked_mul(1_000_000_000).ok_or_else(|| {
-                        HttpQueryError::InvalidTimestampQueryParameter {
+                    timestamp = timestamp
+                        .checked_mul(1_000_000_000)
+                        .or_else(|| {
+                            timestamp
+                                .checked_div(1_000_000)?
+                                .checked_mul(1_000_000_000_000_000)
+                        })
+                        .ok_or_else(|| HttpQueryError::InvalidTimestampQueryParameter {
                             name: "time",
                             value: value.clone(),
-                        }
-                    })?;
+                        })?;
                 }
                 time = Some(timestamp);
             }

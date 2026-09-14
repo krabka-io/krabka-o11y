@@ -132,62 +132,7 @@ const OVERSIZED_END_NS: &str = "2595601000000000";
 ///
 /// Do not loosen a normalizer to make a case pass. Each one drops only what is
 /// measured on one side's own storage, clock or build.
-const LOKI_KNOWN_DIVERGENCE: &[Divergence] = &[
-    Divergence {
-        case: "query_forwarded_time_overflow",
-        reason: "Loki accepts a decimal instant whose frontend-to-querier rescaling exceeds \
-                 signed 64-bit nanoseconds. Krabka returns 400 instead of overflowing the \
-                 timestamp used by its query engine.",
-    },
-    Divergence {
-        case: "instant_selector_api_stream",
-        reason: "Loki refuses a log selector on `/query` outright: 400, \"log queries are not \
-                 supported as an instant query type\". Krabka answers it, with an empty stream \
-                 list.",
-    },
-    Divergence {
-        case: "instant_selector_worker_stream",
-        reason: "Loki refuses a log selector on `/query`, as `instant_selector_api_stream`.",
-    },
-    Divergence {
-        case: "parser_selected_json",
-        reason: "For selected JSON extraction, Loki keeps a row whose selected nested fields are \
-                 absent, sets them to empty labels, and attaches `LabelFilterErr`; Krabka drops \
-                 that row at the numeric label filter.",
-    },
-    Divergence {
-        case: "parser_pattern",
-        reason: "Loki's pattern parser captures the remainder of an unterminated quoted logfmt \
-                 value, while Krabka leaves that malformed row unmatched.",
-    },
-    Divergence {
-        case: "push_protobuf_empty_structured_metadata_name",
-        reason: "Loki 3.7.7 rejects a protobuf push whose structured metadata has an empty \
-                 label name with 500, \"label name is empty\". Krabka accepts it with 204.",
-    },
-    Divergence {
-        case: "delete_list_after_create",
-        reason: "Loki 3.7.7 includes `user_id` as an empty string in each delete request; \
-                 Krabka's delete-list response omits that field.",
-    },
-    Divergence {
-        case: "tail_live_frame",
-        reason: "Under the default encoding, Loki 3.7.7 writes an entry that reaches a tail \
-                 live with its stream labels alone: its structured metadata and its \
-                 `detected_level` are not in the frame. An entry it replays from history comes \
-                 with both folded into the labels, as `tail_first_frame` shows. Krabka folds \
-                 both in on either path. Under `categorize-labels` the two agree \
-                 (`tail_live_frame_categorized`). The parser-stage live path agrees in \
-                 `tail_live_parser_frame`.",
-    },
-    Divergence {
-        case: "status_services",
-        reason: "`/services` lists the modules Loki runs, and those follow its config. This \
-                 suite's Loki runs the pattern ingester and turns usage reporting off, so it \
-                 lists `pattern-ingester`, `pattern-ingester-tee` and `pattern-ring-client` and \
-                 omits `analytics`. Krabka lists the modules of a Loki on its default config.",
-    },
-];
+const LOKI_KNOWN_DIVERGENCE: &[Divergence] = &[];
 
 /// The request header that asks for the `categorize-labels` encoding.
 ///

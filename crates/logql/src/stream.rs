@@ -134,6 +134,19 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn pattern_parser_captures_the_remainder_when_the_closing_literal_is_missing() {
+        let parser = PatternParser::new("status=<status> msg=\"<msg>\"").unwrap();
+
+        assert_eq!(
+            parser.captures("status=500 msg=\"unterminated").unwrap(),
+            vec![
+                ("status".to_string(), "500".to_string()),
+                ("msg".to_string(), "unterminated".to_string()),
+            ]
+        );
+    }
 }
 
 mod anchored_regex_pattern;

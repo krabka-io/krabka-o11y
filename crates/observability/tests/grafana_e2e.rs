@@ -85,12 +85,7 @@ const STEP_SECS: i64 = 15;
 ///
 /// Do not loosen `normalize()` to make a case pass. It drops the volatile
 /// members of the answer and nothing else.
-const KNOWN_DIVERGENCE: &[Divergence] = &[Divergence {
-    case: "label_join",
-    reason: "Krabka accepts the PromQL function `label_join` in a LogQL query and answers it. \
-             Loki rejects it with 400, because `label_join` is not a LogQL function. Krabka is a \
-             superset here.",
-}];
+const KNOWN_DIVERGENCE: &[Divergence] = &[];
 
 /// Single-binary Loki, configured for one tenant on the local filesystem.
 ///

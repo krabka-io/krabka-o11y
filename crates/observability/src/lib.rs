@@ -212,7 +212,7 @@ pub use distributor::{
 };
 pub use error::QueryError;
 pub use http::loki_router;
-pub use limits::{Limits, OverridesError, OverridesProvider};
+pub use limits::{Limits, OtlpAttributeAction, OverridesError, OverridesProvider};
 pub use log_level::{
     LogLevelControl, LogLevelError, Telemetry, init_telemetry, install_json_logging,
     json_logging_layer,
@@ -291,7 +291,8 @@ pub(crate) use self::{
         loki_normalization::{
             is_loki_json_content_type, is_loki_label_name, is_protobuf_content_type,
             loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
-            normalize_otlp_logs, validate_loki_label_limits, validate_loki_line_size,
+            normalize_otlp_logs, truncate_loki_line, validate_loki_label_limits,
+            validate_loki_line_size,
         },
         otlp_normalization::{
             detect_log_level, discover_detected_level_label, discover_service_name_label,

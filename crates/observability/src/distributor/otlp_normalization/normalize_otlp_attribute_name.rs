@@ -21,3 +21,10 @@ pub(crate) fn normalize_otlp_attribute_name(name: &str) -> String {
     }
     normalized
 }
+
+pub(crate) fn matches_otlp_attribute(name: &str, root: &str) -> bool {
+    name == root
+        || name
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.starts_with('_'))
+}

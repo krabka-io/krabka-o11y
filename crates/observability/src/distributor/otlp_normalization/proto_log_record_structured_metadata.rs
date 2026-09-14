@@ -9,6 +9,12 @@ pub(crate) fn proto_log_record_structured_metadata(
     let mut metadata = proto_attributes_to_labels(Some(log_record.attributes.as_slice()))?;
     insert_metadata_if_absent(
         &mut metadata,
+        "observed_timestamp",
+        (log_record.observed_time_unix_nano != 0)
+            .then(|| log_record.observed_time_unix_nano.to_string()),
+    )?;
+    insert_metadata_if_absent(
+        &mut metadata,
         "severity_number",
         (log_record.severity_number != 0).then(|| log_record.severity_number.to_string()),
     )?;

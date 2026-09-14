@@ -19,7 +19,12 @@ pub(crate) fn a_repeated_log_query_parameter_keeps_the_first_value() {
     check!(parse("query=a&time=01").time == Some(1_000_000_000_000_000_000));
     check!(parse("query=a&time=0.5").time == Some(500_000_000_000_000_000));
     check!(parse("query=a&time=0").time == Some(0));
-    check!(super::super::prelude::parse_query_params(Some("query=a&time=9.223372037")).is_err());
+    check!(
+        super::super::prelude::parse_query_params(Some("query=a&time=9.223372037"))
+            .unwrap()
+            .time
+            == Some(9_223_000_000_000_000_000)
+    );
     check!(parse("query=a&start=100&start=200").start == Some(100_000_000_000));
     check!(parse("query=a&end=500&end=900").end == Some(500_000_000_000));
     check!(parse("query=a&limit=5&limit=9").limit == Some(5));

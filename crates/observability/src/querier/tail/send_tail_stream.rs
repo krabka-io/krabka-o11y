@@ -13,6 +13,7 @@ pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
         let _ = send_tail_frame(&mut socket, frame).await;
         return;
     };
+    let initial_records = source.records().len();
     let mut sent_records = 0;
     let mut poll = tokio::time::interval(Duration::from_millis(50));
     let mut keepalive = tokio::time::interval(Duration::from_secs(15));
@@ -53,6 +54,7 @@ pub(crate) async fn send_tail_stream(mut socket: WebSocket, tail: TailStream) {
                             &frontier,
                             &tail.delete_filters,
                             tail.encoding,
+                            sent_records >= initial_records,
                         );
                         sent_records = eligible_end;
                         let mut frame = apply_loki_tail_frame_limit(frame, tail.limit);

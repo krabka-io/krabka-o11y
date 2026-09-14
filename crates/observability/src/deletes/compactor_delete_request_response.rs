@@ -2,6 +2,7 @@ use super::Serialize;
 
 #[derive(Serialize)]
 pub(crate) struct CompactorDeleteRequestResponse {
+    pub(crate) user_id: String,
     pub(crate) request_id: String,
     pub(crate) start_time: i64,
     pub(crate) end_time: i64,
