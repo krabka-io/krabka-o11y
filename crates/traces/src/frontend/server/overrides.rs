@@ -1,12 +1,15 @@
 use super::{
-    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Principal, QuerierBackend,
-    QueryFrontend, Response, State, request_tenant,
+    Arc, BlockCatalog, Bytes, Extension, HeaderMap, Method, Principal, QuerierBackend,
+    QueryFrontend, Response, State, Uri, overrides_api_response, request_tenant,
 };
 
 pub(crate) async fn overrides<B, C>(
     State(qf): State<Arc<QueryFrontend<B, C>>>,
     Extension(principal): Extension<Principal>,
+    method: Method,
+    uri: Uri,
     headers: HeaderMap,
+    body: Bytes,
 ) -> Response
 where
     B: QuerierBackend + 'static,
@@ -16,5 +19,12 @@ where
         Ok(tenant) => tenant,
         Err(rejection) => return *rejection,
     };
-    Json(*qf.cfg.overrides.for_tenant(tenant.as_str())).into_response()
+    overrides_api_response(
+        &qf.cfg.overrides,
+        tenant.as_str(),
+        &method,
+        &headers,
+        uri.query(),
+        &body,
+    )
 }

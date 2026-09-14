@@ -42,11 +42,11 @@ where
     };
     let limits = state.cfg.limits_for_tenant(&tenant);
     if let Err(err) =
-        QueryEnforcer::check_search_limit(limits, u64::try_from(limit).unwrap_or(u64::MAX))
+        QueryEnforcer::check_search_limit(&limits, u64::try_from(limit).unwrap_or(u64::MAX))
     {
         return limit_error_response(&err);
     }
-    if let Err(err) = QueryEnforcer::check_search_duration(limits, start_ns, end_ns) {
+    if let Err(err) = QueryEnforcer::check_search_duration(&limits, start_ns, end_ns) {
         return limit_error_response(&err);
     }
     if limit > state.engine.max_traces() {

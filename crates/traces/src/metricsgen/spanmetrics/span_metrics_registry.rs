@@ -11,6 +11,8 @@ pub struct SpanMetricsRegistry {
     pub(crate) config: SpanMetricsConfig,
     pub(crate) entries: HashMap<DimKey, DimEntry>,
     pub(crate) targets: HashSet<Vec<(String, String)>>,
+    pub(crate) hosts: HashSet<Vec<(String, String)>>,
+    pub(crate) host_info: HostInfoConfig,
     pub(crate) discarded_series: f64,
 }
 
@@ -26,6 +28,8 @@ impl SpanMetricsRegistry {
             config: cfg.processor.span_metrics.clone(),
             entries: HashMap::new(),
             targets: HashSet::new(),
+            hosts: HashSet::new(),
+            host_info: cfg.processor.host_info.clone(),
             discarded_series: 0.0,
         }
     }
@@ -41,6 +45,21 @@ impl SpanMetricsRegistry {
     /// every kind, so a second enum would repeat this one's two live variants
     /// under a new name.
     pub fn record_span(&mut self, span: &SpanRecord) -> RecordOutcome {
+        if self.host_info.enabled {
+            for identifier in &self.host_info.host_identifiers {
+                if let Some((_, value)) = span
+                    .resource_attributes
+                    .iter()
+                    .find(|(name, value)| name == identifier && !value.is_empty())
+                {
+                    self.hosts.insert(sorted_labels(vec![
+                        ("grafana_host_id".into(), value.clone()),
+                        ("host_source".into(), identifier.clone()),
+                    ]));
+                    break;
+                }
+            }
+        }
         if !span_allowed(span, &self.config) {
             return RecordOutcome::Ignored;
         }
@@ -123,33 +142,39 @@ impl SpanMetricsRegistry {
 
         for (labels, entry) in &mut self.entries {
             let labels = labels.clone();
-            series.push(Series {
-                name: "traces_spanmetrics_calls_total".to_string(),
-                labels: labels.clone(),
-                sample: SeriesSample::Counter(entry.calls),
-                exemplars: Vec::new(),
-                timestamp_ms,
-            });
-            series.push(Series {
-                name: "traces_spanmetrics_size_total".to_string(),
-                labels: labels.clone(),
-                sample: SeriesSample::Counter(entry.size_total),
-                exemplars: Vec::new(),
-                timestamp_ms,
-            });
+            if self.config.subprocessor_enabled("count") {
+                series.push(Series {
+                    name: "traces_spanmetrics_calls_total".to_string(),
+                    labels: labels.clone(),
+                    sample: SeriesSample::Counter(entry.calls),
+                    exemplars: Vec::new(),
+                    timestamp_ms,
+                });
+            }
+            if self.config.subprocessor_enabled("size") {
+                series.push(Series {
+                    name: "traces_spanmetrics_size_total".to_string(),
+                    labels: labels.clone(),
+                    sample: SeriesSample::Counter(entry.size_total),
+                    exemplars: Vec::new(),
+                    timestamp_ms,
+                });
+            }
 
             let (buckets, sum, count) = entry.latency.cumulative_seconds();
-            series.push(Series {
-                name: "traces_spanmetrics_latency".to_string(),
-                labels,
-                sample: SeriesSample::ClassicHistogram {
-                    buckets,
-                    sum,
-                    count,
-                },
-                exemplars: std::mem::take(&mut entry.exemplars),
-                timestamp_ms,
-            });
+            if self.config.subprocessor_enabled("latency") {
+                series.push(Series {
+                    name: "traces_spanmetrics_latency".to_string(),
+                    labels,
+                    sample: SeriesSample::ClassicHistogram {
+                        buckets,
+                        sum,
+                        count,
+                    },
+                    exemplars: std::mem::take(&mut entry.exemplars),
+                    timestamp_ms,
+                });
+            }
         }
 
         if self.enable_target_info {
@@ -161,6 +186,14 @@ impl SpanMetricsRegistry {
                 timestamp_ms,
             }));
         }
+
+        series.extend(self.hosts.iter().map(|labels| Series {
+            name: self.host_info.metric_name.clone(),
+            labels: labels.clone(),
+            sample: SeriesSample::Gauge(1.0),
+            exemplars: Vec::new(),
+            timestamp_ms,
+        }));
 
         series
     }

@@ -15,7 +15,7 @@ use axum::{
     Json, Router,
     body::{Body, Bytes},
     extract::{Extension, Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, Uri},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -34,6 +34,7 @@ use crate::{
         merge::TraceStatus,
         wire::parse_hex16,
     },
+    limits::overrides_api_response,
     readiness::tempo_readiness_routes,
 };
 

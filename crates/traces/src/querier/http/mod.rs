@@ -2,8 +2,9 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{Extension, Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -40,7 +41,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     error::tempo_limit_error_response,
     ids::UnixNano,
-    limits::{LimitError, Limits, OverridesProvider, QueryEnforcer},
+    limits::{LimitError, Limits, OverridesProvider, QueryEnforcer, overrides_api_response},
     metrics::ServiceMetrics,
     readiness::tempo_readiness_routes,
 };
@@ -2162,7 +2163,7 @@ overrides:
         let (status, body) = get_json("/api/status/buildinfo").await;
         check!(status == StatusCode::OK);
         check!(body["status"] == "success");
-        check!(body["data"]["version"].as_str() == Some("2.6.0"));
+        check!(body["data"]["version"].as_str() == Some("3.0.3"));
     }
 
     #[tokio::test]

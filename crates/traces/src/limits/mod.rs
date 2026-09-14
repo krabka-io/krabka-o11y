@@ -4,9 +4,11 @@ use thiserror::Error;
 
 mod enforce;
 mod overrides;
+mod overrides_api_response;
 
 pub use enforce::{IngestEnforcer, QueryEnforcer};
-pub use overrides::{OverridesError, OverridesProvider};
+pub use overrides::{OverrideMutationError, OverridesError, OverridesProvider};
+pub(crate) use overrides_api_response::overrides_api_response;
 
 #[cfg(test)]
 mod tests {

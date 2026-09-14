@@ -14,6 +14,8 @@ The owned behavior below has executable coverage, and delegated compatibility is
 | Surface | Behavior | Result | Test | Oracle |
 | :--- | :--- | :--- | :--- | :--- |
 | **OTLP, Zipkin, Jaeger ingest and Tempo query APIs** | Trace by ID and search match Tempo | Pass | `tests/tempo_differential.rs::real_tempo_and_krabka_match_basic_by_id_and_search` | Pinned Tempo image |
+| **Tempo 3.0.3 overrides API** | Versioned replace, merge patch, and delete semantics | Pass | `limits::overrides_api_response::tests::mutations_follow_tempo_preconditions_and_etags` | Deterministic in-process contract test |
+| **Tempo metrics generator** | Host-info labels and configurable span-metrics subprocessors | Pass | `metricsgen::spanmetrics::tests::host_info_and_subprocessors_follow_tempo_configuration` | Deterministic processor test |
 
 ## Test Inventory
 

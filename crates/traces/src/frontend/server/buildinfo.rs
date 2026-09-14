@@ -4,7 +4,7 @@ pub(crate) async fn buildinfo() -> Response {
     Json(json!({
         "status": "success",
         "data": {
-            "version": "2.6.0",
+            "version": "3.0.3",
             "revision": "krabka",
             "branch": "main",
             "buildUser": "krabka",

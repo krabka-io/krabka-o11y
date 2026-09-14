@@ -67,7 +67,7 @@ pub use checkpoint::{
     EdgeCheckpointStore, InMemoryCheckpointStore, encode_checkpoint_key, parse_checkpoint_key,
 };
 pub use clock::{Clock, MockClock, SystemClock};
-pub use config::{DEFAULT_LATENCY_BUCKETS_NS, MetricsGenConfig};
+pub use config::{DEFAULT_LATENCY_BUCKETS_NS, HostInfoConfig, MetricsGenConfig};
 pub use contract::{
     BucketSpan, NativeHistogram, SpanKind, SpanRecord, StatusCode, TRACES_WAL_TOPIC,
 };
