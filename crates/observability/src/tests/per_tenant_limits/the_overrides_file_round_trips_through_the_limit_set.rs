@@ -1,4 +1,5 @@
 use super::*;
+use crate::{OtlpAttributeAction, OtlpAttributesConfig, OtlpConfig, OtlpResourceAttributesConfig};
 
 /// Every field of the limit set has to survive a write and a read. A field
 /// whose serde attribute names the wrong unit adapter, or whose key differs
@@ -12,6 +13,29 @@ use super::*;
 pub(crate) fn the_overrides_file_round_trips_through_the_limit_set() {
     let limits = Limits {
         max_line_size: bytes(4096),
+        max_line_size_truncate: true,
+        max_structured_metadata_size: bytes(3072),
+        max_structured_metadata_entries_count: 6,
+        otlp_config: OtlpConfig {
+            resource_attributes: OtlpResourceAttributesConfig {
+                ignore_defaults: true,
+                attributes_config: vec![OtlpAttributesConfig {
+                    action: OtlpAttributeAction::IndexLabel,
+                    attributes: vec!["host.name".into()],
+                    regex: None,
+                }],
+            },
+            scope_attributes: vec![OtlpAttributesConfig {
+                action: OtlpAttributeAction::Drop,
+                attributes: vec!["scope.secret".into()],
+                regex: None,
+            }],
+            log_attributes: vec![OtlpAttributesConfig {
+                action: OtlpAttributeAction::Drop,
+                attributes: vec!["log.secret".into()],
+                regex: None,
+            }],
+        },
         max_label_names_per_series: 7,
         max_label_name_length: bytes(64),
         max_label_value_length: bytes(128),

@@ -6,9 +6,8 @@ use super::*;
 /// `categorize-labels` keeps the stream to its own labels and gives the entry
 /// the envelope.
 ///
-/// Loki is not consistent here -- the frame it backfills when a tail opens
-/// folds, the frames it streams afterwards drop the metadata instead -- so
-/// Krabka folds throughout, which is the backfill's answer.
+/// Loki is not consistent here: the frame it backfills when a tail opens
+/// folds, while the frames streamed afterwards drop the metadata.
 #[test]
 pub(crate) fn a_tail_frame_carries_the_encoding_the_tail_request_asked_for() {
     let mut labels = Labels::default();
@@ -40,6 +39,7 @@ pub(crate) fn a_tail_frame_carries_the_encoding_the_tail_request_asked_for() {
             &frontier,
             &[],
             encoding,
+            true,
         )
     };
 
@@ -49,9 +49,7 @@ pub(crate) fn a_tail_frame_carries_the_encoding_the_tail_request_asked_for() {
                 "streams": [
                     {
                         "stream": {
-                            "app": "api",
-                            "detected_level": "unknown",
-                            "trace_id": "abc"
+                            "app": "api"
                         },
                         "values": [["10", "api error"]]
                     }

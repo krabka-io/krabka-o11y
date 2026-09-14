@@ -85,12 +85,12 @@ async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
                 tenant: "tenant-a".to_string(),
                 labels: labels([
                     ("deployment_environment", "prod"),
-                    ("instrumentation_scope", "api"),
                     ("service_name", "checkout"),
                 ]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("instrumentation_scope".to_string(), "api".to_string()),
                     ("status".to_string(), "500".to_string()),
                     ("trace_id".to_string(), "abc".to_string()),
                 ]),
@@ -263,15 +263,13 @@ async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metad
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("cloud_region", "us-west"),
-                    ("instrumentation_scope", "api"),
-                    ("service_name", "checkout"),
-                ]),
+                labels: labels([("service_name", "checkout"),]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("cloud_region".to_string(), "us-west".to_string()),
                     ("http_status_code".to_string(), "500".to_string()),
+                    ("instrumentation_scope".to_string(), "api".to_string()),
                     ("thread_name".to_string(), "worker-1".to_string()),
                 ]),
                 position: None,
@@ -424,11 +422,11 @@ async fn otlp_logs_endpoint_discovers_service_name_label_from_resource_attribute
     assert!(
         records[0].labels
             == labels([
-                ("app", "checkout"),
                 ("deployment_environment", "prod"),
-                ("service_name", "checkout"),
+                ("service_name", "unknown_service"),
             ])
     );
+    check!(records[0].structured_metadata.get("app") == Some(&"checkout".to_string()));
 }
 
 #[tokio::test]
@@ -591,12 +589,14 @@ async fn otlp_logs_endpoint_accepts_protobuf_payloads() {
                 tenant: "tenant-a".to_string(),
                 labels: labels([
                     ("deployment_environment", "prod"),
-                    ("instrumentation_scope", "api"),
                     ("service_name", "checkout"),
                 ]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("instrumentation_scope".to_string(), "api".to_string()),
+                    ("scope_name".to_string(), "api".to_string()),
+                    ("scope_version".to_string(), "1.2.3".to_string()),
                     ("status".to_string(), "500".to_string()),
                     ("trace_id".to_string(), "abc".to_string()),
                 ]),
@@ -637,6 +637,9 @@ async fn otlp_logs_endpoint_maps_proto_trace_and_span_ids_to_structured_metadata
     assert!(
         records[0].structured_metadata
             == BTreeMap::from([
+                ("instrumentation_scope".to_string(), "api".to_string()),
+                ("scope_name".to_string(), "api".to_string()),
+                ("scope_version".to_string(), "1.2.3".to_string()),
                 ("status".to_string(), "500".to_string()),
                 (
                     "trace_id".to_string(),
@@ -679,6 +682,9 @@ async fn otlp_logs_endpoint_maps_proto_severity_fields_to_structured_metadata() 
     assert!(
         records[0].structured_metadata
             == BTreeMap::from([
+                ("instrumentation_scope".to_string(), "api".to_string()),
+                ("scope_name".to_string(), "api".to_string()),
+                ("scope_version".to_string(), "1.2.3".to_string()),
                 ("severity_number".to_string(), "17".to_string()),
                 ("severity_text".to_string(), "ERROR".to_string()),
                 ("trace_id".to_string(), "abc".to_string()),
@@ -769,12 +775,14 @@ async fn otlp_grpc_logs_service_writes_tenant_scoped_wal_records() {
                 tenant: "tenant-a".to_string(),
                 labels: labels([
                     ("deployment_environment", "prod"),
-                    ("instrumentation_scope", "api"),
                     ("service_name", "checkout"),
                 ]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("instrumentation_scope".to_string(), "api".to_string()),
+                    ("scope_name".to_string(), "api".to_string()),
+                    ("scope_version".to_string(), "1.2.3".to_string()),
                     ("status".to_string(), "500".to_string()),
                     ("trace_id".to_string(), "abc".to_string()),
                 ]),

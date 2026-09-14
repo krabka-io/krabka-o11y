@@ -25,6 +25,11 @@ pub(crate) async fn execute_http_logql_expr(
 ) -> Result<Value, HttpQueryError> {
     match expression {
         LogqlExpr::Stream { source, .. } => {
+            if matches!(kind, QueryKind::Instant) {
+                return Err(HttpQueryError::LokiPlainParse(
+                    "log queries are not supported as an instant query type, please change your query to a range query type".to_string(),
+                ));
+            }
             let (direction, limit, interval) = stream_options;
             execute_http_stream_query(
                 state,

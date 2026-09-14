@@ -1293,7 +1293,7 @@ async fn query_endpoint_applies_metric_binary_comparison_group_left_with_label_r
 }
 
 #[tokio::test]
-async fn query_endpoint_accepts_label_join_metric_query() {
+async fn query_endpoint_rejects_label_join_metric_query_like_loki() {
     let state = fixture();
     let app = loki_router(state);
 
@@ -1308,28 +1308,9 @@ async fn query_endpoint_accepts_label_join_metric_query() {
         .await
         .unwrap();
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(
-        json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "detected_level": "unknown",
-                                "env": "prod",
-                                "joined": "api/prod/"
-                            },
-                            "value": [19, "1"]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
-                }
-            })
-    );
+    assert!(response.status() == StatusCode::BAD_REQUEST);
+    let body = text_body(response).await;
+    assert!(body.contains("expecting range aggregation"), "{body}");
 }
 
 #[tokio::test]

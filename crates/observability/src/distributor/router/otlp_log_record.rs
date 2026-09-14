@@ -3,7 +3,10 @@ use super::{Deserialize, OtlpAnyValue, OtlpKeyValue, Value};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OtlpLogRecord {
+    #[serde(default)]
     pub(crate) time_unix_nano: Value,
+    #[serde(default)]
+    pub(crate) observed_time_unix_nano: Option<Value>,
     #[serde(default)]
     pub(crate) severity_number: Option<Value>,
     #[serde(default)]

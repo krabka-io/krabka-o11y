@@ -1,5 +1,6 @@
 use super::{
-    ByteSize, ByteSizeExt, Deserialize, Serialize, Time, TimeExt, bytes, days, minutes, secs,
+    ByteSize, ByteSizeExt, Deserialize, OtlpConfig, Serialize, Time, TimeExt, bytes, days, minutes,
+    secs,
 };
 
 /// One tenant's complete limit set.
@@ -19,6 +20,24 @@ pub struct Limits {
         deserialize_with = "super::non_negative_byte_size::deserialize"
     )]
     pub max_line_size: ByteSize,
+
+    /// Truncate oversized lines instead of rejecting their push.
+    #[serde(default)]
+    pub max_line_size_truncate: bool,
+
+    /// Largest structured-metadata payload on one entry. `Loki` default: `64KB`.
+    #[serde(
+        serialize_with = "krabka_units::serde_units::human::byte_size::serialize",
+        deserialize_with = "super::non_negative_byte_size::deserialize"
+    )]
+    pub max_structured_metadata_size: ByteSize,
+
+    /// Most structured-metadata labels on one entry. `Loki` default: `128`.
+    pub max_structured_metadata_entries_count: u64,
+
+    /// Per-tenant Loki OTLP resource-attribute actions.
+    #[serde(default)]
+    pub otlp_config: OtlpConfig,
 
     /// Most label names one stream may carry. `Loki` default: `15`.
     pub max_label_names_per_series: u64,
@@ -143,6 +162,10 @@ impl Default for Limits {
         Self {
             // `_ = l.MaxLineSize.Set("256KB")`, and `KB` is 1000 bytes there.
             max_line_size: bytes(256_000),
+            max_line_size_truncate: false,
+            max_structured_metadata_size: bytes(64_000),
+            max_structured_metadata_entries_count: 128,
+            otlp_config: OtlpConfig::default(),
             // `validation.max-label-names-per-series`
             max_label_names_per_series: 15,
             // `validation.max-length-label-name`
@@ -190,6 +213,10 @@ impl Limits {
     pub fn unenforced() -> Self {
         Self {
             max_line_size: ByteSize::ZERO,
+            max_line_size_truncate: false,
+            max_structured_metadata_size: ByteSize::ZERO,
+            max_structured_metadata_entries_count: 0,
+            otlp_config: OtlpConfig::default(),
             max_label_names_per_series: 0,
             max_label_name_length: ByteSize::ZERO,
             max_label_value_length: ByteSize::ZERO,

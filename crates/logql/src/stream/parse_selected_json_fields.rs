@@ -14,12 +14,12 @@ pub(crate) fn parse_selected_json_fields(
     };
 
     for extraction in config.extractions() {
-        if let Some(value) = extraction.evaluate(&value) {
-            insert_extracted_field(
-                fields,
-                extraction.destination(),
-                selected_json_value_to_string(value),
-            );
-        }
+        insert_extracted_field(
+            fields,
+            extraction.destination(),
+            extraction
+                .evaluate(&value)
+                .map_or_else(String::new, selected_json_value_to_string),
+        );
     }
 }

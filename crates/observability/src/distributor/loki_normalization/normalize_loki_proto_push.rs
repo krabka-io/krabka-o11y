@@ -2,8 +2,9 @@ use super::{
     DistributorError, Limits, LokiProtoPushRequest, TenantId, WalLogRecord,
     discover_service_name_label, loki_missing_proto_timestamp_error,
     loki_proto_label_pairs_to_labels, loki_proto_timestamp_ns, loki_push_entry_labels,
-    parse_loki_proto_labels, validate_loki_line_size, validate_loki_stream_labels,
-    validate_loki_timestamp_window,
+    parse_loki_proto_labels, truncate_loki_line, validate_loki_line_size,
+    validate_loki_stream_labels, validate_loki_timestamp_window,
+    validate_structured_metadata_limits,
 };
 
 pub(crate) fn normalize_loki_proto_push(
@@ -19,7 +20,14 @@ pub(crate) fn normalize_loki_proto_push(
         validate_loki_stream_labels(&stream_labels, limits)?;
         discover_service_name_label(&mut stream_labels);
 
-        for entry in stream.entries {
+        for mut entry in stream.entries {
+            if entry
+                .structured_metadata
+                .iter()
+                .any(|label| label.name.is_empty())
+            {
+                return Err(DistributorError::EmptyStructuredMetadataLabelName);
+            }
             let timestamp_ns = if let Some(timestamp) = entry.timestamp.as_ref() {
                 loki_proto_timestamp_ns(Some(timestamp))?
             } else {
@@ -29,14 +37,17 @@ pub(crate) fn normalize_loki_proto_push(
                 ));
             };
             validate_loki_timestamp_window(timestamp_ns, &stream_labels, limits)?;
+            truncate_loki_line(&mut entry.line, limits);
             validate_loki_line_size(&entry.line, &stream_labels, limits)?;
             let labels = loki_push_entry_labels(&stream_labels, &entry.line);
+            let structured_metadata = loki_proto_label_pairs_to_labels(&entry.structured_metadata);
+            validate_structured_metadata_limits(&structured_metadata, &stream_labels, limits)?;
             records.push(WalLogRecord {
                 tenant: tenant.to_owned(),
                 labels,
                 timestamp_ns,
                 line: entry.line,
-                structured_metadata: loki_proto_label_pairs_to_labels(&entry.structured_metadata),
+                structured_metadata,
                 position: None,
             });
         }

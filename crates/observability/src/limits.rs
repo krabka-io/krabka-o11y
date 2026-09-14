@@ -53,6 +53,7 @@ mod limits_provider_for_config;
 mod limits_type;
 mod load_logs_limits_overrides_config;
 mod merge_limits;
+mod otlp_attribute_action;
 mod overrides_error;
 mod overrides_provider;
 mod partial_limits;
@@ -64,6 +65,9 @@ pub(crate) use limits_provider_for_config::limits_provider_for_config;
 pub use limits_type::Limits;
 pub(crate) use load_logs_limits_overrides_config::load_logs_limits_overrides_config;
 pub(crate) use merge_limits::merge_limits;
+pub use otlp_attribute_action::{
+    OtlpAttributeAction, OtlpAttributesConfig, OtlpConfig, OtlpResourceAttributesConfig,
+};
 pub use overrides_error::OverridesError;
 pub use overrides_provider::OverridesProvider;
 pub(crate) use partial_limits::PartialLimits;

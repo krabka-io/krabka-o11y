@@ -1,12 +1,20 @@
 use super::{
-    DistributorError, Labels, OtlpLogRecord, insert_metadata_if_absent, otlp_attributes_to_labels,
-    otlp_severity_number_to_string,
+    DistributorError, Labels, OtlpLogRecord, insert_metadata_if_absent, metadata_value_to_string,
+    otlp_attributes_to_labels, otlp_severity_number_to_string,
 };
 
 pub(crate) fn otlp_log_record_structured_metadata(
     log_record: &OtlpLogRecord,
 ) -> Result<Labels, DistributorError> {
     let mut metadata = otlp_attributes_to_labels(log_record.attributes.as_deref())?;
+    insert_metadata_if_absent(
+        &mut metadata,
+        "observed_timestamp",
+        log_record
+            .observed_time_unix_nano
+            .as_ref()
+            .map(metadata_value_to_string),
+    )?;
     insert_metadata_if_absent(
         &mut metadata,
         "severity_number",

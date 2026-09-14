@@ -60,7 +60,11 @@ impl PatternParser {
                                 }
                             });
                     let value_end = if let Some(next_literal) = next_literal {
-                        pos.saturating_add(line[pos..].find(next_literal)?)
+                        let Some(offset) = line[pos..].find(next_literal) else {
+                            captures.push((name.clone(), line[pos..].to_string()));
+                            return Some(captures);
+                        };
+                        pos.saturating_add(offset)
                     } else {
                         line.len()
                     };

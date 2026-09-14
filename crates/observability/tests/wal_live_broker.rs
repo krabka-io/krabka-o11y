@@ -237,7 +237,7 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
     let body = query_until_values(
         &querier,
         TENANT,
-        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=20.000000000",
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=19.000000000&end=21.000000000",
         1,
     )
     .await;
@@ -616,7 +616,7 @@ async fn a_log_produced_by_a_native_kafka_client_reaches_a_query_answer() {
     let body = query_until_values(
         &querier,
         TENANT,
-        "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=20.000000000",
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=19.000000000&end=21.000000000",
         1,
     )
     .await;

@@ -37,7 +37,7 @@ async fn query_endpoint_can_load_indexes_from_persisted_manifest() {
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -59,7 +59,7 @@ async fn query_endpoint_can_load_tenant_index_from_object_store_manifest() {
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -81,7 +81,7 @@ async fn query_endpoint_can_load_tenant_index_from_object_store_shard() {
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -103,7 +103,7 @@ async fn query_endpoint_can_load_tenant_index_from_object_store_shard_catalog() 
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -125,7 +125,7 @@ async fn query_endpoint_can_build_querier_from_object_store_shard_catalog_config
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000019",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -200,7 +200,7 @@ async fn configured_object_store_query_returns_partial_warning_for_missing_block
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -411,7 +411,7 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030&direction=forward",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000&direction=forward",
                 )
                 .header("X-Scope-OrgID", "tenant-a")
                 .body(Body::empty())
@@ -1094,7 +1094,7 @@ async fn configured_object_store_querier_loads_manifest_for_request_tenant_heade
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000029",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-b")
                 .body(Body::empty())
@@ -1255,7 +1255,7 @@ async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_
         .oneshot(
             Request::builder()
                 .uri(
-                    "/loki/api/v1/query?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&time=0.000000029",
+                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
                 )
                 .header("X-Scope-OrgID", "tenant-b")
                 .body(Body::empty())

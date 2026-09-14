@@ -10,6 +10,19 @@ use super::{Limits, PartialLimits};
 pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
     Limits {
         max_line_size: partial.max_line_size.unwrap_or(base.max_line_size),
+        max_line_size_truncate: partial
+            .max_line_size_truncate
+            .unwrap_or(base.max_line_size_truncate),
+        max_structured_metadata_size: partial
+            .max_structured_metadata_size
+            .unwrap_or(base.max_structured_metadata_size),
+        max_structured_metadata_entries_count: partial
+            .max_structured_metadata_entries_count
+            .unwrap_or(base.max_structured_metadata_entries_count),
+        otlp_config: partial
+            .otlp_config
+            .clone()
+            .unwrap_or_else(|| base.otlp_config.clone()),
         max_label_names_per_series: partial
             .max_label_names_per_series
             .unwrap_or(base.max_label_names_per_series),

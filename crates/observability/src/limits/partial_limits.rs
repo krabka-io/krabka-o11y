@@ -1,4 +1,4 @@
-use super::{ByteSize, Deserialize, Time};
+use super::{ByteSize, Deserialize, OtlpConfig, Time};
 
 /// A sparse override: every field an operator left out keeps the value it
 /// merges over.
@@ -13,6 +13,17 @@ pub(crate) struct PartialLimits {
         deserialize_with = "super::option_non_negative_byte_size::deserialize"
     )]
     pub(crate) max_line_size: Option<ByteSize>,
+    #[serde(default)]
+    pub(crate) max_line_size_truncate: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "super::option_non_negative_byte_size::deserialize"
+    )]
+    pub(crate) max_structured_metadata_size: Option<ByteSize>,
+    #[serde(default)]
+    pub(crate) max_structured_metadata_entries_count: Option<u64>,
+    #[serde(default)]
+    pub(crate) otlp_config: Option<OtlpConfig>,
     #[serde(default)]
     pub(crate) max_label_names_per_series: Option<u64>,
     #[serde(

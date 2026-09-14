@@ -1946,17 +1946,17 @@ fn query_evaluator_applies_unanchored_pattern_parser_and_collision_suffixes() {
 }
 
 #[test]
-fn query_evaluator_exposes_pattern_parser_error_fields() {
+fn query_evaluator_accepts_the_remainder_for_the_final_pattern_capture() {
     let query =
         parse_query(r#"{app="api"} | pattern `<method> <path>` | __error__ = "PatternParserErr""#)
             .unwrap();
     let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
 
-    check!(query.matches(&labels, "too-few"));
+    check!(!query.matches(&labels, "too-few"));
     check!(!query.matches(&labels, "GET /ready"));
 
     let query = parse_query(r#"{app="api"} | pattern `<method> <path>` | __error__ = """#).unwrap();
-    check!(!query.matches(&labels, "too-few"));
+    check!(query.matches(&labels, "too-few"));
     check!(query.matches(&labels, "GET /ready"));
 }
 
