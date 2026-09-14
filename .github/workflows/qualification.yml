@@ -22,14 +22,24 @@ jobs:
             command: bazel test //...
           - id: ordinary-cargo
             command: cargo test --workspace --locked
+          - id: ordinary-clippy
+            command: cargo clippy --workspace --all-targets --locked -- -D warnings
+          - id: ordinary-format
+            command: bazel run //tools/format && git diff --exit-code
           - id: oracle-versions
             command: bazel test --config=docker --flaky_test_attempts=1 //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:tempo_version_test //bazel/images:pyroscope_version_test
-          - id: mimir
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test //crates/metrics-service:grafana_integration_docker_test
-          - id: loki
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:loki_differential_docker_test //crates/observability:grafana_e2e_docker_test //crates/observability:grafana_integration_docker_test
-          - id: tempo
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/traces:tempo_differential_docker_test //crates/traces:grafana_e2e_docker_test
+          - id: mimir-differential
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test
+          - id: mimir-grafana
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:grafana_integration_docker_test
+          - id: loki-differential
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:loki_differential_docker_test
+          - id: loki-grafana
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:grafana_e2e_docker_test //crates/observability:grafana_integration_docker_test
+          - id: tempo-differential
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/traces:tempo_differential_docker_test
+          - id: tempo-grafana
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/traces:grafana_e2e_docker_test
           - id: pyroscope
             command: bazel test --config=docker --flaky_test_attempts=1 //crates/profiles:pyroscope_differential_docker_test
           - id: clients-and-correlation
