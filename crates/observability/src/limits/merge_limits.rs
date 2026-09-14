@@ -19,18 +19,10 @@ pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
         max_structured_metadata_entries_count: partial
             .max_structured_metadata_entries_count
             .unwrap_or(base.max_structured_metadata_entries_count),
-        otlp_resource_attributes: partial
-            .otlp_resource_attributes
+        otlp_config: partial
+            .otlp_config
             .clone()
-            .unwrap_or_else(|| base.otlp_resource_attributes.clone()),
-        otlp_scope_attributes: partial
-            .otlp_scope_attributes
-            .clone()
-            .unwrap_or_else(|| base.otlp_scope_attributes.clone()),
-        otlp_log_attributes: partial
-            .otlp_log_attributes
-            .clone()
-            .unwrap_or_else(|| base.otlp_log_attributes.clone()),
+            .unwrap_or_else(|| base.otlp_config.clone()),
         max_label_names_per_series: partial
             .max_label_names_per_series
             .unwrap_or(base.max_label_names_per_series),

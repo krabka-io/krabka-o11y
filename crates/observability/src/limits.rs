@@ -33,11 +33,7 @@
 //! [`krabka_blockstore::RetentionWindows`]. All three roles share one
 //! provider, so they answer a tenant with the same numbers.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::Path as FsPath,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::Path as FsPath, sync::Arc};
 
 use krabka_units::{bytes, days, minutes, secs, serde_units};
 
@@ -69,7 +65,9 @@ pub(crate) use limits_provider_for_config::limits_provider_for_config;
 pub use limits_type::Limits;
 pub(crate) use load_logs_limits_overrides_config::load_logs_limits_overrides_config;
 pub(crate) use merge_limits::merge_limits;
-pub use otlp_attribute_action::OtlpAttributeAction;
+pub use otlp_attribute_action::{
+    OtlpAttributeAction, OtlpAttributesConfig, OtlpConfig, OtlpResourceAttributesConfig,
+};
 pub use overrides_error::OverridesError;
 pub use overrides_provider::OverridesProvider;
 pub(crate) use partial_limits::PartialLimits;

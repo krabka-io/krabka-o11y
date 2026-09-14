@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, ByteSize, ByteSizeExt, Deserialize, OtlpAttributeAction, Serialize, Time, TimeExt,
-    bytes, days, minutes, secs,
+    ByteSize, ByteSizeExt, Deserialize, OtlpConfig, Serialize, Time, TimeExt, bytes, days, minutes,
+    secs,
 };
 
 /// One tenant's complete limit set.
@@ -37,15 +37,7 @@ pub struct Limits {
 
     /// Per-tenant Loki OTLP resource-attribute actions.
     #[serde(default)]
-    pub otlp_resource_attributes: BTreeMap<String, OtlpAttributeAction>,
-
-    /// Per-tenant Loki OTLP scope-attribute actions.
-    #[serde(default)]
-    pub otlp_scope_attributes: BTreeMap<String, OtlpAttributeAction>,
-
-    /// Per-tenant Loki OTLP log-attribute actions.
-    #[serde(default)]
-    pub otlp_log_attributes: BTreeMap<String, OtlpAttributeAction>,
+    pub otlp_config: OtlpConfig,
 
     /// Most label names one stream may carry. `Loki` default: `15`.
     pub max_label_names_per_series: u64,
@@ -173,9 +165,7 @@ impl Default for Limits {
             max_line_size_truncate: false,
             max_structured_metadata_size: bytes(64_000),
             max_structured_metadata_entries_count: 128,
-            otlp_resource_attributes: BTreeMap::new(),
-            otlp_scope_attributes: BTreeMap::new(),
-            otlp_log_attributes: BTreeMap::new(),
+            otlp_config: OtlpConfig::default(),
             // `validation.max-label-names-per-series`
             max_label_names_per_series: 15,
             // `validation.max-length-label-name`
@@ -226,9 +216,7 @@ impl Limits {
             max_line_size_truncate: false,
             max_structured_metadata_size: ByteSize::ZERO,
             max_structured_metadata_entries_count: 0,
-            otlp_resource_attributes: BTreeMap::new(),
-            otlp_scope_attributes: BTreeMap::new(),
-            otlp_log_attributes: BTreeMap::new(),
+            otlp_config: OtlpConfig::default(),
             max_label_names_per_series: 0,
             max_label_name_length: ByteSize::ZERO,
             max_label_value_length: ByteSize::ZERO,

@@ -1,8 +1,6 @@
 use krabka_units::convert::{ByteSizeExt, TimeExt};
 
-use super::otlp_normalization::{
-    is_default_otlp_resource_label, matches_otlp_attribute, normalize_otlp_attribute_name,
-};
+use super::otlp_normalization::is_default_otlp_resource_label;
 use crate::{
     ByteSize, CONTENT_TYPE, DistributorError, HeaderMap, Labels, Limits, LokiProtoPushRequest,
     LokiTypedPushRequest, MatchOp, OtlpAttributeAction, OtlpLogsRequest, TenantId, Time, Value,

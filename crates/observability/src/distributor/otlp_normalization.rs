@@ -50,9 +50,7 @@ pub(crate) use loki_missing_proto_timestamp_error::loki_missing_proto_timestamp_
 pub(crate) use loki_proto_label_pairs_to_labels::loki_proto_label_pairs_to_labels;
 pub(crate) use loki_proto_timestamp_ns::loki_proto_timestamp_ns;
 pub(crate) use loki_stale_sample_label_set::loki_stale_sample_label_set;
-pub(crate) use normalize_otlp_attribute_name::{
-    matches_otlp_attribute, normalize_otlp_attribute_name,
-};
+pub(crate) use normalize_otlp_attribute_name::normalize_otlp_attribute_name;
 pub(crate) use normalize_otlp_proto_logs::normalize_otlp_proto_logs;
 pub(crate) use normalize_otlp_proto_logs_for_tenant::normalize_otlp_proto_logs_for_tenant;
 pub(crate) use otlp_attributes_to_labels::otlp_attributes_to_labels;

@@ -1,9 +1,9 @@
 use super::{
-    DistributorError, Limits, OtlpAttributeAction, ProtoExportLogsServiceRequest, TenantId,
+    DistributorError, Labels, Limits, OtlpAttributeAction, ProtoExportLogsServiceRequest, TenantId,
     WalLogRecord, discover_service_name_label, is_default_otlp_resource_label,
-    matches_otlp_attribute, normalize_otlp_attribute_name, proto_attributes_to_labels,
-    proto_log_record_structured_metadata, proto_timestamp_ns, proto_value_to_string,
-    validate_loki_label_limits, validate_loki_line_size, validate_loki_timestamp_window,
+    proto_attributes_to_labels, proto_log_record_structured_metadata, proto_timestamp_ns,
+    proto_value_to_string, validate_loki_label_limits, validate_loki_line_size,
+    validate_loki_timestamp_window,
 };
 use crate::{
     distributor::loki_normalization::validate_structured_metadata_limits, truncate_loki_line,
@@ -24,62 +24,61 @@ pub(crate) fn normalize_otlp_proto_logs_for_tenant(
             .map(|resource| resource.attributes.as_slice());
         let action = |name: &str| {
             limits
-                .otlp_resource_attributes
-                .get(name)
-                .copied()
+                .otlp_config
+                .resource_attributes
+                .attributes_config
+                .iter()
+                .find(|rule| rule.matches(name))
+                .map(|rule| rule.action)
                 .unwrap_or_else(|| {
-                    if is_default_otlp_resource_label(name) {
+                    if !limits.otlp_config.resource_attributes.ignore_defaults
+                        && is_default_otlp_resource_label(name)
+                    {
                         OtlpAttributeAction::IndexLabel
                     } else {
                         OtlpAttributeAction::StructuredMetadata
                     }
                 })
         };
-        let indexed_names = resource_attribute_values
-            .unwrap_or_default()
-            .iter()
-            .filter(|attribute| action(&attribute.key) == OtlpAttributeAction::IndexLabel)
-            .map(|attribute| normalize_otlp_attribute_name(&attribute.key))
-            .collect::<Vec<_>>();
-        let dropped_names = resource_attribute_values
-            .unwrap_or_default()
-            .iter()
-            .filter(|attribute| action(&attribute.key) == OtlpAttributeAction::Drop)
-            .map(|attribute| normalize_otlp_attribute_name(&attribute.key))
-            .collect::<Vec<_>>();
-        let resource_attributes = proto_attributes_to_labels(resource_attribute_values)?;
-        let mut resource_labels = resource_attributes.clone();
-        resource_labels.retain(|name, _| {
-            indexed_names
-                .iter()
-                .any(|root| matches_otlp_attribute(name, root))
-        });
-        let mut resource_metadata = resource_attributes;
-        resource_metadata.retain(|name, _| {
-            !indexed_names
-                .iter()
-                .any(|root| matches_otlp_attribute(name, root))
-                && !dropped_names
-                    .iter()
-                    .any(|root| matches_otlp_attribute(name, root))
-        });
+        let mut resource_labels = Labels::default();
+        let mut resource_metadata = Labels::default();
+        let mut resource_names = std::collections::BTreeSet::new();
+        for attribute in resource_attribute_values.unwrap_or_default() {
+            let values = proto_attributes_to_labels(Some(std::slice::from_ref(attribute)))?;
+            if values
+                .keys()
+                .any(|name| !resource_names.insert(name.clone()))
+            {
+                return Err(DistributorError::InvalidOtlpAttribute);
+            }
+            match action(&attribute.key) {
+                OtlpAttributeAction::IndexLabel => resource_labels.extend(values),
+                OtlpAttributeAction::StructuredMetadata => resource_metadata.extend(values),
+                OtlpAttributeAction::Drop => {}
+            }
+        }
 
         for scope_logs in resource_logs.scope_logs {
             let labels = resource_labels.clone();
             let mut inherited_metadata = resource_metadata.clone();
-            inherited_metadata.extend(proto_attributes_to_labels(
-                scope_logs
-                    .scope
-                    .as_ref()
-                    .map(|scope| scope.attributes.as_slice()),
-            )?);
-            for name in limits
-                .otlp_scope_attributes
-                .iter()
-                .filter(|(_, action)| **action == OtlpAttributeAction::Drop)
-                .map(|(name, _)| normalize_otlp_attribute_name(name))
+            for attribute in scope_logs
+                .scope
+                .as_ref()
+                .map(|scope| scope.attributes.as_slice())
+                .unwrap_or_default()
             {
-                inherited_metadata.retain(|key, _| !matches_otlp_attribute(key, &name));
+                let action = limits
+                    .otlp_config
+                    .scope_attributes
+                    .iter()
+                    .find(|rule| rule.matches(&attribute.key))
+                    .map(|rule| rule.action)
+                    .unwrap_or_default();
+                if action != OtlpAttributeAction::Drop {
+                    inherited_metadata.extend(proto_attributes_to_labels(Some(
+                        std::slice::from_ref(attribute),
+                    ))?);
+                }
             }
             if let Some(scope) = &scope_logs.scope {
                 if !scope.name.is_empty() {
@@ -114,13 +113,22 @@ pub(crate) fn normalize_otlp_proto_logs_for_tenant(
                 validate_loki_line_size(&line, &labels, limits)?;
                 let mut structured_metadata = inherited_metadata.clone();
                 structured_metadata.extend(proto_log_record_structured_metadata(&log_record)?);
-                for name in limits
-                    .otlp_log_attributes
-                    .iter()
-                    .filter(|(_, action)| **action == OtlpAttributeAction::Drop)
-                    .map(|(name, _)| normalize_otlp_attribute_name(name))
-                {
-                    structured_metadata.retain(|key, _| !matches_otlp_attribute(key, &name));
+                for attribute in &log_record.attributes {
+                    if limits
+                        .otlp_config
+                        .log_attributes
+                        .iter()
+                        .find(|rule| rule.matches(&attribute.key))
+                        .map(|rule| rule.action)
+                        == Some(OtlpAttributeAction::Drop)
+                    {
+                        for name in
+                            proto_attributes_to_labels(Some(std::slice::from_ref(attribute)))?
+                                .keys()
+                        {
+                            structured_metadata.remove(name);
+                        }
+                    }
                 }
                 validate_structured_metadata_limits(&structured_metadata, &labels, limits)?;
                 records.push(WalLogRecord {

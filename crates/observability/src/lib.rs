@@ -212,7 +212,10 @@ pub use distributor::{
 };
 pub use error::QueryError;
 pub use http::loki_router;
-pub use limits::{Limits, OtlpAttributeAction, OverridesError, OverridesProvider};
+pub use limits::{
+    Limits, OtlpAttributeAction, OtlpAttributesConfig, OtlpConfig, OtlpResourceAttributesConfig,
+    OverridesError, OverridesProvider,
+};
 pub use log_level::{
     LogLevelControl, LogLevelError, Telemetry, init_telemetry, install_json_logging,
     json_logging_layer,

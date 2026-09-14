@@ -214,6 +214,8 @@ impl IntoResponse for DistributorError {
                 | Self::TooManyLabelNames { .. }
                 | Self::LabelNameTooLong { .. }
                 | Self::LabelValueTooLong { .. }
+                | Self::StructuredMetadataTooLarge { .. }
+                | Self::TooManyStructuredMetadataLabels { .. }
                 | Self::NoValidStreams
                 | Self::EmptyStructuredMetadataLabelName
                 | Self::TimestampTooOld { .. }

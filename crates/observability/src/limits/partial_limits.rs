@@ -1,4 +1,4 @@
-use super::{BTreeMap, ByteSize, Deserialize, OtlpAttributeAction, Time};
+use super::{ByteSize, Deserialize, OtlpConfig, Time};
 
 /// A sparse override: every field an operator left out keeps the value it
 /// merges over.
@@ -23,11 +23,7 @@ pub(crate) struct PartialLimits {
     #[serde(default)]
     pub(crate) max_structured_metadata_entries_count: Option<u64>,
     #[serde(default)]
-    pub(crate) otlp_resource_attributes: Option<BTreeMap<String, OtlpAttributeAction>>,
-    #[serde(default)]
-    pub(crate) otlp_scope_attributes: Option<BTreeMap<String, OtlpAttributeAction>>,
-    #[serde(default)]
-    pub(crate) otlp_log_attributes: Option<BTreeMap<String, OtlpAttributeAction>>,
+    pub(crate) otlp_config: Option<OtlpConfig>,
     #[serde(default)]
     pub(crate) max_label_names_per_series: Option<u64>,
     #[serde(
