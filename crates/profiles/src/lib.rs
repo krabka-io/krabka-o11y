@@ -57,6 +57,7 @@ mod tests {
         for (err, want) in [
             (ProfilesError::UnsupportedFormat("x".into()), 415),
             (ProfilesError::Decode("x".into()), 400),
+            (ProfilesError::Unprocessable("x".into()), 422),
             (ProfilesError::Tenant(TenantResolveError::Missing), 400),
             (
                 ProfilesError::TenantDenied(TenantDenied {

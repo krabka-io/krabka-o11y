@@ -14,6 +14,8 @@ pub enum ProfilesError {
     Gunzip(String),
     #[error("invalid request: {0}")]
     Invalid(String),
+    #[error("unprocessable profile: {0}")]
+    Unprocessable(String),
     /// The `X-Scope-OrgID` header names a tenant that is not a valid tenant id.
     ///
     /// The message is the [`TenantResolveError`] text alone, which is the text
@@ -80,6 +82,7 @@ impl ProfilesError {
             | Self::Tenant(_)
             | Self::Pprof(_)
             | Self::TooLarge { .. } => 400,
+            Self::Unprocessable(_) => 422,
             // Only a service with a credentials file can deny a tenant. The
             // Connect doors send `permission_denied`, which is also a 403.
             Self::TenantDenied(_) => 403,

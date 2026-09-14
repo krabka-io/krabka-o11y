@@ -283,7 +283,7 @@ fn build_profile(
 
     for ((type_index, stack, context_labels), values) in samples_by_stack {
         let mut stack_locations = Vec::new();
-        for (frame, line) in stack.into_iter().rev() {
+        for (frame, line) in stack {
             let function_id = *function_ids.entry(frame.clone()).or_insert_with(|| {
                 let id = u64::try_from(functions.len() + 1).expect("function id fits u64");
                 let name_ref = intern_string(&mut strings, &mut string_ids, &frame);

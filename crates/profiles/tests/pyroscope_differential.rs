@@ -42,6 +42,7 @@ const SELECTOR: &str = r#"{env="pprofdiff"}"#;
 
 const TENANT_B: &str = "tenant-b";
 const CPU_PROFILE_TYPE: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+const WALL_PROFILE_TYPE: &str = "wall:wall:nanoseconds:wall:nanoseconds";
 const CPU_NAME: &str = "process_cpu";
 const E2E_SERVICE: &str = "checkout";
 const E2E_SELECTOR: &str = r#"{service_name="checkout"}"#;
@@ -2889,6 +2890,40 @@ fn legacy_ingest_cases(goroutine_pprof: &[u8]) -> Vec<LegacyIngestCase> {
             ),
         },
         LegacyIngestCase {
+            app: "krabkadiffjfrcpu",
+            format: "jfr",
+            content_type: "multipart/form-data; boundary=krabka-jfr-boundary",
+            profile_type: CPU_PROFILE_TYPE,
+            body: jfr_body(),
+        },
+        LegacyIngestCase {
+            app: "krabkadiffjfrwall",
+            format: "jfr",
+            content_type: "multipart/form-data; boundary=krabka-jfr-boundary",
+            profile_type: WALL_PROFILE_TYPE,
+            body: jfr_body(),
+        },
+        LegacyIngestCase {
+            app: "krabkadiffspeedscope",
+            format: "speedscope",
+            content_type: "application/json",
+            profile_type: CPU_PROFILE_TYPE,
+            body: br#"{
+              "$schema": "https://www.speedscope.app/file-format-schema.json",
+              "shared": {"frames": [{"name": "main.work"}, {"name": "main.hotloop"}]},
+              "profiles": [{
+                "type": "sampled",
+                "name": "cpu",
+                "unit": "nanoseconds",
+                "startValue": 0,
+                "endValue": 140,
+                "samples": [[0, 1], [0]],
+                "weights": [100, 40]
+              }]
+            }"#
+            .to_vec(),
+        },
+        LegacyIngestCase {
             app: "krabkadiffpprof",
             format: "pprof",
             // A raw pprof body, which is what the SDKs that do not speak
@@ -2899,6 +2934,17 @@ fn legacy_ingest_cases(goroutine_pprof: &[u8]) -> Vec<LegacyIngestCase> {
             body: goroutine_pprof.to_vec(),
         },
     ]
+}
+
+fn jfr_body() -> Vec<u8> {
+    const BOUNDARY: &str = "krabka-jfr-boundary";
+    let mut body = format!(
+        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"jfr\"; filename=\"profile.jfr\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(include_bytes!("fixtures/profiler-wall.jfr"));
+    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+    body
 }
 
 /// 100 `main.work;main.hotloop` lines and 40 `main.work` lines, one sample per
@@ -2950,13 +2996,18 @@ async fn post_ingest(
         .duration_since(UNIX_EPOCH)?
         .as_secs()
         .to_string();
-    let query = url::form_urlencoded::Serializer::new(String::new())
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query
         .append_pair("name", case.app)
         .append_pair("format", case.format)
         .append_pair("sampleRate", "100")
         .append_pair("from", &now_secs)
-        .append_pair("until", &now_secs)
-        .finish();
+        .append_pair("until", &now_secs);
+    if case.format == "tree" {
+        // Pyroscope's v2 adapter accepts but ignores this legacy storage hint.
+        query.append_pair("aggregationType", "average");
+    }
+    let query = query.finish();
     let mut request = client
         .post(format!("{base}/ingest?{query}"))
         .header(reqwest::header::CONTENT_TYPE, case.content_type)
@@ -2973,6 +3024,69 @@ async fn post_ingest(
             case.format
         )
         .into());
+    }
+    Ok(())
+}
+
+async fn assert_legacy_failure_statuses_match(
+    client: &reqwest::Client,
+    pyroscope_base: &str,
+    krabka_base: &str,
+) -> TestResult {
+    for (name, query, content_type, body) in [
+        (
+            "missing name",
+            "format=groups",
+            "text/plain",
+            &b"main 1\n"[..],
+        ),
+        (
+            "malformed groups",
+            "name=badgroups&format=groups",
+            "text/plain",
+            &b"main nope\n"[..],
+        ),
+        (
+            "malformed pprof",
+            "name=badpprof&format=pprof",
+            "application/octet-stream",
+            &b"not a pprof"[..],
+        ),
+        (
+            "malformed speedscope",
+            "name=badspeedscope&format=speedscope",
+            "application/json",
+            &b"{}"[..],
+        ),
+        (
+            "missing jfr part",
+            "name=badjfr&format=jfr",
+            "multipart/form-data; boundary=empty",
+            &b"--empty--\r\n"[..],
+        ),
+    ] {
+        let send = |base: &str, tenant: Option<&str>| {
+            let mut request = client
+                .post(format!("{base}/ingest?{query}"))
+                .header(reqwest::header::CONTENT_TYPE, content_type)
+                .body(body.to_vec());
+            if let Some(tenant) = tenant {
+                request = request.header("x-scope-orgid", tenant);
+            }
+            request.send()
+        };
+        let pyroscope = send(pyroscope_base, None).await?;
+        let krabka = send(krabka_base, Some(TENANT)).await?;
+        if pyroscope.status() != krabka.status() {
+            return Err(format!(
+                "legacy {name} status differs: pyroscope={} body={:?}, krabka={} body={:?}",
+                pyroscope.status(),
+                pyroscope.text().await.unwrap_or_default(),
+                krabka.status(),
+                krabka.text().await.unwrap_or_default(),
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -3000,16 +3114,10 @@ fn drain_sink_into_store(sink: &CapturingSink, store: &WalTailProfileStore) -> T
 /// profile in nanoseconds named `process_cpu`, whatever `?units=` says, and
 /// its counts are stored as the time they stand for.
 ///
-/// Two formats remain deliberate, measured exclusions against
-/// `grafana/pyroscope:2.3.1`:
+/// Pyroscope 2.3.1's default image accepts a sampled speedscope upload but
+/// exposes no profile for it. The explicit branch below records that known
+/// output divergence while keeping Krabka's useful speedscope ingestion.
 ///
-///   * **speedscope.** Pyroscope answers a valid nanosecond speedscope upload
-///     with 200 and stores no series. Krabka stores it. Pyroscope also rejects
-///     the speedscope unit `samples` with 422.
-///   * **jfr.** Pyroscope splits the fixture into `wall` and `process_cpu`
-///     series tagged `jfr_event="wall"`. Krabka decodes both sample types into
-///     one input profile before the common sample-type split. A full value and
-///     label comparison belongs to the Pyroscope compatibility milestone.
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
 async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {
@@ -3031,7 +3139,41 @@ async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {
     drain_sink_into_store(&sink, &store)?;
 
     for case in &cases {
-        let query = format!(r#"{}{{service_name="{}"}}"#, case.profile_type, case.app);
+        let selector = if case.format == "jfr" {
+            format!(r#"{{service_name="{}",jfr_event="wall"}}"#, case.app)
+        } else {
+            format!(r#"{{service_name="{}"}}"#, case.app)
+        };
+        let query = format!("{}{selector}", case.profile_type);
+        if case.format == "speedscope" {
+            let pyroscope_render = render_any(
+                &client,
+                &pyroscope_base,
+                std::slice::from_ref(&query),
+                "now-1h",
+                "now",
+                None,
+                false,
+            )
+            .await?;
+            if flame_names(&pyroscope_render).len() > 1 {
+                return Err(format!(
+                    "Pyroscope 2.3.1 unexpectedly exposed the known-empty speedscope upload: {pyroscope_render}"
+                )
+                .into());
+            }
+            render_any(
+                &client,
+                &krabka.querier_base,
+                std::slice::from_ref(&query),
+                "0",
+                &i64::MAX.to_string(),
+                Some(TENANT),
+                true,
+            )
+            .await?;
+            continue;
+        }
         let pyroscope_render = render_until_non_empty(
             &client,
             &pyroscope_base,
@@ -3056,6 +3198,9 @@ async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {
         assert_flamebearer_equal(&pyroscope_render, &krabka_render)
             .map_err(|err| format!("/ingest format={}: {err}", case.format))?;
     }
+
+    assert_legacy_failure_statuses_match(&client, &pyroscope_base, &krabka.distributor_base)
+        .await?;
 
     krabka.shutdown();
     Ok(())
@@ -3236,35 +3381,73 @@ async fn real_pyroscope_otlp_export_matches_krabka() -> TestResult {
     let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
 
     let now_nanos = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?;
-    let export = otlp_export_body(now_nanos);
-    post_otlp_export(&client, &pyroscope_base, None, &export).await?;
-    post_otlp_export(&client, &krabka.distributor_base, Some(TENANT), &export).await?;
+    let protobuf = otlp_export_body(now_nanos, OTLP_PROTOBUF_SERVICE, false)?;
+    let json = otlp_export_body(now_nanos, OTLP_JSON_SERVICE, true)?;
+    let gzip = gzip_bytes(&otlp_export_body(now_nanos, OTLP_GZIP_SERVICE, false)?)?;
+    let cases = [
+        (
+            OTLP_PROTOBUF_SERVICE,
+            "application/x-protobuf",
+            None,
+            protobuf,
+        ),
+        (OTLP_JSON_SERVICE, "application/json", None, json),
+        (
+            OTLP_GZIP_SERVICE,
+            "application/protobuf",
+            Some("gzip"),
+            gzip,
+        ),
+    ];
+    for (_, content_type, content_encoding, export) in &cases {
+        post_otlp_export(
+            &client,
+            &pyroscope_base,
+            None,
+            export,
+            content_type,
+            *content_encoding,
+        )
+        .await?;
+        post_otlp_export(
+            &client,
+            &krabka.distributor_base,
+            Some(TENANT),
+            export,
+            content_type,
+            *content_encoding,
+        )
+        .await?;
+    }
     drain_sink_into_store(&sink, &store)?;
 
-    // Pyroscope names an OTLP series after the profile's own sample type, so
-    // this is `cpu:...` where the `/ingest` stack formats give `process_cpu`.
-    let query = format!(r#"{OTLP_PROFILE_TYPE}{{service_name="{OTLP_SERVICE}"}}"#);
-    let pyroscope_render = render_until_non_empty(
-        &client,
-        &pyroscope_base,
-        std::slice::from_ref(&query),
-        "now-1h",
-        "now",
-        None,
-    )
-    .await?;
-    let krabka_render = render_any(
-        &client,
-        &krabka.querier_base,
-        &[query],
-        "0",
-        &i64::MAX.to_string(),
-        Some(TENANT),
-        false,
-    )
-    .await?;
-    assert_flamebearer_equal(&pyroscope_render, &krabka_render)?;
-    assert_otlp_series_labels_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    for (service, _, _, _) in &cases {
+        // Pyroscope names an OTLP series after the profile's own sample type,
+        // so this is `cpu:...` where `/ingest` gives `process_cpu`.
+        let query = format!(r#"{OTLP_PROFILE_TYPE}{{service_name="{service}"}}"#);
+        let pyroscope_render = render_until_non_empty(
+            &client,
+            &pyroscope_base,
+            std::slice::from_ref(&query),
+            "now-1h",
+            "now",
+            None,
+        )
+        .await?;
+        let krabka_render = render_any(
+            &client,
+            &krabka.querier_base,
+            &[query],
+            "0",
+            &i64::MAX.to_string(),
+            Some(TENANT),
+            false,
+        )
+        .await?;
+        assert_flamebearer_equal(&pyroscope_render, &krabka_render)?;
+        assert_otlp_series_labels_match(&client, &pyroscope_base, &krabka.querier_base, service)
+            .await?;
+    }
 
     krabka.shutdown();
     Ok(())
@@ -3278,9 +3461,10 @@ async fn assert_otlp_series_labels_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
     krabka_base: &str,
+    service: &str,
 ) -> TestResult {
     let body = json!({
-        "matchers": [format!(r#"{{service_name="{OTLP_SERVICE}"}}"#)],
+        "matchers": [format!(r#"{{service_name="{service}"}}"#)],
         "start": query_start_ms(),
         "end": query_end_ms(),
     });
@@ -3308,12 +3492,14 @@ async fn assert_otlp_series_labels_match(
     Ok(())
 }
 
-const OTLP_SERVICE: &str = "krabkadiffotlp";
+const OTLP_PROTOBUF_SERVICE: &str = "krabkadiffotlp-protobuf";
+const OTLP_JSON_SERVICE: &str = "krabkadiffotlp-json";
+const OTLP_GZIP_SERVICE: &str = "krabkadiffotlp-gzip";
 const OTLP_PROFILE_TYPE: &str = "cpu:cpu:nanoseconds:cpu:nanoseconds";
 
 /// The same two-frame CPU profile the other cases use, in OTLP's table form:
 /// one stack per sample, every symbol reached through the shared dictionary.
-fn otlp_export_body(time_unix_nano: u64) -> Vec<u8> {
+fn otlp_export_body(time_unix_nano: u64, service: &str, json: bool) -> TestResult<Vec<u8>> {
     use krabka_profiles::wire::pb::{
         opentelemetry::proto::{
             common::v1::{AnyValue, KeyValue, any_value::Value as AnyValueValue},
@@ -3417,7 +3603,7 @@ fn otlp_export_body(time_unix_nano: u64) -> Vec<u8> {
                 attributes: vec![KeyValue {
                     key: "service.name".to_string(),
                     value: Some(AnyValue {
-                        value: Some(AnyValueValue::StringValue(OTLP_SERVICE.to_string())),
+                        value: Some(AnyValueValue::StringValue(service.to_string())),
                     }),
                 }],
                 ..Resource::default()
@@ -3430,7 +3616,11 @@ fn otlp_export_body(time_unix_nano: u64) -> Vec<u8> {
         }],
         dictionary: Some(dictionary),
     };
-    prost::Message::encode_to_vec(&request)
+    if json {
+        Ok(serde_json::to_vec(&request)?)
+    } else {
+        Ok(prost::Message::encode_to_vec(&request))
+    }
 }
 
 async fn post_otlp_export(
@@ -3438,11 +3628,16 @@ async fn post_otlp_export(
     base: &str,
     tenant: Option<&str>,
     body: &[u8],
+    content_type: &str,
+    content_encoding: Option<&str>,
 ) -> TestResult {
     let mut request = client
         .post(format!("{base}/v1development/profiles"))
-        .header(reqwest::header::CONTENT_TYPE, "application/x-protobuf")
+        .header(reqwest::header::CONTENT_TYPE, content_type)
         .body(body.to_vec());
+    if let Some(content_encoding) = content_encoding {
+        request = request.header(reqwest::header::CONTENT_ENCODING, content_encoding);
+    }
     if let Some(tenant) = tenant {
         request = request.header("x-scope-orgid", tenant);
     }
