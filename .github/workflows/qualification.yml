@@ -1,0 +1,86 @@
+name: compatibility qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: qualification · ${{ matrix.id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ordinary-bazel
+            command: bazel test //...
+          - id: ordinary-cargo
+            command: cargo test --workspace --locked
+          - id: oracle-versions
+            command: bazel test --config=docker //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:tempo_version_test //bazel/images:pyroscope_version_test
+          - id: mimir
+            command: bazel test --config=docker //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:grafana_integration_docker_test
+          - id: loki
+            command: bazel test --config=docker //crates/observability:loki_differential_docker_test //crates/observability:grafana_e2e_docker_test
+          - id: tempo
+            command: bazel test --config=docker //crates/traces:tempo_differential_docker_test //crates/traces:grafana_e2e_docker_test
+          - id: pyroscope
+            command: bazel test --config=docker //crates/profiles:pyroscope_differential_docker_test
+          - id: clients-and-correlation
+            command: bazel test //crates/integration:logs_to_traces_trace_id_test //crates/integration:traces_to_metrics_exemplars_test //crates/integration:traces_to_profiles_span_profiles_test
+          - id: lifecycle-and-failures
+            command: bazel test //crates/blockstore:lifecycle_test //crates/observability:compactor_test //crates/observability:deletes_test //crates/observability:wal_live_broker_test //crates/profiles:lifecycle_test //crates/traces:block_lifecycle_test //crates/traces:wal_group_rebalance_test
+          - id: security-and-limits
+            command: bazel test //crates/metrics:tenant_quota_isolation_test //crates/observability:audit_test //crates/observability:server_security_test //crates/observability:service_security_test //crates/profiles:tenant_resolution_test //crates/promql:tenant_isolation_test //crates/traces:tenant_isolation_test
+          - id: scale-object-store
+            command: bazel test --config=scale //crates/observability:scale_object_store_docker_test
+          - id: scale-soak
+            command: bazel test --config=scale //crates/observability:soak_ingest_query_docker_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+          bazelisk-cache: true
+          disk-cache: compatibility-qualification
+          repository-cache: true
+      - id: toolchain
+        run: |
+          channel="$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)"
+          test -n "${channel}"
+          echo "channel=${channel}" >>"${GITHUB_OUTPUT}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/share/miniconda \
+            /usr/local/lib/android /usr/local/.ghcup /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+      - name: host container callback
+        run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
+      - run: ${{ matrix.command }}
+
+  report:
+    name: immutable compatibility report
+    needs: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: promote and validate
+        env:
+          EVIDENCE: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          tools/qualification-report.py --report qualification/milestone-15.json \
+            --promote --commit "${GITHUB_SHA}" --evidence "${EVIDENCE}" \
+            --output qualification/milestone-15-qualified.json --final
+      - uses: actions/upload-artifact@v4
+        with:
+          name: milestone-15-qualification-${{ github.sha }}
+          path: qualification/milestone-15-qualified.json
+          if-no-files-found: error

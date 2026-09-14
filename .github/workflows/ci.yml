@@ -267,6 +267,8 @@ jobs:
       - run: tools/route-inventory.py --check
       - run: tools/upstream-surface.py --self-test
       - run: tools/upstream-surface.py --check
+      - run: tools/qualification-report.py --self-test
+      - run: tools/qualification-report.py --check
       # //fuzz is a workspace of its own, so it repeats the sibling pins from
       # //Cargo.toml. A bump to one copy knows nothing about the other. This
       # fails on the drift.
