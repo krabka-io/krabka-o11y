@@ -168,7 +168,8 @@ jobs:
       # MODULE.bazel. The script reads the pinned checkouts through `cargo
       # metadata`, so it needs a resolved dependency graph, which a sandboxed
       # Bazel test does not have. Running it here catches a hand edit to either
-      # list on the pull request that makes it. It comes first because it takes about a second.
+      # list on the pull request that makes it. It comes first because it takes
+      # about a second.
       - name: sibling crate lists
         run: tools/check-sibling-members.sh
       - name: test

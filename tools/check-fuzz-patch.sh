@@ -13,8 +13,9 @@
 # repeated in both.
 #
 # Copies of a pin drift. A bump to the table in //Cargo.toml knows nothing
-# about the others, so it leaves those workspaces on the old revision. The fuzz targets then decode with one copy of
-# the sibling crates while every other build uses another, and the benchmarks
+# about the others, so it leaves those workspaces on the old revision. The
+# fuzz targets then decode with one copy of the sibling crates while every
+# other build uses another, and the benchmarks
 # measure a different one again -- and nothing says so: every workspace
 # resolves, every one builds, and the scheduled jobs keep reporting on code
 # that is no longer what ships.
