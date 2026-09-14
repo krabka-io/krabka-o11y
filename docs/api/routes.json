@@ -1822,6 +1822,14 @@
     {
       "signal": "profiles",
       "method": "POST",
+      "path": "/pyroscope/ingest",
+      "sources": [
+        "crates/profiles/src/distributor/router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
       "path": "/querier.v1.QuerierService/AnalyzeQuery",
       "sources": [
         "crates/profiles/proto/querier/v1/querier.proto"

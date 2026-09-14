@@ -25,17 +25,28 @@ pub(crate) async fn otlp_http_handler(
         let tenant = tenant.as_ref().map_err(TenantResolveError::clone)?;
         // Before the profiles are decoded, so a denied push reaches no WAL.
         authorize_tenant(&principal, tenant)?;
-        let req = pb::otlp_profiles::ExportProfilesServiceRequest::decode(body)
-            .map_err(|err| ProfilesError::Decode(format!("OTLP profiles decode: {err}")))?;
+        let body = decode_http_body(&headers, &body, state.max_decompressed)?;
+        let json = is_json(&headers)?;
+        let req = if json {
+            serde_json::from_slice(&body)
+                .map_err(|err| ProfilesError::Decode(format!("OTLP profiles JSON decode: {err}")))?
+        } else {
+            pb::otlp_profiles::ExportProfilesServiceRequest::decode(body.as_slice())
+                .map_err(|err| ProfilesError::Decode(format!("OTLP profiles decode: {err}")))?
+        };
         let raws = decode_otlp(&req)?;
         items = raws.len() as u64;
         process_raw(&state, tenant, raws).await?;
-        Ok::<_, ProfilesError>(
-            pb::otlp_profiles::ExportProfilesServiceResponse {
-                partial_success: None,
-            }
-            .encode_to_vec(),
-        )
+        let response = pb::otlp_profiles::ExportProfilesServiceResponse {
+            partial_success: None,
+        };
+        if json {
+            serde_json::to_vec(&response)
+                .map(|body| ("application/json", body))
+                .map_err(|err| ProfilesError::Internal(format!("OTLP profiles JSON encode: {err}")))
+        } else {
+            Ok(("application/x-protobuf", response.encode_to_vec()))
+        }
     }
     .instrument(ingest_span.clone())
     .await;
@@ -51,12 +62,56 @@ pub(crate) async fn otlp_http_handler(
         start.elapsed().as_time(),
     );
     match result {
-        Ok(body) => (
+        Ok((content_type, body)) => (
             StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/x-protobuf")],
+            [(axum::http::header::CONTENT_TYPE, content_type)],
             Bytes::from(body),
         )
             .into_response(),
         Err(err) => profiles_error_response(err),
+    }
+}
+
+fn is_json(headers: &HeaderMap) -> Result<bool, ProfilesError> {
+    let content_type = match headers.get(axum::http::header::CONTENT_TYPE) {
+        Some(value) => value
+            .to_str()
+            .map_err(|_| ProfilesError::UnsupportedFormat("non-ASCII content-type".into()))?,
+        None => "application/x-protobuf",
+    }
+    .split(';')
+    .next()
+    .unwrap_or_default()
+    .trim();
+    if content_type.eq_ignore_ascii_case("application/json") {
+        Ok(true)
+    } else if content_type.eq_ignore_ascii_case("application/protobuf")
+        || content_type.eq_ignore_ascii_case("application/x-protobuf")
+    {
+        Ok(false)
+    } else {
+        Err(ProfilesError::UnsupportedFormat(content_type.to_string()))
+    }
+}
+
+fn decode_http_body(
+    headers: &HeaderMap,
+    body: &[u8],
+    max_output: ByteSize,
+) -> Result<Vec<u8>, ProfilesError> {
+    let encoding = match headers.get(axum::http::header::CONTENT_ENCODING) {
+        Some(value) => value
+            .to_str()
+            .map_err(|_| ProfilesError::UnsupportedFormat("non-ASCII content-encoding".into()))?,
+        None => "identity",
+    };
+    if encoding.eq_ignore_ascii_case("gzip") {
+        gunzip(body, max_output)
+    } else if encoding.eq_ignore_ascii_case("identity") {
+        Ok(body.to_vec())
+    } else {
+        Err(ProfilesError::UnsupportedFormat(format!(
+            "content-encoding {encoding}"
+        )))
     }
 }
