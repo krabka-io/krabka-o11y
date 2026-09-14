@@ -3320,7 +3320,6 @@ fn drain_sink_into_store(sink: &CapturingSink, store: &WalTailProfileStore) -> T
 /// Pyroscope 2.3.1's default image accepts a sampled speedscope upload but
 /// exposes no profile for it. The explicit branch below records that known
 /// output divergence while keeping Krabka's useful speedscope ingestion.
-///
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
 async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {
