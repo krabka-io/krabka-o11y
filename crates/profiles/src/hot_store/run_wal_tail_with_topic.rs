@@ -1,3 +1,5 @@
+use krabka_observability::persisted_format::validate_persisted_format;
+
 use super::{
     AutoOffsetReset, CancellationToken, Consumer, ProfileRecord, ProfilesError, WalTailConfig,
     WalTailProfileStore,
@@ -67,6 +69,15 @@ pub async fn run_wal_tail_with_topic(
             return Ok(());
         };
         metrics.record_poll(&records);
+        for record in &records {
+            validate_persisted_format(
+                record
+                    .headers
+                    .iter()
+                    .map(|header| (header.key.as_str(), header.value.as_deref())),
+            )
+            .map_err(|error| ProfilesError::Wal(error.to_string()))?;
+        }
         // Decoded outside the store's write lock, then applied as one batch:
         // the store copies itself on write while a query holds a snapshot, and
         // a batch pays that once instead of once per record.

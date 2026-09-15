@@ -62,7 +62,7 @@ async fn deprecated_api_prom_query_range_endpoint_returns_loki_streams_json() {
                             "values": [["19", "api error"]]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -156,7 +156,7 @@ async fn query_range_endpoint_applies_metric_binary_arithmetic() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -197,7 +197,7 @@ async fn query_range_endpoint_applies_bool_metric_binary_comparison() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -305,7 +305,7 @@ async fn query_range_endpoint_applies_bool_metric_query_scalar_comparison() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -346,7 +346,7 @@ async fn query_range_endpoint_applies_bool_scalar_metric_query_comparison() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -387,7 +387,7 @@ async fn query_range_endpoint_applies_metric_query_scalar_arithmetic() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -428,7 +428,7 @@ async fn query_range_endpoint_applies_scalar_metric_query_arithmetic() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -536,7 +536,7 @@ async fn metric_query_endpoint_splits_stats_for_cold_blocks_and_hot_tail_samples
                             "value": [30, "1"]
                         }
                     ],
-                    "stats": expected_loki_mixed_stats_with(1819, 1, 1, 1)
+                    "stats": expected_loki_mixed_stats_with(1846, 1, 1, 1)
                 }
             })
     );
@@ -859,7 +859,7 @@ async fn query_range_endpoint_keep_stage_suppresses_detected_level_fallback() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 2, 1)
+                    "stats": expected_loki_stats_with(1846, 2, 1)
                 }
             })
     );
@@ -944,7 +944,7 @@ async fn query_range_endpoint_applies_interval_to_stream_results() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_mixed_stats_with(1819, 1, 1, 1)
+                    "stats": expected_loki_mixed_stats_with(1846, 1, 1, 1)
                 }
             })
     );
@@ -1169,7 +1169,7 @@ async fn query_range_endpoint_returns_count_over_time_matrix_json() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -1251,7 +1251,7 @@ async fn query_range_endpoint_applies_negative_count_over_time_offset() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -1292,7 +1292,7 @@ async fn query_range_endpoint_accepts_range_selector_before_pipeline() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -1658,7 +1658,7 @@ async fn query_range_endpoint_accepts_form_encoded_post_body() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -1725,7 +1725,7 @@ async fn query_range_endpoint_treats_integer_step_as_seconds() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 2, 1)
+                    "stats": expected_loki_stats_with(1846, 2, 1)
                 }
             })
     );
@@ -1767,7 +1767,7 @@ async fn query_range_endpoint_accepts_float_seconds_step_for_count_over_time_mat
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 2, 1)
+                    "stats": expected_loki_stats_with(1846, 2, 1)
                 }
             })
     );
@@ -1809,7 +1809,7 @@ async fn query_range_endpoint_accepts_duration_step_for_count_over_time_matrix_j
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 2, 1)
+                    "stats": expected_loki_stats_with(1846, 2, 1)
                 }
             })
     );
@@ -1850,7 +1850,7 @@ async fn query_range_endpoint_accepts_compound_duration_step_for_grafana() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 0, 1)
+                    "stats": expected_loki_stats_with(1846, 0, 1)
                 }
             })
     );
@@ -1892,7 +1892,7 @@ async fn query_range_endpoint_accepts_millisecond_duration_step_for_grafana() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 2, 1)
+                    "stats": expected_loki_stats_with(1846, 2, 1)
                 }
             })
     );
@@ -1934,7 +1934,7 @@ async fn query_range_endpoint_accepts_compound_duration_range_selector() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 2, 1)
+                    "stats": expected_loki_stats_with(1846, 2, 1)
                 }
             })
     );
@@ -1973,7 +1973,7 @@ async fn query_range_endpoint_accepts_trailing_vector_grouping() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );

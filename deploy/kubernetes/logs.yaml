@@ -87,18 +87,13 @@ spec:
             failureThreshold: 6
           lifecycle:
             preStop:
-              # Loki's `prepare_shutdown`, which is the drain Krabka
-              # implements: it clears the `accepting-writes` gate, `/ready` on
-              # the data port starts answering 503, and the endpoint is
-              # removed before SIGTERM arrives. Without it the pod keeps
-              # receiving pushes it is about to stop serving, and the
-              # orchestrator never learns otherwise -- the admin port, which
-              # has no gate for this role, answers 200 throughout.
+              # EndpointSlice removal starts with termination. Give it time to
+              # propagate before SIGTERM without requiring an HTTP client in
+              # the minimal application image.
               exec:
                 command:
-                  - /busybox/sh
-                  - -c
-                  - /busybox/wget -q -O - --post-data= http://127.0.0.1:3100/ingester/prepare_shutdown; /busybox/sleep 5
+                  - /bin/sleep
+                  - "5"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

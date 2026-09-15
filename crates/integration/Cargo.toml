@@ -38,7 +38,9 @@ krabka-promql = { path = "../promql", version = "0.4.0" }
 krabka-traces = { path = "../traces", version = "0.4.0" }
 krabka-units = { workspace = true }
 object_store = { workspace = true }
+reqwest = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
 tower = { workspace = true, features = ["util"] }

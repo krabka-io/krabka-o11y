@@ -1,3 +1,5 @@
+use krabka_observability::persisted_format::validate_persisted_format;
+
 use super::{
     MetricStore, PrometheusApiState, RulerStateConsumerError, Time, WalHeadConsumerCommit,
     WalHeadConsumerPoll, WalHeadConsumerRecord, WalHeadReplayResult, replay_ruler_state_records,
@@ -27,6 +29,15 @@ where
         .poll(timeout)
         .await
         .map_err(|error| RulerStateConsumerError::Poll(error.to_string()))?;
+    for record in records.iter().filter(|record| record.topic == state_topic) {
+        validate_persisted_format(
+            record
+                .headers
+                .iter()
+                .map(|header| (header.key.as_str(), header.value.as_deref())),
+        )
+        .map_err(|error| RulerStateConsumerError::UnsupportedFormat(error.to_string()))?;
+    }
     let replay_records = records
         .into_iter()
         .map(|record| WalHeadConsumerRecord {

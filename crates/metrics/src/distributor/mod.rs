@@ -800,7 +800,9 @@ overrides:
             record.value.as_deref() == Some(&b"payload"[..]),
             "not the key again"
         );
-        check!(record.headers.is_empty(), "no trace context on this path");
+        check!(record.headers.len() == 1);
+        check!(record.headers[0].key == "krabka-format-version");
+        check!(record.headers[0].value.as_deref() == Some(&b"1"[..]));
     }
 
     /// `wal_producer_record` shapes one WAL append. The partition is left
@@ -832,15 +834,17 @@ overrides:
 
         // Headers keep their order and their pairing; the two values differ so
         // a swap between them is visible.
-        check!(record.headers.len() == 2);
-        check!(record.headers[0].key == "traceparent");
-        check!(record.headers[0].value.as_deref() == Some(&b"00-abc-def-01"[..]));
-        check!(record.headers[1].key == "tracestate");
-        check!(record.headers[1].value.as_deref() == Some(&b"vendor=1"[..]));
+        check!(record.headers.len() == 3);
+        check!(record.headers[0].key == "krabka-format-version");
+        check!(record.headers[0].value.as_deref() == Some(&b"1"[..]));
+        check!(record.headers[1].key == "traceparent");
+        check!(record.headers[1].value.as_deref() == Some(&b"00-abc-def-01"[..]));
+        check!(record.headers[2].key == "tracestate");
+        check!(record.headers[2].value.as_deref() == Some(&b"vendor=1"[..]));
 
-        // No trace context means no headers, rather than empty ones.
+        // No trace context still carries the persisted format contract.
         let bare = super::wal_producer_record(Bytes::from_static(b"k"), b"v".to_vec(), Vec::new());
-        check!(bare.headers.is_empty());
+        check!(bare.headers.len() == 1);
     }
 
     /// `decoded_sample_count` totals three collections across every series.
@@ -1143,15 +1147,16 @@ overrides:
                 ))
                 .collect::<Vec<_>>()
                 == vec![
+                    ("krabka-format-version", Some("1".to_string())),
                     ("traceparent", Some("00-abc-def-01".to_string())),
                     ("tracestate", Some("vendor=1".to_string())),
                 ],
             "headers keep their names, values and order"
         );
 
-        // No active span means no headers, not an empty-valued one.
+        // No active span still carries the persisted format contract.
         let bare = super::wal_producer_record(Bytes::from_static(b"k"), b"v".to_vec(), vec![]);
-        check!(bare.headers.is_empty());
+        check!(bare.headers.len() == 1);
     }
 
     /// The HTTP-to-gRPC mapping the error kinds share. Only two codes get a
@@ -3833,6 +3838,38 @@ overrides:
         );
         check!(consumer.commit_calls == 1);
         check!(tracker.elected_replica("tenant-a", "c1") == Some("r1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn future_ha_format_is_rejected_before_state_or_offset_changes() {
+        let tracker = HaTracker::default();
+        let record = HaElectionRecord {
+            tenant: "tenant-a".to_string(),
+            cluster: "c1".to_string(),
+            replica: "r1".to_string(),
+            lease_timestamp_ms: 42_000,
+        };
+        let mut future = consumer_record(HA_TRACKER_TOPIC, 1, 7, Some(record.encode().unwrap()));
+        future.headers.push(krabka_client_consumer::Header {
+            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(b"2")),
+        });
+        let mut consumer = RecordingHaElectionConsumer {
+            batches: vec![vec![future]],
+            commit_calls: 0,
+        };
+
+        let error =
+            poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
+                .await
+                .expect_err("future format must fail closed");
+
+        assert!(matches!(
+            error,
+            HaElectionConsumerError::UnsupportedFormat(_)
+        ));
+        check!(consumer.commit_calls == 0);
+        check!(tracker.elected_replica("tenant-a", "c1").is_none());
     }
 
     #[test]

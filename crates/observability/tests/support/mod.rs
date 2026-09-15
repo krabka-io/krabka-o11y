@@ -557,11 +557,11 @@ pub fn assert_loki_error(body: &Value, error_type: &str, error_contains: &str) {
 }
 
 pub fn expected_api_error() -> Value {
-    expected_api_error_with_stats(&expected_loki_stats_with(1819, 1, 1))
+    expected_api_error_with_stats(&expected_loki_stats_with(1846, 1, 1))
 }
 
 pub fn expected_loki_forwarded_api_error() -> Value {
-    expected_loki_forwarded_api_error_with_stats(&expected_loki_stats_with(1819, 1, 1))
+    expected_loki_forwarded_api_error_with_stats(&expected_loki_stats_with(1846, 1, 1))
 }
 
 pub fn expected_api_error_with_stats(stats: &Value) -> Value {

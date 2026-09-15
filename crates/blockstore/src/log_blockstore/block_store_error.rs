@@ -22,6 +22,8 @@ pub enum BlockStoreError {
     InvalidTimeRange { start_ns: i64, end_ns: i64 },
     #[error("invalid log index manifest version {actual}; expected {expected}")]
     InvalidManifestVersion { actual: u32, expected: u32 },
+    #[error("unsupported log block format: {0}")]
+    UnsupportedBlockFormat(String),
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]

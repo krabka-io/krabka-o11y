@@ -89,6 +89,40 @@ mod tests {
         assert2::assert!(out == vec![batch]);
     }
 
+    #[tokio::test]
+    async fn future_block_format_is_rejected_before_rows_are_read() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
+            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(UInt64Array::from(vec![10_u64])),
+                Arc::new(Int64Array::from(vec![100_i64])),
+            ],
+        )
+        .unwrap();
+        let props = WriterProperties::builder()
+            .set_key_value_metadata(Some(vec![parquet::file::metadata::KeyValue::new(
+                crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+                Some("2".to_string()),
+            )]))
+            .build();
+        let object_writer = BufWriter::new(store.clone(), Path::from("future.parquet"));
+        let mut writer = AsyncArrowWriter::try_new(object_writer, schema, Some(props)).unwrap();
+        writer.write(&batch).await.unwrap();
+        writer.close().await.unwrap();
+
+        let error = read_block(store, "future.parquet")
+            .await
+            .expect_err("future format must not be decoded");
+        assert2::assert!(
+            matches!(error, BlockStoreError::InvalidBlock(message) if message.contains("version `2`"))
+        );
+    }
+
     /// `read_block_row_groups` is the default-cap wrapper the query path calls,
     /// and nothing exercised it -- only the `_with_max_bytes` form beneath it.
     /// Replaced by `Ok(vec![])` it reports every block as holding no rows, which

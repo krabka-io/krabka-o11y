@@ -4059,8 +4059,10 @@ dependencies = [
  "krabka-traces",
  "krabka-units",
  "object_store",
+ "reqwest 0.13.4",
  "serde_json",
  "tempfile",
+ "testcontainers",
  "tokio",
  "tower",
 ]

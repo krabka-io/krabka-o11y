@@ -6,6 +6,9 @@ pub enum WalHeadConsumerError {
     #[error("metrics WAL consumer poll failed: {0}")]
     Poll(String),
 
+    #[error("metrics WAL record has unsupported format: {0}")]
+    UnsupportedFormat(String),
+
     #[error(transparent)]
     Replay(#[from] WalHeadReplayError),
 

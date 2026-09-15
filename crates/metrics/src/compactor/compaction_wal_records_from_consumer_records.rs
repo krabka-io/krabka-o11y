@@ -1,3 +1,5 @@
+use krabka_observability::persisted_format::validate_persisted_format;
+
 use super::{
     CompactionConsumerRecordError, CompactionWalRecord, ConsumerRecord, Offset, PartitionIndex,
 };
@@ -15,6 +17,17 @@ pub fn compaction_wal_records_from_consumer_records(
         if record.topic != wal_topic {
             continue;
         }
+        validate_persisted_format(
+            record
+                .headers
+                .iter()
+                .map(|header| (header.key.as_str(), header.value.as_deref())),
+        )
+        .map_err(|error| CompactionConsumerRecordError::UnsupportedFormat {
+            partition: PartitionIndex(record.partition),
+            offset: Offset(record.offset),
+            message: error.to_string(),
+        })?;
         let value = record
             .value
             .as_ref()

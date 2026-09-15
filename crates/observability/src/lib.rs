@@ -2,6 +2,7 @@
 
 pub mod ids;
 pub mod metrics;
+pub mod persisted_format;
 
 use std::{
     cmp::Ordering,

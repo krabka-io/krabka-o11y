@@ -1024,6 +1024,10 @@ fn an_audit_record_becomes_a_kafka_record_pinned_to_its_partition() {
                 value: Some(Bytes::from_static(br#"{"class_uid":6003}"#)),
                 headers: vec![
                     Header {
+                        key: "krabka-format-version".to_owned(),
+                        value: Some(Bytes::from_static(b"1")),
+                    },
+                    Header {
                         key: "event_class".to_owned(),
                         value: Some(Bytes::from_static(b"api_activity")),
                     },

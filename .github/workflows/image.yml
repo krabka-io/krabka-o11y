@@ -21,6 +21,10 @@ on:
       - MODULE.bazel.lock
       - bazel/images/krabka/**
       - deploy/**
+      - docs/releases/**
+      - qualification/**
+      - tools/qualification-report.py
+      - tools/release-smoke.sh
       - Cargo.lock
       - Cargo.toml
       - crates/**
@@ -30,7 +34,10 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
+  artifact-metadata: write
   contents: read
+  issues: read
   packages: write
   id-token: write
   # For actions/attest-build-provenance. The attestation is attached to the
@@ -38,6 +45,33 @@ permissions:
   attestations: write
 
 jobs:
+  release-gate:
+    name: qualified release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      qualified-run: ${{ steps.qualification.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: require exact qualification and completed prerequisites
+        id: qualification
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for issue in 242 243 244 245 246; do
+            test "$(gh issue view "${issue}" --json state --jq .state)" = CLOSED
+          done
+          run="$(gh run list --workflow qualification.yml --commit "${GITHUB_SHA}" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          test -n "${run}"
+          gh run download "${run}" \
+            --name "milestone-16-qualification-${GITHUB_SHA}" --dir qualified
+          tools/qualification-report.py \
+            --report qualified/milestone-16-qualified.json \
+            --final --commit "${GITHUB_SHA}"
+          echo "run=${run}" >> "${GITHUB_OUTPUT}"
+
   # Two minutes, no Bazel. It catches the manifest errors that only appear when
   # something renders them: a kustomize base that will not build, or a compose
   # file with an undefined anchor. `//deploy:role_config_test` covers the other
@@ -55,8 +89,11 @@ jobs:
 
   image:
     name: build · publish
+    needs: [manifests, release-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
@@ -129,3 +166,66 @@ jobs:
           subject-name: ghcr.io/krabka-io/krabka-o11y
           subject-digest: ${{ steps.digest.outputs.digest }}
           push-to-registry: true
+
+  release:
+    name: release · qualify published digest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [image, release-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IMAGE: ghcr.io/krabka-io/krabka-o11y@${{ needs.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: clean four-signal install and query smoke
+        run: tools/release-smoke.sh "${IMAGE}" "" release-assets/smoke
+      - name: generate SPDX SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ env.IMAGE }}
+          format: spdx-json
+          output-file: release-assets/sbom.spdx.json
+          upload-artifact: false
+      - name: attest release provenance
+        id: provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: ghcr.io/krabka-io/krabka-o11y
+          subject-digest: ${{ needs.image.outputs.digest }}
+          push-to-registry: true
+      - name: attest release SBOM
+        id: sbom-attestation
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-name: ghcr.io/krabka-io/krabka-o11y
+          subject-digest: ${{ needs.image.outputs.digest }}
+          sbom-path: release-assets/sbom.spdx.json
+          push-to-registry: true
+      - name: assemble and publish release
+        env:
+          QUALIFICATION_RUN: ${{ needs.release-gate.outputs.qualified-run }}
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          test -f "docs/releases/${tag}.md"
+          gh run download "${QUALIFICATION_RUN}" \
+            --name "milestone-16-qualification-${GITHUB_SHA}" --dir release-assets
+          cp "${PROVENANCE_BUNDLE}" release-assets/provenance.jsonl
+          cp "${SBOM_BUNDLE}" release-assets/sbom-attestation.jsonl
+          printf '%s\n' "${IMAGE}" > release-assets/image.txt
+          tar -C release-assets -czf release-assets/four-signal-smoke.tgz smoke
+          rm -rf release-assets/smoke
+          (cd release-assets && find . -type f ! -name SHA256SUMS -print0 | \
+            sort -z | xargs -0 sha256sum > SHA256SUMS)
+          gh release create "${tag}" release-assets/* \
+            --verify-tag --title "krabka-o11y ${tag}" \
+            --notes-file "docs/releases/${tag}.md"

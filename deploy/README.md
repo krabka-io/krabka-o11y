@@ -31,6 +31,10 @@ The stack publishes Prometheus remote-write on `:4041`, the PromQL query API on
 `:4318`, the Tempo query API on `:3201`, Pyroscope ingest on `:4040`, and the
 Pyroscope query API on `:4042`. Every request needs an `X-Scope-OrgID` header.
 
+The stack also starts the pinned Alloy client. Send Loki pushes to its `:9999`
+listener and OTLP/HTTP traces to `:14318`; its unmodified public-protocol
+configuration also remote-writes its own metrics and profiles to Krabka.
+
 ## Kubernetes
 
 ```bash

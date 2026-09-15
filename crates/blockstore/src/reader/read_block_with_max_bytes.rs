@@ -23,9 +23,12 @@ pub async fn read_block_with_max_bytes(
     let path = Path::from(object_key);
     head_within_cap(&store, &path, object_key, max_bytes).await?;
     let reader = ObjectStoreReader::new(store, path);
-    let stream = ParquetRecordBatchStreamBuilder::new(reader)
+    let builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
-        .map_err(|error| unreadable(object_key, error))?
+        .map_err(|error| unreadable(object_key, error))?;
+    crate::validate_persisted_block_format(builder.metadata())
+        .map_err(crate::BlockStoreError::InvalidBlock)?;
+    let stream = builder
         .build()
         .map_err(|error| unreadable(object_key, error))?;
     stream

@@ -1,3 +1,5 @@
+use krabka_observability::persisted_format::validate_persisted_format;
+
 use super::{
     Time, WalHead, WalHeadConsumerCommit, WalHeadConsumerError, WalHeadConsumerPoll,
     WalHeadConsumerRecord, WalHeadReplayResult, replay_wal_head_records,
@@ -23,6 +25,15 @@ where
     C: WalHeadConsumerPoll + WalHeadConsumerCommit + ?Sized,
 {
     let records = consumer.poll(timeout).await?;
+    for record in records.iter().filter(|record| record.topic == wal_topic) {
+        validate_persisted_format(
+            record
+                .headers
+                .iter()
+                .map(|header| (header.key.as_str(), header.value.as_deref())),
+        )
+        .map_err(|error| WalHeadConsumerError::UnsupportedFormat(error.to_string()))?;
+    }
     let replay_records = records
         .into_iter()
         .map(|record| WalHeadConsumerRecord {

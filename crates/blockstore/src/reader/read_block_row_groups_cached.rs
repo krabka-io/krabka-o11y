@@ -36,9 +36,12 @@ pub(crate) async fn read_block_row_groups_cached(
         ),
         None => ObjectStoreReader::new(Arc::clone(store), path),
     };
-    let stream = ParquetRecordBatchStreamBuilder::new(reader)
+    let builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
-        .map_err(|error| unreadable(object_key, error))?
+        .map_err(|error| unreadable(object_key, error))?;
+    crate::validate_persisted_block_format(builder.metadata())
+        .map_err(crate::BlockStoreError::InvalidBlock)?;
+    let stream = builder
         .with_row_groups(row_groups.to_vec())
         .build()
         .map_err(|error| unreadable(object_key, error))?;

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "krabka_commit": null,
+  "artifacts": {
+    "alloy": {"image": "mirror.gcr.io/grafana/alloy:v1.19.2", "digest": "sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8", "revision": "becfd489a7bb459c0496893b555fb87a003296b1"},
+    "grafana": {"image": "mirror.gcr.io/grafana/grafana:13.2.2", "digest": "sha256:9924c7fe0effe4a5fea08b3451905de54f09fde9d1589463a5f2d02d9ec158bc", "revision": "3db12332b66497c31f8ad2a5fb0eb0fe0ca05a7e"},
+    "loki": {"image": "mirror.gcr.io/grafana/loki:3.7.7", "digest": "sha256:550d599ec4efacd8ebc0a5871766855057cba2bd0c669c0711d898c00d6d901f", "revision": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da"},
+    "mimir": {"image": "mirror.gcr.io/grafana/mimir:3.2.1", "digest": "sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289", "revision": "e49585d43c6e852225e114bd1ddd98da58a4c060"},
+    "minio": {"image": "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z", "digest": "sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb"},
+    "prometheus": {"image": "mirror.gcr.io/prom/prometheus:v3.14.0", "digest": "sha256:e906cef998316bbe319f98711e1b4d8613ad37e14b08ff831d7036e77b7464f9", "revision": "d7598b7141418fa35be2b5ec5d0fefb634199610"},
+    "pyroscope": {"image": "mirror.gcr.io/grafana/pyroscope:2.3.1", "digest": "sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334", "revision": "7aeaa0ff91e83538b3ff0d09bfefb168bddc022d"},
+    "tempo": {"image": "mirror.gcr.io/grafana/tempo:3.0.3", "digest": "sha256:05321ebf1f191fde34282b3dc86e68f511d489133df7963cd1670a2e1e11b33c", "revision": "1900ed7bb5cad1a3edc285783d7d4ac4278337dc"}
+  },
+  "manifests": ["docs/api/client_oracles.json", "docs/api/routes.json", "docs/api/upstream_surfaces.json", "docs/persisted_formats.md"],
+  "gates": [
+    {"id": "ordinary", "commands": ["bazel run //tools/format && git diff --exit-code", "bazel test //...", "cargo test --workspace --locked", "cargo clippy --workspace --all-targets --locked -- -D warnings"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "oracle_versions", "commands": ["bazel test --config=docker --flaky_test_attempts=1 //bazel/images:alloy_version_test //bazel/images:grafana_version_test //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:prometheus_version_test //bazel/images:pyroscope_version_test //bazel/images:tempo_version_test"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "differential", "commands": ["bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test", "bazel test --config=docker --flaky_test_attempts=1 //crates/observability:loki_differential_docker_test", "bazel test --config=docker --flaky_test_attempts=1 //crates/traces:tempo_differential_docker_test", "bazel test --config=docker --flaky_test_attempts=1 //crates/profiles:pyroscope_differential_docker_test"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "grafana", "commands": ["bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:grafana_integration_docker_test", "bazel test --config=docker --flaky_test_attempts=1 //crates/observability:grafana_e2e_docker_test //crates/observability:grafana_integration_docker_test", "bazel test --config=docker --flaky_test_attempts=1 //crates/traces:grafana_e2e_docker_test", "bazel test --config=docker --flaky_test_attempts=1 //crates/profiles:pyroscope_differential_docker_test"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "client_oracles", "commands": ["bazel test --config=docker --flaky_test_attempts=1 //crates/integration:alloy_client_docker_test //crates/integration:prometheus_client_docker_test"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "persisted_upgrade", "commands": ["bazel run -c opt //bazel/images/krabka:load && tools/release-smoke.sh krabka-o11y:dev \"ghcr.io/krabka-io/krabka-o11y:sha-$(git rev-parse --short=12 HEAD^)\" qualification/evidence/persisted-upgrade"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "clients_and_correlation", "commands": ["bazel test //crates/integration:logs_to_traces_trace_id_test //crates/integration:traces_to_metrics_exemplars_test //crates/integration:traces_to_profiles_span_profiles_test"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "lifecycle_and_failures", "commands": ["bazel test //crates/blockstore:lifecycle_test //crates/observability:compactor_test //crates/observability:deletes_test //crates/observability:wal_live_broker_test //crates/profiles:lifecycle_test //crates/traces:block_lifecycle_test //crates/traces:wal_group_rebalance_test"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "security_and_limits", "commands": ["bazel test //crates/metrics:tenant_quota_isolation_test //crates/observability:audit_test //crates/observability:server_security_test //crates/observability:service_security_test //crates/profiles:tenant_resolution_test //crates/promql:tenant_isolation_test //crates/traces:tenant_isolation_test"], "command_count": 0, "result": "pending", "evidence": null},
+    {"id": "scale", "commands": ["bazel test --config=scale --flaky_test_attempts=1 //crates/observability:scale_object_store_docker_test", "bazel test --config=scale --flaky_test_attempts=1 //crates/observability:soak_ingest_query_docker_test"], "command_count": 0, "result": "pending", "evidence": null}
+  ]
+}

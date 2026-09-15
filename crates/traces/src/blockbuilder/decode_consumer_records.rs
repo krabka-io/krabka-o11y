@@ -1,3 +1,5 @@
+use krabka_observability::persisted_format::validate_persisted_format;
+
 use super::{BTreeMap, ConsumerRecord, PartitionWindow, SpanRecord, TracesError};
 
 /// Decode Kafka consumer records into per-partition span windows.
@@ -12,6 +14,13 @@ pub fn decode_consumer_records(
 ) -> Result<BTreeMap<i32, PartitionWindow>, TracesError> {
     let mut windows = BTreeMap::<i32, PartitionWindow>::new();
     for record in records {
+        validate_persisted_format(
+            record
+                .headers
+                .iter()
+                .map(|header| (header.key.as_str(), header.value.as_deref())),
+        )
+        .map_err(|error| TracesError::Wal(error.to_string()))?;
         let Some(value) = &record.value else {
             continue;
         };

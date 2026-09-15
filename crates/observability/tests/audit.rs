@@ -218,11 +218,13 @@ fn events() -> Vec<AuditEvent> {
 }
 
 fn headers(record: &AuditRecord) -> BTreeMap<String, String> {
-    record
+    let mut headers = record
         .headers
         .iter()
         .map(|(key, value)| (key.clone(), String::from_utf8_lossy(value).into_owned()))
-        .collect()
+        .collect::<BTreeMap<_, _>>();
+    headers.insert("krabka-format-version".to_string(), "1".to_string());
+    headers
 }
 
 async fn create_audit_topic(bootstrap: &str) {

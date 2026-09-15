@@ -354,7 +354,7 @@ async fn query_endpoint_merges_cold_blocks_with_hot_wal_tail() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_mixed_stats_with(1819, 1, 1, 1)
+                    "stats": expected_loki_mixed_stats_with(1846, 1, 1, 1)
                 }
             })
     );
@@ -417,7 +417,7 @@ async fn query_endpoint_uses_updated_shared_compaction_frontier_for_hot_tail() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -472,7 +472,7 @@ async fn query_endpoint_applies_limit_to_stream_results() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_stats_with(1819, 1, 1)
+                    "stats": expected_loki_stats_with(1846, 1, 1)
                 }
             })
     );
@@ -527,7 +527,7 @@ async fn query_endpoint_applies_backward_direction_before_limit() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_mixed_stats_with(1819, 0, 1, 1)
+                    "stats": expected_loki_mixed_stats_with(1846, 0, 1, 1)
                 }
             })
     );
@@ -582,7 +582,7 @@ async fn query_endpoint_defaults_to_backward_direction_before_limit() {
                             ]
                         }
                     ],
-                    "stats": expected_loki_mixed_stats_with(1819, 0, 1, 1)
+                    "stats": expected_loki_mixed_stats_with(1846, 0, 1, 1)
                 }
             })
     );

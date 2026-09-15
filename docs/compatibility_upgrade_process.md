@@ -1,9 +1,12 @@
 # Upstream Compatibility Upgrades
 
-Use this process when Krabka changes a Mimir, Loki, Tempo, or Pyroscope oracle.
+Use this process when Krabka changes a Mimir, Loki, Tempo, Pyroscope, Grafana,
+Prometheus, or Alloy oracle.
 The pull request is the review record for the change.
 [`docs/api/upstream_surfaces.json`](api/upstream_surfaces.json) is the source of truth for each oracle baseline.
 It records the tag, image, platform, digest, and upstream Git revision.
+Client baselines and their classified workflows live in
+[`docs/api/client_oracles.json`](api/client_oracles.json).
 
 ## Select the release
 

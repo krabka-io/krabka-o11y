@@ -5,6 +5,9 @@ pub enum HaElectionConsumerError {
     #[error("HA election consumer poll failed: {0}")]
     Poll(String),
 
+    #[error("HA election record has unsupported format: {0}")]
+    UnsupportedFormat(String),
+
     #[error(transparent)]
     Replay(#[from] HaElectionReplayError),
 

@@ -35,6 +35,8 @@ pub(crate) async fn block_metadata(
     if let Some(cache) = cache
         && let Some(metadata) = cache.get(&meta)
     {
+        crate::validate_persisted_block_format(&metadata)
+            .map_err(crate::BlockStoreError::InvalidBlock)?;
         tracing::Span::current().record("cached", true);
         return Ok(metadata);
     }
@@ -53,5 +55,7 @@ pub(crate) async fn block_metadata(
     let builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
         .map_err(|error| unreadable(object_key, error))?;
+    crate::validate_persisted_block_format(builder.metadata())
+        .map_err(crate::BlockStoreError::InvalidBlock)?;
     Ok(Arc::clone(builder.metadata()))
 }

@@ -2,6 +2,8 @@ use super::Error;
 
 #[derive(Debug, Error)]
 pub enum WalRecordDecodeError {
+    #[error("unsupported WAL record format: {0}")]
+    UnsupportedFormat(String),
     #[error("wal record deserialization failed: {0}")]
     Deserialize(#[from] serde_json::Error),
     #[error("native Kafka log record is missing header {name}")]

@@ -212,19 +212,7 @@ mod tests {
         }
         let _ = object_symbol_anchor();
         let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = {
-            let object = object::File::parse(bytes.as_slice()).unwrap();
-            object
-                .symbols()
-                .find(|symbol| {
-                    symbol.address() != 0
-                        && symbol
-                            .name()
-                            .is_ok_and(|name| name.contains("object_symbol_anchor"))
-                })
-                .unwrap()
-                .address()
-        };
+        let address = object_symbol_anchor_address(&bytes);
         let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
@@ -262,19 +250,7 @@ mod tests {
         }
         let _ = object_symbol_anchor();
         let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = {
-            let object = object::File::parse(bytes.as_slice()).unwrap();
-            object
-                .symbols()
-                .find(|symbol| {
-                    symbol.address() != 0
-                        && symbol
-                            .name()
-                            .is_ok_and(|name| name.contains("object_symbol_anchor"))
-                })
-                .unwrap()
-                .address()
-        };
+        let address = object_symbol_anchor_address(&bytes);
         let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
@@ -316,19 +292,7 @@ mod tests {
         }
         let _ = object_symbol_anchor();
         let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = {
-            let object = object::File::parse(bytes.as_slice()).unwrap();
-            object
-                .symbols()
-                .find(|symbol| {
-                    symbol.address() != 0
-                        && symbol
-                            .name()
-                            .is_ok_and(|name| name.contains("object_symbol_anchor"))
-                })
-                .unwrap()
-                .address()
-        };
+        let address = object_symbol_anchor_address(&bytes);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let max_debuginfo = ByteSize::from_bytes(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
@@ -484,9 +448,7 @@ mod tests {
             .find(|symbol| {
                 symbol.address() != 0
                     && symbol.size() > 0
-                    && symbol
-                        .name()
-                        .is_ok_and(|name| name.contains("object_symbol_anchor"))
+                    && symbol.name().is_ok_and(is_object_symbol_anchor_symbol)
             })
             .expect("anchor has a sized symbol");
         let at_end = nearest_symbol_name(&object, anchor.address() + anchor.size());
@@ -635,13 +597,15 @@ mod tests {
         object
             .symbols()
             .find(|symbol| {
-                symbol.address() != 0
-                    && symbol
-                        .name()
-                        .is_ok_and(|name| name.contains("object_symbol_anchor"))
+                symbol.address() != 0 && symbol.name().is_ok_and(is_object_symbol_anchor_symbol)
             })
             .unwrap()
             .address()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn is_object_symbol_anchor_symbol(name: &str) -> bool {
+        name.ends_with("object_symbol_anchor") || name.contains("object_symbol_anchor17h")
     }
 
     #[cfg(target_os = "linux")]

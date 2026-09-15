@@ -47,15 +47,18 @@ pub async fn open_block_stream(
         .await
         .map_err(|error| {
             BlockStoreError::block_unreadable(object_key, BlockReadFailure::Parquet(error))
-        })?
-        .with_batch_size(batch_rows);
-    let schema = Arc::clone(builder.schema());
+        })?;
+    crate::validate_persisted_block_format(builder.metadata())
+        .map_err(BlockStoreError::InvalidBlock)?;
+    let builder = builder.with_batch_size(batch_rows);
     let key = object_key.to_string();
-    let batches = builder
-        .build()
-        .map_err(|error| {
-            BlockStoreError::block_unreadable(object_key, BlockReadFailure::Parquet(error))
-        })?
+    let batches = builder.build().map_err(|error| {
+        BlockStoreError::block_unreadable(object_key, BlockReadFailure::Parquet(error))
+    })?;
+    // The built stream preserves Arrow types such as dictionaries while
+    // stripping file-level Parquet metadata from the logical batch schema.
+    let schema = Arc::clone(batches.schema());
+    let batches = batches
         .map_err(move |error| {
             BlockStoreError::block_unreadable(&key, BlockReadFailure::Parquet(error))
         })

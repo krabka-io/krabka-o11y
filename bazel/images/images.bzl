@@ -9,7 +9,7 @@ which is the whole thing the digest pin exists to prevent.
 Keeping that in one place is the point of this file. It was previously written
 twice: here, and again as a default in each suite's source. The two drifted --
 `grafana_e2e` asked for `grafana:11.5.2` and `prometheus:v3.1.0` while the
-build loaded `11.6.1` and `v3.8.0`, so that suite pulled both images from the
+build loaded different versions, so that suite pulled both images from the
 network on every run and compared against whatever it got. //bazel/defs.bzl now
 hands each suite the reference from this map, and no suite carries a default.
 
@@ -40,12 +40,34 @@ ORACLES = {
     ),
 }
 
+CLIENTS = {
+    "alloy": struct(
+        binary = "/bin/alloy",
+        image = "mirror.gcr.io/grafana/alloy:v1.19.2",
+        revision = "becfd489a7bb459c0496893b555fb87a003296b1",
+        version = "1.19.2",
+    ),
+    "grafana": struct(
+        binary = "/usr/share/grafana/bin/grafana",
+        image = "mirror.gcr.io/grafana/grafana:13.2.2",
+        revision = "",
+        version = "13.2.2",
+    ),
+    "prometheus": struct(
+        binary = "/bin/prometheus",
+        image = "mirror.gcr.io/prom/prometheus:v3.14.0",
+        revision = "d7598b7141418fa35be2b5ec5d0fefb634199610",
+        version = "3.14.0",
+    ),
+}
+
 IMAGES = {
-    "grafana": "mirror.gcr.io/grafana/grafana:11.6.1",
+    "alloy": CLIENTS["alloy"].image,
+    "grafana": CLIENTS["grafana"].image,
     "loki": ORACLES["loki"].image,
     "mimir": ORACLES["mimir"].image,
     "minio": "mirror.gcr.io/minio/minio:RELEASE.2025-04-22T22-12-26Z",
-    "prometheus": "mirror.gcr.io/prom/prometheus:v3.8.0",
+    "prometheus": CLIENTS["prometheus"].image,
     "pyroscope": ORACLES["pyroscope"].image,
     "tempo": ORACLES["tempo"].image,
 }

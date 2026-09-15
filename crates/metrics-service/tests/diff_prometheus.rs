@@ -25,7 +25,7 @@ use krabka_metrics::{
     wire::pb,
 };
 use krabka_promql::WalHead;
-use promql_corpus::{CorpusCase, PromqlCorpus, QueryKind};
+use promql_corpus::{CorpusCase, KnownDivergence, PromqlCorpus, QueryKind};
 use prost::Message;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -84,6 +84,42 @@ const QUERY_CONCURRENCY: usize = 12;
 /// histogram corpora need native histograms.
 const PROMETHEUS_FEATURES: &str = "native-histograms,promql-experimental-functions,\
      promql-duration-expr,promql-extended-range-selectors,type-and-unit-labels";
+
+/// Query changes observed when the client oracle moved from Prometheus 3.8 to
+/// 3.14. The list is bidirectional: the suite fails if any case starts agreeing
+/// again, so each difference remains an explicit compatibility decision.
+const PROMETHEUS_DIVERGENCES: &[KnownDivergence] = &[
+    KnownDivergence {
+        reason: "Prometheus 3.14 rejects nested duration expressions that 3.8 and Krabka accept.",
+        cases: &[
+            "duration_expression.test:170",
+            "duration_expression.test:173",
+            "duration_expression.test:176",
+            "duration_expression.test:203",
+            "duration_expression.test:206",
+            "duration_expression.test:209",
+            "duration_expression.test:212",
+            "duration_expression.test:215",
+            "duration_expression.test:218",
+            "duration_expression.test:221",
+            "duration_expression.test:224",
+            "duration_expression.test:227",
+        ],
+    },
+    KnownDivergence {
+        reason: "Prometheus 3.14 changed the anchored boundary used by changes and resets.",
+        cases: &["extended_vectors.test:321", "extended_vectors.test:344"],
+    },
+    KnownDivergence {
+        reason: "Prometheus 3.14 adds sample-range detail to histogram monotonicity annotations; values agree.",
+        cases: &[
+            "histograms.test:958",
+            "histograms.test:962",
+            "histograms.test:966",
+            "native_histograms.test:1787",
+        ],
+    },
+];
 
 /// The corpus builds, and every case it declines to run says why.
 ///
@@ -155,10 +191,16 @@ async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
     seed_both(&client, &krabka.base_url, &prometheus_base, &corpus).await?;
 
     let mismatches = run_corpus(&client, &krabka.base_url, &prometheus_base, &corpus).await?;
-    promql_corpus::write_report("diff_prometheus", &corpus, &mismatches, &[]);
+    promql_corpus::write_report(
+        "diff_prometheus",
+        &corpus,
+        &mismatches,
+        PROMETHEUS_DIVERGENCES,
+    );
     krabka.shutdown();
 
-    let verdict = promql_corpus::check_divergences(&corpus, &mismatches, &[], &[]);
+    let verdict =
+        promql_corpus::check_divergences(&corpus, &mismatches, PROMETHEUS_DIVERGENCES, &[]);
     assert!(
         verdict.is_none(),
         "the differential and the known-divergence list disagree:\n{}",
