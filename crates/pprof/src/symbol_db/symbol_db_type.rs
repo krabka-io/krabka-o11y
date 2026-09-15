@@ -317,7 +317,8 @@ impl SymbolDb {
                             .get(line.function_id as usize)
                             .map(|function| ResolvedLine {
                                 function: ResolvedFunction {
-                                    name: self.string(function.name).to_string(),
+                                    name: drop_go_type_parameters(self.string(function.name))
+                                        .into_owned(),
                                     system_name: self.string(function.system_name).to_string(),
                                     filename: self.string(function.filename).to_string(),
                                     start_line: function.start_line,
