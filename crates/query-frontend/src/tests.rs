@@ -82,7 +82,7 @@ impl QueryFrontendAdapter for TestAdapter {
             .zip(self.ends.iter().copied())
             .map(|(id, end_epoch_millis)| PlannedQuery {
                 query: id,
-                cache_key: CacheKey::new(id.to_le_bytes()),
+                cache_key: CacheKey::new("test", id.to_le_bytes()),
                 end_epoch_millis,
             })
             .collect())
@@ -173,7 +173,7 @@ async fn retries_only_transient_errors_up_to_the_configured_limit() {
 async fn in_memory_cache_expires_entries_after_ttl() {
     let clock = Arc::new(ManualClock::default());
     let cache = InMemoryCache::new(Duration::from_millis(10)).with_clock(clock.clone());
-    let key = CacheKey::new(b"key".to_vec());
+    let key = CacheKey::new("tenant-a", b"key".to_vec());
     QueryCache::<usize>::insert(&cache, &key, &7).await.unwrap();
     clock.set(11);
 
@@ -184,14 +184,14 @@ async fn in_memory_cache_expires_entries_after_ttl() {
 async fn bounded_in_memory_cache_evicts_the_oldest_entry() {
     let cache = InMemoryCache::new_bounded(Duration::from_mins(1), NonZeroUsize::new(2).unwrap());
     for id in 0_u8..3 {
-        QueryCache::insert(&cache, &CacheKey::new([id]), &id)
+        QueryCache::insert(&cache, &CacheKey::new("tenant-a", [id]), &id)
             .await
             .unwrap();
     }
 
-    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new([0])).await == Ok(None));
-    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new([1])).await == Ok(Some(1)));
-    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new([2])).await == Ok(Some(2)));
+    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new("tenant-a", [0])).await == Ok(None));
+    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new("tenant-a", [1])).await == Ok(Some(1)));
+    assert!(QueryCache::<u8>::get(&cache, &CacheKey::new("tenant-a", [2])).await == Ok(Some(2)));
 }
 
 #[tokio::test]
@@ -204,13 +204,13 @@ async fn fresh_results_are_not_inserted() {
 
     assert!(frontend.execute(&adapter, &()).await.unwrap() == vec![0, 1]);
     assert!(
-        QueryCache::<usize>::get(&cache, &CacheKey::new(0_usize.to_le_bytes()))
+        QueryCache::<usize>::get(&cache, &CacheKey::new("test", 0_usize.to_le_bytes()))
             .await
             .unwrap()
             == Some(0)
     );
     assert!(
-        QueryCache::<usize>::get(&cache, &CacheKey::new(1_usize.to_le_bytes()))
+        QueryCache::<usize>::get(&cache, &CacheKey::new("test", 1_usize.to_le_bytes()))
             .await
             .unwrap()
             == None
@@ -226,7 +226,7 @@ async fn adapter_can_refuse_to_cache_mutable_results() {
 
     assert!(frontend.execute(&adapter, &()).await.unwrap() == vec![0]);
     assert!(
-        QueryCache::<usize>::get(&cache, &CacheKey::new(0_usize.to_le_bytes()))
+        QueryCache::<usize>::get(&cache, &CacheKey::new("test", 0_usize.to_le_bytes()))
             .await
             .unwrap()
             == None
@@ -246,10 +246,52 @@ async fn object_store_cache_round_trips_and_expires() {
     let second =
         ObjectStoreCache::<Vec<usize>>::new(store, "query-cache", Duration::from_millis(10))
             .with_clock(clock.clone());
-    let key = CacheKey::new(b"key".to_vec());
+    let key = CacheKey::new("tenant-a", b"key".to_vec());
     QueryCache::insert(&first, &key, &vec![1, 2]).await.unwrap();
     assert!(QueryCache::get(&second, &key).await.unwrap() == Some(vec![1, 2]));
 
     clock.set(11);
     assert!(QueryCache::get(&second, &key).await.unwrap() == None);
+}
+
+#[tokio::test]
+async fn cache_keys_are_isolated_by_tenant() {
+    let cache = InMemoryCache::default();
+    let tenant_a = CacheKey::new("tenant-a", b"same".to_vec());
+    let tenant_b = CacheKey::new("tenant-b", b"same".to_vec());
+    QueryCache::insert(&cache, &tenant_a, &1).await.unwrap();
+    QueryCache::insert(&cache, &tenant_b, &2).await.unwrap();
+
+    assert!(QueryCache::<usize>::get(&cache, &tenant_a).await == Ok(Some(1)));
+    assert!(QueryCache::<usize>::get(&cache, &tenant_b).await == Ok(Some(2)));
+}
+
+#[tokio::test]
+async fn sweeps_expired_entries_without_looking_them_up() {
+    let clock = Arc::new(ManualClock::default());
+    let cache = InMemoryCache::new(Duration::from_millis(10)).with_clock(clock.clone());
+    let key = CacheKey::new("tenant-a", b"stale".to_vec());
+    QueryCache::<usize>::insert(&cache, &key, &1).await.unwrap();
+    clock.set(11);
+
+    assert!(QueryCache::<usize>::sweep(&cache).await == Ok(1));
+    assert!(QueryCache::<usize>::get(&cache, &key).await == Ok(None));
+}
+
+#[tokio::test]
+async fn object_store_sweep_removes_only_expired_cache_objects() {
+    let clock = Arc::new(ManualClock::default());
+    let store: Arc<dyn object_store::ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+    let cache = ObjectStoreCache::<usize>::new(store, "query-cache", Duration::from_millis(10))
+        .with_clock(clock.clone());
+    let stale = CacheKey::new("tenant-a", b"stale".to_vec());
+    let live = CacheKey::new("tenant-b", b"live".to_vec());
+    QueryCache::insert(&cache, &stale, &1).await.unwrap();
+    clock.set(8);
+    QueryCache::insert(&cache, &live, &2).await.unwrap();
+    clock.set(11);
+
+    assert!(QueryCache::sweep(&cache).await.unwrap() == 1);
+    assert!(QueryCache::get(&cache, &stale).await.unwrap() == None);
+    assert!(QueryCache::get(&cache, &live).await.unwrap() == Some(2));
 }
