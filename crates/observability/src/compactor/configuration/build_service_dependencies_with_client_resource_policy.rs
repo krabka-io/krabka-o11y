@@ -80,7 +80,7 @@ pub async fn build_service_dependencies_with_client_resource_policy(
                 all_in_one_querier_group_id(&config.wal_group_id),
                 client_resource_policy,
                 security,
-                metrics,
+                metrics.with_fresh_recovery(),
             )
         }
     }

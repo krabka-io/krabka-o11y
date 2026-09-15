@@ -30,11 +30,13 @@ traces=$5
 roles=$(dirname "$6")
 
 failed=0
+checked=()
 
 readonly BAD_ARGUMENT=--krabka-deploy-test-not-a-flag
 
 check() {
   local binary=$1 role=$2 output status
+  checked+=("$role")
   output=$("$binary" "--config.file=$roles/$role.yaml" "$BAD_ARGUMENT" 2>&1)
   status=$?
   if [[ $status -ne 0 && $output == *"$BAD_ARGUMENT"* ]]; then
@@ -48,18 +50,39 @@ check() {
 
 check "$metrics" metrics-distributor
 check "$metrics" metrics-block-builder
+check "$metrics" metrics-compactor
 check "$metrics_service" metrics-querier
+check "$metrics_service" metrics-query-frontend
+check "$metrics_service" metrics-ruler
 check "$observability" logs-distributor
 check "$observability" logs-block-builder
 check "$observability" logs-querier
 check "$observability" logs-all
 check "$traces" traces-distributor
 check "$traces" traces-block-builder
+check "$traces" traces-live-store
 check "$traces" traces-querier
+check "$traces" traces-query-frontend
+check "$traces" traces-compactor
+check "$traces" traces-metrics-generator
 check "$traces" traces-all
 check "$profiles" profiles-distributor
 check "$profiles" profiles-block-builder
 check "$profiles" profiles-querier
+check "$profiles" profiles-query-frontend
+check "$profiles" profiles-compactor
+check "$profiles" profiles-symbolizer
 check "$profiles" profiles-all
+
+# A new file is not deployed safely until this test chooses the binary that
+# parses it. Keep the explicit mapping above, but make omissions fail.
+for path in "$roles"/*.yaml; do
+  role=${path##*/}
+  role=${role%.yaml}
+  if [[ " ${checked[*]} " != *" $role "* ]]; then
+    echo "NOT OK   $role: config has no binary/CLI check"
+    failed=1
+  fi
+done
 
 exit $failed

@@ -1,5 +1,5 @@
 use super::{
-    Arc, BlockBuilderConfig, Cli, ClientSecurity, ObjectStore, ServiceMetrics,
+    Arc, BlockBuilderConfig, Cli, ClientSecurity, ObjectStore, ReadinessGate, ServiceMetrics,
     client_resource_policy,
 };
 
@@ -18,9 +18,12 @@ pub(crate) fn block_builder_config(
     index_key: String,
     metrics: ServiceMetrics,
     wal_security: Option<ClientSecurity>,
+    catch_up: ReadinessGate,
 ) -> BlockBuilderConfig {
     let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
-    let mut config = BlockBuilderConfig::new(cli.bootstrap.clone(), store).with_metrics(metrics);
+    let mut config = BlockBuilderConfig::new(cli.bootstrap.clone(), store)
+        .with_metrics(metrics)
+        .with_catch_up(catch_up);
     config.client_dispatch_queue_capacity = client_dispatch_queue_capacity;
     config.client_frame_max = client_frame_max;
     config.wal_topic.clone_from(&cli.wal_topic);

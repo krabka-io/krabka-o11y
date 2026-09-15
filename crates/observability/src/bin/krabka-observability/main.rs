@@ -269,6 +269,7 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // data port, and the admin port echoes it, so a probe that cannot reach
     // the data port still gets the truth rather than "the listener is up".
     let readiness = RoleReadiness::new();
+    readiness.track_object_store(metrics.object_store.clone());
     // CPU/heap profiling admin server (Alloy pyroscope.scrape target) plus the
     // Prometheus RED-metrics exporter and `/ready` on the same :9404 admin port.
     krabka_telemetry::profiling::serve_admin_with_config(
@@ -290,10 +291,14 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
         wal_security,
         metrics.wal_consumer.clone(),
     )
-    .await?
-    .with_metrics(metrics)
-    .with_readiness(readiness)
-    .with_server_security(server_security);
+    .await?;
+    for source in dependencies.wal_recovery_metrics() {
+        readiness.track_wal_consumer(source.clone());
+    }
+    let dependencies = dependencies
+        .with_metrics(metrics)
+        .with_readiness(readiness)
+        .with_server_security(server_security);
     serve_service(config, dependencies, None).await?;
 
     telemetry.shutdown();

@@ -1,0 +1,5 @@
+# krabka-traces --target=live-store
+target: live-store
+listen: 0.0.0.0:3200
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092

@@ -26,6 +26,12 @@ pub(crate) async fn serve_compactor_service_listener(
     let delete_requests =
         compactor_delete_requests_for_config(&config, dependencies.delete_requests.clone())?;
     let readiness = dependencies.readiness.clone().unwrap_or_default();
+    if let Some(consumer) = &dependencies.wal_consumer {
+        consumer
+            .lock()
+            .await
+            .set_catch_up_gate(readiness.gate("wal-catch-up"));
+    }
     // The delete-request API checks every tenant against this authorizer. Its
     // connect task also keeps the ACL snapshot fresh, so it is supervised: a
     // block builder whose authorizer stopped would refuse every delete call

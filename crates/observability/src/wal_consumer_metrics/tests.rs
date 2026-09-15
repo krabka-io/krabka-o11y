@@ -83,6 +83,39 @@ fn the_consumed_offset_only_advances_with_the_records_it_was_given() {
     );
 }
 
+#[test]
+fn recovery_status_separates_consumed_committed_and_caught_up() {
+    let metrics = WalConsumerMetrics::unregistered();
+    metrics.record_assignment(&[("wal".to_owned(), 0)], false);
+    metrics.record_poll_at(&[record("wal", 0, 7, 1_000)], 1_000);
+
+    let before = metrics.recovery_status();
+    check!(!before.caught_up);
+    check!(before.partitions[0].consumed_offset == Some(7));
+    check!(before.partitions[0].committed_offset.is_none());
+    check!(before.partitions[0].lag.is_none());
+
+    metrics.record_commit();
+    metrics.record_assignment(&[("wal".to_owned(), 0)], true);
+    let after = metrics.recovery_status();
+    check!(after.caught_up);
+    check!(after.partitions[0].committed_offset == Some(8));
+    check!(after.partitions[0].lag == Some(0));
+}
+
+#[test]
+fn recovery_sources_share_instruments_without_overwriting_status() {
+    let first = WalConsumerMetrics::unregistered();
+    let second = first.with_fresh_recovery();
+    first.record_assignment(&[("first".to_string(), 0)], true);
+    second.record_assignment(&[("second".to_string(), 1)], false);
+
+    check!(first.recovery_status().partitions[0].topic == "first");
+    check!(second.recovery_status().partitions[0].topic == "second");
+    first.record_partition_assigned("shared", 2);
+    check!(second.partition_owned("shared", 2) == 1);
+}
+
 /// The instruments are read by scraping the registry rather than by reading
 /// the handles back, so an instrument that was never registered, or registered
 /// under a name no dashboard uses, fails here and only here.

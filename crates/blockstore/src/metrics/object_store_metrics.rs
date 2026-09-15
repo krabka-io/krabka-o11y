@@ -1,3 +1,11 @@
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    },
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use super::{
     ByteSize, ByteSizeExt, Counter, Family, Histogram, ObjectStoreOperation,
     ObjectStoreOperationLabel, Registry, Time, TimeExt,
@@ -27,6 +35,7 @@ pub struct ObjectStoreMetrics {
     retries: Family<ObjectStoreOperationLabel, Counter>,
     transferred_bytes: Family<ObjectStoreOperationLabel, Counter>,
     duration: Family<ObjectStoreOperationLabel, Histogram>,
+    last_success_unix_millis: Arc<AtomicI64>,
 }
 
 impl ObjectStoreMetrics {
@@ -94,6 +103,7 @@ impl ObjectStoreMetrics {
             duration: Family::<ObjectStoreOperationLabel, Histogram>::new_with_constructor(|| {
                 Histogram::new(OPERATION_DURATION_BUCKETS)
             }),
+            last_success_unix_millis: Arc::new(AtomicI64::new(-1)),
         }
     }
 
@@ -105,12 +115,26 @@ impl ObjectStoreMetrics {
     pub fn record_operation(&self, operation: ObjectStoreOperation, ok: bool, elapsed: Time) {
         let label = ObjectStoreOperationLabel::from(operation);
         self.operations.get_or_create(&label).inc();
-        if !ok {
+        if ok {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |elapsed| {
+                    i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+                });
+            self.last_success_unix_millis.store(now, Ordering::Relaxed);
+        } else {
             self.failures.get_or_create(&label).inc();
         }
         self.duration
             .get_or_create(&label)
             .observe(elapsed.secs_f64());
+    }
+
+    /// Wall-clock time of the most recent successful store operation.
+    #[must_use]
+    pub fn last_success_unix_millis(&self) -> Option<i64> {
+        let value = self.last_success_unix_millis.load(Ordering::Relaxed);
+        (value >= 0).then_some(value)
     }
 
     /// Records that one attempt of `operation` is about to be retried.

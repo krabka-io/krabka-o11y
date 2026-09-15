@@ -2657,12 +2657,16 @@ rules:
             )]],
             commit_calls: 0,
         };
+        let recovery =
+            krabka_observability::wal_consumer_metrics::WalConsumerMetrics::unregistered();
+        recovery.record_assignment(&[(krabka_metrics::WAL_TOPIC.to_owned(), 0)], false);
 
         let result = super::poll_wal_head_consumer_once(
             &mut consumer,
             &head,
             krabka_metrics::WAL_TOPIC,
             millis(1),
+            Some(&recovery),
         )
         .await
         .unwrap();
@@ -2677,6 +2681,9 @@ rules:
         };
         assert2::assert!(result == expected);
         assert2::assert!(consumer.commit_calls == 1);
+        let recovery = recovery.recovery_status();
+        assert2::assert!(recovery.partitions[0].consumed_offset == Some(4));
+        assert2::assert!(recovery.partitions[0].committed_offset == Some(5));
     }
 
     #[tokio::test]
@@ -2692,6 +2699,7 @@ rules:
             &head,
             krabka_metrics::WAL_TOPIC,
             millis(1),
+            None,
         )
         .await
         .unwrap();
@@ -2737,6 +2745,8 @@ rules:
             &head,
             krabka_metrics::WAL_TOPIC,
             millis(1),
+            None,
+            None,
             |summary| summary.polls == 2,
         )
         .await

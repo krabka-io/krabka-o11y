@@ -1,5 +1,6 @@
 use krabka_observability::{
-    wal_consumer_metrics::WalConsumerMetrics, wal_group_assignment::WalAssignmentWatch,
+    ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
+    wal_group_assignment::WalAssignmentWatch,
 };
 
 use super::{
@@ -22,7 +23,8 @@ use super::{
 /// [`krabka_observability::wal_group_assignment`].
 pub struct WalAssignmentConsumer {
     consumer: Consumer,
-    assignment: WalAssignmentWatch,
+    assignment: tokio::sync::Mutex<WalAssignmentWatch>,
+    metrics: WalConsumerMetrics,
 }
 
 impl WalAssignmentConsumer {
@@ -31,7 +33,24 @@ impl WalAssignmentConsumer {
     pub fn new(consumer: Consumer, metrics: &WalConsumerMetrics) -> Self {
         Self {
             consumer,
-            assignment: WalAssignmentWatch::new(metrics.clone()),
+            assignment: tokio::sync::Mutex::new(WalAssignmentWatch::new(metrics.clone())),
+            metrics: metrics.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_catch_up(
+        consumer: Consumer,
+        metrics: &WalConsumerMetrics,
+        gate: ReadinessGate,
+    ) -> Self {
+        Self {
+            consumer,
+            assignment: tokio::sync::Mutex::new(WalAssignmentWatch::with_catch_up(
+                metrics.clone(),
+                gate,
+            )),
+            metrics: metrics.clone(),
         }
     }
 }
@@ -48,7 +67,11 @@ impl CompactionConsumerPoll for WalAssignmentConsumer {
         // Read after the poll, so the snapshot is the one the fetch was served
         // against. An empty poll is observed too: a member that lost every
         // partition returns nothing and would otherwise look idle.
-        self.assignment.observe_consumer(&self.consumer).await;
+        self.assignment
+            .lock()
+            .await
+            .observe_consumer(&self.consumer, !records.is_empty())
+            .await;
         Ok(records)
     }
 }
@@ -66,6 +89,13 @@ impl CompactionConsumerCommit for WalAssignmentConsumer {
             .collect();
         Consumer::commit_offsets_sync(&self.consumer, offsets)
             .await
-            .map_err(|error| CompactionConsumerCommitError::Commit(error.to_string()))
+            .map_err(|error| CompactionConsumerCommitError::Commit(error.to_string()))?;
+        self.metrics.record_commit();
+        self.assignment
+            .lock()
+            .await
+            .observe_applied(&self.consumer)
+            .await;
+        Ok(())
     }
 }

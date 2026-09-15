@@ -4,10 +4,8 @@
 # port is the only probe target, and it reports the `object-store` and
 # `wal-consumer` gates.
 #
-# Metrics has no `compactor` role. Nothing yet merges metric blocks that are
-# already in object storage, so the retention sweep that a Mimir compactor
-# would run rides inside this role instead -- hence the
-# `block-builder-retention-sweep-interval` key below.
+# Retention sweeping stays here because it operates on newly written blocks;
+# the separate `compactor` role merges blocks already in object storage.
 #
 # The window the sweep applies is per tenant. It is the
 # `compactor_blocks_retention_period` limit in the file `runtime-overrides`

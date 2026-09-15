@@ -1,3 +1,5 @@
+use krabka_observability::{ReadinessGate, wal_group_assignment::WalAssignmentWatch};
+
 use super::{
     Arc, CancellationToken, Consumer, LiveStore, RwLock, ServiceMetrics, TracesError,
     ingest_wal_payloads,
@@ -12,7 +14,9 @@ pub async fn run(
     store: Arc<RwLock<LiveStore>>,
     metrics: ServiceMetrics,
     shutdown: CancellationToken,
+    catch_up: ReadinessGate,
 ) -> Result<(), TracesError> {
+    let mut assignment = WalAssignmentWatch::with_catch_up(metrics.wal_consumer.clone(), catch_up);
     while !shutdown.is_cancelled() {
         let records = consumer
             .poll(krabka_units::millis(500))
@@ -20,6 +24,9 @@ pub async fn run(
             .inspect_err(|_| metrics.wal_consumer.record_poll_failure())
             .map_err(|err| TracesError::Wal(err.to_string()))?;
         metrics.wal_consumer.record_poll(&records);
+        assignment
+            .observe_consumer(&consumer, !records.is_empty())
+            .await;
         if records.is_empty() {
             continue;
         }
@@ -45,6 +52,9 @@ pub async fn run(
 
         if let Err(err) = consumer.commit_sync().await {
             tracing::warn!(error = %err, "live-store offset commit failed");
+        } else {
+            metrics.wal_consumer.record_commit();
+            assignment.observe_applied(&consumer).await;
         }
     }
     Ok(())

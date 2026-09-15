@@ -35,7 +35,9 @@ pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
                     deferred.security.clone(),
                 ) => {
                     match result {
-                        Ok(c) => break c.with_metrics(deferred.metrics.clone()),
+                        Ok(c) => break c
+                            .with_metrics(deferred.metrics.clone())
+                            .with_catch_up(wal_tail.clone()),
                         Err(error) => {
                             tracing::warn!(%error, "querier WAL consumer connect failed; retrying");
                             tokio::select! {
@@ -47,17 +49,13 @@ pub(crate) fn spawn_wal_hot_tail_connect_and_poll(
                 }
             }
         };
-        wal_tail.mark_ready();
         loop {
             let result = tokio::select! {
                 () = token.cancelled() => break,
                 result = poll_log_hot_tail_once_with_frontier(&mut consumer, &hot_tail, poll_interval, frontier.as_ref()) => result,
             };
             let should_back_off = match result {
-                Ok(decoded) => {
-                    wal_tail.mark_ready();
-                    decoded == 0
-                }
+                Ok(decoded) => decoded == 0,
                 Err(error) => {
                     wal_tail.mark_unready();
                     tracing::warn!(%error, "querier WAL hot-tail poll failed; retrying");

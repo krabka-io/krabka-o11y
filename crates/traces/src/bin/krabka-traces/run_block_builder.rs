@@ -24,6 +24,7 @@ pub(crate) async fn run_block_builder(
     // report. It still needs them: a block builder that has not reached the
     // broker writes nothing, and looks the same as one with an idle topic.
     let wal_consumer_gate = readiness.gate("wal-consumer");
+    let wal_catch_up_gate = readiness.gate("wal-catch-up");
     let gates = BlockStoreGates::register(&readiness);
     let promoted_attrs = promoted_attrs_from_cli(&cli)?;
     let consumer = wal_consumer(
@@ -49,7 +50,11 @@ pub(crate) async fn run_block_builder(
     gates.trace_index.mark_ready();
     let index = Arc::new(Mutex::new(initial_index));
     blockbuilder::run(
-        blockbuilder::BlockBuilderConsumer::new(consumer, &metrics.wal_consumer),
+        blockbuilder::BlockBuilderConsumer::with_catch_up(
+            consumer,
+            &metrics.wal_consumer,
+            wal_catch_up_gate,
+        ),
         writer,
         index,
         configured.store,

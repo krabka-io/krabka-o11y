@@ -1,7 +1,14 @@
+use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
+
 use super::{
     Future, ReadinessGate, Shutdown, Time, WalHead, WalHeadConsumerCommit, WalHeadConsumerPoll,
     run_wal_head_consumer_loop,
 };
+
+pub(crate) struct WalHeadConsumerRecovery {
+    pub(crate) metrics: Option<WalConsumerMetrics>,
+    pub(crate) catch_up_gate: Option<ReadinessGate>,
+}
 
 /// Runs the WAL head consumer, and reports through `wal_head` whether the
 /// querier can currently answer for the recent window.
@@ -25,6 +32,7 @@ pub(crate) fn spawn_wal_head_consumer_task<C, Build, BuildFuture>(
     poll_timeout: Time,
     shutdown: Shutdown,
     wal_head_gate: ReadinessGate,
+    recovery: WalHeadConsumerRecovery,
 ) -> tokio::task::JoinHandle<()>
 where
     C: WalHeadConsumerPoll + WalHeadConsumerCommit + Send + 'static,
@@ -32,6 +40,10 @@ where
     BuildFuture: Future<Output = Result<C, String>> + Send + 'static,
 {
     tokio::spawn(async move {
+        let WalHeadConsumerRecovery {
+            metrics,
+            catch_up_gate,
+        } = recovery;
         let mut consumer = tokio::select! {
             biased;
             () = shutdown.signalled() => return,
@@ -50,12 +62,17 @@ where
             &wal_head,
             &wal_topic,
             poll_timeout,
+            metrics.as_ref(),
+            catch_up_gate.as_ref(),
             move |_| consumer_stop.is_triggered(),
         )
         .await;
         // The head stops advancing here, so the querier's recent window starts
         // going stale whether the loop ended on an error or on shutdown.
         wal_head_gate.mark_unready();
+        if let Some(gate) = catch_up_gate {
+            gate.mark_unready();
+        }
         if let Err(error) = result {
             tracing::error!(%error, "metrics WAL head consumer stopped");
         }

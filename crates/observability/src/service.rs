@@ -5,7 +5,7 @@ use crate::{
     CompactorDeleteRequests, Error, Infallible, LogHotTail, LogIngestLimiter, LogQueryAuthorizer,
     LogWalConsumer, LogWalSink, Mutex, OverridesProvider, ParseError, PathBuf, Role, RoleReadiness,
     ServiceConfig, ServiceMetrics, SharedCompactionFrontier, audit::AuditHandle,
-    server_security::ServerSecurity,
+    server_security::ServerSecurity, wal_consumer_metrics::WalConsumerMetrics,
 };
 
 mod active_log_delete_filter_error;

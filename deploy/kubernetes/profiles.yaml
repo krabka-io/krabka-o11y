@@ -70,7 +70,7 @@ spec:
           # `:9404/ready` keeps answering 200 for the whole of a drain; the
           # data port stops answering when the role stops serving.
           startupProbe:
-            httpGet: {path: /ready, port: http}
+            tcpSocket: {port: http}
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
@@ -162,7 +162,7 @@ spec:
           # This role binds no data port, so the admin port is its only probe
           # target. It is also the port carrying the role's readiness gates.
           startupProbe:
-            httpGet: {path: /ready, port: admin}
+            tcpSocket: {port: admin}
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
@@ -264,7 +264,7 @@ spec:
           # `:9404/ready` keeps answering 200 for the whole of a drain; the
           # data port stops answering when the role stops serving.
           startupProbe:
-            httpGet: {path: /ready, port: http}
+            tcpSocket: {port: http}
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:

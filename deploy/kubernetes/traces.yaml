@@ -1,9 +1,7 @@
 # OTLP, Jaeger and Zipkin trace ingest, block building, and TraceQL search.
 #
-# Read the probe comments before copying this file. `krabka-traces` registers
-# no readiness gates and serves no `/ready` on its admin port, so none of these
-# roles can report whether it is able to answer -- only whether its socket is
-# open. That is a gap in the binary, not in the manifest.
+# Startup checks only require the listener. Readiness checks the role's broker,
+# WAL catch-up, object-store, and index dependencies before traffic is routed.
 apiVersion: v1
 kind: Service
 metadata:
@@ -13,6 +11,12 @@ spec:
     app.kubernetes.io/name: traces-distributor
   ports:
     - {name: http, port: 3200, targetPort: http}
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}
+    - {name: jaeger-grpc, port: 14250, targetPort: jaeger-grpc}
+    - {name: jaeger-compact, port: 6831, targetPort: jaeger-compact, protocol: UDP}
+    - {name: jaeger-http, port: 14268, targetPort: jaeger-http}
+    - {name: zipkin, port: 9411, targetPort: zipkin}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -72,14 +76,12 @@ spec:
             - {name: otlp-grpc, containerPort: 4317}
             - {name: otlp-http, containerPort: 4318}
             - {name: jaeger-grpc, containerPort: 14250}
+            - {name: jaeger-compact, containerPort: 6831, protocol: UDP}
             - {name: jaeger-http, containerPort: 14268}
             - {name: zipkin, containerPort: 9411}
             - {name: admin, containerPort: 9404}
-          # A socket check, not `/ready`. `krabka-traces` merges only the
-          # metrics router into its admin port, and the `/ready` its data-port
-          # roles serve is a constant `"ready"` with no gates behind it. An
-          # httpGet here would report a readiness this binary does not measure,
-          # which is worse than reporting only that the port is open.
+          # Startup only requires the listener; dependency gates belong to the
+          # readiness probe below.
           startupProbe:
             tcpSocket: {port: http}
             periodSeconds: 5
@@ -175,11 +177,8 @@ spec:
             - configMapRef: {name: krabka-object-store-endpoint}
           ports:
             - {name: admin, containerPort: 9404}
-          # A socket check, not `/ready`. `krabka-traces` merges only the
-          # metrics router into its admin port, and the `/ready` its data-port
-          # roles serve is a constant `"ready"` with no gates behind it. An
-          # httpGet here would report a readiness this binary does not measure,
-          # which is worse than reporting only that the port is open.
+          # Startup only requires the listener; dependency gates belong to the
+          # readiness probe below.
           startupProbe:
             tcpSocket: {port: admin}
             periodSeconds: 5
@@ -278,11 +277,8 @@ spec:
           ports:
             - {name: http, containerPort: 3200}
             - {name: admin, containerPort: 9404}
-          # A socket check, not `/ready`. `krabka-traces` merges only the
-          # metrics router into its admin port, and the `/ready` its data-port
-          # roles serve is a constant `"ready"` with no gates behind it. An
-          # httpGet here would report a readiness this binary does not measure,
-          # which is worse than reporting only that the port is open.
+          # Startup only requires the listener; dependency gates belong to the
+          # readiness probe below.
           startupProbe:
             tcpSocket: {port: http}
             periodSeconds: 5

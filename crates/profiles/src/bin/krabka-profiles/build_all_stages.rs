@@ -35,6 +35,12 @@ pub(crate) async fn build_all_stages(
     shutdown: &CancellationToken,
     security: &ProcessSecurity,
 ) -> Result<Option<BTreeMap<RoleKind, AllStage>>, Box<dyn std::error::Error>> {
+    let mut block_builder_metrics = metrics.clone();
+    block_builder_metrics.wal_consumer = metrics.wal_consumer.with_fresh_recovery();
+    readiness.track_wal_consumer(block_builder_metrics.wal_consumer.clone());
+    let mut read_metrics = metrics.clone();
+    read_metrics.wal_consumer = metrics.wal_consumer.with_fresh_recovery();
+    readiness.track_wal_consumer(read_metrics.wal_consumer.clone());
     // One object store, built once, for every role that reads or writes
     // blocks. Four roles call `build_object_store` when they run alone, and
     // four calls here would be four independent stores: with
@@ -158,11 +164,28 @@ pub(crate) async fn build_all_stages(
     stages.insert(RoleKind::Querier, loopback_stage);
     stages.insert(
         RoleKind::BlockBuilder,
-        block_builder_stage(cli, &store, &index_key, metrics, security.wal.clone()),
+        block_builder_stage(
+            cli,
+            &store,
+            &index_key,
+            &block_builder_metrics,
+            security.wal.clone(),
+            readiness
+                .for_role(RoleKind::BlockBuilder)
+                .gate("wal-catch-up"),
+        ),
     );
     stages.insert(
         RoleKind::QueryFrontend,
-        read_path_stage(cli, read, metrics, security.wal.clone()),
+        read_path_stage(
+            cli,
+            read,
+            &read_metrics,
+            security.wal.clone(),
+            readiness
+                .for_role(RoleKind::QueryFrontend)
+                .gate("wal-catch-up"),
+        ),
     );
     stages.insert(
         RoleKind::Symbolizer,

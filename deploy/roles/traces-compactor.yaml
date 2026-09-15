@@ -1,0 +1,5 @@
+# krabka-traces --target=compactor
+target: compactor
+admin-listen-addr: 0.0.0.0:9404
+object-store-url: s3://krabka-traces
+compaction-interval: 5m

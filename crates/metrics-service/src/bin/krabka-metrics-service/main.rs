@@ -765,6 +765,10 @@ mod tests {
             millis(1),
             shutdown.clone(),
             readiness.gate("wal-head"),
+            WalHeadConsumerRecovery {
+                metrics: None,
+                catch_up_gate: None,
+            },
         );
 
         let signalled = tokio::time::timeout(millis(25).to_std(), shutdown.signalled()).await;
@@ -824,6 +828,10 @@ mod tests {
             millis(1),
             shutdown.clone(),
             readiness.gate("wal-head"),
+            WalHeadConsumerRecovery {
+                metrics: None,
+                catch_up_gate: None,
+            },
         );
 
         assert2::assert!(
@@ -955,7 +963,7 @@ use run_query_frontend::run_query_frontend;
 use run_ruler::run_ruler;
 use shutdown::Shutdown;
 use spawn_shutdown_signal_listener::spawn_shutdown_signal_listener;
-use spawn_wal_head_consumer_task::spawn_wal_head_consumer_task;
+use spawn_wal_head_consumer_task::{WalHeadConsumerRecovery, spawn_wal_head_consumer_task};
 use target::Target;
 
 #[tokio::main]
@@ -1040,7 +1048,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .await
                     }
                     Target::QueryFrontend => {
-                        run_query_frontend(cli, metrics, readiness, &server_security, audit).await
+                        run_query_frontend(
+                            cli,
+                            metrics,
+                            readiness,
+                            &server_security,
+                            wal_security,
+                            audit,
+                        )
+                        .await
                     }
                     Target::Ruler => {
                         Box::pin(run_ruler(

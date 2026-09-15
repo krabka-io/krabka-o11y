@@ -1,11 +1,12 @@
+use krabka_blockstore::MeteredObjectStore;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
     Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, MimirTenantAdminState,
     ObjectStore, PrometheusApiState, RoleReadiness, ServerSecurity, Shutdown, WalHead,
-    load_runtime_overrides, mimir_tenant_admin_router, prometheus_router, query_engine_opts,
-    readiness_router, serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
-    spawn_wal_head_consumer_task,
+    WalHeadConsumerRecovery, load_runtime_overrides, mimir_tenant_admin_router, prometheus_router,
+    query_engine_opts, readiness_router, serve_prometheus_router_joinable,
+    spawn_shutdown_signal_listener, spawn_wal_head_consumer_task,
 };
 
 #[tracing::instrument(
@@ -27,7 +28,12 @@ pub(crate) async fn run_querier(
     let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> =
         Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
+    let object_store_metrics = metrics.object_store.clone();
+    readiness.track_object_store(object_store_metrics.clone());
+    let store = MeteredObjectStore::wrap(store, object_store_metrics);
     let head = WalHead::with_retention(cli.wal_head_retention);
+    let recovery_metrics = metrics.wal_consumer.clone();
+    readiness.track_wal_consumer(recovery_metrics.clone());
     let status_wal = cli
         .wal_bootstrap
         .as_ref()
@@ -76,6 +82,10 @@ pub(crate) async fn run_querier(
                 poll_timeout,
                 shutdown.clone(),
                 wal_head_gate,
+                WalHeadConsumerRecovery {
+                    metrics: Some(recovery_metrics),
+                    catch_up_gate: Some(readiness.gate("wal-catch-up")),
+                },
             ),
         );
     }
