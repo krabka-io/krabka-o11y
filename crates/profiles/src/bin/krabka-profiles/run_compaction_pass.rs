@@ -4,6 +4,7 @@ use krabka_profiles::{
     blockbuilder::BLOCK_OBJECT_PREFIX,
     lifecycle::{LifecycleOptions, LifecycleReport, run_lifecycle_pass},
 };
+use object_store::ObjectStoreExt as _;
 
 use super::{
     Arc, Cli, CompactionPolicy, DownsamplePolicy, ObjectStore, OverridesProvider, ProfileIndex,
@@ -34,6 +35,25 @@ pub(crate) async fn run_compaction_pass(
         cli.index_snapshot_max,
     )
     .await?;
+    let ingested = index.all_blocks();
+    let capability =
+        object_store::path::Path::from(krabka_profiles::recording::RECORDING_RULES_ENABLED_KEY);
+    if let Some(url) = &cli.recording_rules_remote_write_url {
+        store.put(&capability, Vec::new().into()).await?;
+        match krabka_profiles::recording::evaluate_compacted_blocks(store, &index, &ingested, url)
+            .await
+        {
+            Ok(requests) if requests > 0 => {
+                tracing::info!(requests, "profiles recording rules exported");
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(%error, "profiles recording-rule export failed"),
+        }
+    } else if let Err(error) = store.delete(&capability).await
+        && !matches!(error, object_store::Error::NotFound { .. })
+    {
+        return Err(error.into());
+    }
     let result = run_lifecycle_pass(
         store,
         &mut index,
@@ -57,22 +77,6 @@ pub(crate) async fn run_compaction_pass(
         Err(_) => {}
     }
     let report = result?;
-    if let Some(url) = &cli.recording_rules_remote_write_url {
-        match krabka_profiles::recording::evaluate_compacted_blocks(
-            store,
-            &index,
-            &report.compacted,
-            url,
-        )
-        .await
-        {
-            Ok(requests) if requests > 0 => {
-                tracing::info!(requests, "profiles recording rules exported");
-            }
-            Ok(_) => {}
-            Err(error) => tracing::warn!(%error, "profiles recording-rule export failed"),
-        }
-    }
     Ok(report.compacted.len())
 }
 

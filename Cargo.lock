@@ -4395,6 +4395,7 @@ dependencies = [
  "krabka-units",
  "multer",
  "num-traits",
+ "object 0.40.0",
  "object_store",
  "parquet",
  "pbjson",

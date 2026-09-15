@@ -56,6 +56,7 @@ mod tests {
     use base64::Engine;
     use krabka_pprof::{FunctionRec, LineRec, LocationRec};
     use krabka_units::secs;
+    use object_store::ObjectStoreExt as _;
 
     /// Converting a heatmap to its wire form derives a step from the time
     /// span and stamps each slot with its own *end*. The span is `end - start`
@@ -544,6 +545,29 @@ mod tests {
             );
         }
         store
+    }
+
+    fn elf_with_build_id(build_id: [u8; 4]) -> Vec<u8> {
+        let mut elf = vec![0; 140];
+        elf[..16].copy_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        elf[16..18].copy_from_slice(&2_u16.to_le_bytes());
+        elf[18..20].copy_from_slice(&62_u16.to_le_bytes());
+        elf[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        elf[32..40].copy_from_slice(&64_u64.to_le_bytes());
+        elf[52..54].copy_from_slice(&64_u16.to_le_bytes());
+        elf[54..56].copy_from_slice(&56_u16.to_le_bytes());
+        elf[56..58].copy_from_slice(&1_u16.to_le_bytes());
+        elf[64..68].copy_from_slice(&4_u32.to_le_bytes());
+        elf[72..80].copy_from_slice(&120_u64.to_le_bytes());
+        elf[96..104].copy_from_slice(&20_u64.to_le_bytes());
+        elf[104..112].copy_from_slice(&20_u64.to_le_bytes());
+        elf[112..120].copy_from_slice(&4_u64.to_le_bytes());
+        elf[120..124].copy_from_slice(&4_u32.to_le_bytes());
+        elf[124..128].copy_from_slice(&4_u32.to_le_bytes());
+        elf[128..132].copy_from_slice(&3_u32.to_le_bytes());
+        elf[132..136].copy_from_slice(b"GNU\0");
+        elf[136..140].copy_from_slice(&build_id);
+        elf
     }
 
     fn store_with_span_frame(name: &str, span_id: u64) -> InMemoryProfileStore {
@@ -1208,9 +1232,18 @@ overrides:
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn grafana_tenant_services_cover_upload_diff_rules_and_debuginfo() {
+        let admin_store: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        admin_store
+            .put(
+                &object_store::path::Path::from(crate::recording::RECORDING_RULES_ENABLED_KEY),
+                Vec::new().into(),
+            )
+            .await
+            .unwrap();
         let state = Arc::new(
             QuerierState::new(Arc::new(store_with_frame("main.work")))
-                .with_recording_rules_enabled(true),
+                .with_admin_store(admin_store),
         );
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let bound = serve(
@@ -1355,9 +1388,22 @@ overrides:
             other_rules.get("rules").is_none(),
             "tenant leak: {other_rules}"
         );
+        let unsupported = connect(
+            "settings.v1.RecordingRulesService/UpsertRecordingRule",
+            "tenant-a",
+            json!({
+                "metricName": "profiles_recorded_filtered_total",
+                "matchers": [format!(r#"{{__profile_type__="{PT}"}}"#)],
+                "stacktraceFilter": {"functionName": {"functionName": "main", "metricType": "TOTAL"}}
+            }),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert!(unsupported.status() == reqwest::StatusCode::BAD_REQUEST);
 
-        let encoded = base64::engine::general_purpose::STANDARD
-            .encode(crate::wire::test_fixtures::cpu_profile_pprof_bytes());
+        let pprof_bytes = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&pprof_bytes);
         let mut ids = Vec::new();
         for name in ["left profile.pprof", "right.pprof"] {
             let uploaded: serde_json::Value = connect(
@@ -1385,6 +1431,24 @@ overrides:
             );
             ids.push(uploaded["id"].as_str().unwrap().to_string());
         }
+        let listed: serde_json::Value = connect(
+            "adhocprofiles.v1.AdHocProfileService/List",
+            "tenant-a",
+            json!({}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(
+            listed["profiles"]
+                .as_array()
+                .is_some_and(|profiles| profiles.len() == 2)
+        );
         let diff: serde_json::Value = connect(
             "adhocprofiles.v1.AdHocProfileService/Diff",
             "tenant-a",
@@ -1399,6 +1463,43 @@ overrides:
         .await
         .unwrap();
         assert!(diff["flamebearerProfile"].as_str().is_some(), "{diff}");
+        let invalid_get = connect(
+            "adhocprofiles.v1.AdHocProfileService/Get",
+            "tenant-a",
+            json!({"id": ids[0], "profileType": "missing"}),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert!(invalid_get.status() == reqwest::StatusCode::BAD_REQUEST);
+        let mut other_unit = krabka_pprof::proto::Profile::decode(pprof_bytes.as_slice()).unwrap();
+        other_unit.string_table.push("count".to_string());
+        other_unit.sample_type[0].unit = i64::try_from(other_unit.string_table.len() - 1).unwrap();
+        let uploaded_other_unit: serde_json::Value = connect(
+            "adhocprofiles.v1.AdHocProfileService/Upload",
+            "tenant-a",
+            json!({
+                "name": "other-unit.pprof",
+                "profile": base64::engine::general_purpose::STANDARD.encode(other_unit.encode_to_vec())
+            }),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        let incompatible = connect(
+            "adhocprofiles.v1.AdHocProfileService/Diff",
+            "tenant-a",
+            json!({"leftId": ids[0], "rightId": uploaded_other_unit["id"]}),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert!(incompatible.status() == reqwest::StatusCode::BAD_REQUEST);
         let isolated = connect(
             "adhocprofiles.v1.AdHocProfileService/Get",
             "tenant-b",
@@ -1420,6 +1521,48 @@ overrides:
         .unwrap();
         assert!(rejected.status() == reqwest::StatusCode::BAD_REQUEST);
 
+        let mismatched_id = "CAFEBABE";
+        connect(
+            "debuginfo.v1alpha1.DebuginfoService/ShouldInitiateUpload",
+            "tenant-a",
+            json!({"file": {"gnuBuildId": mismatched_id, "name": "bad", "type": "TYPE_EXECUTABLE_FULL"}}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+        client
+            .post(format!(
+                "http://{bound}/debuginfo.v1alpha1.DebuginfoService/Upload/{mismatched_id}"
+            ))
+            .header("x-scope-orgid", "tenant-a")
+            .body(elf_with_build_id([0xde, 0xad, 0xbe, 0xef]))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let mismatched = connect(
+            "debuginfo.v1alpha1.DebuginfoService/UploadFinished",
+            "tenant-a",
+            json!({"gnuBuildId": mismatched_id}),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert!(mismatched.status() == reqwest::StatusCode::BAD_REQUEST);
+        connect(
+            "debuginfo.v1alpha1.DebuginfoService/DeleteDebuginfo",
+            "tenant-a",
+            json!({"gnuBuildId": mismatched_id}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
         let build_id = "DEADBEEF";
         let initiated: serde_json::Value = connect(
             "debuginfo.v1alpha1.DebuginfoService/ShouldInitiateUpload",
@@ -1440,7 +1583,7 @@ overrides:
                 "http://{bound}/debuginfo.v1alpha1.DebuginfoService/Upload/{build_id}"
             ))
             .header("x-scope-orgid", "tenant-a")
-            .body(b"\x7fELF-test".to_vec())
+            .body(elf_with_build_id([0xde, 0xad, 0xbe, 0xef]))
             .send()
             .await
             .unwrap()
@@ -1470,7 +1613,7 @@ overrides:
         .await
         .unwrap();
         assert!(
-            debug_info["object"][0]["file"]["gnuBuildId"] == build_id,
+            debug_info["object"][0]["file"]["gnuBuildId"] == build_id.to_ascii_lowercase(),
             "{debug_info}"
         );
         let other_debug_info: serde_json::Value = connect(

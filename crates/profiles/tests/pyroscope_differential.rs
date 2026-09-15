@@ -78,7 +78,10 @@ impl WalSink for CapturingSink {
 #[tokio::test]
 #[ignore = "requires the official Pyroscope 2.3.1 profilecli binary"]
 async fn official_profilecli_uploads_elf_through_public_debuginfo_api() -> TestResult {
-    let profilecli = std::env::var("KRABKA_PROFILECLI")?;
+    let Ok(profilecli) = std::env::var("KRABKA_PROFILECLI") else {
+        eprintln!("KRABKA_PROFILECLI is not set; skipping optional profilecli probe");
+        return Ok(());
+    };
     let krabka = start_krabka_pair(CapturingSink::default(), WalTailProfileStore::new()).await?;
     let url = krabka.querier_base.clone();
     let executable = profilecli.clone();

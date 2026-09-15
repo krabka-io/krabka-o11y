@@ -3,7 +3,10 @@
 use std::{
     collections::BTreeSet,
     io::Read as _,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -16,14 +19,18 @@ use axum::{
 use base64::Engine as _;
 use connectrpc_axum::message::{Code, ConnectError, ConnectRequest, ConnectResponse};
 use flate2::read::GzDecoder;
-use futures::TryStreamExt as _;
+use futures::{StreamExt as _, TryStreamExt as _};
 use krabka_blockstore::{LABEL_PROFILE_TYPE, MatchOp, TenantId};
 use krabka_observability::server_security::{Principal, authorize_tenant};
 use krabka_pprof::{Frame, PprofProfile, ProfileStore, Tree, diff_trees, parse_label_selector};
-use object_store::{ObjectStore, ObjectStoreExt as _, path::Path};
+use object_store::{
+    ObjectStore, ObjectStoreExt as _, PutMode, PutOptions, UpdateVersion, buffered::BufWriter,
+    path::Path,
+};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::io::AsyncWriteExt as _;
 
 use super::{
     QuerierState, pb, tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
@@ -211,6 +218,57 @@ async fn rules(
         .unwrap_or_default())
 }
 
+async fn update_rules<T>(
+    store: &dyn ObjectStore,
+    tenant: &TenantId,
+    mut update: impl FnMut(&mut pb::settings::v1::ListRecordingRulesResponse) -> Result<T, ConnectError>,
+) -> Result<T, ConnectError> {
+    let key = Path::from(rules_key(tenant));
+    for _ in 0..8 {
+        let (mut stored, version) = match store.get(&key).await {
+            Ok(object) => {
+                let version = UpdateVersion {
+                    e_tag: object.meta.e_tag.clone(),
+                    version: object.meta.version.clone(),
+                };
+                let bytes = object
+                    .bytes()
+                    .await
+                    .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
+                let stored = pb::settings::v1::ListRecordingRulesResponse::decode(bytes)
+                    .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
+                (stored, Some(version))
+            }
+            Err(object_store::Error::NotFound { .. }) => (
+                pb::settings::v1::ListRecordingRulesResponse::default(),
+                None,
+            ),
+            Err(error) => return Err(admin_error(Code::Internal, error.to_string())),
+        };
+        let output = update(&mut stored)?;
+        stored.rules.sort_by(|left, right| left.id.cmp(&right.id));
+        let options = PutOptions {
+            mode: version.map_or(PutMode::Create, PutMode::Update),
+            ..Default::default()
+        };
+        match store
+            .put_opts(&key, stored.encode_to_vec().into(), options)
+            .await
+        {
+            Ok(_) => return Ok(output),
+            Err(
+                object_store::Error::AlreadyExists { .. }
+                | object_store::Error::Precondition { .. },
+            ) => {}
+            Err(error) => return Err(admin_error(Code::Internal, error.to_string())),
+        }
+    }
+    Err(admin_error(
+        Code::AlreadyExists,
+        "recording rules changed concurrently, please try again",
+    ))
+}
+
 pub(crate) async fn get_recording_rule_handler<S: ProfileStore>(
     Extension(state): Extension<std::sync::Arc<QuerierState<S>>>,
     Extension(principal): Extension<Principal>,
@@ -254,6 +312,12 @@ pub(crate) async fn upsert_recording_rule_handler<S: ProfileStore>(
 ) -> Result<ConnectResponse<pb::settings::v1::UpsertRecordingRuleResponse>, ConnectError> {
     let tenant = tenant(&state, &principal, &headers)?;
     let req = req.0;
+    if req.stacktrace_filter.is_some() {
+        return Err(admin_error(
+            Code::InvalidArgument,
+            "stacktrace filters are not supported",
+        ));
+    }
     validate_metric_name(&req.metric_name)?;
     let profile_type = recording_profile_type(&req.matchers)?;
     if req.group_by.iter().any(|name| !valid_label_name(name))
@@ -284,38 +348,38 @@ pub(crate) async fn upsert_recording_rule_handler<S: ProfileStore>(
         }
         req.id
     };
-    let key = rules_key(&tenant);
-    let mut stored = rules(state.admin_store.as_ref(), &tenant).await?;
-    let position = stored.rules.iter().position(|rule| rule.id == id);
-    let generation = if let Some(position) = position {
-        if req.generation != stored.rules[position].generation {
-            return Err(admin_error(
-                Code::AlreadyExists,
-                "conflicting update, please try again",
-            ));
+    let rule = update_rules(state.admin_store.as_ref(), &tenant, |stored| {
+        let position = stored.rules.iter().position(|rule| rule.id == id);
+        let generation = if let Some(position) = position {
+            if req.generation != stored.rules[position].generation {
+                return Err(admin_error(
+                    Code::AlreadyExists,
+                    "conflicting update, please try again",
+                ));
+            }
+            req.generation.saturating_add(1)
+        } else {
+            1
+        };
+        let rule = pb::settings::v1::RecordingRule {
+            id: id.clone(),
+            metric_name: req.metric_name.clone(),
+            profile_type: profile_type.clone(),
+            matchers: req.matchers.clone(),
+            group_by: req.group_by.clone(),
+            external_labels: req.external_labels.clone(),
+            generation,
+            stacktrace_filter: None,
+            provisioned: false,
+        };
+        if let Some(position) = position {
+            stored.rules[position] = rule.clone();
+        } else {
+            stored.rules.push(rule.clone());
         }
-        req.generation.saturating_add(1)
-    } else {
-        1
-    };
-    let rule = pb::settings::v1::RecordingRule {
-        id,
-        metric_name: req.metric_name,
-        profile_type,
-        matchers: req.matchers,
-        group_by: req.group_by,
-        external_labels: req.external_labels,
-        generation,
-        stacktrace_filter: req.stacktrace_filter,
-        provisioned: false,
-    };
-    if let Some(position) = position {
-        stored.rules[position] = rule.clone();
-    } else {
-        stored.rules.push(rule.clone());
-    }
-    stored.rules.sort_by(|left, right| left.id.cmp(&right.id));
-    write_message(state.admin_store.as_ref(), &key, &stored).await?;
+        Ok(rule)
+    })
+    .await?;
     Ok(ConnectResponse::new(
         pb::settings::v1::UpsertRecordingRuleResponse { rule: Some(rule) },
     ))
@@ -328,21 +392,18 @@ pub(crate) async fn delete_recording_rule_handler<S: ProfileStore>(
     req: ConnectRequest<pb::settings::v1::DeleteRecordingRuleRequest>,
 ) -> Result<ConnectResponse<pb::settings::v1::DeleteRecordingRuleResponse>, ConnectError> {
     let tenant = tenant(&state, &principal, &headers)?;
-    let key = rules_key(&tenant);
-    let mut stored = rules(state.admin_store.as_ref(), &tenant).await?;
-    let before = stored.rules.len();
-    stored.rules.retain(|rule| rule.id != req.0.id);
-    if before == stored.rules.len() {
-        return Err(admin_error(
-            Code::NotFound,
-            format!("no rule with ID='{}' found", req.0.id),
-        ));
-    }
-    if stored.rules.is_empty() {
-        delete_object(state.admin_store.as_ref(), &key).await?;
-    } else {
-        write_message(state.admin_store.as_ref(), &key, &stored).await?;
-    }
+    update_rules(state.admin_store.as_ref(), &tenant, |stored| {
+        let before = stored.rules.len();
+        stored.rules.retain(|rule| rule.id != req.0.id);
+        if before == stored.rules.len() {
+            return Err(admin_error(
+                Code::NotFound,
+                format!("no rule with ID='{}' found", req.0.id),
+            ));
+        }
+        Ok(())
+    })
+    .await?;
     Ok(ConnectResponse::new(
         pb::settings::v1::DeleteRecordingRuleResponse {},
     ))
@@ -403,6 +464,15 @@ pub(crate) async fn feature_flags_handler<S: ProfileStore>(
     _req: ConnectRequest<pb::capabilities::v1::GetFeatureFlagsRequest>,
 ) -> Result<ConnectResponse<pb::capabilities::v1::GetFeatureFlagsResponse>, ConnectError> {
     tenant(&state, &principal, &headers)?;
+    let recording_rules_enabled = match state
+        .admin_store
+        .head(&Path::from(crate::recording::RECORDING_RULES_ENABLED_KEY))
+        .await
+    {
+        Ok(_) => true,
+        Err(object_store::Error::NotFound { .. }) => false,
+        Err(error) => return Err(admin_error(Code::Internal, error.to_string())),
+    };
     let flag = |name: &str, enabled: bool, description: &str| pb::capabilities::v1::FeatureFlag {
         name: name.to_string(),
         enabled,
@@ -414,7 +484,7 @@ pub(crate) async fn feature_flags_handler<S: ProfileStore>(
             feature_flags: vec![
                 flag(
                     "pyroscopeRuler",
-                    state.recording_rules_enabled,
+                    recording_rules_enabled,
                     "Profiling recording-rule evaluation is configured on the compactor.",
                 ),
                 flag(
@@ -444,8 +514,18 @@ struct AdHocProfile {
     uploaded_at: i64,
 }
 
+#[derive(Deserialize, Serialize)]
+struct AdHocMetadata {
+    name: String,
+    uploaded_at: i64,
+}
+
 fn adhoc_key(tenant: &TenantId, id: &str) -> String {
     format!("{ADMIN_PREFIX}/{tenant}/adhoc/{id}.json")
+}
+
+fn adhoc_metadata_key(tenant: &TenantId, id: &str) -> String {
+    format!("{ADMIN_PREFIX}/{tenant}/adhoc/{id}.metadata.json")
 }
 
 fn valid_adhoc_id(id: &str) -> bool {
@@ -533,6 +613,19 @@ pub(crate) async fn upload_adhoc_handler<S: ProfileStore>(
         .put(&Path::from(adhoc_key(&tenant, &id)), bytes.into())
         .await
         .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
+    let metadata = serde_json::to_vec(&AdHocMetadata {
+        name: profile.name.clone(),
+        uploaded_at,
+    })
+    .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
+    state
+        .admin_store
+        .put(
+            &Path::from(adhoc_metadata_key(&tenant, &id)),
+            metadata.into(),
+        )
+        .await
+        .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
     Ok(ConnectResponse::new(response))
 }
 
@@ -571,12 +664,21 @@ pub(crate) async fn list_adhoc_handler<S: ProfileStore>(
         let id = object
             .location
             .filename()
-            .and_then(|filename| filename.strip_suffix(".json"))
+            .and_then(|filename| filename.strip_suffix(".metadata.json"))
             .unwrap_or_default();
         if !valid_adhoc_id(id) {
             continue;
         }
-        let profile = read_adhoc(state.admin_store.as_ref(), &tenant, id).await?;
+        let bytes = state
+            .admin_store
+            .get(&object.location)
+            .await
+            .map_err(|error| admin_error(Code::Internal, error.to_string()))?
+            .bytes()
+            .await
+            .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
+        let profile: AdHocMetadata = serde_json::from_slice(&bytes)
+            .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
         profiles.push(pb::adhocprofiles::v1::AdHocProfilesProfileMetadata {
             id: id.to_string(),
             name: profile.name,
@@ -600,35 +702,35 @@ pub(crate) async fn diff_adhoc_handler<S: ProfileStore>(
     let right = read_adhoc(state.admin_store.as_ref(), &tenant, &req.0.right_id).await?;
     let left = decode_profile(&left.profile)?;
     let right = decode_profile(&right.profile)?;
-    let left_types = profile_types(&left);
-    let right_types: BTreeSet<_> = profile_types(&right).into_iter().collect();
+    let left_types = left.sample_types();
+    let right_types: BTreeSet<_> = right.sample_types().into_iter().collect();
     let common: Vec<_> = left_types
         .into_iter()
         .filter(|profile_type| right_types.contains(profile_type))
         .collect();
-    let selected = req
-        .0
-        .profile_type
-        .as_deref()
-        .filter(|selected| common.iter().any(|candidate| candidate == selected))
-        .or_else(|| common.first().map(String::as_str))
-        .ok_or_else(|| {
+    let selected = match req.0.profile_type.as_deref() {
+        Some(selected) => common
+            .iter()
+            .find(|(candidate, _)| candidate == selected)
+            .ok_or_else(|| admin_error(Code::InvalidArgument, "profile type not found"))?,
+        None => common.first().ok_or_else(|| {
             admin_error(
                 Code::InvalidArgument,
                 "profiles have no common profile types",
             )
-        })?;
+        })?,
+    };
     let max_nodes = state.effective_max_nodes(&tenant, req.0.max_nodes.unwrap_or_default());
-    let (left_tree, unit) = profile_tree(&left, selected)?;
-    let (right_tree, _) = profile_tree(&right, selected)?;
+    let left_tree = profile_tree(&left, &selected.0, &selected.1)?;
+    let right_tree = profile_tree(&right, &selected.0, &selected.1)?;
     let flamebearer_profile = diff_json(
         diff_trees(&left_tree, &right_tree, max_nodes),
-        selected,
-        &unit,
+        &selected.0,
+        &selected.1,
     )?;
     Ok(ConnectResponse::new(
         pb::adhocprofiles::v1::AdHocProfilesDiffResponse {
-            profile_types: common,
+            profile_types: common.into_iter().map(|(name, _)| name).collect(),
             flamebearer_profile,
         },
     ))
@@ -642,12 +744,22 @@ fn adhoc_response(
 ) -> Result<pb::adhocprofiles::v1::AdHocProfilesGetResponse, ConnectError> {
     let profile = decode_profile(&stored.profile)?;
     let profile_types = profile_types(&profile);
-    let selected = selected
-        .filter(|selected| profile_types.iter().any(|candidate| candidate == selected))
-        .or_else(|| profile_types.first().map(String::as_str))
-        .ok_or_else(|| admin_error(Code::InvalidArgument, "profile has no sample types"))?
-        .to_string();
-    let (tree, unit) = profile_tree(&profile, &selected)?;
+    let selected = match selected {
+        Some(selected) if profile_types.iter().any(|candidate| candidate == selected) => {
+            selected.to_string()
+        }
+        Some(_) => return Err(admin_error(Code::InvalidArgument, "profile type not found")),
+        None => profile_types
+            .first()
+            .cloned()
+            .ok_or_else(|| admin_error(Code::InvalidArgument, "profile has no sample types"))?,
+    };
+    let unit = profile
+        .sample_types()
+        .into_iter()
+        .find_map(|(name, unit)| (name == selected).then_some(unit))
+        .ok_or_else(|| admin_error(Code::InvalidArgument, "profile type not found"))?;
+    let tree = profile_tree(&profile, &selected, &unit)?;
     Ok(pb::adhocprofiles::v1::AdHocProfilesGetResponse {
         id: id.to_string(),
         name: stored.name.clone(),
@@ -704,11 +816,11 @@ fn profile_types(profile: &PprofProfile) -> Vec<String> {
         .collect()
 }
 
-fn profile_tree(profile: &PprofProfile, selected: &str) -> Result<(Tree, String), ConnectError> {
+fn profile_tree(profile: &PprofProfile, selected: &str, unit: &str) -> Result<Tree, ConnectError> {
     let sample_types = profile.sample_types();
     let index = sample_types
         .iter()
-        .position(|(sample_type, _)| sample_type == selected)
+        .position(|(sample_type, sample_unit)| sample_type == selected && sample_unit == unit)
         .ok_or_else(|| {
             admin_error(
                 Code::InvalidArgument,
@@ -729,7 +841,7 @@ fn profile_tree(profile: &PprofProfile, selected: &str) -> Result<(Tree, String)
             .collect();
         tree.add_stack(&frames, value);
     }
-    Ok((tree, sample_types[index].1.clone()))
+    Ok(tree)
 }
 
 fn flamegraph_json(
@@ -781,6 +893,12 @@ fn valid_build_id(build_id: &str) -> bool {
     (2..=40).contains(&build_id.len()) && build_id.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn canonical_build_id(build_id: &str) -> Result<String, ConnectError> {
+    valid_build_id(build_id)
+        .then(|| build_id.to_ascii_lowercase())
+        .ok_or_else(|| admin_error(Code::InvalidArgument, "invalid gnu_build_id"))
+}
+
 async fn debuginfo_metadata(
     store: &dyn ObjectStore,
     tenant: &TenantId,
@@ -793,6 +911,69 @@ async fn debuginfo_metadata(
     .await
 }
 
+async fn validate_uploaded_debuginfo(
+    store: &dyn ObjectStore,
+    tenant: &TenantId,
+    expected_build_id: &str,
+) -> Result<u64, ConnectError> {
+    let object = store
+        .get(&Path::from(format!(
+            "{}/exe",
+            debuginfo_prefix(tenant, expected_build_id)
+        )))
+        .await
+        .map_err(|error| match error {
+            object_store::Error::NotFound { .. } => {
+                admin_error(Code::FailedPrecondition, "uploaded debug info is missing")
+            }
+            error => admin_error(Code::Internal, error.to_string()),
+        })?;
+    let size = object.meta.size;
+    let file = tempfile::NamedTempFile::new()
+        .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
+    let mut output = tokio::fs::File::from_std(
+        file.reopen()
+            .map_err(|error| admin_error(Code::Internal, error.to_string()))?,
+    );
+    let mut stream = object.into_stream();
+    while let Some(chunk) = stream.next().await {
+        output
+            .write_all(&chunk.map_err(|error| admin_error(Code::Internal, error.to_string()))?)
+            .await
+            .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
+    }
+    output
+        .flush()
+        .await
+        .map_err(|error| admin_error(Code::Internal, error.to_string()))?;
+    drop(output);
+    let actual = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        use object::Object as _;
+
+        let reader =
+            object::read::ReadCache::new(file.reopen().map_err(|error| error.to_string())?);
+        let object = object::read::File::parse(&reader).map_err(|error| error.to_string())?;
+        if object.format() != object::BinaryFormat::Elf {
+            return Err("uploaded debug info is not an ELF object".to_string());
+        }
+        object
+            .build_id()
+            .map_err(|error| error.to_string())?
+            .map(hex::encode)
+            .ok_or_else(|| "uploaded debug info has no GNU build ID".to_string())
+    })
+    .await
+    .map_err(|error| admin_error(Code::Internal, error.to_string()))?
+    .map_err(|error| admin_error(Code::FailedPrecondition, error))?;
+    if actual != expected_build_id {
+        return Err(admin_error(
+            Code::FailedPrecondition,
+            "uploaded debug info GNU build ID does not match",
+        ));
+    }
+    Ok(size)
+}
+
 pub(crate) async fn should_initiate_upload_handler<S: ProfileStore>(
     Extension(state): Extension<std::sync::Arc<QuerierState<S>>>,
     Extension(principal): Extension<Principal>,
@@ -800,7 +981,7 @@ pub(crate) async fn should_initiate_upload_handler<S: ProfileStore>(
     req: ConnectRequest<pb::debuginfo::v1alpha1::ShouldInitiateUploadRequest>,
 ) -> Result<ConnectResponse<pb::debuginfo::v1alpha1::ShouldInitiateUploadResponse>, ConnectError> {
     let tenant = tenant(&state, &principal, &headers)?;
-    let file = req
+    let mut file = req
         .0
         .file
         .ok_or_else(|| admin_error(Code::InvalidArgument, "file metadata is required"))?;
@@ -812,9 +993,7 @@ pub(crate) async fn should_initiate_upload_handler<S: ProfileStore>(
             },
         ));
     }
-    if !valid_build_id(&file.gnu_build_id) {
-        return Err(admin_error(Code::InvalidArgument, "invalid gnu_build_id"));
-    }
+    file.gnu_build_id = canonical_build_id(&file.gnu_build_id)?;
     if !matches!(file.r#type, 1 | 2) {
         return Err(admin_error(
             Code::InvalidArgument,
@@ -877,9 +1056,8 @@ pub(crate) async fn upload_debuginfo_handler<S: ProfileStore>(
             .map_err(|_| (StatusCode::BAD_REQUEST, "invalid tenant"))?;
         authorize_tenant(&principal, &tenant)
             .map_err(|_| (StatusCode::FORBIDDEN, "tenant access denied"))?;
-        if !valid_build_id(&build_id) {
-            return Err((StatusCode::BAD_REQUEST, "invalid gnu_build_id"));
-        }
+        let build_id = canonical_build_id(&build_id)
+            .map_err(|_| (StatusCode::BAD_REQUEST, "invalid gnu_build_id"))?;
         let metadata = debuginfo_metadata(state.admin_store.as_ref(), &tenant, &build_id)
             .await
             .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
@@ -889,30 +1067,41 @@ pub(crate) async fn upload_debuginfo_handler<S: ProfileStore>(
                 "no pending upload for this build ID",
             ));
         }
-        let body = match tokio::time::timeout(
-            std::time::Duration::from_mins(2),
-            axum::body::to_bytes(request.into_body(), DEBUGINFO_MAX_BYTES),
-        )
-        .await
-        {
-            Ok(Ok(body)) => body,
-            Ok(Err(_)) => {
-                return Err((
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    "debug info upload is too large",
-                ));
+        let path = Path::from(format!("{}/exe", debuginfo_prefix(&tenant, &build_id)));
+        let mut writer = BufWriter::new(Arc::clone(&state.admin_store), path);
+        let mut body = request.into_body().into_data_stream();
+        let upload = async {
+            let mut size = 0_usize;
+            while let Some(chunk) = body.next().await {
+                let chunk = chunk.map_err(|_| (StatusCode::BAD_REQUEST, "invalid upload body"))?;
+                size = size.saturating_add(chunk.len());
+                if size > DEBUGINFO_MAX_BYTES {
+                    return Err((
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "debug info upload is too large",
+                    ));
+                }
+                writer
+                    .put(chunk)
+                    .await
+                    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "upload failed"))?;
+            }
+            Ok(())
+        };
+        match tokio::time::timeout(std::time::Duration::from_mins(2), upload).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                let _ = writer.abort().await;
+                return Err(error);
             }
             Err(_) => {
+                let _ = writer.abort().await;
                 state.metrics.debuginfo_upload_timeouts.inc();
                 return Err((StatusCode::REQUEST_TIMEOUT, "debug info upload timed out"));
             }
-        };
-        state
-            .admin_store
-            .put(
-                &Path::from(format!("{}/exe", debuginfo_prefix(&tenant, &build_id))),
-                body.into(),
-            )
+        }
+        writer
+            .shutdown()
             .await
             .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "upload failed"))?;
         Ok(StatusCode::OK)
@@ -931,10 +1120,8 @@ pub(crate) async fn upload_finished_handler<S: ProfileStore>(
     req: ConnectRequest<pb::debuginfo::v1alpha1::UploadFinishedRequest>,
 ) -> Result<ConnectResponse<pb::debuginfo::v1alpha1::UploadFinishedResponse>, ConnectError> {
     let tenant = tenant(&state, &principal, &headers)?;
-    if !valid_build_id(&req.0.gnu_build_id) {
-        return Err(admin_error(Code::InvalidArgument, "invalid gnu_build_id"));
-    }
-    let mut metadata = debuginfo_metadata(state.admin_store.as_ref(), &tenant, &req.0.gnu_build_id)
+    let build_id = canonical_build_id(&req.0.gnu_build_id)?;
+    let mut metadata = debuginfo_metadata(state.admin_store.as_ref(), &tenant, &build_id)
         .await?
         .ok_or_else(|| {
             admin_error(
@@ -948,31 +1135,17 @@ pub(crate) async fn upload_finished_handler<S: ProfileStore>(
             "upload is not pending",
         ));
     }
-    let object = state
-        .admin_store
-        .head(&Path::from(format!(
-            "{}/exe",
-            debuginfo_prefix(&tenant, &req.0.gnu_build_id)
-        )))
-        .await
-        .map_err(|error| match error {
-            object_store::Error::NotFound { .. } => {
-                admin_error(Code::FailedPrecondition, "uploaded debug info is missing")
-            }
-            error => admin_error(Code::Internal, error.to_string()),
-        })?;
+    let object_size =
+        validate_uploaded_debuginfo(state.admin_store.as_ref(), &tenant, &build_id).await?;
     metadata.state = pb::debuginfo::v1alpha1::object_metadata::State::Uploaded as i32;
     metadata.finished_at = Some(pbjson_types::Timestamp {
         seconds: now_seconds(),
         nanos: 0,
     });
-    metadata.size_bytes = i64::try_from(object.size).unwrap_or(i64::MAX);
+    metadata.size_bytes = i64::try_from(object_size).unwrap_or(i64::MAX);
     write_message(
         state.admin_store.as_ref(),
-        &format!(
-            "{}/metadata",
-            debuginfo_prefix(&tenant, &req.0.gnu_build_id)
-        ),
+        &format!("{}/metadata", debuginfo_prefix(&tenant, &build_id)),
         &metadata,
     )
     .await?;
@@ -1024,10 +1197,8 @@ pub(crate) async fn delete_debuginfo_handler<S: ProfileStore>(
     req: ConnectRequest<pb::debuginfo::v1alpha1::DeleteDebuginfoRequest>,
 ) -> Result<ConnectResponse<pb::debuginfo::v1alpha1::DeleteDebuginfoResponse>, ConnectError> {
     let tenant = tenant(&state, &principal, &headers)?;
-    if !valid_build_id(&req.0.gnu_build_id) {
-        return Err(admin_error(Code::InvalidArgument, "invalid gnu_build_id"));
-    }
-    let prefix = debuginfo_prefix(&tenant, &req.0.gnu_build_id);
+    let build_id = canonical_build_id(&req.0.gnu_build_id)?;
+    let prefix = debuginfo_prefix(&tenant, &build_id);
     delete_object(state.admin_store.as_ref(), &format!("{prefix}/metadata")).await?;
     delete_object(state.admin_store.as_ref(), &format!("{prefix}/exe")).await?;
     Ok(ConnectResponse::new(

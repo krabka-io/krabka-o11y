@@ -13,7 +13,7 @@ struct UploadedResolver<'a> {
 impl NativeResolver for UploadedResolver<'_> {
     fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>> {
         self.uploaded
-            .get(&request.build_id)
+            .get(&request.build_id.to_ascii_lowercase())
             .and_then(|resolver| resolver.symbolize(request))
             .or_else(|| self.configured.symbolize(request))
     }
@@ -49,7 +49,8 @@ pub async fn symbolize_blocks_once(
             {
                 continue;
             }
-            if uploaded.contains_key(&request.build_id) {
+            let build_id = request.build_id.to_ascii_lowercase();
+            if uploaded.contains_key(&build_id) {
                 metrics.record_symbolizer_cache(true);
                 continue;
             }
@@ -57,7 +58,7 @@ pub async fn symbolize_blocks_once(
             let object = match store
                 .get(&Path::from(format!(
                     "debug-info/{}/{}/exe",
-                    block.tenant, request.build_id
+                    block.tenant, build_id
                 )))
                 .await
             {
@@ -68,7 +69,7 @@ pub async fn symbolize_blocks_once(
                 continue;
             };
             if let Ok(object) = krabka_pprof::ObjectSymbolResolver::from_bytes(&bytes) {
-                uploaded.insert(request.build_id, object);
+                uploaded.insert(build_id, object);
             }
         }
         let resolver = UploadedResolver {
