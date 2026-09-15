@@ -1,4 +1,4 @@
-use krabka_observability::SupervisedTasks;
+use krabka_observability::{ReadinessGate, SupervisedTasks};
 
 use super::{AllStage, Arc, Cli, ClientSecurity, ProfileReadPath, ServiceMetrics};
 
@@ -21,6 +21,7 @@ pub(crate) fn read_path_stage(
     read: ProfileReadPath,
     metrics: &ServiceMetrics,
     wal_security: Option<ClientSecurity>,
+    catch_up: ReadinessGate,
 ) -> AllStage {
     let cli = Arc::clone(cli);
     let metrics = metrics.clone();
@@ -28,7 +29,7 @@ pub(crate) fn read_path_stage(
         Box::pin(async move {
             let mut tasks = SupervisedTasks::new(token.clone());
             for (name, handle) in
-                read.spawn_background(&cli, &metrics, &token, wal_security.as_ref())
+                read.spawn_background(&cli, &metrics, &token, wal_security.as_ref(), catch_up)
             {
                 tasks.adopt(name, handle);
             }

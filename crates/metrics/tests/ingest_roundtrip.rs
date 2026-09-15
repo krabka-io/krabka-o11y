@@ -107,7 +107,7 @@ async fn remote_write_v1_lands_as_block() {
         .build_runtime(object_store.clone(), metrics.object_store.clone())
         .expect("compactor runtime");
     let mut consumer = config
-        .build_consumer(&metrics.wal_consumer, None)
+        .build_consumer(&metrics.wal_consumer, None, None)
         .await
         .expect("compactor consumer");
     let result = run_compactor_consumer_loop(

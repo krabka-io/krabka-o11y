@@ -34,6 +34,8 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // remaining startup takes. The block builder has no data port at all, and
     // this is the only place it can be asked.
     let readiness = RoleReadiness::new();
+    readiness.track_wal_consumer(metrics.wal_consumer.clone());
+    readiness.track_object_store(metrics.object_store.clone());
     let admin = krabka_telemetry::profiling::spawn_admin_with_config(
         cli.admin_listen_addr,
         krabka_metrics::metrics::metrics_router(metrics.registry.clone())

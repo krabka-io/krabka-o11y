@@ -1,5 +1,6 @@
 use krabka_observability::{
-    wal_consumer_metrics::WalConsumerMetrics, wal_group_assignment::WalAssignmentWatch,
+    ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
+    wal_group_assignment::WalAssignmentWatch,
 };
 
 use super::{
@@ -23,6 +24,7 @@ use super::{
 pub struct WalAssignmentConsumer {
     consumer: Consumer,
     assignment: WalAssignmentWatch,
+    metrics: WalConsumerMetrics,
 }
 
 impl WalAssignmentConsumer {
@@ -32,6 +34,20 @@ impl WalAssignmentConsumer {
         Self {
             consumer,
             assignment: WalAssignmentWatch::new(metrics.clone()),
+            metrics: metrics.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_catch_up(
+        consumer: Consumer,
+        metrics: &WalConsumerMetrics,
+        gate: ReadinessGate,
+    ) -> Self {
+        Self {
+            consumer,
+            assignment: WalAssignmentWatch::with_catch_up(metrics.clone(), gate),
+            metrics: metrics.clone(),
         }
     }
 }
@@ -66,6 +82,8 @@ impl CompactionConsumerCommit for WalAssignmentConsumer {
             .collect();
         Consumer::commit_offsets_sync(&self.consumer, offsets)
             .await
-            .map_err(|error| CompactionConsumerCommitError::Commit(error.to_string()))
+            .map_err(|error| CompactionConsumerCommitError::Commit(error.to_string()))?;
+        self.metrics.record_commit();
+        Ok(())
     }
 }

@@ -121,6 +121,7 @@ impl MetricsCompactorConfig {
         &self,
         wal_consumer_metrics: &WalConsumerMetrics,
         security: Option<krabka_client_core::ClientSecurity>,
+        catch_up: Option<krabka_observability::ReadinessGate>,
     ) -> Result<DurableCompactionConsumer<WalAssignmentConsumer>, MetricsCompactorBuildError> {
         self.validate()?;
         let consumer = Consumer::builder()
@@ -135,8 +136,14 @@ impl MetricsCompactorConfig {
             .build()
             .await
             .map_err(|error| consumer_build_error(&error))?;
+        let consumer = match catch_up {
+            Some(gate) => {
+                WalAssignmentConsumer::with_catch_up(consumer, wal_consumer_metrics, gate)
+            }
+            None => WalAssignmentConsumer::new(consumer, wal_consumer_metrics),
+        };
         Ok(DurableCompactionConsumer::new(
-            WalAssignmentConsumer::new(consumer, wal_consumer_metrics),
+            consumer,
             self.wal_topic.clone(),
         ))
     }

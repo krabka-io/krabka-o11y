@@ -269,6 +269,8 @@ pub(crate) async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // data port, and the admin port echoes it, so a probe that cannot reach
     // the data port still gets the truth rather than "the listener is up".
     let readiness = RoleReadiness::new();
+    readiness.track_wal_consumer(metrics.wal_consumer.clone());
+    readiness.track_object_store(metrics.object_store.clone());
     // CPU/heap profiling admin server (Alloy pyroscope.scrape target) plus the
     // Prometheus RED-metrics exporter and `/ready` on the same :9404 admin port.
     krabka_telemetry::profiling::serve_admin_with_config(

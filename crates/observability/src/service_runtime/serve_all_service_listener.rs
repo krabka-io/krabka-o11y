@@ -50,6 +50,13 @@ pub async fn serve_all_service_listener(
     let dependencies = dependencies.with_audit(security.audit.clone());
     let readiness = dependencies.readiness.clone().unwrap_or_default();
     let metrics = dependencies.metrics.clone().unwrap_or_default();
+    if let Some(consumer) = &dependencies.wal_consumer {
+        consumer.lock().await.set_catch_up_gate(
+            readiness
+                .for_role(RoleKind::BlockBuilder)
+                .gate("wal-catch-up"),
+        );
+    }
     // One gate for the process, registered here and handed to the router, so
     // that `POST /ingester/prepare_shutdown` and the first step of this stop
     // clear the same one.
@@ -77,7 +84,7 @@ pub async fn serve_all_service_listener(
         object_store,
         querier_token.clone(),
         metrics,
-        readiness,
+        readiness.clone(),
         distributor_state,
     )
     .await?;

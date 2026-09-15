@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy
+  namespace: krabka-o11y
+spec:
+  selector: {app.kubernetes.io/name: alloy}
+  ports:
+    - {name: loki, port: 9999, targetPort: loki}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alloy
+  namespace: krabka-o11y
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: alloy}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: alloy}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 473
+        runAsGroup: 473
+        fsGroup: 473
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: alloy
+          image: mirror.gcr.io/grafana/alloy@sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8
+          args: [run, /etc/alloy/config.alloy, --server.http.listen-addr=0.0.0.0:12345, --storage.path=/var/lib/alloy]
+          ports:
+            - {name: loki, containerPort: 9999}
+            - {name: otlp-http, containerPort: 4318}
+            - {name: admin, containerPort: 12345}
+          readinessProbe:
+            httpGet: {path: /-/ready, port: admin}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: admin}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/alloy, readOnly: true}
+            - {name: data, mountPath: /var/lib/alloy}
+      volumes:
+        - name: config
+          configMap: {name: qualification-alloy}
+        - name: data
+          emptyDir: {}

@@ -19,6 +19,7 @@ pub(crate) async fn run_block_builder(
     // two things it writes between: the WAL consumer and the object store.
     let object_store_gate = readiness.gate("object-store");
     let wal_consumer_gate = readiness.gate("wal-consumer");
+    let wal_catch_up_gate = readiness.gate("wal-catch-up");
     let store = build_object_store(&cli.object_store_url, metrics.object_store.clone())?;
     object_store_gate.mark_ready();
     // The same runtime overrides file the distributor reads. It holds the
@@ -42,7 +43,7 @@ pub(crate) async fn run_block_builder(
     config.flush_max_age = cli.block_builder_flush_max_age;
     let runtime = config.build_runtime(store.clone(), metrics.object_store.clone())?;
     let mut consumer = config
-        .build_consumer(&metrics.wal_consumer, wal_security)
+        .build_consumer(&metrics.wal_consumer, wal_security, Some(wal_catch_up_gate))
         .await?;
     wal_consumer_gate.mark_ready();
     let stopping = CancellationToken::new();

@@ -162,10 +162,24 @@ async fn a_failed_put_counts_as_an_attempt_and_as_a_failure() {
     check!(outcome.is_err());
     check!(metrics.operations(ObjectStoreOperation::Put) == 1);
     check!(metrics.failures(ObjectStoreOperation::Put) == 1);
+    check!(metrics.last_success_unix_millis().is_none());
     check!(
         metrics.transferred_bytes(ObjectStoreOperation::Put) == 0,
         "a put that failed transferred nothing"
     );
+}
+
+#[tokio::test]
+async fn a_success_records_when_the_object_store_last_worked() {
+    let metrics = ObjectStoreMetrics::unregistered();
+    let store = MeteredObjectStore::wrap(Arc::new(InMemory::new()), metrics.clone());
+
+    store
+        .put(&Path::from("blocks/a"), PutPayload::from_static(b"x"))
+        .await
+        .expect("put succeeds");
+
+    check!(metrics.last_success_unix_millis().is_some());
 }
 
 #[tokio::test]

@@ -1,0 +1,5 @@
+# krabka-profiles --target=symbolizer
+target: symbolizer
+admin-listen-addr: 0.0.0.0:9404
+object-store-url: s3://krabka-profiles
+index-refresh-interval: 15s

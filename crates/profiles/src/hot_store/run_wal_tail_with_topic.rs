@@ -1,4 +1,6 @@
-use krabka_observability::persisted_format::validate_persisted_format;
+use krabka_observability::{
+    persisted_format::validate_persisted_format, wal_group_assignment::WalAssignmentWatch,
+};
 
 use super::{
     AutoOffsetReset, CancellationToken, Consumer, ProfileRecord, ProfilesError, WalTailConfig,
@@ -32,6 +34,7 @@ pub async fn run_wal_tail_with_topic(
         client_dispatch_queue_capacity,
         client_frame_max,
         metrics,
+        catch_up,
         security,
     } = config;
     // Raced against the token rather than awaited: an unreachable broker makes
@@ -52,6 +55,10 @@ pub async fn run_wal_tail_with_topic(
                 ProfilesError::Wal(format!("hot WAL-tail consumer build failed: {err}"))
             })?,
     };
+    let mut assignment = match catch_up {
+        Some(gate) => WalAssignmentWatch::with_catch_up(metrics.clone(), gate),
+        None => WalAssignmentWatch::new(metrics.clone()),
+    };
 
     loop {
         let polled = tokio::select! {
@@ -69,6 +76,7 @@ pub async fn run_wal_tail_with_topic(
             return Ok(());
         };
         metrics.record_poll(&records);
+        assignment.observe_consumer(&consumer).await;
         for record in &records {
             validate_persisted_format(
                 record
@@ -91,6 +99,7 @@ pub async fn run_wal_tail_with_topic(
             .commit_sync()
             .await
             .map_err(|err| ProfilesError::Wal(format!("hot WAL-tail commit failed: {err}")))?;
+        metrics.record_commit();
         // Checked after the commit, never between the poll and it: a batch
         // this tail has already applied must reach the broker as a committed
         // offset even when the signal lands mid-iteration.

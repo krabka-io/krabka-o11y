@@ -100,11 +100,10 @@ docker run --rm ghcr.io/krabka-io/krabka-o11y@sha256:<digest> \
   krabka-observability --target=all --wal-bootstrap-server=broker:9092
 ```
 
-[`deploy/`](deploy) holds a Docker Compose stack and a kustomize base that run
-one role of each signal against a broker and an object store. Read
+[`deploy/`](deploy) holds a Docker Compose stack and a production-role
+kustomize base against a broker and an object store. Read
 [`deploy/README.md`](deploy/README.md) first. It records which lifecycle
-property of the binaries each probe, grace period, and volume is wired to, and
-which three of them do not hold.
+property of the binaries each probe, grace period, and volume is wired to.
 
 ```bash
 docker compose -f deploy/compose/docker-compose.yaml up -d

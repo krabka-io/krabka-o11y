@@ -1,8 +1,8 @@
 use super::{
     Arc, CancellationToken, Cli, ClientSecurity, ColdProfileStore, ObjectStore, ServiceMetrics,
-    UnionProfileStore, WalTailProfileStore, client_resource_policy, spawn_profile_index_refresh,
-    spawn_wal_tail,
+    UnionProfileStore, WalTailProfileStore, spawn_profile_index_refresh, spawn_wal_tail,
 };
+use krabka_observability::ReadinessGate;
 
 /// What a profiles read role queries: the WAL tail in front of the blocks.
 pub(crate) type ProfileUnionStore = UnionProfileStore<WalTailProfileStore, ColdProfileStore>;
@@ -58,8 +58,8 @@ impl ProfileReadPath {
         metrics: &ServiceMetrics,
         shutdown: &CancellationToken,
         wal_security: Option<&ClientSecurity>,
+        catch_up: ReadinessGate,
     ) -> [(&'static str, tokio::task::JoinHandle<()>); 2] {
-        let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
         [
             (
                 "profiles index refresher",
@@ -77,9 +77,8 @@ impl ProfileReadPath {
                 spawn_wal_tail(
                     cli,
                     self.hot.clone(),
-                    client_dispatch_queue_capacity,
-                    client_frame_max,
                     metrics.wal_consumer.clone(),
+                    catch_up,
                     wal_security.cloned(),
                     shutdown.clone(),
                 ),

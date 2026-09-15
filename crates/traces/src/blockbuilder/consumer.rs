@@ -1,5 +1,6 @@
 use krabka_observability::{
-    wal_consumer_metrics::WalConsumerMetrics, wal_group_assignment::WalAssignmentWatch,
+    ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
+    wal_group_assignment::WalAssignmentWatch,
 };
 
 use super::{Consumer, ConsumerRecord, Time, TracesError, WalConsumerCommit, WalConsumerPoll};
@@ -22,6 +23,7 @@ use super::{Consumer, ConsumerRecord, Time, TracesError, WalConsumerCommit, WalC
 pub struct BlockBuilderConsumer {
     consumer: Consumer,
     assignment: WalAssignmentWatch,
+    metrics: WalConsumerMetrics,
 }
 
 impl BlockBuilderConsumer {
@@ -31,6 +33,20 @@ impl BlockBuilderConsumer {
         Self {
             consumer,
             assignment: WalAssignmentWatch::new(metrics.clone()),
+            metrics: metrics.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_catch_up(
+        consumer: Consumer,
+        metrics: &WalConsumerMetrics,
+        gate: ReadinessGate,
+    ) -> Self {
+        Self {
+            consumer,
+            assignment: WalAssignmentWatch::with_catch_up(metrics.clone(), gate),
+            metrics: metrics.clone(),
         }
     }
 }
@@ -54,6 +70,8 @@ impl WalConsumerCommit for BlockBuilderConsumer {
     async fn commit_sync(&mut self) -> Result<(), TracesError> {
         Consumer::commit_sync(&self.consumer)
             .await
-            .map_err(|err| TracesError::Wal(err.to_string()))
+            .map_err(|err| TracesError::Wal(err.to_string()))?;
+        self.metrics.record_commit();
+        Ok(())
     }
 }

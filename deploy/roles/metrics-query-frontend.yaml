@@ -1,0 +1,6 @@
+# krabka-metrics-service --target=query-frontend
+target: query-frontend
+listen: 0.0.0.0:9090
+admin-listen-addr: 0.0.0.0:9404
+object-store-url: s3://krabka-metrics
+manifest-prefix: metrics

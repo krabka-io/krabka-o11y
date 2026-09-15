@@ -102,14 +102,16 @@ pub async fn run_with_config(
     // abandons whatever it holds for the lost partitions, and nothing in this
     // process can flush them first. See
     // `krabka_observability::wal_group_assignment`.
-    let mut assignment = WalAssignmentWatch::new(
-        config
-            .metrics
-            .as_ref()
-            .map_or_else(WalConsumerMetrics::unregistered, |metrics| {
-                metrics.wal_consumer.clone()
-            }),
-    );
+    let wal_metrics = config
+        .metrics
+        .as_ref()
+        .map_or_else(WalConsumerMetrics::unregistered, |metrics| {
+            metrics.wal_consumer.clone()
+        });
+    let mut assignment = match &config.catch_up {
+        Some(gate) => WalAssignmentWatch::with_catch_up(wal_metrics.clone(), gate.clone()),
+        None => WalAssignmentWatch::new(wal_metrics.clone()),
+    };
 
     let mut accumulator =
         ConsumerRecordAccumulator::new(config.flush_records, config.flush_max_age);
@@ -191,6 +193,7 @@ pub async fn run_with_config(
                 .commit_sync()
                 .await
                 .map_err(|err| ProfilesError::Block(format!("consumer commit failed: {err}")))?;
+            wal_metrics.record_commit();
             Ok::<(), ProfilesError>(())
         }
         .instrument(build_span)

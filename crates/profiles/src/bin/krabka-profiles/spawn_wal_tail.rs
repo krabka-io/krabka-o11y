@@ -1,6 +1,6 @@
-use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
+use krabka_observability::{ReadinessGate, wal_consumer_metrics::WalConsumerMetrics};
 
-use super::{CancellationToken, Cli, ClientSecurity, WalTailProfileStore};
+use super::{CancellationToken, Cli, ClientSecurity, WalTailProfileStore, client_resource_policy};
 
 /// Runs the hot WAL tail, returning its handle for the caller to supervise.
 ///
@@ -17,12 +17,12 @@ use super::{CancellationToken, Cli, ClientSecurity, WalTailProfileStore};
 pub(crate) fn spawn_wal_tail(
     cli: &Cli,
     hot: WalTailProfileStore,
-    client_dispatch_queue_capacity: krabka_client_core::ConnectionDispatchQueueCapacity,
-    client_frame_max: krabka_client_core::ClientFrameMax,
     metrics: WalConsumerMetrics,
+    catch_up: ReadinessGate,
     wal_security: Option<ClientSecurity>,
     shutdown: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
+    let (client_dispatch_queue_capacity, client_frame_max) = client_resource_policy(cli);
     let config = krabka_profiles::hot_store::WalTailConfig {
         bootstrap: cli.bootstrap.clone(),
         group_id: cli.query_wal_tail_group_id.clone(),
@@ -31,6 +31,7 @@ pub(crate) fn spawn_wal_tail(
         client_dispatch_queue_capacity,
         client_frame_max,
         metrics,
+        catch_up: Some(catch_up),
         security: wal_security,
     };
     tokio::spawn(async move {

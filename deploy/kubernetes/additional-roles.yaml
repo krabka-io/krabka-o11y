@@ -1,0 +1,358 @@
+apiVersion: v1
+kind: List
+items:
+# Production roles not needed by the small three-stage compose topology.
+# Durable data belongs to the broker or object store; these pods keep only
+# replaceable working files in /tmp.
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: metrics-query-frontend
+    spec:
+      selector: {app.kubernetes.io/name: metrics-query-frontend}
+      ports: [{name: http, port: 9090, targetPort: http}]
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: metrics-query-frontend
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: metrics-query-frontend}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: metrics-query-frontend}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 60
+          securityContext: &pod-security
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - &metrics-query-frontend
+              name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-metrics-service]
+              args: [--config.file=/etc/krabka/metrics-query-frontend.yaml]
+              envFrom: &object-store-env
+                - secretRef: {name: krabka-object-store}
+                - configMapRef: {name: krabka-object-store-endpoint}
+              ports:
+                - {name: http, containerPort: 9090}
+                - {name: admin, containerPort: 9404}
+              startupProbe: &http-startup
+                httpGet: {path: /ready, port: http}
+                periodSeconds: 5
+                failureThreshold: 60
+              readinessProbe: &http-ready
+                httpGet: {path: /ready, port: http}
+                periodSeconds: 5
+              livenessProbe: &admin-live
+                tcpSocket: {port: admin}
+                periodSeconds: 10
+                failureThreshold: 6
+              securityContext: &container-security
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              volumeMounts: &role-mounts
+                - {name: roles, mountPath: /etc/krabka, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes: &role-volumes
+            - name: roles
+              configMap: {name: krabka-roles}
+            - name: tmp
+              emptyDir: {}
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: metrics-ruler
+    spec:
+      selector: {app.kubernetes.io/name: metrics-ruler}
+      ports: [{name: http, port: 9090, targetPort: http}]
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: metrics-ruler
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: metrics-ruler}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: metrics-ruler}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 90
+          securityContext: *pod-security
+          initContainers: &topic-contract
+            - name: topic-contract
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-o11y-bootstrap]
+              args: [--bootstrap=broker:9092, --partitions=1, --state-partitions=1, --replicas=1, --retention-ms=900000]
+              securityContext: *container-security
+              volumeMounts: [{name: tmp, mountPath: /tmp}]
+          containers:
+            - <<: *metrics-query-frontend
+              args: [--config.file=/etc/krabka/metrics-ruler.yaml]
+          volumes: *role-volumes
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: metrics-compactor
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: metrics-compactor}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: metrics-compactor}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 120
+          securityContext: *pod-security
+          containers:
+            - name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-metrics]
+              args: [--config.file=/etc/krabka/metrics-compactor.yaml]
+              envFrom: *object-store-env
+              ports: [{name: admin, containerPort: 9404}]
+              startupProbe: &admin-startup
+                httpGet: {path: /ready, port: admin}
+                periodSeconds: 5
+                failureThreshold: 60
+              readinessProbe: &admin-ready
+                httpGet: {path: /ready, port: admin}
+                periodSeconds: 5
+              livenessProbe: *admin-live
+              securityContext: *container-security
+              volumeMounts: *role-mounts
+          volumes: *role-volumes
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: traces-live-store
+    spec:
+      selector: {app.kubernetes.io/name: traces-live-store}
+      ports: [{name: http, port: 3200, targetPort: http}]
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: traces-live-store
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: traces-live-store}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: traces-live-store}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 60
+          securityContext: *pod-security
+          initContainers: *topic-contract
+          containers:
+            - name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-traces]
+              args: [--config.file=/etc/krabka/traces-live-store.yaml]
+              ports:
+                - {name: http, containerPort: 3200}
+                - {name: admin, containerPort: 9404}
+              startupProbe: *http-startup
+              readinessProbe: *http-ready
+              livenessProbe: *admin-live
+              securityContext: *container-security
+              volumeMounts: *role-mounts
+          volumes: *role-volumes
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: traces-query-frontend
+    spec:
+      selector: {app.kubernetes.io/name: traces-query-frontend}
+      ports: [{name: http, port: 3200, targetPort: http}]
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: traces-query-frontend
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: traces-query-frontend}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: traces-query-frontend}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 60
+          securityContext: *pod-security
+          containers:
+            - name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-traces]
+              args: [--config.file=/etc/krabka/traces-query-frontend.yaml]
+              envFrom: *object-store-env
+              ports:
+                - {name: http, containerPort: 3200}
+                - {name: admin, containerPort: 9404}
+              startupProbe: *http-startup
+              readinessProbe: *http-ready
+              livenessProbe: *admin-live
+              securityContext: *container-security
+              volumeMounts: *role-mounts
+          volumes: *role-volumes
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: traces-compactor
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: traces-compactor}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: traces-compactor}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 120
+          securityContext: *pod-security
+          containers:
+            - name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-traces]
+              args: [--config.file=/etc/krabka/traces-compactor.yaml]
+              envFrom: *object-store-env
+              ports: [{name: admin, containerPort: 9404}]
+              startupProbe: *admin-startup
+              readinessProbe: *admin-ready
+              livenessProbe: *admin-live
+              securityContext: *container-security
+              volumeMounts: *role-mounts
+          volumes: *role-volumes
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: traces-metrics-generator
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: traces-metrics-generator}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: traces-metrics-generator}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 60
+          securityContext: *pod-security
+          initContainers: *topic-contract
+          containers:
+            - name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-traces]
+              args: [--config.file=/etc/krabka/traces-metrics-generator.yaml]
+              ports: [{name: admin, containerPort: 9404}]
+              startupProbe: *admin-startup
+              readinessProbe: *admin-ready
+              livenessProbe: *admin-live
+              securityContext: *container-security
+              volumeMounts: *role-mounts
+          volumes: *role-volumes
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: profiles-query-frontend
+    spec:
+      selector: {app.kubernetes.io/name: profiles-query-frontend}
+      ports: [{name: http, port: 4040, targetPort: http}]
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: profiles-query-frontend
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: profiles-query-frontend}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: profiles-query-frontend}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 60
+          securityContext: *pod-security
+          initContainers: *topic-contract
+          containers:
+            - name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-profiles]
+              args: [--config.file=/etc/krabka/profiles-query-frontend.yaml]
+              envFrom: *object-store-env
+              ports:
+                - {name: http, containerPort: 4040}
+                - {name: admin, containerPort: 9404}
+              startupProbe: *http-startup
+              readinessProbe: *http-ready
+              livenessProbe: *admin-live
+              securityContext: *container-security
+              volumeMounts: *role-mounts
+          volumes: *role-volumes
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: profiles-compactor
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: profiles-compactor}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: profiles-compactor}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 120
+          securityContext: *pod-security
+          containers:
+            - name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-profiles]
+              args: [--config.file=/etc/krabka/profiles-compactor.yaml]
+              envFrom: *object-store-env
+              ports: [{name: admin, containerPort: 9404}]
+              startupProbe: *admin-startup
+              readinessProbe: *admin-ready
+              livenessProbe: *admin-live
+              securityContext: *container-security
+              volumeMounts: *role-mounts
+          volumes: *role-volumes
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: profiles-symbolizer
+    spec:
+      replicas: 1
+      selector:
+        matchLabels: {app.kubernetes.io/name: profiles-symbolizer}
+      template:
+        metadata:
+          labels: {app.kubernetes.io/name: profiles-symbolizer}
+        spec:
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 60
+          securityContext: *pod-security
+          containers:
+            - name: role
+              image: ghcr.io/krabka-io/krabka-o11y
+              command: [krabka-profiles]
+              args: [--config.file=/etc/krabka/profiles-symbolizer.yaml]
+              envFrom: *object-store-env
+              ports: [{name: admin, containerPort: 9404}]
+              startupProbe: *admin-startup
+              readinessProbe: *admin-ready
+              livenessProbe: *admin-live
+              securityContext: *container-security
+              volumeMounts: *role-mounts
+          volumes: *role-volumes

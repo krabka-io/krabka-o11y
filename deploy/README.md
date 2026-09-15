@@ -1,7 +1,7 @@
 # Deploying krabka-o11y
 
-One role of each signal, a broker, and an object store. The same role
-configuration drives both orchestrators.
+Every production role for all four signals, a broker, and an object store. The
+same role configuration drives both orchestrators.
 
 | Path | What it is |
 | --- | --- |
@@ -47,13 +47,40 @@ with the compose stack.
 
 Replace the `krabka-object-store` secret before you use this anywhere real. The
 literals in `kustomization.yaml` exist so that one `kubectl apply` brings the
-stack up on a scratch cluster, and that is the only claim the base makes.
+stack up on the ephemeral qualification cluster; they are not production
+credentials.
 
-The base renders and has not been applied to a cluster. The compose stack has
-been run end to end: all four signals were ingested and read back, and the
-drain, the probes, and the stop behaviour recorded below were measured on it.
-The two share the image and the role configuration, so what is untested here is
-the probe, volume, and lifecycle wiring that only Kubernetes has.
+The `kubernetes lifecycle` workflow applies this base to a fresh kind cluster.
+It checks all four public ingest/query protocols and tenant isolation while
+scaling, deleting a pod, enforcing disruption budgets, draining the node,
+cold-starting, upgrading, and rolling back every role. Run the same check
+locally after building the image:
+
+```bash
+bazel run -c opt //bazel/images/krabka:load
+tools/kubernetes-qualification.sh krabka-o11y:dev \
+  ghcr.io/krabka-io/krabka-o11y:sha-<previous-release-commit>
+```
+
+The report, exact rendered manifests, image metadata, command log, responses,
+cluster version, and `SHA256SUMS` land under
+`qualification/evidence/kubernetes/`.
+
+### Cluster contracts
+
+- `broker:9092` must resolve inside the namespace to a Kafka-compatible broker.
+  The base pins `krabka-broker`, persists its log and consumer offsets on a
+  `ReadWriteOnce` claim, and runs the idempotent topic-contract bootstrap in
+  every WAL-backed pod before the role starts.
+- The four `s3://krabka-*` buckets must exist. The base pins MinIO, persists it
+  on a `ReadWriteOnce` claim, and creates the buckets with `minio-buckets`.
+- `metrics-distributor`, `logs-distributor`, `traces-distributor`,
+  `*-querier`, `traces-live-store`, and the three query-frontends are stable
+  namespace-local DNS names used by role configuration.
+- Replace `krabka-object-store` with real `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY` data. Keep the endpoint/region settings in
+  `krabka-object-store-endpoint`, or replace both with the credentials and DNS
+  contract of the production object store.
 
 ## Roles
 
@@ -69,7 +96,7 @@ rather than four.
 | `live-store` | Serves the window no block covers yet | traces |
 | `querier` | Answers a query over blocks and the live tier | all four |
 | `query-frontend` | Shards a query, fans out, merges | traces, profiles, metrics |
-| `compactor` | Merges blocks already in object storage, enforces retention | traces, profiles |
+| `compactor` | Merges blocks already in object storage, enforces retention | metrics, traces, profiles |
 | `ruler` | Evaluates recording and alerting rules | metrics |
 | `metrics-generator` | Derives metrics from spans and remote-writes them | traces |
 | `symbolizer` | Resolves profile addresses to function names | profiles |
@@ -77,13 +104,10 @@ rather than four.
 
 The table's `metrics` column means the two metrics binaries together.
 
-The gaps are real, not oversights. Only traces keeps the recent window as a
-role of its own; a logs or metrics querier tails the WAL itself. Only metrics
-evaluates rules and only profiles resolves symbols. Logs and metrics have no
-`compactor`: logs folds retention and delete materialisation into its block
-builder, as Loki does, and nothing yet merges metric blocks that are already
-in object storage, so the metrics retention sweep rides in its block builder
-too.
+Only traces keeps the recent window as a role of its own; logs, metrics, and
+profiles tail the WAL in their read path. Only metrics evaluates rules and only
+profiles resolves symbols. Logs has no separate `compactor`: it folds
+retention and delete materialisation into its block builder, as Loki does.
 
 `block-builder` is the name that settled the one collision worth naming. Metrics
 and logs used to call this stage `compactor`, while traces and profiles used
@@ -165,6 +189,14 @@ echo the same gates there -- a `krabka-traces` query port on both `/ready` and
 Tempo's `/status` alias, which is what the traces query-frontend probes to
 decide its fan-out.
 
+**`/status/recovery` explains that answer.** Its JSON reports every tracked WAL
+consumer's assignment, consumed and committed offsets, catch-up state and lag,
+plus the last successful object-store operation. `lag` is `0` once the pinned
+client has proved the partition is at its broker-observed end and `null` while
+that proof is unavailable; consumed and committed offsets remain visible in
+both states. WAL-backed read and block-building roles keep `/ready` false until
+that catch-up proof succeeds.
+
 **The drain is a readiness change, not an exit.** `POST
 /ingester/prepare_shutdown` on the logs distributor clears the
 `accepting-writes` gate. The data port then answers 503 and the orchestrator
@@ -190,8 +222,9 @@ signal. The metrics-service ruler drains its alertmanager queue under a
 the consumer-group offsets that record how far each block builder has read. The
 logs block builder and the logs querier keep a local manifest and a
 delete-request store under `--data-root`. None of that is reconstructible, so
-none of it is on an `emptyDir`. Every other role gets an `emptyDir` for its working directory,
-because its state is in the broker and in the object store.
+none of it is on an `emptyDir`. Every other role gets an `emptyDir` only for
+replaceable working files, because its durable state is in the broker and the
+object store.
 
 **The topic contract is provisioned, not assumed.** `krabka-o11y-bootstrap`
 creates the six topics, then describes each one and fails if one does not meet
@@ -208,7 +241,7 @@ the metrics querier, the traces compactor, a logs role with no
 `wal_bootstrap_server` -- skips the check rather than making a broker it does
 not use a condition of its starting.
 
-## Gaps
+## Remaining constraints
 
 These are properties of the binaries that the manifests cannot work around.
 Each one is a place where a probe says less than it appears to.
@@ -221,17 +254,18 @@ which costs nothing today, because no traces role has a drain gate to report.
 The traces querier is probed on its data port, where the query-frontend's own
 membership probe asks it.
 
-**No probe reports how far behind a WAL consumer is.** A gate answers whether a
-consumer is attached, not whether it has caught up. A block builder that is
-attached and an hour behind reads as ready, and the lag is visible only in the
-metrics. This is true of `--target all` too, where one `/ready` now covers
-every role of the process.
+**Numeric lag before catch-up is unavailable from the pinned consumer API.**
+The recovery endpoint therefore reports `lag: null`, not a fabricated number,
+until the broker proves the consumer is at the end. The consumed and committed
+offsets show whether work is still being made durable.
 
-**Only the logs all-in-one empties the WAL on the way out.** Its stop ends with
-a pass that compacts whatever the block builder had not yet flushed, so a push
-the process accepted a moment earlier is in a block before it exits. The traces
-and profiles block builders flush what they have buffered and stop; a record
-produced after their last poll stays in the WAL, uncommitted, for the next start
-to replay. Nothing is durably lost either way -- offsets move only behind a
-flush -- but in those two signals the last records are not queryable until the
-process is started again.
+**Singleton WAL owners do not scale by replica count.** The base protects the
+four block builders, traces live-store, traces metrics-generator, and the
+logs, metrics, and profiles read paths with `minAvailable: 1` disruption
+budgets. Scale the WAL topic partitions and add query fan-out before adding
+those consumers. Qualification scales the four distributors, the metrics
+query-frontend, and the traces querier and query-frontend.
+
+Their rolling strategies do not surge: the old member stops before its
+replacement waits for the single partition and catches up. The two logs roles
+use `Recreate` because they also mount single-writer PVCs.

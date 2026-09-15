@@ -59,11 +59,12 @@ pub(crate) async fn run_querier(
         let live_shutdown = shutdown.clone();
         let live_metrics = metrics.clone();
         tasks.spawn("traces querier embedded live-store", async move {
-            if let Some(gate) = &live_store_gate {
-                gate.mark_ready();
-            }
+            let gate = live_store_gate
+                .as_ref()
+                .expect("embedded live store registers a gate")
+                .clone();
             if let Err(err) =
-                livestore::run(consumer, live_store, live_metrics, live_shutdown).await
+                livestore::run(consumer, live_store, live_metrics, live_shutdown, gate).await
             {
                 tracing::error!(error = %err, "traces querier embedded live-store stopped");
             }

@@ -1,5 +1,7 @@
 use krabka_client_consumer::Consumer;
 
+use crate::ReadinessGate;
+
 use super::{BTreeSet, WalAssignmentChange, WalConsumerMetrics};
 
 /// Reports every change to one consumer group member's partition assignment.
@@ -11,11 +13,11 @@ use super::{BTreeSet, WalAssignmentChange, WalConsumerMetrics};
 /// The watch reports. It does not recover: see the
 /// [module documentation](super) for why a block builder cannot flush a
 /// partition it has already lost.
-#[derive(Debug)]
 pub struct WalAssignmentWatch {
     metrics: WalConsumerMetrics,
     owned: BTreeSet<(String, i32)>,
     first_observation: bool,
+    catch_up: Option<ReadinessGate>,
 }
 
 impl WalAssignmentWatch {
@@ -30,6 +32,17 @@ impl WalAssignmentWatch {
             metrics,
             owned: BTreeSet::new(),
             first_observation: true,
+            catch_up: None,
+        }
+    }
+
+    /// Builds a watch that also keeps a recovery readiness gate in step with
+    /// the consumer's broker-observed end offsets.
+    #[must_use]
+    pub fn with_catch_up(metrics: WalConsumerMetrics, catch_up: ReadinessGate) -> Self {
+        Self {
+            catch_up: Some(catch_up),
+            ..Self::new(metrics)
         }
     }
 
@@ -91,7 +104,18 @@ impl WalAssignmentWatch {
     /// empty one: a member that lost every partition polls nothing, and that is
     /// the state the watch most needs to see.
     pub async fn observe_consumer(&mut self, consumer: &Consumer) -> WalAssignmentChange {
-        self.observe(&consumer.assignment().await)
+        let assigned = consumer.assignment().await;
+        let change = self.observe(&assigned);
+        let caught_up = consumer.at_log_end().await;
+        self.metrics.record_assignment(&assigned, caught_up);
+        if let Some(gate) = &self.catch_up {
+            if caught_up {
+                gate.mark_ready();
+            } else {
+                gate.mark_unready();
+            }
+        }
+        change
     }
 
     /// The partitions this member holds, as of the last [`Self::observe`] call.

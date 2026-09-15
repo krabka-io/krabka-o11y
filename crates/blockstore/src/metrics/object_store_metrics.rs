@@ -2,6 +2,13 @@ use super::{
     ByteSize, ByteSizeExt, Counter, Family, Histogram, ObjectStoreOperation,
     ObjectStoreOperationLabel, Registry, Time, TimeExt,
 };
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    },
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Latency buckets for one object-store request, in seconds.
 ///
@@ -27,6 +34,7 @@ pub struct ObjectStoreMetrics {
     retries: Family<ObjectStoreOperationLabel, Counter>,
     transferred_bytes: Family<ObjectStoreOperationLabel, Counter>,
     duration: Family<ObjectStoreOperationLabel, Histogram>,
+    last_success_unix_millis: Arc<AtomicI64>,
 }
 
 impl ObjectStoreMetrics {
@@ -94,6 +102,7 @@ impl ObjectStoreMetrics {
             duration: Family::<ObjectStoreOperationLabel, Histogram>::new_with_constructor(|| {
                 Histogram::new(OPERATION_DURATION_BUCKETS)
             }),
+            last_success_unix_millis: Arc::new(AtomicI64::new(-1)),
         }
     }
 
@@ -107,10 +116,24 @@ impl ObjectStoreMetrics {
         self.operations.get_or_create(&label).inc();
         if !ok {
             self.failures.get_or_create(&label).inc();
+        } else {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |elapsed| {
+                    i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+                });
+            self.last_success_unix_millis.store(now, Ordering::Relaxed);
         }
         self.duration
             .get_or_create(&label)
             .observe(elapsed.secs_f64());
+    }
+
+    /// Wall-clock time of the most recent successful store operation.
+    #[must_use]
+    pub fn last_success_unix_millis(&self) -> Option<i64> {
+        let value = self.last_success_unix_millis.load(Ordering::Relaxed);
+        (value >= 0).then_some(value)
     }
 
     /// Records that one attempt of `operation` is about to be retried.

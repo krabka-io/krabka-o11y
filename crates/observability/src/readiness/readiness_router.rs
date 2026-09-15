@@ -1,4 +1,4 @@
-use super::{Extension, RoleReadiness, Router, get, ready};
+use super::{Extension, RoleReadiness, Router, get, ready, recovery_status::recovery_status};
 
 /// A router serving `GET /ready` for `readiness`.
 ///
@@ -8,5 +8,6 @@ use super::{Extension, RoleReadiness, Router, get, ready};
 pub fn readiness_router(readiness: RoleReadiness) -> Router {
     Router::new()
         .route("/ready", get(ready))
+        .route("/status/recovery", get(recovery_status))
         .layer(Extension(readiness))
 }

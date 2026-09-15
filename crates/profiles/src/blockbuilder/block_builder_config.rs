@@ -1,7 +1,7 @@
 use super::{
     Arc, ByteSize, DEFAULT_FLUSH_MAX_AGE, DEFAULT_FLUSH_RECORDS, DEFAULT_INDEX_SNAPSHOT_MAX,
     DEFAULT_WAL_FETCH_MAX, DEFAULT_WAL_FETCH_PARTITION_MAX, IndexSnapshotRetain, ObjectStore,
-    ObjectStoreRetryPolicy, PROFILES_WAL_TOPIC, ServiceMetrics, Time, millis,
+    ObjectStoreRetryPolicy, PROFILES_WAL_TOPIC, ReadinessGate, ServiceMetrics, Time, millis,
 };
 
 #[derive(Clone)]
@@ -33,6 +33,7 @@ pub struct BlockBuilderConfig {
     /// block-builder then still works without a metrics registry, as in tests
     /// and in `run()`.
     pub metrics: Option<ServiceMetrics>,
+    pub catch_up: Option<ReadinessGate>,
     /// TLS and SASL for the WAL consumer, as `WalClientSecurityArgs::load`
     /// gives it. `None`, the default, connects in plain text.
     ///
@@ -62,6 +63,7 @@ impl BlockBuilderConfig {
             index_snapshot_retain: IndexSnapshotRetain::default(),
             object_store_retry: ObjectStoreRetryPolicy::DEFAULT,
             metrics: None,
+            catch_up: None,
             security: None,
         }
     }
@@ -71,6 +73,12 @@ impl BlockBuilderConfig {
     #[must_use]
     pub fn with_metrics(mut self, metrics: ServiceMetrics) -> Self {
         self.metrics = Some(metrics);
+        self
+    }
+
+    #[must_use]
+    pub fn with_catch_up(mut self, gate: ReadinessGate) -> Self {
+        self.catch_up = Some(gate);
         self
     }
 }

@@ -179,6 +179,7 @@ pub(crate) fn all_role_stages(
                     RoleKind::MetricsGenerator,
                     run_metrics_generator(
                         generator.cli,
+                        generator.metrics,
                         generator.readiness.for_role(RoleKind::MetricsGenerator),
                         token,
                         &generator.security,

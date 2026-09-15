@@ -3,6 +3,7 @@ use super::{
     KafkaWalRecord, LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError,
     WalConsumerMetrics, WalPosition, async_trait,
 };
+use crate::ReadinessGate;
 use crate::wal_group_assignment::WalAssignmentWatch;
 
 pub struct KafkaLogWalConsumer {
@@ -80,6 +81,13 @@ impl KafkaLogWalConsumer {
         self
     }
 
+    /// Keeps readiness false until the broker reports this consumer caught up.
+    #[must_use]
+    pub fn with_catch_up(mut self, gate: ReadinessGate) -> Self {
+        self.assignment = WalAssignmentWatch::with_catch_up(self.metrics.clone(), gate);
+        self
+    }
+
     #[cfg_attr(test, mutants::skip)]
     pub(crate) async fn close(self) {
         let _ = self.consumer.close().await;
@@ -88,6 +96,10 @@ impl KafkaLogWalConsumer {
 
 #[async_trait]
 impl LogWalConsumer for KafkaLogWalConsumer {
+    fn set_catch_up_gate(&mut self, gate: ReadinessGate) {
+        self.assignment = WalAssignmentWatch::with_catch_up(self.metrics.clone(), gate);
+    }
+
     #[cfg_attr(test, mutants::skip)]
     async fn poll(&mut self, timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
         let records = self
@@ -135,6 +147,7 @@ impl LogWalConsumer for KafkaLogWalConsumer {
     #[cfg_attr(test, mutants::skip)]
     async fn commit_compacted(&mut self, _position: WalPosition) -> Result<(), WalConsumerError> {
         self.consumer.commit_sync().await?;
+        self.metrics.record_commit();
         Ok(())
     }
 }

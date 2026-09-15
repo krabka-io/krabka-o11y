@@ -158,11 +158,28 @@ pub(crate) async fn build_all_stages(
     stages.insert(RoleKind::Querier, loopback_stage);
     stages.insert(
         RoleKind::BlockBuilder,
-        block_builder_stage(cli, &store, &index_key, metrics, security.wal.clone()),
+        block_builder_stage(
+            cli,
+            &store,
+            &index_key,
+            metrics,
+            security.wal.clone(),
+            readiness
+                .for_role(RoleKind::BlockBuilder)
+                .gate("wal-catch-up"),
+        ),
     );
     stages.insert(
         RoleKind::QueryFrontend,
-        read_path_stage(cli, read, metrics, security.wal.clone()),
+        read_path_stage(
+            cli,
+            read,
+            metrics,
+            security.wal.clone(),
+            readiness
+                .for_role(RoleKind::QueryFrontend)
+                .gate("wal-catch-up"),
+        ),
     );
     stages.insert(
         RoleKind::Symbolizer,

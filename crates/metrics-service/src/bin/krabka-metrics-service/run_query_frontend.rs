@@ -1,3 +1,5 @@
+use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics};
+
 use super::{
     Arc, AuditHandle, Cli, MimirTenantAdminState, ObjectStore, PrometheusApiState,
     QueryFrontendOptions, RoleReadiness, ServerSecurity, Shutdown, TimeExt, WalHead,
@@ -23,6 +25,9 @@ pub(crate) async fn run_query_frontend(
     let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> =
         Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
+    let object_store_metrics = ObjectStoreMetrics::unregistered();
+    readiness.track_object_store(object_store_metrics.clone());
+    let store = MeteredObjectStore::wrap(store, object_store_metrics);
     let head = WalHead::new();
     let metric_store = Arc::new(
         krabka_metrics_service::RefreshingMetricBlockStore::new(
