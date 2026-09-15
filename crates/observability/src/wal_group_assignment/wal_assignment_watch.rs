@@ -1,8 +1,7 @@
 use krabka_client_consumer::Consumer;
 
-use crate::ReadinessGate;
-
 use super::{BTreeSet, WalAssignmentChange, WalConsumerMetrics};
+use crate::ReadinessGate;
 
 /// Reports every change to one consumer group member's partition assignment.
 ///

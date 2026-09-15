@@ -1,8 +1,9 @@
+use krabka_observability::{ReadinessGate, wal_group_assignment::WalAssignmentWatch};
+
 use super::{
     Arc, CancellationToken, Consumer, LiveStore, RwLock, ServiceMetrics, TracesError,
     ingest_wal_payloads,
 };
-use krabka_observability::{ReadinessGate, wal_group_assignment::WalAssignmentWatch};
 
 /// Consume traces WAL records and rebuild the in-memory hot tier.
 ///

@@ -1,10 +1,12 @@
+use std::{collections::BTreeMap, sync::Arc};
+
+use serde::Serialize;
+
 use super::{
     ConsumerRecord, Counter, Family, Gauge, Histogram, Registry, Time, TimeExt, WalPartitionLabel,
     WalPollOutcome, WalPollOutcomeLabel,
 };
 use crate::PanicSafeShared;
-use serde::Serialize;
-use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WalPartitionRecoveryStatus {

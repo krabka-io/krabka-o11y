@@ -1,8 +1,7 @@
 use krabka_blockstore::ObjectStoreMetrics;
 
-use crate::wal_consumer_metrics::WalConsumerMetrics;
-
 use super::{Arc, PanicSafeShared, ReadinessGate, RoleKind, recovery_status::RecoveryStatus};
+use crate::wal_consumer_metrics::WalConsumerMetrics;
 
 /// The preconditions a role must meet before an orchestrator routes traffic
 /// to it.

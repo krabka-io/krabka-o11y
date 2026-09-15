@@ -1,13 +1,14 @@
-use super::{
-    ByteSize, ByteSizeExt, Counter, Family, Histogram, ObjectStoreOperation,
-    ObjectStoreOperationLabel, Registry, Time, TimeExt,
-};
 use std::{
     sync::{
         Arc,
         atomic::{AtomicI64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
+};
+
+use super::{
+    ByteSize, ByteSizeExt, Counter, Family, Histogram, ObjectStoreOperation,
+    ObjectStoreOperationLabel, Registry, Time, TimeExt,
 };
 
 /// Latency buckets for one object-store request, in seconds.
@@ -114,15 +115,15 @@ impl ObjectStoreMetrics {
     pub fn record_operation(&self, operation: ObjectStoreOperation, ok: bool, elapsed: Time) {
         let label = ObjectStoreOperationLabel::from(operation);
         self.operations.get_or_create(&label).inc();
-        if !ok {
-            self.failures.get_or_create(&label).inc();
-        } else {
+        if ok {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |elapsed| {
                     i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
                 });
             self.last_success_unix_millis.store(now, Ordering::Relaxed);
+        } else {
+            self.failures.get_or_create(&label).inc();
         }
         self.duration
             .get_or_create(&label)

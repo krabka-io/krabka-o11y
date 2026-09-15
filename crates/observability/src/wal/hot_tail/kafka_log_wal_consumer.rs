@@ -3,8 +3,7 @@ use super::{
     KafkaWalRecord, LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError,
     WalConsumerMetrics, WalPosition, async_trait,
 };
-use crate::ReadinessGate;
-use crate::wal_group_assignment::WalAssignmentWatch;
+use crate::{ReadinessGate, wal_group_assignment::WalAssignmentWatch};
 
 pub struct KafkaLogWalConsumer {
     pub(crate) consumer: Consumer,

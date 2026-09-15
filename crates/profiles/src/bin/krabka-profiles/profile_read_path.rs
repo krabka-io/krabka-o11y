@@ -1,8 +1,9 @@
+use krabka_observability::ReadinessGate;
+
 use super::{
     Arc, CancellationToken, Cli, ClientSecurity, ColdProfileStore, ObjectStore, ServiceMetrics,
     UnionProfileStore, WalTailProfileStore, spawn_profile_index_refresh, spawn_wal_tail,
 };
-use krabka_observability::ReadinessGate;
 
 /// What a profiles read role queries: the WAL tail in front of the blocks.
 pub(crate) type ProfileUnionStore = UnionProfileStore<WalTailProfileStore, ColdProfileStore>;

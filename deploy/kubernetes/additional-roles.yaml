@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: List
 items:
-# Production roles not needed by the small three-stage compose topology.
-# Durable data belongs to the broker or object store; these pods keep only
-# replaceable working files in /tmp.
+  # Production roles not needed by the small three-stage compose topology.
+  # Durable data belongs to the broker or object store; these pods keep only
+  # replaceable working files in /tmp.
   - apiVersion: v1
     kind: Service
     metadata:
@@ -92,11 +92,11 @@ items:
             - name: topic-contract
               image: ghcr.io/krabka-io/krabka-o11y
               command: [krabka-o11y-bootstrap]
-              args: [--bootstrap=broker:9092, --partitions=1, --state-partitions=1, --replicas=1, --retention-ms=900000]
+              args: ['--bootstrap=broker:9092', --partitions=1, --state-partitions=1, --replicas=1, --retention-ms=900000]
               securityContext: *container-security
               volumeMounts: [{name: tmp, mountPath: /tmp}]
           containers:
-            - <<: *metrics-query-frontend
+            - !!merge <<: *metrics-query-frontend
               args: [--config.file=/etc/krabka/metrics-ruler.yaml]
           volumes: *role-volumes
   - apiVersion: apps/v1

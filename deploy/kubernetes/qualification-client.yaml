@@ -32,7 +32,7 @@ spec:
       containers:
         - name: alloy
           image: mirror.gcr.io/grafana/alloy@sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8
-          args: [run, /etc/alloy/config.alloy, --server.http.listen-addr=0.0.0.0:12345, --storage.path=/var/lib/alloy]
+          args: [run, /etc/alloy/config.alloy, '--server.http.listen-addr=0.0.0.0:12345', --storage.path=/var/lib/alloy]
           ports:
             - {name: loki, containerPort: 9999}
             - {name: otlp-http, containerPort: 4318}

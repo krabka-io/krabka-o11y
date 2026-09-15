@@ -1,9 +1,8 @@
 use krabka_blockstore::ObjectStoreMetrics;
 use serde::Serialize;
 
-use crate::wal_consumer_metrics::{WalConsumerMetrics, WalRecoveryStatus};
-
 use super::{Extension, IntoResponse, Response, RoleReadiness};
+use crate::wal_consumer_metrics::{WalConsumerMetrics, WalRecoveryStatus};
 
 #[derive(Serialize)]
 pub(crate) struct RecoveryStatus {

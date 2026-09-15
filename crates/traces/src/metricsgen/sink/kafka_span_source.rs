@@ -1,10 +1,11 @@
-use super::{
-    AsyncMutex, Consumer, SinkError, SpanRecord, SpanSource, Time, async_trait,
-    decode_consumer_records, millis,
-};
 use krabka_observability::{
     ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
     wal_group_assignment::WalAssignmentWatch,
+};
+
+use super::{
+    AsyncMutex, Consumer, SinkError, SpanRecord, SpanSource, Time, async_trait,
+    decode_consumer_records, millis,
 };
 
 /// Kafka-backed source for the traces WAL consumer group.
