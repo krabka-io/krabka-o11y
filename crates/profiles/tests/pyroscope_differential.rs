@@ -143,7 +143,7 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
     assert_label_values_match(&client, &pyroscope_base, &krabka.querier_base, "env").await?;
     assert_select_merge_stacktraces_match(&client, &pyroscope_base, &krabka.querier_base).await?;
     assert_select_merge_pprof_match(&client, &pyroscope_base, &krabka.querier_base).await?;
-    assert_async_request_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    assert_async_request_contract(&client, &pyroscope_base, &krabka.querier_base).await?;
     assert_select_series_match(&client, &pyroscope_base, &krabka.querier_base).await?;
     assert_diff_match(&client, &pyroscope_base, &krabka.querier_base).await?;
 
@@ -1434,7 +1434,7 @@ fn pprof_function_names(response: &Value) -> BTreeSet<&str> {
         .collect()
 }
 
-async fn assert_async_request_match(
+async fn assert_async_request_contract(
     client: &reqwest::Client,
     pyroscope_base: &str,
     krabka_base: &str,
@@ -1454,20 +1454,33 @@ async fn assert_async_request_match(
         },
     )
     .await?;
-    let krabka = connect_json_until(
-        client,
-        krabka_base,
-        Some(TENANT),
-        "SelectMergeStacktraces",
-        body,
-        |value| {
-            value
-                .get("flamegraph")
-                .is_some_and(|flamegraph| flamegraph_ticks(flamegraph) > 0)
-        },
-    )
-    .await?;
-    assert_connect_flamegraph_equal("SelectMergeStacktraces async", &pyroscope, &krabka)
+    assert!(
+        pyroscope
+            .get("flamegraph")
+            .is_some_and(|flamegraph| flamegraph_ticks(flamegraph) > 0)
+    );
+    let response = client
+        .post(format!(
+            "{krabka_base}/querier.v1.QuerierService/SelectMergeStacktraces"
+        ))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header("x-scope-orgid", TENANT)
+        .json(&body)
+        .send()
+        .await?;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let error: Value = response.json().await?;
+    assert_eq!(
+        error.get("code").and_then(Value::as_str),
+        Some("invalid_argument")
+    );
+    assert!(
+        error
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("async profile queries are not supported"))
+    );
+    Ok(())
 }
 
 async fn assert_diff_has_ticks(
