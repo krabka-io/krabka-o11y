@@ -16,7 +16,10 @@ pub fn read_log_block(
     key: &BlockKey,
 ) -> Result<Vec<LogRow>, BlockStoreError> {
     let file = File::open(block_path(root, key))?;
-    let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    crate::validate_persisted_block_format(builder.metadata())
+        .map_err(BlockStoreError::UnsupportedBlockFormat)?;
+    let reader = builder.build()?;
     let mut rows = Vec::new();
     for batch in reader {
         rows.extend(batch_to_rows(&batch?)?);

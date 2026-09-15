@@ -34,7 +34,11 @@ pub fn block_writer_properties(schema: &SchemaRef, decl: &BlockSchema) -> Result
 
     let mut builder = WriterProperties::builder()
         .set_compression(Compression::ZSTD(ZstdLevel::try_new(BLOCK_ZSTD_LEVEL)?))
-        .set_max_row_group_row_count(Some(BLOCK_ROW_GROUP_ROWS));
+        .set_max_row_group_row_count(Some(BLOCK_ROW_GROUP_ROWS))
+        .set_key_value_metadata(Some(vec![parquet::file::metadata::KeyValue::new(
+            crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+            Some(crate::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
+        )]));
 
     if !sorting.is_empty() {
         builder = builder.set_sorting_columns(Some(sorting));

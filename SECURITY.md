@@ -12,7 +12,9 @@ The maintainers will acknowledge the report, assess the impact, and coordinate a
 
 ## Supported code
 
-Security fixes target the current `main` branch until the project publishes supported release lines.
+Security fixes target the latest supported `v0.4.x` release and the current
+`main` branch. Upgrade to the newest patch release before reporting an issue
+that is already fixed there.
 
 ## Trust boundaries
 

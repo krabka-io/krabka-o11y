@@ -11,7 +11,7 @@ each one it is handed before executing the test binary.
 
 load("@rules_img//img:load.bzl", "image_load")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load(":images.bzl", "IMAGES", "ORACLES")
+load(":images.bzl", "CLIENTS", "IMAGES", "ORACLES")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -56,4 +56,26 @@ package(default_visibility = ["//visibility:public"])
         ],
     )
     for name, oracle in ORACLES.items()
+]
+
+[
+    sh_test(
+        name = name + "_version_test",
+        size = "small",
+        srcs = ["client_version_test.sh"],
+        args = [
+            "$(rootpath :%s_tar)" % name,
+            client.image,
+            client.binary,
+            client.version,
+            client.revision,
+        ],
+        data = [":" + name + "_tar"],
+        tags = [
+            "docker",
+            "external",
+            "no-sandbox",
+        ],
+    )
+    for name, client in CLIENTS.items()
 ]

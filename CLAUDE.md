@@ -39,15 +39,12 @@ cargo clippy -p krabka-promql --all-targets -- -D warnings
 
 ## Compatibility
 
-**Krabka is greenfield and undeployed.** There are no production users, no persisted state to migrate, and no clients pinned to a specific build. Do not write backwards-compatibility shims:
-
-- No `#[serde(default)]` on record fields "to keep old WAL records readable"
-- No `V2` enum variants that stay alongside `V1` to support replay
-- No feature flags that gate new behavior behind a default-off switch
-- No migration code or one-shot upgraders for on-disk format changes
-- No deprecated-but-kept API surfaces
-
-When a schema, enum, wire format, or interface changes, change it. Delete local WAL topics, blocks, and data directories during development if necessary.
+**Release `v0.4` is a supported persisted-data boundary.** Writers stamp the
+current version and readers support the previous release according to
+[`docs/persisted_formats.md`](docs/persisted_formats.md). Reject unknown future
+formats before state mutation. A persisted schema change needs an old/new
+rolling-upgrade and rollback result; deleting local WAL topics, blocks, or data
+directories is not a migration plan.
 
 **Upstream compatibility is the constraint that matters.** Each signal has one upstream implementation that Krabka must match:
 
@@ -112,4 +109,4 @@ Write conventional commits. They are the repo's convention and are applied consi
 - `fix:` — a fix, at the patch level
 - `feat!:` — a breaking change, at the major level
 
-No crate in this repo is published — all ten set `publish = false`, because they depend on a git pin of DataFusion that crates.io rejects. There is no release automation configured here.
+No crate in this repo is published — all ten set `publish = false`, because they depend on a git pin of DataFusion that crates.io rejects. Version tags publish the multi-platform image and release artifacts only after an exact-commit compatibility qualification succeeds; see `.github/workflows/image.yml`.

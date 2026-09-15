@@ -26,6 +26,12 @@ impl LogBlockTableProvider {
         root: impl AsRef<Path>,
         blocks: &[BlockDescriptor],
     ) -> Result<Self, BlockStoreError> {
+        for block in blocks {
+            let file = File::open(block_path(root.as_ref(), &block.key))?;
+            let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+            crate::validate_persisted_block_format(builder.metadata())
+                .map_err(BlockStoreError::UnsupportedBlockFormat)?;
+        }
         let schema = log_block_schema();
         let listing_table = planned_log_listing_table(root, blocks, Arc::clone(&schema))?;
         Ok(Self {
@@ -130,6 +136,11 @@ impl TableProvider for LogBlockTableProvider {
                 head_log_blocks_within_cap(store.as_ref(), block_paths, self.block_read_max)
                     .await
                     .map_err(|error| DataFusionError::External(Box::new(error)))?;
+                for path in block_paths {
+                    crate::reader::block_metadata(store, path.as_ref(), self.block_read_max, None)
+                        .await
+                        .map_err(|error| DataFusionError::External(Box::new(error)))?;
+                }
                 listing_table.scan(state, projection, filters, limit).await
             }
         }

@@ -24,6 +24,16 @@ pub async fn run(
             continue;
         }
 
+        for record in &records {
+            krabka_observability::persisted_format::validate_persisted_format(
+                record
+                    .headers
+                    .iter()
+                    .map(|header| (header.key.as_str(), header.value.as_deref())),
+            )
+            .map_err(|error| TracesError::Wal(error.to_string()))?;
+        }
+
         {
             let payloads = records
                 .iter()

@@ -1,3 +1,5 @@
+use krabka_observability::persisted_format::{PERSISTED_FORMAT_HEADER, PERSISTED_FORMAT_VERSION};
+
 use super::{Bytes, ProducerHeader, ProducerRecord, WAL_TOPIC};
 
 /// Builds the WAL producer record for a serialized entry.
@@ -17,13 +19,19 @@ pub(crate) fn wal_producer_record(
         partition: None,
         key: Some(key),
         value: Some(Bytes::from(value)),
-        headers: trace_headers
-            .into_iter()
-            .map(|(key, value)| ProducerHeader {
-                key,
-                value: Some(Bytes::from(value.into_bytes())),
-            })
-            .collect(),
+        headers: std::iter::once(ProducerHeader {
+            key: PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(PERSISTED_FORMAT_VERSION)),
+        })
+        .chain(
+            trace_headers
+                .into_iter()
+                .map(|(key, value)| ProducerHeader {
+                    key,
+                    value: Some(Bytes::from(value.into_bytes())),
+                }),
+        )
+        .collect(),
         ..Default::default()
     }
 }

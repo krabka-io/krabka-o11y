@@ -6,6 +6,9 @@ pub enum RulerStateConsumerError {
     #[error("ruler state consumer poll failed: {0}")]
     Poll(String),
 
+    #[error("ruler state record has unsupported format: {0}")]
+    UnsupportedFormat(String),
+
     #[error(transparent)]
     Replay(#[from] RulerStateReplayError),
 

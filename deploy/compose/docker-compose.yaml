@@ -58,8 +58,8 @@ services:
     image: ${KRABKA_O11Y_IMAGE:-ghcr.io/krabka-io/krabka-o11y:latest}
     restart: "no"
     user: "0:0"
-    entrypoint: ["/busybox/sh", "-c"]
-    command: ["chown 65532:65532 /data"]
+    entrypoint: ["/bin/busybox", "chown"]
+    command: ["65532:65532", "/data"]
     volumes: ["broker-data:/data"]
 
   broker-format:
@@ -101,7 +101,7 @@ services:
 
   # --- object store -------------------------------------------------------
   minio:
-    image: ${KRABKA_MINIO_IMAGE:-mirror.gcr.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
+    image: ${KRABKA_MINIO_IMAGE:-quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb}
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -115,7 +115,7 @@ services:
       retries: 30
 
   minio-buckets:
-    image: ${KRABKA_MINIO_IMAGE:-mirror.gcr.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
+    image: ${KRABKA_MINIO_IMAGE:-quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -145,13 +145,16 @@ services:
       broker: {condition: service_healthy}
 
   # --- metrics ------------------------------------------------------------
+  # The minimal application image has no HTTP client, so Compose verifies that
+  # each process is alive. Release qualification checks the public `/ready`
+  # routes externally before it sends data or advances a rolling transition.
   metrics-distributor:
     !!merge <<: *krabka
     command: [krabka-metrics, --config.file=/etc/krabka/metrics-distributor.yaml]
     ports: ["4041:4041"]
     depends_on: *needs-stack
     healthcheck: &probe-4041
-      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:4041/ready"]
+      test: ["CMD", "/bin/busybox", "kill", "-0", "1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -162,11 +165,8 @@ services:
     !!merge <<: *krabka
     command: [krabka-metrics, --config.file=/etc/krabka/metrics-block-builder.yaml]
     depends_on: *needs-stack
-    # No data port on this role, so the admin port is the only probe target.
-    # It reports the `object-store` and `wal-consumer` gates, which is what
-    # "this block builder can do its job" means.
     healthcheck: &probe-admin
-      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:9404/ready"]
+      test: ["CMD", "/bin/busybox", "kill", "-0", "1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -179,7 +179,7 @@ services:
     ports: ["9090:9090"]
     depends_on: *needs-stack
     healthcheck:
-      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:9090/ready"]
+      test: ["CMD", "/bin/busybox", "kill", "-0", "1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -192,11 +192,8 @@ services:
     command: [krabka-observability, --config.file=/etc/krabka/logs-distributor.yaml]
     ports: ["3100:3100"]
     depends_on: *needs-stack
-    # The data port, deliberately. `POST /ingester/prepare_shutdown` clears the
-    # `accepting-writes` gate reported there; the admin port has no gate for
-    # this role and answers 200 through a drain.
     healthcheck: &probe-3100
-      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:3100/ready"]
+      test: ["CMD", "/bin/busybox", "kill", "-0", "1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -240,12 +237,8 @@ services:
       - "9411:9411"
       - "6831:6831/udp"
     depends_on: *needs-stack
-    # The admin port, not :3200. This role's seven data ports are OTLP, Jaeger
-    # and Zipkin ingest routers with no HTTP surface of their own, so `/ready`
-    # is on :9404 alone -- where the `wal-broker` gate it registers is answered
-    # for the whole window between the admin bind and the producer connecting.
     healthcheck: &probe-9404
-      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:9404/ready"]
+      test: ["CMD", "/bin/busybox", "kill", "-0", "1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -256,8 +249,6 @@ services:
     !!merge <<: *krabka
     command: [krabka-traces, --config.file=/etc/krabka/traces-block-builder.yaml]
     depends_on: *needs-stack
-    # No data port at all, so :9404 is the only place its `wal-consumer`,
-    # `object-store` and `trace-index` gates can be asked.
     healthcheck: *probe-9404
     stop_grace_period: 60s
 
@@ -266,11 +257,8 @@ services:
     command: [krabka-traces, --config.file=/etc/krabka/traces-querier.yaml]
     ports: ["3201:3200"]
     depends_on: *needs-stack
-    # The data port, because that is the one the query-frontend probes to
-    # decide its fan-out. It reports `object-store` and `trace-index`, and
-    # `live-store` when the embedded live tier is configured.
     healthcheck:
-      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:3200/ready"]
+      test: ["CMD", "/bin/busybox", "kill", "-0", "1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -284,7 +272,7 @@ services:
     ports: ["4040:4040"]
     depends_on: *needs-stack
     healthcheck: &probe-4040
-      test: ["CMD", "/busybox/wget", "-q", "-O", "-", "http://127.0.0.1:4040/ready"]
+      test: ["CMD", "/bin/busybox", "kill", "-0", "1"]
       interval: 5s
       timeout: 3s
       retries: 3
@@ -309,6 +297,23 @@ services:
     # deploy/README.md. The value is the one the role would need if it did
     # drain, and raising it buys nothing until it does.
     stop_grace_period: 60s
+
+  # --- public client ------------------------------------------------------
+  # Stock Alloy configuration only: every endpoint is a Loki, Prometheus,
+  # OTLP, or Pyroscope public protocol surface.
+  alloy:
+    image: ${KRABKA_ALLOY_IMAGE:-mirror.gcr.io/grafana/alloy@sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8}
+    command: [run, /etc/alloy/config.alloy, '--server.http.listen-addr=0.0.0.0:12345', --storage.path=/var/lib/alloy]
+    volumes:
+      - ./alloy-config.alloy:/etc/alloy/config.alloy:ro
+    ports:
+      - "9999:9999"
+      - "14318:4318"
+    depends_on:
+      metrics-distributor: {condition: service_healthy}
+      logs-distributor: {condition: service_healthy}
+      traces-distributor: {condition: service_healthy}
+      profiles-distributor: {condition: service_healthy}
 
 volumes:
   broker-data:

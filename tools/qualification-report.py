@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and promote the Milestone 15 compatibility report."""
+"""Validate and promote the Milestone 16 compatibility report."""
 
 import argparse
 import copy
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REPORT = ROOT / "qualification/milestone-15.json"
+REPORT = ROOT / "qualification/milestone-16.json"
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 REQUIRED_GATES = {
@@ -21,6 +21,8 @@ REQUIRED_GATES = {
     "lifecycle_and_failures",
     "security_and_limits",
     "scale",
+    "client_oracles",
+    "persisted_upgrade",
 }
 WORKFLOW = ROOT / ".github/workflows/qualification.yml"
 
@@ -49,7 +51,7 @@ def validate(report, final=False, commit=None):
         fail("status must be draft or qualified")
 
     products = report.get("artifacts", {})
-    if set(products) != {"grafana", "loki", "mimir", "minio", "prometheus", "pyroscope", "tempo"}:
+    if set(products) != {"alloy", "grafana", "loki", "mimir", "minio", "prometheus", "pyroscope", "tempo"}:
         fail("artifacts must name every pinned qualification image")
     for name, artifact in products.items():
         if not artifact.get("image") or not SHA256.fullmatch(artifact.get("digest", "")):
@@ -72,6 +74,27 @@ def validate(report, final=False, commit=None):
         for key in ("digest", "revision"):
             if products[name].get(key) != upstream[name].get(key):
                 fail(f"{name} {key} differs from the upstream surface manifest")
+
+    clients = load(ROOT / "docs/api/client_oracles.json")["products"]
+    if set(clients) != {"alloy", "grafana", "prometheus"}:
+        fail("client oracle manifest must name Alloy, Grafana, and Prometheus")
+    for name, client in clients.items():
+        required = client.get("classifications", {}).get("required", [])
+        if not required or not all(isinstance(surface, str) and surface for surface in required):
+            fail(f"{name} must classify its required public workflows")
+        for key in ("image", "digest", "revision"):
+            if products[name].get(key) != client.get(key):
+                fail(f"{name} {key} differs from the client oracle manifest")
+
+    manifests = report.get("manifests", [])
+    required_manifests = {
+        "docs/api/upstream_surfaces.json",
+        "docs/api/client_oracles.json",
+        "docs/api/routes.json",
+        "docs/persisted_formats.md",
+    }
+    if set(manifests) != required_manifests:
+        fail("report must name the API, client, route, and persisted-format manifests")
 
     gates = report.get("gates", [])
     ids = {gate.get("id") for gate in gates}

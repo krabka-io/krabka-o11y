@@ -30,7 +30,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: minio
-          image: mirror.gcr.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          image: quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb
           args: [server, /data]
           env:
             - name: MINIO_ROOT_USER
@@ -74,7 +74,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: mc
-          image: mirror.gcr.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          image: quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb
           command: [/bin/sh, -c]
           args:
             - >-

@@ -27,7 +27,7 @@ jobs:
           - id: ordinary-format
             command: bazel run //tools/format && git diff --exit-code
           - id: oracle-versions
-            command: bazel test --config=docker --flaky_test_attempts=1 //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:tempo_version_test //bazel/images:pyroscope_version_test
+            command: bazel test --config=docker --flaky_test_attempts=1 //bazel/images:alloy_version_test //bazel/images:grafana_version_test //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:prometheus_version_test //bazel/images:pyroscope_version_test //bazel/images:tempo_version_test
           - id: mimir-differential
             command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test
           - id: mimir-grafana
@@ -44,6 +44,10 @@ jobs:
             command: bazel test --config=docker --flaky_test_attempts=1 //crates/profiles:pyroscope_differential_docker_test
           - id: clients-and-correlation
             command: bazel test //crates/integration:logs_to_traces_trace_id_test //crates/integration:traces_to_metrics_exemplars_test //crates/integration:traces_to_profiles_span_profiles_test
+          - id: client-oracles
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/integration:alloy_client_docker_test //crates/integration:prometheus_client_docker_test
+          - id: persisted-upgrade
+            command: bazel run -c opt //bazel/images/krabka:load && tools/release-smoke.sh krabka-o11y:dev "ghcr.io/krabka-io/krabka-o11y:sha-$(git rev-parse --short=12 HEAD^)" qualification/evidence/persisted-upgrade
           - id: lifecycle-and-failures
             command: bazel test //crates/blockstore:lifecycle_test //crates/observability:compactor_test //crates/observability:deletes_test //crates/observability:wal_live_broker_test //crates/profiles:lifecycle_test //crates/traces:block_lifecycle_test //crates/traces:wal_group_rebalance_test
           - id: security-and-limits
@@ -77,6 +81,12 @@ jobs:
       - name: host container callback
         run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
       - run: ${{ matrix.command }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: milestone-16-${{ matrix.id }}-${{ github.sha }}
+          path: qualification/evidence/${{ matrix.id }}
+          if-no-files-found: ignore
 
   report:
     name: immutable compatibility report
@@ -89,11 +99,11 @@ jobs:
         env:
           EVIDENCE: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          tools/qualification-report.py --report qualification/milestone-15.json \
+          tools/qualification-report.py --report qualification/milestone-16.json \
             --promote --commit "${GITHUB_SHA}" --evidence "${EVIDENCE}" \
-            --output qualification/milestone-15-qualified.json --final
+            --output qualification/milestone-16-qualified.json --final
       - uses: actions/upload-artifact@v4
         with:
-          name: milestone-15-qualification-${{ github.sha }}
-          path: qualification/milestone-15-qualified.json
+          name: milestone-16-qualification-${{ github.sha }}
+          path: qualification/milestone-16-qualified.json
           if-no-files-found: error

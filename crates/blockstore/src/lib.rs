@@ -24,6 +24,7 @@ mod merge;
 mod metrics;
 mod nested_set;
 mod path_escape;
+mod persisted_format;
 mod profile_block;
 mod profile_index;
 mod profile_schema;
@@ -103,6 +104,9 @@ pub use metrics::{
 };
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
 pub use path_escape::{escape_object_path_segment, unescape_object_path_segment};
+pub use persisted_format::{
+    PERSISTED_BLOCK_FORMAT_KEY, PERSISTED_BLOCK_FORMAT_VERSION, validate_persisted_block_format,
+};
 pub use profile_block::{ProfileSampleRow, encode_profile_samples};
 pub use profile_index::{LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileIndex};
 pub use profile_schema::{

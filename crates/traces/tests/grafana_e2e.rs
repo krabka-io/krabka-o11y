@@ -995,15 +995,17 @@ async fn mapped_base_url(
 async fn wait_for_http_ok(client: &reqwest::Client, base: &str, paths: &[&str]) -> TestResult {
     let deadline = Instant::now() + Duration::from_secs(90);
     while Instant::now() < deadline {
+        let mut all_ready = true;
         for path in paths {
-            if client
+            all_ready &= client
                 .get(format!("{base}{path}"))
+                .basic_auth(GRAFANA_ADMIN, Some(GRAFANA_ADMIN))
                 .send()
                 .await
-                .is_ok_and(|resp| resp.status().is_success())
-            {
-                return Ok(());
-            }
+                .is_ok_and(|resp| resp.status().is_success());
+        }
+        if all_ready {
+            return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
@@ -1154,7 +1156,12 @@ async fn grafana_e2e_full_surface() -> TestResult {
     // ----- §4: Grafana + Tempo datasource + every Tempo endpoint. -----
     let grafana = start_grafana().await?;
     let grafana_base = mapped_base_url(&grafana, GRAFANA_HTTP_PORT).await?;
-    wait_for_http_ok(&client, &grafana_base, &["/api/health"]).await?;
+    wait_for_http_ok(
+        &client,
+        &grafana_base,
+        &["/api/health", "/api/plugins/tempo/settings"],
+    )
+    .await?;
 
     let tempo_ds = json!({
         "name": "Krabka Traces",

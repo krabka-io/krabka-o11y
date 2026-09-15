@@ -36,13 +36,21 @@ impl KafkaSink {
         // as Kafka record headers so the block-builder consumer can re-parent
         // its block-build span onto this ingest span, stitching one distributed
         // trace across the WAL. Additive: empty when no active/sampled span.
-        let headers = krabka_telemetry::propagation::current_trace_headers()
-            .into_iter()
-            .map(|(k, v)| Header {
-                key: k,
-                value: Some(Bytes::from(v.into_bytes())),
-            })
-            .collect();
+        let headers = std::iter::once(Header {
+            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(
+                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
+            )),
+        })
+        .chain(
+            krabka_telemetry::propagation::current_trace_headers()
+                .into_iter()
+                .map(|(k, v)| Header {
+                    key: k,
+                    value: Some(Bytes::from(v.into_bytes())),
+                }),
+        )
+        .collect();
         let ack = self
             .producer
             .send(ProducerRecord {

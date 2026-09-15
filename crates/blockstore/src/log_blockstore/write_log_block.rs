@@ -22,7 +22,11 @@ pub fn write_log_block(
 
     let schema = log_block_schema();
     let batch = rows_to_batch(&rows, Arc::clone(&schema))?;
-    let mut writer = ArrowWriter::try_new(File::create(&path)?, schema, None)?;
+    let mut writer = ArrowWriter::try_new(
+        File::create(&path)?,
+        schema,
+        Some(crate::persisted_format::persisted_block_writer_properties()),
+    )?;
     writer.write(&batch)?;
     writer.close()?;
     let size = ByteSize::from_bytes(fs::metadata(&path)?.len());

@@ -1,0 +1,55 @@
+prometheus.remote_write "krabka" {
+  endpoint {
+    url = "http://metrics-distributor:4041/api/v1/push"
+    headers = { "X-Scope-OrgID" = "release-smoke" }
+  }
+}
+
+prometheus.scrape "alloy" {
+  targets = [{ "__address__" = "127.0.0.1:12345" }]
+  scrape_interval = "2s"
+  scrape_timeout = "1s"
+  forward_to = [prometheus.remote_write.krabka.receiver]
+}
+
+loki.write "krabka" {
+  endpoint {
+    url = "http://logs-distributor:3100/loki/api/v1/push"
+    headers = { "X-Scope-OrgID" = "release-smoke" }
+  }
+}
+
+loki.source.api "release" {
+  http {
+    listen_address = "0.0.0.0"
+    listen_port = 9999
+  }
+  forward_to = [loki.write.krabka.receiver]
+}
+
+otelcol.exporter.otlphttp "krabka" {
+  client {
+    endpoint = "http://traces-distributor:4318"
+    headers = { "X-Scope-OrgID" = "release-smoke" }
+  }
+}
+
+otelcol.receiver.otlp "release" {
+  http { endpoint = "0.0.0.0:4318" }
+  output { traces = [otelcol.exporter.otlphttp.krabka.input] }
+}
+
+pyroscope.write "krabka" {
+  endpoint {
+    url = "http://profiles-distributor:4040"
+    headers = { "X-Scope-OrgID" = "release-smoke" }
+  }
+}
+
+pyroscope.scrape "alloy" {
+  targets = [{ "__address__" = "127.0.0.1:12345", "service_name" = "alloy" }]
+  scrape_interval = "5s"
+  scrape_timeout = "6s"
+  delta_profiling_duration = "3s"
+  forward_to = [pyroscope.write.krabka.receiver]
+}

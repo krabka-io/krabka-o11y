@@ -1,3 +1,5 @@
+use krabka_observability::persisted_format::validate_persisted_format;
+
 use super::{
     HaElectionConsumerCommit, HaElectionConsumerError, HaElectionConsumerPoll,
     HaElectionConsumerRecord, HaElectionReplayResult, HaTracker, Offset, PartitionIndex, Time,
@@ -16,6 +18,15 @@ where
     C: HaElectionConsumerPoll + HaElectionConsumerCommit + ?Sized,
 {
     let records = consumer.poll(timeout).await?;
+    for record in records.iter().filter(|record| record.topic == ha_topic) {
+        validate_persisted_format(
+            record
+                .headers
+                .iter()
+                .map(|header| (header.key.as_str(), header.value.as_deref())),
+        )
+        .map_err(|error| HaElectionConsumerError::UnsupportedFormat(error.to_string()))?;
+    }
     let replay_records = records
         .into_iter()
         .map(|record| HaElectionConsumerRecord {

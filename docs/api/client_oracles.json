@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "products": {
+    "alloy": {
+      "tag": "v1.19.2",
+      "image": "mirror.gcr.io/grafana/alloy:v1.19.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8",
+      "revision": "becfd489a7bb459c0496893b555fb87a003296b1",
+      "source": "https://github.com/grafana/alloy/releases/tag/v1.19.2",
+      "classifications": {
+        "required": [
+          "loki.source.api -> loki.write",
+          "otelcol.receiver.otlp -> otelcol.exporter.otlphttp",
+          "prometheus.scrape -> prometheus.remote_write v1",
+          "prometheus.remote_write v2",
+          "pyroscope.scrape -> pyroscope.write"
+        ]
+      }
+    },
+    "grafana": {
+      "tag": "v13.2.2",
+      "image": "mirror.gcr.io/grafana/grafana:13.2.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:9924c7fe0effe4a5fea08b3451905de54f09fde9d1589463a5f2d02d9ec158bc",
+      "revision": "3db12332b66497c31f8ad2a5fb0eb0fe0ca05a7e",
+      "source": "https://github.com/grafana/grafana/releases/tag/v13.2.2",
+      "classifications": {
+        "required": [
+          "alerting",
+          "dashboards",
+          "datasource provisioning and proxy",
+          "exemplar navigation",
+          "Explore cross-signal correlations",
+          "profiles drilldown"
+        ],
+        "known_differences": [
+          "13.2 reports API health before the bundled Tempo plugin is query-ready"
+        ]
+      }
+    },
+    "prometheus": {
+      "tag": "v3.14.0",
+      "image": "mirror.gcr.io/prom/prometheus:v3.14.0",
+      "platform": "linux/amd64",
+      "digest": "sha256:e906cef998316bbe319f98711e1b4d8613ad37e14b08ff831d7036e77b7464f9",
+      "revision": "d7598b7141418fa35be2b5ec5d0fefb634199610",
+      "source": "https://github.com/prometheus/prometheus/releases/tag/v3.14.0",
+      "classifications": {
+        "required": [
+          "HTTP query API behavior since 3.8",
+          "remote write v1",
+          "remote write v2"
+        ],
+        "known_differences": [
+          "3.14 rejects 12 nested duration expressions accepted by 3.8 and Krabka",
+          "3.14 changes the anchored boundary for changes and resets",
+          "3.14 enriches four histogram monotonicity annotations while values agree"
+        ]
+      }
+    }
+  }
+}

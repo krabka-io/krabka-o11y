@@ -1,3 +1,5 @@
+use krabka_observability::persisted_format::validate_persisted_format;
+
 use super::{
     Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, Labels, ObjectStore, ObjectStoreMetrics,
     ProfileIndex, ProfileRecord, ProfilesError, STACKTRACE_PARTITION, build_block,
@@ -13,6 +15,15 @@ pub async fn flush_consumer_records_with_index(
     flush_records: usize,
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
+    for record in records {
+        validate_persisted_format(
+            record
+                .headers
+                .iter()
+                .map(|header| (header.key.as_str(), header.value.as_deref())),
+        )
+        .map_err(|error| ProfilesError::Wal(error.to_string()))?;
+    }
     let mut batches: BTreeMap<(String, i32), Vec<(i64, ProfileRecord)>> = BTreeMap::new();
     for record in records {
         let value = record

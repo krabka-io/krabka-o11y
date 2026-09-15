@@ -27,13 +27,21 @@ impl KafkaSink {
         // Inject the current ingest span's W3C trace context onto the WAL record
         // so the block-builder (WAL consumer) can continue the same distributed
         // trace. Empty when there is no active/sampled span, so this is additive.
-        let headers = krabka_telemetry::propagation::current_trace_headers()
-            .into_iter()
-            .map(|(key, value)| Header {
-                key,
-                value: Some(Bytes::from(value.into_bytes())),
-            })
-            .collect();
+        let headers = std::iter::once(Header {
+            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(
+                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
+            )),
+        })
+        .chain(
+            krabka_telemetry::propagation::current_trace_headers()
+                .into_iter()
+                .map(|(key, value)| Header {
+                    key,
+                    value: Some(Bytes::from(value.into_bytes())),
+                }),
+        )
+        .collect();
         let ack = self
             .producer
             .send(ProducerRecord {

@@ -91,7 +91,8 @@ pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
         # suites defaulted to `:latest`, which is the thing digest pinning
         # exists to remove: a differential test that disagrees with a moving
         # target reports a difference nobody changed.
-        ("grafana", "mirror.gcr.io", "grafana/grafana", "11.6.1", "sha256:95173c11b36f53a423ce47f00baee3f913a3e403f202a83c8bc3c7115a2cfdd0"),
+        ("alloy", "mirror.gcr.io", "grafana/alloy", "v1.19.2", "sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8"),
+        ("grafana", "mirror.gcr.io", "grafana/grafana", "13.2.2", "sha256:9924c7fe0effe4a5fea08b3451905de54f09fde9d1589463a5f2d02d9ec158bc"),
         ("loki", "mirror.gcr.io", "grafana/loki", "3.7.7", "sha256:550d599ec4efacd8ebc0a5871766855057cba2bd0c669c0711d898c00d6d901f"),
         ("mimir", "mirror.gcr.io", "grafana/mimir", "3.2.1", "sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289"),
         # The object store the `scale` suites run against. Not a differential
@@ -113,7 +114,7 @@ pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
         # The digest is unchanged, so this is the same image bytes from a
         # registry that still serves them.
         ("minio", "quay.io", "minio/minio", "RELEASE.2025-04-22T22-12-26Z", "sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb"),
-        ("prometheus", "mirror.gcr.io", "prom/prometheus", "v3.8.0", "sha256:67abe619da66a6b14cc0e185205f93a29d5b03cedd1aaa06930745b21f95a374"),
+        ("prometheus", "mirror.gcr.io", "prom/prometheus", "v3.14.0", "sha256:e906cef998316bbe319f98711e1b4d8613ad37e14b08ff831d7036e77b7464f9"),
         ("pyroscope", "mirror.gcr.io", "grafana/pyroscope", "2.3.1", "sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334"),
         ("tempo", "mirror.gcr.io", "grafana/tempo", "3.0.3", "sha256:05321ebf1f191fde34282b3dc86e68f511d489133df7963cd1670a2e1e11b33c"),
     ]

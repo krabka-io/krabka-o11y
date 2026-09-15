@@ -8,6 +8,10 @@ exports_files(["Cargo.toml"])
 crate_library(name = "integration")
 
 crate_tests(
+    docker = {
+        "alloy_client": ["alloy"],
+        "prometheus_client": ["prometheus"],
+    },
     lib = "integration",
     # The library holds no code to mutate -- it is the `//!` doc that says why
     # this crate is allowed to depend on more than one signal. A sweep over it
