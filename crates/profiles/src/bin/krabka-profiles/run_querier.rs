@@ -49,6 +49,7 @@ pub(crate) async fn run_querier(
     let state = Arc::new(
         QuerierState::new_with_overrides(Arc::clone(&read.union), overrides)
             .with_admin_store(configured.store)
+            .with_recording_rules_enabled(cli.recording_rules_remote_write_url.is_some())
             .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
             .with_metrics(metrics.clone()),
     );

@@ -1208,7 +1208,10 @@ overrides:
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn grafana_tenant_services_cover_upload_diff_rules_and_debuginfo() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_frame("main.work")))
+                .with_recording_rules_enabled(true),
+        );
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let bound = serve(
             "127.0.0.1:0".parse().unwrap(),
@@ -1248,14 +1251,20 @@ overrides:
                 .as_array()
                 .is_some_and(|flags| {
                     flags.len() == 4
-                        && flags.iter().all(|flag| {
-                            !flag
-                                .get("enabled")
-                                .and_then(serde_json::Value::as_bool)
-                                .unwrap_or(false)
-                        })
+                        && flags
+                            .iter()
+                            .any(|flag| flag["name"] == "pyroscopeRuler" && flag["enabled"] == true)
+                        && flags
+                            .iter()
+                            .filter(|flag| flag["name"] != "pyroscopeRuler")
+                            .all(|flag| {
+                                !flag
+                                    .get("enabled")
+                                    .and_then(serde_json::Value::as_bool)
+                                    .unwrap_or(false)
+                            })
                 }),
-            "capabilities must truthfully disable unsupported evaluator features: {capabilities}"
+            "capabilities must report only configured total-value evaluation: {capabilities}"
         );
 
         let rule: serde_json::Value = connect(

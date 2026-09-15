@@ -403,9 +403,9 @@ pub(crate) async fn feature_flags_handler<S: ProfileStore>(
     _req: ConnectRequest<pb::capabilities::v1::GetFeatureFlagsRequest>,
 ) -> Result<ConnectResponse<pb::capabilities::v1::GetFeatureFlagsResponse>, ConnectError> {
     tenant(&state, &principal, &headers)?;
-    let flag = |name: &str, description: &str| pb::capabilities::v1::FeatureFlag {
+    let flag = |name: &str, enabled: bool, description: &str| pb::capabilities::v1::FeatureFlag {
         name: name.to_string(),
-        enabled: false,
+        enabled,
         description: Some(description.to_string()),
         documentation_url: None,
     };
@@ -414,14 +414,24 @@ pub(crate) async fn feature_flags_handler<S: ProfileStore>(
             feature_flags: vec![
                 flag(
                     "pyroscopeRuler",
-                    "Profiling recording-rule evaluation is not enabled.",
+                    state.recording_rules_enabled,
+                    "Profiling recording-rule evaluation is configured on the compactor.",
                 ),
                 flag(
                     "pyroscopeRulerFunctions",
+                    false,
                     "Function recording rules are not enabled.",
                 ),
-                flag("utf8LabelNames", "UTF-8 label names are not enabled."),
-                flag("v2StorageLayer", "Pyroscope v2 storage is not enabled."),
+                flag(
+                    "utf8LabelNames",
+                    false,
+                    "UTF-8 label names are not enabled.",
+                ),
+                flag(
+                    "v2StorageLayer",
+                    false,
+                    "Pyroscope v2 storage is not enabled.",
+                ),
             ],
         },
     ))

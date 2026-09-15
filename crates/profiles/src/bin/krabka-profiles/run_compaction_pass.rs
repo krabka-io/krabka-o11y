@@ -57,6 +57,22 @@ pub(crate) async fn run_compaction_pass(
         Err(_) => {}
     }
     let report = result?;
+    if let Some(url) = &cli.recording_rules_remote_write_url {
+        match krabka_profiles::recording::evaluate_compacted_blocks(
+            store,
+            &index,
+            &report.compacted,
+            url,
+        )
+        .await
+        {
+            Ok(requests) if requests > 0 => {
+                tracing::info!(requests, "profiles recording rules exported");
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(%error, "profiles recording-rule export failed"),
+        }
+    }
     Ok(report.compacted.len())
 }
 

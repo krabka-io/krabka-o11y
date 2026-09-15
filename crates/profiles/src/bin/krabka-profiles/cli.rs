@@ -275,6 +275,13 @@ pub(crate) struct Cli {
         value_parser = parse_positive_time_or_legacy_nanos
     )]
     pub(crate) compactor_downsample_resolution: Option<Time>,
+    /// Prometheus remote-write endpoint for profile recording-rule samples.
+    #[arg(
+        long,
+        visible_alias = "compaction-worker.metrics-exporter.remote-write-address",
+        env = "KRABKA_PROFILES_RECORDING_RULES_REMOTE_WRITE_URL"
+    )]
+    pub(crate) recording_rules_remote_write_url: Option<url::Url>,
     #[arg(long, env = "KRABKA_PROFILES_BLOCK_BUILDER_FLUSH_RECORDS", default_value_t = krabka_profiles::blockbuilder::DEFAULT_FLUSH_RECORDS, value_parser = parse_positive_usize)]
     pub(crate) block_builder_flush_records: usize,
     #[arg(
