@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package adhocprofiles.v1;
+
+service AdHocProfileService {
+  rpc Upload(AdHocProfilesUploadRequest) returns (AdHocProfilesGetResponse) {}
+  rpc Get(AdHocProfilesGetRequest) returns (AdHocProfilesGetResponse) {}
+  rpc List(AdHocProfilesListRequest) returns (AdHocProfilesListResponse) {}
+  rpc Diff(AdHocProfilesDiffRequest) returns (AdHocProfilesDiffResponse) {}
+}
+
+message AdHocProfilesUploadRequest { string name = 1; string profile = 2; optional int64 max_nodes = 3; }
+message AdHocProfilesGetRequest { string id = 1; optional string profile_type = 2; optional int64 max_nodes = 3; }
+message AdHocProfilesGetResponse {
+  string id = 1;
+  string name = 2;
+  int64 uploaded_at = 3;
+  string profile_type = 4;
+  repeated string profile_types = 5;
+  string flamebearer_profile = 6;
+}
+message AdHocProfilesListRequest {}
+message AdHocProfilesListResponse { repeated AdHocProfilesProfileMetadata profiles = 1; }
+message AdHocProfilesProfileMetadata { string id = 1; string name = 2; int64 uploaded_at = 3; }
+message AdHocProfilesDiffRequest {
+  string left_id = 1;
+  string right_id = 2;
+  optional string profile_type = 3;
+  optional int64 max_nodes = 4;
+}
+message AdHocProfilesDiffResponse { repeated string profile_types = 1; string flamebearer_profile = 2; }

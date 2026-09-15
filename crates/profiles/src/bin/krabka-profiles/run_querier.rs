@@ -34,7 +34,7 @@ pub(crate) async fn run_querier(
     let index_key = cli.index_object_key.clone();
     let read = build_profile_read_path(
         &cli,
-        configured.store,
+        Arc::clone(&configured.store),
         index_key,
         debuginfod,
         profile_index_gate,
@@ -48,6 +48,7 @@ pub(crate) async fn run_querier(
     }
     let state = Arc::new(
         QuerierState::new_with_overrides(Arc::clone(&read.union), overrides)
+            .with_admin_store(configured.store)
             .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
             .with_metrics(metrics.clone()),
     );

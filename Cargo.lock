@@ -4397,6 +4397,7 @@ dependencies = [
  "object_store",
  "parquet",
  "pbjson",
+ "pbjson-types",
  "prometheus-client",
  "proptest",
  "prost 0.14.4",

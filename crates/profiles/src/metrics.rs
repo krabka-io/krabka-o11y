@@ -51,6 +51,10 @@ mod tests {
         m.record_blocks_built(2);
         m.record_query("select_series", true, millis(500));
         m.record_query("render", false, millis(100));
+        m.debuginfo_upload_retries.inc();
+        m.debuginfo_upload_timeouts.inc();
+        m.record_symbolizer_cache(true);
+        m.record_symbolizer_cache(false);
 
         let mut buf = String::new();
         let r = m.registry.lock().await;
@@ -65,6 +69,9 @@ mod tests {
             "krabka_profiles_blocks_built_total",
             "krabka_profiles_query_requests_total",
             "krabka_profiles_query_duration_seconds",
+            "krabka_profiles_debuginfo_upload_retries_total",
+            "krabka_profiles_debuginfo_upload_timeouts_total",
+            "krabka_profiles_symbolizer_cache_requests_total",
         ] {
             assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
         }
@@ -73,6 +80,8 @@ mod tests {
             "status=\"ok\"",
             "status=\"error\"",
             "route=\"select_series\"",
+            "status=\"hit\"",
+            "status=\"miss\"",
         ] {
             check!(buf.contains(label), "label {label} missing");
         }

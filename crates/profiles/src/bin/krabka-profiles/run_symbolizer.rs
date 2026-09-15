@@ -23,7 +23,7 @@ pub(crate) async fn run_symbolizer(
         cli.debuginfod_urls,
         config,
     )?;
-    let configured = build_object_store(&cli.object_store_url, metrics.object_store)
+    let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
         .map_err(|error| format!("object store: {error}"))?;
     loop {
         let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
@@ -36,6 +36,7 @@ pub(crate) async fn run_symbolizer(
             &configured.store,
             &index,
             &resolver,
+            &metrics,
         )
         .await?;
         tracing::info!(updated, "profiles offline symbolization pass complete");

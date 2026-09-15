@@ -2,6 +2,28 @@
 
 /// Generated protobuf and Connect server stubs.
 pub mod pb {
+    /// Pyroscope ad hoc profile upload and comparison service.
+    pub mod adhocprofiles {
+        #[allow(clippy::similar_names)]
+        pub mod v1 {
+            include!(concat!(env!("OUT_DIR"), "/adhocprofiles.v1.rs"));
+        }
+    }
+
+    /// Pyroscope tenant feature flags consumed by Grafana.
+    pub mod capabilities {
+        pub mod v1 {
+            include!(concat!(env!("OUT_DIR"), "/capabilities.v1.rs"));
+        }
+    }
+
+    /// Pyroscope debug-information upload metadata service.
+    pub mod debuginfo {
+        pub mod v1alpha1 {
+            include!(concat!(env!("OUT_DIR"), "/debuginfo.v1alpha1.rs"));
+        }
+    }
+
     /// Pyroscope `push.v1.PusherService`.
     pub mod push {
         pub mod v1 {

@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package settings.v1;
+
+import "types/v1/types.proto";
+
+service RecordingRulesService {
+  rpc GetRecordingRule(GetRecordingRuleRequest) returns (GetRecordingRuleResponse) {}
+  rpc ListRecordingRules(ListRecordingRulesRequest) returns (ListRecordingRulesResponse) {}
+  rpc UpsertRecordingRule(UpsertRecordingRuleRequest) returns (UpsertRecordingRuleResponse) {}
+  rpc DeleteRecordingRule(DeleteRecordingRuleRequest) returns (DeleteRecordingRuleResponse) {}
+}
+
+message GetRecordingRuleRequest { string id = 1; }
+message GetRecordingRuleResponse { RecordingRule rule = 1; }
+message ListRecordingRulesRequest {}
+message ListRecordingRulesResponse { repeated RecordingRule rules = 1; }
+message UpsertRecordingRuleRequest {
+  string id = 1;
+  string metric_name = 2;
+  repeated string matchers = 3;
+  repeated string group_by = 4;
+  repeated types.v1.LabelPair external_labels = 5;
+  int64 generation = 6;
+  optional StacktraceFilter stacktrace_filter = 7;
+}
+message UpsertRecordingRuleResponse { RecordingRule rule = 1; }
+message DeleteRecordingRuleRequest { string id = 1; }
+message DeleteRecordingRuleResponse {}
+message RecordingRule {
+  string id = 1;
+  string metric_name = 2;
+  string profile_type = 3;
+  repeated string matchers = 4;
+  repeated string group_by = 5;
+  repeated types.v1.LabelPair external_labels = 6;
+  int64 generation = 7;
+  optional StacktraceFilter stacktrace_filter = 8;
+  bool provisioned = 9;
+}
+message StacktraceFilter { optional StacktraceFilterFunctionName function_name = 1; }
+enum MetricType { TOTAL = 0; }
+message StacktraceFilterFunctionName { string function_name = 1; MetricType metric_type = 2; }
+message RecordingRuleStore {
+  string id = 1;
+  string metric_name = 2;
+  string prometheus_data_source = 3;
+  repeated string matchers = 4;
+  repeated string group_by = 5;
+  repeated types.v1.LabelPair external_labels = 6;
+  int64 generation = 7;
+  optional StacktraceFilter stacktrace_filter = 8;
+}
+message RecordingRulesStore { repeated RecordingRuleStore rules = 1; int64 generation = 2; }

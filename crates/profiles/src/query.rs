@@ -1046,14 +1046,20 @@ overrides:
     }
 
     #[tokio::test]
-    async fn settings_service_matches_fresh_tenant_semantics() {
+    async fn settings_service_persists_and_isolates_tenants() {
         // Regression: the Grafana Profiles Drilldown app calls
         // `settings.v1.SettingsService/Get` during init. A 404 aborts init — the
         // app never issues the per-panel SelectSeries queries and the landing
         // grid renders empty. The querier must answer 200 with an (empty)
-        // settings set; `Set` must echo the value back.
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        // settings set. Settings live in the configured object store so a new
+        // querier process sees them after restart.
+        let admin_store: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_frame("main.work")))
+                .with_admin_store(Arc::clone(&admin_store)),
+        );
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let bound = serve(
             "127.0.0.1:0".parse().unwrap(),
             state,
@@ -1108,6 +1114,63 @@ overrides:
             "Set must echo the setting, got {json}"
         );
 
+        shutdown_tx.send(()).unwrap();
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_frame("main.work")))
+                .with_admin_store(admin_store),
+        );
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+
+        let persisted: serde_json::Value = client
+            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
+            .header("content-type", "application/json")
+            .header("connect-protocol-version", "1")
+            .header("x-scope-orgid", "tenant-a")
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            persisted
+                .pointer("/settings/0/name")
+                .and_then(|value| value.as_str())
+                == Some("flamegraph.collapsed"),
+            "setting must survive restart: {persisted}"
+        );
+        let isolated: serde_json::Value = client
+            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
+            .header("content-type", "application/json")
+            .header("connect-protocol-version", "1")
+            .header("x-scope-orgid", "tenant-b")
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            isolated.get("settings").is_none(),
+            "tenant leak: {isolated}"
+        );
+
         let resp = client
             .post(format!("http://{bound}/settings.v1.SettingsService/Delete"))
             .header("content-type", "application/json")
@@ -1121,6 +1184,356 @@ overrides:
             resp.status() == reqwest::StatusCode::OK,
             "Delete must succeed, got {}",
             resp.status()
+        );
+        let deleted: serde_json::Value = client
+            .post(format!("http://{bound}/settings.v1.SettingsService/Get"))
+            .header("content-type", "application/json")
+            .header("connect-protocol-version", "1")
+            .header("x-scope-orgid", "tenant-a")
+            .body("{}")
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            deleted.get("settings").is_none(),
+            "delete failed: {deleted}"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn grafana_tenant_services_cover_upload_diff_rules_and_debuginfo() {
+        let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        let client = reqwest::Client::new();
+        let connect = |path: &str, tenant: &str, body: serde_json::Value| {
+            client
+                .post(format!("http://{bound}/{path}"))
+                .header("content-type", "application/json")
+                .header("connect-protocol-version", "1")
+                .header("x-scope-orgid", tenant)
+                .body(body.to_string())
+        };
+
+        let capabilities: serde_json::Value = connect(
+            "capabilities.v1.FeatureFlagsService/GetFeatureFlags",
+            "tenant-a",
+            json!({}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(
+            capabilities["featureFlags"]
+                .as_array()
+                .is_some_and(|flags| {
+                    flags.len() == 4
+                        && flags.iter().all(|flag| {
+                            !flag
+                                .get("enabled")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false)
+                        })
+                }),
+            "capabilities must truthfully disable unsupported evaluator features: {capabilities}"
+        );
+
+        let rule: serde_json::Value = connect(
+            "settings.v1.RecordingRulesService/UpsertRecordingRule",
+            "tenant-a",
+            json!({
+                "metricName": "profiles_recorded_cpu_total",
+                "matchers": [format!(r#"{{__profile_type__="{PT}"}}"#)],
+                "groupBy": ["service_name"]
+            }),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        let rule_id = rule["rule"]["id"].as_str().unwrap();
+        assert!(rule["rule"]["profileType"] == PT, "{rule}");
+        let updated: serde_json::Value = connect(
+            "settings.v1.RecordingRulesService/UpsertRecordingRule",
+            "tenant-a",
+            json!({
+                "id": rule_id,
+                "metricName": "profiles_recorded_cpu_total",
+                "matchers": [format!(r#"{{__profile_type__="{PT}"}}"#)],
+                "groupBy": ["service_name", "namespace"],
+                "generation": "1"
+            }),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(updated["rule"]["generation"] == "2", "{updated}");
+        let fetched: serde_json::Value = connect(
+            "settings.v1.RecordingRulesService/GetRecordingRule",
+            "tenant-a",
+            json!({"id": rule_id}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(fetched["rule"]["groupBy"][1] == "namespace", "{fetched}");
+        let tenant_rules: serde_json::Value = connect(
+            "settings.v1.RecordingRulesService/ListRecordingRules",
+            "tenant-a",
+            json!({}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(
+            tenant_rules["rules"]
+                .as_array()
+                .is_some_and(|rules| rules.len() == 1)
+        );
+        let other_rules: serde_json::Value = connect(
+            "settings.v1.RecordingRulesService/ListRecordingRules",
+            "tenant-b",
+            json!({}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(
+            other_rules.get("rules").is_none(),
+            "tenant leak: {other_rules}"
+        );
+
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode(crate::wire::test_fixtures::cpu_profile_pprof_bytes());
+        let mut ids = Vec::new();
+        for name in ["left profile.pprof", "right.pprof"] {
+            let uploaded: serde_json::Value = connect(
+                "adhocprofiles.v1.AdHocProfileService/Upload",
+                "tenant-a",
+                json!({"name": name, "profile": encoded}),
+            )
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+            assert!(
+                uploaded["flamebearerProfile"].as_str().is_some(),
+                "{uploaded}"
+            );
+            assert!(
+                uploaded["name"]
+                    .as_str()
+                    .is_some_and(|name| !name.contains(' ')),
+                "{uploaded}"
+            );
+            ids.push(uploaded["id"].as_str().unwrap().to_string());
+        }
+        let diff: serde_json::Value = connect(
+            "adhocprofiles.v1.AdHocProfileService/Diff",
+            "tenant-a",
+            json!({"leftId": ids[0], "rightId": ids[1]}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(diff["flamebearerProfile"].as_str().is_some(), "{diff}");
+        let isolated = connect(
+            "adhocprofiles.v1.AdHocProfileService/Get",
+            "tenant-b",
+            json!({"id": ids[0]}),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert!(isolated.status() == reqwest::StatusCode::NOT_FOUND);
+
+        let unsafe_build_id = "a".repeat(41);
+        let rejected = connect(
+            "debuginfo.v1alpha1.DebuginfoService/ShouldInitiateUpload",
+            "tenant-a",
+            json!({"file": {"gnuBuildId": unsafe_build_id, "name": "app", "type": "TYPE_EXECUTABLE_FULL"}}),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert!(rejected.status() == reqwest::StatusCode::BAD_REQUEST);
+
+        let build_id = "DEADBEEF";
+        let initiated: serde_json::Value = connect(
+            "debuginfo.v1alpha1.DebuginfoService/ShouldInitiateUpload",
+            "tenant-a",
+            json!({"file": {"gnuBuildId": build_id, "name": "app", "type": "TYPE_EXECUTABLE_FULL"}}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(initiated["shouldInitiateUpload"] == true, "{initiated}");
+        client
+            .post(format!(
+                "http://{bound}/debuginfo.v1alpha1.DebuginfoService/Upload/{build_id}"
+            ))
+            .header("x-scope-orgid", "tenant-a")
+            .body(b"\x7fELF-test".to_vec())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        connect(
+            "debuginfo.v1alpha1.DebuginfoService/UploadFinished",
+            "tenant-a",
+            json!({"gnuBuildId": build_id}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+        let debug_info: serde_json::Value = connect(
+            "debuginfo.v1alpha1.DebuginfoService/ListDebuginfo",
+            "tenant-a",
+            json!({}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(
+            debug_info["object"][0]["file"]["gnuBuildId"] == build_id,
+            "{debug_info}"
+        );
+        let other_debug_info: serde_json::Value = connect(
+            "debuginfo.v1alpha1.DebuginfoService/ListDebuginfo",
+            "tenant-b",
+            json!({}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(
+            other_debug_info.get("object").is_none(),
+            "tenant leak: {other_debug_info}"
+        );
+        connect(
+            "debuginfo.v1alpha1.DebuginfoService/DeleteDebuginfo",
+            "tenant-a",
+            json!({"gnuBuildId": build_id}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+        let deleted_debug_info: serde_json::Value = connect(
+            "debuginfo.v1alpha1.DebuginfoService/ListDebuginfo",
+            "tenant-a",
+            json!({}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(
+            deleted_debug_info.get("object").is_none(),
+            "delete failed: {deleted_debug_info}"
+        );
+        connect(
+            "settings.v1.RecordingRulesService/DeleteRecordingRule",
+            "tenant-a",
+            json!({"id": rule_id}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+        let deleted_rules: serde_json::Value = connect(
+            "settings.v1.RecordingRulesService/ListRecordingRules",
+            "tenant-a",
+            json!({}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert!(
+            deleted_rules.get("rules").is_none(),
+            "delete failed: {deleted_rules}"
         );
     }
 
@@ -3180,7 +3593,6 @@ mod connect_error;
 mod default_heatmap_time_buckets_max;
 mod default_heatmap_value_buckets;
 mod default_store;
-mod delete_settings_handler;
 mod deserialize_group_by;
 mod diff_handler;
 mod diff_inner;
@@ -3194,7 +3606,6 @@ mod flamegraph_dot;
 mod frames_match_call_sites;
 mod get_profile_stats_handler;
 mod get_profile_stats_inner;
-mod get_settings_handler;
 mod heatmap_individual_exemplars_from_scan;
 mod heatmap_series;
 mod heatmap_slot_timestamp;
@@ -3255,7 +3666,6 @@ mod series_inner;
 mod series_key;
 mod serve;
 mod serve_supervised;
-mod set_settings_handler;
 mod span_exemplars_by_series;
 mod span_exemplars_from_scan;
 mod span_exemplars_from_totals;
@@ -3264,6 +3674,7 @@ mod stack_trace_call_sites;
 mod tenant_connect_error;
 mod tenant_denied_connect_error;
 mod tenant_error_response;
+mod tenant_services;
 mod timed_query;
 mod timed_query_response;
 mod types_label_pairs;
@@ -3276,7 +3687,6 @@ use connect_error::connect_error;
 use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;
 use default_heatmap_value_buckets::DEFAULT_HEATMAP_VALUE_BUCKETS;
 pub use default_store::DefaultStore;
-use delete_settings_handler::delete_settings_handler;
 use deserialize_group_by::deserialize_group_by;
 use diff_handler::diff_handler;
 use diff_inner::diff_inner;
@@ -3288,7 +3698,6 @@ use flamegraph_dot::flamegraph_dot;
 use frames_match_call_sites::frames_match_call_sites;
 use get_profile_stats_handler::get_profile_stats_handler;
 use get_profile_stats_inner::get_profile_stats_inner;
-use get_settings_handler::get_settings_handler;
 use heatmap_individual_exemplars_from_scan::heatmap_individual_exemplars_from_scan;
 use heatmap_slot_timestamp::heatmap_slot_timestamp;
 use heatmap_span_exemplars_by_series::HeatmapSpanExemplarsBySeries;
@@ -3348,7 +3757,6 @@ use series_inner::series_inner;
 use series_key::SeriesKey;
 pub use serve::serve;
 pub use serve_supervised::serve_supervised;
-use set_settings_handler::set_settings_handler;
 use span_exemplars_by_series::SpanExemplarsBySeries;
 use span_exemplars_from_scan::span_exemplars_from_scan;
 use span_exemplars_from_totals::span_exemplars_from_totals;
@@ -3357,6 +3765,13 @@ use stack_trace_call_sites::stack_trace_call_sites;
 use tenant_connect_error::tenant_connect_error;
 use tenant_denied_connect_error::tenant_denied_connect_error;
 use tenant_error_response::tenant_error_response;
+use tenant_services::{
+    delete_debuginfo_handler, delete_recording_rule_handler, delete_settings_handler,
+    diff_adhoc_handler, feature_flags_handler, get_adhoc_handler, get_recording_rule_handler,
+    get_settings_handler, list_adhoc_handler, list_debuginfo_handler, list_recording_rules_handler,
+    set_settings_handler, should_initiate_upload_handler, upload_adhoc_handler,
+    upload_debuginfo_handler, upload_finished_handler, upsert_recording_rule_handler,
+};
 use timed_query::timed_query;
 use timed_query_response::timed_query_response;
 use types_label_pairs::types_label_pairs;
