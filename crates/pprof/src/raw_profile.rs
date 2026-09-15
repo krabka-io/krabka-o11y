@@ -1,10 +1,10 @@
 //! Raw pprof emission from merged profile trees.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::{
-    PprofProfile, ProfileType, Tree,
-    proto::{Function, Line, Location, Profile, Sample, ValueType},
+    Frame, PprofProfile, ProfileType, ResolvedFunction, ResolvedLocation, ResolvedMapping, Tree,
+    proto::{Function, Line, Location, Mapping, Profile, Sample, ValueType},
 };
 
 #[cfg(test)]
@@ -118,11 +118,13 @@ mod tests {
 mod collect_samples;
 mod intern_string;
 mod pprof_builder;
+mod resolved_to_pprof_with_max_nodes;
 mod tree_to_pprof;
 mod tree_to_pprof_with_max_nodes;
 
 use collect_samples::collect_samples;
 use intern_string::intern_string;
 use pprof_builder::PprofBuilder;
+pub(crate) use resolved_to_pprof_with_max_nodes::resolved_to_pprof_with_max_nodes;
 pub use tree_to_pprof::tree_to_pprof;
 pub use tree_to_pprof_with_max_nodes::tree_to_pprof_with_max_nodes;

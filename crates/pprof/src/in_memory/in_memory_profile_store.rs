@@ -138,6 +138,31 @@ impl ProfileStore for InMemoryProfileStore {
         })
     }
 
+    async fn query_stats(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<crate::ProfileQueryStats, ProfileError> {
+        let compiled = compile_matchers(matchers)?;
+        let rows = self
+            .rows_in_range(tenant, start_ms, end_ms)
+            .filter(|row| row.profile_type == profile_type)
+            .filter(|row| row_matches(row, &compiled));
+        let mut stats = crate::ProfileQueryStats::default();
+        let mut profiles = BTreeSet::new();
+        for row in rows {
+            stats.fingerprints.insert(row.fingerprint);
+            profiles.insert((row.fingerprint, row.timestamp_ms));
+            stats.sample_count = stats.sample_count.saturating_add(1);
+        }
+        stats.profile_count = profiles.len() as u64;
+        stats.block_count = u64::from(stats.sample_count > 0);
+        Ok(stats)
+    }
+
     async fn label_names(
         &self,
         tenant: &str,

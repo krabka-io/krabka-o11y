@@ -18,6 +18,15 @@ where
         .map_err(|error| tenant_connect_error(&error))?;
     authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
     let req = req.0;
+    if req
+        .r#async
+        .as_ref()
+        .is_some_and(|query| query.r#type != 0 || !query.request_id.is_empty())
+    {
+        return Err(connect_error(ProfileError::Unsupported(
+            "async profile queries are not supported".to_string(),
+        )));
+    }
     let label_selector = merge_profile_id_selector(&req.label_selector, &req.profile_id_selector)
         .map_err(connect_error)?;
     let stack_trace_call_sites = stack_trace_call_sites(req.stack_trace_selector.as_ref());

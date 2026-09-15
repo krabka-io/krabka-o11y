@@ -178,6 +178,19 @@ impl ProfileStore for WalTailProfileStore {
             .await
     }
 
+    async fn query_stats(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<ProfileQueryStats, ProfileError> {
+        self.snapshot()?
+            .query_stats(tenant, profile_type, matchers, start_ms, end_ms)
+            .await
+    }
+
     async fn label_names(
         &self,
         tenant: &str,

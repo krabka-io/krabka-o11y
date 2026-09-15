@@ -1,8 +1,9 @@
 use super::{
     Cow, Deserialize, EMPTY_STACKTRACE_ID, Frame, FunctionRec, HashMap, HashSet, LineRec,
     LocationRec, MappingRec, MappingSymbolization, NativeResolver, Partition, ProfileError,
-    RawLocation, SerdeCompat, Serialize, SymbolSource, SymbolizeRequest, TreeNode,
-    WincodeDeserialize, WincodeSerialize, drop_go_type_parameters, remap_index,
+    RawLocation, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping, SerdeCompat,
+    Serialize, SymbolSource, SymbolizeRequest, TreeNode, WincodeDeserialize, WincodeSerialize,
+    drop_go_type_parameters, remap_index,
 };
 
 /// Deduplicated symbol database for a profile block.
@@ -272,6 +273,71 @@ impl SymbolDb {
     }
 
     #[must_use]
+    pub fn resolve_locations(&self, partition: u64, stacktrace_id: u32) -> Vec<ResolvedLocation> {
+        if stacktrace_id == EMPTY_STACKTRACE_ID {
+            return Vec::new();
+        }
+        let Some(part) = self.partitions.get(&partition) else {
+            return Vec::new();
+        };
+        let mut resolved = Vec::new();
+        let mut current = i32::try_from(stacktrace_id).unwrap_or(-1);
+        for _ in 0..part.nodes.len() {
+            if current < 0 {
+                break;
+            }
+            let Ok(current_index) = usize::try_from(current) else {
+                break;
+            };
+            let Some(node) = part.nodes.get(current_index) else {
+                break;
+            };
+            if let Ok(location_index) = usize::try_from(node.location_ref)
+                && let Some(location) = self.locations.get(location_index)
+            {
+                let mapping = self
+                    .mappings
+                    .get(location.mapping_id as usize)
+                    .map(|mapping| ResolvedMapping {
+                        memory_start: mapping.memory_start,
+                        memory_limit: mapping.memory_limit,
+                        file_offset: mapping.file_offset,
+                        filename: self.string(mapping.filename).to_string(),
+                        build_id: self.string(mapping.build_id).to_string(),
+                        has_functions: mapping.symbolization.has_functions(),
+                        has_filenames: mapping.symbolization.has_filenames(),
+                        has_line_numbers: mapping.symbolization.has_line_numbers(),
+                        has_inline_frames: mapping.symbolization.has_inline_frames(),
+                    });
+                let lines = location
+                    .lines
+                    .iter()
+                    .filter_map(|line| {
+                        self.functions
+                            .get(line.function_id as usize)
+                            .map(|function| ResolvedLine {
+                                function: ResolvedFunction {
+                                    name: self.string(function.name).to_string(),
+                                    system_name: self.string(function.system_name).to_string(),
+                                    filename: self.string(function.filename).to_string(),
+                                    start_line: function.start_line,
+                                },
+                                line: i64::from(line.line),
+                            })
+                    })
+                    .collect();
+                resolved.push(ResolvedLocation {
+                    address: location.address,
+                    mapping,
+                    lines,
+                });
+            }
+            current = node.parent;
+        }
+        resolved
+    }
+
+    #[must_use]
     /// # Panics
     /// Panics if decoded profile indexes reference a missing string, mapping, function, or location that validation promised was present.
     pub fn raw_locations(&self, partition: u64, stacktrace_id: u32) -> Vec<RawLocation> {
@@ -456,5 +522,9 @@ impl SymbolDb {
 impl SymbolSource for SymbolDb {
     fn resolve(&self, partition: u64, id: u32) -> Vec<Frame> {
         SymbolDb::resolve(self, partition, id)
+    }
+
+    fn resolve_locations(&self, partition: u64, id: u32) -> Vec<ResolvedLocation> {
+        SymbolDb::resolve_locations(self, partition, id)
     }
 }

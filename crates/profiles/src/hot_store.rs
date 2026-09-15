@@ -8,7 +8,9 @@ use std::{
 use krabka_blockstore::LabelMatcher;
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
-use krabka_pprof::{InMemoryProfileStore, ProfileError, ProfileScan, ProfileStats, ProfileStore};
+use krabka_pprof::{
+    InMemoryProfileStore, ProfileError, ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore,
+};
 use krabka_units::{Time, convert::TimeExt as _, hours};
 use tokio_util::sync::CancellationToken;
 

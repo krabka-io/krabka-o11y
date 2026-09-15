@@ -1,12 +1,6 @@
 //! Querier role: Pyroscope `querier.v1` Connect API and legacy flamebearer endpoints.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Write as _,
-    future::Future,
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, fmt::Write as _, future::Future, net::SocketAddr, sync::Arc};
 
 use arrow::{
     array::{Array, AsArray, BinaryArray},
@@ -1519,19 +1513,24 @@ overrides:
         check!(diff.pointer("/flamegraph/leftTicks").and_then(json_i64) == Some(5));
         check!(diff.pointer("/flamegraph/rightTicks").and_then(json_i64) == Some(7));
 
-        let response: serde_json::Value = request(json!({
-            "async": { "type": "ASYNC_QUERY_TYPE_FORCE" }
-        }))
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-        check!(response.pointer("/flamegraph/total").and_then(json_i64) == Some(12));
-        check!(response.get("async").is_none());
+        for async_query in [
+            json!({ "type": "ASYNC_QUERY_TYPE_FORCE" }),
+            json!({ "requestId": "query-1" }),
+        ] {
+            let extra = json!({ "async": async_query });
+            let response = request(extra).send().await.unwrap();
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = response.text().await.unwrap();
+            check!(
+                status == reqwest::StatusCode::BAD_REQUEST,
+                "status={status} headers={headers:?} body={body}"
+            );
+            check!(
+                body.contains("async profile queries are not supported"),
+                "status={status} headers={headers:?} body={body}"
+            );
+        }
     }
 
     #[tokio::test]

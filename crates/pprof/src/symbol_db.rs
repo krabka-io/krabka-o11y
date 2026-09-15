@@ -11,7 +11,9 @@ use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
 
 use crate::{
     error::ProfileError,
-    frame::{Frame, SymbolSource},
+    frame::{
+        Frame, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping, SymbolSource,
+    },
     symbolizer::{NativeResolver, SymbolizeRequest},
 };
 

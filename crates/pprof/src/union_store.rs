@@ -15,7 +15,7 @@ use krabka_blockstore::LabelMatcher;
 
 use crate::{
     Frame, PCOL_STACKTRACE_PARTITION, ProfileError, ProfileScan, ProfileStats, ProfileStore,
-    SymbolSource, profile_samples_schema,
+    ResolvedLocation, SymbolSource, profile_samples_schema,
 };
 
 #[cfg(test)]

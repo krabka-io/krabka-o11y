@@ -1,4 +1,4 @@
-use super::{Arc, BTreeMap, Frame, SymbolSource};
+use super::{Arc, BTreeMap, Frame, ResolvedLocation, SymbolSource};
 
 #[derive(Default)]
 pub(crate) struct UnionSymbols {
@@ -18,6 +18,15 @@ impl SymbolSource for UnionSymbols {
             .get(&partition_base)
             .map_or_else(Vec::new, |source| {
                 source.resolve(partition ^ partition_base, id)
+            })
+    }
+
+    fn resolve_locations(&self, partition: u64, id: u32) -> Vec<ResolvedLocation> {
+        let partition_base = partition & 0xff00_0000_0000_0000;
+        self.sources
+            .get(&partition_base)
+            .map_or_else(Vec::new, |source| {
+                source.resolve_locations(partition ^ partition_base, id)
             })
     }
 }

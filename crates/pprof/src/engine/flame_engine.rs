@@ -9,8 +9,8 @@ use super::{
     FlameGraph, FlameGraphDiff, Frame, Heatmap, LabelMatcher, LabeledHeatmap, MatchOp,
     NonZeroUsize, ProfileError, ProfileStore, ProfileType, SampleSelector, Series, SeriesAgg, Time,
     Tree, bin_heatmap, covering_range, diff_trees, fold_bucket, group_frame_name,
-    heatmap_points_from_totals, merge_scan_to_tree, series_buckets_from_stacktrace_selector,
-    series_buckets_from_totals, tree_to_pprof, tree_to_pprof_with_max_nodes, validate_range,
+    heatmap_points_from_totals, merge_scan_to_pprof, merge_scan_to_tree,
+    series_buckets_from_stacktrace_selector, series_buckets_from_totals, validate_range,
     validated_step,
 };
 
@@ -456,6 +456,42 @@ impl<S: ProfileStore> FlameEngine<S> {
         Ok(tree)
     }
 
+    async fn merge_to_pprof(
+        &self,
+        query: (&str, &ProfileType, &str),
+        range: (i64, i64),
+        max_nodes: i64,
+        sample_selector: SampleSelector<'_>,
+        call_sites: &[String],
+    ) -> Result<crate::PprofProfile, ProfileError> {
+        let (tenant, profile_type, label_selector) = query;
+        match sample_selector {
+            SampleSelector::Span([]) => {
+                return Err(ProfileError::Plan(
+                    "span selector must contain at least one span id".to_string(),
+                ));
+            }
+            SampleSelector::Trace([]) => {
+                return Err(ProfileError::Plan(
+                    "trace selector must contain at least one trace id".to_string(),
+                ));
+            }
+            SampleSelector::None | SampleSelector::Span(_) | SampleSelector::Trace(_) => {}
+        }
+        let matchers = crate::matcher::parse_label_selector(label_selector)?;
+        let scan = self
+            .store
+            .select(
+                tenant,
+                &profile_type.to_string(),
+                &matchers,
+                range.0,
+                range.1,
+            )
+            .await?;
+        merge_scan_to_pprof(&scan, profile_type, max_nodes, sample_selector, call_sites).await
+    }
+
     /// # Errors
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_series(
@@ -695,17 +731,16 @@ impl<S: ProfileStore> FlameEngine<S> {
         call_sites: &[String],
     ) -> Result<Vec<u8>, ProfileError> {
         let profile_type = ProfileType::parse(profile_type)?;
-        let tree = self
-            .merge_to_tree(
-                tenant,
-                &profile_type.to_string(),
-                label_selector,
+        let profile = self
+            .merge_to_pprof(
+                (tenant, &profile_type, label_selector),
                 (start_ms, end_ms),
-                None,
+                i64::MAX,
+                SampleSelector::None,
                 call_sites,
             )
             .await?;
-        Ok(tree_to_pprof(&tree, &profile_type).encode())
+        Ok(profile.encode())
     }
 
     /// # Errors
@@ -740,22 +775,21 @@ impl<S: ProfileStore> FlameEngine<S> {
         let (tenant, profile_type, label_selector) = query;
         let (start_ms, end_ms) = range;
         let profile_type = ProfileType::parse(profile_type)?;
-        let tree = self
-            .merge_to_tree_with_sample_selector(
-                tenant,
-                &profile_type.to_string(),
-                label_selector,
-                (start_ms, end_ms),
-                sample_selector,
-                call_sites,
-            )
-            .await?;
         let max_nodes = if max_nodes > 0 {
             max_nodes
         } else {
             self.opts.default_max_nodes
         };
-        Ok(tree_to_pprof_with_max_nodes(&tree, &profile_type, max_nodes).encode())
+        let profile = self
+            .merge_to_pprof(
+                (tenant, &profile_type, label_selector),
+                (start_ms, end_ms),
+                max_nodes,
+                sample_selector,
+                call_sites,
+            )
+            .await?;
+        Ok(profile.encode())
     }
 
     /// # Errors
