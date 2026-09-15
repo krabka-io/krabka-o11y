@@ -1,4 +1,5 @@
 use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
+use krabka_traces::frontend::{HttpReadinessProbe, QuerierHealth, QuerierScheme, ReadinessProbe};
 
 use super::*;
 
@@ -34,6 +35,37 @@ pub(crate) async fn run_querier(
     // that stopped at the last record it read, so the gate goes back down when
     // the loop ends.
     let live_store_gate = live_store.is_some().then(|| readiness.gate("live-store"));
+    let remote_live_store = if live_store.is_none() && cli.target != Target::All {
+        cli.querier_live_store_url
+            .as_deref()
+            .map(|raw| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+                let url = Url::parse(raw)?;
+                let scheme = match url.scheme() {
+                    "http" => QuerierScheme::Http,
+                    "https" => QuerierScheme::Https,
+                    scheme => return Err(format!("unsupported live-store URL scheme {scheme}").into()),
+                };
+                let host = url.host_str().ok_or("live-store URL has no host")?;
+                let port = url.port_or_known_default().ok_or("live-store URL has no port")?;
+                let addr = if host.contains(':') {
+                    format!("[{host}]:{port}")
+                } else {
+                    format!("{host}:{port}")
+                };
+                Ok((
+                    readiness.gate("live-store"),
+                    HttpReadinessProbe::new(
+                        cli.querier_readiness_timeout.to_std(),
+                        scheme,
+                        security.server.internal_client(),
+                    )?,
+                    addr,
+                ))
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let (router, store, trace_index_key, trace_index) = build_querier_router_with_live(
         &cli,
         metrics.clone(),
@@ -48,6 +80,26 @@ pub(crate) async fn run_querier(
     // stop of either -- error, early return, or panic -- ends the role rather
     // than leaving it answering from a tier that no longer moves.
     let mut tasks = SupervisedTasks::new(shutdown.clone());
+    if let Some((gate, probe, addr)) = remote_live_store {
+        let probe_shutdown = shutdown.clone();
+        let interval = cli.querier_membership_refresh_interval.to_std();
+        tasks.spawn("traces querier remote live-store readiness", async move {
+            let mut tick = tokio::time::interval(interval);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    () = probe_shutdown.cancelled() => break,
+                    _ = tick.tick() => match probe.probe(&addr).await {
+                        QuerierHealth::Ready => gate.mark_ready(),
+                        health => {
+                            gate.mark_unready();
+                            tracing::warn!(%addr, ?health, "remote trace live-store is not ready");
+                        }
+                    }
+                }
+            }
+        });
+    }
     if let Some(live_store) = live_store {
         let consumer = wal_consumer(
             &cli,

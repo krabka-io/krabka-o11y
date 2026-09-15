@@ -27,6 +27,17 @@ wait_deployments() {
   done < <(kubectl -n "${namespace}" get deployments -l app.kubernetes.io/part-of=krabka-o11y -o name | sort)
 }
 
+set_krabka_image() {
+  local deployment=$1 image=$2 init_names
+  local images=("role=${image}")
+  init_names=$(kubectl -n "${namespace}" get "${deployment}" \
+    -o jsonpath='{.spec.template.spec.initContainers[*].name}')
+  if grep -qw topic-contract <<<"${init_names}"; then
+    images+=("topic-contract=${image}")
+  fi
+  run kubectl -n "${namespace}" set image "${deployment}" "${images[@]}"
+}
+
 forward_pids=()
 cleanup() {
   if ((${#forward_pids[@]})); then kill "${forward_pids[@]}" 2>/dev/null || true; fi
@@ -100,6 +111,8 @@ start_forwards() {
   forward_pids=()
   port_forward service/alloy 19999:9999
   port_forward service/alloy 14318:4318
+  port_forward service/metrics-distributor 14041:4041
+  port_forward service/profiles-distributor 14040:4040
   port_forward service/metrics-query-frontend 19090:9090
   port_forward service/logs-querier 13101:3100
   port_forward service/traces-query-frontend 13201:3200
@@ -120,8 +133,9 @@ ensure_forwards() {
 start_forwards
 
 send_corpus() {
-  local now_ns trace_id span_id
+  local now_ns now_ms trace_id span_id
   now_ns=$(date +%s%N)
+  now_ms=$((now_ns / 1000000))
   trace_id=$(printf '%s' "${marker}" | sha256sum | cut -c 1-32)
   span_id=${trace_id:0:16}
   run curl -fsS http://127.0.0.1:19999/loki/api/v1/push \
@@ -130,6 +144,13 @@ send_corpus() {
   run curl -fsS http://127.0.0.1:14318/v1/traces \
     -H 'Content-Type: application/json' \
     --data "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"${marker}\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"${trace_id}\",\"spanId\":\"${span_id}\",\"name\":\"${marker}\",\"startTimeUnixNano\":\"${now_ns}\",\"endTimeUnixNano\":\"$((now_ns + 1000000))\"}]}]}]}"
+  run curl -fsS 'http://127.0.0.1:14041/api/v1/push/influx/write?precision=ms' \
+    -H "X-Scope-OrgID: ${tenant}" -H 'Content-Type: text/plain' \
+    --data-binary "krabka_qualification,marker=${marker} value=1 ${now_ms}"
+  run curl -fsS \
+    "http://127.0.0.1:14040/ingest?name=qualification%7Bservice_name%3D%22${marker}%22%7D&format=groups&units=samples&until=${now_ms}" \
+    -H "X-Scope-OrgID: ${tenant}" -H 'Content-Type: text/plain' \
+    --data-binary 'qualification;sample 1'
 }
 
 wait_for() {
@@ -142,7 +163,7 @@ wait_for() {
     else
       response=$(curl -fsS "${url}" -H "X-Scope-OrgID: ${tenant}" 2>/dev/null) || response=
     fi
-    if grep -q "${marker}\|alloy" <<<"${response}"; then
+    if grep -Fq "${marker}" <<<"${response}"; then
       printf '%s\n' "${response}" >"${evidence_dir}/${name}.json"
       return 0
     fi
@@ -162,7 +183,7 @@ assert_absent() {
     response=$(curl -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated')
   fi
   printf '%s\n' "${response}" >"${evidence_dir}/${name}.json"
-  if grep -q "${needle}" <<<"${response}"; then
+  if grep -Fq "${needle}" <<<"${response}"; then
     echo "${name} leaked another tenant's corpus" >&2
     return 1
   fi
@@ -172,20 +193,21 @@ query_corpus() {
   local stage=$1 now_s
   ensure_forwards
   now_s=$(( $(date +%s) + 60 ))
-  wait_for "${stage}-metrics" 'http://127.0.0.1:19090/api/v1/query?query=alloy_build_info'
+  wait_for "${stage}-metrics" \
+    "http://127.0.0.1:19090/api/v1/query?query=krabka_qualification%7Bmarker%3D%22${marker}%22%7D"
   wait_for "${stage}-logs" "http://127.0.0.1:13101/loki/api/v1/query_range?query=%7Bjob%3D%22${marker}%22%7D"
   wait_for "${stage}-traces" "http://127.0.0.1:13201/api/search?q=%7Bresource.service.name%3D%22${marker}%22%7D&start=0&end=${now_s}"
   wait_for "${stage}-profiles" 'http://127.0.0.1:14042/querier.v1.QuerierService/Series' \
-    '{"matchers":[],"labelNames":["service_name","__profile_type__"]}'
+    "{\"matchers\":[\"{service_name=\\\"${marker}\\\"}\"],\"labelNames\":[\"service_name\",\"__profile_type__\"]}"
   assert_absent "${stage}-metrics-isolation" \
-    'http://127.0.0.1:19090/api/v1/query?query=alloy_build_info' alloy
+    "http://127.0.0.1:19090/api/v1/query?query=krabka_qualification%7Bmarker%3D%22${marker}%22%7D" "${marker}"
   assert_absent "${stage}-logs-isolation" \
     "http://127.0.0.1:13101/loki/api/v1/query_range?query=%7Bjob%3D%22${marker}%22%7D" "${marker}"
   assert_absent "${stage}-traces-isolation" \
     "http://127.0.0.1:13201/api/search?q=%7Bresource.service.name%3D%22${marker}%22%7D&start=0&end=${now_s}" "${marker}"
   assert_absent "${stage}-profiles-isolation" \
-    'http://127.0.0.1:14042/querier.v1.QuerierService/Series' alloy \
-    '{"matchers":[],"labelNames":["service_name","__profile_type__"]}'
+    'http://127.0.0.1:14042/querier.v1.QuerierService/Series' "${marker}" \
+    "{\"matchers\":[\"{service_name=\\\"${marker}\\\"}\"],\"labelNames\":[\"service_name\",\"__profile_type__\"]}"
 }
 
 assert_no_restarts() {
@@ -243,7 +265,7 @@ mapfile -t deployments < <(kubectl -n "${namespace}" get deployments -l app.kube
 for deployment in "${deployments[@]}"; do
   marker="${base_marker}-upgrade-${deployment##*/}"
   send_corpus
-  run kubectl -n "${namespace}" set image "${deployment}" "role=${new_image}"
+  set_krabka_image "${deployment}" "${new_image}"
   run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=10m
   query_corpus "upgrade-${deployment##*/}"
 done
@@ -251,7 +273,7 @@ assert_no_restarts upgraded
 for deployment in "${deployments[@]}"; do
   marker="${base_marker}-rollback-${deployment##*/}"
   send_corpus
-  run kubectl -n "${namespace}" set image "${deployment}" "role=${old_image}"
+  set_krabka_image "${deployment}" "${old_image}"
   run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=10m
   query_corpus "rollback-${deployment##*/}"
 done

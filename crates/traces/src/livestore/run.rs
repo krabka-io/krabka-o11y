@@ -24,7 +24,9 @@ pub async fn run(
             .inspect_err(|_| metrics.wal_consumer.record_poll_failure())
             .map_err(|err| TracesError::Wal(err.to_string()))?;
         metrics.wal_consumer.record_poll(&records);
-        assignment.observe_consumer(&consumer).await;
+        assignment
+            .observe_consumer(&consumer, !records.is_empty())
+            .await;
         if records.is_empty() {
             continue;
         }
@@ -52,6 +54,7 @@ pub async fn run(
             tracing::warn!(error = %err, "live-store offset commit failed");
         } else {
             metrics.wal_consumer.record_commit();
+            assignment.observe_applied(&consumer).await;
         }
     }
     Ok(())

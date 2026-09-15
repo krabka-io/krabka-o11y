@@ -188,6 +188,10 @@ impl AllInOne {
         let dependencies = build_service_dependencies(&config, WalConsumerMetrics::unregistered())
             .await
             .expect("all-in-one dependencies");
+        check!(
+            dependencies.wal_recovery_metrics().len() == 2,
+            "the block builder and hot tail report recovery independently"
+        );
         let listener = tokio::net::TcpListener::bind(config.listen_addr)
             .await
             .expect("bind the all-in-one data port");

@@ -50,19 +50,23 @@ impl SpanSource for KafkaSpanSource {
         self.assignment
             .lock()
             .await
-            .observe_consumer(&consumer)
+            .observe_consumer(&consumer, !records.is_empty())
             .await;
         decode_consumer_records(records)
     }
 
     async fn commit(&self) -> Result<(), SinkError> {
-        self.consumer
-            .lock()
-            .await
+        let consumer = self.consumer.lock().await;
+        consumer
             .commit_sync()
             .await
             .map_err(|err| SinkError::Source(err.to_string()))?;
         self.metrics.record_commit();
+        self.assignment
+            .lock()
+            .await
+            .observe_applied(&consumer)
+            .await;
         Ok(())
     }
 }

@@ -44,6 +44,7 @@ pub(crate) fn with_querier_dependencies(
             topic: config.wal_topic.clone(),
             client_resource_policy,
             security: security.cloned(),
-            metrics,
-        }))
+            metrics: metrics.clone(),
+        })
+        .with_wal_recovery_metrics(metrics))
 }

@@ -60,7 +60,9 @@ impl WalConsumerPoll for BlockBuilderConsumer {
         // Read after the poll, so the snapshot is the one the fetch was served
         // against. An empty poll is observed too: a member that lost every
         // partition returns nothing and would otherwise look idle.
-        self.assignment.observe_consumer(&self.consumer).await;
+        self.assignment
+            .observe_consumer(&self.consumer, !records.is_empty())
+            .await;
         Ok(records)
     }
 }
@@ -72,6 +74,7 @@ impl WalConsumerCommit for BlockBuilderConsumer {
             .await
             .map_err(|err| TracesError::Wal(err.to_string()))?;
         self.metrics.record_commit();
+        self.assignment.observe_applied(&self.consumer).await;
         Ok(())
     }
 }

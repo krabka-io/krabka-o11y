@@ -4,3 +4,7 @@ listen: 0.0.0.0:9090
 admin-listen-addr: 0.0.0.0:9404
 object-store-url: s3://krabka-metrics
 manifest-prefix: metrics
+wal-bootstrap: broker:9092
+wal-group-id: krabka-metrics-query-frontend
+wal-client-id: krabka-metrics-query-frontend
+wal-head-retention: 5m

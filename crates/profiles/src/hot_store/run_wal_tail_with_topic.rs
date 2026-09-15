@@ -76,7 +76,9 @@ pub async fn run_wal_tail_with_topic(
             return Ok(());
         };
         metrics.record_poll(&records);
-        assignment.observe_consumer(&consumer).await;
+        assignment
+            .observe_consumer(&consumer, !records.is_empty())
+            .await;
         for record in &records {
             validate_persisted_format(
                 record
@@ -100,6 +102,7 @@ pub async fn run_wal_tail_with_topic(
             .await
             .map_err(|err| ProfilesError::Wal(format!("hot WAL-tail commit failed: {err}")))?;
         metrics.record_commit();
+        assignment.observe_applied(&consumer).await;
         // Checked after the commit, never between the poll and it: a batch
         // this tail has already applied must reach the broker as a committed
         // offset even when the signal lands mid-iteration.

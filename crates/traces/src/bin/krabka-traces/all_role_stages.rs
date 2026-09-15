@@ -58,7 +58,11 @@ pub(crate) fn all_role_stages(
         }),
     );
 
-    let builder = ctx.clone();
+    let mut builder = ctx.clone();
+    builder.metrics.wal_consumer = builder.metrics.wal_consumer.with_fresh_recovery();
+    builder
+        .readiness
+        .track_wal_consumer(builder.metrics.wal_consumer.clone());
     stages.insert(
         RoleKind::BlockBuilder,
         all_role_stage(move |token| async move {
@@ -77,7 +81,10 @@ pub(crate) fn all_role_stages(
         }),
     );
 
-    let live = ctx.clone();
+    let mut live = ctx.clone();
+    live.metrics.wal_consumer = live.metrics.wal_consumer.with_fresh_recovery();
+    live.readiness
+        .track_wal_consumer(live.metrics.wal_consumer.clone());
     stages.insert(
         RoleKind::LiveStore,
         all_role_stage(move |token| async move {
@@ -170,8 +177,12 @@ pub(crate) fn all_role_stages(
     // stack, Mimir included. So: the role joins the composition when the
     // operator has said where the metrics go, by `--remote-write-url` or by a
     // `--config` file, and otherwise says once that it is not running.
-    let generator = ctx.clone();
+    let mut generator = ctx.clone();
     if generator.cli.remote_write_url.is_some() || generator.cli.config.is_some() {
+        generator.metrics.wal_consumer = generator.metrics.wal_consumer.with_fresh_recovery();
+        generator
+            .readiness
+            .track_wal_consumer(generator.metrics.wal_consumer.clone());
         stages.insert(
             RoleKind::MetricsGenerator,
             all_role_stage(move |token| async move {

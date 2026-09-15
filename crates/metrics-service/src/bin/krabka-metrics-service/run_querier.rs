@@ -1,7 +1,5 @@
-use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics};
-use krabka_observability::{
-    CriticalTaskError, SupervisedTasks, wal_consumer_metrics::WalConsumerMetrics,
-};
+use krabka_blockstore::MeteredObjectStore;
+use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
     Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, MimirTenantAdminState,
@@ -30,11 +28,11 @@ pub(crate) async fn run_querier(
     let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> =
         Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
-    let object_store_metrics = ObjectStoreMetrics::unregistered();
+    let object_store_metrics = metrics.object_store.clone();
     readiness.track_object_store(object_store_metrics.clone());
     let store = MeteredObjectStore::wrap(store, object_store_metrics);
     let head = WalHead::with_retention(cli.wal_head_retention);
-    let recovery_metrics = WalConsumerMetrics::unregistered();
+    let recovery_metrics = metrics.wal_consumer.clone();
     readiness.track_wal_consumer(recovery_metrics.clone());
     let status_wal = cli
         .wal_bootstrap

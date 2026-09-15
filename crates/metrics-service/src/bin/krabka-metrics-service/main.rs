@@ -1048,7 +1048,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .await
                     }
                     Target::QueryFrontend => {
-                        run_query_frontend(cli, metrics, readiness, &server_security, audit).await
+                        run_query_frontend(
+                            cli,
+                            metrics,
+                            readiness,
+                            &server_security,
+                            wal_security,
+                            audit,
+                        )
+                        .await
                     }
                     Target::Ruler => {
                         Box::pin(run_ruler(

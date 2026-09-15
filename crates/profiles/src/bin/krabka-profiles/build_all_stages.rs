@@ -35,6 +35,12 @@ pub(crate) async fn build_all_stages(
     shutdown: &CancellationToken,
     security: &ProcessSecurity,
 ) -> Result<Option<BTreeMap<RoleKind, AllStage>>, Box<dyn std::error::Error>> {
+    let mut block_builder_metrics = metrics.clone();
+    block_builder_metrics.wal_consumer = metrics.wal_consumer.with_fresh_recovery();
+    readiness.track_wal_consumer(block_builder_metrics.wal_consumer.clone());
+    let mut read_metrics = metrics.clone();
+    read_metrics.wal_consumer = metrics.wal_consumer.with_fresh_recovery();
+    readiness.track_wal_consumer(read_metrics.wal_consumer.clone());
     // One object store, built once, for every role that reads or writes
     // blocks. Four roles call `build_object_store` when they run alone, and
     // four calls here would be four independent stores: with
@@ -162,7 +168,7 @@ pub(crate) async fn build_all_stages(
             cli,
             &store,
             &index_key,
-            metrics,
+            &block_builder_metrics,
             security.wal.clone(),
             readiness
                 .for_role(RoleKind::BlockBuilder)
@@ -174,7 +180,7 @@ pub(crate) async fn build_all_stages(
         read_path_stage(
             cli,
             read,
-            metrics,
+            &read_metrics,
             security.wal.clone(),
             readiness
                 .for_role(RoleKind::QueryFrontend)

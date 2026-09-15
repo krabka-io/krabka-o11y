@@ -44,7 +44,7 @@ items:
                 - {name: http, containerPort: 9090}
                 - {name: admin, containerPort: 9404}
               startupProbe: &http-startup
-                httpGet: {path: /ready, port: http}
+                tcpSocket: {port: http}
                 periodSeconds: 5
                 failureThreshold: 60
               readinessProbe: &http-ready
@@ -122,7 +122,7 @@ items:
               envFrom: *object-store-env
               ports: [{name: admin, containerPort: 9404}]
               startupProbe: &admin-startup
-                httpGet: {path: /ready, port: admin}
+                tcpSocket: {port: admin}
                 periodSeconds: 5
                 failureThreshold: 60
               readinessProbe: &admin-ready

@@ -1,10 +1,12 @@
-use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics};
+use krabka_blockstore::MeteredObjectStore;
+use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, AuditHandle, Cli, MimirTenantAdminState, ObjectStore, PrometheusApiState,
-    QueryFrontendOptions, RoleReadiness, ServerSecurity, Shutdown, TimeExt, WalHead,
-    load_runtime_overrides, mimir_tenant_admin_router, prometheus_router, query_engine_opts,
-    readiness_router, serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
+    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, MimirTenantAdminState,
+    ObjectStore, PrometheusApiState, QueryFrontendOptions, RoleReadiness, ServerSecurity, Shutdown,
+    TimeExt, WalHead, WalHeadConsumerRecovery, load_runtime_overrides, mimir_tenant_admin_router,
+    prometheus_router, query_engine_opts, readiness_router, serve_prometheus_router_joinable,
+    spawn_shutdown_signal_listener, spawn_wal_head_consumer_task,
 };
 
 #[tracing::instrument(
@@ -19,16 +21,78 @@ pub(crate) async fn run_query_frontend(
     metrics: krabka_promql::metrics::ServiceMetrics,
     readiness: RoleReadiness,
     security: &ServerSecurity,
+    wal_security: Option<ClientSecurity>,
     audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> =
         Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
-    let object_store_metrics = ObjectStoreMetrics::unregistered();
+    let object_store_metrics = metrics.object_store.clone();
     readiness.track_object_store(object_store_metrics.clone());
     let store = MeteredObjectStore::wrap(store, object_store_metrics);
-    let head = WalHead::new();
+    let head = WalHead::with_retention(cli.wal_head_retention);
+    let recovery_metrics = metrics.wal_consumer.clone();
+    readiness.track_wal_consumer(recovery_metrics.clone());
+    let status_wal = cli
+        .wal_bootstrap
+        .as_ref()
+        .map(|_| (head.clone(), readiness.gate("wal-head")));
+    let shutdown = Shutdown::new();
+    spawn_shutdown_signal_listener(shutdown.clone());
+    let mut tasks = SupervisedTasks::new(shutdown.token().clone());
+    if let Some(bootstrap) = cli.wal_bootstrap.clone() {
+        let wal_head_gate = status_wal
+            .as_ref()
+            .expect("configured WAL bootstrap registers a readiness gate")
+            .1
+            .clone();
+        let wal_head = head.clone();
+        let wal_topic = cli.wal_topic.clone();
+        let poll_timeout = cli.wal_poll_timeout;
+        // Every frontend needs the complete recent window. A shared consumer
+        // group would split partitions between replicas and make the public
+        // Service return different answers depending on which pod it chose.
+        let group_id = format!(
+            "{}-{}-{}",
+            cli.wal_group_id,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let client_id = cli.wal_client_id.clone();
+        let subscribe_topic = cli.wal_topic.clone();
+        tasks.adopt(
+            "metrics query-frontend WAL head",
+            spawn_wal_head_consumer_task(
+                move || async move {
+                    Consumer::builder()
+                        .bootstrap(bootstrap)
+                        .maybe_security(wal_security)
+                        .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
+                        .frame_max(cli.client_frame_max)
+                        .group_id(group_id)
+                        .client_id(client_id)
+                        .auto_offset_reset(AutoOffsetReset::Earliest)
+                        .subscribe([subscribe_topic])
+                        .build()
+                        .await
+                        .map_err(|error| error.to_string())
+                },
+                wal_head,
+                wal_topic,
+                poll_timeout,
+                shutdown.clone(),
+                wal_head_gate,
+                WalHeadConsumerRecovery {
+                    metrics: Some(recovery_metrics),
+                    catch_up_gate: Some(readiness.gate("wal-catch-up")),
+                },
+            ),
+        );
+    }
     let metric_store = Arc::new(
         krabka_metrics_service::RefreshingMetricBlockStore::new(
             Arc::clone(&store),
@@ -71,6 +135,11 @@ pub(crate) async fn run_query_frontend(
                 }),
             ),
         );
+    let state = if let Some((head, readiness)) = status_wal {
+        state.with_wal_head_status(head, readiness)
+    } else {
+        state
+    };
     let state = state.with_query_limits(load_runtime_overrides(cli.runtime_overrides.as_deref())?);
     let router = prometheus_router(Arc::new(state))
         .merge(mimir_tenant_admin_router(MimirTenantAdminState::new(
@@ -79,8 +148,6 @@ pub(crate) async fn run_query_frontend(
             head,
         )))
         .merge(readiness_router(readiness));
-    let shutdown = Shutdown::new();
-    spawn_shutdown_signal_listener(shutdown.clone());
     let (bound, server) =
         serve_prometheus_router_joinable(cli.listen, router, security, shutdown.signalled())
             .await?;
@@ -90,8 +157,12 @@ pub(crate) async fn run_query_frontend(
         authentication = security.authentication_enabled(),
         "metrics-service query-frontend listening"
     );
-    // Join the server task so in-flight requests drain (graceful shutdown)
-    // before the process exits.
-    server.await?;
-    Ok(())
+    let outcome = tokio::select! {
+        result = server => result.map_err(Into::into),
+        name = tasks.first_unexpected_exit() => Err(Box::<dyn std::error::Error>::from(
+            CriticalTaskError(name),
+        )),
+    };
+    tasks.shutdown().await;
+    outcome
 }

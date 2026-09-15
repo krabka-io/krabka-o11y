@@ -103,6 +103,19 @@ fn recovery_status_separates_consumed_committed_and_caught_up() {
     check!(after.partitions[0].lag == Some(0));
 }
 
+#[test]
+fn recovery_sources_share_instruments_without_overwriting_status() {
+    let first = WalConsumerMetrics::unregistered();
+    let second = first.with_fresh_recovery();
+    first.record_assignment(&[("first".to_string(), 0)], true);
+    second.record_assignment(&[("second".to_string(), 1)], false);
+
+    check!(first.recovery_status().partitions[0].topic == "first");
+    check!(second.recovery_status().partitions[0].topic == "second");
+    first.record_partition_assigned("shared", 2);
+    check!(second.partition_owned("shared", 2) == 1);
+}
+
 /// The instruments are read by scraping the registry rather than by reading
 /// the handles back, so an instrument that was never registered, or registered
 /// under a name no dashboard uses, fails here and only here.

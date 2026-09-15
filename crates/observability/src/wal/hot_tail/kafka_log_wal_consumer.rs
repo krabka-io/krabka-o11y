@@ -113,7 +113,9 @@ impl LogWalConsumer for KafkaLogWalConsumer {
         // against. A revocation here says the group abandoned whatever the
         // compactor had buffered for the lost partitions. See
         // `krabka_observability::wal_group_assignment`.
-        self.assignment.observe_consumer(&self.consumer).await;
+        self.assignment
+            .observe_consumer(&self.consumer, !records.is_empty())
+            .await;
         records
             .into_iter()
             .map(|record| {
@@ -147,6 +149,7 @@ impl LogWalConsumer for KafkaLogWalConsumer {
     async fn commit_compacted(&mut self, _position: WalPosition) -> Result<(), WalConsumerError> {
         self.consumer.commit_sync().await?;
         self.metrics.record_commit();
+        self.assignment.observe_applied(&self.consumer).await;
         Ok(())
     }
 }

@@ -136,7 +136,9 @@ pub async fn run_with_config(
         // Read after the poll, so the snapshot is the one the fetch was served
         // against. An empty poll is observed too: a member that lost every
         // partition returns nothing and would otherwise look idle.
-        assignment.observe_consumer(&consumer).await;
+        assignment
+            .observe_consumer(&consumer, !records.is_empty())
+            .await;
         let draining = shutdown.is_cancelled();
         let now = Instant::now();
         accumulator.push(records, now);
@@ -194,6 +196,7 @@ pub async fn run_with_config(
                 .await
                 .map_err(|err| ProfilesError::Block(format!("consumer commit failed: {err}")))?;
             wal_metrics.record_commit();
+            assignment.observe_applied(&consumer).await;
             Ok::<(), ProfilesError>(())
         }
         .instrument(build_span)

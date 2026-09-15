@@ -134,6 +134,16 @@ impl WalConsumerMetrics {
         }
     }
 
+    /// Shares the exported instruments while keeping independent recovery
+    /// state for another consumer in the same process.
+    #[must_use]
+    pub fn with_fresh_recovery(&self) -> Self {
+        Self {
+            recovery: Arc::default(),
+            ..self.clone()
+        }
+    }
+
     /// Records that the group has placed `partition` of `topic` on this member.
     ///
     /// Call it for the partitions of a first assignment as well as for the ones

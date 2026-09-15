@@ -16,7 +16,9 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // "a listener exists". The roles with a data port echo the same gates on
     // it.
     let readiness = RoleReadiness::new();
-    readiness.track_wal_consumer(metrics.wal_consumer.clone());
+    if cli.target != Target::All {
+        readiness.track_wal_consumer(metrics.wal_consumer.clone());
+    }
     readiness.track_object_store(metrics.object_store.clone());
     let admin = krabka_telemetry::profiling::spawn_admin_with_config(
         cli.admin_listen_addr,

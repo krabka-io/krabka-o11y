@@ -1,4 +1,4 @@
-use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics};
+use krabka_blockstore::MeteredObjectStore;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
@@ -31,7 +31,7 @@ pub(crate) async fn run_ruler(
     let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> =
         Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
-    let object_store_metrics = ObjectStoreMetrics::unregistered();
+    let object_store_metrics = metrics.object_store.clone();
     readiness.track_object_store(object_store_metrics.clone());
     let store = MeteredObjectStore::wrap(store, object_store_metrics);
     let config_store = Arc::clone(&store);
