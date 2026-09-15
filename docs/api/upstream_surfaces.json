@@ -566,7 +566,6 @@
             "connect POST /adhocprofiles.v1.AdHocProfileService/List",
             "connect POST /adhocprofiles.v1.AdHocProfileService/Upload",
             "connect POST /capabilities.v1.FeatureFlagsService/GetFeatureFlags",
-            "connect POST /debuginfo.v1.DebuginfoService/Upload",
             "connect POST /push.v1.PusherService/Push",
             "connect POST /querier.v1.QuerierService/Diff",
             "connect POST /querier.v1.QuerierService/LabelNames",
@@ -607,6 +606,16 @@
             "protocol OTLP HTTP protobuf profiles development",
             "protocol pprof",
             "protocol speedscope"
+          ]
+        },
+        {
+          "classification": "excluded",
+          "evidence": [
+            "https://github.com/grafana/pyroscope/blob/v2.3.1/pkg/api/api.go"
+          ],
+          "reason": "Pyroscope 2.3.1 does not register the generated debuginfo.v1 streaming service; profilecli uses the registered v1alpha1 metadata RPCs and raw upload route.",
+          "surfaces": [
+            "connect POST /debuginfo.v1.DebuginfoService/Upload"
           ]
         },
         {

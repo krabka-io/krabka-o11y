@@ -119,6 +119,7 @@ opentelemetry_sdk = { version = "0.32", default-features = false, features = ["t
 # writer failed at runtime with "Disabled feature at compile time: zstd".
 parquet = { version = "59", default-features = false, features = ["arrow", "async", "object_store", "zstd"] }
 pbjson = "0.9"
+pbjson-types = "0.9"
 prometheus-client = "0.25"
 # PromQL parser only; Krabka supplies the PromQL-to-DataFusion planner.
 promql-parser = { version = "0.10", features = ["ser"] }

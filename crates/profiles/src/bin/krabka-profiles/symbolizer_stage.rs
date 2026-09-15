@@ -2,7 +2,7 @@ use krabka_blockstore::ProfileIndex;
 use krabka_units::{ByteSize, Time, convert::TimeExt as _};
 use object_store::ObjectStore;
 
-use super::{AllStage, Arc, DebuginfodConfig};
+use super::{AllStage, Arc, DebuginfodConfig, ServiceMetrics};
 
 pub(crate) fn symbolizer_stage(
     urls: Vec<String>,
@@ -11,6 +11,7 @@ pub(crate) fn symbolizer_stage(
     index_key: String,
     index_max: ByteSize,
     interval: Time,
+    metrics: ServiceMetrics,
 ) -> AllStage {
     Box::new(move |token| {
         Box::pin(async move {
@@ -27,7 +28,7 @@ pub(crate) fn symbolizer_stage(
                 .await
                 {
                     Ok(index) => match krabka_profiles::symbolizer::symbolize_blocks_once(
-                        &store, &index, &resolver,
+                        &store, &index, &resolver, &metrics,
                     )
                     .await
                     {

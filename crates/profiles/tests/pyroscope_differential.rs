@@ -76,6 +76,64 @@ impl WalSink for CapturingSink {
 }
 
 #[tokio::test]
+#[ignore = "requires the official Pyroscope 2.3.1 profilecli binary"]
+async fn official_profilecli_uploads_elf_through_public_debuginfo_api() -> TestResult {
+    let Ok(profilecli) = std::env::var("KRABKA_PROFILECLI") else {
+        eprintln!("KRABKA_PROFILECLI is not set; skipping optional profilecli probe");
+        return Ok(());
+    };
+    let krabka = start_krabka_pair(CapturingSink::default(), WalTailProfileStore::new()).await?;
+    let url = krabka.querier_base.clone();
+    let executable = profilecli.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(&profilecli)
+            .args([
+                "debuginfo",
+                "upload",
+                "--url",
+                &url,
+                "--tenant-id",
+                TENANT,
+                &executable,
+            ])
+            .output()
+    })
+    .await??;
+    if !output.status.success() {
+        krabka.shutdown();
+        return Err(format!(
+            "profilecli failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
+    let listed: Value = reqwest::Client::new()
+        .post(format!(
+            "{}/debuginfo.v1alpha1.DebuginfoService/ListDebuginfo",
+            krabka.querier_base
+        ))
+        .header("content-type", "application/json")
+        .header("connect-protocol-version", "1")
+        .header("x-scope-orgid", TENANT)
+        .body("{}")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(
+        listed["object"]
+            .as_array()
+            .is_some_and(|objects| objects.len() == 1 && objects[0]["sizeBytes"] != "0"),
+        "{listed}"
+    );
+    krabka.shutdown();
+    Ok(())
+}
+
+#[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
 async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestResult {
     let client = reqwest::Client::new();

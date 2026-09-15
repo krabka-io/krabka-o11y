@@ -34,6 +34,12 @@ pub struct ServiceMetrics {
     pub query_requests: Family<RouteStatusLabel, Counter>,
     /// Per-route query handler latency in seconds.
     pub query_duration: Family<RouteLabel, Histogram>,
+    /// Debug-info uploads retried after pending state became stale.
+    pub debuginfo_upload_retries: Counter,
+    /// Debug-info HTTP uploads that exceeded their deadline.
+    pub debuginfo_upload_timeouts: Counter,
+    /// Uploaded-symbol cache lookups, labelled `hit` or `miss`.
+    pub symbolizer_cache_requests: Family<StatusLabel, Counter>,
     // WAL-CONSUMER, COMPACTOR and OBJECT-STORE roles.
     /// WAL consumer progress and receive delay. See
     /// [`WalConsumerMetrics`] for what lag this measures and what it leaves
@@ -71,6 +77,9 @@ impl ServiceMetrics {
         let query_duration = Family::<RouteLabel, Histogram>::new_with_constructor(|| {
             Histogram::new([0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0])
         });
+        let debuginfo_upload_retries = Counter::default();
+        let debuginfo_upload_timeouts = Counter::default();
+        let symbolizer_cache_requests = Family::<StatusLabel, Counter>::default();
 
         registry.register(
             "ingest_requests",
@@ -117,6 +126,21 @@ impl ServiceMetrics {
             "Per-route query handler latency in seconds.",
             query_duration.clone(),
         );
+        registry.register(
+            "debuginfo_upload_retries",
+            "Debug-info uploads retried after stale pending state.",
+            debuginfo_upload_retries.clone(),
+        );
+        registry.register(
+            "debuginfo_upload_timeouts",
+            "Debug-info HTTP uploads that exceeded their deadline.",
+            debuginfo_upload_timeouts.clone(),
+        );
+        registry.register(
+            "symbolizer_cache_requests",
+            "Uploaded-symbol cache lookups labelled hit or miss.",
+            symbolizer_cache_requests.clone(),
+        );
 
         // These three come from the shared modules, so the four signals export
         // the same instrument under their own prefix and one dashboard reads
@@ -141,6 +165,9 @@ impl ServiceMetrics {
             blocks_built,
             query_requests,
             query_duration,
+            debuginfo_upload_retries,
+            debuginfo_upload_timeouts,
+            symbolizer_cache_requests,
         }
     }
 
@@ -217,6 +244,15 @@ impl ServiceMetrics {
                 route: route.into(),
             })
             .observe(elapsed.secs_f64());
+    }
+
+    /// Record one lookup in the per-pass uploaded-symbol cache.
+    pub fn record_symbolizer_cache(&self, hit: bool) {
+        self.symbolizer_cache_requests
+            .get_or_create(&StatusLabel {
+                status: if hit { "hit" } else { "miss" }.into(),
+            })
+            .inc();
     }
 }
 

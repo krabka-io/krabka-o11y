@@ -1798,6 +1798,86 @@
     {
       "signal": "profiles",
       "method": "POST",
+      "path": "/adhocprofiles.v1.AdHocProfileService/Diff",
+      "sources": [
+        "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/adhocprofiles.v1.AdHocProfileService/Get",
+      "sources": [
+        "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/adhocprofiles.v1.AdHocProfileService/List",
+      "sources": [
+        "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/adhocprofiles.v1.AdHocProfileService/Upload",
+      "sources": [
+        "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/capabilities.v1.FeatureFlagsService/GetFeatureFlags",
+      "sources": [
+        "crates/profiles/proto/capabilities/v1/feature_flags.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/debuginfo.v1alpha1.DebuginfoService/DeleteDebuginfo",
+      "sources": [
+        "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/debuginfo.v1alpha1.DebuginfoService/ListDebuginfo",
+      "sources": [
+        "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/debuginfo.v1alpha1.DebuginfoService/ShouldInitiateUpload",
+      "sources": [
+        "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/debuginfo.v1alpha1.DebuginfoService/Upload/{gnu_build_id}",
+      "sources": [
+        "crates/profiles/src/query/router.rs"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/debuginfo.v1alpha1.DebuginfoService/UploadFinished",
+      "sources": [
+        "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
       "path": "/ingest",
       "sources": [
         "crates/profiles/src/distributor/router.rs"
@@ -1921,6 +2001,38 @@
       "path": "/querier.v1.QuerierService/Series",
       "sources": [
         "crates/profiles/proto/querier/v1/querier.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/settings.v1.RecordingRulesService/DeleteRecordingRule",
+      "sources": [
+        "crates/profiles/proto/settings/v1/recording_rules.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/settings.v1.RecordingRulesService/GetRecordingRule",
+      "sources": [
+        "crates/profiles/proto/settings/v1/recording_rules.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/settings.v1.RecordingRulesService/ListRecordingRules",
+      "sources": [
+        "crates/profiles/proto/settings/v1/recording_rules.proto"
+      ]
+    },
+    {
+      "signal": "profiles",
+      "method": "POST",
+      "path": "/settings.v1.RecordingRulesService/UpsertRecordingRule",
+      "sources": [
+        "crates/profiles/proto/settings/v1/recording_rules.proto"
       ]
     },
     {
@@ -2152,6 +2264,18 @@
   "protobuf": {
     "files": [
       {
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "sha256": "b03f08fa664025e191f689b0c130cbbcfe0a0485e86ccf446a84d304db702990"
+      },
+      {
+        "source": "crates/profiles/proto/capabilities/v1/feature_flags.proto",
+        "sha256": "2960fbc7efdb0b584150cebf505d08fd3c88f633ddc905e0c36a95fad1ea7dda"
+      },
+      {
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "sha256": "a25d886aa95a556e95f25eef69d9a921f0968066ba31e3547165f22a4400c37f"
+      },
+      {
         "source": "crates/profiles/proto/google/v1/profile.proto",
         "sha256": "06472c503fb99cc947e7db0a5b7ed22930b1f905e5a5a150aad4d1a7264fb4d6"
       },
@@ -2180,6 +2304,10 @@
         "sha256": "5ee68d0c47d597d0f1b76bd28b3c2e81eef7900c251aac72ce9513aee7198c64"
       },
       {
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "sha256": "2be236255007f9294d326029cfe4ae61d8b7da0a96e73a450fc6e6929c4728b1"
+      },
+      {
         "source": "crates/profiles/proto/settings/v1/settings.proto",
         "sha256": "bda2490d6849d010eec8282c532bfb7b1286fa3165afa8e2115b117849a111ae"
       },
@@ -2189,6 +2317,87 @@
       }
     ],
     "services": [
+      {
+        "name": "adhocprofiles.v1.AdHocProfileService",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "methods": [
+          {
+            "name": "Upload",
+            "request": "AdHocProfilesUploadRequest",
+            "request_stream": false,
+            "response": "AdHocProfilesGetResponse",
+            "response_stream": false
+          },
+          {
+            "name": "Get",
+            "request": "AdHocProfilesGetRequest",
+            "request_stream": false,
+            "response": "AdHocProfilesGetResponse",
+            "response_stream": false
+          },
+          {
+            "name": "List",
+            "request": "AdHocProfilesListRequest",
+            "request_stream": false,
+            "response": "AdHocProfilesListResponse",
+            "response_stream": false
+          },
+          {
+            "name": "Diff",
+            "request": "AdHocProfilesDiffRequest",
+            "request_stream": false,
+            "response": "AdHocProfilesDiffResponse",
+            "response_stream": false
+          }
+        ]
+      },
+      {
+        "name": "capabilities.v1.FeatureFlagsService",
+        "source": "crates/profiles/proto/capabilities/v1/feature_flags.proto",
+        "methods": [
+          {
+            "name": "GetFeatureFlags",
+            "request": "GetFeatureFlagsRequest",
+            "request_stream": false,
+            "response": "GetFeatureFlagsResponse",
+            "response_stream": false
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.DebuginfoService",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "methods": [
+          {
+            "name": "ShouldInitiateUpload",
+            "request": "ShouldInitiateUploadRequest",
+            "request_stream": false,
+            "response": "ShouldInitiateUploadResponse",
+            "response_stream": false
+          },
+          {
+            "name": "UploadFinished",
+            "request": "UploadFinishedRequest",
+            "request_stream": false,
+            "response": "UploadFinishedResponse",
+            "response_stream": false
+          },
+          {
+            "name": "ListDebuginfo",
+            "request": "ListDebuginfoRequest",
+            "request_stream": false,
+            "response": "ListDebuginfoResponse",
+            "response_stream": false
+          },
+          {
+            "name": "DeleteDebuginfo",
+            "request": "DeleteDebuginfoRequest",
+            "request_stream": false,
+            "response": "DeleteDebuginfoResponse",
+            "response_stream": false
+          }
+        ]
+      },
       {
         "name": "opentelemetry.proto.collector.profiles.v1development.ProfilesService",
         "source": "crates/profiles/proto/opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
@@ -2306,6 +2515,40 @@
         ]
       },
       {
+        "name": "settings.v1.RecordingRulesService",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "methods": [
+          {
+            "name": "GetRecordingRule",
+            "request": "GetRecordingRuleRequest",
+            "request_stream": false,
+            "response": "GetRecordingRuleResponse",
+            "response_stream": false
+          },
+          {
+            "name": "ListRecordingRules",
+            "request": "ListRecordingRulesRequest",
+            "request_stream": false,
+            "response": "ListRecordingRulesResponse",
+            "response_stream": false
+          },
+          {
+            "name": "UpsertRecordingRule",
+            "request": "UpsertRecordingRuleRequest",
+            "request_stream": false,
+            "response": "UpsertRecordingRuleResponse",
+            "response_stream": false
+          },
+          {
+            "name": "DeleteRecordingRule",
+            "request": "DeleteRecordingRuleRequest",
+            "request_stream": false,
+            "response": "DeleteRecordingRuleResponse",
+            "response_stream": false
+          }
+        ]
+      },
+      {
         "name": "settings.v1.SettingsService",
         "source": "crates/profiles/proto/settings/v1/settings.proto",
         "methods": [
@@ -2334,6 +2577,337 @@
       }
     ],
     "messages": [
+      {
+        "name": "adhocprofiles.v1.AdHocProfilesUploadRequest",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "fields": [
+          {
+            "name": "name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "adhocprofiles.v1.AdHocProfilesGetRequest",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "adhocprofiles.v1.AdHocProfilesGetResponse",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "name",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "uploaded_at",
+            "number": 3,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "profile_type",
+            "number": 4,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "profile_types",
+            "number": 5,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "flamebearer_profile",
+            "number": 6,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "adhocprofiles.v1.AdHocProfilesListRequest",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "fields": []
+      },
+      {
+        "name": "adhocprofiles.v1.AdHocProfilesListResponse",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "fields": [
+          {
+            "name": "profiles",
+            "number": 1,
+            "type": "AdHocProfilesProfileMetadata",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "adhocprofiles.v1.AdHocProfilesProfileMetadata",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "adhocprofiles.v1.AdHocProfilesDiffRequest",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "fields": [
+          {
+            "name": "left_id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "right_id",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "profile_type",
+            "number": 3,
+            "type": "string",
+            "label": "optional"
+          },
+          {
+            "name": "max_nodes",
+            "number": 4,
+            "type": "int64",
+            "label": "optional"
+          }
+        ]
+      },
+      {
+        "name": "adhocprofiles.v1.AdHocProfilesDiffResponse",
+        "source": "crates/profiles/proto/adhocprofiles/v1/adhocprofiles.proto",
+        "fields": [
+          {
+            "name": "profile_types",
+            "number": 1,
+            "type": "string",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "capabilities.v1.GetFeatureFlagsRequest",
+        "source": "crates/profiles/proto/capabilities/v1/feature_flags.proto",
+        "fields": []
+      },
+      {
+        "name": "capabilities.v1.GetFeatureFlagsResponse",
+        "source": "crates/profiles/proto/capabilities/v1/feature_flags.proto",
+        "fields": [
+          {
+            "name": "feature_flags",
+            "number": 1,
+            "type": "FeatureFlag",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "capabilities.v1.FeatureFlag",
+        "source": "crates/profiles/proto/capabilities/v1/feature_flags.proto",
+        "fields": [
+          {
+            "name": "name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "enabled",
+            "number": 2,
+            "type": "bool",
+            "label": "singular"
+          },
+          {
+            "name": "description",
+            "number": 3,
+            "type": "string",
+            "label": "optional"
+          },
+          {
+            "name": "documentation_url",
+            "number": 4,
+            "type": "string",
+            "label": "optional"
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.FileMetadata",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": [
+          {
+            "name": "gnu_build_id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "go_build_id",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "otel_file_id",
+            "number": 3,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "name",
+            "number": 4,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "type",
+            "number": 5,
+            "type": "Type",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.ShouldInitiateUploadRequest",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": [
+          {
+            "name": "file",
+            "number": 1,
+            "type": "FileMetadata",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.ShouldInitiateUploadResponse",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": [
+          {
+            "name": "should_initiate_upload",
+            "number": 1,
+            "type": "bool",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.UploadFinishedRequest",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": [
+          {
+            "name": "gnu_build_id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.UploadFinishedResponse",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": []
+      },
+      {
+        "name": "debuginfo.v1alpha1.ListDebuginfoRequest",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": []
+      },
+      {
+        "name": "debuginfo.v1alpha1.ListDebuginfoResponse",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": [
+          {
+            "name": "object",
+            "number": 1,
+            "type": "ObjectMetadata",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.DeleteDebuginfoRequest",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": [
+          {
+            "name": "gnu_build_id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.DeleteDebuginfoResponse",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": []
+      },
+      {
+        "name": "debuginfo.v1alpha1.ObjectMetadata",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "fields": [
+          {
+            "name": "file",
+            "number": 1,
+            "type": "FileMetadata",
+            "label": "singular"
+          },
+          {
+            "name": "state",
+            "number": 2,
+            "type": "State",
+            "label": "singular"
+          },
+          {
+            "name": "started_at",
+            "number": 3,
+            "type": "google.protobuf.Timestamp",
+            "label": "singular"
+          },
+          {
+            "name": "finished_at",
+            "number": 4,
+            "type": "google.protobuf.Timestamp",
+            "label": "singular"
+          },
+          {
+            "name": "size_bytes",
+            "number": 5,
+            "type": "int64",
+            "label": "singular"
+          }
+        ]
+      },
       {
         "name": "google.v1.Profile",
         "source": "crates/profiles/proto/google/v1/profile.proto",
@@ -3992,6 +4566,274 @@
         ]
       },
       {
+        "name": "settings.v1.GetRecordingRuleRequest",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.GetRecordingRuleResponse",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "rule",
+            "number": 1,
+            "type": "RecordingRule",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.ListRecordingRulesRequest",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": []
+      },
+      {
+        "name": "settings.v1.ListRecordingRulesResponse",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "rules",
+            "number": 1,
+            "type": "RecordingRule",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.UpsertRecordingRuleRequest",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "metric_name",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "matchers",
+            "number": 3,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "group_by",
+            "number": 4,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "external_labels",
+            "number": 5,
+            "type": "types.v1.LabelPair",
+            "label": "repeated"
+          },
+          {
+            "name": "generation",
+            "number": 6,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "stacktrace_filter",
+            "number": 7,
+            "type": "StacktraceFilter",
+            "label": "optional"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.UpsertRecordingRuleResponse",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "rule",
+            "number": 1,
+            "type": "RecordingRule",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.DeleteRecordingRuleRequest",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.DeleteRecordingRuleResponse",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": []
+      },
+      {
+        "name": "settings.v1.RecordingRule",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "metric_name",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "profile_type",
+            "number": 3,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "matchers",
+            "number": 4,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "group_by",
+            "number": 5,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "external_labels",
+            "number": 6,
+            "type": "types.v1.LabelPair",
+            "label": "repeated"
+          },
+          {
+            "name": "generation",
+            "number": 7,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "stacktrace_filter",
+            "number": 8,
+            "type": "StacktraceFilter",
+            "label": "optional"
+          },
+          {
+            "name": "provisioned",
+            "number": 9,
+            "type": "bool",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.StacktraceFilter",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "function_name",
+            "number": 1,
+            "type": "StacktraceFilterFunctionName",
+            "label": "optional"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.StacktraceFilterFunctionName",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "function_name",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.RecordingRuleStore",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "id",
+            "number": 1,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "metric_name",
+            "number": 2,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "prometheus_data_source",
+            "number": 3,
+            "type": "string",
+            "label": "singular"
+          },
+          {
+            "name": "matchers",
+            "number": 4,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "group_by",
+            "number": 5,
+            "type": "string",
+            "label": "repeated"
+          },
+          {
+            "name": "external_labels",
+            "number": 6,
+            "type": "types.v1.LabelPair",
+            "label": "repeated"
+          },
+          {
+            "name": "generation",
+            "number": 7,
+            "type": "int64",
+            "label": "singular"
+          },
+          {
+            "name": "stacktrace_filter",
+            "number": 8,
+            "type": "StacktraceFilter",
+            "label": "optional"
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.RecordingRulesStore",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "fields": [
+          {
+            "name": "rules",
+            "number": 1,
+            "type": "RecordingRuleStore",
+            "label": "repeated"
+          }
+        ]
+      },
+      {
         "name": "settings.v1.GetSettingsRequest",
         "source": "crates/profiles/proto/settings/v1/settings.proto",
         "fields": []
@@ -4519,6 +5361,38 @@
     ],
     "enums": [
       {
+        "name": "debuginfo.v1alpha1.Type",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "values": [
+          {
+            "name": "TYPE_UNSPECIFIED",
+            "number": 0
+          },
+          {
+            "name": "TYPE_EXECUTABLE_FULL",
+            "number": 1
+          },
+          {
+            "name": "TYPE_EXECUTABLE_NO_TEXT",
+            "number": 2
+          }
+        ]
+      },
+      {
+        "name": "debuginfo.v1alpha1.State",
+        "source": "crates/profiles/proto/debuginfo/v1alpha1/debuginfo.proto",
+        "values": [
+          {
+            "name": "STATE_UPLOADING",
+            "number": 0
+          },
+          {
+            "name": "STATE_UPLOADED",
+            "number": 1
+          }
+        ]
+      },
+      {
         "name": "querier.v1.ProfileFormat",
         "source": "crates/profiles/proto/querier/v1/querier.proto",
         "values": [
@@ -4595,6 +5469,16 @@
           {
             "name": "HEATMAP_QUERY_TYPE_SPAN",
             "number": 2
+          }
+        ]
+      },
+      {
+        "name": "settings.v1.MetricType",
+        "source": "crates/profiles/proto/settings/v1/recording_rules.proto",
+        "values": [
+          {
+            "name": "TOTAL",
+            "number": 0
           }
         ]
       },

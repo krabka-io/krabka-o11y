@@ -3,16 +3,17 @@ use std::collections::HashMap;
 use object_store::ObjectStoreExt as _;
 
 use super::{Arc, NativeResolver, NativeSymbol, ObjectStore, Path, ProfileIndex, SymbolizeRequest};
+use crate::metrics::ServiceMetrics;
 
 struct UploadedResolver<'a> {
-    uploaded: HashMap<String, krabka_pprof::ObjectSymbolResolver>,
+    uploaded: &'a HashMap<String, krabka_pprof::ObjectSymbolResolver>,
     configured: &'a dyn NativeResolver,
 }
 
 impl NativeResolver for UploadedResolver<'_> {
     fn symbolize(&self, request: &SymbolizeRequest) -> Option<Vec<NativeSymbol>> {
         self.uploaded
-            .get(&request.build_id)
+            .get(&request.build_id.to_ascii_lowercase())
             .and_then(|resolver| resolver.symbolize(request))
             .or_else(|| self.configured.symbolize(request))
     }
@@ -27,8 +28,10 @@ pub async fn symbolize_blocks_once(
     store: &Arc<dyn ObjectStore>,
     index: &ProfileIndex,
     resolver: &dyn NativeResolver,
+    metrics: &ServiceMetrics,
 ) -> Result<usize, crate::ProfilesError> {
     let mut updated = 0;
+    let mut uploaded_by_tenant = HashMap::<String, HashMap<_, _>>::new();
     for block in index.all_blocks() {
         let key = Path::from(format!("{}.symdb", block.object_key));
         let bytes = store
@@ -39,26 +42,34 @@ pub async fn symbolize_blocks_once(
             .await
             .map_err(|error| crate::ProfilesError::Block(error.to_string()))?;
         let mut symbols = krabka_pprof::SymbolDb::decode(&bytes)?;
-        let mut uploaded = HashMap::new();
+        let uploaded = uploaded_by_tenant.entry(block.tenant.clone()).or_default();
         for request in symbols.pending_native_symbols() {
             if request.build_id.is_empty()
-                || uploaded.contains_key(&request.build_id)
                 || !request.build_id.chars().all(|ch| ch.is_ascii_hexdigit())
             {
                 continue;
             }
+            let build_id = request.build_id.to_ascii_lowercase();
+            if uploaded.contains_key(&build_id) {
+                metrics.record_symbolizer_cache(true);
+                continue;
+            }
+            metrics.record_symbolizer_cache(false);
             let object = match store
-                .get(&Path::from(format!("debuginfo/{}", request.build_id)))
+                .get(&Path::from(format!(
+                    "debug-info/{}/{}/exe",
+                    block.tenant, build_id
+                )))
                 .await
             {
-                Ok(object) if object.meta.size <= 512 * 1024 * 1024 => object,
+                Ok(object) if object.meta.size <= 1024 * 1024 * 1024 => object,
                 _ => continue,
             };
             let Ok(bytes) = object.bytes().await else {
                 continue;
             };
             if let Ok(object) = krabka_pprof::ObjectSymbolResolver::from_bytes(&bytes) {
-                uploaded.insert(request.build_id, object);
+                uploaded.insert(build_id, object);
             }
         }
         let resolver = UploadedResolver {

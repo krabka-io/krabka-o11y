@@ -1,5 +1,5 @@
 //! Generates Connect-RPC server stubs and prost message types from the vendored
-//! `push.v1`, `querier.v1`, and OTLP `profiles/v1development` protos.
+//! Pyroscope-compatible Connect and OTLP profile protos.
 //!
 //! This script drives codegen through the vendored `protoc` binary from
 //! `protoc-bin-vendored`, so the build is hermetic. It needs no system `protoc`
@@ -9,10 +9,14 @@
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protos = [
+        "proto/adhocprofiles/v1/adhocprofiles.proto",
+        "proto/capabilities/v1/feature_flags.proto",
+        "proto/debuginfo/v1alpha1/debuginfo.proto",
         "proto/google/v1/profile.proto",
         "proto/push/v1/push.proto",
         "proto/querier/v1/querier.proto",
         "proto/settings/v1/settings.proto",
+        "proto/settings/v1/recording_rules.proto",
         "proto/opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
     ];
     let includes = ["proto"];
@@ -27,11 +31,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compile()?;
     normalize_generated_code()?;
     for path in [
+        "proto/adhocprofiles/v1/adhocprofiles.proto",
+        "proto/capabilities/v1/feature_flags.proto",
+        "proto/debuginfo/v1alpha1/debuginfo.proto",
         "proto/types/v1/types.proto",
         "proto/google/v1/profile.proto",
         "proto/push/v1/push.proto",
         "proto/querier/v1/querier.proto",
         "proto/settings/v1/settings.proto",
+        "proto/settings/v1/recording_rules.proto",
         "proto/opentelemetry/proto/common/v1/common.proto",
         "proto/opentelemetry/proto/resource/v1/resource.proto",
         "proto/opentelemetry/proto/profiles/v1development/profiles.proto",
@@ -44,6 +52,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
     const GENERATED_FILES: &[&str] = &[
+        "adhocprofiles.v1.rs",
+        "capabilities.v1.rs",
+        "debuginfo.v1alpha1.rs",
         "google.v1.rs",
         "opentelemetry.proto.collector.profiles.v1development.rs",
         "opentelemetry.proto.common.v1.rs",
@@ -55,10 +66,14 @@ fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
         "types.v1.rs",
     ];
     const BUILDERS: &[&str] = &[
+        "AdHocProfileServiceBuilder",
+        "DebuginfoServiceBuilder",
+        "FeatureFlagsServiceBuilder",
         "ProfilesServiceBuilder",
         "PusherServiceBuilder",
         "QuerierServiceBuilder",
         "SettingsServiceBuilder",
+        "RecordingRulesServiceBuilder",
     ];
 
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR")?);

@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package debuginfo.v1alpha1;
+
+import "google/protobuf/timestamp.proto";
+
+service DebuginfoService {
+  rpc ShouldInitiateUpload(ShouldInitiateUploadRequest) returns (ShouldInitiateUploadResponse) {}
+  rpc UploadFinished(UploadFinishedRequest) returns (UploadFinishedResponse) {}
+  rpc ListDebuginfo(ListDebuginfoRequest) returns (ListDebuginfoResponse) {}
+  rpc DeleteDebuginfo(DeleteDebuginfoRequest) returns (DeleteDebuginfoResponse) {}
+}
+
+message FileMetadata {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_EXECUTABLE_FULL = 1;
+    TYPE_EXECUTABLE_NO_TEXT = 2;
+  }
+  string gnu_build_id = 1;
+  string go_build_id = 2;
+  string otel_file_id = 3;
+  string name = 4;
+  Type type = 5;
+}
+
+message ShouldInitiateUploadRequest { FileMetadata file = 1; }
+message ShouldInitiateUploadResponse { bool should_initiate_upload = 1; string reason = 2; }
+message UploadFinishedRequest { string gnu_build_id = 1; }
+message UploadFinishedResponse {}
+message ListDebuginfoRequest {}
+message ListDebuginfoResponse { repeated ObjectMetadata object = 1; }
+message DeleteDebuginfoRequest { string gnu_build_id = 1; }
+message DeleteDebuginfoResponse {}
+
+message ObjectMetadata {
+  FileMetadata file = 1;
+  enum State {
+    STATE_UPLOADING = 0;
+    STATE_UPLOADED = 1;
+  }
+  State state = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp finished_at = 4;
+  int64 size_bytes = 5;
+}

@@ -18,6 +18,7 @@ pub struct QuerierState<S: ProfileStore = DefaultStore> {
     /// resolves the `X-Scope-OrgID` header under this one value.
     pub(crate) tenant_policy: TenantPolicy,
     pub(crate) metrics: ServiceMetrics,
+    pub(crate) admin_store: Arc<dyn object_store::ObjectStore>,
     pub(crate) heatmap_value_buckets: usize,
     pub(crate) heatmap_time_buckets_max: usize,
 }
@@ -82,6 +83,7 @@ impl<S: ProfileStore> QuerierState<S> {
             // process-shared bundle (the one wired to `/metrics`) via
             // [`Self::with_metrics`] so query handlers feed the exported series.
             metrics: ServiceMetrics::new(),
+            admin_store: Arc::new(object_store::memory::InMemory::new()),
             heatmap_value_buckets: DEFAULT_HEATMAP_VALUE_BUCKETS,
             heatmap_time_buckets_max: DEFAULT_HEATMAP_TIME_BUCKETS_MAX,
         }
@@ -101,6 +103,13 @@ impl<S: ProfileStore> QuerierState<S> {
     #[must_use]
     pub fn with_metrics(mut self, metrics: ServiceMetrics) -> Self {
         self.metrics = metrics;
+        self
+    }
+
+    /// Stores tenant settings, ad hoc profiles, recording rules and debug info.
+    #[must_use]
+    pub fn with_admin_store(mut self, store: Arc<dyn object_store::ObjectStore>) -> Self {
+        self.admin_store = store;
         self
     }
 

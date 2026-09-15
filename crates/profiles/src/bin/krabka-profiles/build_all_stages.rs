@@ -104,11 +104,13 @@ pub(crate) async fn build_all_stages(
             },
             overrides.clone(),
         )
+        .with_admin_store(Arc::clone(&store))
         .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
         .with_metrics(metrics.clone()),
     );
     let querier_state = Arc::new(
         QuerierState::new_with_overrides(Arc::clone(&read.union), overrides.clone())
+            .with_admin_store(Arc::clone(&store))
             .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
             .with_metrics(metrics.clone()),
     );
@@ -171,6 +173,7 @@ pub(crate) async fn build_all_stages(
             index_key.clone(),
             cli.index_snapshot_max,
             cli.index_refresh_interval,
+            metrics.clone(),
         ),
     );
     stages.insert(

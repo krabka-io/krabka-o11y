@@ -36,7 +36,7 @@ pub(crate) async fn run_query_frontend(
     let index_key = cli.index_object_key.clone();
     let read = build_profile_read_path(
         &cli,
-        configured.store,
+        Arc::clone(&configured.store),
         index_key,
         debuginfod,
         profile_index_gate,
@@ -56,6 +56,7 @@ pub(crate) async fn run_query_frontend(
             },
             overrides,
         )
+        .with_admin_store(configured.store)
         .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
         .with_metrics(metrics.clone()),
     );

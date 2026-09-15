@@ -22,6 +22,7 @@ pub mod limits;
 pub mod metrics;
 pub mod query;
 pub mod query_frontend;
+pub mod recording;
 pub mod symbolizer;
 mod tenant_from_headers;
 pub mod wal;

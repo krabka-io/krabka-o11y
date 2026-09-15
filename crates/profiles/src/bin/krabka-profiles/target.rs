@@ -18,7 +18,7 @@ use super::ValueEnum;
 /// rather than a difference in naming. There is no `live-store`, because only
 /// traces keeps the window that no block covers yet as a role of its own; a
 /// profiles querier tails the WAL for that window itself. There is no `ruler`,
-/// because nothing evaluates recording or alerting rules over profiles.
+/// because the compactor evaluates profile recording rules as it creates blocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub(crate) enum Target {

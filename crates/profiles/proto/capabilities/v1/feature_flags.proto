@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package capabilities.v1;
+
+service FeatureFlagsService {
+  rpc GetFeatureFlags(GetFeatureFlagsRequest) returns (GetFeatureFlagsResponse) {}
+}
+
+message GetFeatureFlagsRequest {}
+message GetFeatureFlagsResponse { repeated FeatureFlag feature_flags = 1; }
+message FeatureFlag {
+  string name = 1;
+  bool enabled = 2;
+  optional string description = 3;
+  optional string documentation_url = 4;
+}

@@ -772,6 +772,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_recording_rules_remote_write_url() {
+        let cli = Cli::try_parse_from([
+            "krabka-profiles",
+            "--target",
+            "compactor",
+            "--compaction-worker.metrics-exporter.remote-write-address",
+            "http://metrics:9009/api/v1/push",
+        ])
+        .unwrap();
+
+        assert!(
+            cli.recording_rules_remote_write_url
+                .as_ref()
+                .map(url::Url::as_str)
+                == Some("http://metrics:9009/api/v1/push")
+        );
+    }
+
+    #[test]
     fn debuginfod_urls_default_is_empty() {
         let _guard = ENV_LOCK
             .get_or_init(|| StdMutex::new(()))

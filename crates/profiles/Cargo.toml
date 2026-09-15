@@ -27,16 +27,18 @@ arrow = { workspace = true }
 base64 = { workspace = true }
 datafusion = { workspace = true }
 object_store = { workspace = true }
+object = { workspace = true }
 parquet = { workspace = true }
 prost = { workspace = true }
 num-traits = { workspace = true }
 pbjson = { workspace = true }
+pbjson-types = { workspace = true }
 prometheus-client = { workspace = true }
 connectrpc-axum = { workspace = true }
 axum = { workspace = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time", "signal", "io-util", "fs"] }
 tokio-util = { workspace = true }
 tower = { workspace = true }
 futures = { workspace = true }
@@ -57,6 +59,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 url = { workspace = true }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
+krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-pprof = { path = "../pprof", version = "0.4.0" }
 krabka-telemetry = { version = "0.4.0" }
@@ -67,6 +70,9 @@ krabka-client-core = { version = "0.4.0" }
 krabka-throttle = { version = "0.4.0" }
 krabka-units = { workspace = true }
 refined_type = { workspace = true }
+reqwest = { workspace = true }
+snap = { workspace = true }
+tempfile = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
